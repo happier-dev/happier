@@ -17529,6 +17529,7 @@ const french: TeamsTranslationRoot = {
             reactivateBody: 'L’accès reprend là où les adhésions, les groupes et l’état du compte le permettent encore.',
             remove: 'Retirer de l’équipe',
             lastOwnerBlocked: 'Une équipe conserve au moins un propriétaire actif. Choisis d’abord un autre propriétaire.',
+            memberUnavailable: 'Cette adhésion à l’équipe est indisponible.',
             accountInactive: 'Le compte de cette personne n’est pas actif : elle ne peut être ni ajoutée ni nommée propriétaire.',
             ownerOnlyAction: 'Seul un propriétaire de l’équipe peut changer les propriétaires.',
             ownerRequiredTitle: 'Propriétaire requis',

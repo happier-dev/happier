@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { teamErrorHttpStatusV1 } from '@happier-dev/protocol/teams';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,10 +10,12 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const addMemberRouterPush = vi.hoisted(() => vi.fn());
+
 installSettingsViewCommonModuleMocks({
     storage: 'real',
     router: async () => ({
-        useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
+        useRouter: () => ({ push: addMemberRouterPush, replace: vi.fn(), back: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),
         useLocalSearchParams: () => ({}),
     }),
@@ -23,6 +26,7 @@ installHomeGovernanceBoundaries(harness);
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const ACCOUNT_SEARCH_PATH = '/v1/home/accounts/search';
+const MEMBER_ADD_PATH = '/v1/teams/members/add';
 // Load the real screen before behavior deadlines; the first import traverses the full UI graph.
 const { TeamMemberAddScreen } = await import('./TeamMemberAddScreen');
 
@@ -40,6 +44,7 @@ async function waitForTestId(
 }
 
 beforeEach(async () => {
+    addMemberRouterPush.mockClear();
     const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
     const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
     resetTeamsSnapshotsForTests();
@@ -148,5 +153,53 @@ describe('TeamMemberAddScreen search', () => {
 
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-member-add-search-retry');
         expect(screen.getTextContent()).toContain('teams.errors.forbidden');
+    });
+});
+
+describe('Team roster admission refusal', () => {
+    it.each([
+        { code: 'invalid_team_input', message: 'homeGovernance.invalidRead', destination: /\/team-1\/members$/u },
+        { code: 'teams_unavailable', message: 'teams.unavailable.disabled' },
+        { code: 'team_not_found', message: 'teams.errors.notFound', destination: '/settings/teams' },
+        { code: 'team_archived', message: 'teams.errors.archived', destination: /\/team-1\/settings$/u },
+        { code: 'team_forbidden', message: 'teams.errors.forbidden' },
+        { code: 'team_forbidden', details: { reason: 'legacy_home_credential' }, message: 'teams.errors.signInOutdated', destination: '/settings/account' },
+        { code: 'team_authentication_required', message: 'teams.errors.authenticationRequired', destination: '/teams/team-1/sign-in' },
+        { code: 'team_authentication_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable' },
+        { code: 'account_not_found', message: 'homeGovernance.errorAccountNotFound' },
+        { code: 'account_ineligible', message: 'teams.members.accountInactive' },
+        { code: 'membership_not_found', message: 'teams.members.memberUnavailable', destination: /\/team-1\/members$/u },
+    ] as const)('presents $code and permits only its recovery', async (refusal) => {
+        const serverId = await harness.addHome({
+            name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'account-ada', teamsEnabled: true,
+        });
+        await harness.selectHomes([serverId]);
+        harness.answer(serverId, TEAM_GET_PATH, {
+            body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageMembers: true }) }),
+        });
+        harness.answer(serverId, ACCOUNT_SEARCH_PATH, {
+            body: { accounts: [homeAccountPickerRowFixture('account-grace', 'Grace')] },
+        });
+        harness.answer(serverId, MEMBER_ADD_PATH, {
+            status: teamErrorHttpStatusV1(refusal.code),
+            body: { error: refusal.code, ...('details' in refusal ? { details: refusal.details } : {}) },
+        });
+
+        const screen = await renderAddMember(serverId);
+        await act(() => screen.changeTextByTestId('team-member-add-search', 'Grace'));
+        await waitForTestId(screen, 'team-member-add-candidate:account-grace');
+        await screen.pressByTestIdAsync('team-member-add-candidate:account-grace');
+        await screen.pressByTestIdAsync('team-member-add-submit');
+        await vi.waitFor(() => expect(screen.getTextContent().split(refusal.message)).toHaveLength(2));
+        const submit = screen.findByTestId('team-member-add-submit');
+        expect(!submit || submit.props.disabled || submit.props.accessibilityState?.disabled).toBeTruthy();
+        if ('destination' in refusal) {
+            await screen.pressByTestIdAsync('team-member-add-refusal-action');
+            const path = new URL(addMemberRouterPush.mock.lastCall?.[0] ?? '', 'https://app.example').pathname;
+            expect(path).toMatch(refusal.destination);
+        } else {
+            expect(screen.findByTestId('team-member-add-refusal-action')).toBeNull();
+        }
+        expect(harness.requestsFor(MEMBER_ADD_PATH)).toHaveLength(1);
     });
 });

@@ -17408,6 +17408,7 @@ const japanese: TeamsTranslationRoot = {
             reactivateBody: 'メンバーシップ、グループ、アカウントの状態が引き続き許可する範囲でアクセスが再開されます。',
             remove: 'チームから削除',
             lastOwnerBlocked: 'チームには有効なオーナーが少なくとも 1 人必要です。先に別のオーナーを選んでください。',
+            memberUnavailable: 'このチームのメンバーシップは利用できません。',
             accountInactive: 'この人のアカウントは有効ではないため、追加することもオーナーにすることもできません。',
             ownerOnlyAction: 'オーナーを変更できるのはチームのオーナーだけです。',
             ownerRequiredTitle: 'オーナーが必要です',

@@ -17500,6 +17500,7 @@ const polish: TeamsTranslationRoot = {
             reactivateBody: 'Dostęp wraca tam, gdzie nadal pozwalają na to członkostwa, grupy i stan konta.',
             remove: 'Usuń z zespołu',
             lastOwnerBlocked: 'Zespół zachowuje co najmniej jednego aktywnego właściciela. Najpierw wskaż innego właściciela.',
+            memberUnavailable: 'To członkostwo w zespole jest niedostępne.',
             accountInactive: 'Konto tej osoby nie jest aktywne, więc nie można jej dodać ani uczynić właścicielem.',
             ownerOnlyAction: 'Tylko właściciel zespołu może zmieniać właścicieli.',
             ownerRequiredTitle: 'Potrzebny właściciel',

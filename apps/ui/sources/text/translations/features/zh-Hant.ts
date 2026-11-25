@@ -17348,6 +17348,7 @@ const traditionalChinese: TeamsTranslationRoot = {
             reactivateBody: '在成員資格、群組與帳戶狀態仍然允許的範圍內，存取會恢復。',
             remove: '移出團隊',
             lastOwnerBlocked: '團隊至少要保留一位使用中的擁有者。請先指定另一位擁有者。',
+            memberUnavailable: '此團隊成員資格無法使用。',
             accountInactive: '此人的帳戶並非使用中，無法新增或設為擁有者。',
             ownerOnlyAction: '只有團隊擁有者才能變更擁有者。',
             ownerRequiredTitle: '需要擁有者',

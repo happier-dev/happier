@@ -12,6 +12,7 @@ import {
     type TeamRoleV1,
 } from '@happier-dev/protocol/teams';
 
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { invalidateTeam, refreshTeamsDirectory } from '@/sync/engine/teams/teamsDirectoryEngine';
@@ -115,8 +116,8 @@ export async function addTeamMember(params: Readonly<{
      * would abandon the admission decision the manager actually made.
      */
     onApprovalSucceeded?: (membership: TeamMembershipV1) => void | Promise<void>;
-    /** Receives the approval's or the Home's own typed refusal code. */
-    onApprovalFailed?: (code: string) => void;
+    /** Carries the deferred refusal from the approval or Home. */
+    onApprovalFailed?: (code: string, refusal?: ActionExecuteFailure) => void;
 }>): Promise<TeamMemberOutcome<TeamMembershipV1>> {
     // One settlement for the immediate answer and the approved one: an
     // admission moves the roster and the viewer's own Team capabilities either

@@ -712,6 +712,7 @@ export const english = {
             reactivateBody: 'Access resumes where memberships, Groups, and Account state still allow it.',
             remove: 'Remove from Team',
             lastOwnerBlocked: 'A Team keeps at least one active owner. Choose another owner first.',
+            memberUnavailable: 'This Team membership is unavailable.',
             accountInactive: 'This person\'s Account is not active, so they cannot be added or made an owner.',
             ownerOnlyAction: 'Only a Team owner can change owners.',
             ownerRequiredTitle: 'Owner needed',

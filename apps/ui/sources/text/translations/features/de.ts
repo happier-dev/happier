@@ -17286,6 +17286,7 @@ const german: TeamsTranslationRoot = {
             reactivateBody: 'Der Zugriff wird dort fortgesetzt, wo Mitgliedschaften, Gruppen und Account-Status ihn weiterhin zulassen.',
             remove: 'Aus dem Team entfernen',
             lastOwnerBlocked: 'Ein Team behält mindestens eine aktive Eigentümerrolle. Wähle zuerst eine andere.',
+            memberUnavailable: 'Diese Teammitgliedschaft ist nicht verfügbar.',
             accountInactive: 'Der Account dieser Person ist nicht aktiv, daher kann sie weder hinzugefügt noch zur Eigentümerin gemacht werden.',
             ownerOnlyAction: 'Nur eine Team-Eigentümerrolle kann Eigentümer ändern.',
             ownerRequiredTitle: 'Eigentümerrolle erforderlich',

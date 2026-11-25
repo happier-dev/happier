@@ -17486,6 +17486,7 @@ const catalan: TeamsTranslationRoot = {
             reactivateBody: 'L’accés es reprèn allà on les afiliacions, els grups i l’estat del compte encara ho permetin.',
             remove: 'Treu de l’equip',
             lastOwnerBlocked: 'Un equip manté com a mínim un propietari actiu. Tria abans un altre propietari.',
+            memberUnavailable: 'Aquesta pertinença a l’equip no està disponible.',
             accountInactive: 'El compte d’aquesta persona no està actiu, així que no es pot afegir ni fer propietària.',
             ownerOnlyAction: 'Només un propietari de l’equip pot canviar els propietaris.',
             ownerRequiredTitle: 'Cal un propietari',

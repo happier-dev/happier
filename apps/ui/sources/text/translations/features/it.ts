@@ -17472,6 +17472,7 @@ const italian: TeamsTranslationRoot = {
             reactivateBody: 'L’accesso riprende dove iscrizioni, gruppi e stato dell’account lo consentono ancora.',
             remove: 'Rimuovi dal team',
             lastOwnerBlocked: 'Un team mantiene almeno un proprietario attivo. Scegline prima un altro.',
+            memberUnavailable: 'Questa appartenenza al team non è disponibile.',
             accountInactive: 'L’account di questa persona non è attivo, quindi non può essere aggiunta né nominata proprietaria.',
             ownerOnlyAction: 'Solo un proprietario del team può cambiare i proprietari.',
             ownerRequiredTitle: 'Serve un proprietario',

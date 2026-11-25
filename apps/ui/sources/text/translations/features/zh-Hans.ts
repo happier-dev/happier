@@ -17348,6 +17348,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
             reactivateBody: '在成员关系、群组和账户状态仍然允许的范围内，访问会恢复。',
             remove: '移出团队',
             lastOwnerBlocked: '团队至少要保留一位活跃的所有者。请先指定另一位所有者。',
+            memberUnavailable: '此团队成员资格不可用。',
             accountInactive: '此人的账户未处于活跃状态，无法添加或设为所有者。',
             ownerOnlyAction: '只有团队所有者才能更改所有者。',
             ownerRequiredTitle: '需要所有者',

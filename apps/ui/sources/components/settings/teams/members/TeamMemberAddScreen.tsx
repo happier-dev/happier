@@ -25,7 +25,8 @@ import {
     type HomeDomainFailure,
 } from '@/sync/ops/teams/teamActionClient';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
-import { teamMemberDetailPath } from '@/components/settings/teams/teamsRoutes';
+import { teamMemberDetailPath, teamMembersPath, teamSettingsPath, teamsDirectoryPath } from '@/components/settings/teams/teamsRoutes';
+import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { addTeamMember } from '@/sync/ops/teams/teamMemberOperations';
 import { t } from '@/text';
 
@@ -34,6 +35,7 @@ import type { TeamSectionContext } from '../teamSectionContext';
 import { teamRoleLabel } from '../teamLabels';
 import { sessionHistoryChoiceOptions } from '../teamPolicyPresentation';
 import { teamMutationFailureLabel, teamReadFailureLabel } from '../teamMutationPresentation';
+import { teamSignInFailureAction } from '../useTeamReadFailureAction';
 
 const ADMISSIBLE_ROLES: readonly TeamAdmissibleRoleV1[] = Object.freeze(['admin', 'member', 'guest']);
 const SEARCH_DEBOUNCE_MS = 250;
@@ -55,6 +57,32 @@ function roleHelp(role: TeamAdmissibleRoleV1): string {
     }
 }
 
+function admissionRefusalLabel(failure: HomeDomainFailure): string | null {
+    switch (failure.code) {
+        case 'invalid_team_input': return t('homeGovernance.invalidRead');
+        case 'account_not_found': return t('homeGovernance.errorAccountNotFound');
+        case 'membership_not_found': return t('teams.members.memberUnavailable');
+        default: return teamMutationFailureLabel(failure);
+    }
+}
+
+function admissionRefusalAction(
+    failure: HomeDomainFailure,
+    address: TeamSectionContext['address'],
+    navigate: (href: string) => void,
+) {
+    if (failure.code === 'team_not_found') {
+        return { label: t('teams.title'), onPress: () => navigate(teamsDirectoryPath()) };
+    }
+    if (failure.code === 'team_archived') {
+        return { label: t('teams.tabs.settings'), onPress: () => navigate(teamSettingsPath(address)) };
+    }
+    if (failure.code === 'invalid_team_input' || failure.code === 'membership_not_found' || failure.kind === 'outcome_unknown') {
+        return { label: t('teams.tabs.members'), onPress: () => navigate(teamMembersPath(address)) };
+    }
+    return teamSignInFailureAction(failure, address, navigate);
+}
+
 const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ context: TeamSectionContext }>) {
     const router = useRouter();
     const { context } = props;
@@ -68,7 +96,16 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
         context.team.policy.defaultSessionHistoryAccess,
     );
     const [submitting, setSubmitting] = React.useState(false);
-    const [error, setError] = React.useState<string | null>(null);
+    const [failure, setFailure] = React.useState<HomeDomainFailure | null>(null);
+    const error = failure ? admissionRefusalLabel(failure) : null;
+    const blocksAdmission = Boolean(error && failure && (
+        !failure.retryable || failure.code === 'team_authentication_unavailable'
+    ));
+    const recovery = failure ? admissionRefusalAction(failure, context.address, (href) => router.push(href)) : undefined;
+
+    const clearAccountRefusal = () => setFailure((current) => (
+        current?.code === 'account_not_found' || current?.code === 'account_ineligible' ? null : current
+    ));
 
     const serverId = context.scope.serverId;
     const accountId = context.scope.accountId;
@@ -137,10 +174,10 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
     }, [context, router]);
 
     const submit = React.useCallback(async () => {
-        if (!selected || submitting || submitInFlightRef.current) return;
+        if (!selected || submitting || blocksAdmission || submitInFlightRef.current) return;
         submitInFlightRef.current = true;
         setSubmitting(true);
-        setError(null);
+        setFailure(null);
         // The admission decision this exact submission carries, captured before
         // the await so a later form edit cannot retarget an approved answer.
         const includeHistory = historyChoiceAvailable && historyAccess === 'all_existing';
@@ -153,7 +190,9 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
                 role,
                 historyAccess: historyChoiceAvailable ? historyAccess : 'from_membership',
                 onApprovalSucceeded: (membership) => settleAdmission(membership, includeHistory),
-                onApprovalFailed: (code) => setError(teamMutationFailureLabel({ kind: 'unknown', code, retryable: false })),
+                onApprovalFailed: (code, refused) => setFailure(
+                    homeDomainFailureFromActionFailure(refused ?? { errorCode: code }, 'teams.members.add'),
+                ),
             });
         } catch (cause) {
             submitInFlightRef.current = false;
@@ -162,7 +201,7 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
             // journey here; settlement never redispatches, because the Home
             // admits the person when the approval is granted.
             if (isTeamActionApprovalPendingError(cause)) context.requestApproval(cause.registration);
-            else setError(t('teams.errors.generic'));
+            else setFailure({ kind: 'unknown', code: null, retryable: false });
             setSubmitting(false);
             return;
         }
@@ -172,13 +211,9 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
             settleAdmission(outcome.value, includeHistory);
             return;
         }
-        // The form is preserved so a rejected submission is not retyped, and the
-        // Home's own reason is used rather than a ladder repeated here: a
-        // last-owner or managed-source refusal is actionable, and an answer that
-        // was lost must not read as "nothing changed" before a second add.
-        setError(teamMutationFailureLabel(outcome.failure));
+        setFailure(outcome.failure);
         if (outcome.failure.kind === 'outcome_unknown') context.refresh();
-    }, [selected, submitting, context, role, historyAccess, historyChoiceAvailable, settleAdmission]);
+    }, [selected, submitting, blocksAdmission, context, role, historyAccess, historyChoiceAvailable, settleAdmission]);
 
     if (!context.team.capabilities.manageMembers) {
         return (
@@ -209,6 +244,7 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
                         onChangeText={(value) => {
                             setQuery(value);
                             setSelected(null);
+                            clearAccountRefusal();
                         }}
                         placeholder={t('teams.members.personPlaceholder')}
                     />
@@ -238,7 +274,10 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
                                 monogram={resolveAccountDisplayName({ profile: candidate.profile, accountId: candidate.accountId }).name}
                             />
                         )}
-                        onPress={() => setSelected(candidate)}
+                        onPress={() => {
+                            if (selected?.accountId !== candidate.accountId) clearAccountRefusal();
+                            setSelected(candidate);
+                        }}
                         showChevron={false}
                     />
                 ))}
@@ -311,9 +350,17 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
                         size="small"
                         title={t('teams.members.addSubmit')}
                         loading={submitting}
-                        disabled={!selected || submitting || !context.canMutate}
+                        disabled={!selected || submitting || blocksAdmission || !context.canMutate}
                         onPress={() => void submit()}
                     />
+                    {recovery ? (
+                        <RoundButton
+                            testID="team-member-add-refusal-action"
+                            size="small"
+                            title={recovery.label}
+                            onPress={recovery.onPress}
+                        />
+                    ) : null}
                 </SectionButtonRow>
             </ItemGroup>
         </>
