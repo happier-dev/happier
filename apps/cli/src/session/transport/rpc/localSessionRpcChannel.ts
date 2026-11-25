@@ -968,10 +968,16 @@ function openLocalSessionHostSession(input: Readonly<{ hostPid: number; path: st
   const refuse = (closing: boolean, notHosted = false, code?: unknown, httpStatus?: number) => {
     // Retain boundary facts, never a response body, launch environment, or OS error message.
     const parsedCode = SessionSpawnLaunchErrorV1Schema.shape.code.safeParse(code);
+    const resetBeforeHeaders = code === 'ECONNRESET' && httpStatus === undefined;
     const admissionFailure: SessionSpawnLaunchErrorV1 = {
       kind: 'launch_error', code: parsedCode.success ? parsedCode.data : 'SPAWN_FAILED',
       message: 'Session host admission failed',
-      failureCause: { phase: 'client_start', failureReason: 'unknown', ...(httpStatus === undefined ? {} : { httpStatus }) },
+      failureCause: { phase: 'client_start', failureReason: 'unknown', ...(httpStatus === undefined ? {} : { httpStatus }),
+        ...(resetBeforeHeaders ? {
+          carrierFailure: { closingSide: 'peer_or_transport', closingStage: 'local_http_head' },
+          actionCause: { phase: 'session_host.admission', errorClass: 'Error', errorCode: code, httpStatus: null },
+        } : {}),
+      },
     };
     resolveAdmitted(false);
     resolveEnded({ exitCode: null, closing, notHosted, admissionFailure });

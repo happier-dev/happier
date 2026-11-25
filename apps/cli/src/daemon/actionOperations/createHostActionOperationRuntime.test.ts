@@ -1300,6 +1300,22 @@ describe('finite host operation custody', () => {
       .toEqual({ ok: true, result: refusal });
     expect(executions, 'A non-retryable refusal is observed without another launch').toBe(1);
   });
+  it('retains the Session host reset cause on the terminal operation error', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'guest', resolveAccountId: async () => 'requester',
+      generateOperationId: () => 'host-reset-operation' });
+    const actionCause = { phase: 'session_host.admission', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    const launchError = { kind: 'launch_error', code: 'ECONNRESET', message: 'Session host admission failed',
+      failureCause: { phase: 'client_start', failureReason: 'unknown', actionCause } } as const;
+    const result = { type: 'error', code: 'spawn_failed', retryable: true, launchError } as const;
+    await runtime.observeExecution({ actionId: 'session.spawn_new', input: {}, actionRequestId: 'host-reset-start',
+      execute: async ({ operationAcceptance }) => {
+        operationAcceptance!.accept({ type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' });
+        return { ok: true, result };
+      } });
+    expect(await runtime.handlers.getV2({ operationId: 'host-reset-operation' })).toMatchObject({ kind: 'found',
+      operation: { state: 'failed', error: { errorCode: 'spawn_failed', failureCause: actionCause },
+        result: { ...result, failureCause: actionCause } } });
+  });
   it('releases an aborted Session creation waiter without cancelling or duplicating its keyed operation', async () => {
     const runtime = createHostActionOperationRuntime({ machineId: 'guest', resolveAccountId: async () => 'requester',
       generateOperationId: () => 'detached-spawn-operation' });

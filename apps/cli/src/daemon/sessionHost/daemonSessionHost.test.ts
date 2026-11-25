@@ -296,6 +296,45 @@ async function crashLatestHost(harness: Awaited<ReturnType<typeof createHarness>
 const HOST_COMMAND = '/runtime/bin/happier session-host';
 
 describe('session host launch', () => {
+  it('retains the socket reset when an idle prestarted host retires during admission', { timeout: 120_000 }, async () => {
+    const preloadsBefore = census.runnerPreloads;
+    let beginAdd!: () => void;
+    const addReachedHost = new Promise<void>(resolve => { beginAdd = resolve; });
+    let finishAdd!: () => void;
+    const peerRead = new Promise<void>(resolve => { finishAdd = resolve; });
+    let holdAdmitted = false;
+    const harness = await createHarness(undefined, async () => {
+      if (holdAdmitted) {
+        beginAdd();
+        await peerRead;
+      }
+      return captureProcessBirthWitness(process.pid);
+    });
+    const intent = new AbortController();
+    const held = harness.sessionHost.prestart(intent.signal);
+    try {
+      await vi.waitFor(() => expect(census.runnerPreloads).toBe(preloadsBefore + 1));
+      holdAdmitted = true;
+      const admission = harness.sessionHost.addSession({ trackingKey: 'reset-during-admission',
+        argv: ['codex'], env: {}, cwd: testHome });
+      await addReachedHost;
+      intent.abort();
+      await harness.hosts[0]!.host.whenEnded;
+      const added = await admission;
+      if (added.status !== 'failed' || added.result.type !== 'error') throw new Error('Expected admission reset');
+      expect(projectSessionSpawnFailure(added.result)).toMatchObject({ type: 'error', code: 'spawn_failed',
+        launchError: { code: 'ECONNRESET', failureCause: { phase: 'client_start',
+          carrierFailure: { closingSide: 'peer_or_transport', closingStage: 'local_http_head' },
+          actionCause: { phase: 'session_host.admission', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null },
+        } },
+      });
+      expect(harness.hostedEnvironments).toEqual([]);
+    } finally {
+      intent.abort();
+      finishAdd();
+      await held;
+    }
+  });
   it('retains a host admission refusal in the public spawn failure without starting a Session', { timeout: 120_000 }, async () => {
     const harness = await createHarness(undefined, async () => null);
     const added = await harness.sessionHost.addSession({ trackingKey: 'refused-admission', argv: ['codex'],

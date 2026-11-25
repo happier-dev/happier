@@ -7,8 +7,13 @@ export function createPendingSessionBirth(store: ActionOperationStore, isActive:
   const readers = new Map<string, () => Promise<SessionSpawnNewResultV1 | null>>();
   const pending = new Map<string, Promise<void>>();
   const settleFailure = (id: string, result: Extract<SessionSpawnNewActionResultV1, { type: 'error' }>): void => {
-    if (result.code === 'cancelled') store.cancel(id);
-    else store.fail(id, { errorCode: result.code, error: result.code }, result);
+    if (result.code === 'cancelled') {
+      store.cancel(id);
+      return;
+    }
+    const failureCause = result.failureCause ?? result.launchError?.failureCause?.actionCause;
+    store.fail(id, { errorCode: result.code, error: result.code, ...(failureCause ? { failureCause } : {}) },
+      failureCause ? { ...result, failureCause } : result);
   };
   const reconcile = async (scope: ActionOperationScope, id: string): Promise<void> => {
     const read = readers.get(id);
