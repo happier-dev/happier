@@ -220,14 +220,14 @@ describe('voiceAgentPrompt', () => {
       digest: createHash('sha256').update(rendered, 'utf8').digest('hex'),
     }).toEqual({
       id: 'happier.global_voice_agent',
-      revision: 19,
+      revision: 20,
       blockIds: [
         'voice.global_agent.identity',
         'voice.global_agent.authority',
         'voice.global_agent.custody',
         'voice.global_agent.results',
       ],
-      digest: 'b0e56a7030270b7b5c795c3560b75afe99f6454099c627d21b5ee7c2c51efbbf',
+      digest: '03cb1fb272c6665f885c1bcf94a8441178b90609a62a68b56e6374d5fa5a8df4',
     });
 
     expect(rendered).toContain("Happier's global Voice agent");
@@ -239,7 +239,7 @@ describe('voiceAgentPrompt', () => {
     expect(rendered).not.toContain('{{');
   });
 
-  it('uses the pending result guidance before inviting a spoken decision', () => {
+  it('calls the requested Action once to open approval, then follows the pending result guidance', () => {
     const prompts = [
       renderPromptPlanV1(buildGlobalVoiceAgentStartupInstructionsPlanV1()),
       buildLocalVoiceAgentSystemPrompt({ sessionId: 's1' }),
@@ -250,9 +250,9 @@ describe('voiceAgentPrompt', () => {
     ];
 
     for (const prompt of prompts) {
-      expect(prompt).toContain('voiceApprovalGuidance');
-      expect(prompt).toContain('tap_required');
-      expect(prompt).toContain('spoken_decision');
+      expect([...prompt.matchAll(/Call the requested Action first so Happier can open any required approval/g)]).toHaveLength(1);
+      expect(prompt).toMatch(/With tap_required, say that a tap in the request UI is required/);
+      expect(prompt).toMatch(/With spoken_decision, ask for an explicit spoken decision/);
       expect(prompt).not.toContain('Voice agent can approve requests is enabled by default');
       expect(prompt).toContain('Read the specific request aloud within the sharing policy');
       expect(prompt).toContain("The person's explicit spoken request is the confirmation");

@@ -17,7 +17,7 @@ export const DEFAULT_VOICE_ASSISTANT_NAME = 'Happier Voice';
 
 export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID =
   'happier.global_voice_agent';
-export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 19;
+export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 20;
 
 const VOICE_AGENT_DIRECT_IDENTITY_RULE =
   'Speak as the coding assistant directly, not as a coordinator or wrapper.';
@@ -46,11 +46,11 @@ export const VOICE_PENDING_SESSION_REQUEST_SCOPE_RULE =
   'While a permission or user-action request is pending in a coding Session, do not send new coding work to that Session. Creating a different Session and working in other Sessions remain available; never require settling an unrelated request first. Continue answering unrelated questions and read-only Inbox requests; do not decide the pending request unless the person asks. Wait for canonical session state to settle that request.';
 
 const VOICE_AGENT_APPROVAL_RULES = [
-  'For a pending Account Action approval, follow voiceApprovalGuidance on the current approval result. With tap_required, say that a tap in the request UI is required and never invite a spoken decision. Only spoken_decision permits an invitation to decide aloud.',
+  'Call the requested Action first so Happier can open any required approval. For a pending Account Action approval, follow voiceApprovalGuidance on the current approval result. With tap_required, say that a tap in the request UI is required and never invite a spoken decision. With spoken_decision, ask for an explicit spoken decision unless the person already gave it for this request.',
   'If an Account approval result has no guidance, read the exact request with the approval request get Action. If it is still pending and guidance is unavailable, tell the person a tap is required. Do not infer permission from an earlier result or a settings value.',
   'For native coding Session permission prompts, read the current Voice approval setting before inviting spoken consent unless the prompt already says a tap is required. If the setting is off or the read is unavailable, direct the person to tap in the request UI.',
   'Read the specific request aloud within the sharing policy. The person\'s explicit spoken request is the confirmation: when they ask you to approve or deny it, use the canonical decision action and do not ask for confirmation again. Ask the person before deciding only when they have not already requested that decision.',
-  'Use the canonical decision Action only when spoken decisions are permitted and do not bypass a present_user_required refusal. An Action initiated by an agent still requires an Ask and an explicit decision from the person.',
+  'Use the canonical decision Action only when spoken decisions are permitted and do not bypass a present_user_required refusal.',
   'Only report the permission as approved, denied, or settled after canonical request state shows that outcome.',
 ] as const;
 
