@@ -604,16 +604,17 @@ export async function probeAgentModelsBestEffort(params: {
           && cached2?.kind === 'success' && cached2.value.source === 'dynamic') {
           return failedResult();
         }
+        const { configuredModelId, ...catalogProvenance } = provenance;
         const res: ProbedAgentModelsResult = {
           ...fallback, availableModels: models, source: 'dynamic',
-          ...(provenance.source !== 'static' ? { observedAt: Date.now() } : {}),
-          ...provenance,
-          ...(provenance.refreshError ? { cacheable: false } : {}),
+          ...(catalogProvenance.source !== 'static' ? { observedAt: Date.now() } : {}),
+          ...catalogProvenance,
+          ...(catalogProvenance.refreshError ? { cacheable: false } : {}),
         };
         if (!usesProviderOwnedCache) {
           agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: provenance.refreshError ? PROBE_MODELS_FAILURE_TTL_MS : PROBE_MODELS_SUCCESS_TTL_MS });
         }
-        return res;
+        return configuredModelId ? { ...res, configuredModelId } : res;
       }
       // A raw hook owns the provider's complete discovery and any runtime-specific
       // fallback. Failure must not silently start a second catalog observation.
@@ -697,7 +698,7 @@ export async function probeAgentModelsBestEffort(params: {
     }
   };
 
-  const result = usesProviderOwnedCache || params.signal
+  const result = usesProviderOwnedCache || params.signal || params.bypassCache
     ? await runProbe()
     : await agentModelsProbeCache.runDedupe(cacheKey, runProbe);
   return usesProviderOwnedCache ? { ...result, cacheable: false } : result;

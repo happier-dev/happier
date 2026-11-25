@@ -1,4 +1,3 @@
-import { readNonBlankSessionControlIdentifier } from '@/sync/domains/sessionControl/opaqueIdentifiers';
 import { readExtendedContextModelId } from './modelOptions';
 import type { SessionConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
@@ -10,7 +9,6 @@ export function parsePreflightModelListFromProbeModelsResult(raw: unknown): Pref
     const supportsFreeformRaw = (rec as any).supportsFreeform;
     if (!Array.isArray(modelsRaw)) return null;
 
-    const configuredModelId = readNonBlankSessionControlIdentifier(rec.configuredModelId);
     const parsed: PreflightModelList = {
         availableModels: modelsRaw
             .filter((m: any) => m && typeof m.id === 'string' && typeof m.name === 'string')
@@ -29,7 +27,6 @@ export function parsePreflightModelListFromProbeModelsResult(raw: unknown): Pref
                     : {}),
             })),
         supportsFreeform: Boolean(supportsFreeformRaw),
-        ...(configuredModelId ? { configuredModelId } : {}),
     };
 
     if (modelsRaw.length > 0 && parsed.availableModels.length === 0 && parsed.supportsFreeform !== true) return null;

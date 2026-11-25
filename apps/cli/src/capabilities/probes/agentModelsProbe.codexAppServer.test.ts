@@ -19,7 +19,10 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
     await fixture.cleanup();
   });
 
-  async function probe(models: unknown[], options: { failFirst?: boolean; accountSettings?: Record<string, unknown>; configuredModel?: string } = {}) {
+  async function probe(models: unknown[], options: {
+    failFirst?: boolean; accountSettings?: Record<string, unknown>; configuredModel?: string;
+    bypassCache?: boolean;
+  } = {}) {
     // The installed app-server process is the only substituted boundary. Launch,
     // RPC orchestration, session-control parsing, normalization and caching stay real.
     const command = await writeFakeCodexAppServerScript({
@@ -48,6 +51,7 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
     return await probeAgentModelsBestEffort({
       agentId: 'codex', cwd: fixture.dir, timeoutMs: 5_000,
       accountSettings: options.accountSettings,
+      bypassCache: options.bypassCache,
       processEnv: createCodexAppServerProcessEnv(command, {
         CODEX_HOME: fixture.dir, OPENAI_API_KEY: 'test', CODEX_API_KEY: undefined,
       }),
@@ -88,11 +92,23 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
   it('reports the effective configured model separately from the discovered catalog', async () => {
     const result = await probe([{ id: 'older-model', displayName: 'Older model' }], {
       configuredModel: 'newer-model',
+      bypassCache: true,
     });
 
     expect(result).toMatchObject({ source: 'dynamic', configuredModelId: 'newer-model' });
     expect(result.availableModels.map((model) => model.id)).toEqual(['default', 'older-model']);
     expect(JSON.stringify(result)).not.toContain('private-value');
+
+    const cached = await probe([], { configuredModel: 'changed-model' });
+    expect(cached.availableModels).toEqual(result.availableModels);
+    expect(cached).not.toHaveProperty('configuredModelId');
+
+    const refreshed = await probe([], { configuredModel: 'changed-model', bypassCache: true });
+    expect(refreshed).toMatchObject({
+      source: 'dynamic',
+      configuredModelId: 'changed-model',
+      availableModels: [{ id: 'default', name: 'Default' }],
+    });
   });
 
   it('uses app-server controls when the shared runtime defaults to appServer', async () => {

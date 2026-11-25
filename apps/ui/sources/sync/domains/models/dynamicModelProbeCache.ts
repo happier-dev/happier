@@ -1,4 +1,3 @@
-import { readNonBlankSessionControlIdentifier } from '@/sync/domains/sessionControl/opaqueIdentifiers';
 import { readExtendedContextModelId } from './modelOptions';
 import { normalizeSessionConfigOptionsArray, type SessionConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
@@ -62,8 +61,7 @@ function normalizePersistedModelList(input: unknown): PreflightModelList | null 
     });
     const supportsFreeform = Boolean(supportsFreeformRaw);
     if (modelsRaw.length > 0 && models.length === 0 && supportsFreeform !== true) return null;
-    const configuredModelId = readNonBlankSessionControlIdentifier(inputRecord.configuredModelId);
-    return { availableModels: models, supportsFreeform, ...(configuredModelId ? { configuredModelId } : {}) };
+    return { availableModels: models, supportsFreeform };
 }
 
 const transientSuccessByKey = new Map<string, Readonly<{

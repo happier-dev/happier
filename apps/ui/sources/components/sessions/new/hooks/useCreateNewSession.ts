@@ -54,6 +54,7 @@ import { setSessionFolderAssignment } from '@/sync/ops/sessionOrganization/setSe
 import { isSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 import { readNonBlankSessionControlIdentifier } from '@/sync/domains/sessionControl/opaqueIdentifiers';
 import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
+import type { ConfiguredModelCatalog } from '@/sync/ops/modelDiscovery';
 import { findModelOptionForEffectiveModelId, getModelOptionsForAgentType } from '@/sync/domains/models/modelOptions';
 
 function getActiveNewSessionDraftScope() {
@@ -332,7 +333,7 @@ export function useCreateNewSession(params: Readonly<{
      * in-session picker would otherwise stay empty until the runtime publishes on first prompt.
      */
     preflightModels?: PreflightModelList | null;
-    preflightModelCatalogReady?: boolean;
+    getFreshLaunchModelCatalog?: (cwd: string) => Promise<ConfiguredModelCatalog | null>;
 }>): Readonly<{
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
     resumePersistedLaunchKey: string | null;
@@ -408,27 +409,39 @@ export function useCreateNewSession(params: Readonly<{
             return;
         }
 
-        const catalog = current.preflightModels;
-        const configuredModelId = catalog?.configuredModelId;
         if (
-            current.preflightModelCatalogReady && configuredModelId && catalog
-            && current.modelMode === 'default' && !current.persistedOperationReentry
+            current.getFreshLaunchModelCatalog && current.modelMode === 'default'
+            && !current.persistedOperationReentry
             && (!current.resumeSessionId.trim() || opts?.startFreshUnderNewAccount === true)
         ) {
-            const models = catalog.availableModels.filter((entry) => entry.id !== 'default');
-            const options = models.map(({ id, extendedContextModelId }) => ({ value: id, extendedContextModelId }));
-            if (options.length > 0 && !findModelOptionForEffectiveModelId(options, configuredModelId)) {
-                createInFlightRef.current = true;
-                try {
-                    const confirmed = await Modal.confirm(
-                        t('newSession.modelMissingFromCatalogTitle'),
-                        t('newSession.modelMissingFromCatalogMessage', { model: configuredModelId }),
-                        { confirmText: t('common.continue'), cancelText: t('common.back') },
-                    );
-                    if (!confirmed || latestParamsRef.current.launchIntentSignature !== current.launchIntentSignature) return;
-                } finally {
-                    createInFlightRef.current = false;
+            createInFlightRef.current = true;
+            current.setIsCreating(true);
+            const isCurrentLaunchTarget = (): boolean => {
+                const latest = latestParamsRef.current;
+                const path = latest.getRequestedPath?.() ?? latest.selectedPath;
+                return latest.launchIntentSignature === current.launchIntentSignature
+                    && path.trim() === trimmedEffectiveSelectedPath;
+            };
+            try {
+                const catalog = await current.getFreshLaunchModelCatalog(trimmedEffectiveSelectedPath);
+                if (!isCurrentLaunchTarget()) return;
+                if (catalog) {
+                    const { configuredModelId, availableModels } = catalog;
+                    const options = availableModels
+                        .filter(({ id }) => id !== 'default')
+                        .map(({ id, extendedContextModelId }) => ({ value: id, extendedContextModelId }));
+                    if (!findModelOptionForEffectiveModelId(options, configuredModelId)) {
+                        const confirmed = await Modal.confirm(
+                            t('newSession.modelMissingFromCatalogTitle'),
+                            t('newSession.modelMissingFromCatalogMessage', { model: configuredModelId }),
+                            { confirmText: t('common.continue'), cancelText: t('common.back') },
+                        );
+                        if (!confirmed || !isCurrentLaunchTarget()) return;
+                    }
                 }
+            } finally {
+                createInFlightRef.current = false;
+                current.setIsCreating(false);
             }
         }
 

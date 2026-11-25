@@ -230,12 +230,14 @@ async function runCreateSession(
         agentType: AgentId;
         modelMode?: ModelMode;
         preflightModels?: PreflightModelList | null;
-        preflightModelCatalogReady?: boolean;
+        getFreshLaunchModelCatalog?: (cwd: string) => Promise<(PreflightModelList & { configuredModelId: string }) | null>;
+        requestedPath?: string;
         targetServerId?: string;
         backendTarget?: BackendTargetRefV1;
         targetFolder?: NewSessionTargetFolderV1 | null;
     }>,
 ): Promise<void> {
+    const { requestedPath } = params;
     let handleCreateSession: null | (() => Promise<void>) = null;
     const settings = { experiments: false } as unknown as Settings;
     const machineEnvPresence: UseMachineEnvPresenceResult = {
@@ -253,6 +255,7 @@ async function runCreateSession(
             router: { push: vi.fn(), replace: vi.fn() },
             selectedMachineId: 'm1',
             selectedPath: '/tmp',
+            getRequestedPath: requestedPath !== undefined ? () => requestedPath : undefined,
             selectedMachine: { metadata: {} },
             setIsCreating: vi.fn(),
             setIsResumeSupportChecking: vi.fn(),
@@ -278,7 +281,7 @@ async function runCreateSession(
             allowedTargetServerIds: [params.targetServerId ?? TARGET_SERVER_ID],
             targetFolder: params.targetFolder ?? null,
             preflightModels: params.preflightModels,
-            preflightModelCatalogReady: params.preflightModelCatalogReady,
+            getFreshLaunchModelCatalog: params.getFreshLaunchModelCatalog,
         });
 
         handleCreateSession = hook.handleCreateSession as () => Promise<void>;
@@ -311,12 +314,18 @@ describe('useCreateNewSession model list seeding', () => {
     it('warns before launching a configured model missing from the Codex catalog', async () => {
         const harness = await setupUseCreateNewSessionHarness();
 
+        const getFreshLaunchModelCatalog = vi.fn(async () => ({
+            ...codexCatalog,
+            availableModels: [{ id: 'default', name: 'Default' }],
+        }));
         await runCreateSession(harness, {
             agentType: 'codex',
+            requestedPath: '/tmp/edited-path',
             preflightModels: codexCatalog,
-            preflightModelCatalogReady: true,
+            getFreshLaunchModelCatalog,
         });
 
+        expect(getFreshLaunchModelCatalog).toHaveBeenCalledWith('/tmp/edited-path');
         expect(harness.modalConfirmSpy).toHaveBeenCalledWith(
             'newSession.modelMissingFromCatalogTitle',
             'newSession.modelMissingFromCatalogMessage',
@@ -333,13 +342,15 @@ describe('useCreateNewSession model list seeding', () => {
     ])('allows launch with model $modelMode, catalog ready $ready, confirmation $confirm', async ({ modelMode, ready, confirm }) => {
         const harness = await setupUseCreateNewSessionHarness({ confirm });
 
+        const getFreshLaunchModelCatalog = vi.fn(async () => ready ? codexCatalog : null);
         await runCreateSession(harness, {
             agentType: 'codex',
             modelMode,
             preflightModels: codexCatalog,
-            preflightModelCatalogReady: ready,
+            getFreshLaunchModelCatalog,
         });
 
+        expect(getFreshLaunchModelCatalog).toHaveBeenCalledTimes(modelMode === 'default' ? 1 : 0);
         expect(harness.modalConfirmSpy).toHaveBeenCalledTimes(confirm ? 1 : 0);
         expect(harness.machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
     });
