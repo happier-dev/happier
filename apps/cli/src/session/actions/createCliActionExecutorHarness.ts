@@ -405,9 +405,9 @@ export function createCliActionExecutorHarness(
       // Placement is captured by this executor, never supplied by its caller.
       ...(localMachineId ? { runtimeActionMachineId: localMachineId } : {}),
       // The requester relay authenticates the person separately. The daemon's
-      // credential identifies the executing Account that owns the original Session.
+      // credential supplies a default only when no requester Account was admitted.
       ...((context?.surface !== 'rpc' || receivingRequesterDecision) && !context?.machineAdmission && !context?.externalActionExecutionAuthorization
-        && runtimeAccountId ? { runtimeAccountId } : {}),
+        && context?.runtimeAccountId === undefined && runtimeAccountId ? { runtimeAccountId } : {}),
       // A received Action already represents another origin. Do not recheck the
       // controller's Account preference, including on same-Account reception.
       ...(accountSettings ? { managedMachineCreationEnabled: accountSettings.managedMachineCreationEnabled } : {}),

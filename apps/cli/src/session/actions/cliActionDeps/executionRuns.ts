@@ -144,32 +144,38 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
       || opts?.requesterWorkAttributionV1 !== undefined || opts?.causalPermissionAuthority !== undefined
       || opts?.effectiveCallerPermissionMode !== undefined;
 
-  const admittedExecutionRunContext = (opts?: ExecutionRunActionTransportOptions): LocalSessionRpcActionContext => ({
-    ...(opts?.reviewedChildActionContext ? { reviewedChildActionContext: opts.reviewedChildActionContext } : {}),
-    ...(opts?.admittedHostWorkflowRequester ? { admittedHostWorkflowRequester: opts.admittedHostWorkflowRequester } : {}),
-    ...(opts?.surface ? { surface: opts.surface } : {}),
-    ...(opts?.authority ? { authority: opts.authority } : {}),
-    ...(opts?.actionCaller ? { actionCaller: opts.actionCaller } : {}),
-    ...(opts?.actionRequestId ? { actionRequestId: opts.actionRequestId } : {}),
-    ...(opts?.workDepth === undefined ? {} : {
-      surface: 'agent' as const,
-      authority: 'account_automation' as const,
-      agentStartWorkDepth: opts.workDepth,
-      agentStartContext: opts.agentStartContext,
-      sessionAgentSpawnPolicyV1: opts.sessionAgentSpawnPolicyV1,
-      callerPermissionMode: opts.agentStartContext?.callerPermissionCeiling,
-    }),
-    // Retained sends have no start depth, but still carry their
-    // admitted authority and current narrowed permission mode.
-    ...(opts?.workDepth !== undefined || opts?.causalPermissionAuthority !== undefined
-      ? { causalPermissionAuthority: opts.causalPermissionAuthority } : {}),
-    ...(opts?.effectiveCallerPermissionMode !== undefined
-      ? { callerPermissionMode: opts.effectiveCallerPermissionMode } : {}),
-    ...(opts?.workspaceWrites === undefined ? {} : { agentStartWorkspaceWrites: opts.workspaceWrites }),
-    ...(opts?.workflowRunId ? { executionRunWorkflowRunId: opts.workflowRunId } : {}),
-    ...(opts?.workflowScope ? { executionRunWorkflowScope: opts.workflowScope } : {}),
-    ...(opts?.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: opts.requesterWorkAttributionV1 } : {}),
-  });
+  const admitExecutionRunContext = async (
+    opts?: ExecutionRunActionTransportOptions,
+  ): Promise<LocalSessionRpcActionContext | null> => {
+    if (!await canUseLocalRuntimeAccount(opts?.runtimeAccountContext
+      ?? { ...opts, serverId: opts?.serverId ?? params.serverId }, readAccountIdFromToken(params.token), params.serverId)) return null;
+    return {
+      ...(opts?.reviewedChildActionContext ? { reviewedChildActionContext: opts.reviewedChildActionContext } : {}),
+      ...(opts?.admittedHostWorkflowRequester ? { admittedHostWorkflowRequester: opts.admittedHostWorkflowRequester } : {}),
+      ...(opts?.surface ? { surface: opts.surface } : {}),
+      ...(opts?.authority ? { authority: opts.authority } : {}),
+      ...(opts?.actionCaller ? { actionCaller: opts.actionCaller } : {}),
+      ...(opts?.actionRequestId ? { actionRequestId: opts.actionRequestId } : {}),
+      ...(opts?.workDepth === undefined ? {} : {
+        surface: 'agent' as const,
+        authority: 'account_automation' as const,
+        agentStartWorkDepth: opts.workDepth,
+        agentStartContext: opts.agentStartContext,
+        sessionAgentSpawnPolicyV1: opts.sessionAgentSpawnPolicyV1,
+        callerPermissionMode: opts.agentStartContext?.callerPermissionCeiling,
+      }),
+      // Retained sends have no start depth, but still carry their
+      // admitted authority and current narrowed permission mode.
+      ...(opts?.workDepth !== undefined || opts?.causalPermissionAuthority !== undefined
+        ? { causalPermissionAuthority: opts.causalPermissionAuthority } : {}),
+      ...(opts?.effectiveCallerPermissionMode !== undefined
+        ? { callerPermissionMode: opts.effectiveCallerPermissionMode } : {}),
+      ...(opts?.workspaceWrites === undefined ? {} : { agentStartWorkspaceWrites: opts.workspaceWrites }),
+      ...(opts?.workflowRunId ? { executionRunWorkflowRunId: opts.workflowRunId } : {}),
+      ...(opts?.workflowScope ? { executionRunWorkflowScope: opts.workflowScope } : {}),
+      ...(opts?.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: opts.requesterWorkAttributionV1 } : {}),
+    };
+  };
 
   const callDetachedExecutionRunRpc = async (
     sessionId: string | null,
@@ -200,6 +206,8 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
         return failure('execution_run_target_unavailable', 'noRunCreated');
       }
       if (direct?.machineId === target.machineId) {
+        const localActionContext = await admitExecutionRunContext(opts);
+        if (!localActionContext) return failure('execution_run_target_unavailable', 'noRunCreated');
         const actionAutomationPort = host.readActionAutomationPort?.();
         result = await direct.invoke(method, request, {
           ...(opts?.signal ? { signal: opts.signal } : {}),
@@ -207,7 +215,7 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
             ? { rpcContext: { requesterSessionBootstrap: params.requesterSessionBootstrap } }
             : {}),
           localActionContext: {
-            ...admittedExecutionRunContext(opts),
+            ...localActionContext,
             // Private requester ports stay on this in-process dispatch only.
             ...(actionAutomationPort ? { actionAutomationPort } : {}),
             ...(opts?.externalActionExecutionAuthorization
@@ -332,14 +340,12 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
           opts,
         );
       }
-      const localActionContext = requiresDirectExecutionRunTransport(opts) ? admittedExecutionRunContext(opts) : undefined;
+      const localActionContext = requiresDirectExecutionRunTransport(opts) ? await admitExecutionRunContext(opts) : undefined;
       const unavailable = () => ({ ok: false as const, code: 'execution_run_target_unavailable',
         details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') });
       // Only the exact local daemon can carry an already-admitted start. Check its
       // receiver capability before Resume; public Session RPC cannot retain these facts.
-      if (localActionContext && (!params.machineActionDirectTargetTransport
-        || !await canUseLocalRuntimeAccount(opts?.runtimeAccountContext
-          ?? { ...opts, serverId: opts?.serverId ?? params.serverId }, readAccountIdFromToken(params.token), params.serverId)
+      if (localActionContext === null || localActionContext && (!params.machineActionDirectTargetTransport
         || opts?.permissionRequestStore !== undefined || opts?.workflowObservationSink !== undefined
         || !resolveLocalSessionRpcRoute({ sessionId, method: SESSION_RPC_METHODS.EXECUTION_RUN_START,
           token: params.token, ...executionRunAuthorityCeiling(opts), localActionContext }))) return unavailable();

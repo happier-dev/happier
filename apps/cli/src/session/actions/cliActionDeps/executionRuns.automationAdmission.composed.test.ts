@@ -15,7 +15,7 @@ import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/auto
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
-it('carries the requester Automation owner into the real detached Run admission without borrowing the custodian', async () => {
+it('carries the installed Account Automation owner into detached Run admission and refuses borrowed custody', async () => {
     const accountId = randomUUID();
     const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
     const machineId = 'scm-requester-machine';
@@ -45,9 +45,10 @@ it('carries the requester Automation owner into the real detached Run admission 
     const request = { intent: 'agent', instructions: 'Explain the captured comparison',
         backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
         permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming' };
-    const rootContext = { surface: 'rpc' as const, authority: 'account_automation' as const,
-        actionCaller: { kind: 'host' as const }, actionRequestId: 'scm-root:execution-start', runtimeAccountId: accountId,
-        externalActionExecutionAuthorization: authorization, externalActionTarget: authorization.binding.target };
+    const ownerContext = { surface: 'rpc' as const, authority: 'account_automation' as const,
+        actionCaller: { kind: 'host' as const }, actionRequestId: 'scm-root:execution-start', runtimeAccountId: accountId };
+    const rootContext = { ...ownerContext, externalActionExecutionAuthorization: authorization,
+        externalActionTarget: authorization.binding.target };
     const invokeReceiver = (localActionContext: Parameters<typeof buildActionExecutorContextForRpc>[0]['localActionContext']) =>
         receiver.execute('execution.run.start', request, buildActionExecutorContextForRpc({
             actionId: 'execution.run.start', serverId, externalActionTarget: authorization.binding.target,
@@ -66,12 +67,16 @@ it('carries the requester Automation owner into the real detached Run admission 
         } } });
     try {
         const result = await deps.executionRunStart!(null, request, {
-            ...rootContext, serverId, targetMachineId: machineId,
+            ...ownerContext, serverId, targetMachineId: machineId,
         });
-        expect(result).toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed', error: 'Execution runs feature disabled' });
+        expect(result).toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed' });
         expect(forwardedPorts[0]).toBe(deps.actionAutomations);
         expect(sent).toEqual([`Bearer ${token}`]);
         expect(http).toHaveBeenCalledTimes(1);
+        await expect(deps.executionRunStart!(null, request, { ...rootContext, serverId, targetMachineId: machineId }))
+            .resolves.toMatchObject({ ok: false, code: 'execution_run_target_unavailable',
+                details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } });
+        expect(forwardedPorts).toHaveLength(1);
         expect(manager.listPublic()).toEqual([]);
     } finally { await manager.dispose(); }
 });

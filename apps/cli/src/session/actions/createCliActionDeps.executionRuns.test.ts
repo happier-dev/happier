@@ -76,6 +76,8 @@ import { createCliActionInventoryDeps } from './cliActionDeps/createCliActionInv
 import { createCliMachineInventoryActionDeps } from './cliActionDeps/machineInventory';
 
 const executionMaterialization = createPluginActionCallerMaterializationFixture('acme.execution');
+// Installed Run transports require the Account identity in an authenticated credential.
+const ownerToken = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
 
 function runProtocolDescribeResponse(overrides?: Readonly<{ version?: number; features?: Readonly<Record<string, boolean>> }> | null) {
   const response = createCapabilitiesService({ capabilities: [executionRunsCapability],
@@ -172,7 +174,7 @@ describe('detached exact Run output observation transport', () => {
       if (method !== RPC_METHODS.CAPABILITIES_DESCRIBE) throw new Error('Effectful capability detection is unavailable');
       return service.describe();
     });
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+    const deps = createCliActionDeps({ token: ownerToken, credentials: { token: ownerToken, encryption: null },
       sessionId: 'cli-global', mode: 'plain', ctx: null,
       machineActionDirectTargetTransport: { machineId: 'machine-1', invoke } });
     await expect(deps.executionRunCheckProtocolV2?.(null, {
@@ -191,7 +193,7 @@ describe('detached exact Run output observation transport', () => {
     ['malformed', { version: 2, available: true, features: { detachedScope: 'true' } }],
   ] as const)('keeps %s Run describe facts unsupported without falling back to discovery', async (_name, protocol) => {
     const methods: string[] = [];
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+    const deps = createCliActionDeps({ token: ownerToken, credentials: { token: ownerToken, encryption: null },
       sessionId: 'cli-global', mode: 'plain', ctx: null,
       machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async method => {
         methods.push(method);
@@ -211,7 +213,7 @@ describe('detached exact Run output observation transport', () => {
     const invoke = vi.fn<MachineActionDirectTargetTransport['invoke']>();
     const targetMachineId = route === 'installed' ? 'machine-1' : 'machine-2';
     const boundary = route === 'installed' ? invoke : callMachineRpc;
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+    const deps = createCliActionDeps({ token: ownerToken, credentials: { token: ownerToken, encryption: null },
       sessionId: 'cli-global', mode: 'plain', ctx: null,
       machineActionDirectTargetTransport: { machineId: 'machine-1', invoke } });
     for (const [reply, rpcErrorCode] of [
@@ -228,7 +230,7 @@ describe('detached exact Run output observation transport', () => {
   });
   it('preserves the current causal ceiling on a direct retained Run send without start depth', async () => {
     const invoke = vi.fn<MachineActionDirectTargetTransport['invoke']>(async () => ({ ok: true }));
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+    const deps = createCliActionDeps({ token: ownerToken, credentials: { token: ownerToken, encryption: null },
       sessionId: 'cli-global', mode: 'plain', ctx: null,
       machineActionDirectTargetTransport: { machineId: 'machine-1', invoke } });
     const causalPermissionAuthority = { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'default' as const };
@@ -249,7 +251,7 @@ describe('detached exact Run output observation transport', () => {
     const response = operation === 'list' ? { runs: [] } : { runId: 'detached-run', callId: 'call', sidechainId: 'sidechain' };
     const invoke = vi.fn(async () => response);
     callMachineRpc.mockClear();
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+    const deps = createCliActionDeps({ token: ownerToken, credentials: { token: ownerToken, encryption: null },
       sessionId: 'cli-global', mode: 'plain', ctx: null,
       machineActionDirectTargetTransport: { machineId: 'machine-1', invoke } });
     const request = operation === 'list' ? {} : { kind: 'delegate', intent: 'delegate', instructions: 'Read the fixture',
@@ -268,7 +270,7 @@ describe('detached exact Run output observation transport', () => {
     const response = { runs: [] };
     const invoke = vi.fn();
     callMachineRpc.mockReset().mockResolvedValue(response);
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+    const deps = createCliActionDeps({ token: ownerToken, credentials: { token: ownerToken, encryption: null },
       sessionId: 'cli-global', mode: 'plain', ctx: null,
       machineActionDirectTargetTransport: { machineId: 'machine-1', invoke } });
     expect(await deps.executionRunList(null, {}, { targetMachineId: 'machine-2' })).toEqual(response);
@@ -291,7 +293,7 @@ describe('detached exact Run output observation transport', () => {
     const invoke = vi.fn<MachineActionDirectTargetTransport['invoke']>().mockRejectedValue(reset);
     callMachineRpc.mockReset().mockRejectedValue(reset);
     readMachineRpcRequestDisposition.mockReset().mockImplementation(error => (error === reset ? 'notSent' : null));
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+    const deps = createCliActionDeps({ token: ownerToken, credentials: { token: ownerToken, encryption: null },
       sessionId: 'cli-global', mode: 'plain', ctx: null,
       machineActionDirectTargetTransport: { machineId: 'machine-1', invoke } });
     const result = await deps.executionRunStart(null, { intent: 'delegate', prompt: 'Start' },
@@ -311,7 +313,7 @@ describe('detached exact Run output observation transport', () => {
     } };
     let release!: () => void;
     const blocked = new Promise<void>(resolve => { release = resolve; });
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+    const deps = createCliActionDeps({ token: ownerToken, credentials: { token: ownerToken, encryption: null },
       sessionId: 'cli-global', mode: 'plain', ctx: null,
       machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async () =>
         ({ ok: true, status: 'running', disposition: 'snapshot', result: snapshot }) } });
@@ -345,7 +347,7 @@ describe('detached exact Run output observation transport', () => {
       retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response', startedAtMs: 1, status: 'running',
       attention: { kind: 'permission_required', requestIds: ['permission'] },
     } } };
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+    const deps = createCliActionDeps({ token: ownerToken, credentials: { token: ownerToken, encryption: null },
       sessionId: 'cli-global', mode: 'plain', ctx: null,
       machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async () => result } });
     expect(await deps.executionRunWait(null, { runId: 'run-watch', condition: 'needs_attention' },
@@ -369,7 +371,7 @@ describe('detached exact Run output observation transport', () => {
     callSessionRpc.mockImplementationOnce(boundary);
     callMachineRpc.mockImplementationOnce(boundary);
     serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
-    const credentials = { token: 'token', encryption: null };
+    const credentials = { token: ownerToken, encryption: null };
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
     const snapshots: unknown[] = [];
     const waiting = deps.executionRunWait(sessionId, { runId: 'run-watch' }, { targetMachineId: 'machine-1',
@@ -383,7 +385,7 @@ describe('detached exact Run output observation transport', () => {
   it.each([{ waitForInputId: 'input-1' }, { waitForOutput: { kind: 'review_walkthrough' as const, comparisonId: 'comparison-1' } }])
   ('keeps exact get observation under caller lifecycle: %j', async (wait) => {
     callMachineRpc.mockResolvedValueOnce({ run: { runId: 'run-1' } });
-    const credentials = { token: 'token', encryption: null };
+    const credentials = { token: ownerToken, encryption: null };
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
     const controller = new AbortController();
     await deps.executionRunGet(null, { runId: 'run-1', ...wait }, { targetMachineId: 'machine-1', signal: controller.signal });
@@ -430,7 +432,7 @@ function createExecutionRunSuccessCase<K extends ExecutionRunActionId>(
 function createExecutionRunActionsService(detachedTransport?: 'installed' | 'public') {
   const directInvoke = vi.fn<MachineActionDirectTargetTransport['invoke']>();
   const credentials = {
-    token: 'token',
+    token: ownerToken,
     encryption: null,
   };
   resetActiveAccountSettingsSnapshotForTests();
@@ -556,8 +558,8 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     }));
   });
   it.each([null, 'source-session'])('does not send an admitted private stamp through public RPC (Session: %s)', async sessionId => {
-    const credentials = { token: 'token', encryption: null };
-    const deps = createCliActionDeps({ token: 'token', credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
+    const credentials = { token: ownerToken, encryption: null };
+    const deps = createCliActionDeps({ token: ownerToken, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
     const result = await deps.executionRunStart(sessionId, { instructions: 'Inspect' }, {
       exactMachineId: 'machine-1', workDepth: 1, workspaceWrites: 'deny',
     });
@@ -578,8 +580,8 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     }));
     // The launch itself is outside this contract: admission and its authority are what must hold.
     callMachineRpc.mockResolvedValue({ type: 'error', errorCode: 'spawn_failed', errorMessage: 'launch refused' });
-    const credentials = { token: 'token', encryption: null };
-    const deps = createCliActionDeps({ token: 'token', credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
+    const credentials = { token: ownerToken, encryption: null };
+    const deps = createCliActionDeps({ token: ownerToken, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
     const result = await deps.executionRunStart('session-1', { instructions: 'Summarize' }, { authority });
     expect(result).toMatchObject({ ok: false, code: 'execution_run_target_unavailable',
       details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } });
@@ -591,8 +593,8 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
   it('carries admitted depth and write ceiling in the exact-daemon private context, not Run input', async () => {
     const invoke = vi.fn(async () => ({ runId: 'run-1' }));
-    const credentials = { token: 'token', encryption: null };
-    const deps = createCliActionDeps({ token: 'token', credentials, sessionId: 'cli-global', mode: 'plain', ctx: null,
+    const credentials = { token: ownerToken, encryption: null };
+    const deps = createCliActionDeps({ token: ownerToken, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null,
       machineActionDirectTargetTransport: { machineId: 'machine-1', invoke },
     });
     await deps.executionRunStart(null, { instructions: 'Inspect' }, { exactMachineId: 'machine-1', workDepth: 3, workspaceWrites: 'deny' });
@@ -653,7 +655,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       };
       throw new Error(`unexpected:${method}`);
     });
-    const credentials = { token: 'token', encryption: null };
+    const credentials = { token: ownerToken, encryption: null };
     const deps = createCliActionDeps({
       token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null,
       machineActionDirectTargetTransport: { machineId: 'machine-1', invoke },
@@ -800,7 +802,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     directories.push(fixture.rootPath);
     await writeFile(join(fixture.rootPath, fixture.trackedPath), 'captured through session Action\n');
     const credentials = {
-      token: 'token',
+      token: ownerToken,
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     serveSessionRecord({ id: 'session-1', active: true, machineId: SCM_TEST_MACHINE_ID, path: fixture.rootPath, local: true });
@@ -859,7 +861,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
   }));
 
   it.each(['scm.diffSummary.generate', 'scm.diffSummary.draftPullRequest'] as const)('keeps delayed %s admission and its typed refusal under the caller lifetime', async actionId => {
-    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
+    const credentials = { token: ownerToken, encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
     const controller = new AbortController();
     let release!: () => void;
     let dispatched!: () => void;
@@ -893,7 +895,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
   it('captures selected-session inventory without model admission', () => withLocalScmMachine(async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-capture-deps-' });
-    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
+    const credentials = { token: ownerToken, encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
     serveSessionRecord({ id: 'session-1', active: true, machineId: SCM_TEST_MACHINE_ID, path: fixture.rootPath, local: true });
     const executeCanonicalAction = vi.fn(async () => { throw new Error('Capture must not admit an analysis run'); });
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
@@ -912,7 +914,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
   it('reads pinned comparison evidence without recapturing later pending files', () => withLocalScmMachine(async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-pinned-capture-deps-' });
     directories.push(fixture.rootPath);
-    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
+    const credentials = { token: ownerToken, encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
     serveSessionRecord({ id: 'session-1', active: true, machineId: SCM_TEST_MACHINE_ID, path: fixture.rootPath, local: true });
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
     const executeCanonicalAction = vi.fn(async () => { throw new Error('Pinned reads must not admit another action'); });
@@ -934,7 +936,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
   it('reads PR evidence through the canonical constrained source Action from page one', () => withLocalScmMachine(async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-pr-source-deps-' });
     directories.push(fixture.rootPath);
-    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
+    const credentials = { token: ownerToken, encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
     serveSessionRecord({ id: 'session-1', active: true, machineId: SCM_TEST_MACHINE_ID, path: fixture.rootPath, local: true });
     // The contributed plugin process is the system boundary; canonical Action
     // admission, source-input shaping, and evidence capture stay real.
@@ -979,7 +981,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
   it('refuses selected-session evidence outside the machine filesystem policy before capture or admission', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-summary-permission-' });
-    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
+    const credentials = { token: ownerToken, encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
     serveSessionRecord({ id: 'session-1', active: true, path: fixture.rootPath, local: true });
     const executeCanonicalAction = vi.fn(async () => ({ ok: true as const, result: { runId: 'denied-run', callId: 'call', sidechainId: 'sidechain' } }));
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null,
@@ -1285,7 +1287,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
   it('fails closed before transport when the CLI action owner has no authenticated credentials', async () => {
     const deps = createCliActionDeps({
-      token: 'token',
+      token: ownerToken,
       sessionId: 'plugin-global',
       mode: 'plain',
       ctx: null,
@@ -1473,7 +1475,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
   });
 
   it.each(['account', 'session'] as const)('reports certain no-Run when the fresh %s lookup fails after capability admission', async (boundary) => {
-    const credentials = { token: 'token', encryption: null };
+    const credentials = { token: ownerToken, encryption: null };
     serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
     callMachineRpc.mockImplementationOnce(async () => {
       if (boundary === 'session') fetchSessionById.mockRejectedValueOnce(new Error('HTTP 500'));
@@ -1503,7 +1505,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     'executionRunStreamStart', 'executionRunStreamRead', 'executionRunStreamCancel',
     'executionRunCancelTurn', 'executionRunStop', 'executionRunAction', 'executionRunWait',
   ] as const)('cancels %s while its fresh Session transport is pending, before any RPC', async (operation) => {
-    const credentials = { token: 'token', encryption: null };
+    const credentials = { token: ownerToken, encryption: null };
     const sessionId = 'c111111111111111111111111';
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
     const caller = new AbortController();
@@ -1835,7 +1837,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
   it('uses the host-stamped detached machine for V2 preflight and start instead of the origin Session machine', async () => {
     const credentials = {
-      token: 'token',
+      token: ownerToken,
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     serveSessionRecord({ id: 'origin-session', active: true, machineId: 'machine-origin' });
@@ -1972,7 +1974,7 @@ describe('background memory hint Runs', () => {
         if (method === SESSION_RPC_METHODS.EXECUTION_RUN_WAIT) return { ok: false, code: 'execution_run_wait_unavailable' };
         throw new Error(`Unexpected machine RPC ${method}`);
       });
-      const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
+      const credentials = { token: ownerToken, encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
       const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
       const executor = createActionExecutor({
     readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.start": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps, isActionEnabled: () => true });

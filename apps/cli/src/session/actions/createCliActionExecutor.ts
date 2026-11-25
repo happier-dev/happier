@@ -623,7 +623,8 @@ export function createCliActionHost(params: CliActionExecutorParams):
     ...(signExternalActionApprovalInput ? { signExternalActionApprovalInput } : {}),
     // Token-only callers retain this host's existing Account binding. The
     // shared harness stamps credentialed hosts; Session-only MCP has no such credentials.
-    ...(!params.credentials && surface !== 'rpc' && !context?.machineAdmission && runtimeAccountId ? { runtimeAccountId } : {}),
+    ...(!params.credentials && surface !== 'rpc' && !context?.machineAdmission
+      && context?.runtimeAccountId === undefined && runtimeAccountId ? { runtimeAccountId } : {}),
     actionsSettings: actionSettingsProvider.getActionsSettings(),
     sessionAgentSpawnPolicyV1:
       context?.sessionAgentSpawnPolicyV1
