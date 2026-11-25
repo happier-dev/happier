@@ -32,6 +32,8 @@ import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 import { formatWorkflowInvocationElapsedLabel } from '@/components/workflows/presentation/workflowUsagePresentation';
 import { formatAutomaticCheckSkipNotice, formatAutomationsNotCheckedNotice } from './formatAutomaticCheckSkipNotice';
 import { readApprovalAutomaticChecksDecision } from './approvalAutomaticChecksDecision';
+import { useMachinePresenceSummary, type MachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { presentWorkflowRunMachineWait } from '@/components/work/status/workflowWorkStatusFacts';
 
 type PresentedApprovalAutomaticChecks = ApprovalAutomaticChecksV1 & {
   startRefusal?: ActionFailurePresentationV1['startRefusal'];
@@ -84,6 +86,11 @@ export function readDeclinedApprovalCheckRunId(approval: ApprovalRequest): strin
   if (approval.v !== 2 || approval.status !== 'rejected') return null;
   const checks = readApprovalAutomaticChecksForRequest(approval);
   return checks?.phase === 'refused' ? readFailedApprovalAutomaticCheck(checks)?.runId ?? null : null;
+}
+
+/** The check line reads only reachability and name; a heartbeat that changes neither wakes nothing. */
+function isSameMachineWaitFacts(left: MachinePresenceSummary, right: MachinePresenceSummary): boolean {
+  return left.reachability === right.reachability && left.name === right.name;
 }
 
 export function ApprovalCheckRunLink(props: Readonly<{
@@ -289,6 +296,13 @@ export const ApprovalAutomaticChecks = React.memo(
     });
     const checkingRunSummary = checkingRunId ? summaries.get(checkingRunId) : null;
     const checkingStartedMs = checkingRunSummary?.state === 'running' ? Date.parse(checkingRunSummary.createdAt) : Number.NaN;
+    // A queued check names its offline Machine (R12 M3): the Run's assigned Machine and that one Machine's pushed presence.
+    const checkingMachine = useMachinePresenceSummary(props.serverId,
+      checkingRunSummary?.state === 'queued' ? checkingRunSummary.machineId : null, undefined, isSameMachineWaitFacts);
+    const checkingMachineWait = checkingRunSummary ? presentWorkflowRunMachineWait(checkingRunSummary.state, {
+      reachable: checkingMachine.reachability === 'unknown' ? undefined : checkingMachine.reachability === 'reachable',
+      name: checkingMachine.name,
+    }) : null;
     const openRun = (runId: string | null) =>
       <ApprovalCheckRunLink runId={runId} serverId={props.serverId} onOpenRoute={props.onOpenRoute} />;
 
@@ -369,7 +383,8 @@ export const ApprovalAutomaticChecks = React.memo(
           {running ? (
             <View style={styles.line}>
               <Text variant="meta" style={styles.secondary}>
-                {checkingProgress ? `${nameOf(running)} · ${checkingProgress}` : nameOf(running)}
+                {checkingMachineWait ? `${nameOf(running)} · ${checkingMachineWait}`
+                  : checkingProgress ? `${nameOf(running)} · ${checkingProgress}` : nameOf(running)}
                 {Number.isFinite(checkingStartedMs) ? <>{' · '}<CheckElapsed fromMs={checkingStartedMs} /></> : null}
               </Text>
               {openRun(runOf(running))}

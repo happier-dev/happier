@@ -21453,6 +21453,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         stopAgain: 'Остановить ещё раз',
         stopping: 'Останавливается…',
         stopWhenMachineReconnects: ({ machine }) => `Остановится, когда ${machine} снова подключится`,
+        waitsForMachineOnline: ({ machine }) => `Ждёт, когда ${machine} будет в сети`,
         stopWhenMachineReconnectsUnknown: 'Остановится, когда машина снова подключится',
         stopRequested: ({ machine }) => `Запрошена остановка. Ожидаем подтверждения от ${machine}.`,
         occurrenceItem: ({ number }) => `Элемент ${number}`,

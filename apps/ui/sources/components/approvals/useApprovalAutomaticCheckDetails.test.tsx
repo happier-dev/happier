@@ -138,3 +138,66 @@ describe('checking block status truth', () => {
     await screen.unmount();
   });
 });
+
+// R12 M3 (FIN ruling): a queued check Run names its offline Machine from two owner facts, the Run's assigned
+// Machine and that Machine's pushed presence. Online or unknown presence keeps the neutral held state.
+describe('checking block waits for an offline Machine', () => {
+  async function mountQueued(machine: 'offline' | 'online' | 'unknown', state: 'queued' | 'running' = 'queued') {
+    const { renderScreen } = await import('@/dev/testkit');
+    const { createMachineFixture, createMachineMetadataFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { ApprovalAutomaticChecksV1Schema } = await import('@happier-dev/protocol/approvals/approvalAutomaticChecks');
+    const { AutomationTriggerIdSchema } = await import('@happier-dev/protocol/automations/automationTriggerIdentity');
+    const { ApprovalAutomaticChecks } = await import('./ApprovalAutomaticChecks');
+    const scope = { serverId, accountId };
+    const run = createWorkflowRunSummaryFixture({ id: runId, ownerAccountId: accountId, state, machineId: 'machine-build' });
+    const record = createMachineFixture({ id: 'machine-build', active: machine === 'online', activeAt: machine === 'online' ? Date.now() : 1,
+      metadata: createMachineMetadataFixture({ host: 'nl-build-3' }) });
+    const { getMachineDisplayName } = await import('@/utils/sessions/machineDisplayNames');
+    const name = getMachineDisplayName(record);
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    // The Machine presence owner's own ingress; an unknown Machine is one this viewer was never sent.
+    if (machine !== 'unknown') await publishMachineInventoryForTest({ serverId, accountId }, [record]);
+    storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(run)], scope);
+    const ref = { automationId: 'automation-check', triggerId: AutomationTriggerIdSchema.parse('trigger-check') };
+    const checks = ApprovalAutomaticChecksV1Schema.parse({ phase: 'checking', humanApprovalRequired: false, subjects: [],
+      selectionStatus: 'ready', notices: [], consents: [], results: [], runs: [{ ...ref, runId }],
+      selected: [{ ...ref, phase: 'before', actionIds: ['machines.command.run'], mode: 'wait', onFailure: 'ask',
+        triggerRevision: 1, workflowId, workflowRevision: 1, ownerAccountId: accountId }] });
+    const screen = await renderScreen(<ApprovalAutomaticChecks checks={checks} actionTitle="Deploy" serverId={serverId}
+      testID="checks" />);
+    return { screen, record, name };
+  }
+
+  it('says the check waits for its offline Machine, then drops the line when presence comes back without a Run read', async () => {
+    const { t } = await import('@/text');
+    const { screen, record, name } = await mountQueued('offline');
+    const waits = t('workflows.run.waitsForMachineOnline', { machine: name });
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(waits));
+    expect(screen.findByTestId('checks:queued-glyph')).not.toBeNull();
+    let homeRequests = 0;
+    const stopCounting = home.subscribe(() => { homeRequests += 1; });
+    const { publishMachineActivityForTest } = await import('@/dev/testkit/harness/machinePresence');
+    await act(async () => publishMachineActivityForTest([storage.getState().machines[record.id] ?? record], { active: true, activeAt: Date.now() }));
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).not.toContain(waits));
+    expect(screen.findByTestId('checks:queued-glyph')).not.toBeNull();
+    stopCounting();
+    expect(homeRequests).toBe(0);
+    await screen.unmount();
+  });
+
+  it.each(['online', 'unknown'] as const)('keeps the neutral held state when the Machine is %s', async (machine) => {
+    const { t } = await import('@/text');
+    const { screen, name } = await mountQueued(machine);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('checks:queued-glyph')).not.toBeNull());
+    expect(screen.getTextContent()).not.toContain(t('workflows.run.waitsForMachineOnline', { machine: name }));
+    await screen.unmount();
+  });
+
+  it('says nothing about the Machine once the check Run is running', async () => {
+    const { t } = await import('@/text');
+    const { screen, name } = await mountQueued('offline', 'running');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('checks:checking')).not.toBeNull());
+    expect(screen.getTextContent()).not.toContain(t('workflows.run.waitsForMachineOnline', { machine: name }));
+    await screen.unmount();
+  });
+});

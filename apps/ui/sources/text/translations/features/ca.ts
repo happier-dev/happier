@@ -21442,6 +21442,7 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         stopAgain: 'Atura de nou',
         stopping: 'Aturant-se…',
         stopWhenMachineReconnects: ({ machine }) => `S’aturarà quan ${machine} es torni a connectar`,
+        waitsForMachineOnline: ({ machine }) => `Espera que ${machine} es connecti`,
         stopWhenMachineReconnectsUnknown: 'S’aturarà quan la màquina es torni a connectar',
         stopRequested: ({ machine }) => `S’ha demanat l’aturada. S’espera la confirmació de ${machine}.`,
         occurrenceItem: ({ number }) => `Element ${number}`,

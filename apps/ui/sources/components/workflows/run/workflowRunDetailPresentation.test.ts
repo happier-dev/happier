@@ -517,6 +517,19 @@ describe('managed workflow Run presentation', () => {
         expect(formatWorkflowRunOutcomeLabel({ ...context, state: 'claimed', inAttentionWindow: true, waitingOnlyForYou: false }))
             .toBe(t('workflows.runState.waiting_for_review'));
     });
+    // R12 M3 (FIN ruling): the headline says a queued Run waits for its Machine only when presence says it is offline.
+    it('says a queued Run waits for its offline Machine, and nothing about it when online, unknown or running', () => {
+        const coverage = { observedLeafCounts: { completed: 0, failed: 0, attention: 0 }, coverage: 'complete' as const, knownFailure: false };
+        const machineName = 'nl-build-3';
+        expect(formatWorkflowRunOutcomeLabel({ state: 'queued', coverage, machineReachable: false, machineName }))
+            .toBe(t('workflows.run.waitsForMachineOnline', { machine: machineName }));
+        expect(formatWorkflowRunOutcomeLabel({ state: 'queued', coverage, machineReachable: true, machineName }))
+            .toBe(t('workflows.runState.queued'));
+        expect(formatWorkflowRunOutcomeLabel({ state: 'queued', coverage, machineName }))
+            .toBe(t('workflows.runState.queued'));
+        expect(formatWorkflowRunOutcomeLabel({ state: 'running', coverage, machineReachable: false, machineName }))
+            .toBe(t('workflows.runState.running'));
+    });
     it('names only live independent lanes and their frozen join, without promising advancement while paused or failed', () => {
         const step = (id: string, name: string) => ({ kind: 'step', id, name,
             document: { text: name, references: [], attachments: [] }, input: [], result: { kind: 'text' } });
