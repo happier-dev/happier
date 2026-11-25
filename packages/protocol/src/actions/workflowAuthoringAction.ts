@@ -5,19 +5,18 @@ import { z } from '../zodRuntimePolicy.js';
 import { EntityDragScopeV1Schema, EntityDragSessionAddressV1Schema } from '../plugins/ui/entityDragDrop.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { WorkflowDefinitionEditOpV1Schema } from '../workflows/workflowDefinitionEditV1.js';
-import { WorkflowArtifactRevisionV1Schema } from '../workflows/workflowDefinitionV1.js';
+import { WorkflowArtifactRevisionV1Schema, WorkflowRoleOverridesV1Schema } from '../workflows/workflowDefinitionV1.js';
 import { PluginUiOpenAutomationEventRequestV1Schema } from '../plugins/ui/hostApiRequests.js';
 import { WorkflowValidationIssueV1Schema } from '../workflows/workflowV1.js';
 import { WorkflowProjectTargetV1Schema } from '../workflows/workflowWorkspaceV1.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
-import { WorkflowRunIdV1Schema } from '../workflows/workflowIdsV1.js';
+import { WorkflowRunIdV1Schema, WorkflowVisibleTeamIdV1Schema } from '../workflows/workflowIdsV1.js';
 import { WorkflowDecimalV1Schema } from '../workflows/workflowProgressV1.js';
 import { AutomationEventFilterV1Schema } from '../automations/automationEventFilterV1.js';
 import { DeploymentEnvironmentRefV1Schema } from '../deployments/deploymentEnvironmentRefV1.js';
 import { AutomationTriggerDefinitionInputSchema } from '../automations/automationTriggerDefinition.js';
 import { PluginJsonSchemaV2Schema } from '../plugins/contributions/publicTypes.js';
 import { AutomationTriggerIdSchema } from '../automations/automationTriggerIdentity.js';
-import { AutomationStoredWorkflowDefinitionV2Schema } from '../automations/automationWorkflowRecipeV2.js';
 export {
   WORKFLOW_AUTHORING_ACTION_IDS,
   isWorkflowAuthoringActionId,
@@ -49,8 +48,8 @@ export const WorkflowDraftTriggerSnapshotV1Schema = lazyZodSchema(() => z.strict
       && rows.every(row => row.trigger === null || row.trigger.enabled === row.enabled);
   })),
   project: zMini.nullable(WorkflowProjectTargetV1Schema), inputs: z.record(z.string(), StrictJsonValueSchema),
-  roleOverrides: AutomationStoredWorkflowDefinitionV2Schema.shape.roleOverrides,
-  visibleTeamId: AutomationStoredWorkflowDefinitionV2Schema.shape.visibleTeamId,
+  roleOverrides: z.optional(WorkflowRoleOverridesV1Schema),
+  visibleTeamId: z.optional(z.nullable(WorkflowVisibleTeamIdV1Schema)),
 }));
 export const WorkflowDraftSettingsV1Schema = lazyZodSchema(() => z.strictObject({
   description: z.string(), projectTarget: zMini.nullable(WorkflowProjectTargetV1Schema),

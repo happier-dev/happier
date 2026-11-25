@@ -12,6 +12,7 @@ import {
   WorkflowMaterializedLeafV1Schema,
 } from '../workflows/workflowDefinitionV1.js';
 import { WorkflowDefinitionV1Schema, WorkflowStepSchema } from '../workflows/workflowV1.js';
+import { WorkflowVisibleTeamIdV1Schema } from '../workflows/workflowIdsV1.js';
 import { AutomationActionTriggerSchema } from './automationActionTriggerV1.js';
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';
 import { SessionPlacementSelectionV1Schema } from '../sessions/creation/sessionPlacementSelectionV1.js';
@@ -39,7 +40,7 @@ export {
 } from './automationDefinitionDisplayV1.js';
 
 const UTF8_ENCODER = new TextEncoder();
-const visibleTeamIdSchema = lazyZodSchema(() => z.optional(z.nullable(preservedBoundedNfcString(191, 'Team ids'))));
+const visibleTeamIdSchema = lazyZodSchema(() => z.optional(z.nullable(WorkflowVisibleTeamIdV1Schema)));
 
 /** Server-visible structural relationship; never private Workflow content. */
 export const AutomationManagedTargetV1Schema = lazyZodSchema(() => z.strictObject({

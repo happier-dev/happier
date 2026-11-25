@@ -263,12 +263,12 @@ describe('actionInputJsonSchema', () => {
     expect(advertised({ source: { kind: 'workspace', path: '/a' }, destination: { kind: 'project', path: '/b' } })).toBe(false);
     expect(advertised({ source: { kind: 'workspace', path: '/a', secret: true }, destination: { kind: 'workspace', path: '/b' } })).toBe(false);
   });
-  it('projects the MCP input and output for every advertised Action from the real registry', () => {
-    for (const spec of listActionSpecs().filter(spec => spec.surfaces.mcp)) {
-      // MCP eagerly registers every advertised input; a missing export must
-      // fail this census rather than being skipped and aborting initialize.
+  it.each(listActionSpecs().filter(spec => spec.surfaces.mcp))(
+    'projects the MCP schemas advertised by $id',
+    (spec) => {
       expect(spec.inputSchema, spec.id).toBeDefined();
-      for (const [kind, schema] of Object.entries({ input: spec.inputSchema, agentInput: spec.agentInputSchema, output: spec.outputSchema })) {
+      const schemas = { input: spec.inputSchema, agentInput: spec.agentInputSchema, output: spec.outputSchema };
+      for (const [kind, schema] of Object.entries(schemas)) {
         if (!schema) continue;
         try {
           const projected = zodSchemaToJsonSchemaObject(schema, { target: 'draft-7' });
@@ -277,8 +277,8 @@ describe('actionInputJsonSchema', () => {
           throw new Error(`Action ${spec.id} ${kind} schema projection failed`, { cause: error });
         }
       }
-    }
-  });
+    },
+  );
 
   it('projects genuine Mini lazy children without losing their input constraints', () => {
     const schema = z.strictObject({

@@ -10,3 +10,4 @@ export const WorkflowDirectRunAdmissionIdV1Schema = lazyZodSchema(() => z.string
 export const WorkflowInvocationRecordIdSchema = preservedBoundedNfcString(191, 'Workflow invocation record ids');
 export const WorkflowDefinitionIdV1Schema = preservedBoundedNfcString(191, 'Workflow definition ids');
 export const WorkflowMachineIdV1Schema = preservedBoundedNfcString(191, 'Workflow Machine ids');
+export const WorkflowVisibleTeamIdV1Schema = preservedBoundedNfcString(191, 'Team ids');
