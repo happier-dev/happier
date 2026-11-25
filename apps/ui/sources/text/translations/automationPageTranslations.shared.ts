@@ -41,7 +41,7 @@ export const english = {
             statusTitle: 'Status',
             statusDescription: 'Where this run is now, and what you can still do with it.',
             causeTitle: 'What started it',
-            causeDescription: 'The trigger and event that admitted this run. They never change afterwards.',
+            causeDescription: 'The original reason this run started.',
         },
         gate: {
             serverTitle: 'Workflows are off on this Home',

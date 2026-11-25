@@ -4080,7 +4080,7 @@ const automationPageTranslations = { fr: translated({
                 statusTitle: 'État',
                 statusDescription: 'Où en est cette exécution, et ce que tu peux encore en faire.',
                 causeTitle: 'Ce qui l’a démarrée',
-                causeDescription: 'Le déclencheur et l’événement qui ont admis cette exécution. Ils ne changent jamais ensuite.',
+                causeDescription: 'La raison pour laquelle cette exécution a démarré.',
             },
             gate: {
                 serverTitle: 'Les workflows sont désactivés sur ce Home',

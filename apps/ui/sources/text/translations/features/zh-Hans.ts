@@ -3965,7 +3965,7 @@ const automationPageTranslations = { 'zh-Hans': translated({
                 statusTitle: '状态',
                 statusDescription: '这次运行现在的进展，以及你还能对它做什么。',
                 causeTitle: '启动原因',
-                causeDescription: '准许这次运行的触发器和事件。之后不会改变。',
+                causeDescription: '这次运行最初启动的原因。',
             },
             gate: {
                 serverTitle: '此 Home 已关闭工作流',

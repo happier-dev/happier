@@ -4020,7 +4020,7 @@ const automationPageTranslations = { ja: translated({
                 statusTitle: '状態',
                 statusDescription: 'この実行の現在の状況と、まだできる操作です。',
                 causeTitle: '開始のきっかけ',
-                causeDescription: 'この実行を受け付けたトリガーとイベントです。後から変わることはありません。',
+                causeDescription: 'この実行が始まったときの理由です。',
             },
             gate: {
                 serverTitle: 'このHomeでは自動化がオフになっています',

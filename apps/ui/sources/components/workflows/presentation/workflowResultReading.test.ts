@@ -28,6 +28,18 @@ describe('authored Workflow result JSON', () => {
         expect(text).not.toContain('review-id');
     });
 
+    it('reads Action policy profiles by name while keeping their identifiers out of the result pane', () => {
+        const profile = { id: 'profile-id', profile: { id: 'profile-id', name: 'Release policy' },
+            access: 'owner', ownerAccountId: 'owner-id', ownerDisplayName: 'Ada',
+            revision: { headerVersion: 1, bodyVersion: 1 } };
+        const value = { profiles: [profile] };
+        const rows = readWorkflowResultRows(value);
+        expect(rows?.map(row => row.text).join(' ')).toContain('Release policy');
+        expect(rows?.map(row => row.text).join(' ')).not.toMatch(/profile-id|owner-id/);
+        expect(readWorkflowResultRows({ profiles: [{ id: 'author-id', note: 'authored JSON' }] })?.[0]?.text)
+            .toContain('author-id');
+    });
+
     it('retains authored fields that happen to resemble loop bookkeeping', () => {
         const authored = { index: 7, status: 'needs_review', results: { answer: 'ok' }, owner: 'Alice' };
         const row = readWorkflowResultRows([authored])?.[0];

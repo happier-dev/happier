@@ -1,6 +1,13 @@
 import type { InboxWorkItem } from '@/activity/presentation/buildInboxWorkGroups';
 import { isTerminalWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
+import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
 import { t } from '@/text';
+
+/** Failed Updates lead with the Run name even when opening its history will show a read problem. */
+export function readInboxWorkflowRunTitle(row: Extract<InboxWorkItem, { kind: 'workflow_run' }>['row']): string {
+    const name = resolveWorkflowRunDisplayName(row.metadata);
+    return formatWorkflowRunDisplayName(row.summary?.state === 'failed' && name.kind === 'unavailable' ? { kind: 'unknown' } : name);
+}
 
 /** The Run's admitted hold, shared by its Inbox row and Brief; never inferred from its title. */
 export function buildInboxWorkflowReasonFacts(item: Extract<InboxWorkItem, { kind: 'workflow_run' }>): readonly string[] {

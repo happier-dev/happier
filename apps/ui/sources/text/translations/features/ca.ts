@@ -4062,7 +4062,7 @@ const automationPageTranslations = { ca: translated({
                 statusTitle: 'Estat',
                 statusDescription: 'On és ara aquesta execució i què encara hi pots fer.',
                 causeTitle: 'Què l’ha iniciat',
-                causeDescription: 'L’activador i l’event que van admetre aquesta execució. No canvien mai després.',
+                causeDescription: 'El motiu original pel qual va començar aquesta execució.',
             },
             gate: {
                 serverTitle: 'Els fluxos de treball estan desactivats en aquest Home',

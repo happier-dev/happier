@@ -3966,7 +3966,7 @@ const automationPageTranslations = { 'zh-Hant': translated({
                 statusTitle: '狀態',
                 statusDescription: '這次執行現在的進度，以及你還能對它做什麼。',
                 causeTitle: '啟動原因',
-                causeDescription: '准許這次執行的觸發器和事件。之後不會改變。',
+                causeDescription: '這次執行最初啟動的原因。',
             },
             gate: {
                 serverTitle: '此 Home 已關閉工作流程',

@@ -4069,7 +4069,7 @@ const automationPageTranslations = { it: translated({
                 statusTitle: 'Stato',
                 statusDescription: 'A che punto è questa esecuzione e cosa puoi ancora farne.',
                 causeTitle: 'Cosa l’ha avviata',
-                causeDescription: 'Il trigger e l’evento che hanno ammesso questa esecuzione. Non cambiano mai dopo.',
+                causeDescription: 'Il motivo per cui questa esecuzione è iniziata.',
             },
             gate: {
                 serverTitle: 'I flussi di lavoro sono disattivati in questo Home',

@@ -4066,7 +4066,7 @@ const automationPageTranslations = { ru: translated({
                 statusTitle: 'Состояние',
                 statusDescription: 'На каком этапе этот запуск и что с ним ещё можно сделать.',
                 causeTitle: 'Что его начало',
-                causeDescription: 'Триггер и событие, которые допустили этот запуск. Позже они не меняются.',
+                causeDescription: 'Первоначальная причина запуска.',
             },
             gate: {
                 serverTitle: 'Рабочие процессы отключены в этом Home',

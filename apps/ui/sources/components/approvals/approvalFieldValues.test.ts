@@ -5,7 +5,22 @@ import { resolveAcknowledgedActionInverse } from './actionResultFacts';
 import { readApprovalPreviewSummary } from './actionApprovalPresentation';
 import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
+import { WORKFLOW_TRIGGER_ADD_ACTION_ID, WORKFLOW_TRIGGER_UPDATE_ACTION_ID } from '@happier-dev/protocol/actions/workflowTriggerActionIds';
+import { formatTriggerSummary } from '@/components/workflows/triggers/formatTriggerSummary';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+
+it.each([WORKFLOW_TRIGGER_ADD_ACTION_ID, WORKFLOW_TRIGGER_UPDATE_ACTION_ID])('reads %s as its trigger summary', actionId => {
+    const trigger = { kind: 'schedule', schedule: { kind: 'once', scheduledAt: 1795166538066 } } as const;
+    const actionArgs = actionId === WORKFLOW_TRIGGER_ADD_ACTION_ID
+        ? { workflow: 'builtin:review-and-converge', project: { machineId: 'raw-machine-id', directory: '/workspace' },
+            trigger: { ...trigger, enabled: true } }
+        : { automationId: 'raw-automation-id', triggerId: 'raw-trigger-id', expectedRevision: 1, patch: { trigger } };
+    for (const describe of [describeApprovalActionFields, describeApprovalRequestFields]) {
+        const rows = describe({ actionId, actionArgs }).rows.filter(row => row.kind === 'value' && !row.technical);
+        expect(rows).toContainEqual(expect.objectContaining({ value: formatTriggerSummary(trigger) }));
+        expect(JSON.stringify(rows)).not.toMatch(/raw-machine-id|raw-automation-id|raw-trigger-id|"label":"Kind"|"label":"Enabled"/);
+    }
+});
 
 it.each(['open', 'rejected', 'executed'] as const)('does not repeat an installation title on a %s card', status => {
     const spec = getActionSpec('machines.managed.bootstrap.respond');

@@ -9,8 +9,6 @@ import { en } from '@/text/translations/en';
 import { buildInboxItems } from '../inboxItems';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { installSignedOutAuthForTest } from '@/dev/testkit/fixtures/signedOutAuth';
-import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
-import { resolveWorkStatusRowMark } from '@/components/work/status/workStatusRowMark';
 import { Icon } from '@/components/ui/icons/Icon';
 
 const paints = vi.hoisted(() => new Map<string, number>());
@@ -60,19 +58,34 @@ describe('Inbox Work row stability', () => {
             inAttentionWindow: false,
         } }));
     });
-    it('marks a failed unseen Run with the calm rose dot from the work-status row mark, never a warning icon', async () => {
+    it('reads a failed Run with unavailable history in the same Updates anatomy as a named Run', async () => {
+        const summary = createWorkflowRunSummaryFixture({ id: 'failed-unreadable', state: 'failed', failureUnseen: true });
+        const row = { ...workflowRunRowFromSummary(summary, null),
+            metadata: { kind: 'unavailable', reason: 'history_not_readable' } as const };
+        const groups = buildInboxWorkGroups({ sessionEntries: [], workflowRuns: [row], automationRuns: [], automationServerId: null,
+            openApprovals: [], stalledSessions: [], landings: [], snoozed: [], resolveSession: () => null, resolveOriginRunId: () => null });
+        const item = groups.flatMap(group => group.items)[0];
+        if (!item) throw new Error('Expected failed Run');
+        const screen = await renderScreen(<InboxWorkItemRow item={item} spansHomes={false} workflowServerId="home" identityDisplay="none"
+            presentation="screen" navigate={vi.fn()} settle={vi.fn(async () => {})} setReminder={vi.fn(async () => {})} />);
+        expect(screen.getTextContent()).toContain('workflows.run.untitled');
+        expect(screen.getTextContent()).not.toContain('workflows.readState.historyTitle');
+        expect(screen.findAllByTestId('inbox.run.failed-unreadable.review')).toHaveLength(0);
+        expect(screen.findAll(node => node.type === Icon && node.props.name === 'timer')).toHaveLength(1);
+        await screen.unmount();
+    });
+
+    it('opens failed Run updates directly from the run row', async () => {
         const row = workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'failed', state: 'failed', failureUnseen: true }), null);
         const groups = buildInboxWorkGroups({ sessionEntries: [], workflowRuns: [row], automationRuns: [], automationServerId: null,
             openApprovals: [], stalledSessions: [], landings: [], snoozed: [], resolveSession: () => null, resolveOriginRunId: () => null });
         const item = groups.flatMap(group => group.items)[0];
         if (!item) throw new Error('failed_item_missing');
+        const navigate = vi.fn();
         const screen = await renderScreen(<InboxWorkItemRow item={item} spansHomes={false} workflowServerId="home" identityDisplay="none"
-            presentation="screen" navigate={vi.fn()} settle={vi.fn(async () => {})} setReminder={vi.fn(async () => {})} />);
-        const runRow = screen.findHostByTestId('inbox.run.failed')!;
-        // React.memo: the rendered instance carries the inner component.
-        const marks = runRow.findAll(node => node.type === WorkStatusRowMark.type);
-        expect(marks.map(mark => resolveWorkStatusRowMark(mark.props.status))).toEqual(['danger']);
-        expect(runRow.findAll(node => node.type === Icon.type && node.props.name === 'warning')).toHaveLength(0);
+            presentation="screen" navigate={navigate} settle={vi.fn(async () => {})} setReminder={vi.fn(async () => {})} />);
+        await screen.pressByTestIdAsync('inbox.run.failed');
+        expect(navigate).toHaveBeenCalledWith('/workflows/runs/failed?serverId=home');
         await screen.unmount();
     });
     it('opens the canonical PR URL as the Landing primary action even in a list-detail Inbox', async () => {

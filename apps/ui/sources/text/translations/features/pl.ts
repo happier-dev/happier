@@ -4074,7 +4074,7 @@ const automationPageTranslations = { pl: translated({
                 statusTitle: 'Stan',
                 statusDescription: 'Na jakim etapie jest to uruchomienie i co jeszcze możesz z nim zrobić.',
                 causeTitle: 'Co je rozpoczęło',
-                causeDescription: 'Wyzwalacz i zdarzenie, które dopuściły to uruchomienie. Później się nie zmieniają.',
+                causeDescription: 'Pierwotny powód rozpoczęcia tego uruchomienia.',
             },
             gate: {
                 serverTitle: 'Przepływy pracy są wyłączone w tym Home',

@@ -4075,7 +4075,7 @@ const automationPageTranslations = { de: translated({
                 statusTitle: 'Status',
                 statusDescription: 'Wo diese Ausführung gerade steht und was du noch damit tun kannst.',
                 causeTitle: 'Was sie gestartet hat',
-                causeDescription: 'Der Auslöser und das Event, die diese Ausführung zugelassen haben. Sie ändern sich danach nie.',
+                causeDescription: 'Der ursprüngliche Grund für diese Ausführung.',
             },
             gate: {
                 serverTitle: 'Workflows sind in diesem Home ausgeschaltet',

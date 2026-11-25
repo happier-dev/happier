@@ -1,3 +1,4 @@
+import { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
 import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { ReviewGetResponseV1Schema, type ReviewListItemV1 } from '@happier-dev/protocol/reviews/reviewListV1';
@@ -146,6 +147,16 @@ export function readWorkflowResultRows(
   if (value.review !== undefined && value.human !== undefined) {
     const review = ReviewGetResponseV1Schema.safeParse(value);
     if (review.success) return readReviewResultRows(review.data.review);
+  }
+  if (Array.isArray(value.profiles)) {
+    const policy = ActionPolicyOutputSchemas['actions.policy.get'].safeParse(value);
+    if (policy.success && 'profiles' in policy.data) {
+      return [{
+        key: 'profiles',
+        label: fieldTitles?.profiles ?? formatWorkflowFieldLabel('profiles'),
+        text: readWorkflowValueText(policy.data.profiles.map(({ profile }) => profile.name)),
+      }];
+    }
   }
   // Authored fields in declaration order, then any additional published values.
   const names = [

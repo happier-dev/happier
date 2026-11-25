@@ -3957,7 +3957,7 @@ const automationPageTranslations = { es: translated({
                 statusTitle: 'Estado',
                 statusDescription: 'Dónde está ahora esta ejecución y qué puedes hacer todavía con ella.',
                 causeTitle: 'Qué la inició',
-                causeDescription: 'El activador y el event que admitieron esta ejecución. Nunca cambian después.',
+                causeDescription: 'El motivo original por el que comenzó esta ejecución.',
             },
             gate: {
                 serverTitle: 'Los flujos de trabajo están desactivados en este Home',

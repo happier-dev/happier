@@ -7,7 +7,7 @@ import { type AccountNoticeArtifact } from '@/sync/domains/artifacts/usageNotice
 import { projectAccountNoticeInboxItemV1, projectOpenUsageNoticeHeaderV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { shallow } from 'zustand/shallow';
 import { readInboxApprovalServerId, resolveInboxItemPageRoute, type InboxItemFocus } from './inboxItemFocus';
-import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
+import { readInboxWorkflowRunTitle } from './workGroups/inboxWorkflowReason';
 import { formatAutomationRunStateLabel } from '@/components/automations/list/automationListFormatting';
 import { reviewSubjectLabel } from '@/components/reviews/list/reviewSubjectLabel';
 import type { SessionQuestionContextV1 } from '@happier-dev/protocol/sessions/permissions/questionV1';
@@ -206,12 +206,13 @@ export function buildInboxItems(input: InboxItemsInput, previous: readonly Inbox
             const view = inboxItemView(type);
             const onceDeliveries = input.workflowRunOnceDeliveries?.get(item.runId)?.filter(delivery =>
                 delivery.event.kind !== 'needs_you' || type === delivery.event.type);
+            const title = readInboxWorkflowRunTitle(item.row);
             rows.push({ key: item.key, producer: 'live', type, view,
-                title: formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(item.row.metadata)), context: item.heldStepLabel,
+                title, context: item.heldStepLabel,
                 createdAt: item.row.updatedAt, read: false, focus, pageRoute: resolveInboxItemPageRoute(focus),
                 ...(workStatus ? { workStatus } : {}),
                 source: { kind: 'workflow_run', id: item.runId, serverId: input.workflowServerId,
-                    displayName: formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(item.row.metadata)),
+                    displayName: title,
                     ...(onceDeliveries?.length ? { onceDeliveries } : {}) } });
         } else if (item.kind === 'automation_run') {
             const run = item.row.automation;
