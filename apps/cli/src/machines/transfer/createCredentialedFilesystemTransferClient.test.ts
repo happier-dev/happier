@@ -13,6 +13,7 @@ import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/o
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
@@ -32,7 +33,7 @@ import { createCredentialedFilesystemTransferClient } from './createCredentialed
 import { createDeploymentImageArchiveCopyForHost } from '@/deployments/targets/ownServer/imageArchiveCopy';
 import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from '@/deployments/targets/ownServer/paths';
 import { readNativeComposeArchiveTransportIdentity } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
-import { projectDeploymentFailure, projectDeploymentReceiptFailure, refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
+import { projectDeploymentException, projectDeploymentFailure, projectDeploymentReceiptFailure, refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { deploymentArtifactReadFailureV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
@@ -148,13 +149,15 @@ describe('credentialed deployment archive byte transport', () => {
             return { status: 200, data: { ok: true, grant: { payload, signature: { alg: 'Ed25519', keyId: trustRoot.keyId,
                 valueBase64Url: Buffer.from(nacl.sign.detached(Buffer.from(createDirectRouteGrantSigningInputV2(payload)), issuer.secretKey)).toString('base64url') } } } };
         });
-        nativeBoundary.dial.mockImplementation(async (request: { handshakeJson: string }) => {
+        const dialArchiveTunnel = async (request: { handshakeJson: string }) => {
             expect(IrohMachineHandshakeV1Schema.parse(JSON.parse(request.handshakeJson)).accountId).toBe('ann');
             return { machineTunnelId: 'archive-tunnel', endpointHandle: 'archive-endpoint', localPort: await lifecycle.ensureListening(),
                 connectionActive: true, remoteEndpointId: 'b'.repeat(64), observedPath: 'direct', startedAtMs: 1, lastErrorCode: null };
-        });
+        };
+        nativeBoundary.dial.mockImplementation(dialArchiveTunnel);
+        const startEndpoint = vi.fn(async () => ({ endpointHandle: 'archive-endpoint', endpointId: 'a'.repeat(64) }));
         nativeBoundary.load.mockReturnValue({ available: true, native: {
-            createEndpoint: async () => ({ endpointHandle: 'archive-endpoint', endpointId: 'a'.repeat(64) }),
+            createEndpoint: startEndpoint,
             getEndpointStatus: async () => ({ active: true, endpointId: 'a'.repeat(64), relayUrls: [], directAddresses: [] }),
             startMachineTunnel: nativeBoundary.dial, stopMachineTunnel: async () => {}, shutdownEndpoint: async () => {},
         } });
@@ -301,9 +304,31 @@ describe('credentialed deployment archive byte transport', () => {
             expect(phases).toHaveLength(phasesBeforeWrongOrigin);
             await expect(readFile(join(destinationRoot, 'wrong-origin.tar'))).rejects.toMatchObject({ code: 'ENOENT' });
             expectedSignedOrigin = archiveOrigin;
-            nativeBoundary.dial.mockRejectedValueOnce(new IrohNativeOperationError('transport-unavailable', 'Direct and relay transport unavailable'));
-            expect(await copy('unreachable.tar')).toMatchObject({ ok: false, errorCode: 'machine_carrier_unavailable' });
+            const carrierCode = 'machine_carrier_unavailable';
+            const carrierCause = { errorClass: 'Error', errorCode: carrierCode, httpStatus: null } as const;
+            const unreachable = () => new IrohNativeOperationError('transport-unavailable', 'Private native detail');
+            const expectCarrierFailure = (result: Awaited<ReturnType<typeof copy>>, expected: Record<string, unknown>) => {
+                expect.soft(result).toMatchObject({ ok: false, errorCode: carrierCode });
+                const parsed = ActionFailureCauseV1Schema.safeParse(result.ok ? undefined : result.failureCause);
+                expect.soft(parsed.success && parsed.data).toEqual({ ...carrierCause, ...expected });
+            };
+            startEndpoint.mockRejectedValueOnce(new IrohNativeOperationError('invalid-request', 'Private startup detail'));
+            expectCarrierFailure(await copy('startup-failed.tar'), { phase: 'daemon.filesystem.copy.source.iroh.runtime_start',
+                nativeErrorReason: 'startup_failed', nativeErrorCode: 'invalid-request' });
+            await expect(readFile(join(destinationRoot, 'startup-failed.tar'))).rejects.toMatchObject({ code: 'ENOENT' });
+            const sourceDialCause = { phase: 'daemon.filesystem.copy.source.iroh.tunnel_open', nativeErrorCode: 'transport-unavailable' };
+            nativeBoundary.dial.mockRejectedValueOnce(unreachable());
+            expectCarrierFailure(await copy('unreachable.tar'), sourceDialCause);
             await expect(readFile(join(destinationRoot, 'unreachable.tar'))).rejects.toMatchObject({ code: 'ENOENT' });
+            nativeBoundary.dial.mockImplementationOnce(dialArchiveTunnel).mockRejectedValueOnce(unreachable());
+            expectCarrierFailure(await copy('destination-unreachable.tar'), {
+                phase: 'daemon.filesystem.copy.destination.iroh.tunnel_open', nativeErrorCode: 'transport-unavailable' });
+            await expect(readFile(join(destinationRoot, 'destination-unreachable.tar'))).rejects.toMatchObject({ code: 'ENOENT' });
+            nativeBoundary.dial.mockRejectedValueOnce(unreachable());
+            const archiveCarrierFailure = projectDeploymentException(await hostCopy(archiveCopyRequest).catch(error => error));
+            const archiveReceiptFailure = projectDeploymentReceiptFailure(archiveCarrierFailure, 'restore');
+            expect.soft(archiveReceiptFailure.code).toBe(carrierCode);
+            expect.soft(archiveReceiptFailure.failureCause).toEqual({ ...carrierCause, ...sourceDialCause });
             nativeBoundary.dial.mockRejectedValueOnce(new IrohNativeOperationError('endpoint-identity-mismatch', 'Wrong authenticated native endpoint'));
             expect(await copy('identity-mismatch.tar')).toMatchObject({ ok: false, errorCode: 'identity_mismatch' });
             await expect(readFile(join(destinationRoot, 'identity-mismatch.tar'))).rejects.toMatchObject({ code: 'ENOENT' });

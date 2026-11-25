@@ -12,8 +12,10 @@ import {
   type FilesystemUploadInput, type FilesystemPreparedCopyInput, type FilesystemTargetCopyInput, type FilesystemCopyOutput,
 } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
-import { ActionApprovalRequestCreatedResultSchema, type ActionApprovalRequestCreatedResult, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, projectActionFailureCauseV1, type ActionApprovalRequestCreatedResult, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { MACHINE_CARRIER_UNAVAILABLE_CODE, MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
+import { logger } from '@/ui/logger';
 import type { FiniteTransferMachineTunnel } from '@/workspaces/sync/workspaceSyncMachineCarrierStream';
 import { requestDirectPeerTransferToFile } from './directPeerTransport';
 import { encodeDirectPeerTransferPathKey } from './directPeerTransport/protocol';
@@ -41,6 +43,20 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
   openMachineTunnel: (input: Readonly<{ targetMachineId: string; serverId?: string; signal?: AbortSignal }>) => Promise<FiniteTransferMachineTunnel>;
   executeAction: (actionId: FilesystemTransferActionId | 'daemon.filesystem.copy' | 'action.operations.get', input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }>) {
+  const openCopyTunnel = async (leg: 'source' | 'destination', request: Parameters<typeof params.openMachineTunnel>[0]) => {
+    try {
+      return await params.openMachineTunnel(request);
+    } catch (error) {
+      if (error instanceof MachineCarrierError && error.code === MACHINE_CARRIER_UNAVAILABLE_CODE && 'failureCause' in error) {
+        request.signal?.throwIfAborted();
+        const cause = projectActionFailureCauseV1(error);
+        const failureCause = { ...cause, phase: `daemon.filesystem.copy.${leg}.${cause.phase}` };
+        logger.warnLocalFile('[Filesystem copy] Iroh Machine carrier unavailable', failureCause);
+        throw Object.assign(error, { failureCause });
+      }
+      throw error;
+    }
+  };
   const invoke = async (actionId: FilesystemTransferActionId | 'daemon.filesystem.copy' | 'action.operations.get', input: unknown, targetMachineId: string, serverId?: string, signal?: AbortSignal) => {
     const result = await params.executeAction(actionId, input, { externalActionTarget: { kind: 'machine', machineId: targetMachineId },
       ...(serverId ? { serverId } : {}), ...(signal ? { signal } : {}) });
@@ -219,7 +235,7 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
       if ('kind' in input.source && input.source.kind === 'entry_tree' && (input.source.sizeBytes !== receipt.prepared.sizeBytes
         || `sha256:${input.source.sha256.toLowerCase()}` !== receipt.prepared.manifestHash.toLowerCase()
         || JSON.stringify(input.source.entryTree) !== JSON.stringify(receipt.entryTree))) throw new Error('Prepared entry source identity changed');
-      sourceTunnel = await params.openMachineTunnel({ serverId: input.source.serverId, targetMachineId: input.source.machineId, signal: input.signal });
+      sourceTunnel = await openCopyTunnel('source', { serverId: input.source.serverId, targetMachineId: input.source.machineId, signal: input.signal });
       const sourcePort = sourceTunnel.localPort;
       const payloads = [{ transferId: receipt.entryTree.operationId, sizeBytes: receipt.prepared.sizeBytes, manifestHash: receipt.prepared.manifestHash }, ...receipt.entryTree.blobs];
       const sourceFiles = new Map<string, string>();
@@ -249,7 +265,7 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
       if (!('manifest' in accepted.prepared) || accepted.sourceId !== source.sourceId) throw new Error('Entry destination custody is unavailable');
       const imports = [{ transferId: receipt.entryTree.operationId, prepared: accepted.prepared.manifest }, ...accepted.prepared.blobs];
       if (imports.length !== payloads.length || new Set(imports.map(record => record.transferId)).size !== payloads.length) throw new Error('Entry import commitment changed');
-      destinationTunnel = await params.openMachineTunnel({ serverId: input.destination.serverId, targetMachineId: input.destination.machineId, signal: input.signal });
+      destinationTunnel = await openCopyTunnel('destination', { serverId: input.destination.serverId, targetMachineId: input.destination.machineId, signal: input.signal });
       const destinationPort = destinationTunnel.localPort;
       for (const record of imports) {
         const sourcePath = sourceFiles.get(record.transferId);

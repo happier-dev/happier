@@ -3,6 +3,7 @@ import { IrohNativeOperationError, MACHINE_ALPN, readIrohRelayConfigFromEnv } fr
 import { mintFiniteAccountClientTransferHandshake } from '@happier-dev/sync-client';
 import { readMachineIrohEndpointAuthorityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import type { ActionExecuteResult, ActionExecutorContext } from '@happier-dev/protocol/actions';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { FilesystemTransferActionId } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { listCurrentAccountMachines } from '@/api/machine/resolveCurrentAccountMachineTarget';
@@ -20,6 +21,15 @@ import { verifyDeploymentArchiveOriginForHost } from '@/session/transport/rpc/ma
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { createPreparedFilesystemTransferClient } from './preparedFilesystemTransferClient';
+
+function filesystemCarrierUnavailableError(
+  phase: 'iroh.runtime_start' | 'iroh.tunnel_open',
+  native: Readonly<{ nativeErrorCode?: string; nativeErrorReason?: string }>,
+) {
+  const error = machineCarrierUnavailableError();
+  const failureCause = { phase, errorClass: 'Error', errorCode: error.code, httpStatus: null, ...native } satisfies ActionFailureCauseV1;
+  return Object.assign(error, { failureCause });
+}
 
 /** Captured installed custody for the existing byte driver, never Action input. */
 export type DeploymentArchiveTransferAuthorityForHost = Readonly<{
@@ -50,7 +60,14 @@ export async function createCredentialedFilesystemTransferClient(input: Readonly
   const api = await ApiClient.create(input.credentials);
   const runtime = await createDaemonMachineIrohRuntime({ happyHomeDir: configuration.happyHomeDir,
     identity: 'ephemeral', relayConfig: readIrohRelayConfigFromEnv(process.env) });
-  if (!runtime.available) { await runtime.shutdown(); throw machineCarrierUnavailableError(); }
+  if (!runtime.available) {
+    await runtime.shutdown();
+    throw filesystemCarrierUnavailableError('iroh.runtime_start', {
+      nativeErrorReason: runtime.reason,
+      ...(runtime.reason === 'startup_failed' && runtime.error instanceof IrohNativeOperationError
+        ? { nativeErrorCode: runtime.error.nativeCode } : {}),
+    });
+  }
   const openMachineTunnel: Parameters<typeof createPreparedFilesystemTransferClient>[0]['openMachineTunnel'] = async request => {
       if (request.serverId && !areServerProfileIdentifiersEquivalent(input.serverId, request.serverId,
         identifier => identifier === input.serverId || identifier === serverIdentityId ? serverIdentityId ?? input.serverId : null)) throw new Error('server_scope_mismatch');
@@ -121,7 +138,7 @@ export async function createCredentialedFilesystemTransferClient(input: Readonly
         remoteEndpointId: minted.endpoint.endpointId, handshake }, minted.endpoint), signal).catch((error: unknown) => {
           signal?.throwIfAborted();
           if (error instanceof IrohNativeOperationError && error.nativeCode === 'transport-unavailable') {
-            throw machineCarrierUnavailableError();
+            throw filesystemCarrierUnavailableError('iroh.tunnel_open', { nativeErrorCode: error.nativeCode });
           }
           throw error;
         });
