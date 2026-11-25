@@ -70,10 +70,18 @@ export function createDatabaseRuntime(options: Readonly<{
             }
         }
         if (result.ok && result.operation === 'stats.read' && result.observation.status === 'available') {
-            const observation = projectDatabaseFindingObservation(result.observation, input.target, context);
-            const subject = readAutomationDatabaseSubjectV1(observation.sourceScope.serverId, input.target);
-            if (subject.ok) await emitDatabaseFindingObservation({ observation, subject: subject.subject,
-                observationReceivedAt: Date.now(), observedDelta: 1 }, context);
+            try {
+                const observation = projectDatabaseFindingObservation(result.observation, input.target, context);
+                const subject = readAutomationDatabaseSubjectV1(observation.sourceScope.serverId, input.target);
+                if (subject.ok) await emitDatabaseFindingObservation({ observation, subject: subject.subject,
+                    observationReceivedAt: Date.now(), observedDelta: 1 }, context);
+            } catch (error) {
+                // The read has settled: an Environment-admitted reader has no stamped Machine,
+                // and finding emission must never turn a completed read into a failed one.
+                context.services.logger.warn('Database finding observation was not emitted', {
+                    code: error instanceof PluginError ? error.code : 'action_failed',
+                });
+            }
         }
         if (writeAudit) {
             context.services.logger.info('Database write committed', {

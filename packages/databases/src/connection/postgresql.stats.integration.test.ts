@@ -110,3 +110,37 @@ it.each([
         await rm(directory, { recursive: true, force: true });
     }
 }, 30000);
+
+it('settles the Workbench size and loaded statements reads for the owner and a bounded read role', async () => {
+    // F5d: the Data page's exact operands (size, empty selection; statements by totalTime, 50 rows from 0) on a loaded extension.
+    const directory = await mkdtemp(join(tmpdir(), 'dbw-pg-loaded-'));
+    let ownedPid: string | undefined;
+    const opened: Awaited<ReturnType<typeof openPostgresqlConnection>>[] = [];
+    try {
+        await run(join(binaries, 'initdb'), ['-D', join(directory, 'data'), '-A', 'trust', '-U', 'fixture', '--no-locale', '-E', 'UTF8']);
+        await run(join(binaries, 'pg_ctl'), ['-D', join(directory, 'data'), '-l', join(directory, 'postgres.log'),
+            '-o', `-c listen_addresses='' -c shared_preload_libraries=pg_stat_statements -k ${directory}`, '-w', 'start']);
+        ownedPid = (await readFile(join(directory, 'data/postmaster.pid'), 'utf8')).split('\n')[0];
+        await run(join(binaries, 'psql'), ['-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-h', directory, '-U', 'fixture', '-d', 'postgres',
+            '-c', 'CREATE EXTENSION pg_stat_statements; CREATE ROLE happier_ro LOGIN NOSUPERUSER; GRANT pg_read_all_data TO happier_ro;']);
+        const requests = [
+            { kind: 'stats.read', group: 'size', selection: {} },
+            { kind: 'stats.read', group: 'statements', selection: { order: 'totalTime', page: { rows: 50, offset: 0 } } },
+        ] as const;
+        for (const login of ['fixture', 'happier_ro']) {
+            const connection = await openPostgresqlConnection(`postgresql://${login}@localhost/postgres?host=${encodeURIComponent(directory)}`);
+            opened.push(connection);
+            for (const request of requests) {
+                const settled = await connection.execute({ operation: 'stats.read', target, request });
+                expect(settled, `${login} ${request.group}`).toMatchObject({ ok: true, operation: 'stats.read',
+                    observation: { group: request.group } });
+            }
+        }
+    } finally {
+        for (const connection of opened) await connection.close().catch(() => {});
+        if (ownedPid && ownedPid === (await readFile(join(directory, 'data/postmaster.pid'), 'utf8')).split('\n')[0]) {
+            await run(join(binaries, 'pg_ctl'), ['-D', join(directory, 'data'), '-m', 'immediate', '-w', 'stop']);
+        }
+        await rm(directory, { recursive: true, force: true });
+    }
+}, 30000);

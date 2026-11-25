@@ -19,6 +19,7 @@ import {
     DATABASE_EDITS_APPLY_ACTION_ID_V1,
     DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
     DATABASE_STATEMENT_RUN_ACTION_ID_V1,
+    DATABASE_STATS_READ_ACTION_ID_V1,
     DATABASE_TARGETS_CONNECT_ACTION_ID_V1,
     DATABASE_TARGETS_FORGET_ACTION_ID_V1,
     DATABASE_TARGETS_LIST_ACTION_ID_V1,
@@ -170,18 +171,50 @@ describe('semantic database Action runtime', () => {
         beforeAll(async () => {
             directory = await mkdtemp(join(tmpdir(), 'dbw-runtime-settlement-'));
             await run(join(postgresBinaries, 'initdb'), ['-D', join(directory, 'data'), '-A', 'trust', '-U', 'fixture', '--no-locale', '-E', 'UTF8']);
-            await run(join(postgresBinaries, 'pg_ctl'), ['-D', join(directory, 'data'), '-l', join(directory, 'postgres.log'), '-o', `-c listen_addresses='' -k ${directory}`, '-w', 'start']);
+            await run(join(postgresBinaries, 'pg_ctl'), ['-D', join(directory, 'data'), '-l', join(directory, 'postgres.log'), '-o', `-c listen_addresses='' -k ${directory} -c shared_preload_libraries=pg_stat_statements`, '-w', 'start']);
             started = true;
             secretValue = `postgresql://fixture@localhost/postgres?host=${encodeURIComponent(directory)}`;
             const setup = new Client({ connectionString: secretValue });
             try {
                 await setup.connect();
-                await setup.query("CREATE TABLE selected(label TEXT); INSERT INTO selected VALUES ('before')");
+                await setup.query("CREATE EXTENSION pg_stat_statements; CREATE TABLE selected(label TEXT); INSERT INTO selected VALUES ('before')");
             } finally { await setup.end(); }
         });
         afterAll(async () => {
             if (started) await run(join(postgresBinaries, 'pg_ctl'), ['-D', join(directory, 'data'), '-m', 'immediate', '-w', 'stop']);
             if (directory) await rm(directory, { recursive: true, force: true });
+        });
+        it('settles the Workbench size and statements reads through the runtime', async () => {
+            const warnings: unknown[] = [];
+            const runtime = createDatabaseRuntime({ async admit() {}, async resolve(input) {
+                return { descriptor: { ...descriptor, engine: 'postgresql' }, connection: await openManualDatabaseConnection({
+                    target, secretValue, access: input.access, signal: input.context.signal,
+                }) };
+            } });
+            const plugin = definePlugin({ id: 'happier.database', version: '0.0.0', displayName: 'Database', actions: createDatabaseActions(runtime) });
+            const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: {
+                logger: { debug() {}, info() {}, error() {}, diagnostic() {}, warn(_message, fields) { warnings.push(fields); } },
+            } });
+            // A native Action always carries the routed Machine and invocation identity.
+            const identity = { requesterAccount: { accountId: 'alice' }, chosenMachine: { machineId: 'machine', installationId: 'installation' },
+                agentCaller: false, authority: 'present_user' as const };
+            const environmentTarget = { kind: 'deployment_service', environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' },
+                deploymentId: 'deployment', targetLinkId: 'link', serviceId: 'postgres', database: 'postgres' } as const;
+            const statsId = databaseActionLocalIdV1(DATABASE_STATS_READ_ACTION_ID_V1);
+            // An Environment-admitted editor reaches this Machine without Machine admission, so no Machine is stamped.
+            const editor = { requesterAccount: { accountId: 'editor' }, agentCaller: false, authority: 'present_user' as const };
+            try {
+                for (const [selected, invocation] of [[target, identity], [environmentTarget, identity], [environmentTarget, editor]] as const) {
+                    expect(await kit.invokeAction(statsId, { operation: 'stats.read', target: selected,
+                        request: { kind: 'stats.read', group: 'size', selection: {} } }, invocation))
+                        .toMatchObject({ ok: true, operation: 'stats.read', observation: { status: 'available' } });
+                    expect(await kit.invokeAction(statsId, { operation: 'stats.read', target: selected, request: { kind: 'stats.read', group: 'statements',
+                        selection: { order: 'totalTime', page: { rows: 50, offset: 0 } } } }, invocation))
+                        .toMatchObject({ ok: true, operation: 'stats.read', observation: { status: 'available' } });
+                }
+                // The finding side effect stays observable without failing the completed read.
+                expect(warnings).toEqual([{ code: 'plugin_service_unavailable' }, { code: 'plugin_service_unavailable' }]);
+            } finally { await kit.dispose(); }
         });
         it('preserves native settlement when connection cleanup rejects', async () => {
             const warnings: unknown[] = [];
