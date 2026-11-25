@@ -1107,12 +1107,13 @@ export class RpcHandlerManager {
                     : sessionAuthorization?.sessionId === this.scopePrefix ? 'session' : 'unattributed';
 
             if (parsedInputAuthorization?.success && parsedInputAuthorization.data.binding.actionId === 'projects.open'
-                && parsedInputAuthorization.data.binding.machineId === this.scopePrefix
                 && (machineInputAuthorizationMatchesRequest && targetMethod === RPC_METHODS.PROJECTS_OPEN
                     || writerTargetInputAuthorizationMatchesRequest && workspaceSyncSourceWriterTargetRouting?.success
                         && workspaceSyncSourceWriterTargetRouting.data.target.phase !== 'release')) {
                 // Only D can open its original protected Project input. P1/P2
-                // retain the exact envelope and D's packet, never D's key.
+                // retain the exact envelope and D's packet, never D's key. Any other
+                // receiver of D's writer-target call cannot bind the Open to this
+                // Machine below, so it refuses rather than skipping the comparison.
                 const authorization = parsedInputAuthorization.data;
                 const binding = authorization.binding;
                 const source = workspaceSyncSourceWriterTargetRouting?.success
