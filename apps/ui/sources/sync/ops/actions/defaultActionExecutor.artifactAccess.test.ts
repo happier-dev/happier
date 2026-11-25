@@ -38,6 +38,9 @@ import { createArtifactReadBatchHttpResponse, projectArtifactStoredKind } from '
 import { Encryption } from '@/sync/encryption/encryption';
 import { fetchArtifactWithBodyFromApi } from '@/sync/engine/artifacts/syncArtifacts';
 import { readReviewAttentionV1, readOneReviewAttentionV1, getReviewV1, scanReviewsV1 } from '../../../../../../packages/plugins/triage/src/reviews/source';
+import { createRegisteredReviewSourceTestkit } from '../../../../../../packages/plugins/triage/src/reviews/attention.testkit';
+import type { PluginServices } from '@happier-dev/plugin-sdk';
+import { ReviewArtifactBodyV1Schema } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 
 // Only HTTP, device credentials and native UI modules are substituted. Account,
 // Artifact, Action, kind-policy and cryptographic owners execute their real logic.
@@ -207,6 +210,81 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
 }
 
 describe('UI Artifact sharing Action front door', () => {
+    it('opens a granted Review title in the registered recipient source and emits no item for a nongrantee', async () => {
+        const title = 'Sealed title for the requested reviewer';
+        const body = JSON.stringify(ReviewArtifactBodyV1Schema.parse({ v: 1, rounds: [{ ordinal: 1, state: 'completed',
+            startedAt: 1, finishedAt: 2, reviewerIds: ['reviewer'], runs: [] }] }));
+        const f = await fixture('e2ee', { header: { kind: 'review.v1', v: 1, reviewId: 'document', title }, body });
+        try {
+            const granted = await f.executor.execute('artifact.access.grants.set', {
+                artifactId: 'document', principal: { kind: 'account', accountId: 'recipient' }, accessLevel: 'view',
+            }, f.context);
+            if (!granted.ok) throw new Error(JSON.stringify(granted));
+            expect(granted).toMatchObject({ ok: true, result: { changed: true } });
+            const recipientEnvelope = f.envelopes.at(-1)?.recipientKeyEnvelopes[0];
+            expect(recipientEnvelope).toBeDefined();
+            if (!recipientEnvelope) throw new Error('Expected the committed recipient key envelope');
+            const stored = { ...f.stored(), access: 'view' as const, dataEncryptionKey: recipientEnvelope.encryptedDataKey,
+                provenanceDataEncryptionKey: recipientEnvelope.encryptedProvenanceDataKey ?? null };
+            expect(stored.header).not.toContain(title);
+
+            // Start a distinct recipient Account context: only its retained key pair
+            // and its grant envelope are available to the real Artifact opener.
+            const recipientHome = await upsertAndActivateServer({ serverUrl: 'https://review-recipient.test', scope: 'tab' });
+            const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'recipient' })), 'base64url')}.signature`;
+            vi.mocked(TokenStorage.getCredentialsForServerUrl).mockResolvedValue({ token, encryption: {
+                publicKey: encodeBase64(x25519.getPublicKey(f.recipientSecret)), machineKey: encodeBase64(f.recipientSecret),
+            } });
+            getStorage().setState({ settingsScope: { serverId: recipientHome.id, accountId: 'recipient' } });
+            const recipientReads: unknown[] = [];
+            setRuntimeFetch(async (url, init) => {
+                const target = new URL(String(url));
+                if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return Response.json({});
+                expect(target.origin).toBe(recipientHome.serverUrl);
+                expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${token}`);
+                if (target.pathname === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 0 });
+                if (target.pathname === '/v1/artifacts/read' && init?.method === 'POST') {
+                    const input: unknown = JSON.parse(String(init.body));
+                    recipientReads.push(input);
+                    return createArtifactReadBatchHttpResponse(input, artifactId => ({ artifactId, ok: true,
+                        artifact: stored, recipientCensus: null }));
+                }
+                throw new Error(`Unexpected recipient request: ${target.pathname}`);
+            });
+            const executor = createDefaultActionExecutor({ presentUserActionConfirmation: async () => true });
+            const context = { ...f.context, serverId: recipientHome.id };
+            let hasReviewGrant = true;
+            const review = { reviewId: 'document', createdAt: 1, updatedAt: 2, projectSourceId: null, workflowId: null,
+                subjectKind: 'comparison', sourceKind: 'direct', state: 'completed', currentRoundOrdinal: 1,
+                startedAt: 1, finishedAt: 2, counts: { total: 2, needsDecision: 2 }, needsYou: {
+                    reviewId: 'document', roundOrdinal: 1, reason: 'review_needs_you', needsYou: true,
+                    requestedVerdict: true, pendingDecisions: true, canSubmitVerdict: true } } as const;
+            expect(JSON.stringify(review)).not.toContain(title);
+            // Review permission facts are the host transport boundary. The source,
+            // Action admission, Account binding and Artifact cryptography stay real.
+            const actions = { execute: async (id: Parameters<typeof executor.execute>[0], input: unknown) => {
+                if (id === 'reviews.list') return { items: hasReviewGrant ? [review] : [], cursor: null };
+                const result = await executor.execute(id, input, context);
+                if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+                return result.result;
+            } } as unknown as PluginServices['actions'];
+            const kit = await createRegisteredReviewSourceTestkit(actions);
+            const input = { v: 1, instance: { v: 1, instance: { source: { pluginId: 'happier.triage', localId: 'reviews' },
+                sourceInstanceId: 'f2494c84-85b6-4c0c-a99a-9a36765ed07e' }, binding: { purpose: 'reviews', source: 'accountData' },
+                localInstanceKey: 'reviews', configuration: { v: 1, token: 'happier-reviews-v1' } } };
+            try {
+                await expect(kit.invokeAction('test-read', input)).resolves.toMatchObject({ items: [{
+                    title, reason: 'review_needs_you', resolved: false,
+                    localRef: { kindId: 'review', collisionScope: 'reviews', entryId: 'document' },
+                }] });
+                expect(recipientReads).toEqual([{ artifactIds: ['document'], projection: 'headers' }]);
+                hasReviewGrant = false;
+                await expect(kit.invokeAction('test-read', input)).resolves.toMatchObject({ items: [] });
+                expect(recipientReads).toHaveLength(1);
+            } finally { await kit.dispose(); }
+        } finally { f.account.dispose(); }
+    });
+
     it.each([{ mode: 'plain', rows: 3 }, { mode: 'e2ee', rows: 1 }] as const)('reads Review attention and source titles from $mode headers ($rows rows), opening a body only on demand', async ({ mode, rows }) => {
         const ids = Array.from({ length: rows }, (_, index) => index === 0 ? 'document' : `document-${index}`);
         const f = await fixture(mode, { header: { kind: 'review.v1', v: 1, reviewId: 'document', title: 'Recipient Review' }, body: 'private Review body' }, ids.slice(1));

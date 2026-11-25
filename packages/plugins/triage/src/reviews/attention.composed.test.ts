@@ -1,39 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import { definePlugin, type PluginServices } from '@happier-dev/plugin-sdk';
+import type { PluginServices } from '@happier-dev/plugin-sdk';
 import {
-  reviewTriageLocalRefV1, TriageGetInputV1Schema, TriageGetResultV1Schema,
-  TriageReadAttentionInputV1Schema, TriageReadAttentionResultV1Schema, TriageScanInputV1Schema, TriageScanResultV1Schema,
+  reviewTriageLocalRefV1, TriageGetResultV1Schema,
+  TriageReadAttentionResultV1Schema, TriageScanResultV1Schema,
 } from '@happier-dev/triage-protocol/v1';
-import { TRIAGE_ACCOUNT_ACTIONS } from '../accountDefinition.js';
-import { PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
-import { createReviewSourceContributionV1 } from './contribution.js';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-
-// Keep the registered source's real declaration and Action handler, without
-// importing unrelated collection schemas through the full plugin definition.
-let kit: PluginTestkit;
-const source = definePlugin({ id: 'happier.triage', version: '0.0.0',
-contributionPoints: PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS,
-contributesTo: { 'happier.triage': { sources: { reviews: createReviewSourceContributionV1() } } },
-actions: { ...Object.fromEntries(
-  Object.entries(TRIAGE_ACCOUNT_ACTIONS).filter(([id]) => id.startsWith('internal/reviews/')),
-), 'test-read': { title: 'Read admitted Review attention', surfaces: ['cli'], dangerLevel: 'safe',
-  inputSchema: TriageReadAttentionInputV1Schema, resultSchema: TriageReadAttentionResultV1Schema,
-  run: async (input, context) => context.services.actions.executeAdmittedTargetedOperation(
-    kit.issueAdmittedTargetedOperation({ point: TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
-      contributor: { testkit: kit, contributionId: 'reviews' }, role: 'readAttention' }), input),
-}, 'test-scan': { title: 'Scan admitted Reviews', surfaces: ['cli'], dangerLevel: 'safe',
-  inputSchema: TriageScanInputV1Schema, resultSchema: TriageScanResultV1Schema,
-  run: async (input, context) => context.services.actions.executeAdmittedTargetedOperation(
-    kit.issueAdmittedTargetedOperation({ point: TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
-      contributor: { testkit: kit, contributionId: 'reviews' }, role: 'scan' }), input),
-}, 'test-get': { title: 'Get an admitted Review', surfaces: ['cli'], dangerLevel: 'safe',
-  inputSchema: TriageGetInputV1Schema, resultSchema: TriageGetResultV1Schema,
-  run: async (input, context) => context.services.actions.executeAdmittedTargetedOperation(
-    kit.issueAdmittedTargetedOperation({ point: TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
-      contributor: { testkit: kit, contributionId: 'reviews' }, role: 'get' }), input),
-} } });
+import { createRegisteredReviewSourceTestkit } from './attention.testkit.js';
 
 const instance = { v: 1, instance: { source: { pluginId: 'happier.triage', localId: 'reviews' },
   sourceInstanceId: 'f2494c84-85b6-4c0c-a99a-9a36765ed07e' }, binding: { purpose: 'reviews', source: 'accountData' },
@@ -70,7 +42,7 @@ describe('registered Review source', () => {
       }
       throw new Error(`Unexpected host Action ${id}`);
     } } as unknown as PluginServices['actions'];
-    kit = await createPluginTestkit({ manifest: source.manifest, module: source, services: { actions } });
+    const kit = await createRegisteredReviewSourceTestkit(actions);
     const read = async () => TriageReadAttentionResultV1Schema.parse(await kit.invokeAction('test-read', { v: 1, instance }));
     try {
       const pending = await read();
