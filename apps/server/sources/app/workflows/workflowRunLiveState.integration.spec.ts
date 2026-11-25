@@ -210,7 +210,7 @@ describe("workflow Run live state", () => {
         })).rejects.toMatchObject({ code: "currentness_conflict" });
     });
 
-    it("includes only the first held invocation in the authorized attention page and clears it after settlement", async () => {
+    it("returns the same first held invocation on exact and attention reads and clears it after settlement", async () => {
         const seeded = await seed();
         const stranger = await seed();
         const { input } = await admit(seeded);
@@ -230,16 +230,19 @@ describe("workflow Run live state", () => {
             [input.runId]: { index: { id: ids[0], lifecycle: "waiting_for_review" }, contentEnvelope: expect.any(String) },
         }, runs: [{ id: input.runId, heldCount: 5 }] });
         expect(await service.getWorkflowRun({ accountId: seeded.accountId, runId: input.runId }))
-            .toMatchObject({ run: { heldCount: 5 } });
+            .toMatchObject({ run: { heldCount: 5 },
+                heldProgress: { index: { id: ids[0], lifecycle: "waiting_for_review" }, contentEnvelope: expect.any(String) } });
         expect(await service.listWorkflowRuns({ ...request, accountId: stranger.accountId })).toMatchObject({ runs: [], heldProgressByRunId: {} });
         await db.workflowRunInvocation.update({ where: { id: ids[0] }, data: { lifecycle: "completed" } });
         expect(await service.listWorkflowRuns(request)).toMatchObject({ heldProgressByRunId: { [input.runId]: { index: { id: ids[1] } } },
             runs: [{ heldCount: 4 }] });
+        expect(await service.getWorkflowRun({ accountId: seeded.accountId, runId: input.runId }))
+            .toMatchObject({ heldProgress: { index: { id: ids[1] } } });
         await db.workflowRunInvocation.updateMany({ where: { id: { in: ids.slice(1) } }, data: { lifecycle: "completed" } });
         expect(await service.listWorkflowRuns(request)).toMatchObject({ runs: [], heldProgressByRunId: {} });
         expect(await service.listWorkflowRuns({ ...request, attention: undefined })).not.toHaveProperty("heldProgressByRunId");
         expect(await service.getWorkflowRun({ accountId: seeded.accountId, runId: input.runId }))
-            .toMatchObject({ run: { heldCount: 0 } });
+            .toMatchObject({ run: { heldCount: 0 }, heldProgress: null });
     });
 
     it("keeps Needs-you membership actionable and consistent across list, detail, wait and definition summaries", async () => {

@@ -292,6 +292,7 @@ function parseSnapshot(value: unknown) {
     resultEnvelope: parsed.resultEnvelope === null || typeof parsed.resultEnvelope === 'string' ? parsed.resultEnvelope : (() => { throw workflowError('content_unavailable'); })(),
     keyCensus: WorkflowRunRecipientCensusResponseV1Schema.parse(parsed.keyCensus),
     rootProgress: parsed.rootProgress,
+    heldProgress: parsed.heldProgress,
   };
 }
 
@@ -801,7 +802,26 @@ export type WorkflowCombinedRunStartV1 = Readonly<{
   orchestrationTarget: WorkflowProjectTargetV1;
 }>;
 
-/** `authoredContext`'s answer from a display summary's step names (same keys as its writer). */
+/** Nested definitions own their local block ids. Branch scope preserves the authored lane. */
+function authoredStepContext(
+  { definition: root, frozenChildren }: WorkflowAcceptedSnapshotV1,
+  path: WorkflowProgressEnvelopeV1['invocationPath'],
+) {
+  let definition: WorkflowDefinitionV1 | undefined = root;
+  let laneLabel: string | undefined;
+  for (const scope of path.scope) {
+    if (!definition) break;
+    const block: WorkflowBlock | undefined = walkWorkflowBlocks(definition.blocks).find(block => block.id === scope.blockId);
+    if (scope.kind === 'workflow') {
+      definition = block?.kind === 'workflow' ? frozenChildren[block.workflowRef] : undefined;
+    } else if (scope.kind === 'branch' && block?.kind === 'parallel') {
+      laneLabel = block.branches.find(branch => branch.id === scope.branchId)?.name?.trim() || laneLabel;
+    }
+  }
+  return { definition, laneLabel, block: definition ? walkWorkflowBlocks(definition.blocks).find(block => block.id === path.blockId) : undefined };
+}
+
+/** `authoredStepContext`'s answer from a display summary's step names (same keys as its writer). */
 function summarizedStepContext(stepNames: WorkflowRunDisplaySummaryV1['stepNames'], path: WorkflowProgressEnvelopeV1['invocationPath']):
   Readonly<{ laneLabel?: string; block?: Readonly<{ kind: string; name?: string }> }> {
   const chain: string[] = [];
@@ -811,6 +831,30 @@ function summarizedStepContext(stepNames: WorkflowRunDisplaySummaryV1['stepNames
     else if (scope.kind === 'branch') laneLabel = stepNames?.lanes[workflowRunStepNameKeyV1(chain, scope.blockId, scope.branchId)] || laneLabel;
   }
   return { ...(laneLabel ? { laneLabel } : {}), block: stepNames?.steps[workflowRunStepNameKeyV1(chain, path.blockId)] };
+}
+
+function projectHeldStep(
+  raw: unknown,
+  runId: string,
+  accountId: string,
+  enc: WorkflowRunEncryptionV1,
+  resolveContext: (path: WorkflowProgressEnvelopeV1['invocationPath']) => ReturnType<typeof summarizedStepContext>,
+): NonNullable<WorkflowRunSummaryV1['heldStep']> | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const fact = record(raw);
+  const parsed = WorkflowRunInvocationIndexV1Schema.safeParse(fact.index);
+  if (!parsed.success || parsed.data.runId !== runId || parsed.data.lifecycle !== 'waiting_for_review') return null;
+  const index = parsed.data;
+  const progress = openWorkflowProgressStoredEnvelopeV1({ ...openMode(enc),
+    binding: { v: 1, purpose: 'invocation_progress', accountId, runId,
+      recordId: index.id, sequence: index.sequence, parentRecordId: index.parentRecordId,
+      memberOrdinal: index.memberOrdinal, attempt: index.attempt },
+    envelope: typeof fact.contentEnvelope === 'string' ? parseWorkflowStoredContentEnvelopeV1(fact.contentEnvelope) : null });
+  if (progress.kind !== 'available') return null;
+  const authored = resolveContext(progress.content.invocationPath);
+  const label = (authored.block?.kind === progress.content.blockKind ? authored.block.name?.trim() : undefined)
+    || progress.content.blockKind;
+  return { invocationId: index.id, label, ...(authored.laneLabel ? { laneLabel: authored.laneLabel } : {}) };
 }
 
 export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActionDeps): WorkflowRunActionOwner & Readonly<{
@@ -2937,42 +2981,10 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               assertRunResourceRestriction(args.context, { machineId: accepted.machineId,
                 project: accepted.workspaceTarget.project }, deps.normalizeAbsolutePath);
               matchesResource = true;
-              // Resolve authored names against the accepted definition, never a mutable source.
-              // Nested workflows have local ids; branch scope does not change their numbering.
-              const authoredContext = (path: WorkflowProgressEnvelopeV1['invocationPath']) => {
-                const { definition: root, frozenChildren } = openProgram();
-                let definition: WorkflowDefinitionV1 | undefined = root;
-                let laneLabel: string | undefined;
-                for (const scope of path.scope) {
-                  if (!definition) break;
-                  const block: WorkflowBlock | undefined = walkWorkflowBlocks(definition.blocks).find(block => block.id === scope.blockId);
-                  if (scope.kind === 'workflow') {
-                    definition = block?.kind === 'workflow' ? frozenChildren[block.workflowRef] : undefined;
-                  } else if (scope.kind === 'branch' && block?.kind === 'parallel') {
-                    laneLabel = block.branches.find(branch => branch.id === scope.branchId)?.name?.trim() || laneLabel;
-                  }
-                }
-                return { definition, laneLabel, block: definition ? walkWorkflowBlocks(definition.blocks).find(block => block.id === path.blockId) : undefined };
-              };
               if (args.input.attention === 'required') {
-                const fact = record(heldProgressByRunId[run.id] ?? {});
-                const parsed = WorkflowRunInvocationIndexV1Schema.safeParse(fact.index);
-                if (parsed.success && parsed.data.runId === run.id && parsed.data.lifecycle === 'waiting_for_review') {
-                  const index = parsed.data;
-                  const progress = openWorkflowProgressStoredEnvelopeV1({ ...openMode(resolved.encryption),
-                    binding: { v: 1, purpose: 'invocation_progress', accountId: census.ownerAccountId, runId: run.id,
-                      recordId: index.id, sequence: index.sequence, parentRecordId: index.parentRecordId,
-                      memberOrdinal: index.memberOrdinal, attempt: index.attempt },
-                    envelope: typeof fact.contentEnvelope === 'string' ? parseWorkflowStoredContentEnvelopeV1(fact.contentEnvelope) : null });
-                  if (progress.kind === 'available') {
-                    // A summarized row names its held step from the summary; only a pre-summary row opens the program.
-                    const authored = acceptedOpen ? authoredContext(progress.content.invocationPath)
-                      : summarizedStepContext(stepNames, progress.content.invocationPath);
-                    const label = (authored.block?.kind === progress.content.blockKind ? authored.block.name?.trim() : undefined)
-                      || progress.content.blockKind;
-                    heldStep = { invocationId: index.id, label, ...(authored.laneLabel ? { laneLabel: authored.laneLabel } : {}) };
-                  }
-                }
+                // Summarized rows name the hold without opening the frozen program.
+                heldStep = projectHeldStep(heldProgressByRunId[run.id], run.id, census.ownerAccountId, resolved.encryption,
+                  path => acceptedOpen ? authoredStepContext(openProgram(), path) : summarizedStepContext(stepNames, path));
               }
               const requested = args.input.invocationProvenance?.find(ref => ref.runId === run.id);
               const rawFacts = record(storagePage.invocationProgressByRunId ?? {})[run.id];
@@ -2988,7 +3000,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
                       memberOrdinal: index.memberOrdinal, attempt: index.attempt },
                     envelope: typeof fact.contentEnvelope === 'string' ? parseWorkflowStoredContentEnvelopeV1(fact.contentEnvelope) : null });
                   if (progress.kind !== 'available') continue;
-                  const { definition } = authoredContext(progress.content.invocationPath);
+                  const { definition } = authoredStepContext(openProgram(), progress.content.invocationPath);
                   const stepOrdinal = definition ? workflowBlockOrdinalV1(definition.blocks, progress.content.invocationPath.blockId) : null;
                   if (stepOrdinal) invocationProvenance.push({ index, stepOrdinal,
                     ...(resultProvenance?.[index.id] ? { notificationCondition: resultProvenance[index.id]!.notificationCondition } : {}) });
@@ -3135,8 +3147,11 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         args.context.signal,
       );
       const { stepProgress, stepProgressCurrentness } = openRootProgress(args.input.runId, snapshot.rootProgress, enc, accountId);
+      const heldStep = snapshot.heldProgress === undefined ? undefined
+        : projectHeldStep(snapshot.heldProgress, args.input.runId, accountId, enc, path => authoredStepContext(accepted, path));
       return WorkflowActionOutputSchemasV1[args.actionId].parse({
-        run: { ...snapshot.run, origin: projectAcceptedOrigin(accepted.origin, snapshot.run.origin), stepProgress, stepProgressCurrentness },
+        run: { ...snapshot.run, origin: projectAcceptedOrigin(accepted.origin, snapshot.run.origin), stepProgress, stepProgressCurrentness,
+          ...(heldStep === undefined ? {} : { heldStep }) },
         callerAccess: projectRunCallerAccess(snapshot.keyCensus),
         definition: accepted.definition,
         authoredDefinition: accepted.authoredDefinition,

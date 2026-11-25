@@ -943,7 +943,7 @@ export async function getWorkflowRunControl(params: Readonly<{ accountId: string
         if (params.projection === 'revision') return { run };
         const root = await tx.workflowRunInvocation.findFirst({ where: { runId: params.runId,
             parentRecordId: null, sequence: 0n, memberOrdinal: 0n, attempt: 0n }, select: invocationSelect });
-        return { run, rootProgress: projectWorkflowRootProgress(root, census) };
+        return { run, rootProgress: projectWorkflowInvocationProgress(root, census) };
     }, { isolationLevel: 'ReadCommitted', transactionClass: 'workflow-get-run-control' });
 }
 
@@ -984,8 +984,13 @@ export async function getWorkflowRun(params: Readonly<{ accountId: string; runId
         if (resultEnvelope !== null) assertWorkflowStoredEnvelopeOuterForMode({ raw: resultEnvelope, mode, binding: { v: 1, purpose: "final_result", accountId: keyCensus.ownerAccountId, runId: params.runId } });
         const root = await tx.workflowRunInvocation.findFirst({ where: { runId: params.runId,
             parentRecordId: null, sequence: 0n, memberOrdinal: 0n, attempt: 0n }, select: invocationSelect });
+        const held = row.state !== "cancelled" && row._count.workflowInvocations > 0
+            ? await tx.workflowRunInvocation.findFirst({ ...firstHeldWorkflowInvocation,
+                where: { runId: row.id, ...firstHeldWorkflowInvocation.where } })
+            : null;
         return { run: await projectRunInTx(tx, row as WorkflowRunProjectionRow, params.accountId), managedCreationId: row.managedCreationId, acceptedEnvelope: row.workflowAcceptedSnapshotEnvelope, checkpointEnvelope, resultEnvelope, keyCensus,
-            rootProgress: projectWorkflowRootProgress(root, keyCensus) };
+            rootProgress: projectWorkflowInvocationProgress(root, keyCensus),
+            heldProgress: projectWorkflowInvocationProgress(held, keyCensus) };
     }, { isolationLevel: "ReadCommitted", transactionClass: "workflow-get-run" });
 }
 
@@ -1265,8 +1270,7 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
         // Keep the ordinary execution-exists relation independent of attention membership.
         const heldRuns = membershipOnly || params.attention !== "required" || candidateRows.length === 0 ? [] : await tx.automationRun.findMany({
             where: { id: { in: candidateRows.map(row => row.id) } },
-            select: { id: true, workflowInvocations: { where: { lifecycle: "waiting_for_review" },
-                orderBy: { sequence: "asc" }, take: 1, select: invocationSelect } },
+            select: { id: true, workflowInvocations: { ...firstHeldWorkflowInvocation, take: 1 } },
         });
         const candidateIds = new Set(candidateRows.map(row => row.id));
         const selectedReferences = params.invocationProvenance?.filter(ref => candidateIds.has(ref.runId)
@@ -1316,25 +1320,12 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
                         const keyCensus = pageKeys?.get(candidate.id);
                         if (!keyCensus) throw new WorkflowRunServiceError("run_not_found");
                         const root = rootsByRunId.get(candidate.id);
-                        const rootProgress = projectWorkflowRootProgress(root, keyCensus);
-                        const projectPrivateInvocation = (row: (typeof selectedInvocations)[number]) => {
-                            try {
-                                assertWorkflowStoredEnvelopeOuterForMode({ raw: row.contentEnvelope, mode: keyCensus.encryptionMode,
-                                    binding: { v: 1, purpose: "invocation_progress", accountId: keyCensus.ownerAccountId, runId: row.runId,
-                                        recordId: row.id, sequence: row.sequence.toString(), parentRecordId: row.parentRecordId,
-                                        memberOrdinal: row.memberOrdinal.toString(), attempt: row.attempt.toString() } });
-                                return { index: projectInvocation(row), contentEnvelope: row.contentEnvelope };
-                            } catch (error) {
-                                if (!(error instanceof WorkflowStoredContentError)) throw error;
-                                return null;
-                            }
-                        };
+                        const rootProgress = projectWorkflowInvocationProgress(root, keyCensus);
                         const invocationProgress = selectedInvocations.filter(row => row.runId === candidate.id).flatMap(row => {
-                            const progress = projectPrivateInvocation(row);
+                            const progress = projectWorkflowInvocationProgress(row, keyCensus);
                             return progress ? [progress] : [];
                         });
-                        const held = heldByRunId.get(candidate.id);
-                        const heldProgress = held ? projectPrivateInvocation(held) : null;
+                        const heldProgress = projectWorkflowInvocationProgress(heldByRunId.get(candidate.id), keyCensus);
                         const row = { ...candidate, workflowAcceptedSnapshotEnvelope: candidate.workflowAcceptedSnapshotEnvelope ?? null,
                             workflowDisplaySummaryEnvelope: candidate.workflowDisplaySummaryEnvelope ?? null,
                             invocationAttentionRequired: attentionIds.has(candidate.id), frontierContinuationAvailable: continuation.has(candidate.id), keyCensus, rootProgress, invocationProgress, heldProgress };
@@ -1712,18 +1703,24 @@ export async function listWorkflowRunsForRecovery(params: PageOptions & Readonly
 
 export const invocationSelect = { id: true, runId: true, sequence: true, parentRecordId: true, memberOrdinal: true, attempt: true, contentRevision: true, lifecycle: true, contentEnvelope: true, createdAt: true, updatedAt: true } as const;
 export type InvocationRow = Prisma.WorkflowRunInvocationGetPayload<{ select: typeof invocationSelect }>;
+const firstHeldWorkflowInvocation = {
+    where: { lifecycle: "waiting_for_review" }, orderBy: { sequence: "asc" }, select: invocationSelect,
+} as const;
+
 export function projectInvocation(row: InvocationRow) {
     return { id: row.id, runId: row.runId, sequence: projectWorkflowBigIntV1(row.sequence), parentRecordId: row.parentRecordId, memberOrdinal: projectWorkflowBigIntV1(row.memberOrdinal), attempt: projectWorkflowBigIntV1(row.attempt), contentRevision: projectWorkflowBigIntV1(row.contentRevision), lifecycle: row.lifecycle as WorkflowInvocationLifecycleV1, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
 }
 
-/** Same opaque root observation for exact detail and paged summaries; private content stays sealed. */
-function projectWorkflowRootProgress(root: InvocationRow | null | undefined, census: WorkflowRunRecipientCensusResponseV1) {
-    if (!root) return null;
+/** Exact detail and paged summaries forward the same bound, sealed invocation fact. */
+function projectWorkflowInvocationProgress(row: InvocationRow | null | undefined, census: WorkflowRunRecipientCensusResponseV1) {
+    if (!row) return null;
+    const index = projectInvocation(row);
     try {
-        assertWorkflowStoredEnvelopeOuterForMode({ raw: root.contentEnvelope, mode: census.encryptionMode,
+        assertWorkflowStoredEnvelopeOuterForMode({ raw: row.contentEnvelope, mode: census.encryptionMode,
             binding: { v: 1, purpose: "invocation_progress", accountId: census.ownerAccountId, runId: census.runId,
-                recordId: root.id, sequence: "0", parentRecordId: null, memberOrdinal: "0", attempt: "0" } });
-        return { index: projectInvocation(root), contentEnvelope: root.contentEnvelope };
+                recordId: index.id, sequence: index.sequence, parentRecordId: index.parentRecordId,
+                memberOrdinal: index.memberOrdinal, attempt: index.attempt } });
+        return { index, contentEnvelope: row.contentEnvelope };
     } catch (error) {
         if (!(error instanceof WorkflowStoredContentError)) throw error;
         return null;

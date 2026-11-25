@@ -2608,6 +2608,9 @@ describe('shared Account workflow run owner', () => {
     }));
     let heldFact: unknown = { index, contentEnvelope };
     const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
+      if (operation.operation === 'get' && carrier === 'snapshot') {
+        return { ...snapshot, run: { ...snapshot.run, state: 'waiting_for_review', heldCount }, heldProgress: heldFact };
+      }
       if (operation.operation !== 'list') throw new Error('attention_must_not_read_per_run_detail');
       return { runs: [{ ...snapshot.run, state: 'waiting_for_review', attentionRequired: true, invocationAttentionRequired: true, heldCount }],
         acceptedEnvelopesByRunId: carrier === 'snapshot' ? { [runId]: snapshot.acceptedEnvelope } : {},
@@ -2616,15 +2619,18 @@ describe('shared Account workflow run owner', () => {
           displaySummary: projectWorkflowRunDisplaySummaryV1(accepted) })) } } : {}),
         keyCensusByRunId: { [runId]: snapshot.keyCensus }, heldProgressByRunId: { [runId]: heldFact } };
     } }));
+    const expectedHeldStep = waitOnly ? { invocationId: index.id, label: 'wait' }
+      : { invocationId: index.id, label: 'Review the changelog', laneLabel: 'Changelog' };
     const result = await owner.execute({ actionId: 'workflow.run.list', input: { attention: 'required' }, context: {} });
-    expect(result).toMatchObject({ runs: [{ heldCount, heldStep: waitOnly
-      ? { invocationId: index.id, label: 'wait' }
-      : { invocationId: index.id, label: 'Review the changelog', laneLabel: 'Changelog' } }] });
+    expect(result).toMatchObject({ runs: [{ heldCount, heldStep: expectedHeldStep }] });
+    const get = () => owner.execute({ actionId: 'workflow.run.get', input: { runId, includeUsage: false }, context: {} });
+    if (carrier === 'snapshot') expect(WorkflowRunGetResultV1Schema.parse(await get()).run.heldStep).toEqual(expectedHeldStep);
     for (const unavailable of [null, { index: { ...index, lifecycle: 'completed' }, contentEnvelope },
       { index: { ...index, runId: 'other-run' }, contentEnvelope }, { index: { ...index, id: 'other-record' }, contentEnvelope }]) {
       heldFact = unavailable;
       expect(await owner.execute({ actionId: 'workflow.run.list', input: { attention: 'required' }, context: {} }))
         .toMatchObject({ runs: [{ heldCount, heldStep: null, startedBy: 'user', where: { directory: '/repo' } }] });
+      if (carrier === 'snapshot') expect(WorkflowRunGetResultV1Schema.parse(await get()).run.heldStep).toBeNull();
     }
     expect(await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} }))
       .toMatchObject({ runs: [{ heldStep: undefined }] });
