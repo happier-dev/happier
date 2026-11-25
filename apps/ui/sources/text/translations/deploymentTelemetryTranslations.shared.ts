@@ -93,7 +93,7 @@ export type Copy = Readonly<{
     turnOffFailed: string;
     retry: string;
     preparing: string;
-    missed: (p: Readonly<{ count: string }>) => string;
+    missed: (p: Readonly<{ count: number; formattedCount: string }>) => string;
     gaps: string;
     unavailableTitle: string;
     unavailableBody: string;
@@ -252,7 +252,7 @@ const en: Copy = {
     turnOffFailed: 'Capture could not be turned off.',
     retry: 'Retry capture',
     preparing: 'Preparing capture…',
-    missed: ({ count }) => `${count} events weren’t kept`,
+    missed: ({ count, formattedCount }) => count === 1 ? `${formattedCount} event wasn’t kept` : `${formattedCount} events weren’t kept`,
     gaps: 'Capture on with gaps',
     unavailableTitle: 'Capture isn’t answering right now',
     unavailableBody: 'Capture keeps each request’s route, time, database queries and logs on this Machine. Try again in a moment.',

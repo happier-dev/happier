@@ -133,7 +133,7 @@ export interface OtlpReceiverOptions<Context> {
     context: Context;
     /** OTLP/HTTP 1.11.1 requires raw and decompressed body bounds. The ingress owner may override its 64 MiB default. */
     maximumRequestBytes?: number;
-    /** The authenticated collector holds the existing writer across body read and persistence. */
+    /** Capture holds the existing writer across body read and persistence. */
     withWriter?: (operation: () => Promise<void>) => Promise<void>;
     normalizeStatement: NormalizeDatabaseStatement;
     onBatch: (batch: NormalizedTelemetryBatch, context: Context) => OtlpIngestResult | Promise<OtlpIngestResult>;

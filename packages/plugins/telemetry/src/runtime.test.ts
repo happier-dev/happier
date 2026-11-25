@@ -32,7 +32,7 @@ async function fixture() {
     return { ...sqlite, runtime, publications };
 }
 
-async function post(endpoint: string, signal: 'traces' | 'logs', body: unknown) {
+async function post(endpoint: string, signal: 'traces' | 'logs' | 'metrics', body: unknown) {
     return fetch(`${endpoint}/v1/${signal}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 }
 
@@ -118,9 +118,9 @@ describe('capture runtime through real HTTP and SQLite', () => {
         }
     });
 
-    it('retains concurrent trace and log exports without counting the retryable batch as lost', async () => {
+    it('acknowledges and retains overlapping trace, log and metric exports without replay', async () => {
         const f = await fixture();
-        const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition } });
+        const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition, capabilities: { metrics: true } } });
         const held = f.holdNextCommit();
         try {
             const traces = () => post(receiver.endpoint, 'traces', traceRequest());
@@ -129,20 +129,22 @@ describe('capture runtime through real HTTP and SQLite', () => {
             }] }] }] });
             const tracesPending = traces();
             await held.entered;
-            const busy = await logs();
-            expect(busy.status).toBe(503);
-            expect(await busy.json()).toMatchObject({ code: 14, message: expect.any(String) });
-            expect(f.runtime.ingest.coverage(partition)).toEqual({ lostObservations: 0, reason: null });
-            expect(f.publications).toEqual([]);
-
+            const logsPending = logs();
+            const metricsPending = post(receiver.endpoint, 'metrics', { resourceMetrics: [{ scopeMetrics: [{ metrics: [{
+                name: 'api.requests', gauge: { dataPoints: [{ timeUnixNano: '1700000000001000000', asInt: '1' }] },
+            }] }] }] });
+            // Give both exporters a turn on the real listener while SQLite still holds the first commit.
+            await delay(150);
             held.release();
-            const accepted = await tracesPending;
-            expect(accepted.status).toBe(200);
-            expect(await accepted.json()).toEqual({});
-            const replay = await logs();
-            expect(replay.status).toBe(200);
-            expect(await replay.json()).toEqual({});
-            await f.runtime.ingest.settled();
+            const responses = await Promise.all([tracesPending, logsPending, metricsPending]);
+            const retained = await Promise.all([
+                f.runtime.store.list({ worktree: partition, kind: 'query', limit: 10 }),
+                f.runtime.store.list({ worktree: partition, kind: 'log', limit: 10 }),
+                f.runtime.store.metricPoints({ worktree: partition, since: 1_700_000_000_000, until: 1_700_000_001_000 }),
+            ]);
+            expect(retained.map(rows => rows.length)).toEqual([1, 1, 1]);
+            expect(responses.map(response => response.status)).toEqual([200, 200, 200]);
+            expect(await Promise.all(responses.map(response => response.json()))).toEqual([{}, {}, {}]);
             expect(await f.runtime.store.list({ worktree: partition, kind: 'query', limit: 10 })).toEqual([
                 expect.objectContaining({ traceId, spanId }),
             ]);
@@ -150,7 +152,7 @@ describe('capture runtime through real HTTP and SQLite', () => {
                 expect.objectContaining({ traceId, spanId, bodyPrefix: 'request completed' }),
             ]);
             expect(f.runtime.ingest.coverage(partition)).toEqual({ lostObservations: 0, reason: null });
-            expect(f.publications).toEqual([[partition], [partition]]);
+            expect(f.publications).toEqual([[partition], [partition], [partition]]);
         } finally {
             held.release();
             await receiver.release();

@@ -40,10 +40,11 @@ describe('local capture background lifecycle', () => {
    const exportLogs = (...messages: string[]) => fetch(`${bound!.endpoint}/v1/logs`, { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ resourceLogs: [{ scopeLogs: [{ logRecords: messages.map(stringValue =>
      ({ timeUnixNano: '1700000000000000000', body: { stringValue } })) }] }] }) });
-   expect((await exportLogs('busy writer')).status).toBe(503);
-   expect(runtime.ingest.coverage('first')).toEqual({ lostObservations: 0, reason: null });
+   const overlapping = exportLogs('while another capture write is held');
    held.release();
-   await runtime.ingest.settled();
+   expect((await overlapping).status).toBe(200);
+   expect(await runtime.store.list({ worktree: 'first', limit: 10 })).toHaveLength(1);
+   expect(runtime.ingest.coverage('first')).toEqual({ lostObservations: 0, reason: null });
    runtime.ingest.offer([{ id: 'next', worktree: 'other', kind: 'log', source: 'otlp', at: 2 }]);
    await runtime.ingest.settled();
    await runtime.removeWorktree('/physical/first');

@@ -125,14 +125,12 @@ export function createCaptureRuntime(input: {
      }
      return admission;
     },
-    withWriter: options.admit ? operation => ingest.exclusive(operation) : undefined,
+    withWriter: ingest.exclusive,
     async onBatch(batch, context) {
      const events = normalizeBatch(batch, context);
-     const localOffer = options.admit ? undefined : ingest.tryOffer(events);
-     if (localOffer?.kind === 'busy') return { accepted: false as const, retryable: true, message: 'Capture store is busy' };
      if (batch.rejectedRecords) ingest.recordLoss(context.partition, 'invalid_telemetry', batch.rejectedRecords, context.physicalRootIdentity);
+     const result = await ingest.write(events);
      if (options.admit) {
-      const result = await ingest.write(events);
       if (result.accepted) {
        const fingerprints = [...new Set(events.flatMap(event => event.kind === 'exception' ? [event.fingerprint] : []))];
        if (fingerprints.length) options.onExceptionsCommitted?.(context, fingerprints);
@@ -143,10 +141,9 @@ export function createCaptureRuntime(input: {
       return { accepted: false as const, retryable: !full, ...(full ? { status: 507 as const } : {}),
        message: full ? 'collector storage full' : 'OTLP store write failed' };
      }
-     // A sequential exporter can send its next request as soon as this response arrives.
-     const accepted = localOffer?.kind === 'accepted' && (await localOffer.settled).accepted;
-     return { accepted: true as const, rejectedRecords: accepted ? 0 : events.length,
-      ...(accepted ? {} : { message: 'Capture coverage lost while storage was unavailable' }) };
+     return result.accepted
+      ? { accepted: true as const }
+      : { accepted: true as const, rejectedRecords: events.length, message: 'Capture coverage lost while storage was unavailable' };
     },
    });
    return { endpoint: receiver.url, release: receiver.close };

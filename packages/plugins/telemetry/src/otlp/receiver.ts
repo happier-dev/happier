@@ -73,6 +73,7 @@ export function createOtlpRequestHandler<Context>(options: OtlpReceiverOptions<C
             const admission = options.admit ? await options.admit(request, signal) : { accepted: true as const, context: options.context };
             if (!admission.accepted) { failure(response, admission.status, admission.message, json); return; }
             const consume = async () => {
+                if (response.destroyed) return;
                 const body = await readBody(request, encoding === 'gzip', options.maximumRequestBytes ?? OTLP_HTTP_DEFAULT_MAXIMUM_REQUEST_BYTES);
                 const batch = normalizeOtlpEnvelope(signal, decodeOtlpRequest(signal, body, json), options.normalizeStatement);
                 const result = await options.onBatch(batch, admission.context);

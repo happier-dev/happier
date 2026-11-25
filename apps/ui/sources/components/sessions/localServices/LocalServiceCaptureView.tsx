@@ -235,7 +235,10 @@ export function LocalServiceCaptureView(
   // line with the next step beside it; the bar says only "Preparing" or "Capture on". The gap's cause is a store
   // code, so the line says what it means for the person (events weren't kept) and offers Retry.
   const gaps = coverage && coverage.lostObservations > 0
-    ? t('deploymentTelemetry.local.missed', { count: new Intl.NumberFormat(locale).format(coverage.lostObservations) })
+    ? t('deploymentTelemetry.local.missed', {
+        count: coverage.lostObservations,
+        formattedCount: new Intl.NumberFormat(locale).format(coverage.lostObservations),
+      })
     : coverage?.reason ? '' : null;
   // One decision for what the view shows: the body draws it, and the time window and status follow it.
   const bodyKind: CaptureBodyKind = status === null

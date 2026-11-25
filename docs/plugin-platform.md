@@ -46,12 +46,14 @@ summaries, while `analysis/requests.ts` owns request ancestry, explicit executio
 correlation and cautious repeated-SELECT evidence. Raw URL paths never substitute
 for `http.route`, and timing or matching SQL shapes never establish correlation.
 
-Ingestion admits one persistence batch at a time, without a replay queue. Local
-capture never waits for storage: busy or failed storage produces partition-scoped
-loss notifications, and local HTTP partial success reports refused records.
-Authenticated collector requests wait for the same writer before reading their
-bodies and acknowledge only committed batches. Native allocation failure returns
-HTTP 507 with `collector storage full`; an actual store failure returns HTTP 503.
+Ingestion admits one persistence batch at a time. Workspace-local and
+authenticated collector OTLP requests wait for the same writer before reading
+their bodies and settle over their open HTTP connections. PostgreSQL wire
+capture offers observations synchronously, and busy or failed storage produces
+partition-scoped loss notifications. Workspace-local HTTP partial success
+reports refused records. For the authenticated collector, native allocation
+failure returns HTTP 507 with `collector storage full`, and other store failures
+return HTTP 503.
 The Environment’s Telemetry tab shows quota failure from the selected `capture.status`
 coverage and keeps previously retained evidence readable.
 A disconnected waiting exporter releases its turn without retaining the writer.

@@ -5,8 +5,7 @@ type WorktreeIdentity = Pick<CaptureEvent, 'physicalRootIdentity'>;
 type PartitionCoverage = Readonly<{ coverage: CaptureCoverage }> & WorktreeIdentity;
 type ObservationLoss = Readonly<{ count: number }> & WorktreeIdentity;
 type CaptureWriteResult = { accepted: true } | { accepted: false; code: string };
-type CaptureOffer = { kind: 'busy' | 'failed' } | { kind: 'accepted'; settled: Promise<CaptureWriteResult> };
-/** One persistence batch, no replay queue and no awaited store call on the wire relay. */
+/** One persistence batch at a time. Only request-bound work can wait for the writer. */
 export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => Promise<void>, publish: (coverage: CaptureCoverage, partitions: readonly string[]) => void = () => {}) {
  let pending: Promise<void> | null = null;
  let failure: string | null = null;
@@ -56,23 +55,24 @@ export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => 
    return { accepted: false, code };
   }
  }
- function tryOffer(events: readonly CaptureEvent[]): CaptureOffer {
-  if (!events.length) return { kind: 'accepted', settled: Promise.resolve({ accepted: true }) };
-  if (failure) { loseEvents(events, failure); return { kind: 'failed' }; }
-  if (pending) return { kind: 'busy' };
-  const settled = Promise.resolve().then(() => persist(events)).finally(() => { pending = null; });
-  pending = settled.then(() => {}, () => {});
-  return { kind: 'accepted', settled };
+ function exclusive<T>(operation: () => Promise<T>): Promise<T> {
+  const result = (pending ?? Promise.resolve()).then(operation).finally(() => {
+   if (pending === settled) pending = null;
+  });
+  const settled = result.then(() => {}, () => {});
+  pending = settled;
+  return result;
  }
  return {
-  /** Called inside exclusive admission; local observation offers use the same persistence owner. */
+  /** Called inside exclusive admission. */
   write: persist,
-  /** Busy observations stay with the caller when its transport supports retry. */
-  tryOffer,
+  /** The wire relay offers only when idle and never waits for persistence. */
   offer(events: readonly CaptureEvent[]): boolean {
-   const result = tryOffer(events);
-   if (result.kind === 'busy') loseEvents(events, 'store_busy');
-   return result.kind === 'accepted';
+   if (!events.length) return true;
+   if (failure) { loseEvents(events, failure); return false; }
+   if (pending) { loseEvents(events, 'store_busy'); return false; }
+   void exclusive(() => persist(events));
+   return true;
   },
   coverage,
   recordLoss(partition: string, cause: string, count = 1, physicalRootIdentity?: string) {
@@ -98,12 +98,7 @@ export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => 
    publish(coverage(), [partition]);
   },
   settled(): Promise<void> { return pending ?? Promise.resolve(); },
-  async exclusive<T>(operation: () => Promise<T>): Promise<T> {
-   while (pending) await pending;
-   const operationResult = Promise.resolve().then(operation);
-   pending = operationResult.then(() => {}, () => {}).finally(() => { pending = null; });
-   return operationResult;
-  },
+  exclusive,
   retry() {
    failure = null;
    reason = lostObservations ? 'incomplete_interval' : null;
