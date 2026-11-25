@@ -543,8 +543,7 @@ export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, c
         try {
           const prepared = await verifyGroup({ repo, git, head, writers, priority, replayScratchRoot, timing });
           if (prepared.priorityExpired) return prepared;
-          const tickets = [...prepared.accepted, ...prepared.refused].map(({ writer }) => writer.id).filter(Boolean);
-          return { ...prepared, head, tickets };
+          return { ...prepared, head };
         } catch (error) {
           if (error instanceof EntryLoadAdmissionRequired || error instanceof EntryLoadAdmissionUnavailable) throw error;
           return { error };

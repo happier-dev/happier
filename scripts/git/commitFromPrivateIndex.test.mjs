@@ -751,10 +751,11 @@ test('only a packet that clears a fleet preflight input drift runs ahead of wait
   await wrongBytes.closed;
 });
 
-for (const scenario of ['one check and regeneration', 'bisected refusal', 'known missing import', 'arrival during the check']) {
+for (const scenario of ['one check and regeneration', 'bisected refusal', 'known missing import', 'refused writer retires', 'arrival during the check']) {
   test(`checks queued CLI packets as one exact tree (${scenario})`, { skip: !hasFlock }, async t => {
     const badEntry = scenario === 'bisected refusal';
-    const badImport = scenario === 'known missing import';
+    const retired = scenario === 'refused writer retires';
+    const badImport = scenario === 'known missing import' || retired;
     const bad = badEntry || badImport;
     const late = scenario === 'arrival during the check';
     const ownsProjection = !late && !badEntry;
@@ -787,7 +788,7 @@ export const actions = ${JSON.stringify(ids)};
       export async function loadEntryGraph({ id, entry }) {
         const files = readdirSync('apps/cli/src').filter(name => /^group-[1-5][.]mjs$/.test(name)).sort();
         appendFileSync(process.env.TEST_PROBE_LOG, JSON.stringify(files) + String.fromCharCode(10));
-        if (process.env.TEST_LATE_READY && files.length === 4) {
+        if (process.env.TEST_LATE_READY && files.length === Number(process.env.TEST_WAIT_GROUP_SIZE)) {
           for (let attempt = 0; !existsSync(process.env.TEST_LATE_READY) && attempt < 500; attempt++) {
             await new Promise(resolve => setTimeout(resolve, 20));
           }
@@ -832,12 +833,12 @@ export const actions = ${JSON.stringify(ids)};
         ...process.env, HAPPIER_COMMIT_GATE_ARRIVED_AT: String(id),
         HAPPIER_COMMIT_TYPECHECK_GATE: 'report', HAPPIER_COMMIT_TYPECHECK_DIR: path.join(f.cwd, '.git', 'typecheck-state'),
         TEST_GROUP_QUEUE: '1', TEST_PROBE_LOG: probeLog, TEST_GROUP_PROJECTIONS: projectionLog,
-        TEST_LATE_READY: late ? lateReady : '',
+        TEST_LATE_READY: late || retired ? lateReady : '', TEST_WAIT_GROUP_SIZE: retired ? '3' : '4',
       } });
       t.after(() => { if (child.exitCode === null) child.kill(); });
       let stderr = '';
       child.stderr.on('data', chunk => { stderr += chunk; });
-      writers.push({ closed: once(child, 'close'), stderr: () => stderr });
+      writers.push({ child, closed: once(child, 'close'), stderr: () => stderr });
       const deadline = performance.now() + 15000;
       const prefix = String(id).padStart(16, '0') + '-';
       while (!fs.readdirSync(tickets).some(name => name.startsWith(prefix))) {
@@ -848,17 +849,30 @@ export const actions = ${JSON.stringify(ids)};
     for (const id of [1, 2, 3, 4]) await startWriter(id);
     blocker.stdin.end();
     await blockerDone;
-    if (late) {
+    if (late || retired) {
       const deadline = performance.now() + 10000;
       while (!fs.existsSync(probeLog)) {
         assert.ok(performance.now() < deadline, writers[0].stderr());
         await new Promise(resolve => setTimeout(resolve, 20));
       }
-      await startWriter(5);
+      if (retired) {
+        const refused = writers[1];
+        const exited = once(refused.child, 'exit');
+        refused.child.kill('SIGTERM');
+        await exited;
+        const ticket = fs.readdirSync(tickets).find(name => name.startsWith('0000000000000002-'));
+        if (ticket) fs.rmSync(path.join(tickets, ticket), { recursive: true });
+      } else {
+        await startWriter(5);
+      }
       f.write('late-writer-ready', '');
     }
     const expectedStatuses = bad ? [0, 1, 0, 0] : late ? [0, 0, 0, 0, 0] : [0, 0, 0, 0];
-    for (const [i, writer] of writers.entries()) assert.equal((await writer.closed)[0], expectedStatuses[i], writer.stderr());
+    for (const [i, writer] of writers.entries()) {
+      const [code, signal] = await writer.closed;
+      if (retired && i === 1) assert.equal(signal, 'SIGTERM');
+      else assert.equal(code, expectedStatuses[i], writer.stderr());
+    }
     const probes = fs.readFileSync(probeLog, 'utf8').trim().split('\n').map(line => JSON.parse(line).map(name => Number(name[6])));
     const all = [1, 2, 3, 4];
     const expectedProbes = badEntry ? [all, [1, 2], [1], [1, 2], [1, 3, 4]]
@@ -869,7 +883,7 @@ export const actions = ${JSON.stringify(ids)};
     assert.equal(reflog[late ? 2 : 1], head);
     if (late) assert.equal(f.git('rev-parse', 'HEAD^').trim(), reflog[1]);
     if (badEntry) assert.match(writers[1].stderr(), /bad group packet/u);
-    if (badImport) assert.match(writers[1].stderr(), /missing-group-producer/u);
+    if (badImport && !retired) assert.match(writers[1].stderr(), /missing-group-producer/u);
     if (ownsProjection) {
       const generations = fs.readFileSync(projectionLog, 'utf8').trim().split('\n');
       assert.equal(generations.length, 1);
@@ -1019,6 +1033,22 @@ test('uses compare-and-swap when the host has no flock', { skip: process.platfor
   assert.match(result.stderr, /no flock on this host/);
   assert.equal(f.git('rev-parse', 'HEAD^').trim(), base);
   assert.equal(f.git('show', 'HEAD:changed'), 'selected\n');
+});
+
+test('a prepared group retries once after a real ref move and stops if the ref moves again', { skip: !hasFlock }, async t => {
+  const f = fixture(t);
+  const { withCommitLock } = await import('../workspaces/commitWriterLock.mjs');
+  const preparations = [];
+  await assert.rejects(withCommitLock({ repo: f.cwd, plan: async head => {
+    preparations.push(head);
+    if (preparations.length <= 2) {
+      const tree = f.git('rev-parse', `${head}^{tree}`).trim();
+      const competing = f.git('commit-tree', tree, '-p', head, '-m', `test: competitor ${preparations.length}`).trim();
+      f.git('update-ref', 'HEAD', competing, head);
+    }
+    return { head };
+  } }, () => assert.fail('a stale prepared group must not publish')), /ref moved again/u);
+  assert.equal(preparations.length, 2);
 });
 
 test('the commit lock stays held across awaits and another writer in the same process can acquire it', { skip: !hasFlock }, async (t) => {

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync,
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync,
   writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { gitIn } from './commitProducerClosure.mjs';
@@ -117,13 +117,21 @@ async function withOrderedCommitLock({ repo, ref, git, scopeRef, moveRef, label 
           if (!record || record.repo !== repo || record.ref !== scopeRef) return;
           yield { id: entry, packet: record.packet, restoresHead: record.restoresHead, saveLanding: result => {
             const pending = join(waiting, 'landing.tmp');
-            writeFileSync(pending, JSON.stringify(result), { mode: 0o600 });
-            renameSync(pending, join(waiting, 'landing'));
+            try {
+              writeFileSync(pending, JSON.stringify(result), { mode: 0o600 });
+              renameSync(pending, join(waiting, 'landing'));
+            } catch (error) {
+              // The frozen packet was already submitted. A retired waiter has
+              // no result mailbox and cannot invalidate the judged tree.
+              if (error.code !== 'ENOENT') throw error;
+            }
           } };
         } finally { closeSync(fd); }
       }
     };
     let planned;
+    let preparedHead;
+    let reprepared = false;
     for (;;) {
       const landed = grouped();
       if (landed && isLanded(git, landed.commit, ref)) return landed;
@@ -132,8 +140,18 @@ async function withOrderedCommitLock({ repo, ref, git, scopeRef, moveRef, label 
         await waitForTicket(older);
         continue;
       }
-      const head = plan && currentHead();
-      if (plan) planned = await plan(head, queued);
+      if (plan) {
+        const head = currentHead();
+        if (head !== preparedHead) {
+          if (reprepared) throw new Error('commit gate: ref moved again after one recheck');
+          if (preparedHead) {
+            reprepared = true;
+            console.error('commit gate: prepared ref moved; rechecking once before publication');
+          }
+          planned = await plan(head, queued);
+          preparedHead = head;
+        }
+      }
       // A restoration may have been admitted or completed during preparation.
       if (olderTickets().length) continue;
       lock = openSync(path, 'a');
@@ -141,15 +159,13 @@ async function withOrderedCommitLock({ repo, ref, git, scopeRef, moveRef, label 
       await flock(repo, lock, ['-x']);
       lockedAt = performance.now();
       // A writer with an earlier arrival can finish admission while we wait.
-      if (!olderTickets().length && (!plan || (head === currentHead() &&
-        planned.tickets?.every(entry => existsSync(join(queue, entry, 'writer'))) !== false))) {
+      if (!olderTickets().length && (!plan || preparedHead === currentHead())) {
         if (plan) console.error(`commit gate: ref lock acquisition ${Math.round(lockedAt - waitingAt)} ms`);
         break;
       }
       closeSync(lock);
       lock = undefined;
       lockedAt = undefined;
-      if (plan) console.error('commit gate: prepared ref or a group member changed; rechecking before publication');
     }
     const landed = grouped();
     if (landed && isLanded(git, landed.commit, ref)) return landed;
