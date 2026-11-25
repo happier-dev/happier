@@ -11,6 +11,7 @@ import { formatGovernanceChange, formatGovernanceSummary, readGovernanceApproval
 import { appendTeamCredentialSourceSummary } from '@happier-dev/protocol/actions/specs/teamCredentialApproval';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { describeManagedAcquireApprovalLine } from '@/components/settings/machines/managed/managedProvisionerKind';
 import { describeApprovalActionFields, readSettledSessionTeamApproval, readTeamMemberApprovalPresentation,
     type ApprovalActionReference, type SettledSessionTeamApproval } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { resolveActionConfirmVerb, resolveActionSummary, resolveActionTitle, resolveBotDraftActionTitle } from '@/text/actionTitles';
@@ -336,6 +337,8 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
         : !distinctAuthoredSummary && summarySource === `${spec.title}.`
         && (summary === titleSource || summary === `${titleSource}.`) ? null : summary;
     // Backup authority follows the Action into both confirmation and Inbox, including authored previews.
+    // A managed Create's fact line names its kind in words and leaves unknown facts out (one presenter for every surface).
+    const acquireLine = spec.id === MANAGED_ACQUIRE_ACTION_ID_V1 ? describeManagedAcquireApprovalLine(input.actionArgs) : null;
     const disclosure = spec.id === 'relay.runtime.personal_home.backup' ? t('personalHome.settings.backupDisclosureBody')
         // A Create whose review records the sign-in says it beside what it creates (BL63); older previews omit it.
         : spec.id === MANAGED_ACQUIRE_ACTION_ID_V1 && readRecord(input.preview).accountSignIn === 'requester_confirms'
@@ -350,7 +353,7 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     return {
         confirmLabel,
         title,
-        summary: [confirmationDraftSubject, governanceSummary ?? visibleSummary, disclosure, ...shareLoss].filter(Boolean).join('\n\n') || null,
+        summary: [confirmationDraftSubject, governanceSummary ?? acquireLine ?? visibleSummary, disclosure, ...shareLoss].filter(Boolean).join('\n\n') || null,
         ...(governanceSummary !== null ? { governance: true } : {}),
         ...(spec.irreversible ? { destructive: true } : {}),
     };

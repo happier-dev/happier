@@ -499,6 +499,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             madeFromPresetOlderImage: ({ preset }: { preset: string }) => `Creata dal preset ${preset}, con un’immagine più vecchia di quella attuale.`,
             createdOn: ({ provider }: { provider: string }) => `Creata da Happier su ${provider}.`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${kind} ${provider}`,
+            kindOnMachine: ({ kind, machine }: { kind: string; machine: string }) => `${kind} su ${machine}`,
             runningFor: ({ duration }: { duration: string }) => `In esecuzione da ${duration}`,
             power: { running: "In esecuzione", stopped: "Arrestata", suspended: "Sospesa" },
         },
@@ -968,9 +969,13 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "Conferma l’accesso della macchina",
         confirm: "Conferma accesso",
-        consequence: "Questo collega la nuova macchina al tuo account. Sei tu a confermarlo.",
+        consequence: "Una volta creata, confermi il suo accesso in Ti aspetta.",
         consequenceTitle: "Accesso all’account",
         expired: "L’approvazione dell’accesso è scaduta. Riprova la configurazione per richiederla di nuovo.",
-        notWaiting: "Questo accesso ha già ricevuto risposta o è scaduto.",
+        notWaiting: "Ha già ricevuto risposta o è scaduto.",
+        notConfirmed: "Impossibile confermare l’accesso.",
+        causeExpired: "È scaduto.",
+        retrySetup: "Riprova la configurazione",
+        openMachine: "Apri macchina",
     },
 };

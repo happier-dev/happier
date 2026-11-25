@@ -499,6 +499,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             madeFromPresetOlderImage: ({ preset }: { preset: string }) => `Создана из пресета ${preset}, с более старым образом, чем текущий.`,
             createdOn: ({ provider }: { provider: string }) => `Создана Happier в ${provider}.`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${kind} ${provider}`,
+            kindOnMachine: ({ kind, machine }: { kind: string; machine: string }) => `${kind} на ${machine}`,
             runningFor: ({ duration }: { duration: string }) => `Работает ${duration}`,
             power: { running: "Работает", stopped: "Остановлена", suspended: "Приостановлена" },
         },
@@ -969,9 +970,13 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "Подтвердите вход машины",
         confirm: "Подтвердить вход",
-        consequence: "Новая машина войдёт в ваш аккаунт. Вы это подтверждаете.",
+        consequence: "Когда она будет создана, вы подтвердите её вход в разделе «Ждёт вас».",
         consequenceTitle: "Вход в аккаунт",
         expired: "Срок подтверждения входа истёк. Повторите настройку, чтобы запросить снова.",
-        notWaiting: "На этот вход уже ответили, или срок его действия истёк.",
+        notWaiting: "На него уже ответили, или срок истёк.",
+        notConfirmed: "Не удалось подтвердить вход.",
+        causeExpired: "Срок истёк.",
+        retrySetup: "Повторить настройку",
+        openMachine: "Открыть машину",
     },
 };

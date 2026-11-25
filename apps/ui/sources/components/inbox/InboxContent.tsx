@@ -12,7 +12,7 @@ import { AccountNoticeRecoveryChoices } from '@/components/inbox/cards/AccountNo
 import type { AccountNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import { MachineVitalsNoticeInboxRow, readMachineVitalsNotice } from '@/components/inbox/cards/MachineVitalsNoticeInboxRow';
 import { InboxReadySessionRow } from '@/components/inbox/InboxReadySessionRow';
-import { MachineSignInConfirm } from '@/components/inbox/cards/MachineSignInConfirm';
+import { MachineSignInAction, MachineSignInFailureLine, useMachineSignInConfirmation } from '@/components/inbox/cards/MachineSignInConfirm';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -137,8 +137,13 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
     }, [dismissNotice, item]);
     // Where it comes from leads the line, unless the title already says it.
     const source = item.sourceLabel ?? (item.source.displayName && item.source.displayName !== item.title ? item.source.displayName : null);
+    const confirmation = useMachineSignInConfirmation(item.machineSignIn, props.confirmMachineSignIn);
     const signIn = item.machineSignIn && props.confirmMachineSignIn ? (
-        <MachineSignInConfirm target={item.machineSignIn} confirm={props.confirmMachineSignIn} testID={`inbox.item.${item.key}.confirm`} />
+        <MachineSignInAction confirmation={confirmation} onOpen={() => { void open(); }} testID={`inbox.item.${item.key}.confirm`} />
+    ) : undefined;
+    // A refused confirmation settles on its row: one line with its cause, its codes behind the row's own toggle.
+    const signInFailure = confirmation.failure ? (
+        <MachineSignInFailureLine failure={confirmation.failure} testID={`inbox.item.${item.key}.failure`} />
     ) : undefined;
     return <InboxWorkRow testID={item.machineSignIn ? `inbox.machine-sign-in.${item.machineSignIn.managedId}`
         : item.focus.kind === 'execution_run' ? `inbox.run.${item.focus.id}`
@@ -161,7 +166,8 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
                 reminder={noticeEntry ? { entry: noticeEntry,
                     onSetReminder: remindAt => props.setNoticeReminder(noticeEntry, remindAt) } : undefined} />
         ) : props.decideBelow ? undefined : signIn}
-        belowAccessory={props.decideBelow && signIn ? signIn : item.pluginSessionRows?.length ? (
+        belowAccessory={signInFailure || (props.decideBelow && signIn) ? <>{signInFailure}{props.decideBelow ? signIn : null}</>
+            : item.pluginSessionRows?.length ? (
             <InboxPluginSessionLines rows={item.pluginSessionRows} invoke={props.invokePluginSessionControl}
                 testID={`inbox.item.${item.key}.plugin_rows`} />
         ) : props.noticeEntry && props.noticeRecovery ? (

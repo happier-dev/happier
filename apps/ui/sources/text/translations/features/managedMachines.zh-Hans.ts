@@ -499,6 +499,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             madeFromPresetOlderImage: ({ preset }: { preset: string }) => `由预设 ${preset} 创建，镜像比当前的旧。`,
             createdOn: ({ provider }: { provider: string }) => `由 Happier 在 ${provider} 上创建。`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${provider} ${kind}`,
+            kindOnMachine: ({ kind, machine }: { kind: string; machine: string }) => `${machine} 上的 ${kind}`,
             runningFor: ({ duration }: { duration: string }) => `已运行 ${duration}`,
             power: { running: "运行中", stopped: "已停止", suspended: "已暂停" },
         },
@@ -968,9 +969,13 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "确认机器登录",
         confirm: "确认登录",
-        consequence: "这会让新机器登录你的账户。由你确认。",
+        consequence: "创建后，你在“需要你”中确认它的登录。",
         consequenceTitle: "账户登录",
         expired: "登录批准已过期。重试设置以再次请求。",
-        notWaiting: "这次登录已被处理或已过期。",
+        notWaiting: "已被处理或已过期。",
+        notConfirmed: "无法确认登录。",
+        causeExpired: "已过期。",
+        retrySetup: "重试设置",
+        openMachine: "打开机器",
     },
 };

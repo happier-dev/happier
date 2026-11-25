@@ -499,6 +499,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             madeFromPresetOlderImage: ({ preset }: { preset: string }) => `Creada con el preajuste ${preset}, con una imagen anterior a la que guarda ahora.`,
             createdOn: ({ provider }: { provider: string }) => `Creada por Happier en ${provider}.`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${kind} de ${provider}`,
+            kindOnMachine: ({ kind, machine }: { kind: string; machine: string }) => `${kind} en ${machine}`,
             runningFor: ({ duration }: { duration: string }) => `En ejecución hace ${duration}`,
             power: { running: "En ejecución", stopped: "Detenida", suspended: "Suspendida" },
         },
@@ -968,9 +969,13 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "Confirma el inicio de sesión de la máquina",
         confirm: "Confirmar inicio de sesión",
-        consequence: "Esto inicia la sesión de la máquina nueva en tu cuenta. Tú lo confirmas.",
+        consequence: "Una vez creada, confirmas su inicio de sesión en Te necesita.",
         consequenceTitle: "Inicio de sesión en la cuenta",
         expired: "La aprobación del inicio de sesión caducó. Reintenta la configuración para pedirla de nuevo.",
-        notWaiting: "Este inicio de sesión ya se respondió o caducó.",
+        notWaiting: "Ya se respondió o caducó.",
+        notConfirmed: "No se pudo confirmar el inicio de sesión.",
+        causeExpired: "Caducó.",
+        retrySetup: "Reintentar configuración",
+        openMachine: "Abrir máquina",
     },
 };

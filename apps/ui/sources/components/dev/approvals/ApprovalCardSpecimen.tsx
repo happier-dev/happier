@@ -66,7 +66,7 @@ function sceneApproval(scene: Exclude<ApprovalCardScene, 'earlierFailures' | 'de
   // An Agent's managed Create; `acquire` carries the reviewed sign-in effect, `acquireWithoutSignIn` is an older preview.
   if (scene === 'acquire' || scene === 'acquireWithoutSignIn') {
     const actionArgs = { selection: { kind: 'one-off', homeId: scope.serverId, launch: {
-      provider: { pluginId: 'happier.machine.lima', localId: 'vm' }, schemaVersion: 1, name: 'Build box', choices: {} },
+      provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'Build box', choices: {} },
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }, enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } };
     const summary = buildApprovalPreviewSummary(getActionSpec('machines.managed.acquire'), actionArgs);
     return { ...base, actionId: 'machines.managed.acquire', actionArgs, status: 'open', summary,

@@ -34,6 +34,20 @@ function describeNativeChoices(facts: ProviderNativeOptionFactsV1): string {
     .filter((part): part is string => part !== null).join(' · ');
 }
 
+const SIZE_UNKNOWN = 'Size unavailable';
+const PRICE_UNKNOWN = presentManagedCost({ kind: 'unpriced', provider: null }).value;
+
+/**
+ * The acquire's one fact line: who makes it, its size and price when known, and how long it is kept. An unknown
+ * size or price is left out rather than printed. A host that can name the kind ("Lima VM on Studio Mac") passes it
+ * as `providerLabel`; `null` leaves the provider out when only a raw id is known.
+ */
+export function formatManagedAcquireReviewLine(review: Readonly<{ provider: string; size: string; price: string; lifetime: string }>,
+  providerLabel?: string | null): string {
+  return [providerLabel === undefined ? review.provider : providerLabel, review.size === SIZE_UNKNOWN ? null : review.size,
+    review.price === PRICE_UNKNOWN ? null : review.price, review.lifetime].filter((part): part is string => Boolean(part)).join(' · ');
+}
+
 /** Only declared receipt facts enter review; provider input and credential bindings stay private. */
 function projectReview(value: unknown) {
   const input = ManagedAcquireInputV1Schema.parse(value);
@@ -59,7 +73,7 @@ function projectReview(value: unknown) {
   const cost = resolveManagedConfigurationCost({ prices: facts?.prices, billing: facts?.billing, provider });
   return {
     homeId: effect.homeId, provider, ...(launch ? { name: launch.name } : {}),
-    size: size ? resolvePluginLocalizedStringV2Text(size.title) : 'Size unavailable',
+    size: size ? resolvePluginLocalizedStringV2Text(size.title) : SIZE_UNKNOWN,
     price: cost.kind === 'price' ? cost.prices.map(price => [
       price.label === undefined ? null : resolvePluginLocalizedStringV2Text(price.label),
       `${formatProviderAmount(price)} ${formatPriceUnit(price.unit)}`, price.source,
@@ -117,8 +131,5 @@ export const managedAcquireApprovalPresentation = {
     { path: 'agentStart', title: 'Agent startup', widget: 'json' },
   ] },
   technicalInputPaths: ['homeId'],
-  summary: (input: unknown) => {
-    const review = projectReview(input);
-    return `${review.provider} · ${review.size} · ${review.price} · ${review.lifetime}`;
-  },
+  summary: (input: unknown) => formatManagedAcquireReviewLine(projectReview(input)),
 } satisfies NonNullable<PreNormalizedActionSpec['approvalPresentation']>;

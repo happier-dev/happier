@@ -85,7 +85,7 @@ function confirmFor(scene: InboxStatesSpecimenScene): InboxModel['confirmMachine
   return () => new Promise<ActionExecuteResult>((resolve) => {
     if (scene === 'signInBusy') return;
     setTimeout(() => resolve(scene === 'signInFailed'
-      ? { ok: false, errorCode: 'no_prompt', error: 'no_prompt' } : { ok: true, result: { ok: true } }), 1_200);
+      ? { ok: false, errorCode: 'auth_request_expired', error: 'auth_request_expired' } : { ok: true, result: { ok: true } }), 1_200);
   });
 }
 

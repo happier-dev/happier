@@ -593,6 +593,18 @@ describe('the shared Action approval presentation owner', () => {
         expect(presentActionApproval({ actionId: 'artifact.public_link.create', authoredSummary: 'My own explanation' }).summary)
             .toBe('My own explanation');
     });
+    it('names a managed Create by its kind and leaves unknown facts out of its line', () => {
+        const actionArgs = { selection: { kind: 'one-off', homeId: 'home', launch: {
+            provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'Build box', choices: {} },
+        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }, enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } };
+        const summary = readApprovalPreviewSummary({ actionId: 'machines.managed.acquire', actionArgs,
+            summary: 'happier.machine.lima · Size unavailable · Price unavailable · Until I delete it' },
+            { actionId: 'machines.managed.acquire', actionArgs }) ?? '';
+        expect(summary).not.toContain('happier.machine.lima');
+        expect(summary).not.toContain('unavailable');
+        expect(summary).toContain('Lima');
+    });
+
     it('says a managed Create signs the new machine into the requester\'s account only when its review records it', () => {
         const actionArgs = { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true };

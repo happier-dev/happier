@@ -499,6 +499,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             madeFromPresetOlderImage: ({ preset }: { preset: string }) => `プリセット ${preset} から作成。現在のイメージより古いイメージです。`,
             createdOn: ({ provider }: { provider: string }) => `Happier が ${provider} で作成しました。`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${provider} ${kind}`,
+            kindOnMachine: ({ kind, machine }: { kind: string; machine: string }) => `${machine} 上の ${kind}`,
             runningFor: ({ duration }: { duration: string }) => `${duration}実行中`,
             power: { running: "実行中", stopped: "停止中", suspended: "一時停止中" },
         },
@@ -968,9 +969,13 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "マシンのサインインを確認",
         confirm: "サインインを確認",
-        consequence: "新しいマシンをあなたのアカウントにサインインさせます。確認するのはあなたです。",
+        consequence: "作成後、「対応が必要」でサインインを確認します。",
         consequenceTitle: "アカウントへのサインイン",
         expired: "サインインの承認の期限が切れました。もう一度依頼するにはセットアップを再試行してください。",
-        notWaiting: "このサインインはすでに応答済みか、期限切れです。",
+        notWaiting: "すでに応答済みか、期限切れです。",
+        notConfirmed: "サインインを確認できませんでした。",
+        causeExpired: "期限が切れました。",
+        retrySetup: "セットアップを再試行",
+        openMachine: "マシンを開く",
     },
 };

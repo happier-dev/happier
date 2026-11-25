@@ -499,6 +499,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             madeFromPresetOlderImage: ({ preset }: { preset: string }) => `Criada a partir da predefinição ${preset}, com uma imagem mais antiga do que a atual.`,
             createdOn: ({ provider }: { provider: string }) => `Criada pelo Happier em ${provider}.`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${kind} ${provider}`,
+            kindOnMachine: ({ kind, machine }: { kind: string; machine: string }) => `${kind} em ${machine}`,
             runningFor: ({ duration }: { duration: string }) => `Em execução há ${duration}`,
             power: { running: "Em execução", stopped: "Parada", suspended: "Suspensa" },
         },
@@ -968,9 +969,13 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "Confirmar o início de sessão da máquina",
         confirm: "Confirmar início de sessão",
-        consequence: "Isto inicia a sessão da nova máquina na sua conta. Você confirma.",
+        consequence: "Depois de criada, você confirma o início de sessão em Precisa de você.",
         consequenceTitle: "Início de sessão na conta",
         expired: "A aprovação do início de sessão expirou. Tente a configuração de novo para pedir outra vez.",
-        notWaiting: "Este início de sessão já foi respondido ou expirou.",
+        notWaiting: "Já foi respondido ou expirou.",
+        notConfirmed: "Não foi possível confirmar o início de sessão.",
+        causeExpired: "Expirou.",
+        retrySetup: "Tentar a configuração de novo",
+        openMachine: "Abrir máquina",
     },
 };

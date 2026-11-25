@@ -499,6 +499,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             madeFromPresetOlderImage: ({ preset }: { preset: string }) => `Créée à partir du préréglage ${preset}, avec une image plus ancienne que l’actuelle.`,
             createdOn: ({ provider }: { provider: string }) => `Créée par Happier chez ${provider}.`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${kind} ${provider}`,
+            kindOnMachine: ({ kind, machine }: { kind: string; machine: string }) => `${kind} sur ${machine}`,
             runningFor: ({ duration }: { duration: string }) => `En marche depuis ${duration}`,
             power: { running: "En marche", stopped: "Arrêtée", suspended: "Suspendue" },
         },
@@ -968,9 +969,13 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "Confirmer la connexion de la machine",
         confirm: "Confirmer la connexion",
-        consequence: "Cela connecte la nouvelle machine à ton compte. Tu le confirmes.",
+        consequence: "Une fois créée, tu confirmes sa connexion dans T’attend.",
         consequenceTitle: "Connexion au compte",
         expired: "L’approbation de connexion a expiré. Relance la configuration pour la redemander.",
-        notWaiting: "Cette connexion a déjà reçu une réponse ou a expiré.",
+        notWaiting: "Elle a déjà reçu une réponse ou a expiré.",
+        notConfirmed: "Impossible de confirmer la connexion.",
+        causeExpired: "Elle a expiré.",
+        retrySetup: "Relancer la configuration",
+        openMachine: "Ouvrir la machine",
     },
 };

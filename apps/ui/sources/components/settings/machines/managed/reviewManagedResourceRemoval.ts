@@ -1,39 +1,24 @@
 import { isManagedOpaquePresetResourceDependencyV1, type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
-import { BUNDLED_MACHINE_PROVISIONER_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 import { Modal, type IModal } from '@/modal';
-import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
-import { storage } from '@/sync/domains/state/storageStore';
 import { t } from '@/text';
-import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import { describeManagedLifecycleState, managedLifecycleActionLabel, type ManagedLifecycleState } from './managedLifecyclePresentation';
 import { nativeIdentityLines } from './managedMachineDisplay';
 import { managedConfirmedAbsenceState } from './managedCreationPresentation';
+import { describeManagedProvisionerKind, readSettledMachineName } from './managedProvisionerKind';
 
-/** What the person knows the resource as: its provider and kind ("Hetzner VM"), from the provisioner's own declaration. */
+/** What the person knows the resource as; an opaque preset row names no provider. */
 function managedResourceProvider(resource: ManagedResourceDependencyV1): Readonly<{ provider: string; name: string }> | null {
-    if (isManagedOpaquePresetResourceDependencyV1(resource)) return null;
-    const declaration = BUNDLED_MACHINE_PROVISIONER_DECLARATIONS[buildQualifiedPluginContributionKey(resource.provider)];
-    if (!declaration) return null;
-    const localized = createPluginLocalizedTextResolver({ projection: null });
-    const provider = localized(declaration.contribution.pluginId, declaration.descriptor.title);
-    const kind = declaration.descriptor.kindTitle ? localized(declaration.contribution.pluginId, declaration.descriptor.kindTitle) : null;
-    return { provider, name: kind ? t('managedMachines.detail.kindFact', { provider, kind }) : provider };
+    return isManagedOpaquePresetResourceDependencyV1(resource) ? null : describeManagedProvisionerKind(resource.provider);
 }
 
 /** The machine it is managed from, by its settled name; left out when this device can't name it yet. */
 function managedResourceControllerName(resource: ManagedResourceDependencyV1): string | null {
     const machineId = resource.controller?.machineId;
-    if (!machineId) return null;
-    for (const machines of Object.values(storage.getState().machineListByServerId ?? {})) {
-        const machine = machines?.find(candidate => candidate.id === machineId);
-        if (machine) return getSettledMachineDisplayName(machine);
-    }
-    return null;
+    return machineId ? readSettledMachineName(machineId) : null;
 }
 
 /**

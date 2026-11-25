@@ -499,6 +499,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             madeFromPresetOlderImage: ({ preset }: { preset: string }) => `Aus der Vorlage ${preset} erstellt, mit einem älteren Image als dem aktuellen.`,
             createdOn: ({ provider }: { provider: string }) => `Von Happier bei ${provider} erstellt.`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${provider} ${kind}`,
+            kindOnMachine: ({ kind, machine }: { kind: string; machine: string }) => `${kind} auf ${machine}`,
             runningFor: ({ duration }: { duration: string }) => `Läuft seit ${duration}`,
             power: { running: "Läuft", stopped: "Gestoppt", suspended: "Pausiert" },
         },
@@ -968,9 +969,13 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "Anmeldung der Maschine bestätigen",
         confirm: "Anmeldung bestätigen",
-        consequence: "Damit wird die neue Maschine bei deinem Konto angemeldet. Du bestätigst das.",
+        consequence: "Sobald sie erstellt ist, bestätigst du ihre Anmeldung unter Braucht dich.",
         consequenceTitle: "Kontoanmeldung",
         expired: "Die Anmeldefreigabe ist abgelaufen. Wiederhole die Einrichtung, um erneut zu fragen.",
-        notWaiting: "Diese Anmeldung wurde schon beantwortet oder ist abgelaufen.",
+        notWaiting: "Sie wurde schon beantwortet oder ist abgelaufen.",
+        notConfirmed: "Die Anmeldung konnte nicht bestätigt werden.",
+        causeExpired: "Sie ist abgelaufen.",
+        retrySetup: "Einrichtung wiederholen",
+        openMachine: "Maschine öffnen",
     },
 };

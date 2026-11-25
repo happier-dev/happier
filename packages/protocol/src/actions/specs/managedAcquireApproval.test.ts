@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MANAGED_MACHINE_ACTION_SPECS } from './managedMachines.js';
+import { formatManagedAcquireReviewLine } from './managedAcquireApproval.js';
 import { describeApprovalActionFields, projectApprovalReviewInput } from '../actionApprovalPresentation.js';
 import { getActionSpec } from '../actionSpecs.js';
 import type { ManagedMachineEnrollmentIdentityV1 } from '../../machines/managed/enrollmentIdentityV1.js';
@@ -144,8 +145,14 @@ describe('managed acquire review', () => {
     expect(projection.unrepresentable).toBeNull();
     expect(projection.rows.map(row => row.path)).not.toContain('enrollmentIdentity.role');
     expect(projection.rows.map(row => row.path)).not.toContain('nativeFacts');
-    expect(spec.approvalPresentation?.summary(input)).toContain('Price unavailable');
+    // An unknown size or price is left out of the fact line, never printed as "unavailable".
+    expect(spec.approvalPresentation?.summary(input)).not.toContain('unavailable');
+    expect(spec.approvalPresentation?.summary(input)).toContain('Until I delete it');
     expect(spec.approvalPresentation?.summary(input)).not.toContain('billed directly');
+    // A host that can name the kind passes it; the line keeps its other facts in order.
+    expect(formatManagedAcquireReviewLine(review as Parameters<typeof formatManagedAcquireReviewLine>[0], 'Lima VM on Studio Mac'))
+      .toBe('Lima VM on Studio Mac · Until I delete it');
+    expect(formatManagedAcquireReviewLine(review as Parameters<typeof formatManagedAcquireReviewLine>[0], null)).toBe('Until I delete it');
   });
 
   it('keeps omitted preset lifetime unresolved in pending and retained approvals', () => {

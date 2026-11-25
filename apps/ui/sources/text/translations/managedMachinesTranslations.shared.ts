@@ -509,6 +509,7 @@ export const managedMachinesEn = {
             madeFromPresetOlderImage: ({ preset }: { preset: string }) => `Made from the ${preset} preset, with an older image than it keeps now.`,
             createdOn: ({ provider }: { provider: string }) => `Created by Happier on ${provider}.`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${provider} ${lowerKind(kind)}`,
+            kindOnMachine: ({ kind, machine }: { kind: string; machine: string }) => `${kind} on ${machine}`,
             runningFor: ({ duration }: { duration: string }) => `Running ${duration}`,
             power: { running: "Running", stopped: "Stopped", suspended: "Suspended" },
         },
@@ -980,10 +981,14 @@ export const managedMachinesEn = {
     machineSignIn: {
         inboxTitle: "Confirm machine sign-in",
         confirm: "Confirm sign-in",
-        consequence: "This signs the new machine into your account. You confirm it.",
+        consequence: "Once it’s created, you confirm its sign-in in Needs you.",
         consequenceTitle: "Account sign-in",
         expired: "Sign-in approval expired. Retry setup to ask again.",
-        notWaiting: "This sign-in was already answered or has expired.",
+        notWaiting: "It was already answered or has expired.",
+        notConfirmed: "Couldn’t confirm the sign-in.",
+        causeExpired: "It expired.",
+        retrySetup: "Retry setup",
+        openMachine: "Open machine",
     },
 };
 

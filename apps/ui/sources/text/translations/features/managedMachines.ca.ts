@@ -499,6 +499,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             madeFromPresetOlderImage: ({ preset }: { preset: string }) => `Creada amb el preajust ${preset}, amb una imatge més antiga que l’actual.`,
             createdOn: ({ provider }: { provider: string }) => `Creada per Happier a ${provider}.`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${kind} de ${provider}`,
+            kindOnMachine: ({ kind, machine }: { kind: string; machine: string }) => `${kind} a ${machine}`,
             runningFor: ({ duration }: { duration: string }) => `En execució fa ${duration}`,
             power: { running: "En execució", stopped: "Aturada", suspended: "Suspesa" },
         },
@@ -968,9 +969,13 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "Confirma l’inici de sessió de la màquina",
         confirm: "Confirma l’inici de sessió",
-        consequence: "Això inicia la sessió de la màquina nova al teu compte. Tu ho confirmes.",
+        consequence: "Un cop creada, confirmes el seu inici de sessió a Et necessita.",
         consequenceTitle: "Inici de sessió al compte",
         expired: "L’aprovació de l’inici de sessió ha caducat. Torna a provar la configuració per demanar-la de nou.",
-        notWaiting: "Aquest inici de sessió ja s’ha respost o ha caducat.",
+        notWaiting: "Ja s’ha respost o ha caducat.",
+        notConfirmed: "No s’ha pogut confirmar l’inici de sessió.",
+        causeExpired: "Ha caducat.",
+        retrySetup: "Torna a provar la configuració",
+        openMachine: "Obre la màquina",
     },
 };

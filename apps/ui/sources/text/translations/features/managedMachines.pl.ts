@@ -499,6 +499,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             madeFromPresetOlderImage: ({ preset }: { preset: string }) => `Utworzona z szablonu ${preset}, ze starszym obrazem niż obecny.`,
             createdOn: ({ provider }: { provider: string }) => `Utworzona przez Happier w ${provider}.`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${kind} ${provider}`,
+            kindOnMachine: ({ kind, machine }: { kind: string; machine: string }) => `${kind} na ${machine}`,
             runningFor: ({ duration }: { duration: string }) => `Działa od ${duration}`,
             power: { running: "Działa", stopped: "Zatrzymana", suspended: "Wstrzymana" },
         },
@@ -969,9 +970,13 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "Potwierdź logowanie maszyny",
         confirm: "Potwierdź logowanie",
-        consequence: "To loguje nową maszynę na twoje konto. Ty to potwierdzasz.",
+        consequence: "Po utworzeniu potwierdzasz jej logowanie w sekcji Czeka na ciebie.",
         consequenceTitle: "Logowanie na konto",
         expired: "Zgoda na logowanie wygasła. Ponów konfigurację, aby poprosić ponownie.",
-        notWaiting: "To logowanie zostało już obsłużone albo wygasło.",
+        notWaiting: "Zostało już obsłużone albo wygasło.",
+        notConfirmed: "Nie udało się potwierdzić logowania.",
+        causeExpired: "Wygasło.",
+        retrySetup: "Ponów konfigurację",
+        openMachine: "Otwórz maszynę",
     },
 };

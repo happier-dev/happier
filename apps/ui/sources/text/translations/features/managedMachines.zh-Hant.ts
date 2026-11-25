@@ -499,6 +499,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             madeFromPresetOlderImage: ({ preset }: { preset: string }) => `由預設 ${preset} 建立，映像比目前的舊。`,
             createdOn: ({ provider }: { provider: string }) => `由 Happier 在 ${provider} 上建立。`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${provider} ${kind}`,
+            kindOnMachine: ({ kind, machine }: { kind: string; machine: string }) => `${machine} 上的 ${kind}`,
             runningFor: ({ duration }: { duration: string }) => `已執行 ${duration}`,
             power: { running: "執行中", stopped: "已停止", suspended: "已暫停" },
         },
@@ -968,9 +969,13 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "確認機器登入",
         confirm: "確認登入",
-        consequence: "這會讓新機器登入你的帳戶。由你確認。",
+        consequence: "建立後，你在「需要你」中確認它的登入。",
         consequenceTitle: "帳戶登入",
         expired: "登入核准已過期。重試設定以再次請求。",
-        notWaiting: "這次登入已被處理或已過期。",
+        notWaiting: "已被處理或已過期。",
+        notConfirmed: "無法確認登入。",
+        causeExpired: "已過期。",
+        retrySetup: "重試設定",
+        openMachine: "開啟機器",
     },
 };
