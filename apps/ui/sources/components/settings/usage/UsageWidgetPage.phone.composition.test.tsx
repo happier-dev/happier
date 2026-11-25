@@ -103,6 +103,7 @@ const visibleContentGeometry = {
 let home: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
 let readFails = false;
 let refuseRead = false;
+let readHeld: { promise: Promise<Response>; release: () => void } | null = null;
 let restorePopoverGlobals: (() => void) | undefined;
 
 beforeEach(() => {
@@ -170,7 +171,7 @@ async function renderUsagePage(
               ? Response.json({ v: 1, results: UsageAnalyticsQueryBatchRequestSchema.parse(request.body).queries.map(query => ({ query, error: 'not_found' })) })
               : undefined
           : request.path === '/v2/usage/query'
-            ? readFails
+            ? readHeld ? readHeld.promise : readFails
               ? Response.json({ error: 'unavailable' }, { status: 503 })
               : Response.json(response)
             : request.path === '/v1/artifacts' && request.method === 'GET'
@@ -284,6 +285,23 @@ it('gives the phone read-failure notice the short form with Details and its Retr
   expect(line()!.props.reason).not.toBe(t('usage.board.charts.coveragePartialShort'));
   expect((line()!.props.actions as readonly { testID?: string }[]).map(action => action.testID))
     .toEqual(['usage-page.header.failed.detail', 'usage-page.header.retry']);
+});
+
+// r230 #79: while the page reads, the phone's header line says the short word on one line, so the page does not
+// drop when the one-line "As of … · Partial" arrives; Details holds the sentence.
+it('holds the phone header to one line while the page reads', async () => {
+  let release = () => {};
+  const promise = new Promise<Response>(resolve => { release = () => resolve(Response.json({ error: 'unavailable' }, { status: 503 })); });
+  readHeld = { promise, release };
+  try {
+    const phone = await renderUsagePage('costs');
+    const line = () => phone.findAllByType(SurfaceFreshnessLine)
+      .find(candidate => candidate.props.testID === 'usage-page.header.reading');
+    await waitForHomeGovernance(() => expect(line()).toBeDefined());
+    expect(line()!.props.reason).toBe(t('usage.board.page.loading'));
+    const actions = (line()!.props.actions ?? (line()!.props.action ? [line()!.props.action] : [])) as readonly { testID?: string }[];
+    expect(actions.map(action => action.testID)).toEqual(['usage-page.header.reading.detail']);
+  } finally { readHeld = null; release(); }
 });
 
 it.each([

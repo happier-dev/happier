@@ -258,16 +258,19 @@ export function UsageRunLength(props: UsageChartBaseProps & Readonly<{ agents: r
         const lo = Math.log(RUN_MIN_MS), hi = Math.log(RUN_MAX_MS);
         const x = (ms: number) => label + ((Math.log(Math.max(RUN_MIN_MS, Math.min(RUN_MAX_MS, ms))) - lo) / (hi - lo)) * plot;
         const ticks = [[60_000, props.labels.ticks.minute], [600_000, props.labels.ticks.tenMinutes], [3_600_000, props.labels.ticks.hour], [RUN_MAX_MS, props.labels.ticks.fourHours]] as const;
-        // A tick label that would print into the next one keeps its rule and leaves its words to the closer tick: on a phone
-        // "1 h" and "4 h" sit 27 px apart and read "1 h4 h" (USAGE-ACCEPT 1121 #17). The end tick always keeps its label.
+        // A tick label that would print into a kept one keeps its rule and leaves its words: on a phone "1 h" and "4 h" sit
+        // 27 px apart and read "1 h4 h" (USAGE-ACCEPT 1121 #17). The two outer ticks always keep theirs, so the narrowest
+        // axis still reads from its shortest run to its longest (r227 #77); the middle ones fill in where they fit.
         const tickSpan = (ms: number, text: string) => {
           const reach = textWidth(text, svgText.fontSize);
           return ms === RUN_MAX_MS ? [x(ms) - reach, x(ms)] : [x(ms) - reach / 2, x(ms) + reach / 2];
         };
-        const labelled = ticks.map(([ms, text], at) => {
-          const next = ticks[at + 1];
-          return !next || tickSpan(ms, text)[1]! + 4 <= tickSpan(next[0], next[1])[0]!;
-        });
+        const spans = ticks.map(([ms, text]) => tickSpan(ms, text));
+        const last = ticks.length - 1;
+        const labelled = ticks.map((_, at) => at === 0 || at === last);
+        for (let at = 1, kept = 0; at < last; at++) {
+          if (spans[kept]![1]! + 4 <= spans[at]![0]! && spans[at]![1]! + 4 <= spans[last]![0]!) { labelled[at] = true; kept = at; }
+        }
         // A name wider than its column is cut to it, so it never runs into the distribution; the values keep it whole.
         const fitName = (value: string) => usageChartFitText(value, label - 8, svgText.styles.body.fontSize);
         const targets: ReactNode[] = [];

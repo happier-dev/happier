@@ -625,6 +625,19 @@ describe('SidebarUsagePopoverContent', () => {
             expect(screen.findByTestId('sidebar-usage-open-connected-services')).toBeTruthy();
         });
 
+        it('keeps the two-word scope whole; the as-of time gives way first on one line (acceptance r227 #72)', async () => {
+            const screen = await renderView({
+                session: { scopeLine: 'Claude Code signs in through Work pool', accountKey: 'claude:work', ownSignIn: null, nextMove: null },
+            });
+            const flat = (style: unknown): Record<string, unknown> => Array.isArray(style)
+                ? Object.assign({}, ...style.map(flat)) : (style ?? {}) as Record<string, unknown>;
+            const scope = screen.findAll(node => typeof node.type === 'string' && node.props.children === 'sidebarFooter.usageThisSession')[0]!;
+            expect(flat(scope.props.style).flexShrink ?? 0).toBe(0);
+            const asOf = screen.findByTestId('sidebar-usage-as-of')!
+                .findAll(node => typeof node.type === 'string' && typeof node.props.children === 'string')[0]!;
+            expect(asOf.props.numberOfLines).toBe(1);
+        });
+
         it('keeps a known session account scoped when its usage is unavailable, until All accounts is chosen', async () => {
             const screen = await renderView({
                 session: { scopeLine: 'Claude Code signs in through Work pool', accountKey: 'claude:missing', ownSignIn: null, nextMove: null },

@@ -645,7 +645,9 @@ function resolveUsagePageNotice(
   if (newerServer) return { testID: 'usage-page.header.newerServer', reason: newerServer, tone: 'neutral' };
   if (facts.workOffline) return { testID: 'usage-page.header.workOffline', reason: t('usage.board.page.workMachinesOffline'), tone: 'neutral' };
   if (partial) return { testID: 'usage-page.header.partial', reason: partial, tone: 'neutral', short: t('usage.board.charts.coveragePartialShort') };
-  if (pending) return { testID: 'usage-page.header.reading', reason: pending, tone: 'neutral', busy: true };
+  // On a phone the reading line is the short word with Details, one line like the partial line that replaces it, so the
+  // page does not drop when the read lands (r230 #79).
+  if (pending) return { testID: 'usage-page.header.reading', reason: pending, tone: 'neutral', busy: true, short: t('usage.board.page.loading') };
   return null;
 }
 

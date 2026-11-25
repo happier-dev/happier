@@ -15,6 +15,7 @@ import { UsageWorkProviderMark, usageWorkProviderIdentities, usageWorkProviderNa
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { readUsageWorkOutcomesEvidence } from './usageWorkPresentation';
+import { usageTokensFromPartsNote } from '../usageCostPresentation';
 import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
 import type {
   UsageWorkIdentities,
@@ -288,6 +289,8 @@ export function UsageWorkSessionRows(
   const outcomeOnce = props.title !== undefined && props.outcomesRead === true && props.parts.length > 0 && !anyLinked;
   const outcomeLine = (sessionId: string) => props.title === undefined || linked(sessionId)
     || props.outcomesRead === true && anyLinked ? usageWorkSessionOutcomeLine(bySession.get(sessionId)) : null;
+  // Under a titled group the parts qualifier is said once in the group's caption, never on each of its rows (r225 #60).
+  const partsSaidOnce = props.title === undefined ? null : usageTokensFromPartsNote(shown.rows.map(part => part.tokensFromParts));
   const rows = (
     <HappierDataRows
       theme={theme}
@@ -312,7 +315,7 @@ export function UsageWorkSessionRows(
         props.sessionLabel(part.sessionId),
         props.cell(part.amount, part.moneyBasis),
         [outcomeLine(part.sessionId),
-          part.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · '),
+          part.tokensFromParts && props.title === undefined ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · '),
       ])}
       rowDatums={shown.rows.map(part => props.datum(props.sessionLabel(part.sessionId), part.amount, part.moneyBasis))}
       renderIdentity={(_row, visual, index) => {
@@ -339,7 +342,12 @@ export function UsageWorkSessionRows(
   if (props.title === undefined) return <>{rows}{more}</>;
   return (
     <View style={styles.group}>
-      <UsageWorkSectionTitle quiet caption={outcomeOnce ? t('usage.board.work.noOutcome') : undefined}>{props.title}</UsageWorkSectionTitle>
+      <UsageWorkSectionTitle quiet caption={[outcomeOnce ? t('usage.board.work.noOutcome') : null, partsSaidOnce]
+        .filter(Boolean).join(' · ') || undefined}>{props.title}</UsageWorkSectionTitle>
+      {/* An opened long list can be folded from its top too, not only after its last row (r225 #60). */}
+      {expanded && leadingUsageRows(props.parts, false).hidden > 0
+        ? <UsageShowAllRows label={props.title} total={props.parts.length} hidden={0} expanded onToggle={() => setExpanded(false)}
+          testID={`${props.testID}.lessTop`} /> : null}
       {rows}
       {more}
     </View>

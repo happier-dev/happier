@@ -59,7 +59,9 @@ export function UsageSourceCoverageWidget(props: UsageBodyProps) {
         {...(failed && description ? { action: { label: t('common.retry'), onPress: retry } }
           : hasMore ? { action: { label: detailOpen ? t('usage.showLess') : t('common.details'), testID: `${props.testID}.detail.action`,
             onPress: () => setDetailOpen(open => !open) } } : {})} /> : null}
-      {captured.length ? <UsagePlanDisclosure title={t('usage.board.sources.capturesTitle')} testID={`${props.testID}.captures`}>
+      {/* Detail under the rows, so it reads at their caption size, never above the widget's own title (r223 #53). */}
+      {captured.length ? <UsagePlanDisclosure title={t('usage.board.sources.capturesTitle')} testID={`${props.testID}.captures`}
+        label={<Text style={[styles.capture, text.detail]} numberOfLines={1}>{t('usage.board.sources.capturesTitle')}</Text>}>
         {captured.map(row => <Text key={row.title} style={[styles.capture, text.detail]} testID={`${props.testID}.captures.row`}>
           {`${row.title}: ${row.captures}`}</Text>)}
       </UsagePlanDisclosure> : null}

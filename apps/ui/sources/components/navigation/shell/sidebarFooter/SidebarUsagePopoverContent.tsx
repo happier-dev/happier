@@ -257,6 +257,17 @@ export function SidebarUsagePopoverView(props: Readonly<{
     const [widened, setWidened] = React.useState(false);
     const [signedOutOpen, setSignedOutOpen] = React.useState(false);
     const signedOutRegionId = React.useId();
+    // Opened at the end of the scroll, the group's rows would land below the fold with only its chevron changed: the
+    // opened rows are brought into view, after their layout, as the navigation customizer does (r223 #54).
+    const signedOutRegion = React.useRef<View>(null);
+    React.useEffect(() => {
+        if (!signedOutOpen || Platform.OS !== 'web') return;
+        const frame = requestAnimationFrame(() => {
+            (signedOutRegion.current as unknown as { scrollIntoView?: (options: Readonly<{ block: 'nearest' }>) => void } | null)
+                ?.scrollIntoView?.({ block: 'nearest' });
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [signedOutOpen]);
     const sourceAccounts = React.useMemo(
         () => groupUsageByProvider(usage.accounts).flatMap((provider) => provider.accounts.map((account) => ({ provider, account }))),
         [usage.accounts],
@@ -411,7 +422,7 @@ export function SidebarUsagePopoverView(props: Readonly<{
         if (signedOutLabel !== null) {
             body = <>
                 {body}
-                <View nativeID={signedOutRegionId} accessibilityLabel={signedOutLabel}
+                <View ref={signedOutRegion} nativeID={signedOutRegionId} accessibilityLabel={signedOutLabel}
                     {...(Platform.OS === 'web' ? { role: 'region' as const } : undefined)}
                     style={signedOutOpen ? undefined : { display: 'none' }}>
                     {signedOutOpen ? <>
@@ -714,13 +725,16 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.variant('label', 'semiBold'),
         color: theme.colors.text.primary,
     },
+    /** The scope is two words and never shrinks; the as-of time beside the actions gives way first (r227 #72). */
     headerScope: {
-        flexShrink: 1,
+        flexShrink: 0,
         ...Typography.variant('meta'),
         color: theme.colors.text.tertiary,
     },
     headerEnd: {
         marginLeft: 'auto',
+        flexShrink: 1,
+        minWidth: 0,
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s6,
