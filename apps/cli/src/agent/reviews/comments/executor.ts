@@ -1,6 +1,7 @@
 import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { createHash, randomBytes as nodeRandomBytes, randomUUID } from 'node:crypto';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import axios from '@/api/client/credentialAxios';
 import { type AxiosRequestConfig, type AxiosResponse } from 'axios';
 import tweetnacl from 'tweetnacl';
@@ -12,7 +13,7 @@ import { buildReviewCommentPublicationTransportRequestV1, openReviewCommentPubli
 import type { ReviewCommentPublicationCryptoContextV1, ReviewCommentClaimPublicationDispatchRequestV1, ReviewCommentPrincipalHeaderV1, ReviewCommentActionIdV1, ReviewCommentMutationActionIdV1, ReviewCommentPublicationPlanV1, ReviewCommentPrincipalProofV1, AccountScopedCryptoMaterial } from '@happier-dev/protocol';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
-import { createHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
+import { createAuthenticationHttpStatusError, createHttpStatusError, isAuthenticationStatus, readServerRefusalCode } from '@/api/client/httpStatusError';
 import { createConnectedServiceCredentialApi, type AccountEncryptionModeReadOptions } from '@/api/client/connectedServiceCredentialApi';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';
@@ -245,18 +246,6 @@ async function encodeReviewCommentPrincipalHeader(params: Readonly<{
         .toString('base64url');
 }
 
-function readServerErrorCode(data: unknown): string | undefined {
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
-        return undefined;
-    }
-    const record = data as JsonRecord;
-    return typeof record.error === 'string'
-        ? record.error
-        : typeof record.code === 'string'
-            ? record.code
-            : undefined;
-}
-
 function readServerErrorMessage(data: unknown, status: number): string {
     if (data && typeof data === 'object' && !Array.isArray(data)) {
         const message = (data as JsonRecord).message;
@@ -269,10 +258,13 @@ function readServerErrorMessage(data: unknown, status: number): string {
 
 function throwForReviewCommentHttpStatus(response: AxiosResponse<unknown>): never {
     const status = response.status;
-    const errorCode = isAuthenticationStatus(status)
-        ? 'not_authenticated'
-        : readServerErrorCode(response.data) ?? 'review_comment_request_failed';
-    throw createHttpStatusError(status, readServerErrorMessage(response.data, status), errorCode);
+    const message = readServerErrorMessage(response.data, status);
+    const error = isAuthenticationStatus(status)
+        ? createAuthenticationHttpStatusError(status, message, response.data)
+        : createHttpStatusError(status, message, readServerRefusalCode(response.data) ?? 'review_comment_request_failed');
+    throw Object.assign(error, {
+        cause: createActionExecuteFailureError({ ok: false, errorCode: error.code!, error: error.message }),
+    });
 }
 
 async function executeReviewCommentHttpRequest(params: Readonly<{
@@ -337,7 +329,7 @@ export function createCliReviewCommentActionExecutorFromCredentials(
         const mode = await readMode({ usage: 'fresh-authority', ...(signal ? { signal } : {}) });
         const code = mode === 'unknown' ? 'review_comment_encryption_mode_unavailable'
             : mode !== expected ? 'review_comment_encryption_mode_mismatch' : null;
-        if (code) throw Object.assign(new Error(code), { code });
+        if (code) throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code });
     };
     return async (actionId, input, options) => {
         const parsedActionId = ReviewCommentActionIdV1Schema.parse(actionId);
@@ -349,8 +341,8 @@ export function createCliReviewCommentActionExecutorFromCredentials(
                 const held = await createCredentialedAccountArtifactStore(params.credentials).readForUpdate(reviewId,
                     { prepareRecipients: false, includeSharedAudience: false,
                         ...(options?.signal ? { signal: options.signal } : {}) });
-                if (!held) throw Object.assign(new Error('review_comment_encryption_material_unavailable'), {
-                    code: 'review_comment_encryption_material_unavailable',
+                if (!held) throw createActionExecuteFailureError({ ok: false,
+                    errorCode: 'review_comment_encryption_material_unavailable', error: 'review_comment_encryption_material_unavailable',
                 });
                 const binding = { artifactId: reviewId, expectedRevision: held.artifact.revision };
                 return { reviewId, mode: held.storageMode,
@@ -363,7 +355,8 @@ export function createCliReviewCommentActionExecutorFromCredentials(
             const assertLogicalIntent = (context: Pick<ReviewCommentTransportContextV1, 'resource' | 'mode'>) => {
                 if ((context.resource || context.mode === 'e2ee') && originalPrincipal?.currentIntent
                     && originalPrincipal.currentIntent.effectBodySha256Base64Url !== createReviewCommentPrincipalBodyHash(omitKeys(parsedInput, ['eventEnvelope']))) {
-                    throw Object.assign(new Error('review_comment_permission_denied'), { code: 'review_comment_permission_denied' });
+                    throw createActionExecuteFailureError({ ok: false,
+                        errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' });
                 }
             };
             const requestTransport = async (request: ReviewCommentTransportRequestV1, writeMode?: 'plain' | 'e2ee') => {
@@ -388,7 +381,8 @@ export function createCliReviewCommentActionExecutorFromCredentials(
                     resolveContext: async boundReviewId => {
                         const resource = boundReviewId ? await readResource(boundReviewId) : undefined;
                         const mode = resource?.mode ?? await readMode({ usage: 'identity', ...(options?.signal ? { signal: options.signal } : {}) });
-                        if (mode === 'unknown') throw new Error('review_comment_encryption_mode_unavailable');
+                        if (mode === 'unknown') throw createActionExecuteFailureError({ ok: false,
+                            errorCode: 'review_comment_encryption_mode_unavailable', error: 'review_comment_encryption_mode_unavailable' });
                         const accountId = (params.resolveAccountId ?? resolveAccountIdFromToken)(params.credentials.token);
                         const context = resource ? { accountId, mode, material: null, resource }
                             : { accountId, mode, material: mode === 'plain' ? null : resolveAccountScopedMaterial(params.credentials) };
@@ -399,7 +393,8 @@ export function createCliReviewCommentActionExecutorFromCredentials(
             }
             const resource = reviewId ? await readResource(reviewId) : undefined;
             const mode = resource?.mode ?? await readMode({ usage: 'identity', ...(options?.signal ? { signal: options.signal } : {}) });
-            if (mode === 'unknown') throw new Error('review_comment_encryption_mode_unavailable');
+            if (mode === 'unknown') throw createActionExecuteFailureError({ ok: false,
+                errorCode: 'review_comment_encryption_mode_unavailable', error: 'review_comment_encryption_mode_unavailable' });
             if (resource || mode === 'e2ee' || parsedActionId === 'reviews.comments.get' || parsedActionId === 'reviews.comments.list') {
                 const accountId = (params.resolveAccountId ?? resolveAccountIdFromToken)(params.credentials.token);
                 assertLogicalIntent({ resource, mode });
@@ -418,7 +413,8 @@ export function createCliReviewCommentActionExecutorFromCredentials(
         let publicationContext: ReviewCommentPublicationCryptoContextV1 | null = null;
         if (parsedActionId === 'reviews.comments.claimPublicationDispatch') {
             const mode = await readMode({ usage: 'identity', ...(options?.signal ? { signal: options.signal } : {}) });
-            if (mode === 'unknown') throw new Error('review_comment_encryption_mode_unavailable');
+            if (mode === 'unknown') throw createActionExecuteFailureError({ ok: false,
+                errorCode: 'review_comment_encryption_mode_unavailable', error: 'review_comment_encryption_mode_unavailable' });
             publicationContext = {
                 accountId: (params.resolveAccountId ?? resolveAccountIdFromToken)(params.credentials.token),
                 mode, material: mode === 'plain' ? null : resolveAccountScopedMaterial(params.credentials),

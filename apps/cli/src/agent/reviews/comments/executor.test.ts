@@ -9,6 +9,7 @@ import { REVIEW_ARTIFACT_KIND_V1, ReviewArtifactHeaderV1Schema, ReviewArtifactBo
 
 import { createCliReviewCommentActionExecutorFromCredentials } from './executor';
 import { ReviewCommentActionOutputSchemasV1 } from '@happier-dev/protocol/reviews/comments/actions';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import {
     REVIEW_COMMENT_PRINCIPAL_HEADER_V1,
     ReviewCommentPrincipalHeaderV1Schema,
@@ -132,6 +133,21 @@ function settlementResponseFor(body: unknown): unknown {
 }
 
 describe('createCliReviewCommentActionExecutorFromCredentials', () => {
+    it.each([
+        { status: 403, expectedCode: 'review_comment_permission_denied' },
+        { status: 401, expectedCode: 'not_authenticated' },
+    ])('preserves a server permission refusal through native Action projection ($status)', async ({ status, expectedCode }) => {
+        axiosPostMock.mockResolvedValueOnce({ status, data: { error: 'review_comment_permission_denied' } });
+        const execute = createCliReviewCommentActionExecutorFromCredentials({ credentials: { token: 'token-1', encryption: null },
+            ...plainEventStorageParams });
+        const result = await execute('reviews.comments.transition', { commentId: 'comment-1', projectId: 'project-1', expectedState: 'open',
+            toState: 'dismissed', reason: 'Reviewed', expectedServerRevision: 1, clientMutationId: 'mutation-1' })
+            .then(() => { throw new Error('Expected the server refusal'); }, error => normalizeActionExecutorThrownError(error));
+        expect(axiosPostMock).toHaveBeenCalledTimes(1);
+        expect(result, JSON.stringify(result)).toMatchObject({ errorCode: expectedCode,
+            failureCause: { errorCode: expectedCode, httpStatus: status } });
+    });
+
     beforeEach(() => {
         vi.clearAllMocks();
     });
