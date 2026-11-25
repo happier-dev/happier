@@ -29,6 +29,7 @@ import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalAct
 import { createCliActionDeps } from '../createCliActionDeps';
 import { createCliActionExecutorFromCredentials } from '../createCliActionExecutorFromCredentials';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { sealAccountSettingsV2RawContent } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { handlePluginsCommand } from '@/cli/commands/plugins';
 import { createDaemonPluginDevelopmentReviewApprovalPublisher } from '@/plugins/daemon/developmentReviewApproval';
 import { handleActionsCommand } from '@/cli/commands/actions';
@@ -736,6 +737,17 @@ describe('plugin install approval Artifact rejoin', () => {
     const source = join(sourceRoot, 'ledger.ts');
     const resolveOrigin = async () => ({ machineId: 'machine-1', serverIdentityId: 'home-identity' });
     const storedCredentials = credentials();
+    const settingsContent = sealAccountSettingsV2RawContent({
+      credentials: storedCredentials, raw: {}, envelopeKind: 'encrypted',
+      randomBytes: length => new Uint8Array(length).fill(9),
+    });
+    const accountGet = http.get.getMockImplementation()!;
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v2/account/settings')) {
+        return { status: 200, data: { content: settingsContent, version: 1 } };
+      }
+      return accountGet(url);
+    });
     const approvalStore = createStore();
     const previousPaths = { happyHomeDir: configuration.happyHomeDir, settingsFile: configuration.settingsFile };
     Object.assign(configuration, { happyHomeDir, settingsFile: join(happyHomeDir, 'settings.json') });
