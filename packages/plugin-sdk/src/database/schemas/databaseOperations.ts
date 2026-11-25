@@ -1,5 +1,6 @@
 import { createDatabaseEngineCapabilityV1Schema } from '@happier-dev/protocol/plugins/contributions/databaseEngines';
 import { z } from 'zod/mini';
+import type { PluginJsonValueV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { DeploymentEnvironmentRefV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import { AutomationDatabaseSubjectReadV1Schema } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { DatabaseEngineIdV1Schema, DatabaseTargetV1Schema, DatabaseWorktreeTargetV1Schema } from './databaseTargets.js';
@@ -213,6 +214,7 @@ export const DatabaseFailureV1Schema = z.discriminatedUnion('status', [
     z.strictObject({ ok: z.literal(false), status: z.literal('conflict'), code: z.literal('database_edit_conflict'), changeIndex: nonnegativeInteger, reason: z.enum(['row_changed', 'row_missing', 'relation_changed']) }),
 ]);
 export type DatabaseFailureV1 = z.infer<typeof DatabaseFailureV1Schema>;
+const explainPlanJson: z.ZodMiniType<PluginJsonValueV2, PluginJsonValueV2> = z.json();
 export const DatabaseOperationResultV1Schema = z.union([
     DatabaseFailureV1Schema,
     z.strictObject({ ok: z.literal(true), operation: z.literal('describe'), descriptor: DatabaseDescriptorV1Schema }),
@@ -225,7 +227,7 @@ export const DatabaseOperationResultV1Schema = z.union([
         // This scopes completeness to the ordered entry list. Absence means all
         // native entries are present; each entry separately describes its rows.
         completeness: z.optional(DatabaseCompletenessV1Schema) }),
-    z.strictObject({ ok: z.literal(true), operation: z.literal('statement.explain'), format: z.enum(['text', 'json']), plan: z.union([z.string(), z.json()]), completeness: DatabaseCompletenessV1Schema }),
+    z.strictObject({ ok: z.literal(true), operation: z.literal('statement.explain'), format: z.enum(['text', 'json']), plan: z.union([z.string(), explainPlanJson]), completeness: DatabaseCompletenessV1Schema }),
     z.strictObject({ ok: z.literal(true), operation: z.literal('edits.apply'), status: z.literal('committed'), inserted: count, updated: count, deleted: count }),
     z.strictObject({ ok: z.literal(true), operation: z.literal('stats.read'), observation: DatabaseStatsObservationV1Schema }),
     z.strictObject({ ok: z.literal(true), operation: z.literal('activity.cancel'), status: z.enum(['signal_sent', 'activity_ended', 'signal_failed']) }),

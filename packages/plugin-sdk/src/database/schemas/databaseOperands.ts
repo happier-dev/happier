@@ -12,11 +12,8 @@ export const DatabaseOrderV1Schema = z.strictObject({
     column: name, direction: z.enum(['asc', 'desc']), nulls: z.optional(z.enum(['first', 'last'])),
 });
 export type DatabaseOrderV1 = z.infer<typeof DatabaseOrderV1Schema>;
-export type DatabaseFilterV1 =
-    | { kind: 'comparison'; column: string; operator: 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte' | 'contains'; value: DatabaseValueV1 }
-    | { kind: 'null'; column: string; isNull: boolean }
-    | { kind: 'and' | 'or'; filters: DatabaseFilterV1[] }
-    | { kind: 'not'; filter: DatabaseFilterV1 };
+export type { DatabaseFilterV1 } from '../schemaTypes.js';
+import type { DatabaseFilterV1 } from '../schemaTypes.js';
 export const DatabaseFilterV1Schema: z.ZodMiniType<DatabaseFilterV1> = z.lazy(() => z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('comparison'), column: name, operator: z.enum(['eq', 'ne', 'lt', 'lte', 'gt', 'gte', 'contains']), value: DatabaseValueV1Schema }),
     z.strictObject({ kind: z.literal('null'), column: name, isNull: z.boolean() }),

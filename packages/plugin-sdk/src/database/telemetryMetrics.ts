@@ -38,14 +38,14 @@ export const TelemetryEnvironmentMetricsReadInputV1Schema = z.strictObject({ ...
 export const TelemetryEnvironmentMetricsReadResultV1Schema = z.strictObject({ items: z.array(z.strictObject({
     environmentId: text, ...TelemetryMetricsReadResultV1Schema.shape,
 })) });
-const telemetryMetricsActionReadInputV1Schema = z.union([
+export const telemetryMetricsActionReadInputV1Schema = z.union([
     TelemetryMetricsReadInputV1Schema, TelemetryEnvironmentMetricsReadInputV1Schema,
 ]);
 export const TelemetryMetricsActionReadInputV1ProtocolSchema: ProtocolComposableSchema<
     z.input<typeof telemetryMetricsActionReadInputV1Schema>,
     (TelemetryMetricsReadInputV1 | TelemetryEnvironmentMetricsReadInputV1) & ProtocolJsonValue
 > = projectZodProtocolSchema(telemetryMetricsActionReadInputV1Schema);
-const telemetryMetricsActionReadResultV1Schema = z.union([
+export const telemetryMetricsActionReadResultV1Schema = z.union([
     TelemetryMetricsReadResultV1Schema, TelemetryEnvironmentMetricsReadResultV1Schema,
 ]);
 export const TelemetryMetricsActionReadResultV1ProtocolSchema: ProtocolComposableSchema<

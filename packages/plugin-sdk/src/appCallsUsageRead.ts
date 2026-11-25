@@ -4,7 +4,8 @@ import { UsageModelPriceReadResultSchema } from '@happier-dev/protocol/usage/usa
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { DatabaseCaptureCostsReadResultV1Schema, type DatabaseCaptureCostsReadInputV1, type DatabaseCaptureCostsReadResultV1 } from './database/databaseCaptureCosts.js';
+import { DatabaseCaptureCostsReadResultV1Schema } from './database/databaseCaptureCosts.js';
+import type { DatabaseCaptureCostsReadInputV1, DatabaseCaptureCostsReadResultV1 } from './database/schemaTypes.js';
 import { projectAppCallsUsageSourcesV1, usageAppCallsSourceId } from './appCallsUsage.js';
 
 export type UsageAppCallsExecute = (

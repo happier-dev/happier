@@ -160,13 +160,13 @@ export {
     DatabaseCaptureProjectV1ProtocolSchema as DatabaseCaptureProjectV1Schema,
     DatabaseCaptureSourceV1ProtocolSchema as DatabaseCaptureSourceV1Schema,
     DatabaseCaptureCoverageV1ProtocolSchema as DatabaseCaptureCoverageV1Schema,
-} from './databaseCaptureSource.js';
+} from './captureProjections.js';
 export {
     DatabaseTelemetryMetricIntervalV1ProtocolSchema as DatabaseTelemetryMetricIntervalV1Schema,
-} from './databaseTelemetryMetricSeries.js';
+} from './telemetryProjections.js';
 export type {
     DatabaseTelemetryMetricIntervalV1,
-} from './databaseTelemetryMetricSeries.js';
+} from './telemetryProjections.js';
 export {
     TelemetryKeyFlowMeasureV1ProtocolSchema as TelemetryKeyFlowMeasureV1Schema,
     TelemetryKeyFlowConfigV1ProtocolSchema as TelemetryKeyFlowConfigV1Schema,
@@ -177,7 +177,7 @@ export {
     TelemetryMetricsActionReadInputV1ProtocolSchema,
     TelemetryMetricsActionReadResultV1ProtocolSchema,
     projectTelemetryMetricsActionReadResultV1,
-} from './telemetryMetrics.js';
+} from './telemetryProjections.js';
 export type {
     TelemetryEnvironmentMetricsReadInputV1,
     TelemetryEnvironmentMetricsReadResultV1,
@@ -185,19 +185,19 @@ export type {
     TelemetryMetricsReadInputV1,
     TelemetryKeyFlowConfigV1,
     TelemetryKeyFlowMeasureV1,
-} from './telemetryMetrics.js';
+} from './telemetryProjections.js';
 export {
     DATABASE_CAPTURE_COST_TOKEN_FIELDS_V1,
     DatabaseCaptureCostsReadInputV1ProtocolSchema as DatabaseCaptureCostsReadInputV1Schema,
     DatabaseCaptureCostOperandV1ProtocolSchema as DatabaseCaptureCostOperandV1Schema,
     DatabaseCaptureCostsReadResultV1ProtocolSchema as DatabaseCaptureCostsReadResultV1Schema,
-} from './databaseCaptureCosts.js';
+} from './captureCostsProjections.js';
 export type {
     DatabaseCaptureCostsReadInputV1,
     DatabaseCaptureCostOperandV1,
     DatabaseCaptureCostMetadataV1,
     DatabaseCaptureCostsReadResultV1,
-} from './databaseCaptureCosts.js';
+} from './captureCostsProjections.js';
 export {
     DatabaseCaptureCursorV1ProtocolSchema as DatabaseCaptureCursorV1Schema,
     DatabaseCapturePageV1ProtocolSchema as DatabaseCapturePageV1Schema,
@@ -227,7 +227,7 @@ export {
     DatabaseCaptureResourceInputV1ProtocolSchema as DatabaseCaptureResourceInputV1Schema,
     DatabaseCaptureResourceSnapshotV1ProtocolSchema as DatabaseCaptureResourceSnapshotV1Schema,
     readProductionCaptureFindingGroupKeyV1,
-} from './databaseCapture.js';
+} from './captureProjections.js';
 export type {
     DatabaseCaptureResourceInputV1,
     DatabaseCaptureProjectV1,
@@ -259,7 +259,7 @@ export type {
     DatabaseCaptureClearResultV1,
     DatabaseCaptureConfigureInputV1,
     DatabaseCaptureConfigureResultV1,
-} from './databaseCapture.js';
+} from './captureProjections.js';
 export {
     DATABASE_PLUGIN_ID_V1,
     DATABASE_TARGETS_LIST_ACTION_ID_V1,

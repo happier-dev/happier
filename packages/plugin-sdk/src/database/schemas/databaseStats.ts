@@ -85,8 +85,4 @@ export const DatabaseStatsCounterSampleV1Schema = z.strictObject({
 });
 type CounterSample = z.infer<typeof DatabaseStatsCounterSampleV1Schema>;
 export type DatabaseStatsCounterSampleV1 = Readonly<Omit<CounterSample, 'rows'> & { rows: readonly Readonly<CounterSample['rows'][number]>[] }>;
-export type DatabaseStatsCounterComparisonV1 = Readonly<{
-    status: 'available'; fromMs: number; toMs: number;
-    rows: readonly Readonly<{ key: string; calls: string; totalTimeMs: number; rows: string; meanTimeMs: number | null }>[];
-    missingKeys: readonly string[];
-}> | Readonly<{ status: 'unavailable'; reason: DatabaseStatsReasonV1 }>;
+export type { DatabaseStatsCounterComparisonV1 } from '../schemaTypes.js';

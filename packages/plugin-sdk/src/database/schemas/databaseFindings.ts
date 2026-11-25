@@ -171,7 +171,7 @@ export const DatabaseFindingListEntryV1Schema = z.strictObject({
     object: z.optional(findingObject),
     dismissalKey: z.optional(dismissalKey),
 });
-const findingDismissInput = z.strictObject({ target: DatabaseTargetV1Schema, dismissalKey });
+export const findingDismissInput = z.strictObject({ target: DatabaseTargetV1Schema, dismissalKey });
 export type DatabaseFindingDismissInputV1 = z.infer<typeof findingDismissInput>;
 export const DatabaseFindingDismissInputV1ProtocolSchema = projectZodProtocolSchema(findingDismissInput);
 export const DatabaseFindingDismissResultV1ProtocolSchema = projectZodProtocolSchema(z.strictObject({ ok: z.literal(true) }));
