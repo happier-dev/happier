@@ -122,6 +122,7 @@ export type Words = Readonly<{
     workosOpenPortal: string;
     workosOpenPortalAgain: string;
     workosNothingCreatedYet: string;
+    workosPortalProviderUnavailable: string;
     workosStepChooseDetail: string;
     workosStepChooseDone: string;
     workosFindConnections: string;
@@ -332,7 +333,8 @@ export const en: Words = {
     workosStepPortalDoneDetail: 'Your organization is linked.',
     workosOpenPortal: 'Open portal',
     workosOpenPortalAgain: 'Open again',
-    workosNothingCreatedYet: 'Nothing is created until you open the portal. Leave now and nothing is kept.',
+    workosNothingCreatedYet: "Open portal saves the connection first. You can finish setup later.",
+    workosPortalProviderUnavailable: "WorkOS didn’t respond. Your connection was saved.",
     workosStepChooseDetail: 'Pick which WorkOS connection signs members in.',
     workosStepChooseDone: 'Connection',
     workosFindConnections: 'Find connections',

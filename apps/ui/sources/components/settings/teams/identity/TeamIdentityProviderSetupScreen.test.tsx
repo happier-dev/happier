@@ -105,6 +105,32 @@ describe('TeamIdentityProviderSetupScreen through its real Action clients', () =
         expect(routerReplaceMock).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/authentication/connection-1`);
     });
 
+    it.each([
+        ['workos_platform_unavailable', 'identityAdministration.errorWorkosPlatformUnavailable'],
+        ['identity_provider_unavailable', 'identityAdministration.workosPortalProviderUnavailable'],
+    ] as const)('keeps the created connection when opening WorkOS is refused with %s', async (error, message) => {
+        harness.answer(serverId, '/v1/teams/identity/connections/list', { body: TeamIdentityConnectionListResultV1Schema.parse({
+            items: [], memberSignInUrl: null,
+            admissionModeApplicability: { v: 1, modes: { invite_only: { status: 'available' }, provisioned: { status: 'available' }, jit: { status: 'available' } } },
+            eligibleProviders: [{ v: 1, providerKind: 'workos_sso', providerId: null, displayName: null, owner: 'team',
+                availability: { status: 'available', setupChoice: { kind: 'create_managed', actionId: 'teams.identity.workos.connection.create' } } }],
+        }) });
+        harness.answer(serverId, workosCreatePath, { body: { connection: connection('connection-1', 'workos_sso') } });
+        harness.answer(serverId, portalPath, { status: 503, body: { error } });
+        const screen = await renderSetup('workos_sso');
+        await act(async () => screen.changeTextByTestId('identity-workos-company-name', 'Northwind Studio'));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('identity-workos-create')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('identity-workos-create');
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.findByTestId('identity-workos-create')).toBeNull();
+        expect(screen.findByTestId('identity-workos-company-name')).toBeNull();
+        expect(routerReplaceMock).not.toHaveBeenCalled();
+        expect(openExternalUrlMock).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('identity-workos-continue');
+        expect(routerReplaceMock).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/authentication/connection-1`);
+        expect(harness.requests.filter(request => request.path === workosCreatePath)).toHaveLength(1);
+    });
+
     it('keeps Team-owned provider fields read-only when Team mutations are unavailable', async () => {
         answerTeam('team-1', true);
         const screen = await renderSetup();

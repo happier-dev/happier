@@ -47,23 +47,37 @@ export function IdentityWorkosSetupContent(props: Readonly<{
     const [displayName, setDisplayName] = React.useState('');
     const [pending, setPending] = React.useState(false);
     const [failure, setFailure] = React.useState<string | null>(null);
+    const [savedConnection, setSavedConnection] = React.useState<Readonly<{ id: string; portalFailure: string | null }> | null>(null);
     const choice = state.kind === 'ready' ? state.eligibleProviders.find((provider) => provider.providerKind === 'workos_sso' && provider.providerId === null) : undefined;
     const eligible = choice?.availability.status === 'available' && choice.availability.setupChoice.kind === 'create_managed';
     const canCreate = props.mutationsAvailable && state.kind === 'ready' && !state.refreshing && !state.stale && eligible;
     const create = async () => {
-        if (!canCreate || pending || !displayName.trim()) return;
+        if (!canCreate || pending || savedConnection || !displayName.trim()) return;
         setPending(true); setFailure(null);
-        // The portal opens on the created connection; its page then continues setup either way, and
-        // says why when the portal could not open ("Open again" is the same step).
         const openPortal = async (connectionId: string) => {
+            const reportPortalFailure = (code: string) => setSavedConnection({ id: connectionId, portalFailure: code });
+            const followPortal = async (value: Readonly<{ url: string }>) => {
+                try {
+                    if (await openExternalUrl(value.url)) {
+                        markWorkosPortalOpenedFor(connectionId);
+                        props.onCreated(connectionId);
+                        return;
+                    }
+                } catch {
+                    // The saved connection remains accessible if this device could not open the link.
+                }
+                reportPortalFailure('workos_portal_open_failed');
+            };
             try {
-                const link = await client.execute('teams.identity.workos.adminPortalLink.create', { v: 1, teamId: props.teamId, connectionId, intent: 'sso' }, {
-                    onApprovalSucceeded: async (value) => { if (await openExternalUrl(value.url)) markWorkosPortalOpenedFor(connectionId); },
-                    onApprovalFailed: () => undefined,
-                });
-                if (link.ok && await openExternalUrl(link.value.url)) markWorkosPortalOpenedFor(connectionId);
-            } catch { /* The connection page offers the portal again. */ }
-            props.onCreated(connectionId);
+                const link = await client.execute('teams.identity.workos.adminPortalLink.create', {
+                    v: 1, teamId: props.teamId, connectionId, intent: 'sso',
+                }, { onApprovalSucceeded: followPortal, onApprovalFailed: reportPortalFailure });
+                if (link.ok) await followPortal(link.value);
+                else if ('approvalPending' in link) setSavedConnection({ id: connectionId, portalFailure: null });
+                else reportPortalFailure(link.failure.code);
+            } catch {
+                reportPortalFailure('home_unreachable');
+            }
         };
         try {
             const result = await client.execute('teams.identity.workos.connection.create', { v: 1, teamId: props.teamId, displayName: displayName.trim() }, {
@@ -87,6 +101,12 @@ export function IdentityWorkosSetupContent(props: Readonly<{
     const blockedReason = blocked
         ? (choice ? eligibleProviderUnavailableReason(choice, props.homeName ?? '', t('identityAdministration.homeWorkosAdd')) : null) ?? t('identityAdministration.errorSetupRequired')
         : null;
+    const portalFailure = savedConnection?.portalFailure;
+    const portalMessage = portalFailure === 'identity_provider_unavailable'
+        ? t('identityAdministration.workosPortalProviderUnavailable')
+        : portalFailure === 'workos_portal_open_failed'
+            ? t('settingsProviders.links.failedToOpen')
+            : portalFailure ? identityAdministrationFailureMessage(portalFailure) : null;
     return <><PageHeader
             leading={<PageHeaderMarkSlot><WorkosMark /></PageHeaderMarkSlot>}
             title={t('identityAdministration.homeWorkosAdd')}
@@ -94,7 +114,11 @@ export function IdentityWorkosSetupContent(props: Readonly<{
             description={props.teamId === null ? t('identityAdministration.homeWorkosPurpose') : t('teams.pages.identityProviderNew')}
             // The page's one decision is creating the connection, so it is the header's primary, as on
             // every other "new" page (New Team). It waits for a name and for the Home to allow it.
-            primaryAction={blocked ? undefined : {
+            primaryAction={savedConnection ? {
+                title: t('common.continue'),
+                testID: 'identity-workos-continue',
+                onPress: () => props.onCreated(savedConnection.id),
+            } : blocked ? undefined : {
                 title: t('identityAdministration.workosOpenPortal'),
                 testID: 'identity-workos-create',
                 loading: pending,
@@ -103,7 +127,11 @@ export function IdentityWorkosSetupContent(props: Readonly<{
             }}
         />
         {props.conditionBanners}
-        <SettingSection section={settings.sectionRefs.configuration}>{blocked ? (
+        <SettingSection section={settings.sectionRefs.configuration}>{savedConnection ? (
+            <ItemGroup description={t('identityAdministration.workosSetupFooter')}>
+                {portalMessage ? <SurfaceStateCard testID="identity-workos-portal-failure" kind="error" size="line" title={portalMessage} /> : null}
+            </ItemGroup>
+        ) : blocked ? (
             <SurfaceStateCard
                 testID="identity-workos-unavailable"
                 kind="unavailable"
@@ -115,7 +143,7 @@ export function IdentityWorkosSetupContent(props: Readonly<{
         ) : /* Search for "Add connection" lands on the form its header primary submits. */ <SettingAnchor setting={settings.settings.create}><ItemGroup description={t('identityAdministration.workosNothingCreatedYet')}>
             {state.kind === 'loading' ? <SurfaceStateCard kind="loading" size="line" title={t('common.loading')} /> : null}
             {state.kind === 'unavailable' ? <SurfaceStateCard kind="error" size="line" title={identityAdministrationFailureMessage(state.failure.code)} action={state.failure.retryable ? { label: t('common.retry'), onPress: refresh } : undefined} /> : null}
-            {state.kind === 'ready' && state.failure ? <SurfaceStateCard kind="error" size="line" title={identityAdministrationFailureMessage(state.failure.code)} action={{ label: t('common.retry'), onPress: refresh }} /> : null}
+            {state.kind === 'ready' && state.failure ? <SurfaceStateCard kind="error" size="line" title={identityAdministrationFailureMessage(state.failure.code)} action={state.failure.retryable ? { label: t('common.retry'), onPress: refresh } : undefined} /> : null}
             <SettingRow setting={settings.settings.companyName} accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput testID="identity-workos-company-name" accessibilityLabel={t('identityAdministration.homeWorkosCompanyName')} value={displayName} editable={canCreate && !pending} onChangeText={setDisplayName} onSubmitEditing={() => void create()} autoCapitalize="words" />} />
             {failure ? <SurfaceStateCard testID="identity-workos-create-failure" kind="error" size="line" title={identityAdministrationFailureMessage(failure)} /> : null}
         </ItemGroup></SettingAnchor>}</SettingSection></>;
