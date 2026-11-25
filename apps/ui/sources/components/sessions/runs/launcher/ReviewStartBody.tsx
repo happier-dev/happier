@@ -12,7 +12,8 @@ import { useExecutableParticipantLabels } from '@/components/sessions/authoring/
 import { ExecutionRunAgentMark } from '@/components/sessions/runs/ExecutionRunAgentMark';
 import { t } from '@/text';
 import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
-import { readReviewLauncherReviewers, readReviewLauncherSteps, updateReviewLauncherStepInput } from './reviewLauncherSelection';
+import { readReviewLauncherReviewers, readReviewLauncherSteps, updateReviewLauncherStepInput, selectReviewLauncherEngines } from './reviewLauncherSelection';
+import { presentReviewLauncherReviewer, type ReviewLauncherInheritedModel } from './reviewLauncherReviewerPresentation';
 
 const ADMISSIBLE = { who: ['newAgent', 'engine', 'session', 'bot', 'person'], machine: 'fixed', folder: 'fixed' } as const;
 
@@ -21,6 +22,7 @@ type Props = Readonly<{
     onChange: React.Dispatch<React.SetStateAction<Record<string, unknown>>>;
     source: ContextualStartSource;
     choices: readonly ExecutionRunLauncherBackendChoice[];
+    inheritedModel?: ReviewLauncherInheritedModel;
     transcriptAvailable: boolean;
     walkthrough: boolean;
     disabled: boolean;
@@ -140,13 +142,19 @@ function StepWho(props: Props & Readonly<{ stepIndex: number; steps: ReturnType<
                 if (positions.length === 0 && (choice.disabled || option.onSelect === undefined)) return [option];
                 const remove = (position: number) => changeReviewers(step.reviewers.filter((_reviewer, index) => index !== position));
                 const { openStep: _openStep, ...selection } = option;
-                if (positions.length > 1) return positions.map(position => ({ ...selection,
+                const present = (position: number) => {
+                    const reviewer = step.reviewers[position];
+                    return reviewer?.kind === 'engine' ? presentReviewLauncherReviewer(reviewer, position, step.reviewers, choice, props.choices, props.inheritedModel) : {};
+                };
+                if (positions.length > 1) return positions.map(position => ({ ...selection, ...present(position),
                     id: reviewReviewerIdForSelectionV1(position),
                     testID: `review-start-reviewer:${reviewReviewerIdForSelectionV1(position)}`,
                     onSelect: () => remove(position),
                 }));
-                return [{ ...selection, onSelect: () => positions.length === 1 ? remove(positions[0]!)
-                    : changeReviewers([...step.reviewers, { kind: 'engine', engineId: id }]) }];
+                return [{ ...selection, ...(positions.length === 1 ? present(positions[0]!) : {}),
+                    onSelect: () => positions.length === 1 ? remove(positions[0]!)
+                        : changeReviewers(readReviewLauncherReviewers(selectReviewLauncherEngines({ reviewers: step.reviewers },
+                            [...enginePositions.keys(), id], props.choices))) }];
             }),
         } })),
     };

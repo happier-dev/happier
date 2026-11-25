@@ -150,7 +150,10 @@ export function useExecutionRunLauncherOptionsModel(rawParams: Readonly<{
 
     React.useEffect(() => {
         if (!catalogReady || !machineAnswered) return;
-        if (params.intent === 'review' && readReviewLauncherReviewers(params.actionInput).length > 0) return;
+        if (params.intent === 'review' && readReviewLauncherReviewers(params.actionInput).length > 0) {
+            params.setActionInput(previous => selectReviewLauncherEngines(previous, readReviewLauncherEngineIds(previous), backendChoices));
+            return;
+        }
         const valueOf = (choice: typeof backendChoices[number]) => params.intent === 'review' ? choice.reviewEngineId ?? choice.backendId : choice.targetKey;
         // A saved choice that is not ready on the Machine stays chosen (it says why); defaults pick only fresh ones.
         const keptValues = backendChoices.filter((choice) => !choice.disabled).map(valueOf);
@@ -168,7 +171,7 @@ export function useExecutionRunLauncherOptionsModel(rawParams: Readonly<{
                 ? []
                 : preferred ? [preferred] : [];
         if (selectedValues.length === next.length && selectedValues.every((value, index) => value === next[index])) return;
-        params.setActionInput(previous => params.intent === 'review' ? selectReviewLauncherEngines(previous, next) : {
+        params.setActionInput(previous => params.intent === 'review' ? selectReviewLauncherEngines(previous, next, backendChoices) : {
             ...previous, ...setValueAtTopLevelPatch(previous, targetFieldPath, next),
         });
     }, [catalogReady, machineAnswered, backendChoices, initialBackendTargetKey, params.intent, params.setActionInput, params.singleTarget, selectedValues, targetField?.requireExplicitSelection, targetFieldPath]);
@@ -242,7 +245,7 @@ export function useExecutionRunLauncherOptionsModel(rawParams: Readonly<{
                     : typeof targetField?.maxSelections === 'number' && current.length >= targetField.maxSelections
                         ? current
                         : [...current, value];
-            return params.intent === 'review' ? selectReviewLauncherEngines(previous, next)
+            return params.intent === 'review' ? selectReviewLauncherEngines(previous, next, backendChoices)
                 : { ...previous, ...setValueAtTopLevelPatch(previous, targetFieldPath, next) };
         });
     }, [backendChoices, params.intent, params.setActionInput, params.setUserActionInput, params.singleTarget, targetField?.maxSelections, targetFieldPath]);
@@ -253,7 +256,7 @@ export function useExecutionRunLauncherOptionsModel(rawParams: Readonly<{
         const value = params.intent === 'review' ? backend.reviewEngineId ?? backend.backendId : backend.targetKey;
         (params.setUserActionInput ?? params.setActionInput)((previous) => ({
             ...previous,
-            ...(params.intent === 'review' ? selectReviewLauncherEngines(previous, [value]) : setValueAtTopLevelPatch(previous, targetFieldPath, [value])),
+            ...(params.intent === 'review' ? selectReviewLauncherEngines(previous, [value], backendChoices) : setValueAtTopLevelPatch(previous, targetFieldPath, [value])),
             profileId: choice.id,
             profileSourceCustody: choice.sourceCustody,
         }));

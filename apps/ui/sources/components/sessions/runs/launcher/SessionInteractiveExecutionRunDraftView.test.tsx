@@ -43,7 +43,7 @@ import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executo
 import { WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema, ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol/scm';
 import { REVIEW_ARTIFACT_KIND_V1, ReviewRoundBindingV1Schema } from '@happier-dev/protocol/reviews/reviewArtifactV1';
-import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
+import { ReviewStartInputSchema, reviewReviewerIdForSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
@@ -777,7 +777,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         backends.roborev = { available: true, intents: ['review'] };
         const runnerAgentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
         reviewRunners = { roborev: { runnerSelection: 'perMember', runnerAgents: [{ agentTarget: runnerAgentTarget, providerProtocols: ['openai-responses'] }] } };
-        await mount({ intent: 'review', initialActionInput: { reviewers: [{ kind: 'engine', engineId: 'roborev', runnerAgentTarget }] } });
+        await mount({ intent: 'review', initialActionInput: { reviewers: [{ kind: 'engine', engineId: 'roborev' }] } });
         const engine = agentRows().find(option => option.testID === 'contextual-start-agent:roborev');
         if (!engine) throw new Error('Expected the panel reviewer');
         await screen.pressByTestIdAsync(`contextual-start-change:${engine.id}`);
@@ -794,6 +794,8 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                 { kind: 'engine', engineId: 'roborev', runnerAgentTarget, modelSelection: ref, connectedServices: null },
                 { kind: 'engine', engineId: 'roborev', runnerAgentTarget, modelSelection: ref, connectedServices: null },
             ] } }));
+        await screen.pressByTestIdAsync(`contextual-start-change:${reviewReviewerIdForSelectionV1(1)}`);
+        expect(screen.findByTestId('review-runner-member-title')?.props.children).toBe('roborev 2');
     });
 
     it('edits only declared profile options of the opened reviewer while retaining the mixed roster and consent', async () => {

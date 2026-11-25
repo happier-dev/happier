@@ -1,6 +1,7 @@
 import { reviewScopeForInput } from '@happier-dev/protocol/reviews/reviewEngines';
 import { ExecutionRunAgentModelPicker } from './ExecutionRunAgentModelPicker';
 import { ExecutionRunEngineRunnerPicker } from './ExecutionRunEngineRunnerPicker';
+import { presentReviewLauncherReviewer } from './reviewLauncherReviewerPresentation';
 import { PersonalSessionModelRefSchema } from '@happier-dev/protocol/providers/selection/v2';
 import { ExecutionRunStartResponseSchema, readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { resolveExecutionRunImplicitRoleIdV1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
@@ -870,7 +871,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             : undefined;
         setActionInput(previous => {
             if (intent === 'review') {
-                const selected = follow ? selectReviewLauncherEngines(previous, [follow.reviewEngineId ?? follow.backendId]) : previous;
+                const selected = follow ? selectReviewLauncherEngines(previous, [follow.reviewEngineId ?? follow.backendId], options.backendChoices) : previous;
                 return updateReviewLauncherEngineConfiguration(selected, configuration => ({ ...configuration, roleId }));
             }
             return { ...previous, roleId, ...(follow ? { backendTargetKeys: [follow.targetKey] } : {}) };
@@ -1162,7 +1163,6 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         }
     }, [accountLifetime, mountedComposerRef, serverId, launcher.prepareStartInput, comparisonReview.launchInput,
         secretOverlayState.overlay, props.sessionId, whereTarget, router]);
-    const reviewModelSubtitle = reviewOptions.modelSubtitle;
     const contextualSource = React.useMemo<ContextualStartSource>(() => ({
         enabled: accountLifetime !== null,
         busy: !editable,
@@ -1179,8 +1179,6 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 ...(intent !== 'review' && selectedChoice?.targetKey === choice.targetKey
                     && (draftModelSelection || options.inheritedDraftSelection || teamCredential.selected)
                     ? { subtitle: exactModelPresentation.subtitle } : {}),
-                ...(intent === 'review' && !choice.unavailableReason && reviewModelSubtitle && options.selectedBackendChoice?.targetKey === choice.targetKey
-                    ? { subtitle: reviewModelSubtitle } : {}),
                 ...(setup ? {} : { onSelect: () => selectBackend(choice.targetKey) }),
             };
         }) } }],
@@ -1191,7 +1189,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             testIDPrefix: 'run-start', choose: target => {
                 if (isWorkflowProjectTarget(target)) setChosenWorkspace({ machineId: target.machineId, cwd: target.directory });
             } },
-    }), [accountLifetime, choosingReviewWorkspace, draftModelSelection, editable, exactModelPresentation.subtitle, intent, machine.name, reviewMachines, reviewModelSubtitle,
+    }), [accountLifetime, choosingReviewWorkspace, draftModelSelection, editable, exactModelPresentation.subtitle, intent, machine.name, reviewMachines,
         options.backendChoices, options.inheritedDraftSelection, options.selectedBackendTargetKeys, selectBackend,
         selectedChoice?.targetKey, session, teamCredential.selected, whereTarget, workspace]);
     const contextualComposer = useContextualStartComposer(contextualSource,
@@ -1216,6 +1214,9 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     [actionInput, draftModelSelection, intent, machineId, options.backendChoices, options.inheritedDraftSelection, options.selectedBackendTargetKeys, reviewModelChoice, reviewModelTarget,
         options.inheritedDraftTeamCredentialModel, props.sessionId, selectBackend, serverId, setActionInput, setupDetails]);
 
+    const reviewInheritedModel = inheritedModelSelection ? {
+        selection: inheritedModelSelection, label: resolveInheritedModelLabel(inheritedModelSelection),
+    } : undefined;
     const reviewStepControls: NonNullable<React.ComponentProps<typeof ReviewStartBody>['stepControls']> = (input, setInput, stepIndex) => {
         const reviewers = readReviewLauncherReviewers(input);
         const configuration = reviewLauncherEngineConfiguration(input);
@@ -1228,7 +1229,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 const role = roles.find(candidate => candidate.roleId === roleId);
                 const follow = role?.agentTargetKey ? options.backendChoices.find(choice => isFreshExecutionRunBackendChoice(choice)
                     && choiceRunsAgent(choice, role.agentTargetKey!)) : null;
-                const next = follow ? selectReviewLauncherEngines(previous, [follow.reviewEngineId ?? follow.backendId]) : previous;
+                const next = follow ? selectReviewLauncherEngines(previous, [follow.reviewEngineId ?? follow.backendId], options.backendChoices) : previous;
                 return { ...next, reviewers: readReviewLauncherReviewers(next).map(reviewer => reviewer.kind === 'engine'
                     ? { ...reviewer, roleId } : reviewer) };
             }),
@@ -1247,7 +1248,9 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             const profileId = choice.reviewInventoryItem?.profileId;
             const profile = parseQualifiedPluginContributionKey(profileId);
             const profileChoice = options.profileChoices.find(candidate => candidate.id === profileId);
-            const renderDetail = () => <>{choice.reviewInventoryItem?.runnerAgents?.length ? <ExecutionRunEngineRunnerPicker engine={choice}
+            const member = presentReviewLauncherReviewer(reviewer, index, reviewers, choice, options.backendChoices, reviewInheritedModel);
+            const renderDetail = () => <><Text variant="label" emphasis="strong" testID="review-runner-member-title">{member.label}</Text>
+                {choice.reviewInventoryItem?.runnerAgents?.length ? <ExecutionRunEngineRunnerPicker engine={choice}
                 choices={options.backendChoices} sessionId={props.sessionId} serverId={serverId} machineId={machineId}
                 actionInput={engineInput} selected={parsed.success ? parsed.data : null} setActionInput={setEngineInput}
                 onAddMember={choice.reviewInventoryItem.runnerSelection === 'perMember'
@@ -1417,6 +1420,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             {(choosingReviewWorkspace || sheetHosted) && !machineInFooter ? <ContextualStartWhere model={contextualComposer} /> : null}
             {intent === 'review' && !credentialSelectionOnly ? <ReviewStartBody input={actionInput}
                 onChange={setActionInput} source={contextualSource} choices={options.backendChoices}
+                inheritedModel={reviewInheritedModel}
                 consumerSessionId={props.sessionId} stepControls={reviewStepControls}
                 transcriptAvailable={props.sessionId !== null} walkthrough={comparisonReview.fields.walkthrough}
                 disabled={!editable} details={agentDetails}

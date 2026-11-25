@@ -3,7 +3,77 @@ import { vi, it, expect } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { ReviewStartBody } from './ReviewStartBody';
 import { reviewReviewerIdForSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
+import { SelectionList } from '@/components/ui/selectionList';
+import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+
+const codexTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+const claudeTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
+const runnerChoices: readonly ExecutionRunLauncherBackendChoice[] = [
+    { targetKey: 'agent:happier.agent.codex/codex', backendId: 'codex', agentId: 'codex', backendTarget: codexTarget,
+        title: 'Codex', disabled: false },
+    { targetKey: 'agent:happier.agent.claude/claude', backendId: 'claude', agentId: 'claude', backendTarget: claudeTarget,
+        title: 'Claude', disabled: false },
+    { targetKey: 'roborev', backendId: 'roborev', agentId: 'roborev', backendTarget: { kind: 'backend', backendId: 'roborev' },
+        title: 'roborev', disabled: false, reviewInventoryItem: { engineId: 'roborev', label: 'roborev', enabled: true,
+            capabilities: { structuredNarration: true }, runnerSelection: 'perMember', runnerAgents: [
+                { agentTarget: codexTarget, providerProtocols: ['openai-responses'] },
+                { agentTarget: claudeTarget, providerProtocols: ['anthropic'] },
+            ] } },
+];
+
+it('names each panel member and its own runner and model in the Who summary', async () => {
+    const reviewers = [
+        { kind: 'engine', engineId: 'roborev', runnerAgentTarget: codexTarget },
+        { kind: 'engine', engineId: 'roborev', runnerAgentTarget: claudeTarget,
+            modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'review-model' } },
+    ];
+    const props: React.ComponentProps<typeof ReviewStartBody> = { input: { reviewers },
+        onChange: () => undefined, source: { enabled: true, where: null, selectedIds: new Set(['roborev']),
+        sections: [{ category: 'engine', section: { kind: 'static', id: 'engines', options: [
+            { id: 'roborev', label: 'roborev', onSelect: () => undefined },
+        ] } }] }, choices: runnerChoices, transcriptAvailable: false, walkthrough: false, disabled: false };
+    const screen = await renderScreen(<ReviewStartBody {...props} />);
+    const options = () => screen.findAllByType(SelectionList).find(node => node.props.testID === 'contextual-start-who')!
+        .props.rootStep.sections.flatMap((section: { options?: readonly unknown[] }) => section.options ?? []);
+    const expected = expect.arrayContaining([
+        expect.objectContaining({ label: 'roborev 1', subtitle: 'Codex · Default model' }),
+        expect.objectContaining({ label: 'roborev 2', subtitle: 'Claude · review-model' }),
+    ]);
+    expect(options()).toEqual(expected);
+    // The ready engine's native runner still has its catalog name without a standalone reviewer row.
+    await screen.update(<ReviewStartBody {...props} choices={[runnerChoices[2]!]} />);
+    expect(options()).toEqual(expected);
+    const inheritedModel = { selection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null,
+        modelId: 'session-model' }, label: 'Session model' };
+    await screen.update(<ReviewStartBody {...props} inheritedModel={inheritedModel} />);
+    expect(options()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ label: 'roborev 1', subtitle: 'Codex · Session model' }),
+        expect.objectContaining({ label: 'roborev 2', subtitle: 'Claude · review-model' }),
+    ]));
+    await screen.update(<ReviewStartBody {...props} inheritedModel={{ ...inheritedModel,
+        selection: { ...inheritedModel.selection, agentTargetKey: 'agent:happier.agent.claude/claude' } }} />);
+    expect(options()).toEqual(expected);
+    await screen.update(<ReviewStartBody {...props} inheritedModel={inheritedModel} input={{ reviewers: [
+        { kind: 'engine', engineId: 'roborev', runnerAgentTarget: codexTarget, childSelection: 'agentDefault' },
+        reviewers[1],
+    ] }} />);
+    expect(options()).toEqual(expected);
+    await screen.unmount();
+});
+
+it('selects a newly checked engine with its first available declared runner', async () => {
+    let input: Record<string, unknown> = { reviewers: [] };
+    const screen = await renderScreen(<ReviewStartBody input={input} onChange={update => {
+        input = typeof update === 'function' ? update(input) : update;
+    }} source={{ enabled: true, where: null, selectedIds: new Set(),
+        sections: [{ category: 'engine', section: { kind: 'static', id: 'engines', options: [
+            { id: 'roborev', testID: 'select-panel', label: 'roborev', onSelect: () => undefined },
+        ] } }] }} choices={runnerChoices} transcriptAvailable={false} walkthrough={false} disabled={false} />);
+    await screen.pressByTestIdAsync('select-panel');
+    expect(input.reviewers).toEqual([{ kind: 'engine', engineId: 'roborev', runnerAgentTarget: codexTarget }]);
+    await screen.unmount();
+});
 it('removes one configured engine occurrence while retaining the other occurrence and person', async () => {
     const first = { kind: 'engine', engineId: 'claude', modelId: 'first-model' };
     const second = { kind: 'engine', engineId: 'claude', modelId: 'second-model' };

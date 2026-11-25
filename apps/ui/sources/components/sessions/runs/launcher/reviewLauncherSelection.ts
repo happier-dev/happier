@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { isFreshExecutionRunBackendChoice, reviewEngineRunnerChoices, type ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
 import {
     ReviewEngineReviewerSelectionV1Schema,
     ReviewReviewerSelectionV1Schema,
@@ -23,13 +25,31 @@ export function readReviewLauncherEngineIds(input: Record<string, unknown>): str
     return readReviewLauncherReviewers(input).flatMap(reviewer => reviewer.kind === 'engine' ? [reviewer.engineId] : []);
 }
 
-export function selectReviewLauncherEngines(input: Record<string, unknown>, engineIds: readonly string[]): Record<string, unknown> {
+export function selectReviewLauncherEngines(input: Record<string, unknown>, engineIds: readonly string[],
+    choices: readonly ExecutionRunLauncherBackendChoice[]): Record<string, unknown> {
     const reviewers = readReviewLauncherReviewers(input);
     const selected = new Set(engineIds);
     const kept = reviewers.filter(reviewer => reviewer.kind !== 'engine' || selected.has(reviewer.engineId));
     const existing = new Set(reviewers.flatMap(reviewer => reviewer.kind === 'engine' ? [reviewer.engineId] : []));
-    return synchronizeReviewLauncherSteps({ ...input, reviewers: [...kept, ...engineIds.filter(engineId => !existing.has(engineId))
-        .map(engineId => ({ kind: 'engine' as const, engineId }))] });
+    const firstRunner = reviewers.flatMap(reviewer => reviewer.kind === 'engine' && reviewer.runnerAgentTarget
+        ? [reviewer.runnerAgentTarget] : [])[0];
+    const firstRunnerKey = firstRunner ? buildBackendTargetKeyV2(firstRunner) : null;
+    const added: ReviewReviewerSelectionV1[] = engineIds.filter(engineId => !existing.has(engineId)).map(engineId => ({ kind: 'engine', engineId }));
+    let defaulted = false;
+    const next = [...kept, ...added].map(reviewer => {
+        if (reviewer.kind !== 'engine' || reviewer.runnerAgentTarget) return reviewer;
+        const engine = choices.find(choice => (choice.reviewEngineId ?? choice.backendId) === reviewer.engineId);
+        const declared = engine?.reviewInventoryItem?.runnerAgents ?? [];
+        const runners = reviewEngineRunnerChoices(declared, choices).filter(runner => isFreshExecutionRunBackendChoice(runner.choice));
+        // An enabled engine may use a runner's native route without a ready standalone reviewer row.
+        const runner = declared.find(candidate => buildBackendTargetKeyV2(candidate.agentTarget) === firstRunnerKey)
+            ?? runners[0] ?? declared[0];
+        if (!runner) return reviewer;
+        defaulted = true;
+        return { ...reviewer, runnerAgentTarget: runner.agentTarget };
+    });
+    return !defaulted && added.length === 0 && kept.length === reviewers.length ? input
+        : synchronizeReviewLauncherSteps({ ...input, reviewers: next });
 }
 
 /** Native refusals address the original roster position, including repeated engine selections. */

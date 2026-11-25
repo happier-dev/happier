@@ -113,8 +113,5 @@ export function useReviewExecutionRunLaunchOptions(params: Readonly<{
             accountScope={accountBinding?.scope ?? null} defaultBindings={defaultSecretBindings}
             personalSecrets={settings.secrets} sharedEnabled={sharedSecrets} editable={!params.busy} onChange={setSecretState} />
     </>;
-    // The chosen reviewer's row names its model; the picker opens under the list from its Change.
-    const modelSubtitle = modelChoice && !params.credentialSelectionOnly
-        ? [model.presentation.subtitle, model.presentation.detail].filter(Boolean).join(' · ') || null : null;
-    return { controls, modelChoice, modelSubtitle, teamCredential, secretState };
+    return { controls, modelChoice, teamCredential, secretState };
 }
