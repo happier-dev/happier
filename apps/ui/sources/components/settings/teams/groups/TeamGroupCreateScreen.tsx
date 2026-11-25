@@ -14,6 +14,8 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { randomUUID } from '@/platform/randomUUID';
+import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
+import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelClient';
 import { sealTeamGroupLabel } from '@/sync/ops/teams/teamGroupLabels';
 import { createTeamGroup } from '@/sync/ops/teams/teamGroupOperations';
@@ -24,7 +26,8 @@ import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDra
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamMutationFailureLabel } from '../teamMutationPresentation';
-import { teamGroupDetailPath } from '../teamsRoutes';
+import { teamGroupDetailPath, teamGroupsPath } from '../teamsRoutes';
+import { teamSignInFailureAction } from '../useTeamReadFailureAction';
 
 type CreateSubmissionIdentity = Readonly<{
     name: string;
@@ -44,7 +47,7 @@ const CreateGroupForm = React.memo(function CreateGroupForm(props: Readonly<{
     const [name, setName] = React.useState('');
     const [description, setDescription] = React.useState('');
     const [submitting, setSubmitting] = React.useState(false);
-    const [error, setError] = React.useState<string | null>(null);
+    const [failure, setFailure] = React.useState<HomeDomainFailure<string> | null>(null);
     const submitInFlightRef = React.useRef(false);
     const nameInputRef = React.useRef<React.ComponentRef<typeof FieldTextInput> | null>(null);
     const descriptionInputRef = React.useRef<React.ComponentRef<typeof FieldTextInput> | null>(null);
@@ -91,7 +94,7 @@ const CreateGroupForm = React.memo(function CreateGroupForm(props: Readonly<{
         }
         submitInFlightRef.current = true;
         setSubmitting(true);
-        setError(null);
+        setFailure(null);
         const canonicalName = nameValidation.name;
         const canonicalDescription = descriptionValidation.description;
         let submission = submissionRef.current;
@@ -135,7 +138,9 @@ const CreateGroupForm = React.memo(function CreateGroupForm(props: Readonly<{
                 description: sealedDescription,
                 requestKey: submission.requestKey,
                 onApprovalSucceeded: openCreatedGroup,
-                onApprovalFailed: (code) => setError(teamMutationFailureLabel({ kind: 'unknown', code, retryable: false })),
+                onApprovalFailed: (code, typedFailure) => setFailure(typedFailure
+                    ? homeDomainFailureFromActionFailure(typedFailure, 'teams.groups.create')
+                    : { kind: 'unknown', code, retryable: false }),
             });
         } catch (cause) {
             submitInFlightRef.current = false;
@@ -147,7 +152,7 @@ const CreateGroupForm = React.memo(function CreateGroupForm(props: Readonly<{
                 // the Group when the approval is granted.
                 context.requestApproval(cause.registration);
             } else {
-                setError(t('teams.errors.generic'));
+                setFailure({ kind: 'unknown', code: null, retryable: false });
             }
             return;
         }
@@ -157,10 +162,22 @@ const CreateGroupForm = React.memo(function CreateGroupForm(props: Readonly<{
             openCreatedGroup(outcome.value);
             return;
         }
-        setError(outcome.failure.kind === 'invalid'
-                ? t('teams.errors.invalidName')
-                : teamMutationFailureLabel(outcome.failure));
+        setFailure(outcome.failure);
     }, [context, nameValidation, descriptionValidation, openCreatedGroup]);
+
+    const signInAction = failure
+        ? teamSignInFailureAction(failure, context.address, (href) => router.push(href), 'team-group-create-refusal')
+        : undefined;
+    const recoveryAction = failure?.code === 'team_conflict'
+        ? {
+            label: t('teams.tabs.groups'),
+            testID: 'team-group-create-refusal-groups',
+            onPress: () => router.push(teamGroupsPath(context.address)),
+        }
+        : signInAction;
+    let error = failure ? teamMutationFailureLabel(failure) : null;
+    if (failure?.code === 'invalid_team_input') error = t('teams.groups.invalidDetails');
+    if (failure?.code === 'team_conflict') error = t('teams.groups.createRequestConflict');
 
     if (!context.team.capabilities.manageGroups) {
         return (
@@ -217,20 +234,26 @@ const CreateGroupForm = React.memo(function CreateGroupForm(props: Readonly<{
 
             <ItemGroup surface="none">
                 <SectionButtonRow footnote={error} footnoteTone="danger" footnoteTestID="team-group-create-error">
-                    <RoundButton
-                        testID="team-group-create-submit"
-                        size="small"
-                        title={t('teams.groups.submit')}
-                        loading={submitting}
-                        // The description is as much a reason to withhold Create as
-                        // the name: the text is preserved, the field says what is
-                        // wrong, and no request is issued that the Home would refuse.
-                        disabled={nameValidation.status !== 'ok'
-                            || descriptionValidation.status !== 'ok'
-                            || submitting
-                            || !context.canMutate}
-                        onPress={() => void submit()}
-                    />
+                    {recoveryAction ? (
+                        <RoundButton
+                            testID={recoveryAction.testID}
+                            size="small"
+                            title={recoveryAction.label}
+                            onPress={recoveryAction.onPress}
+                        />
+                    ) : (
+                        <RoundButton
+                            testID="team-group-create-submit"
+                            size="small"
+                            title={t('teams.groups.submit')}
+                            loading={submitting}
+                            disabled={nameValidation.status !== 'ok'
+                                || descriptionValidation.status !== 'ok'
+                                || submitting
+                                || !context.canMutate}
+                            onPress={() => void submit()}
+                        />
+                    )}
                 </SectionButtonRow>
             </ItemGroup>
         </>

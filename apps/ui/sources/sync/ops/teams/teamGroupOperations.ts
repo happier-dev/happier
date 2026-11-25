@@ -88,7 +88,7 @@ async function groupMutation(params: Readonly<{
     actionId: TeamActionIdV1;
     input: unknown;
     onApprovalSucceeded?: (group: TeamGroupV1) => void | Promise<void>;
-    onApprovalFailed?: (code: string) => void;
+    onApprovalFailed?: Parameters<typeof runTeamAction>[0]['onApprovalFailed'];
 }>): Promise<TeamGroupOutcome<TeamGroupV1>> {
     // One settlement for the immediate answer and the approved one. The Home
     // answered with the row the viewer now sees, so publish it to the one Group
@@ -138,7 +138,7 @@ export function createTeamGroup(params: Readonly<{
      * leave the manager on a submitted form with no route to the new Group.
      */
     onApprovalSucceeded?: (group: TeamGroupV1) => void | Promise<void>;
-    onApprovalFailed?: (code: string) => void;
+    onApprovalFailed?: Parameters<typeof runTeamAction>[0]['onApprovalFailed'];
 }>): Promise<TeamGroupOutcome<TeamGroupV1>> {
     return groupMutation({
         scope: params.scope,

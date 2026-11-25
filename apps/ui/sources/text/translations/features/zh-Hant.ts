@@ -17363,6 +17363,8 @@ const traditionalChinese: TeamsTranslationRoot = {
             namePlaceholder: '開發',
             descriptionPlaceholder: '此群組的用途',
             submit: '建立群組',
+            invalidDetails: '這個 Home 未接受該團隊群組的詳細資料。',
+            createRequestConflict: '這個請求可能已建立團隊群組。發起新請求前，請先查看團隊群組。',
             nameTaken: '此團隊中已有同名的群組。',
             memberCount: ({ count }: { count: number }) => `${count}${count === 1 ? "位成員" : "位成員"}`,
             archivedMemberCount: '還原後成員會回來',

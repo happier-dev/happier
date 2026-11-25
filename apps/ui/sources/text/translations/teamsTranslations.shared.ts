@@ -732,6 +732,8 @@ export const english = {
             namePlaceholder: 'Developers',
             descriptionPlaceholder: 'What this Group is for',
             submit: 'Create Group',
+            invalidDetails: 'This Home didn’t accept this Group’s details.',
+            createRequestConflict: 'This request may already have created a Group. Check Groups before starting a new request.',
             nameTaken: 'A Group in this Team already uses that name.',
             memberCount: ({ count }: { count: number }) => `${count} ${count === 1 ? "member" : "members"}`,
             archivedMemberCount: 'Members return on restore',

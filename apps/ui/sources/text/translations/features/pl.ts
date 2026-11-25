@@ -17515,6 +17515,8 @@ const polish: TeamsTranslationRoot = {
             namePlaceholder: 'Programiści',
             descriptionPlaceholder: 'Do czego służy ta grupa',
             submit: 'Utwórz grupę',
+            invalidDetails: 'Ten Home nie zaakceptował danych grupy.',
+            createRequestConflict: 'To żądanie mogło już utworzyć grupę. Sprawdź listę grup przed wysłaniem nowego żądania.',
             nameTaken: 'Grupa o tej nazwie już istnieje w tym zespole.',
             memberCount: ({ count }: { count: number }) => `${count} ${count === 1 ? "członek" : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? "członkowie" : "członków"}`,
             archivedMemberCount: 'Członkowie wrócą po przywróceniu',

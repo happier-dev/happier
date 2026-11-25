@@ -7,6 +7,7 @@ import { projectPrivateLabelForRecipientV1, PrivateLabelStoredV1Schema } from '@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { teamErrorHttpStatusV1 } from '@happier-dev/protocol/teams';
 
 import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamGroupFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -16,6 +17,7 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerReplace = vi.hoisted(() => vi.fn());
+const routerPush = vi.hoisted(() => vi.fn());
 
 vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
@@ -25,7 +27,7 @@ vi.mock('@react-navigation/native', async () => {
 installSettingsViewCommonModuleMocks({
     storage: 'real',
     router: async () => ({
-        useRouter: () => ({ push: vi.fn(), back: vi.fn(), replace: routerReplace }),
+        useRouter: () => ({ push: routerPush, back: vi.fn(), replace: routerReplace }),
         useNavigation: () => ({ setOptions: vi.fn() }),
         useLocalSearchParams: () => ({}),
     }),
@@ -77,6 +79,7 @@ beforeEach(async () => {
     await harness.reset();
     await harness.selectHomes([]);
     routerReplace.mockReset();
+    routerPush.mockReset();
 });
 
 afterEach(() => {
@@ -84,6 +87,42 @@ afterEach(() => {
 });
 
 describe('TeamGroupCreateScreen', () => {
+    it.each([
+        { code: 'invalid_team_input', details: undefined, label: 'teams.groups.invalidDetails', action: undefined, path: undefined },
+        { code: 'team_not_found', details: undefined, label: 'teams.errors.notFound', action: undefined, path: undefined },
+        { code: 'teams_unavailable', details: undefined, label: 'teams.unavailable.disabled', action: undefined, path: undefined },
+        { code: 'team_archived', details: undefined, label: 'teams.errors.archived', action: undefined, path: undefined },
+        { code: 'team_forbidden', details: undefined, label: 'teams.errors.forbidden', action: undefined, path: undefined },
+        { code: 'team_forbidden', details: { reason: 'legacy_home_credential' }, label: 'teams.errors.signInOutdated', action: 'sign-in', path: '/settings/account' },
+        { code: 'team_authentication_required', details: undefined, label: 'teams.errors.authenticationRequired', action: 'sign-in', path: '/teams/team-1/sign-in' },
+        { code: 'team_authentication_unavailable', details: undefined, label: 'teams.credentials.externalApi.authenticationUnavailable', action: undefined, path: undefined },
+        { code: 'team_conflict', details: undefined, label: 'teams.groups.createRequestConflict', action: 'groups', path: '/groups' },
+    ] as const)('presents the Group creation refusal $code', async ({ code, details, label, action, path }) => {
+        const serverId = await addHome({ manageGroups: true });
+        harness.answer(serverId, GROUP_CREATE_PATH, {
+            status: teamErrorHttpStatusV1(code),
+            body: { error: code, ...(details ? { details } : {}) },
+        });
+        const screen = await renderCreate(serverId);
+        await waitForTestId(screen, 'team-group-create-name');
+        act(() => screen.changeTextByTestId('team-group-create-name', 'Design'));
+        await screen.pressByTestIdAsync('team-group-create-submit');
+
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(label));
+        expect(screen.getTextContent().split(label)).toHaveLength(2);
+        expect(screen.findByTestId('team-group-create-name')?.props.value).toBe('Design');
+        const visible = collectRenderedTestIds(screen.tree.toJSON());
+        expect(visible.filter(id => id.endsWith('-retry'))).toEqual([]);
+        if (action) {
+            expect(visible).not.toContain('team-group-create-submit');
+            await screen.pressByTestIdAsync(`team-group-create-refusal-${action}`);
+            expect(new URL(routerPush.mock.lastCall?.[0] ?? '', 'https://app.example').pathname).toMatch(
+                action === 'groups' ? /\/settings\/teams\/[^/]+\/team-1\/groups$/u : path!,
+            );
+        }
+        expect(harness.requestsFor(GROUP_CREATE_PATH)).toHaveLength(1);
+    });
+
     it.each(['plain', 'e2ee'] as const)('seals %s descriptions at the real Action HTTP boundary and preserves exact retry ciphertext', async mode => {
         const credentials = mode === 'e2ee' ? { token: createAccountTokenForTests('account-ada'),
             secret: encodeBase64(new Uint8Array(32).fill(41), 'base64url') } : undefined;
@@ -99,7 +138,7 @@ describe('TeamGroupCreateScreen', () => {
                 lastName: null, username: null, avatarUrl: null }, readiness: { status: 'available',
                 contentPublicKey: encodeBase64(encryption.contentDataKey),
                 contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(encryption.contentDataKey) }, envelopeStatus: 'missing' }] : [] } });
-        harness.answer(serverId, GROUP_CREATE_PATH, { status: 409, body: { error: 'team_conflict' } });
+        harness.answer(serverId, GROUP_CREATE_PATH, { status: 503, body: { error: 'temporarily_unavailable' } });
         const screen = await renderCreate(serverId);
         await waitForTestId(screen, 'team-group-create-name');
         act(() => screen.changeTextByTestId('team-group-create-name', 'Design'));

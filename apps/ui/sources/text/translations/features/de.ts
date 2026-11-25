@@ -17301,6 +17301,8 @@ const german: TeamsTranslationRoot = {
             namePlaceholder: 'Entwicklung',
             descriptionPlaceholder: 'Wofür diese Gruppe da ist',
             submit: 'Gruppe erstellen',
+            invalidDetails: 'Dieses Home hat die Angaben zur Gruppe abgelehnt.',
+            createRequestConflict: 'Diese Anfrage hat möglicherweise bereits eine Gruppe erstellt. Prüfe die Gruppen, bevor du eine neue Anfrage stellst.',
             nameTaken: 'In diesem Team gibt es bereits eine Gruppe mit diesem Namen.',
             memberCount: ({ count }: { count: number }) => `${count} ${count === 1 ? "Mitglied" : "Mitglieder"}`,
             archivedMemberCount: 'Mitglieder kehren beim Wiederherstellen zurück',

@@ -17423,6 +17423,8 @@ const japanese: TeamsTranslationRoot = {
             namePlaceholder: '開発',
             descriptionPlaceholder: 'このグループの用途',
             submit: 'グループを作成',
+            invalidDetails: 'このHomeではグループの詳細を受け付けられませんでした。',
+            createRequestConflict: 'このリクエストですでにグループが作成されている可能性があります。新しいリクエストを送る前にグループを確認してください。',
             nameTaken: 'このチームには、その名前のグループがすでにあります。',
             memberCount: ({ count }: { count: number }) => `${count}${count === 1 ? "人のメンバー" : "人のメンバー"}`,
             archivedMemberCount: '復元するとメンバーが戻ります',

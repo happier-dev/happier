@@ -17501,6 +17501,8 @@ const catalan: TeamsTranslationRoot = {
             namePlaceholder: 'Desenvolupament',
             descriptionPlaceholder: 'Per a què serveix aquest grup',
             submit: 'Crea el grup',
+            invalidDetails: 'Aquest Home no ha acceptat els detalls del grup.',
+            createRequestConflict: 'És possible que aquesta sol·licitud ja hagi creat un grup. Comprova els grups abans de tornar-ho a demanar.',
             nameTaken: 'Ja hi ha un grup amb aquest nom en aquest equip.',
             memberCount: ({ count }: { count: number }) => `${count} ${count === 1 ? "membre" : "membres"}`,
             archivedMemberCount: 'Els membres tornen en restaurar-lo',

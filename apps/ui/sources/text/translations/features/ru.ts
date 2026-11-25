@@ -17517,6 +17517,8 @@ const russian: TeamsTranslationRoot = {
             namePlaceholder: 'Разработчики',
             descriptionPlaceholder: 'Для чего эта группа',
             submit: 'Создать группу',
+            invalidDetails: 'Этот Home не принял данные группы.',
+            createRequestConflict: 'Возможно, этот запрос уже создал группу. Проверьте список групп, прежде чем отправлять новый запрос.',
             nameTaken: 'Группа с таким названием уже есть в этой команде.',
             memberCount: ({ count }: { count: number }) => `${count} ${count % 10 === 1 && count % 100 !== 11 ? "участник" : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? "участника" : "участников"}`,
             archivedMemberCount: 'Участники вернутся после восстановления',

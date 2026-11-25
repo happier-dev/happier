@@ -17423,6 +17423,8 @@ const spanish: TeamsTranslationRoot = {
             namePlaceholder: 'Desarrollo',
             descriptionPlaceholder: 'Para qué sirve este grupo',
             submit: 'Crear grupo',
+            invalidDetails: 'Este Home no ha aceptado los datos del grupo.',
+            createRequestConflict: 'Es posible que esta solicitud ya haya creado un grupo. Consulta los grupos antes de hacer una nueva solicitud.',
             nameTaken: 'Ya hay un grupo con ese nombre en este equipo.',
             memberCount: ({ count }: { count: number }) => `${count} ${count === 1 ? "miembro" : "miembros"}`,
             archivedMemberCount: 'Los miembros vuelven al restaurar',
