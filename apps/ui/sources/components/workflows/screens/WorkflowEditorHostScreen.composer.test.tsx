@@ -26,6 +26,7 @@ import {
     serializeWorkflowStoredContentEnvelopeV1} from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowProgressEnvelopeV1Schema, type WorkflowInvocationDetailV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { removeWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import { createAuthoringMemoryHttpBoundary } from '@/dev/testkit/mocks/authoringMemoryHttp';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
@@ -1937,7 +1938,9 @@ describe('editor workflow composer', () => {
         const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
         await act(async () => {
             const editor = screen.root.findByType(WorkflowEditorBody);
-            editor.props.onChange({ ...editor.props.draftStore.get(), name: 'Edited name', blocks: [{ kind: 'wait', id: 'review',
+            const draft = editor.props.draftStore.get();
+            const { draft: withoutStarter } = removeWorkflowBlock(draft, draft.blocks[0].id);
+            editor.props.onChange({ ...withoutStarter, name: 'Edited name', blocks: [{ kind: 'wait', id: 'review',
                 document: { text: 'Check status', references: [], attachments: [] } }] });
         });
         await act(async () => { screen.root.findByType(WorkflowEditorBody).props.onChangeProjectTarget?.({ machineId: 'machine-1', directory: '/repo' }); });
@@ -1949,6 +1952,7 @@ describe('editor workflow composer', () => {
         await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
         await vi.waitFor(() => expect(screen.findByTestId('admitted-run')).not.toBeNull());
+        expect(startRequests()[0]).toMatchObject({ metadata: { title: 'Edited name' } });
         vi.stubGlobal('document', { ...doc, activeElement: body });
         try {
             await act(async () => { workspace?.activateTab('group:1', editorTabId); });
