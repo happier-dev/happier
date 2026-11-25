@@ -3069,8 +3069,15 @@ describe('WorkflowEditorHostScreen composition', () => {
             await act(async () => { controller.abort(); await saving; });
         }
         const result = await saving;
-        if (result.ok) expect(result.result).toMatchObject({ status: 'refused' });
-        else expect(result.errorCode).toBeTruthy();
+        if (child === 'trigger') {
+            expect(result).toMatchObject({ ok: true, result: {
+                kind: 'approval_request_created', actionId: 'workflow.trigger.add', artifactId: boundary.creates[0]!.id,
+            } });
+        } else if (result.ok) {
+            expect(result.result).toMatchObject({ status: 'refused' });
+        } else {
+            expect(result.errorCode).toBeTruthy();
+        }
         expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.settings.triggers.rows).toHaveLength(child === 'trigger' ? 1 : 0);
         // The person-owned Save executes the retained delta through native UI policy.
         await saveDirectlyFromUi();
