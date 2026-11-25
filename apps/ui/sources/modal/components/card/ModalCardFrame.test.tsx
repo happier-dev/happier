@@ -204,7 +204,7 @@ describe('ModalCardFrame', () => {
 
     it.each(['card', 'sheet'] as const)('keeps an explicitly solid form opaque in its %s with transparent floating settings', async (presentation) => {
         const { Platform } = await import('react-native');
-        const { storage } = await import('@/sync/domains/state/storage');
+        const { storage } = await import('@/sync/domains/state/storageStore');
         const { glassPresetMaterials } = await import('@/components/ui/glass/glassMaterial');
         const previousOS = Platform.OS;
         const previousState = storage.getState();
@@ -226,7 +226,7 @@ describe('ModalCardFrame', () => {
     });
     it.each(['card', 'sheet'] as const)('honors fully transparent floating material in its %s without an opaque shadow underlay', async (presentation) => {
         const { Platform } = await import('react-native');
-        const { storage } = await import('@/sync/domains/state/storage');
+        const { storage } = await import('@/sync/domains/state/storageStore');
         const { glassPresetMaterials } = await import('@/components/ui/glass/glassMaterial');
         const previousOS = Platform.OS;
         const previousState = storage.getState();
