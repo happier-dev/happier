@@ -90,6 +90,7 @@ const CHANNELS_BINDINGS_RESOURCE = {
 } as const;
 
 type ChannelsHostMethod =
+  | 'admitAction'
   | 'executeAction'
   | 'readResource'
   | 'selectActionInput'
@@ -923,8 +924,12 @@ function createChannelsHostApi(input: Readonly<{
     diagnostics: [],
   } satisfies PluginUiSurfaceContextV1;
   const handlers: PluginSurfaceHostApiHandlers = {};
-  // Only daemon transport is substituted. The mounted host admission, public
-  // SDK adapter, Resource subscription lifecycle and author hooks remain real.
+  // Supply the daemon and policy responses at the host boundary. The mounted
+  // transport, public SDK adapter, Resource subscription lifecycle and author hooks remain real.
+  if (methods.includes('admitAction')) handlers.admitAction = async (request) => {
+    PluginUiExecuteActionRequestV1Schema.parse(request.payload);
+    return { admitted: true };
+  };
   if (methods.includes('readResource')) handlers.readResource = async (request) => {
     const payload = request.payload;
     if (!isRecord(payload)) throw new Error('Expected a Resource read payload.');
@@ -1516,7 +1521,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     const targetedContributions = channelsProviderTargetedContributions();
     const data = createOfflineChannelsDataClient({ rows: [connection, binding] });
     const host = createChannelsHostApi({
-      methods: ['executeAction', 'selectActionInput', 'watchContext'],
+      methods: ['admitAction', 'executeAction', 'selectActionInput', 'watchContext'],
       readResource: async () => {
         throw Object.assign(new Error('Daemon Resource must not run in cold offline Account policy mode.'), {
           code: 'unavailable',
@@ -1611,7 +1616,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     const binding = offlineBindingStateRow();
     const data = createOfflineChannelsDataClient({ rows: [connection, binding] });
     const host = createChannelsHostApi({
-      methods: ['executeAction', 'watchContext'],
+      methods: ['admitAction', 'executeAction', 'watchContext'],
       readResource: async () => {
         throw new Error('Cold offline connection policy must not invoke a daemon Resource.');
       },
@@ -1939,7 +1944,7 @@ describe('Channels settings surface (real source, mounted)', () => {
       batchFailure: () => batchFailure,
     });
     const host = createChannelsHostApi({
-      methods: ['executeAction', 'watchContext'],
+      methods: ['admitAction', 'executeAction', 'watchContext'],
       readResource: async () => {
         throw new Error('A cold offline Account policy mutation must not reach the daemon Resource.');
       },
@@ -1998,7 +2003,7 @@ describe('Channels settings surface (real source, mounted)', () => {
       batchFailureAfterCommit: () => batchFailureAfterCommit,
     });
     const host = createChannelsHostApi({
-      methods: ['executeAction', 'watchContext'],
+      methods: ['admitAction', 'executeAction', 'watchContext'],
       readResource: async () => {
         throw new Error('A cold offline Account policy mutation must not reach the daemon Resource.');
       },
@@ -2054,7 +2059,7 @@ describe('Channels settings surface (real source, mounted)', () => {
       batchFailureAfterCommit: () => batchFailureAfterCommit,
     });
     const host = createChannelsHostApi({
-      methods: ['executeAction', 'watchContext'],
+      methods: ['admitAction', 'executeAction', 'watchContext'],
       readResource: async () => {
         throw new Error('A cold offline Account policy mutation must not reach the daemon Resource.');
       },
