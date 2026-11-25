@@ -1709,7 +1709,8 @@ async function killDaemonPidSafely({
   cliHomeDir,
   serverUrl = '',
   env = process.env,
-  sourcePath = '',
+  sources,
+  cliIdentity,
   sourceLabel = 'state file',
   processInstanceFingerprint = null,
 }) {
@@ -1732,7 +1733,7 @@ async function killDaemonPidSafely({
     ), { code: 'daemon_stop_incomplete', reason: terminated.reason ?? 'process_identity_unverified' });
   }
   if (terminated.reason === 'already_exited') return false;
-  console.log(`[local] killed stuck daemon pid ${pid} (from ${sourcePath || sourceLabel})`);
+  console.log(`[local] killed stuck daemon pid ${pid} (sources=${sources.join(',')}; identity=${cliIdentity}; home=${cliHomeDir})`);
   return true;
 }
 
@@ -1885,12 +1886,19 @@ export async function stopLocalDaemon({
     ? await listPidsWithEnvNeedles([`HAPPIER_STACK_STACK=${scopedStackName}`,
       `HAPPIER_HOME_DIR=${cliHomeDir}`, 'HAPPIER_STACK_PROCESS_KIND=daemon']) : [];
   const unpublishedFingerprints = new Map(unpublishedPids.map(pid => [pid, readProcessInstanceFingerprintSync(pid)]));
-  const retainedPids = [...new Set([
-    scopedDaemonState.pid,
-    retainedLock?.pid,
-    ...unpublishedPids,
-    ...await readStackRuntimeDaemonPidsForCliHome(runtimeState, { cliHomeDir, stackName: scopedStackName }),
-  ].filter((pid) => Number.isSafeInteger(pid) && pid > 1))];
+  const retainedPidSources = new Map();
+  for (const [source, pids] of [
+    ['state', [scopedDaemonState.pid]],
+    ['lock', [retainedLock?.pid]],
+    ['env-discovery', unpublishedPids],
+    ['runtime-membership', await readStackRuntimeDaemonPidsForCliHome(runtimeState, { cliHomeDir, stackName: scopedStackName })],
+  ]) {
+    for (const pid of pids.filter((pid) => Number.isSafeInteger(pid) && pid > 1)) {
+      if (!retainedPidSources.has(pid)) retainedPidSources.set(pid, []);
+      retainedPidSources.get(pid).push(source);
+    }
+  }
+  const retainedPids = [...retainedPidSources.keys()];
 
   const explicitCommand = String(cliCommand ?? '').trim();
   const explicitEntrypoint = String(cliEntrypoint ?? '').trim();
@@ -1946,7 +1954,9 @@ export async function stopLocalDaemon({
     if (liveness.status === 'dead') continue;
     if (liveness.status === 'alive') {
       await killDaemonPidSafely({ pid, cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv,
-        sourcePath: runtimeStatePath, sourceLabel: 'retained daemon owner',
+        sources: retainedPidSources.get(pid),
+        cliIdentity: String(cliIdentity ?? '').trim() || String(daemonEnv.HAPPIER_STACK_CLI_IDENTITY ?? '').trim() || 'default',
+        sourceLabel: 'retained daemon owner',
         processInstanceFingerprint: recordedIdentity.processInstanceFingerprint });
     }
     if (!isRecordedStackProcessRetired(pid, recordedIdentity)) {

@@ -6,11 +6,60 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { once } from 'node:events';
 
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
+
 import { stopLocalDaemon } from './daemon.mjs';
 import { spawnDetachedTestProcess } from './testkit/core/spawn_test_process.mjs';
 import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
 import { resolvePreferredStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
 import { recordStackRuntimeStart } from './utils/stack/runtime_state.mjs';
+
+
+for (const publication of ['env-discovery', 'state', 'all']) {
+  test(`stopLocalDaemon logs supplying PID sources and identity (${publication})`, async (t) => {
+    const tmp = await mkdtemp(join(tmpdir(), 'hstack-stop-log-sources-'));
+    let daemonPid;
+    let fingerprint;
+    try {
+      const cliHomeDir = join(tmp, 'cli-home');
+      const internalServerUrl = 'http://127.0.0.1:3005';
+      const stackName = 'log-sources-stop';
+      const cliIdentity = 'log-source-identity';
+      daemonPid = await spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl, stackName,
+        processKind: publication === 'state' ? '' : 'daemon' });
+      fingerprint = readProcessInstanceFingerprintSync(daemonPid);
+      assert.ok(fingerprint, 'fixture birth identity must be known before stop');
+      const { statePath, lockPath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl: internalServerUrl, env: {} });
+      if (publication !== 'env-discovery') {
+        await mkdir(dirname(statePath), { recursive: true });
+        await writeFile(statePath, JSON.stringify({ pid: daemonPid, httpPort: 0 }));
+      }
+      const runtimeStatePath = join(tmp, 'stack.runtime.json');
+      if (publication === 'all') {
+        await writeFile(lockPath, String(daemonPid));
+        await recordStackRuntimeStart(runtimeStatePath, { stackName, ownerPid: process.pid,
+          processes: { daemonPid, daemonPids: [daemonPid] } });
+      }
+      const logs = [];
+      t.mock.method(console, 'log', (...args) => logs.push(args.join(' ')));
+      await stopLocalDaemon({ cliBin: join(tmp, 'missing', 'happier.mjs'), cliHomeDir,
+        internalServerUrl, stackName, cliIdentity, runtimeStatePath,
+        env: { ...process.env, HAPPIER_STACK_REPO_DIR: '', HAPPIER_STACK_STACK: stackName } });
+      assert.throws(() => process.kill(daemonPid, 0), { code: 'ESRCH' });
+      const line = logs.find(line => line.includes(`killed stuck daemon pid ${daemonPid} `));
+      assert.ok(line, 'retirement must emit a kill attribution');
+      const expectedSources = publication === 'all' ? 'state,lock,env-discovery,runtime-membership' : publication;
+      assert.ok(line.includes(`sources=${expectedSources};`), `expected sources=${expectedSources}; got ${line}`);
+      assert.ok(line.includes(`identity=${cliIdentity}`), `expected stopped identity; got ${line}`);
+    } finally {
+      t.mock.restoreAll();
+      if (daemonPid && fingerprint && readProcessInstanceFingerprintSync(daemonPid) === fingerprint) {
+        try { process.kill(daemonPid, 'SIGKILL'); } catch {}
+      }
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+}
 
 for (const liveness of ['retired', 'alive', 'inconclusive']) {
   test(`stopLocalDaemon with an unloadable source bundle requires proven PID absence (${liveness === 'alive' ? 'alive reused PID' : liveness})`, async (t) => {
