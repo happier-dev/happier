@@ -15,6 +15,7 @@ import { DiscussionErrorCodeV1Schema } from '@happier-dev/protocol/discussions/a
 import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
 import { formatExactTurnAutomationError } from '@/components/automations/automationErrorFormatting';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionHttpError';
+import { presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 
 /**
  * The one place a Workflow failure becomes something a person can read.
@@ -345,8 +346,10 @@ export function resolveWorkflowRunProblemPresentation(
                 : 'workflows.triggers.once.missed',
         repair: 'none', accessibilitySemantics: 'status',
     });
-    return (run.state === 'failed' || run.state === 'interrupted') && isWorkflowOperationErrorCode(code)
-        ? describeWorkflowOperationProblem(code) : null;
+    if (run.state !== 'failed' && run.state !== 'interrupted') return null;
+    if (isWorkflowOperationErrorCode(code)) return describeWorkflowOperationProblem(code);
+    const startupCause = presentSessionStartupFailureCause(code);
+    return startupCause ? { ...present(null, { ...GENERIC_SHAPE, repair: 'none' }), message: startupCause } : null;
 }
 
 /** The same typed refusal is shown for an Action and a persisted invocation failure. */

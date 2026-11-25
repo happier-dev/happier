@@ -11,7 +11,7 @@ import { resolveSessionStartFailureNotice } from '@/components/sessions/startFai
 import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnNewAction';
 import { SUPPORTED_LANGUAGE_CODES, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 
-import { isSessionNativeConversationUnreachable, presentSessionActivationFailure, presentSessionRuntimeIssue, presentSessionStartupFailureCause } from './sessionRuntimeIssuePresentation';
+import { isSessionNativeConversationUnreachable, presentExecutionRunFailureSummary, presentSessionActivationFailure, presentSessionRuntimeIssue, presentSessionStartupFailureCause } from './sessionRuntimeIssuePresentation';
 import { SESSION_MODEL_TRANSITION_FAILURE_STATUSES, formatSessionModelTransitionFailureCode } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import { getPendingMessageVisualState, pendingMessageStatesBlockedReason, resolveSessionDeliveryFailure } from '@/components/sessions/pending/pendingMessageVisualState';
 import { resolvePendingActivationBanner } from '@/components/sessions/pending/resolvePendingActivationBanner';
@@ -20,6 +20,16 @@ import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { resourceStateLabel } from '@/components/settings/teams/credentials/readinessPresentation';
 
 const KNOWN_CODE = 'native_agent_privileged_effect_authority_unavailable';
+
+it.each([
+    ['agent_isolation_unavailable', /isolation/i],
+    ['ACP_CATALOG_UNAVAILABLE', /couldn’t load.*agent catalog/i],
+] as const)('explains reviewer startup refusal %s in the Run and reviewer presenters', async (code, explanation) => {
+    await useLanguage('en');
+    expect(presentSessionStartupFailureCause(code)).toMatch(explanation);
+    expect(presentExecutionRunFailureSummary({ code }).summary).toMatch(explanation);
+});
+
 const ENGLISH_PREVIEW = SESSION_PREPARATION_FAILURE_PREVIEWS[KNOWN_CODE];
 const CLOSED_CODES = [
     'SOURCE_RUNTIME_RELOAD_REQUIRED',

@@ -35,6 +35,7 @@ import type { JsonObject } from '../../../json/strictJsonValue.js';
 import { SessionStatusResultSchema } from '../../../sessions/control/contract.js';
 import { AgentsBackendsListOutputSchema } from '../../agentBackendInventory.js';
 import { buildQualifiedPluginContributionKey } from '../../../plugins/contributionIdentity.js';
+import { reviewStartExecutionRunCompletion } from '../../specs/executionRunCompletion.js';
 
 export { reviewScopeForInput } from '../../../reviews/reviewEngines.js';
 
@@ -338,18 +339,39 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           return engineInput.profileId ? [{ engineId: selection.engineId, profileId: engineInput.profileId,
             ...(engineInput.profileSourceCustody ? { profileSourceCustody: engineInput.profileSourceCustody } : {}) }] : [];
         });
-        const readReviewEngineInventory = async (dispatchOptions = opts) => await deps.reviewEnginesList!({
-          sessionId,
-          ...(detached && dispatchOptions?.targetMachineId ? { machineId: dispatchOptions.targetMachineId } : {}),
-          includeDisabled: false,
-          engineIds: [...new Set(reviewers.flatMap(selection => selection.kind === 'engine' ? [selection.engineId] : []))],
-          ...(profileSelections.length > 0 ? { profileSelections } : {}),
-          scope: reviewScopeForInput(reviewInput),
-        }, ctx);
+        const workflowReviewRound = reviewInput.reviewRoundSettlement === 'workflow' ? reviewInput.reviewRound : undefined;
+        const workflowReviewerId = reviewInput.reviewReviewerId;
+        const completedLaunchRefusals = (results: readonly Readonly<{ key: string; ok: boolean; errorCode?: string }>[]) => ({
+          ok: true as const,
+          result: reviewStartExecutionRunCompletion.terminal({ intent: 'review', sessionId, results, reviewRound: workflowReviewRound }, []),
+        });
+        const readReviewEngineInventory = async (dispatchOptions = opts) => {
+          try {
+            const inventory = await deps.reviewEnginesList!({
+              sessionId,
+              ...(detached && dispatchOptions?.targetMachineId ? { machineId: dispatchOptions.targetMachineId } : {}),
+              includeDisabled: false,
+              engineIds: [...new Set(reviewers.flatMap(selection => selection.kind === 'engine' ? [selection.engineId] : []))],
+              ...(profileSelections.length > 0 ? { profileSelections } : {}),
+              scope: reviewScopeForInput(reviewInput),
+            }, ctx);
+            return { ok: true as const, inventory };
+          } catch (error) {
+            const refusal = readActionFailureEnvelope(error);
+            if (!workflowReviewRound || !workflowReviewerId || !refusal || refusal.errorCode === 'action_failed'
+              || isActionOutcomeUnknownErrorCodeV1(refusal.errorCode) || ctx.signal?.aborted) throw error;
+            // Inventory ran before any native reviewer start.
+            return { ok: false as const, result: completedLaunchRefusals([
+              { key: workflowReviewerId, ok: false, errorCode: refusal.errorCode },
+            ]) };
+          }
+        };
         let reviewEngineInventory: unknown;
         if (transcriptReviewers.some(reviewer => reviewer.kind === 'engine')) {
           if (!deps.reviewEnginesList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-          reviewEngineInventory = await readReviewEngineInventory();
+          const inventory = await readReviewEngineInventory();
+          if (!inventory.ok) return inventory.result;
+          reviewEngineInventory = inventory.inventory;
           const defaultOptions = readReviewNarratorOptions(reviewEngineInventory);
           const profileOptions = readReviewNarratorOptions({ items: readRecord(reviewEngineInventory).selectionItems });
           if (reviewers.some((selection, index) => {
@@ -465,7 +487,11 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         if (!deps.reviewEnginesList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         // Retained graphs lack the fresh binding; a later round must still clear prior acknowledgement.
         if ((reviewInput.reviewRound?.roundOrdinal ?? 1) > 1 || typeof reviewInput.newRoundCostConsent === 'boolean') {
-          reviewEngineInventory ??= await readReviewEngineInventory();
+          if (reviewEngineInventory === undefined || reviewEngineInventory === null) {
+            const inventory = await readReviewEngineInventory();
+            if (!inventory.ok) return inventory.result;
+            reviewEngineInventory = inventory.inventory;
+          }
           reviewInput = refreshReviewNewRoundCostConsentV1(reviewInput,
             ReviewEngineInventorySchema.parse(reviewEngineInventory), reviewInput.newRoundCostConsent === true);
         }
@@ -540,7 +566,11 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           ...reviewIntentInput
         } = reviewInput;
         const intentInputBase = { ...reviewIntentInput, permissionMode };
-        reviewEngineInventory ??= await readReviewEngineInventory(executionRunDispatchOpts);
+        if (reviewEngineInventory === undefined || reviewEngineInventory === null) {
+          const inventory = await readReviewEngineInventory(executionRunDispatchOpts);
+          if (!inventory.ok) return inventory.result;
+          reviewEngineInventory = inventory.inventory;
+        }
         const narratorOptions = readReviewNarratorOptions(reviewEngineInventory);
         const explicitProfileOptions = readReviewNarratorOptions({ items: readRecord(reviewEngineInventory).selectionItems });
         const selectedReviewEngineItems = new Map(admittedEngineSelections.map(({ reviewerId, selection, engineInput }) => {
@@ -680,10 +710,13 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           },
         });
 
-        if (!reviewInput.reviewRound && results.length > 0 && results.every(result => !result.ok
-          && readExecutionRunStartRunCreation(result.details) === 'noRunCreated')) await reviewRecords!.settle({ ...reviewRound,
-          outcome: ctx.signal?.aborted ? 'cancelled' : 'failed', finishedAt: Date.now(), runs: [],
-          ...(ctx.signal?.aborted ? {} : { signal: ctx.signal }) });
+        if (results.length > 0 && results.every(result => !result.ok
+          && readExecutionRunStartRunCreation(result.details) === 'noRunCreated')) {
+          if (workflowReviewRound && !ctx.signal?.aborted) return completedLaunchRefusals(results);
+          if (!reviewInput.reviewRound) await reviewRecords!.settle({ ...reviewRound,
+            outcome: ctx.signal?.aborted ? 'cancelled' : 'failed', finishedAt: Date.now(), runs: [],
+            ...(ctx.signal?.aborted ? {} : { signal: ctx.signal }) });
+        }
         if (!narrationRequested) return { ok: true, result: { intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}) } };
         const reviewRunIds = results.flatMap((item) => item.ok && typeof readRecord(item.result).runId === 'string'
           ? [String(readRecord(item.result).runId)] : []);

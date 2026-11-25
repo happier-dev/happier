@@ -30,6 +30,13 @@ function actionError(rawCode: string | null, message = 'server-internal reason')
  * never reach a person as prose the server chose or as the identifier itself.
  */
 describe('workflowProblemPresentation', () => {
+    it.each([
+        ['ACP_CATALOG_UNAVAILABLE', 'settings.acpCatalogUnavailable'],
+        ['agent_isolation_unavailable', 'errors.agentIsolationUnavailable'],
+    ])('shows %s on a failed Run before its invocation details arrive', (errorCode, message) => {
+        expect(resolveWorkflowRunProblemPresentation({ state: 'failed', errorCode })).toMatchObject({ message });
+    });
+
     it('names the selected Machine only for a target refusal', () => {
         const context = { machineName: 'Build computer' };
         expect(resolveWorkflowProblemPresentation(actionError('target_unavailable'), undefined, context).message)

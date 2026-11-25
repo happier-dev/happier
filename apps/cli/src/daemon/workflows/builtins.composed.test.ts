@@ -133,6 +133,8 @@ type Fixtures = {
   reply?: (sessionId: string, stepId: string) => SessionMessageReplyOutcomeV1;
   discussionRead?: NonNullable<ActionExecutorDeps['discussionAction']>;
   reviewerFailureCode?: string;
+  reviewerStartRefusal?: 'agent_isolation_unavailable';
+  reviewCatalogRefusal?: boolean;
   reviewPartial?: boolean;
   reviewLaunchFailure?: boolean;
   comments?: () => readonly ReviewCommentV1[];
@@ -312,6 +314,10 @@ function harness(fixtures: Fixtures = {}) {
     readActionsSettings: () => fixtures.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }),
     executionRunCheckProtocolV2: async () => ({ ok: true }),
     executionRunStart: async (sessionId, request, options) => {
+      if (request.intent === 'review' && fixtures.reviewerStartRefusal) {
+        return { ok: false, code: fixtures.reviewerStartRefusal,
+          details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') };
+      }
       if (request.intent === 'review' && fixtures.reviewLaunchFailure && !reviewLaunchRejected) {
         reviewLaunchRejected = true;
         // The native start boundary returns a typed pre-creation refusal;
@@ -364,7 +370,13 @@ function harness(fixtures: Fixtures = {}) {
           ...(!run.failed ? { result: { kind: typeof run.value === 'string' ? 'text' : 'json', value: run.value } } : {}),
         } } } };
     },
-    reviewEnginesList: async () => ({ items: [engine, otherEngine].map((value) => ({ value, label: value })) }),
+    reviewEnginesList: async () => {
+      if (fixtures.reviewCatalogRefusal) throw createActionExecuteFailureError({ ok: false,
+        errorCode: 'ACP_CATALOG_UNAVAILABLE', error: 'ACP_CATALOG_UNAVAILABLE',
+        failureCause: { phase: 'acp_catalog.snapshot.source_stale', errorClass: 'Error', errorCode: 'ACP_CATALOG_UNAVAILABLE',
+          nativeErrorReason: 'source-stale', httpStatus: null } });
+      return { items: [engine, otherEngine].map((value) => ({ value, label: value })) };
+    },
     agentsBackendsList: async () => ({ items: [engine, otherEngine].map((targetKey) => ({ targetKey, label: targetKey, enabled: true })) }),
     reviewCommentAction: async ({ actionId, input }) => {
       if (actionId === 'reviews.comments.get') {
@@ -1095,6 +1107,26 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     expect(h.store.list().find(row => row.blockId === 'settle')).toMatchObject({ lifecycle: 'failed', reason: 'resource_forbidden' });
     expect(h.store.list().some(row => row.blockId === 'fix')).toBe(false);
   });
+  it.each([
+    { code: 'agent_isolation_unavailable', fixtures: { reviewerStartRefusal: 'agent_isolation_unavailable' } },
+    { code: 'ACP_CATALOG_UNAVAILABLE', fixtures: { reviewCatalogRefusal: true } },
+  ] as const)('settles a Review Workflow when every reviewer start is refused with $code', async ({ code, fixtures }) => {
+    const h = harness({ ...fixtures, reviewCounts: { total: 0, needsDecision: 0 } });
+    const reviewers = [{ kind: 'engine', engineId: engine }];
+    const snapshot = await accepted(builtin('review-and-converge'), { reviewers, then: 'fix',
+      steps: [{ kind: 'review', reviewers, instructions: 'Find defects' },
+        { kind: 'verify', reviewers, instructions: 'Verify persisted findings' }] });
+
+    const run = await h.runAccepted(snapshot);
+    const prepared = h.store.list().find(row => row.blockId === 'prepare')?.result as { reviewRound?: unknown } | undefined;
+    const reviewRound = ReviewRoundBindingV1Schema.parse(prepared?.reviewRound);
+    expect((await h.readReview(reviewRound.reviewId))?.rounds[0]).toMatchObject({ state: 'failed', reviewerOutcomes: [
+      { reason: { run: 'launch_failed', errorCode: code } }, { reason: { run: 'launch_failed', errorCode: code } },
+    ] });
+    expect(run).toMatchObject({ state: 'interrupted', reason: code });
+    expect(h.readReviewMetadata(reviewRound.reviewId)?.state).toBe('failed');
+    expect(h.store.list().some(row => row.blockId === 'fix')).toBe(false);
+  });
   it('finishes one authored Review pass with canonical counts even when unresolved findings exceed one page', async () => {
     const h = harness({ reviewCounts: { total: 51, needsDecision: 1 } });
     const reviewInput = ReviewStartInputSchema.parse({ reviewers: [{ kind: 'engine', engineId: engine }], instructions: 'Review once' });
@@ -1135,7 +1167,6 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     { state: 'completed', fixtures: {} },
     { state: 'failed', fixtures: { reviewerFailureCode: 'native_review_failed' } },
     { state: 'partial', fixtures: { reviewPartial: true } },
-    { state: 'failed', fixtures: { reviewLaunchFailure: true } },
   ])('keeps empty authored Review findings distinct from $state execution coverage ($fixtures)', async ({ state, fixtures }) => {
     const h = harness({ ...fixtures, reviewCounts: { total: 0, needsDecision: 0 } });
     const reviewInput = ReviewStartInputSchema.parse({ reviewers: [{ kind: 'engine', engineId: engine }], instructions: 'Review once' });
@@ -1147,6 +1178,17 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     expect(h.commentReads).toEqual([]);
     expect(h.events).not.toContain('check');
     expect(h.events).not.toContain('verify');
+  });
+  it('fails the direct Review Run with its launch refusal when its sole reviewer never started', async () => {
+    const h = harness({ reviewLaunchFailure: true, reviewCounts: { total: 0, needsDecision: 0 } });
+    const reviewInput = ReviewStartInputSchema.parse({ reviewers: [{ kind: 'engine', engineId: engine }], instructions: 'Review once' });
+    const binding = await h.admitReview(reviewInput);
+    const composed = reviewComposition.buildReviewStepsWorkflowV1(reviewInput, binding);
+    const snapshot = await accepted(composed.definition, composed.inputs);
+    expect(await h.runAccepted(snapshot)).toMatchObject({ state: 'failed', reason: 'execution_run_target_unavailable' });
+    expect((await h.readReview(binding.reviewId))?.rounds[0]).toMatchObject({ state: 'failed', reviewerOutcomes: [
+      { reason: { run: 'launch_failed', errorCode: 'execution_run_target_unavailable' } },
+    ] });
   });
   it('keeps authored Review and verification engines read-only despite a broader launch preference', async () => {
     const h = harness({ reviewCounts: { total: 0, needsDecision: 0 } });

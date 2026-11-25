@@ -16,9 +16,11 @@ export function ReviewSummaryHost(props: Readonly<{
     reviewers?: ReviewSummaryProps['reviewers'];
     onOpenReview?: () => void;
     footerAction?: ReviewSummaryProps['footerAction'];
+    workflowFailureCode?: string | null;
 }>): React.ReactElement {
     const detail = useReviewDetail(props.reviewId, { scope: props.scope });
-    const glance = projectReviewGlance(undefined, detail.data?.review ?? null, { needsYou: detail.data?.human.needsYou });
+    const glance = projectReviewGlance(undefined, detail.data?.review ?? null,
+        { needsYou: detail.data?.human.needsYou, workflowFailureCode: props.workflowFailureCode });
     if (!glance) return <SurfaceStateCard kind={detail.status === 'error' ? 'error' : 'loading'}
         title={t(detail.status === 'error' ? 'common.error' : 'common.loading')}
         action={detail.status === 'error' ? { label: t('common.retry'), onPress: () => void detail.refresh() } : undefined} />;

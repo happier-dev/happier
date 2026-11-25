@@ -229,6 +229,24 @@ it('shows nothing for a run that produced no Review of its own', async () => {
   }
 });
 
+it.each([
+  ['ACP_CATALOG_UNAVAILABLE', 'settings.acpCatalogUnavailable'],
+  ['agent_isolation_unavailable', 'errors.agentIsolationUnavailable'],
+] as const)('shows %s on its failed Review card', async (failureCode, messageKey) => {
+  homes.answer(serverId, 'POST /v1/reviews/get', { body: {
+    review: { ...review, state: 'failed', finishedAt: 3, counts: { total: 0, needsDecision: 0 } },
+    human: { reviewId, roundOrdinal: 1, requests: [], verdicts: [],
+      needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
+        requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } },
+  } });
+  homes.answer(serverId, 'GET /v1/reviews/comments', { body: { items: [], cursor: null } });
+  const screen = await renderScreen(<WorkflowRunReview runId="hunt-run" scope={{ serverId, accountId: 'alice' }}
+    enabled workflowFailureCode={failureCode} />);
+  try {
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t(messageKey)));
+  } finally { await screen.unmount(); }
+});
+
 it('finds a Review by its workflowRunId when a contributed PR action produced it', async () => {
   function Result() {
     const result = useWorkflowRunResultReview({ runId: 'hunt-run', scope: { serverId, accountId: 'alice' },

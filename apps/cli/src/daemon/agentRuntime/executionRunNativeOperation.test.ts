@@ -4,6 +4,21 @@ import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/ad
 import { createFirstConversationAgentFixture } from '@/daemon/testkit/firstConversationAgent.testkit';
 import { admitAgentNativeMcpPlacementForHost } from '@/plugins/runtime/invocation/services/exec';
 
+it('keeps a refused native preparation distinct from disposal of admitted Run material', async () => {
+    const lifetime = new AbortController();
+    const owner = createExecutionRunNativeOperationOwner({ ingress: { signal: lifetime.signal },
+        agentIsolation: { read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }) },
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
+        machine: {
+            async readMemberFolderOwner() { throw new Error('Requester refused before placement'); },
+            async prepareNativeOperation() { throw new Error('Requester refused before OS preparation'); },
+        },
+    });
+    await expect(owner.prepareNativeOperation('/project', lifetime.signal, 'review')).rejects
+        .toMatchObject({ code: 'agent_isolation_unavailable' });
+    await expect(owner.disposeNativeOperation()).resolves.toBeUndefined();
+});
+
 it('retains admitted requester custody through real native Run services when OS isolation is disabled', async () => {
     const lifetime = new AbortController();
     const requester = { kind: 'isolated' as const, separationRequired: false, accountAutomation: true as const,

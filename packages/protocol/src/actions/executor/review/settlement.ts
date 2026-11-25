@@ -45,9 +45,11 @@ export async function dispatchReviewSettlementAction(input: Readonly<{
     reviewerOutcomes: collectReviewRoundOutcomes(parsed), finishedAt: Date.now(),
     runs: [{ kind: 'workflow', runId: caller.runId }], signal: input.ctx.signal });
   const outcomes = round.reviewerOutcomes;
-  if (round.state === 'failed' && outcomes?.length
-    && outcomes.every(outcome => outcome.reason?.errorCode === 'resource_forbidden')) {
-    return { ok: false, errorCode: 'resource_forbidden', error: 'resource_forbidden' };
+  const firstErrorCode = outcomes?.[0]?.reason?.errorCode;
+  if (round.state === 'failed' && firstErrorCode && outcomes?.every(outcome =>
+    outcome.reason?.errorCode === 'resource_forbidden'
+    || (outcome.reason?.run === 'launch_failed' && outcome.reason.errorCode !== undefined))) {
+    return { ok: false, errorCode: firstErrorCode, error: firstErrorCode };
   }
   return { ok: true, result: parsed.reviewRound };
 }

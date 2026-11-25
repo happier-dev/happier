@@ -249,8 +249,12 @@ export const reviewStartExecutionRunCompletion: ExecutionRunCompletionDeclaratio
 
 export const reviewStartCompletion: ActionCompletionDeclaration = {
   awaits: 'workflow_runs',
-  immediateResultSchema: lazyZodSchema(() => FanoutOutputSchema.check(z.refine(output =>
-    output.intent === 'review' && output.reviewRound !== undefined && output.results.length === 0))),
+  immediateResultSchema: lazyZodSchema(() => z.union([
+    FanoutOutputSchema.check(z.refine(output =>
+      output.intent === 'review' && output.reviewRound !== undefined && output.results.length === 0)),
+    ReviewStartTerminalValueV1Schema.check(z.refine(output => output.reviewRound !== undefined
+      && output.perEngineOutcome.length > 0 && output.perEngineOutcome.every(outcome => outcome.outcome === 'launch_failed'))),
+  ])),
   executionRuns: reviewStartExecutionRunCompletion,
   terminalOutputSchema: StrictJsonValueSchema,
   launched: output => {

@@ -75,6 +75,8 @@ export function WorkflowRunReview(
     /** A transcript fold retains its ordinary Run entry when this Run produced no Review. */
     fallback?: React.ReactNode;
     footerAction?: React.ReactNode;
+    /** The producing Run's retained cause, used only if the linked Review failed. */
+    workflowFailureCode?: string | null;
   }>,
 ): React.ReactElement | null {
   const router = useRouter();
@@ -160,6 +162,7 @@ export function WorkflowRunReview(
       <ReviewSummaryHost
         reviewId={reviewId}
         scope={props.scope}
+        workflowFailureCode={props.workflowFailureCode}
         subject={null}
         rows={rows}
         reviewers={reviewers}

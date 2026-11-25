@@ -762,8 +762,7 @@ function persistedFailure(record: WorkflowCoordinatorInvocation, automationCause
         return new WorkflowLeafFailure('failed', code, true);
       }
       }
-      if (code === 'resource_forbidden' && record.execution?.kind === 'action'
-        && record.execution.actionId === REVIEW_SETTLE_ROUND_ACTION_ID_V1) {
+      if (record.execution?.kind === 'action' && record.execution.actionId === REVIEW_SETTLE_ROUND_ACTION_ID_V1) {
         // The Review round is settled. A parent waiting on the child needs its terminal refusal.
         return new WorkflowLeafFailure('failed', code, true);
       }

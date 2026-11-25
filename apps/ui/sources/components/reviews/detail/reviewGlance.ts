@@ -3,6 +3,7 @@ import type { ReviewNeedsYouV1 } from '@happier-dev/protocol/reviews/reviewHuman
 import type { ReviewListItemV1 } from '@happier-dev/protocol/reviews/reviewListV1';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { projectHappierReviewGlance } from '@happier-dev/plugin-ui/components';
+import { presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { t } from '@/text';
 import type { ReviewDetailGlance } from './ReviewDetailView';
 
@@ -12,9 +13,10 @@ import type { ReviewDetailGlance } from './ReviewDetailView';
  * Fixed findings close the sentence ("2 findings to decide · 1 fixed", lab `detail-fixed`).
  */
 export function projectReviewGlance(round: ReviewArtifactV1['rounds'][number] | undefined, review: ReviewListItemV1 | null,
-  options?: Readonly<{ countsOnChips?: boolean; fixedCount?: number; needsYou?: ReviewNeedsYouV1 }>): ReviewDetailGlance | null {
+  options?: Readonly<{ countsOnChips?: boolean; fixedCount?: number; needsYou?: ReviewNeedsYouV1; workflowFailureCode?: string | null }>): ReviewDetailGlance | null {
   const glance = projectHappierReviewGlance(round, review ? { ...review, needsYou: options?.needsYou } : null, {
-    running: t('reviewWalkthrough.detail.glanceRunning'), failed: t('reviewWalkthrough.detail.glanceFailed'),
+    running: t('reviewWalkthrough.detail.glanceRunning'),
+    failed: presentSessionStartupFailureCause(options?.workflowFailureCode) ?? t('reviewWalkthrough.detail.glanceFailed'),
     requestedFromYou: t('reviewWalkthrough.detail.requestedFromYou'),
     noFindings: t('reviewWalkthrough.detail.glanceNoFindings'),
     partialNoFindings: t('reviewWalkthrough.detail.glancePartialNoFindings'), allDecided: t('reviewWalkthrough.detail.glanceAllDecided'),

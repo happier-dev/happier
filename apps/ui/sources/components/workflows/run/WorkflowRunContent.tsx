@@ -1626,6 +1626,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             {/* A run that starts a Review (a Hunt) shows that Review itself: its findings so far (lab `hunts-running`). */}
             {/* A phone page without its view switch row gives the summary the page's section gap before the Map (U8 R4 R3). */}
             {producedReviewId ? <WorkflowRunReview runId={props.run.id} scope={navigationScope} enabled={props.active !== false}
+                workflowFailureCode={props.run.errorCode}
                 openedFromHeader={resultIsReview}
                 testID={`${testIDPrefix}-review`} style={[styles.section, styles.pageSection, phone ? null : styles.onTitleEdge,
                     phone && !navigationShown && sourceFolded && isTerminalWorkflowRunState(props.run.state) ? styles.sectionBeforeView : null]} /> : null}

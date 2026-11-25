@@ -140,6 +140,7 @@ function resolveSessionStartupFailureCause(
     const reconnect = teamCredentialReconnectPresentation(code);
     if (reconnect) return reconnect.message;
     if (code === 'update_required') return resourceStateLabel('update_required');
+    if (code === 'ACP_CATALOG_UNAVAILABLE') return t('settings.acpCatalogUnavailable');
     if (code === 'machine_target_not_current') return t('session.startFailure.cause.admission_unavailable');
     const startupRecovery = presentSessionStartupFailureRecovery([code]);
     if (startupRecovery) return startupRecovery.cause;

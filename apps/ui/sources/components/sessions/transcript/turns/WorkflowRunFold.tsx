@@ -203,6 +203,7 @@ export const WorkflowRunFold = React.memo(function WorkflowRunFold(
       return (
         <View style={styles.container}>
           <WorkflowRunReview runId={props.run.runId} scope={scope} enabled={scope !== null}
+            workflowFailureCode={summary?.errorCode}
             fallback={<WorkflowRunFoldHeader runId={props.run.runId} disclosure={null}
               presentation={presentation} onOpen={open} />}
             footerAction={open ? <TextLinkButton testID="workflow-run-review:open-run" size="meta"

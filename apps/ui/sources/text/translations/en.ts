@@ -1204,6 +1204,7 @@ const acpCatalogTranslationExtension = {
     acpCatalogDeleteBackendConfirm: ({ name }: { name: string }) =>
       `Delete "${name}"?`,
     acpCatalogValidationFailed: 'ACP catalog settings are invalid.',
+    acpCatalogUnavailable: 'Happier couldn’t load a current Agent catalog. Try again.',
   },
   newSession: {},
 } as const;

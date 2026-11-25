@@ -66,7 +66,9 @@ export function createExecutionRunNativeOperationOwner(input: Readonly<{
         async disposeNativeOperation() {
             lifetime.abort();
             if (!pending) return;
-            try { await (await pending)?.dispose(); }
+            // A rejected preparation supplied no material to dispose. Its
+            // caller still owns the typed refusal and the Start receipt.
+            try { await (await pending.catch(() => undefined))?.dispose(); }
             finally { pending = undefined; }
         },
     };
