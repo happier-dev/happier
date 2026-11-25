@@ -3,7 +3,7 @@ import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/action
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { NotificationsNotifyMeResultV1Schema } from '@happier-dev/protocol/account/notifications/notifyMeV1';
 
-import { createUiAccountAction, resolveUiAccountActionFallbackMachineId } from './accountActionDeps';
+import { createUiAccountAction, isUiAccountActionForeignMachine } from './accountActionDeps';
 
 /** Notification delivery and catalog remain owned by the captured Account's daemon. */
 export function createUiNotificationActionDeps(
@@ -19,11 +19,9 @@ export function createUiNotificationActionDeps(
         notificationChannelsList: async (context) => {
             // The catalog is the captured Account's. A field pinned to another
             // person's Machine (a Use guest's workflow Where) is read on the
-            // Account's own daemon; an own targeted Machine keeps serving it.
+            // Account's own daemon; any other target keeps serving it.
             const { externalActionTarget: target, ...accountContext } = context;
-            const ownTarget = target?.kind === 'machine' && resolveUiAccountActionFallbackMachineId(params.account,
-                { candidateMachineIds: [target.machineId], allowUnreachableFallback: true }) !== null;
-            if (!ownTarget) context = accountContext;
+            if (target?.kind === 'machine' && isUiAccountActionForeignMachine(params.account, target.machineId)) context = accountContext;
             const result = await execute({
                 actionId: 'action.options.resolve',
                 // Trigger authoring reads the catalog; it does not send a notification.

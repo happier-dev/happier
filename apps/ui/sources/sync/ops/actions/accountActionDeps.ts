@@ -49,6 +49,12 @@ function readReceiverAccountAction(projection: PluginProjectionV2 | null | undef
     return action?.execution.target === 'account' ? action : undefined;
 }
 
+/** A known Machine held by another Account (a shared Machine); an unknown one is not classified. */
+export function isUiAccountActionForeignMachine(account: Pick<ActionAccountContext, 'serverId' | 'accountId'>, machineId: string): boolean {
+    const machine = resolveMachineForActiveServerFromState(storage.getState(), machineId, account);
+    return !!machine?.access && machine.access.custodian.accountId !== account.accountId;
+}
+
 /** Automatic Account execution stays on an own Machine; explicit native targets retain their reviewed path. */
 export function resolveUiAccountActionFallbackMachineId(account: Pick<ActionAccountContext, 'serverId' | 'accountId'>,
     options?: Readonly<{
