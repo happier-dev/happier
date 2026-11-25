@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useArtifactTitleProjections } from '@/components/artifacts/useArtifactTitleProjections';
 import { core } from 'zod/mini';
 import { t } from '@/text';
 import { readMachineDisplayNamesById, storage, useArtifact, useMachineDisplayNamesById, useProjectAccountRows, useServerScopedMachine, useMachineListForServer } from '@/sync/domains/state/storage';
@@ -379,6 +380,10 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
     const viewer = useAccountSettingsScope();
     const ownHome = areServerProfileIdentifiersEquivalent(viewer?.serverId, approvalServerId);
     const artifact = useArtifact((reference?.kind === 'skill' || reference?.kind === 'artifact') && ownHome ? reference.id : '');
+    // A Document this Account can open names itself on a cold page: the one exact demand Doc labels use opens it.
+    const artifactRefs = React.useMemo(() => (reference?.kind === 'skill' || reference?.kind === 'artifact') && ownHome
+        ? [reference.id] : NO_ARTIFACT_REFS, [ownHome, reference]);
+    useArtifactTitleProjections(viewer, artifactRefs, artifactRefs.length > 0);
     const machineReference = reference?.kind === 'machine' && (!reference.serverId
         || areServerProfileIdentifiersEquivalent(reference.serverId, approvalServerId)) ? reference : null;
     const machine = useServerScopedMachine(approvalServerId, machineReference?.id ?? '');
@@ -497,6 +502,7 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
 }
 
 const NO_WORKFLOW_REFS: readonly string[] = Object.freeze([]);
+const NO_ARTIFACT_REFS: readonly string[] = Object.freeze([]);
 
 /**
  * An existing Run reads as its Run rows do: its Workflow's title from the Run label owner and when it started, on

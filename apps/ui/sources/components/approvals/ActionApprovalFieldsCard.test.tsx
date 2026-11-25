@@ -404,6 +404,30 @@ it('titles a keyed field in Technical details in words, never its translation ke
     await screen.unmount();
 });
 
+it('names the requester\'s own Document on a cold page that has not loaded its Documents yet', async () => {
+    const home = await upsertServerProfile({ name: 'Personal', serverUrl: 'https://own-document-approval.test' });
+    profiles.push(home.id);
+    const scope = { serverId: home.id, accountId: 'account' };
+    await act(async () => { storage.setState({ settingsScope: scope, profileScope: scope, machineListByServerId: { [home.id]: [] } }); });
+    const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+    const bridge = await loadSyncSingletonForTests();
+    const { sync } = await import('@/sync/sync');
+    const { createInboxApprovalArtifactFixture } = await import('@/dev/testkit/fixtures/inboxFixtures');
+    // The Home's exact read is the network boundary: it publishes the opened Document through the real store.
+    const read = vi.spyOn(sync, 'refreshArtifactsByIds').mockImplementation(async (ids) => {
+        const doc = createInboxApprovalArtifactFixture({ id: ids[0]!, title: 'Release notes' });
+        storage.setState(state => ({ artifacts: { ...state.artifacts, [doc.id]: doc } }));
+    });
+    const screen = await renderScreen(<ActionApprovalFieldsCard anatomy="page" serverId={home.id}
+        presentation={describeApprovalActionFields({ actionId: 'artifact.public_link.create', actionArgs: { artifactId: 'own-doc' } })} />);
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(screen.getTextContent()).toContain('Release notes');
+    expect(screen.getTextContent()).not.toContain(t('approvals.referenceNameUnavailable'));
+    read.mockRestore();
+    await screen.unmount();
+    bridge.dispose();
+});
+
 it('reads a workspace-sync request by its machine and the two folders it links, keeping the ids in Technical details', async () => {
     const home = await upsertServerProfile({ name: 'Personal', serverUrl: 'https://workspace-sync-approval.test' });
     profiles.push(home.id);
