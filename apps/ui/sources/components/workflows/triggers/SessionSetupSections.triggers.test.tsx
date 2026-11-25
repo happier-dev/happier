@@ -16,6 +16,7 @@ import {
   AutomationStoredWorkflowDefinitionV2Schema} from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import {
   WorkflowTriggerSetV1Schema,
+  type WorkflowAttachedTriggerV1,
   type WorkflowTriggerSetV1,
 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import {
@@ -152,11 +153,12 @@ let holdAutomationRead: (() => Promise<void>) | undefined;
 let finishRunRead: (() => Promise<void>) | undefined;
 let workflowInventoryReads = 0;
 let subjectQueries: unknown[] = [];
+const contextAttachmentsBySession = new Map<string, WorkflowAttachedTriggerV1[]>();
 
 /** The Home returns direct Session attachments and inherited all-Session Account habits. */
 function attachedTo(sessionId: string) {
   return rows.flatMap(row => row.triggers.filter(trigger => row.scopeSessionId === sessionId
-    || (row.scopeSessionId === null && trigger.kind === 'sessionLifecycle' && !('subject' in trigger && trigger.subject !== undefined))).map(trigger => ({
+    || (row.scopeSessionId === null && trigger.kind === 'sessionLifecycle' && trigger.subjectKind === undefined)).map(trigger => ({
     automationId: row.id, triggerId: trigger.id, workflowDefinitionId: row.workflowDefinitionId,
     relation: row.scopeSessionId === sessionId ? 'direct' as const : 'context' as const,
     enabled: row.enabled && trigger.enabled, revision: trigger.revision,
@@ -174,7 +176,8 @@ const automationHttp = vi.fn(async (url: URL, init?: RequestInit): Promise<Respo
     if (failAutomationReads) return Response.json({ error: 'temporarily_unavailable' }, { status: 503 });
     subjectQueries.push(body.subject);
     return Response.json(AutomationDefinitionListResponseSchema.parse({ automations: [],
-      attached: attachedTo(body.subject.sessionId), nextCursor: null, skippedNotSharedCount: 0 }));
+      attached: [...attachedTo(body.subject.sessionId), ...(contextAttachmentsBySession.get(body.subject.sessionId) ?? [])],
+      nextCursor: null, skippedNotSharedCount: 0 }));
   }
   const detailQuery = body === null ? null : AutomationDefinitionDetailsRequestSchema.parse(body);
   if ((method === 'GET' || detailQuery !== null) && failAutomationReads) return Response.json({ error: 'temporarily_unavailable' }, { status: 503 });
@@ -267,6 +270,7 @@ beforeEach(async () => {
   finishRunRead = undefined;
   automationHttp.mockClear();
   subjectQueries = [];
+  contextAttachmentsBySession.clear();
   machineRow = createPlainMachineRowFixture({ id: 'machine-a', accountId: 'account-a' });
   workflowHttp = await installWorkflowActionHttpBoundary({ accountId: () => 'account-a', automationDefinitions: automationHttp,
     machineRows: () => [machineRow],
@@ -459,6 +463,37 @@ describe('the Session Info page Automations section', () => {
     await vi.waitFor(() => expect(screen.findByTestId('subject-triggers-read-only:set-1:account-habit')).not.toBeNull());
     expect(screen.findByTestId('subject-triggers:set-1:account-habit-switch')).toBeNull();
     expect(screen.findByTestId('subject-triggers:set-1:account-habit')).toBeNull();
+  });
+
+  it('shows an attached Project habit as inherited without offering Session mutation controls', async () => {
+    const projectKey = 'project-context-habits';
+    const session = getStorage().getState().sessions['session-1'];
+    if (!session) throw new Error('Expected the Session fixture');
+    act(() => getStorage().getState().applySessions([{ ...session, projectKey }]));
+    const projectHabit = { ...lifecycleTrigger('project-habit', true),
+      subject: { kind: 'project', serverId: 'portable-home', projectKey } };
+    const unrelated = { ...lifecycleTrigger('unrelated-project-habit', true),
+      subject: { kind: 'project', serverId: 'portable-home', projectKey: 'other-project' } };
+    answer([WorkflowTriggerSetV1Schema.parse({ ...triggerSet([]), scopeSessionId: null,
+      triggers: [projectHabit, unrelated] })]);
+    rows = rows.map(row => ({ ...row, scopeSessionId: null }));
+    // The server's attached-query response owns this Session-to-Project relation.
+    // Both real Project-subject definitions remain in details; only the admitted
+    // Project attachment is returned for this Session, never an all-Session row.
+    contextAttachmentsBySession.set('session-1', [{ automationId: 'set-1', triggerId: projectHabit.id,
+      workflowDefinitionId: null, relation: 'context', enabled: true, revision: projectHabit.revision,
+      summary: { kind: 'sessionLifecycle', events: ['parentTurnCompleted'] },
+      setUpBy: { accountId: 'account-a', displayName: 'Owner' },
+    }]);
+    const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
+    await settle();
+    await vi.waitFor(() => expect(screen.findByTestId('subject-triggers-read-only:set-1:project-habit')).not.toBeNull());
+    expect(subjectQueries).toContainEqual(expect.objectContaining({ kind: 'session', sessionId: 'session-1' }));
+    expect(screen.findByTestId('subject-triggers-read-only:set-1:unrelated-project-habit')).toBeNull();
+    expect(screen.findByTestId('subject-triggers:set-1:project-habit-switch')).toBeNull();
+    expect(screen.findByTestId('subject-triggers:set-1:project-habit')).toBeNull();
+    expect(automationHttp.mock.calls.filter(([, init]) => init?.method === 'PUT' || init?.method === 'PATCH'
+      || init?.method === 'DELETE')).toEqual([]);
   });
 
   it('keeps destination-only Habit content mounted through a Machine flap and recovers when the Machine returns', async () => {

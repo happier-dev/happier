@@ -196,6 +196,59 @@ it('authors the mounted sentence through Actions without upgrading a refused tri
     expect(hook.getCurrent().triggers.dirty).toBe(true);
 });
 
+it('opens both conditional Sentence branches in their existing cards and retains their edits', async () => {
+    const home = await sourceHome();
+    const { WorkflowDefinitionV1Schema } = await import('@happier-dev/protocol/workflows/workflowV1');
+    const { WorkflowDraftGetResultV1Schema } = await import('@happier-dev/protocol/actions/workflowAuthoringAction');
+    const { WorkflowSentenceBuilder } = await import('../sentence/WorkflowSentenceBuilder');
+    const { WorkflowActionBlockEditor } = await import('../editor/WorkflowActionBlockEditor');
+    const when = { kind: 'exists', value: { kind: 'literal', value: true } } as const;
+    const definition = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [{ kind: 'if', id: 'gate',
+        when,
+        then: [{ ...message, id: 'then-message' }],
+        otherwise: [{ ...message, id: 'otherwise-message' }],
+    }] });
+    const restorePopover = withPopoverWebGlobals();
+    try {
+        const screen = await renderScreen(<WorkflowSentenceBuilder anchorRef={createRef<View>()}
+            intent={{ name: 'Conditional notice', definition, trigger }} accountLifetime={home.lifetime} onRequestClose={() => {}} />, {
+            createNodeMock: element => element.type === 'View' ? {
+                addEventListener() {}, removeEventListener() {}, measureInWindow: callback => callback(0, 0, 300, 40),
+            } satisfies Pick<View, 'measureInWindow'> & Pick<EventTarget, 'addEventListener' | 'removeEventListener'> : null,
+        });
+        try {
+            const read = async () => {
+                const result = await createDefaultActionExecutor().execute('workflow.authoring.draft.get',
+                    { scope: home.lifetime.scope }, { surface: 'ui', authority: 'present_user' });
+                expect(result.ok).toBe(true);
+                if (!result.ok) throw new Error('Expected the mounted conditional draft');
+                const parsed = WorkflowDraftGetResultV1Schema.parse(result.result);
+                if (parsed.status !== 'available' || parsed.drafts.length !== 1) throw new Error('Expected one mounted draft');
+                return WorkflowDefinitionV1Schema.parse(parsed.drafts[0]!.definition);
+            };
+            for (const [id, text] of [['then-message', 'Then branch edited'], ['otherwise-message', 'Otherwise branch edited']] as const) {
+                await screen.pressByTestIdAsync(`workflow-builder-sentence-step:${id}`);
+                const selected = screen.findAllByType(WorkflowActionBlockEditor).filter(node => node.props.selected);
+                expect(selected.map(node => node.props.block.id)).toEqual([id]);
+                expect(screen.findHostByTestId(`workflow-builder-action-${id}-card`)).not.toBeNull();
+                await act(async () => screen.changeTextByTestId(`workflow-builder-action-${id}-field-message-text`, text));
+            }
+            await screen.pressByTestIdAsync('workflow-builder-sentence-step:then-message');
+            expect(screen.findAllByType(WorkflowActionBlockEditor).filter(node => node.props.selected)
+                .map(node => node.props.block.id)).toEqual(['then-message']);
+            const retained = await read();
+            expect(retained).toMatchObject({ blocks: [{ kind: 'if', id: 'gate', when,
+                then: [{ id: 'then-message', input: { message: { kind: 'literal', value: 'Then branch edited' } } }],
+                otherwise: [{ id: 'otherwise-message', input: { message: { kind: 'literal', value: 'Otherwise branch edited' } } }],
+            }] });
+        } finally {
+            await screen.unmount();
+        }
+    } finally {
+        restorePopover();
+    }
+});
+
 it('hands an agent-cleared Project to the full editor without reviving the source place', async () => {
     const home = await sourceHome();
     const project = { machineId: 'machine-a', directory: '/repo' };
