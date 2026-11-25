@@ -17315,6 +17315,7 @@ const russian: TeamsTranslationRoot = {
                 policyDefault: "Политика организации",
                 machineNotMemberUsable: "Участники не могут использовать эту машину. Предоставьте команде доступ к ней или выберите другую.",
                 machineDescription: "Где запускаются новые сессии.",
+                agentDescription: "Какой агент используют новые сессии.",
                 teamDefault: "По умолчанию для команды",
                 groupDefault: "По умолчанию для группы",
                 none: "Не задан",

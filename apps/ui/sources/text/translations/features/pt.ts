@@ -17276,6 +17276,7 @@ const portuguese: TeamsTranslationRoot = {
                 policyDefault: "Política da organização",
                 machineNotMemberUsable: "Os membros não podem usar esta máquina. Partilha-a com a equipa ou escolhe outra.",
                 machineDescription: "Onde começam as novas sessões.",
+                agentDescription: "Qual agente as novas sessões usam.",
                 teamDefault: "Padrão da equipe",
                 groupDefault: "Padrão do grupo",
                 none: "Não definido",

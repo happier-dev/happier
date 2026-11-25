@@ -806,7 +806,8 @@ const ProjectAgentDefaultRow = React.memo(function ProjectAgentDefaultRow(props:
   const restoreOption = restore?.value ? options.find((option) => sameAgentTarget(option.target, restore.value)) : undefined;
   const restoreSource = restoreOption && restore ? describeInheritedDefaultSource(restore.source, restore.names) : null;
   const inheritedTitle = props.current === undefined ? restoreOption?.entry.title ?? null : null;
-  const subtitle = props.current === undefined ? restoreSource ?? undefined : undefined;
+  // Like Machine and Approval, the row always says something: whose Agent it inherits, else what it decides.
+  const subtitle = (props.current === undefined ? restoreSource : null) ?? t('teams.settings.memberDefaults.agentDescription');
   if (!props.state.editable) {
     // A preference row: no icon (apps/ui AGENTS Configuration surfaces; UI refinements A fix 4).
     return <Item testID={props.testID} title={title} subtitle={subtitle}
@@ -915,7 +916,7 @@ export const ProjectSessionDefaultsSection = React.memo(function ProjectSessionD
 
 /**
  * The project editor while its read is in flight: the same section with the rows every loaded editor shows (Machine,
- * Agent and Approval profile), by name, each field holding a quiet bar, and the closing "Other agents" row, whose
+ * Agent and Approval profile), by name, each field and description line holding a quiet bar, and the closing "Other agents" row, whose
  * mark keeps the section's leading column where the loaded rows put their titles. Which Agents lead and how many
  * connected-service rows they open with come from the read and join between them, so the rows above never move
  * (TS-UI-ACCEPT-FINAL-1124: a held Agent group collapsed by 342 px for a Project with no Agent set). A read-only scope
@@ -946,8 +947,8 @@ export const ProjectSessionDefaultsLoadingSection = React.memo(function ProjectS
   return (
     <ItemGroup testID={props.testID} accessibilityLabel={t('common.loading')}>
       {fieldRow(`${props.testID}-machine`, t('teams.settings.memberDefaults.machine'), line)}
-      {/* The Agent row has a description only when an inherited Agent leads, and then its group joins below anyway. */}
-      {fieldRow(`${props.testID}-agent`, t('projects.sessionDefaults.agent'))}
+      {/* The Agent row always carries a line (its inherited source or its description), so its bar holds it. */}
+      {fieldRow(`${props.testID}-agent`, t('projects.sessionDefaults.agent'), line)}
       {fieldRow(`${props.testID}-approvalProfile`, t('teams.settings.memberDefaults.approvalProfile'),
         props.shared ? t('teams.settings.memberDefaults.approvalProfileProject') : line)}
       <Item testID={`${props.testID}-otherAgents`} icon={<Icon name="stack" />}

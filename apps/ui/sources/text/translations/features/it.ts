@@ -17290,6 +17290,7 @@ const italian: TeamsTranslationRoot = {
                 policyDefault: "Criterio dell’organizzazione",
                 machineNotMemberUsable: "I membri non possono usare questa macchina. Condividila con il team o scegline un’altra.",
                 machineDescription: "Dove partono le nuove sessioni.",
+                agentDescription: "Quale agente usano le nuove sessioni.",
                 teamDefault: "Predefinito del team",
                 groupDefault: "Predefinito del gruppo",
                 none: "Non impostato",

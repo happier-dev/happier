@@ -17314,6 +17314,7 @@ const polish: TeamsTranslationRoot = {
                 policyDefault: "Zasady organizacji",
                 machineNotMemberUsable: "Członkowie nie mogą używać tej maszyny. Udostępnij ją zespołowi lub wybierz inną.",
                 machineDescription: "Gdzie zaczynają się nowe sesje.",
+                agentDescription: "Którego agenta używają nowe sesje.",
                 teamDefault: "Domyślne zespołu",
                 groupDefault: "Domyślne grupy",
                 none: "Nie ustawiono",

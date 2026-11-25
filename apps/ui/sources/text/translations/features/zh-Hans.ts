@@ -17166,6 +17166,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 policyDefault: "组织策略",
                 machineNotMemberUsable: "成员无法使用此机器。请与团队共享，或选择另一台机器。",
                 machineDescription: "新会话的启动位置。",
+                agentDescription: "新会话使用的智能体。",
                 teamDefault: "团队默认",
                 groupDefault: "群组默认",
                 none: "未设置",

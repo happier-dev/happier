@@ -17226,6 +17226,7 @@ const japanese: TeamsTranslationRoot = {
                 policyDefault: "組織のポリシー",
                 machineNotMemberUsable: "メンバーはこのマシンを使用できません。チームと共有するか、別のマシンを選んでください。",
                 machineDescription: "新しいセッションを開始する場所。",
+                agentDescription: "新しいセッションで使うエージェント。",
                 teamDefault: "チームの既定",
                 groupDefault: "グループの既定",
                 none: "未設定",

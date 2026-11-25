@@ -547,6 +547,7 @@ export const english = {
                 machine: "Machine",
                 machineNotMemberUsable: "Members can't use this Machine. Share it with the Team, or pick another.",
                 machineDescription: "Where new sessions start.",
+                agentDescription: "Which Agent new sessions use.",
                 teamDefault: "Team default",
                 groupDefault: "Group default",
                 useDefault: ({ value }: { value: string }) => `Use the default · ${value}`,

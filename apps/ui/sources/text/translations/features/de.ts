@@ -17105,6 +17105,7 @@ const german: TeamsTranslationRoot = {
                 policyDefault: "Organisationsrichtlinie",
                 machineNotMemberUsable: "Mitglieder können diese Maschine nicht nutzen. Teile sie mit dem Team oder wähle eine andere.",
                 machineDescription: "Wo neue Sitzungen starten.",
+                agentDescription: "Welchen Agenten neue Sitzungen nutzen.",
                 teamDefault: "Team-Standard",
                 groupDefault: "Gruppen-Standard",
                 none: "Nicht festgelegt",

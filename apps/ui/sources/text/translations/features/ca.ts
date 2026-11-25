@@ -17304,6 +17304,7 @@ const catalan: TeamsTranslationRoot = {
                 policyDefault: "Política de l’organització",
                 machineNotMemberUsable: "Els membres no poden utilitzar aquesta màquina. Comparteix-la amb l’equip o tria’n una altra.",
                 machineDescription: "On comencen les sessions noves.",
+                agentDescription: "Quin agent fan servir les sessions noves.",
                 teamDefault: "Predeterminat de l’equip",
                 groupDefault: "Predeterminat del grup",
                 none: "Sense definir",
