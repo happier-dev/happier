@@ -7,7 +7,7 @@ import { createDeferred, renderScreen } from '@/dev/testkit';
 import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED, readRpcRequestDisposition, socketRpcCodec } from '@happier-dev/sync-client';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { MachineVitalsGetInputV1Schema, MachineVitalsSnapshotV1Schema } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -52,7 +52,8 @@ const { clearMachineRequestReachabilityForMachine } = await import('@/sync/domai
 const { storage } = await import('@/sync/domains/state/storageStore');
 const beforeState = storage.getState();
 
-type MachineCall = Readonly<{ method: string; requestId: string; params: unknown; reply(value: unknown): Promise<void>; refuse(errorCode: string): void }>;
+type MachineCall = Readonly<{ method: string; requestId: string; params: unknown; reply(value: unknown): Promise<void>;
+    push(value: unknown): Promise<void>; refuse(errorCode: string): void }>;
 
 // This is the existing family harness: physical Home readiness, real Socket.IO, codec and Action wiring.
 async function withMachineHome(run: (home: Readonly<{
@@ -99,6 +100,12 @@ async function withMachineHome(run: (home: Readonly<{
             const request = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, raw.params, raw.method);
             const call: MachineCall = { method: raw.method.split(':').slice(1).join(':'), requestId: raw.requestId, params: request.params,
                 reply: async value => { acknowledge({ ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' }, value, request.callId) }); },
+                push: async value => {
+                    const callId = globalThis.crypto.randomUUID().replaceAll('-', '');
+                    const params = await socketRpcCodec.encodeParams({ mode: 'plain' }, value, { method: raw.method, callId });
+                    socket.emit(SOCKET_RPC_EVENTS.CONTINUATION, { requestId: raw.requestId, selectedSocketId: socket.id });
+                    socket.emit(SOCKET_RPC_EVENTS.CONTINUATION, { requestId: raw.requestId, senderSocketId: socket.id, callId, params, notification: true });
+                },
                 refuse: errorCode => { acknowledge({ ok: false, error: 'RPC method not available', errorCode }); } };
             calls.push(call);
             await answer(call);
@@ -107,6 +114,100 @@ async function withMachineHome(run: (home: Readonly<{
     try { await run({ serverId, serverUrl, socketServer: server, calls, cancellations, setAnswer: next => { answer = next; } }); }
     finally { await serverScopedRpcSocketPool.stopAll(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }
+
+it('reconciles a demanded install from its retained cursor when the focused Home socket is replaced', async () => {
+    const { apiSocket } = await import('@/sync/api/session/apiSocket');
+    const { ensureMachineAgentInstallJobs, readAgentInstallJob, subscribeAgentInstallJob } =
+        await import('@/agents/machineAgents/installJobs/installJobStore');
+    await withMachineHome(async home => {
+        const target = { serverId: home.serverId, accountId: 'owner', machineId: 'shared-machine', agentId: 'codex' };
+        const progress = (bytesDone: number) => ({ t: 'progress', stepId: 'cli', bytesDone, bytesTotal: 10 });
+        const reads = () => home.calls.filter(call => call.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ);
+        const readCursors = () => reads().map(call => call.params);
+        const published: number[] = [];
+        const activeReadsAtDispatch: number[] = [];
+        const observe = () => subscribeAgentInstallJob(target, () => {
+            const bytesDone = readAgentInstallJob(target)?.steps[0]?.bytesDone;
+            if (bytesDone != null) published.push(bytesDone);
+        });
+        let connected = false;
+        const stopStatus = apiSocket.onStatusChange(status => { connected = status === 'connected'; });
+        const token = createAccountTokenForTests(target.accountId, { currentAccount: true });
+        const replaceHome = async () => {
+            const before = new Set(home.socketServer.sockets.sockets.keys());
+            apiSocket.initialize({ endpoint: home.serverUrl, serverId: home.serverId, token, request: homes.request }, null);
+            await vi.waitFor(() => {
+                expect(connected).toBe(true);
+                expect([...home.socketServer.sockets.sockets.keys()].some(id => !before.has(id))).toBe(true);
+            });
+        };
+        const idleMinute = async () => {
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+            try { await vi.advanceTimersByTimeAsync(60_000); }
+            finally { vi.useRealTimers(); }
+        };
+
+        home.setAnswer(async call => {
+            if (call.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ) {
+                activeReadsAtDispatch.push(reads().filter(read => !home.cancellations.includes(read.requestId)).length);
+            }
+            if (call.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST) await call.reply({ ok: true, jobs: [
+                { agentId: 'codex', jobId: 'install-reconnect', intent: 'install', startedAt: 100,
+                    steps: [{ stepId: 'cli', label: 'Agent CLI', state: 'running' }], progress: [], done: false, outcome: null },
+            ] });
+        });
+
+        let release = observe();
+        try {
+            await replaceHome();
+            await ensureMachineAgentInstallJobs(target);
+            await vi.waitFor(() => expect(reads()).toHaveLength(1));
+            await reads()[0].push({ events: [progress(3)], nextCursor: 1 });
+            await vi.waitFor(() => expect(published).toEqual([3]));
+            await idleMinute();
+            expect(reads()).toHaveLength(1);
+
+            // Replace Home while the scoped observation stays parked and has no terminal ACK.
+            await replaceHome();
+            await vi.waitFor(() => expect(reads(), 'cursor reads after one Home replacement').toHaveLength(2));
+            expect(home.cancellations).toEqual([reads()[0].requestId]);
+            await reads()[1].push({ events: [progress(2), progress(6)], nextCursor: 2 });
+            await reads()[1].push({ events: [progress(6)], nextCursor: 2 });
+            await reads()[1].push({ events: [progress(7)], nextCursor: 3 });
+            await vi.waitFor(() => expect(published).toEqual([3, 6, 7]));
+            expect(reads()).toHaveLength(2);
+
+            // Keep the first replacement read parked when the next Home socket replaces it.
+            await replaceHome();
+            await vi.waitFor(() => expect(reads()).toHaveLength(3));
+            await replaceHome();
+            await vi.waitFor(() => expect(reads()).toHaveLength(4));
+            expect(home.cancellations).toEqual(reads().slice(0, 3).map(call => call.requestId));
+            await reads()[2].push({ events: [progress(9)], nextCursor: 4 });
+            await reads()[3].push({ events: [progress(8)], nextCursor: 4 });
+            await vi.waitFor(() => expect(published).toEqual([3, 6, 7, 8]));
+
+            release();
+            await vi.waitFor(() => expect(home.cancellations).toHaveLength(4));
+            await replaceHome();
+            await idleMinute();
+            expect(reads()).toHaveLength(4);
+
+            release = observe();
+            await vi.waitFor(() => expect(readCursors()).toEqual([0, 1, 3, 3, 4].map(cursor =>
+                ({ jobId: 'install-reconnect', cursor }))));
+            expect(activeReadsAtDispatch).toEqual([1, 1, 1, 1, 1]);
+            await reads()[4].reply({ ok: true, events: [progress(10)], nextCursor: 5, steps: [], progress: [],
+                done: true, outcome: { kind: 'succeeded', version: '1.0' } });
+            await vi.waitFor(() => expect(readAgentInstallJob(target)?.outcome).toEqual({ kind: 'succeeded', version: '1.0' }));
+            expect(published).toEqual([3, 6, 7, 8, 10]);
+        } finally {
+            release();
+            stopStatus();
+            apiSocket.disconnect();
+        }
+    });
+});
 
 function vitals(sampledAt = Date.now()) {
     return MachineVitalsSnapshotV1Schema.parse({ state: 'reporting', sample: {

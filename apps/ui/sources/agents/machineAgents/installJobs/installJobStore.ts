@@ -107,8 +107,14 @@ function stopObserving(record: JobRecord): void {
 function updateRecoverySubscription(state: MachineJobs): void {
     if (state.controller.signal.aborted) return;
     if (state.listeners.size || state.agentListeners.size) {
-        state.detachRecovery ??= subscribeMachineRpcRecovery({ ...state.target, expectedAccountId: state.target.accountId }, () => {
-            for (const current of state.records.values()) if (hasReaders(state, current)) void observe(state, current);
+        state.detachRecovery ??= subscribeMachineRpcRecovery({ ...state.target, expectedAccountId: state.target.accountId }, revalidate => {
+            for (const current of state.records.values()) {
+                if (!hasReaders(state, current)) continue;
+                // The scoped progress RPC can still be parked after Home reconnects.
+                // Retire it before following again from the last applied cursor.
+                if (revalidate === true) stopObserving(current);
+                void observe(state, current);
+            }
         });
     } else {
         state.detachRecovery?.();
