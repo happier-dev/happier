@@ -313,6 +313,8 @@ function projectAccountRequestForProvider(value: unknown): unknown {
   } };
 }
 
+const voicePrivacyRefusalMessage = 'Current Voice privacy settings withhold the data this tool needs. Tell the person why the tool cannot complete the request. Do not retry.';
+
 export function isVoiceToolResultBlockedByPrivacy(
   toolName: string,
   prefs: VoiceToolResultRedactionPrefs,
@@ -471,7 +473,7 @@ export function redactVoiceToolResultForProvider(
     return {
       ok: false,
       errorCode: 'privacy_disabled',
-      errorMessage: 'privacy_disabled',
+      errorMessage: voicePrivacyRefusalMessage,
     };
   }
   if (ACTION_RESULT_TOOL_NAMES.has(toolName)) {
@@ -499,7 +501,7 @@ export function redactVoiceToolResultForProvider(
       const source = typeof optionsSourceId === 'string' ? optionsSourceId : '';
       const spawnModelField = result.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && result.fieldPath === 'modelSelection';
       if (prefs?.shareDeviceInventory !== true && (INVENTORY_OPTIONS_SOURCE_IDS.has(source) || spawnModelField)) {
-        return { ok: false, errorCode: 'privacy_disabled', errorMessage: 'privacy_disabled' };
+        return { ok: false, errorCode: 'privacy_disabled', errorMessage: voicePrivacyRefusalMessage };
       }
       const modelSource = MODEL_OPTIONS_SOURCE_IDS.has(source);
       if (modelSource || spawnModelField) {
@@ -564,7 +566,7 @@ export function redactVoiceActionExecutionResultForProvider(
   const record = value && typeof value === 'object' && !Array.isArray(value)
     ? value as Readonly<Record<string, unknown>> : null;
   if (isVoiceToolResultBlockedByPrivacy(toolName, prefs)) {
-    return { ok: false, errorCode: 'privacy_disabled', error: 'privacy_disabled' };
+    return { ok: false, errorCode: 'privacy_disabled', error: voicePrivacyRefusalMessage };
   }
   if (ACTION_RESULT_TOOL_NAMES.has(toolName)) {
     const projected = projectActionResultForProvider(value);
@@ -575,7 +577,7 @@ export function redactVoiceActionExecutionResultForProvider(
     const result = redactVoiceToolResultForProvider(toolName, record.result, prefs);
     const body = readResultRecord(result);
     if (body.errorCode === 'privacy_disabled') {
-      return { ok: false, errorCode: 'privacy_disabled', error: 'privacy_disabled' };
+      return { ok: false, errorCode: 'privacy_disabled', error: voicePrivacyRefusalMessage };
     }
     const voiceApprovalGuidance = readVoiceApprovalGuidance(record.voiceApprovalGuidance);
     // A skipped or unchecked Automation is the person's to hear; only the typed notice passes.

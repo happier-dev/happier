@@ -185,9 +185,9 @@ describe('redactVoiceToolResultValue', () => {
       expect(redactVoiceToolResultForProvider('resolveActionOptions', result, { ...SHARE_ALL, shareDeviceInventory: true }))
         .toEqual({ ok: true, optionsSourceId, options: [{ label: 'Model' }] });
       expect(redactVoiceToolResultForProvider('resolveActionOptions', result, SHARE_ALL))
-        .toMatchObject({ errorCode: 'privacy_disabled' });
+        .toEqual({ ok: false, errorCode: 'privacy_disabled', errorMessage: expect.stringMatching(/privacy settings.*tell the person.*do not retry/i) });
       expect(redactVoiceActionExecutionResultForProvider('resolveActionOptions', { ok: true, result }, SHARE_ALL))
-        .toEqual({ ok: false, errorCode: 'privacy_disabled', error: 'privacy_disabled' });
+        .toEqual({ ok: false, errorCode: 'privacy_disabled', error: expect.stringMatching(/privacy settings.*tell the person.*do not retry/i) });
     },
   );
 
@@ -209,10 +209,10 @@ describe('redactVoiceToolResultValue', () => {
           const wrapped = Reflect.apply(redactVoiceActionExecutionResultForProvider, undefined,
             ['action.options.resolve', { ok: true, result }, prefs]);
           expect(JSON.parse(JSON.stringify(direct))).toEqual({
-            ok: false, errorCode: 'privacy_disabled', errorMessage: 'privacy_disabled',
+            ok: false, errorCode: 'privacy_disabled', errorMessage: expect.stringMatching(/privacy settings.*tell the person.*do not retry/i),
           });
           expect(JSON.parse(JSON.stringify(wrapped))).toEqual({
-            ok: false, errorCode: 'privacy_disabled', error: 'privacy_disabled',
+            ok: false, errorCode: 'privacy_disabled', error: expect.stringMatching(/privacy settings.*tell the person.*do not retry/i),
           });
         }
       }
