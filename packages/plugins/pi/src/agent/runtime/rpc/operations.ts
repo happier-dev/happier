@@ -3,7 +3,9 @@ import { parseMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/
 import { createMcpCatalogPermissionChoiceV1, type InteractionTransientApprovalAuthorRequestV1 } from '@happier-dev/plugin-sdk/interactions';
 import { PI_PROVIDER_ID } from '../../providerBinding.js';
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
+import { PI_PROVIDER_SECRET_ENV_KEY } from '../../launchEnvironment.js';
 import { createSecureTempDirectorySync, writeAtomicTextFile } from '@happier-dev/plugin-sdk/fs';
 import { buildPiModelDiscoveryExtensionSource, parsePiModelDiscoveryRecord } from '../../models/discoveryExtension.js';
 import { parsePiModelId } from '../../models/catalog.js';
@@ -100,6 +102,7 @@ class PiSessionOpenTimeoutError extends Error {
 
 export type PiSessionOpenLifecycle = Readonly<{
   signal: AbortSignal;
+  isOpening(): boolean;
   remainingMs(phase: string, maximumMs?: number): number;
   waitFor<T>(
     operation: Promise<T>,
@@ -139,6 +142,7 @@ export function createPiSessionOpenLifecycle(params: Readonly<{
   };
   return Object.freeze({
     signal: controller.signal,
+    isOpening: () => !disposed && !controller.signal.aborted,
     remainingMs,
     async waitFor<T>(operation: Promise<T>, phase = currentPhase, disposeLateResult?: (value: T) => void | Promise<void>) {
       remainingMs(phase);
@@ -393,34 +397,38 @@ function assertPiRequestAuthRuntimeConfigured(env: Readonly<Record<string, strin
   }
 }
 
+async function readPiVersionOutput(
+  exec: PluginServices['exec'],
+  executable: ManagedExecutableRef,
+  phase: string,
+  lifecycle?: PiSessionOpenLifecycle,
+): Promise<string> {
+  const request = {
+    executable,
+    args: ['--version'],
+    cwd: { root: 'workspace', relativePath: '' },
+    timeoutMs: lifecycle?.remainingMs(phase, PI_VERSION_PROBE_TIMEOUT_MS)
+      ?? PI_VERSION_PROBE_TIMEOUT_MS,
+    maxStdoutBytes: 8 * 1024,
+    maxStderrBytes: 8 * 1024,
+  } as const;
+  const operation = exec.run(request, lifecycle ? { signal: lifecycle.signal } : undefined);
+  const result = lifecycle ? await lifecycle.waitFor(operation, phase) : await operation;
+  if (result.termination.observed.kind !== 'exit' || result.termination.observed.exitCode !== 0) return '';
+  const decode = new TextDecoder();
+  return `${decode.decode(result.stdout)}\n${decode.decode(result.stderr)}`;
+}
+
 async function requireSupportedPiRequestAuthVersion(
   params: PiExecutionRunConversationParams,
   executable: ManagedExecutableRef,
   lifecycle?: PiSessionOpenLifecycle,
 ): Promise<string> {
-  let output = '';
-  try {
-    const request = {
-      executable,
-      args: ['--version'],
-      cwd: { root: 'workspace', relativePath: '' },
-      timeoutMs: lifecycle?.remainingMs('request-auth version probe', PI_VERSION_PROBE_TIMEOUT_MS)
-        ?? PI_VERSION_PROBE_TIMEOUT_MS,
-      maxStdoutBytes: 8 * 1024,
-      maxStderrBytes: 8 * 1024,
-    } as const;
-    const operation = params.services.exec.run(request, lifecycle ? { signal: lifecycle.signal } : undefined);
-    const result = lifecycle
-      ? await lifecycle.waitFor(operation, 'request-auth version probe')
-      : await operation;
-    if (result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 0) {
-      const decode = new TextDecoder();
-      output = `${decode.decode(result.stdout)}\n${decode.decode(result.stderr)}`;
-    }
-  } catch {
-    lifecycle?.remainingMs('request-auth version probe');
-    // The compatibility resolver below turns an unavailable/unreadable probe into a typed refusal.
-  }
+  const phase = 'request-auth version probe';
+  const output = await readPiVersionOutput(params.services.exec, executable, phase, lifecycle).catch(() => {
+    lifecycle?.remainingMs(phase);
+    return '';
+  });
   const compatibility = resolvePiRequestAuthCompatibility(output);
   if (!compatibility.supported) {
     throw new PiRequestAuthCompatibilityError(compatibility);
@@ -1257,6 +1265,7 @@ function createPiConversationRuntime(params: Readonly<{
   resumeSessionSelector: string | null;
   resumeProviderSessionId: string | null;
   clearSubscribers: () => void;
+  reportStartupExit(error: unknown): Promise<void>;
 }>): PiConversationRuntime {
   const launchPermissionPolicy = resolvePiEffectiveLaunchPermissionPolicy(params.permissionMode);
   let disposed = false;
@@ -1436,6 +1445,7 @@ function createPiConversationRuntime(params: Readonly<{
       try {
         return { status: 'applied', changed: await params.operations.updateSessionRuntimeConfig(update) };
       } catch (error) {
+        await params.reportStartupExit(error);
         return {
           status: 'rejected',
           // Native negative acknowledgements carry only refusal text. Keep that
@@ -1553,7 +1563,7 @@ async function createPiConversationRuntimeOperations(
       mode: 0o600,
     });
   }
-  const processSpawn = params.services.exec.clients.spawn(createPiExecSpec({
+  const spec = createPiExecSpec({
     ...params,
     happierToolsExtension,
     env: {
@@ -1562,7 +1572,41 @@ async function createPiConversationRuntimeOperations(
         ? { [PI_REQUEST_AUTH_PRODUCER_VERSION_ENV]: requestAuthProducerVersion }
         : {}),
     },
-  }, executable, modelDiscoveryExtensionPath), sessionOpenLifecycle || params.nativeLaunch ? {
+  }, executable, modelDiscoveryExtensionPath);
+  // The Session opener supplies Pi's admitted launch overlay. The broker
+  // substitutes the credential in that same environment slot.
+  const environmentVariablePresent = Object.hasOwn(spec.launch.env, PI_PROVIDER_SECRET_ENV_KEY);
+  const reportStartupExit = async (error: unknown): Promise<void> => {
+    if (!(error instanceof PiRpcProcessExitError)) return;
+    const stderr = error.readStartupStderr();
+    if (!stderr) return;
+    const version = requestAuthProducerVersion ?? await readPiVersionOutput(
+      params.services.exec, executable, 'startup exit version probe', sessionOpenLifecycle ?? undefined,
+    ).then(output => {
+      const compatibility = resolvePiRequestAuthCompatibility(output);
+      return 'version' in compatibility ? compatibility.version : null;
+    }, () => null);
+    const resolutionClass = resolved.diagnostics
+      ?.find(diagnostic => diagnostic.code === 'agent_cli_resolved')?.detail?.source;
+    try {
+      params.logger.diagnostic({
+        code: error.code,
+        severity: 'error',
+        message: 'Pi RPC exited during Session startup',
+        details: {
+          executableBasename: redactBugReportSensitiveText(basename(resolved.executablePath)),
+          resolutionClass: typeof resolutionClass === 'string' ? resolutionClass : null,
+          executableVersion: version === null ? null : redactBugReportSensitiveText(version),
+          environmentVariable: PI_PROVIDER_SECRET_ENV_KEY,
+          environmentVariablePresent,
+          ...stderr,
+        },
+      });
+    } catch {
+      // A retired diagnostic service cannot replace the startup failure.
+    }
+  };
+  const processSpawn = params.services.exec.clients.spawn(spec, sessionOpenLifecycle || params.nativeLaunch ? {
     ...(sessionOpenLifecycle ? { signal: sessionOpenLifecycle.signal } : {}),
     ...(params.nativeLaunch ? { nativeLaunch: params.nativeLaunch } : {}),
   } : undefined);
@@ -1729,6 +1773,7 @@ async function createPiConversationRuntimeOperations(
   let capabilityNoticePublication = Promise.resolve();
   rpc = createPiJsonStreamRpcClient({
     handle,
+    ...(happierSessionId && sessionOpenLifecycle ? { isOpeningSession: sessionOpenLifecycle.isOpening } : {}),
     onEvent(record) {
       usageProjector.observeRecord(record);
       const extensionUserInput = parsePiExtensionUserInput(record);
@@ -1890,6 +1935,7 @@ async function createPiConversationRuntimeOperations(
     operations,
     permissionMode: params.permissionMode,
     logger: params.logger,
+    reportStartupExit,
     resumeSessionSelector: readString(params.resumeSessionSelector),
     resumeProviderSessionId: readString(params.resumeProviderSessionId),
     clearSubscribers: () => {
@@ -1916,6 +1962,7 @@ async function createPiConversationRuntimeOperations(
       await capabilityNoticePublication;
       if (mcpStartupFailure) throw mcpStartupFailure;
     } catch (error) {
+      await reportStartupExit(error);
       await runtime.dispose();
       throw error;
     }

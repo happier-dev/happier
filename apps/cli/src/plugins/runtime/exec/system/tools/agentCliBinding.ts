@@ -19,6 +19,7 @@ import {
 import { AGENT_CLI_MISSING_PREVIEW } from '@/packagedRuntime/managedTools/agentCliNotFoundError';
 
 import type { PluginExecSystemToolDefinition } from './definitions';
+import { createSystemToolDiagnostic } from './diagnostics';
 import { issueAdmittedPluginExecSystemToolGrant } from './resolveGrant';
 import { resolveMemberRunnableAgentCliLaunch, type MemberAgentCliLaunchContext } from './memberAgentCliLaunch';
 export { createMemberAgentCliLaunchContext, readMemberAgentCliLaunchContext, resolveMemberRunnableAgentCliLaunch,
@@ -138,6 +139,15 @@ function createBoundAgentCliSystemToolService(params: Readonly<{
                 launch: { executablePath: launch.command, args: Object.freeze([...launch.args]) } });
             return Object.freeze({
                 ...resolved,
+                diagnostics: Object.freeze([
+                    ...(resolved.diagnostics ?? []),
+                    createSystemToolDiagnostic({
+                        code: 'agent_cli_resolved',
+                        severity: 'info',
+                        messageKey: 'plugins.exec.systemTools.agentCliResolved',
+                        detail: { source: launch.source },
+                    }),
+                ]),
                 ...(launch.providerExitOwnership === 'direct' ? { providerExitOwnership: 'direct' as const } : {}),
             });
         },

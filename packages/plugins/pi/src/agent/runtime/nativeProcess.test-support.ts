@@ -40,7 +40,7 @@ export function hostBoundaries(signal = new AbortController().signal, sessionSta
   const context = {
     signal,
     services: {
-      logger: { debug() {}, info() {}, warn() {}, error() {} },
+      logger: { debug() {}, info() {}, warn() {}, error() {}, diagnostic: vi.fn() },
       connectedAccounts: {
         watch(_purpose: string, callback: (event: ConnectedAccountBindingEvent) => void | Promise<void>) {
           let disposed = false;
@@ -59,6 +59,7 @@ export function hostBoundaries(signal = new AbortController().signal, sessionSta
         }; },
         systemTools: { resolve: vi.fn(async () => ({
           executable: { kind: 'systemTool', id: 'pi-cli' }, executablePath: '/fixture/pi',
+          diagnostics: [{ code: 'agent_cli_resolved', detail: { source: 'system' } }],
         })) },
         clients: { spawn },
       },

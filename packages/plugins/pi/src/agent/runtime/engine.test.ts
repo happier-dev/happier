@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol/bugs/reports/redaction';
 
 import type {
   AgentExecutionRunRuntimeContextV1,
@@ -18,6 +19,7 @@ import { buildPiAgentRuntimeDescriptorV1 } from '../../protocol/runtimeDescripto
 import { createPiAgentRuntime } from './engine.js';
 import { PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID } from '../auth/services/requestAuth/purposes.js';
 import { PI_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '../auth/services/requestAuth/index.js';
+import { PI_PROVIDER_SECRET_ENV_KEY } from '../launchEnvironment.js';
 
 const openedSessions: AgentSessionRuntime[] = [];
 
@@ -29,6 +31,15 @@ describe('Pi Agent runtime', () => {
 
   it.each(['get_state', 'set_model'])('preserves the process exit diagnostic when Pi exits during startup %s', async command => {
     const boundary = hostBoundaries();
+    const launchKey = 'fake-opaque-provider-key';
+    const providerKeyPresent = command === 'get_state';
+    const redaction = registerSensitiveDiagnosticValues([launchKey]);
+    const stderr = new TextEncoder().encode(
+      `Pi extension startup detail
+${'diagnostic context '.repeat(200)}
+Fatal startup marker: ${launchKey}
+`,
+    );
     const write = boundary.write.getMockImplementation()!;
     boundary.write.mockImplementation(async record => {
       if (record === null || typeof record !== 'object' || Array.isArray(record) || record.type !== command) {
@@ -37,18 +48,19 @@ describe('Pi Agent runtime', () => {
       }
       boundary.finish({
         termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } },
-        stdout: new Uint8Array(), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false,
+        stdout: new Uint8Array(), stderr, stdoutTruncated: false, stderrTruncated: false,
       });
     });
     const error = await createPiAgentRuntime().sessions.open({
       kind: 'create', sessionId: 'pi-startup-exit', cwd: '/workspace',
+      launchEnvironment: { values: providerKeyPresent ? { [PI_PROVIDER_SECRET_ENV_KEY]: launchKey } : {}, unset: [] },
       configuration: {
         mode: { value: null, updatedAtMs: 0 },
         model: { value: 'github-copilot/fixture-model', updatedAtMs: 0 },
         permissionIntent: { value: null, updatedAtMs: 0 },
         options: {},
       },
-    }, boundary.context).catch((error: unknown) => error);
+    }, boundary.context).catch((error: unknown) => error).finally(() => redaction.close());
     const issue = classifyPrimarySessionRuntimeIssue({
       cause: 'session_error', startupPhase: 'client_start',
       error: sanitizeNativeAgentSessionBoundaryError(error, true),
@@ -56,6 +68,22 @@ describe('Pi Agent runtime', () => {
     expect(issue.failureCause).toMatchObject({
       phase: 'client_start', providerErrorCode: 'pi_rpc_unexpected_exit',
     });
+    const log = vi.mocked(boundary.context.services.logger.diagnostic);
+    expect(log).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      code: 'pi_rpc_unexpected_exit',
+      details: expect.objectContaining({
+        executableBasename: 'pi',
+        resolutionClass: 'system',
+        executableVersion: '0.82.1',
+        environmentVariable: PI_PROVIDER_SECRET_ENV_KEY,
+        environmentVariablePresent: providerKeyPresent,
+        stderrTail: expect.stringContaining('Pi extension startup detail'),
+      }),
+    }));
+    const serialized = JSON.stringify(log.mock.calls);
+    expect(serialized).toContain('Fatal startup marker: [REDACTED]');
+    expect(serialized).not.toContain(launchKey);
+    expect(JSON.stringify(issue)).not.toContain('Pi extension startup detail');
   });
 
   it.each([false, true])('retains a typed native configuration failure through Session opening (cleanup fails=%s)', async cleanupFails => {

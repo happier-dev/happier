@@ -30,6 +30,7 @@ describe('Agent CLI system-tool startup prerequisite', () => {
                 async resolvePath() { throw new Error('No path resolution is required'); },
             });
             const granted = await service.systemTools.resolve({ toolId: 'agent-cli', purpose: 'Verify native command lookup' });
+            expect(granted.diagnostics).toContainEqual({ code: 'agent_cli_resolved', detail: { source: 'system' } });
             const result = await service.run({ executable: granted.executable, env: environment.values });
             expect(result.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
             expect(JSON.parse(new TextDecoder().decode(result.stdout))).toEqual({

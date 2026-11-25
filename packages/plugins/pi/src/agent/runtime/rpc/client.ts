@@ -12,6 +12,7 @@ import type { PiRpcCommand, PiRpcCommandWithoutId, PiRpcResponse } from './types
 
 type PiJsonStreamRpcClientParams = Readonly<{
   handle: PluginProtocolClientHandle<'jsonStream'>;
+  isOpeningSession?: () => boolean;
   onEvent?: (record: Readonly<Record<string, unknown>>) => void;
 }>;
 
@@ -41,12 +42,20 @@ export type PiJsonStreamRpcExit = Readonly<{
   error: PiRpcProcessExitError;
 }>;
 
+type StartupStderr = Readonly<{ stderrTail: string; stderrTruncated: boolean }>;
+
 export class PiRpcProcessExitError extends Error {
   readonly code = 'pi_rpc_unexpected_exit';
+  readonly #startupStderr: StartupStderr | undefined;
 
-  constructor(message: string) {
+  constructor(message: string, startupStderr?: StartupStderr) {
     super(message);
     this.name = 'PiRpcProcessExitError';
+    this.#startupStderr = startupStderr;
+  }
+
+  readStartupStderr(): StartupStderr | undefined {
+    return this.#startupStderr;
   }
 }
 
@@ -61,7 +70,10 @@ export class PiRpcNegativeAcknowledgementError extends Error {
 
 const MAX_PI_PROCESS_STDERR_PREVIEW_BYTES = 2_000;
 
-function createPiProcessExit(result: PluginProcessResult): PiJsonStreamRpcExit {
+// Match the runner's existing diagnostic text allowance (BoundedTextSchema).
+const RUNNER_DIAGNOSTIC_TEXT_MAX_BYTES = 65_536;
+
+function createPiProcessExit(result: PluginProcessResult, openingSession: boolean): PiJsonStreamRpcExit {
   const observed = result.termination.observed;
   const exitCode = observed.kind === 'exit' ? observed.exitCode : null;
   const signal = observed.kind === 'signal' ? observed.signal : null;
@@ -95,10 +107,19 @@ function createPiProcessExit(result: PluginProcessResult): PiJsonStreamRpcExit {
   const stderrDescription = stderrPreview.length > 0
     ? `; stderr preview${result.stderrTruncated || stderrWasLocallyTruncated ? ' (truncated)' : ''}: ${stderrPreview}`
     : '';
+  const startupTail = openingSession && result.termination.requestedBy.kind === 'none'
+    ? trimBugReportTextToMaxBytes(redactedStderr, RUNNER_DIAGNOSTIC_TEXT_MAX_BYTES)
+    : undefined;
   return Object.freeze({
     exitCode,
     signal,
-    error: new PiRpcProcessExitError(`Pi RPC process ${terminalDescription}${stderrDescription}`),
+    error: new PiRpcProcessExitError(
+      `Pi RPC process ${terminalDescription}${stderrDescription}`,
+      startupTail === undefined ? undefined : {
+        stderrTail: startupTail,
+        stderrTruncated: result.stderrTruncated || startupTail.length < redactedStderr.length,
+      },
+    ),
   });
 }
 
@@ -143,7 +164,7 @@ export function createPiJsonStreamRpcClient(params: PiJsonStreamRpcClientParams)
   };
 
   void params.handle.wait().then((result) => {
-    terminal ??= createPiProcessExit(result);
+    terminal ??= createPiProcessExit(result, params.isOpeningSession?.() === true);
     rejectTerminalEligiblePending(terminal.error);
     const listeners = [...exitListeners];
     exitListeners.clear();
