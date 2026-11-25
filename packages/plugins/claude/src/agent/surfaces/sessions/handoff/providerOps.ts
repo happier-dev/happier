@@ -147,6 +147,7 @@ export const claudeHandoffSurface = {
                     code: 'target_identity_conflict',
                     message: error.message,
                     retryable: error.retryable,
+                    ...(error.diagnostics ? { diagnostics: error.diagnostics } : {}),
                 };
             }
             return {

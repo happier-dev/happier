@@ -3748,6 +3748,13 @@ precedence over its daemon's startup snapshot. This lookup works independently
 of transcript follow. Older metadata without a recorded Claude root uses the
 daemon's configured root.
 
+Claude native target import reports filesystem identity conflicts through the
+existing handoff diagnostic field. The diagnostic identifies the directory or
+transcript check that failed and distinguishes an unreadable location, a wrong
+entry type, different transcript bytes, and a transcript that changed during
+comparison. It carries only a cause code and path kind. A clean target accepts
+the import, and a byte-identical existing transcript can be reused.
+
 `SessionHandle.watch` follows committed retained transcript rows through the shared socket source and delivers complete text before advancing its reconnect frontier. Provisional stream deltas do not become retained message events. Cancellation ends the watcher; credential and plugin-occurrence checks prevent further delivery after retirement.
 
 In 0.3 development, bounded server transcript pages, exact-message/action-reference

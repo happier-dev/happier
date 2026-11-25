@@ -638,6 +638,7 @@ describe('Claude handoff bundle leaf', () => {
             ok: false,
             code: 'target_identity_conflict',
             retryable: false,
+            diagnostics: [{ code: 'transcript_content_mismatch', details: { pathKind: 'transcript_file' } }],
         });
         await expect(readFile(transcriptPath, 'utf8')).resolves.toBe(existingTranscript);
     });
@@ -666,6 +667,7 @@ describe('Claude handoff bundle leaf', () => {
             ok: false,
             code: 'target_identity_conflict',
             retryable: false,
+            diagnostics: [{ code: 'not_regular_file', details: { pathKind: 'transcript_file' } }],
         });
         await expect(readFile(sentinelPath, 'utf8')).resolves.toBe('preserve');
     });
@@ -682,21 +684,23 @@ describe('Claude handoff bundle leaf', () => {
         await mkdir(projectsDir, { recursive: true });
         await mkdir(outsideDir, { recursive: true });
         await symlink(outsideDir, projectDir, 'dir');
+        vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', configDir);
 
-        await expect(importClaudeSessionBundle({
+        const result = await claudeHandoffSurface.importBundle({
             bundle: {
                 agentId: 'claude',
                 remoteSessionId: 'session-parent-symlink',
                 transcriptBase64: Buffer.from('{"type":"assistant","text":"incoming"}\n', 'utf8').toString('base64'),
             },
-            targetPath,
-            env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
-        })).rejects.toMatchObject({
-            name: 'PluginError',
+            targetDirectory: targetPath,
+        }, handoffContext());
+
+        expect(result).toMatchObject({
+            ok: false,
             code: 'target_identity_conflict',
             retryable: false,
+            diagnostics: [{ code: 'not_directory', details: { pathKind: 'session_dir' } }],
         });
-
         await expect(access(outsideTranscriptPath)).rejects.toMatchObject({ code: 'ENOENT' });
         expect((await lstat(projectDir)).isSymbolicLink()).toBe(true);
     });

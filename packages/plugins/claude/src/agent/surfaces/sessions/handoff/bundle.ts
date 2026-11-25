@@ -55,7 +55,8 @@ async function withTranscriptReader<TResult>(
 
 async function transcriptEqualsFile(content: ClaudeTranscriptContent, filePath: string): Promise<boolean> {
     const entry = await lstat(filePath);
-    if (!entry.isFile() || entry.size !== transcriptSize(content)) return false;
+    if (!entry.isFile()) throw targetIdentityConflict('not_regular_file', 'transcript_file');
+    if (entry.size !== transcriptSize(content)) return false;
     const existing = await open(filePath, 'r');
     try {
         return await withTranscriptReader(content, async (readTranscriptChunk) => {
@@ -240,12 +241,21 @@ function readErrorCode(error: unknown): string | null {
         : null;
 }
 
-function targetIdentityConflict(): PluginError {
+function targetIdentityConflict(
+    code: ClaudeTranscriptLookupFailure['code'] | 'transcript_content_mismatch' | 'transcript_identity_changed',
+    pathKind: ClaudeTranscriptLookupFailure['pathKind'],
+): PluginError {
     return new PluginError({
         code: 'target_identity_conflict',
         message: 'Claude handoff target conflicts with the existing native session',
         retryable: false,
+        diagnostics: [{ code, details: { pathKind } }],
     });
+}
+
+function targetLookupConflict(error: unknown, pathKind: ClaudeTranscriptLookupFailure['pathKind']): PluginError {
+    const failure = classifyClaudeTranscriptLookupError(error, pathKind);
+    return targetIdentityConflict(failure.code, failure.pathKind);
 }
 
 async function preflightClaudeTranscriptTarget(params: Readonly<{
@@ -266,31 +276,34 @@ async function preflightClaudeTranscriptTarget(params: Readonly<{
         if (readErrorCode(error) === 'ENOENT') {
             return 'absent';
         }
-        throw targetIdentityConflict();
+        throw targetLookupConflict(error, 'transcript_file');
     }
     throwIfAborted(params.signal);
     if (!entry.isFile()) {
-        throw targetIdentityConflict();
+        throw targetIdentityConflict('not_regular_file', 'transcript_file');
     }
 
-    try {
-        if (!await transcriptEqualsFile(params.transcript, params.transcriptPath)) {
-            throw targetIdentityConflict();
-        }
-    } catch {
-        throw targetIdentityConflict();
-    }
+    const identical = await transcriptEqualsFile(params.transcript, params.transcriptPath).catch((error: unknown) => {
+        throwIfAborted(params.signal);
+        throw isPluginError(error) ? error : targetLookupConflict(error, 'transcript_file');
+    });
     throwIfAborted(params.signal);
+    if (!identical) {
+        throw targetIdentityConflict('transcript_content_mismatch', 'transcript_file');
+    }
 
     let entryAfterRead;
     try {
         entryAfterRead = await lstat(params.transcriptPath);
-    } catch {
-        throw targetIdentityConflict();
+    } catch (error) {
+        throw targetLookupConflict(error, 'transcript_file');
     }
     throwIfAborted(params.signal);
-    if (!entryAfterRead.isFile() || !isSameFileIdentity(entry, entryAfterRead)) {
-        throw targetIdentityConflict();
+    if (!entryAfterRead.isFile()) {
+        throw targetIdentityConflict('not_regular_file', 'transcript_file');
+    }
+    if (!isSameFileIdentity(entry, entryAfterRead)) {
+        throw targetIdentityConflict('transcript_identity_changed', 'transcript_file');
     }
     return 'identical';
 }
@@ -313,7 +326,7 @@ async function assertExistingClaudeProjectParentsAreSafe(params: Readonly<{
     const resolvedProjectDir = resolve(params.projectDir);
     const projectRelativePath = relative(configRoot, resolvedProjectDir);
     if (!isCanonicalAbsolutePathInsideRoot(configRoot, resolvedProjectDir)) {
-        throw targetIdentityConflict();
+        throw targetIdentityConflict('root_mismatch', 'session_dir');
     }
 
     let currentPath = configRoot;
@@ -321,6 +334,7 @@ async function assertExistingClaudeProjectParentsAreSafe(params: Readonly<{
         throwIfAborted(params.signal);
         if (!segment) continue;
         currentPath = join(currentPath, segment);
+        const pathKind = currentPath === resolvedProjectDir ? 'session_dir' : 'claude_projects_dir';
         let entry: Awaited<ReturnType<typeof lstat>>;
         try {
             entry = await lstat(currentPath);
@@ -331,11 +345,11 @@ async function assertExistingClaudeProjectParentsAreSafe(params: Readonly<{
             if (readErrorCode(error) === 'ENOENT') {
                 return;
             }
-            throw targetIdentityConflict();
+            throw targetLookupConflict(error, pathKind);
         }
         throwIfAborted(params.signal);
         if (!entry.isDirectory()) {
-            throw targetIdentityConflict();
+            throw targetIdentityConflict('not_directory', pathKind);
         }
     }
 }
