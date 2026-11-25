@@ -1528,8 +1528,8 @@ const STATE_RECORDS: readonly StateRecordDefinition[] = [
  */
 export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
   id: CHANNEL_STATE_COLLECTION_ID,
-  schemaVersion: 27,
-  readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26],
+  schemaVersion: 28,
+  readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27],
   // V21 publishes the V20 document with its reused subschemas under `$defs`
   // (same validation, a fraction of the size every reader compiles).
   // V22 admits due unclassified PR captures so interrupted batching can resume.
@@ -1537,6 +1537,7 @@ export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
   // V25 admits native Workflow refusal codes in existing terminal attention.
   // V26 publishes the additive configured-Fix failure-cause field at a new version.
   // V27 records the trigger that automatically created a PR binding.
+  // V28 admits Workflow target diagnostics in held configured-Fix results.
   schema: shareRepeatedCollectionSchemas({
     type: 'object',
     properties: {

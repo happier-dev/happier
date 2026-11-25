@@ -418,6 +418,7 @@ it.each([
     { id: 'channel-deliveries', version: 5 },
     { id: 'channel-state', version: 24, sourceDigest: '5EY3qVdZqSlCS_M08QWkvHIIhCYdvSvT437gTs6KSQY' },
     { id: 'channel-state', version: 25, sourceDigest: 'EZyGXIly0PceYly_04z5X8YSFZoSnHBm2hTnvA0M1KM' },
+    { id: 'channel-state', version: 27, sourceDigest: 'bkg1yytSkIddrEhcXZpxgh5AbhKchGTDbx1b-tslGb4' },
 ])('promotes a stored V$version $id row on Collection demand', async ({ id, version, sourceDigest }) => {
     const bundled = PluginManifestV2Schema.parse(JSON.parse(readFileSync(
         new URL('../../../../assets/bundled-plugin-manifests/channels.json', import.meta.url), 'utf8',

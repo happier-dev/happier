@@ -433,6 +433,12 @@ export const CHANNEL_COLLECTION_MIGRATIONS = {
     toSchemaVersion: 27,
     // Retained bindings have no recorded attachment origin.
     migrate: (value) => value,
+  }, {
+    id: 'channel-state-v27-to-v28',
+    fromSchemaVersion: 27,
+    toSchemaVersion: 28,
+    // The optional configured-Fix diagnostic leaves retained rows valid.
+    migrate: (value) => value,
   }],
   [CHANNEL_DELIVERIES_COLLECTION_ID]: [{
     id: 'channel-deliveries-v1-to-v2',

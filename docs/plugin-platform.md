@@ -7143,6 +7143,10 @@ materializes the V26 declaration, its reader can read a retained V25 writer's
 rows while the existing writer preparation runs. The V25→V26 identity
 migration preserves binding and custody values.
 
+Channels `channel-state` V28 declares the optional Workflow target diagnostic
+in held configured-Fix results. The existing V27→V28 identity migration
+allows Home to adopt the new writer while preserving retained V27 row values.
+
 ### Plugin Collection tables
 
 The Account Collection query owner accepts both `asc` and `desc` keyset order.
