@@ -10,7 +10,8 @@ const binaries = '/usr/lib/postgresql/16/bin';
 export const nativePostgresqlAvailable = existsSync(join(binaries, 'initdb'));
 
 /** Actual PostgreSQL, with SCRAM TCP and a separate local administrator socket. */
-export async function createNativePostgresqlFixture(directory: string, preloadStatistics?: boolean) {
+export async function createNativePostgresqlFixture(directory: string, preloadStatistics?: boolean,
+    tls?: Readonly<{ certificate: string; key: string }>) {
     await mkdir(directory, { recursive: true });
     const reservation = createServer();
     await new Promise<void>(resolve => reservation.listen(0, '127.0.0.1', resolve));
@@ -21,8 +22,15 @@ export async function createNativePostgresqlFixture(directory: string, preloadSt
     const data = join(directory, 'data');
     await run(join(binaries, 'initdb'), ['-D', data, '-A', 'trust', '-U', 'fixture', '--no-locale', '-E', 'UTF8']);
     await writeFile(join(data, 'pg_hba.conf'), 'local all all trust\nhost all all 127.0.0.1/32 scram-sha-256\n');
+    const options = [`-h 127.0.0.1 -p ${port} -k ${directory}`];
+    if (preloadStatistics) options.push('-c shared_preload_libraries=pg_stat_statements');
+    if (tls) {
+        await writeFile(join(data, 'server.crt'), tls.certificate);
+        await writeFile(join(data, 'server.key'), tls.key, { mode: 0o600 });
+        options.push('-c ssl=on');
+    }
     await run(join(binaries, 'pg_ctl'), ['-D', data, '-l', join(directory, 'postgres.log'),
-        '-o', `-h 127.0.0.1 -p ${port} -k ${directory}${preloadStatistics ? ' -c shared_preload_libraries=pg_stat_statements' : ''}`, '-w', 'start']);
+        '-o', options.join(' '), '-w', 'start']);
     const connectionString = (database: string) => `postgresql://fixture@localhost/${encodeURIComponent(database)}?host=${encodeURIComponent(directory)}&port=${port}`;
     const adminPassword = 'fixture-statistics-admin';
     if (preloadStatistics !== undefined) {

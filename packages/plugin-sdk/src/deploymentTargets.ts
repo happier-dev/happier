@@ -121,11 +121,13 @@ export type DeploymentDatabaseEndpointV1 = Readonly<{ connectionString: string }
 export interface DeploymentTargetDatabaseRuntimeV1 {
     /** Optional native setup for this exact linked database. Return the provider-selected
      * endpoint without credentials. When declared, the host opens reads and writes there,
-     * always over TLS with the declared trust; `open` is not used for this target. */
+     * always over TLS with the declared trust. */
     readRoleEndpoint?(input: Readonly<{
         preparation: DeploymentTargetPreparationBaseV1;
         target: DatabaseManagedDeploymentTargetV1;
     }>, context: PluginAccountActionContext): Promise<DeploymentDatabaseEndpointV1>;
+    /** Allow the provider's restricted read transport while neither data role is bound. */
+    readonly readFallbackWithoutDataRole?: true;
     listTargets(input: Readonly<{
         preparation: DeploymentTargetPreparationBaseV1;
         target: Omit<DatabaseManagedDeploymentTargetV1, 'database'>;

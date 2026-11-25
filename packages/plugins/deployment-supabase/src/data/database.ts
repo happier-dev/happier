@@ -9,6 +9,7 @@ import {
   admitPostgresqlWorkbenchStatement, decodePostgresqlObjectRowsV1, executePostgresqlOperation, fitDatabaseOperationResult, postgresqlParameter,
   PostgresqlInputError, PostgresqlOperationError, postgresqlFailureCause,
 } from '@happier-dev/databases/postgresql';
+import { readSupabaseDatabaseAddress } from './operations.js';
 import { openSupabaseReadOnlyTransport } from './transport.js';
 
 const unavailable = { ok: false, status: 'unavailable', code: 'database_operation_unavailable',
@@ -32,23 +33,25 @@ function descriptor(target: DatabaseManagedDeploymentTargetV1, placement: Databa
       : { operation, available: false, code: unavailable.code, reason: unavailable.reason }) };
 }
 
-/** The existing data target owns the selected provider transport; the host owns access admission. */
 export const supabaseDatabaseRuntime: DeploymentTargetDatabaseRuntimeV1 = {
+  readFallbackWithoutDataRole: true,
+  async readRoleEndpoint({ preparation, target }, context) {
+    const { host, port } = await readSupabaseDatabaseAddress(preparation, context);
+    let url: URL;
+    try { url = new URL(`postgresql://${host}:${port}`); }
+    catch { throw new PluginError({ code: 'provider_response_invalid' }); }
+    if (url.hostname !== host.toLowerCase() || url.port !== String(port) || url.username || url.password
+      || url.pathname || url.search || url.hash) throw new PluginError({ code: 'provider_response_invalid' });
+    url.pathname = `/${encodeURIComponent(target.database)}`;
+    return { connectionString: url.href, trust: 'verified' };
+  },
   async listTargets({ preparation, target, placement }, context) {
     const transport = await openSupabaseReadOnlyTransport(preparation, context);
     if (!transport.ok) return { targets: [], completeness: { complete: false, reason: 'transport_unproven' } };
     return { targets: [descriptor({ ...target, database: transport.database }, placement)], completeness: { complete: true } };
   },
   async open({ preparation, target, placement, access }, context) {
-    if (access === 'write') {
-      const readDataRole = context.services.secrets.readDataRole;
-      if (!readDataRole) throw new PluginError({ code: 'write_connection_setup_required' });
-      const connectionString = await readDataRole({ role: 'write', signal: context.signal });
-      if (!context.services.databaseEngines) throw new PluginError({ code: 'plugin_service_unavailable' });
-      const connection = await context.services.databaseEngines.open('postgresql', {
-        connectionString, access, signal: context.signal });
-      return { descriptor: descriptor(target, placement), connection };
-    }
+    if (access === 'write') throw new PluginError({ code: 'write_connection_setup_required' });
     const transport = await openSupabaseReadOnlyTransport({ ...preparation, database: target.database }, context);
     if (!transport.ok) throw new PluginError({ code: transport.reason });
     const selected = descriptor(target, placement);

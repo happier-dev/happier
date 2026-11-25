@@ -41,6 +41,7 @@ import { createManagedReadAccessForHost } from './managedReadAccessForHost';
 import { invokeHostReviewedChildV1, readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import * as deploymentActions from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { isManagedDeploymentDataRoleBindingV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { readSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
@@ -495,8 +496,10 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             const selected = admitted.selected ?? refuse('target_mismatch');
             const bound = await bind(admission, selected, { access: operation, database: target.database });
             try {
-                // A declared endpoint owns how this database is reached, for reads and writes alike.
-                const resolved = (operation === 'read' || operation === 'write') && bound.runtime.readRoleEndpoint
+                const useReadFallback = operation === 'read' && bound.runtime.readFallbackWithoutDataRole
+                    && !admission.detail.content.bindings.some(binding =>
+                        isManagedDeploymentDataRoleBindingV1(binding) && binding.targetLinkId === target.targetLinkId);
+                const resolved = (operation === 'read' || operation === 'write') && bound.runtime.readRoleEndpoint && !useReadFallback
                     ? await (operation === 'read' ? bindReadAccess(admitted, bound).openRead()
                         : bindReadAccess(admitted, bound).openWrite()).then(({ connection, reported }) => ({ connection, descriptor: {
                         target, engine: connection.engine, label: target.database, origin: admission.origin, ...reported,

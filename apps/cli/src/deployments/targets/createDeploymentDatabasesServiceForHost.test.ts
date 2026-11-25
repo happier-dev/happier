@@ -1,8 +1,15 @@
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { getCACertificates, setDefaultCACertificates } from 'node:tls';
 import { EventEmitter } from 'node:events';
 import axios from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { EnvironmentSecretLaunchAdmissionInputV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import * as installationStore from '@/daemon/identity/store';
 import { sealMachineSecretGrant } from '@/deployments/secrets/machineSecretGrant';
@@ -20,6 +27,10 @@ import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createDeploymentDatabasesServiceForHost } from './createDeploymentDatabasesServiceForHost';
 import { createDeploymentTargetRoleAdmissionFixture } from './deploymentTargetRoleAdmission.testkit';
 import { PLUGIN_MANIFEST } from '../../../../../packages/plugins/deployment-neon/src/manifest';
+
+import { PLUGIN_MANIFEST as SUPABASE_MANIFEST } from '../../../../../packages/plugins/deployment-supabase/src/manifest';
+import { supabaseDatabaseRuntime } from '../../../../../packages/plugins/deployment-supabase/src/data/database';
+import { createNativePostgresqlFixture, nativePostgresqlAvailable } from './ownServer/nativePostgresql.testkit';
 
 // Exercise the real engine and dialect, substituting only the external mysql2 connection.
 const { createConnection } = vi.hoisted(() => ({ createConnection: vi.fn() }));
@@ -336,5 +347,158 @@ describe('managed database attachment at the deployment owner', () => {
             await expect(service.resolve(write, 'write')).rejects.toMatchObject({ code: 'target_mismatch' });
             expect(createConnection).toHaveBeenCalledTimes(opened);
         } finally { await owners.dispose(); }
+    });
+    it.skipIf(!nativePostgresqlAvailable || !existsSync('/usr/bin/openssl'))('uses Supabase bound roles for typed Structure and Rows and keeps the unbound management fallback', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-supabase-direct-'));
+        const cleanup: (() => Promise<void>)[] = [];
+        try {
+            const certificateFile = join(root, 'fixture.crt');
+            const keyFile = join(root, 'fixture.key');
+            execFileSync('/usr/bin/openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+                '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost',
+                '-out', certificateFile, '-keyout', keyFile], { stdio: 'pipe' });
+            const [certificate, key] = await Promise.all([readFile(certificateFile, 'utf8'), readFile(keyFile, 'utf8')]);
+            const trusted = getCACertificates('default');
+            setDefaultCACertificates([...trusted, certificate]);
+            cleanup.push(async () => { setDefaultCACertificates(trusted); });
+            const postgres = await createNativePostgresqlFixture(root, undefined, { certificate, key });
+            cleanup.push(postgres.close);
+            await postgres.execute(`
+                REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+                CREATE TABLE items (id bigint PRIMARY KEY, label text NOT NULL);
+                INSERT INTO items VALUES (9007199254740993, 'fixture-row');
+                CREATE ROLE workbench_reader LOGIN PASSWORD 'fixture-reader';
+                GRANT SELECT ON items TO workbench_reader;
+                CREATE ROLE workbench_writer LOGIN PASSWORD 'fixture-writer';
+                GRANT SELECT, UPDATE ON items TO workbench_writer;
+            `);
+            const stored = createDeploymentTargetRoleAdmissionFixture('branches.list');
+            stored.state.environment.environment.capabilities.editData = true;
+            stored.state.environment.environment.dataEditorMode = 'managers';
+            const manifest = normalizePluginManifestV2(SUPABASE_MANIFEST);
+            const pluginId = manifest.id;
+            const definition = manifest.contributes.deploymentTargets[0]!;
+            const selected = stored.state.environment.targetLinks[0]!;
+            selected.targetLink.source = { kind: 'plugin', contribution: { pluginId, localId: definition.id } };
+            selected.targetLink.targetKind = definition.targetKind;
+            const account = { service: { pluginId, localId: 'supabase' }, accountId: 'selected-account' };
+            selected.content!.credentialPrincipal = { kind: 'account', accountId: 'custody-account',
+                purpose: { consumer: { pluginId, localId: 'projects-link' }, purpose: 'deploy-manage' },
+                target: { kind: 'account', account } };
+            const revision = 'csr_abcdefghijklmnopqrstuv';
+            const profile = QualifiedConnectedAccountProfileV4Schema.parse({ ref: account, status: 'connected',
+                authenticationModeId: 'token', revisionSemantics: 'revisioned', credentialRevision: revision,
+                configurationReady: true, configurationRevision: null, kind: 'token', expiresAt: null, scopes: [] });
+            const unused = async (): Promise<never> => { throw new Error('Unexpected account mutation'); };
+            const purposeOwner = createConnectedAccountPurposeBindingOwner({ credentialOwnerAccountId: 'custody-account',
+                store: { read: async () => ({ v: 1, bindings: [] }), update: unused, subscribe: () => ({ dispose() {} }) },
+                selectTarget: unused, resolveTarget: createPurposeTargetResolver({ available: true,
+                    resolveService: async () => ({ service: account.service, authentication: manifest.contributes.connectedAccountDescriptors[0]!.authentication }),
+                    listAccounts: async () => [profile] }),
+                resolveCredentialRevision: async () => revision, materializeAccount: async ({ credentialRevisionBasis }) => {
+                    credentialRevisionBasis?.captureCredentialRevision(revision);
+                    return { kind: 'httpHeaders', headers: { authorization: 'Bearer fixture-provider-token' } };
+                }, projectTargetAccounts: unused, assertTargetAccountMaterializable: unused });
+            const httpPaths: string[] = [];
+            const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} },
+                http: createStablePluginHttpHost({ purposeHost: createConnectedAccountPluginHttpPurposeHost(purposeOwner, { registerRawForRedaction() {} }),
+                    adapter: { async request(request) {
+                        const path = new URL(request.url).pathname;
+                        httpPaths.push(path);
+                        const response = path === '/v1/branches/branch-main'
+                            ? { ref: 'branch-main', db_host: 'localhost', db_port: postgres.port }
+                            : path === '/v1/projects/branch-main/database/query/read-only' ? [{ database: 'postgres' }] : undefined;
+                        if (!response) throw new Error('Unexpected provider request');
+                        return { status: 200, body: new TextEncoder().encode(JSON.stringify(response)), headers: {}, finalUrl: request.url };
+                    }, openWebSocket: unused } }) });
+            cleanup.push(owners.dispose);
+            const environment = { serverId: 'home', environmentId: stored.state.environment.environment.id,
+                projectSourceId: stored.state.environment.environment.projectSourceId };
+            const target: DatabaseManagedDeploymentTargetV1 = { kind: 'managed_deployment', environment,
+                targetLinkId: selected.targetLink.id, contribution: { pluginId, contributionId: definition.id },
+                platformProjectId: 'provider-project', branchId: 'branch:branch-main', database: 'postgres' };
+            const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(31));
+            vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1, createdAt: 1,
+                installationId: stored.host.installationId, publicKey: encodeBase64(keys.publicKey, 'base64url'),
+                privateKey: encodeBase64(keys.secretKey, 'base64url') });
+            const grantedRoles: ('readOnlyPassword' | 'write')[] = [];
+            const grants = vi.spyOn(axios, 'request').mockImplementation(async ({ data }) => {
+                const { materialization } = EnvironmentSecretLaunchAdmissionInputV1Schema.parse(data);
+                if (materialization.kind !== 'dataRole' || !('targetLinkId' in materialization)) throw new Error('Expected one managed data role');
+                const role = materialization.role ?? 'readOnlyPassword';
+                grantedRoles.push(role);
+                const login = role === 'write' ? 'workbench_writer:fixture-writer' : 'workbench_reader:fixture-reader';
+                return { status: 200, data: { ok: true, grants: [sealMachineSecretGrant({
+                    subject: { v: 1, kind: 'secret', environmentId: environment.environmentId, machineId: stored.host.machineId,
+                        installationId: stored.host.installationId, resourceId: role, resourceRevision: 1 },
+                    installationPublicKey: keys.publicKey,
+                    content: { kind: 'secret', value: `postgresql://${login}@localhost:${postgres.port}/postgres` },
+                })] } };
+            });
+            const host = { ...stored.host, credentials: { encryption: null, token: `header.${encodeBase64(
+                new TextEncoder().encode(JSON.stringify({ sub: stored.host.credentialOwnerAccountId })), 'base64url')}.signature` },
+                readConnectedAccountPurposes: () => ({ owner: purposeOwner }) };
+            const service = createDeploymentDatabasesServiceForHost({ seed: {
+                plugin: { id: 'happier.database.workbench', version: '0.0.0' },
+                contribution: { id: 'targets-list', qualifiedId: 'happier.database.workbench/actions/targets-list' },
+                occurrenceId: 'workbench', correlationId: 'supabase-direct', surface: 'cli', signal: new AbortController().signal,
+                approvalContext: { ...stored.request.context, authority: 'present_user' }, isOccurrenceCurrent: () => true,
+                databaseEngines: createDatabaseEnginesService({ targets: [], registry: { targetRegistrations: [],
+                    async activateContributionsOnDemand() { return []; } } }),
+            }, contributes: { deploymentTargets: [{ pluginId, identity: { pluginId, localId: definition.id }, definition,
+                provenance: 'first_party', source: { kind: 'bundled' }, manifestPath: '/fixture/supabase/plugin.json', pluginVersion: manifest.version }],
+                activationTargets: [{ pluginId, manifest, provenance: 'first_party', source: { kind: 'bundled' },
+                    manifestPath: '/fixture/supabase/plugin.json', daemonEntryPath: null,
+                    sourceSpec: { kind: 'path', locator: '/fixture/supabase', trustPolicy: 'local_trusted', installPolicy: 'link' } }] },
+                targetRegistrations: [{ pluginId, occurrenceId: 'provider', registration: {
+                    family: 'deploymentTargets', localId: definition.id, value: supabaseDatabaseRuntime } }],
+                readHost: async () => host, readCurrentOccurrenceId: () => 'provider',
+                createServices: owners.createServices, resolveInvocationHostPolicy: owners.resolveInvocationHostPolicy,
+            });
+            const relation = { schema: 'public', name: 'items' };
+            const structure = { operation: 'relation.structure', target, relation } satisfies DatabaseOperationInputV1;
+            const rows = { operation: 'rows.read', target, relation, columns: ['id', 'label'], order: [], page: { rows: 10 } } satisfies DatabaseOperationInputV1;
+            async function execute(request: DatabaseOperationInputV1, access: 'read' | 'write' = 'read') {
+                const resolved = await service.resolve(request, access);
+                try { return await resolved.connection.execute(request); }
+                finally { await resolved.connection.close(); }
+            }
+            await expect(execute({ operation: 'statement.run', target, mode: 'read',
+                statement: { sql: 'SELECT current_database() AS database', parameters: [] } })).resolves.toMatchObject({ ok: true });
+            expect(grants).not.toHaveBeenCalled();
+            for (const request of [structure, rows]) {
+                await expect(execute(request)).resolves.toMatchObject({ ok: false, code: 'database_operation_unavailable' });
+            }
+            const bind = (role: 'write' | 'readOnlyPassword') => stored.state.environment.content.bindings.push({
+                purpose: 'dataRole', targetLinkId: target.targetLinkId, role,
+                source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(role), resourceRevision: 1 },
+            });
+            bind('readOnlyPassword');
+            const nativeAt = httpPaths.length;
+            await expect(execute(structure)).resolves.toMatchObject({ ok: true, structure: { primaryKey: ['id'],
+                columns: [{ name: 'id', nativeType: 'bigint' }, { name: 'label', nativeType: 'text' }] } });
+            await expect(execute(rows)).resolves.toMatchObject({ ok: true, result: { rows: [{ cells: [
+                { type: 'integer', value: '9007199254740993' }, { type: 'text', value: 'fixture-row' },
+            ] }] } });
+            expect(httpPaths.slice(nativeAt)).toEqual(['/v1/branches/branch-main', '/v1/branches/branch-main']);
+
+            const write = { operation: 'statement.run', target, mode: 'write', executionMode: 'transaction',
+                statements: [{ sql: "UPDATE items SET label = 'applied' WHERE id = 9007199254740993", parameters: [] }] } satisfies DatabaseOperationInputV1;
+            await expect(execute(write, 'write')).rejects.toMatchObject({ code: 'write_connection_setup_required' });
+            bind('write');
+            await expect(execute(write, 'write')).resolves.toMatchObject({ ok: true, results: [{ affectedRows: '1' }] });
+            await expect(execute(rows)).resolves.toMatchObject({ ok: true, result: { rows: [{ cells: [
+                { type: 'integer', value: '9007199254740993' }, { type: 'text', value: 'applied' },
+            ] }] } });
+            expect(grantedRoles).toEqual(['readOnlyPassword', 'readOnlyPassword', 'write', 'readOnlyPassword']);
+            stored.state.environment.content.bindings = stored.state.environment.content.bindings.filter(binding =>
+                !('role' in binding && binding.role === 'readOnlyPassword'));
+            grants.mockClear();
+            await expect(execute(rows)).rejects.toMatchObject({ code: 'read_role_setup_required' });
+            expect(grants).not.toHaveBeenCalled();
+        } finally {
+            try { for (const close of cleanup.reverse()) await close(); }
+            finally { await rm(root, { recursive: true, force: true }); }
+        }
     });
 });

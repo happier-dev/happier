@@ -1213,6 +1213,12 @@ transaction commit and rollback for direct connections.
 
 For a managed PostgreSQL or MySQL target that supplies a direct SQL endpoint to
 the Workbench, a missing limited login returns `read_role_setup_required`.
+In 0.3 development, Supabase keeps its restricted Management API reads until
+either data role is bound. A writer-only link prompts for read setup. Attach a
+limited login at the direct PostgreSQL address for typed Structure and Rows.
+The controller must trust the Supabase database CA for that address. The
+[Supabase SSL guide](https://supabase.com/docs/guides/platform/ssl-enforcement)
+shows where to download it.
 The Workbench offers two Actions. **Attach read-only database login** selects the
 exact revision of a Saved Secret containing the login's connection URL. The
 controller checks the URL against the linked database and verifies the account's

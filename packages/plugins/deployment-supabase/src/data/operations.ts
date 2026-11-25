@@ -87,7 +87,22 @@ function project(value: unknown, organization: string, expectedRef?: string) {
   if (!object(value) || !text(value.ref) || !text(value.organization_slug) || !text(value.name) || !text(value.status)) return failure('provider_response_invalid');
   if (value.organization_slug !== organization || (expectedRef !== undefined && value.ref !== expectedRef)) return failure('deployment_conflict');
   return { ref: value.ref, organizationSlug: value.organization_slug, name: value.name, status: value.status,
-    ...(text(value.region) ? { region: value.region } : {}), ...(object(value.database) && text(value.database.version) ? { version: value.database.version } : {}) };
+    ...(text(value.region) ? { region: value.region } : {}),
+    ...(object(value.database) && text(value.database.version) ? { version: value.database.version } : {}) };
+}
+/** The selected project's or child branch's direct PostgreSQL address, with no login material. */
+export async function readSupabaseDatabaseAddress(input: Scope, context: Context) {
+  const { projectRef, branchRef } = resource(input);
+  if (branchRef === projectRef) {
+    const selected = await request(context, `/v1/projects/${encode(projectRef)}`);
+    project(selected, account(input), projectRef);
+    if (!object(selected) || !object(selected.database) || !text(selected.database.host)) return failure('database_connection_unavailable');
+    return { host: selected.database.host, port: 5432 };
+  }
+  const config = await request(context, `/v1/branches/${encode(branchRef)}`);
+  if (!object(config) || config.ref !== branchRef || !text(config.db_host) || typeof config.db_port !== 'number'
+      || !Number.isInteger(config.db_port) || config.db_port < 1 || config.db_port > 65535) return failure('provider_response_invalid');
+  return { host: config.db_host, port: config.db_port };
 }
 function facts(value: ReturnType<typeof project>, branchRef = value.ref) {
   return { state: 'provisioned' as const, ready: value.status === 'ACTIVE_HEALTHY', engine: 'postgres', status: value.status,
