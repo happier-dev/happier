@@ -235,6 +235,7 @@ it.each(['accepted', 'recipient', 'unavailable'] as const)('projects %s checkout
   const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'alice' };
   getStorage().setState({ profileScope: scope });
   const checkout = { id: 'checkout', serverId: scope.serverId, machineId: 'checkout-machine', rootPath: '/work/project', createdAtMs: 1,
+    source: { sourceId: 'project-source', revision: 1 },
     repositoryIdentity: { kind: 'github' as const, deployment: 'https://github.com', repository: 'acme/project' } };
   state.activateProjectAccountRowsScope(scope);
   getStorage().getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
@@ -246,6 +247,7 @@ it.each(['accepted', 'recipient', 'unavailable'] as const)('projects %s checkout
   const executor = createDefaultActionExecutor();
   const ordinary = await executor.execute('session.status.get', { sessionId: session.id }, { surface: 'ui', serverId, expectedAccountId: 'alice' });
   expect(ordinary).not.toHaveProperty('result.acceptedWorkspace');
+  expect(ordinary).not.toHaveProperty('result.projectContextSource');
   if (scenario === 'recipient') expect(ordinary).not.toHaveProperty('result.agentTarget');
   else expect(ordinary).toMatchObject({ result: {
     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
@@ -253,10 +255,13 @@ it.each(['accepted', 'recipient', 'unavailable'] as const)('projects %s checkout
   const result = await executor.execute('session.status.get', { sessionId: session.id, includeAcceptedWorkspace: true },
     { surface: 'ui', serverId, expectedAccountId: 'alice' });
   expect(result).toMatchObject({ ok: true, result: { session: { id: session.id } } });
-  if (scenario === 'accepted') expect(result).toMatchObject({ result: { acceptedWorkspace: {
+  if (scenario === 'accepted') expect(result).toMatchObject({ result: { projectContextSource: { kind: 'source', sourceId: 'project-source' }, acceptedWorkspace: {
     checkout: { serverId: scope.serverId, workspaceId: checkout.id, machineId: checkout.machineId, rootPath: checkout.rootPath }, repository: checkout.repositoryIdentity,
   } } });
-  else expect(result).not.toHaveProperty('result.acceptedWorkspace');
+  else {
+    expect(result).not.toHaveProperty('result.acceptedWorkspace');
+    expect(result).toMatchObject({ result: { projectContextSource: { kind: 'unavailable' } } });
+  }
   expect(homes.requests.filter(request => request.path.includes('/project-rows'))).toHaveLength(0);
 });
 

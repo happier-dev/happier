@@ -19,6 +19,7 @@ import { SessionViewerProjectionV1Schema } from '../personal/viewer.js';
 import { SessionReadinessV1Schema } from './sessionReadinessV1.js';
 import { SessionTurnProgressV1Schema } from '../state/valueSchemas/turnProgress.js';
 import { SessionAcceptedWorkspaceV1Schema } from '../../workspaces/workspaceRefV1.js';
+import { ProjectContextSourceResolutionV1Schema } from '../../projects/projectListProjectionV1.js';
 import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js';
 export { SessionReadinessV1Schema, composeSessionReadinessV1 } from './sessionReadinessV1.js';
 export type { SessionReadinessV1, SessionReadinessFactsV1, SessionCredentialReadinessV1, SessionReadinessRepairV1 } from './sessionReadinessV1.js';
@@ -675,6 +676,7 @@ export const SessionStatusResultSchema = lazyZodSchema(() => z.looseObject({
   session: SessionSummarySchema,
   compaction: z.optional(AgentSessionCompactionAvailabilityV1Schema),
   acceptedWorkspace: z.optional(SessionAcceptedWorkspaceV1Schema),
+  projectContextSource: z.optional(ProjectContextSourceResolutionV1Schema),
   agentTarget: z.optional(AgentExecutionTargetV1Schema),
   // Content-free Session selection; omitted when its owner metadata cannot be opened.
   connectedServices: z.optional(ConnectedServiceBindingsV2Schema),

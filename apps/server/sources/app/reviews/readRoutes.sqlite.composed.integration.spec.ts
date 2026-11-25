@@ -25,6 +25,17 @@ import { finishExecutionRun } from '../../../../cli/src/agent/runtime/bridges/ex
 import { resolveExecutionRunRuntimeBackendTarget, resolveExecutionRunRuntimeBackendId } from '../../../../cli/src/agent/runtime/bridges/executionRun/backendTargets';
 import type { ExecutionRunState } from '../../../../cli/src/agent/runtime/bridges/executionRun/executionRunTypes';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '@happier-dev/protocol/account/settings/sessionAgentSpawnPolicyV1';
+import { createCliActionDeps } from '../../../../cli/src/session/actions/createCliActionDeps';
+import { registerProjectAccountRowRoutes } from '@/app/api/routes/projects/registerProjectAccountRowRoutes';
+import { registerSessionListingRoutes } from '@/app/api/routes/session/registerSessionListingRoutes';
+import { featuresRoutes } from '@/app/api/routes/features/featuresRoutes';
+import { registerReviewHumanRoutes } from './reviewHumanRoutes';
+import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
+import { inTx } from '@/storage/inTx';
+import { setArtifactAccessGrantInTx } from '@/app/artifacts/artifactAccessService';
+import { setTeamPolicyInTx } from '@/app/teams/policy';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
+import { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 describe('Review read Actions through authenticated HTTP', () => {
     let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
@@ -38,6 +49,10 @@ describe('Review read Actions through authenticated HTTP', () => {
         registerReviewReadRoutes(app);
         artifactsRoutes(app);
         registerAccountEncryptionRoutes(app);
+        registerProjectAccountRowRoutes(app);
+        registerSessionListingRoutes(app);
+        registerReviewHumanRoutes(app);
+        featuresRoutes(app);
         await app.listen({ port: 0, host: '127.0.0.1' });
         const address = app.server.address();
         if (!address || typeof address === 'string') throw new Error('Expected HTTP listener');
@@ -116,6 +131,95 @@ describe('Review read Actions through authenticated HTTP', () => {
                     sourceSessionId: session.id, sourceSessionSeq: 7, counts: { total: 0, needsDecision: 0 } } } });
         });
     });
+
+    it.each((['private_default', 'team_default', 'team_required'] as const).flatMap(reviewCreationPolicy =>
+        (['engine', 'person'] as const).map(reviewerKind => ({ reviewCreationPolicy, reviewerKind }))))(
+        'applies the selected Session Project policy through review.start ($reviewCreationPolicy/$reviewerKind)', async ({ reviewCreationPolicy, reviewerKind }) => {
+            const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+            await makeShareEligibleForTest(owner.id, [outsider.id]);
+            const team = await db.team.create({ data: { name: 'Action Review Team', reviewCreationPolicy, externalSharingPolicy: 'disabled' } });
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
+            const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, {
+                serverId: origin, requestKey: randomUUID(), name: 'Action Project', owner: { kind: 'team', teamId: team.id }, audience: [],
+            }));
+            if (!source.ok) throw new Error(source.error);
+            const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+            const headers = { authorization: `Bearer ${token}` };
+            const workspaceId = randomUUID();
+            const machineId = randomUUID();
+            const key = { kind: 'workspace-ref', serverId: origin, id: workspaceId };
+            const graphKey = { kind: 'relationship-graph' };
+            expect((await app.inject({ method: 'POST', url: '/v1/account/project-rows/mutate', headers, payload: {
+                mutations: [{ key, expectedRevision: 'absent', content: { t: 'plain', v: { key, value: {
+                    id: workspaceId, serverId: origin, machineId, rootPath: harness.baseDir, createdAtMs: 1,
+                    source: { sourceId: source.source.id, revision: source.source.revision },
+                } } } }, { key: graphKey, expectedRevision: 'absent', content: { t: 'plain', v: { key: graphKey, value: { relationships: [] } } } }],
+                expectedRefs: [], topologyChange: true,
+            } })).json()).toMatchObject({ status: 'updated' });
+            const metadata = { path: harness.baseDir, host: 'fixture', machineId, workspaceId, projectId: workspaceId };
+            const ownerMetadata = createSessionOwnerMetadataV1({ metadata });
+            if (!ownerMetadata.ok) throw new Error('Expected canonical owner metadata');
+            const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), encryptionMode: 'plain',
+                metadataLayoutVersion: 1, metadata: JSON.stringify(projectSessionSharedMetadataV1({ metadata })),
+                ownerMetadata: JSON.stringify(createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata.ownerMetadata)) } });
+            await runWithServerHttpBaseUrl(origin, async () => {
+                const credentials = { token, encryption: null };
+                const deps = createCliActionDeps({ token, credentials, sessionId: session.id, mode: 'plain', ctx: null,
+                    serverId: origin, serverIdentityId: origin, serverHttpBaseUrl: origin });
+                const executor = createActionExecutor({
+                    ...createAccountServerActionDeps({ token, serverId: origin, serverHttpBaseUrl: origin }),
+                    sessionStatusGet: deps.sessionStatusGet,
+                    projectWorkspaceRefs: deps.projectWorkspaceRefs,
+                    reviewRecords: deps.reviewRecords,
+                    // Only the external daemon process is substituted; Account/Session reads and Record writes stay real.
+                    reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex', enabled: true,
+                        capabilities: { structuredNarration: true } }] }),
+                    executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: machineId }),
+                    executionRunStart: async () => ({ runId: randomUUID(), callId: randomUUID(), sidechainId: randomUUID() }),
+                });
+                const reviewers = reviewerKind === 'engine' ? [{ kind: 'engine' as const, engineId: 'codex' }]
+                    : [{ kind: 'person' as const, principal: { kind: 'account' as const, accountId: owner.id }, required: true }];
+                const input = { sessionId: session.id, scope: 'repository' as const, instructions: 'Review the repository.', reviewers };
+                const context = {
+                    surface: 'cli', authority: 'present_user', serverId: origin, bypassApprovals: true,
+                    defaultSessionId: session.id, defaultSessionMachineId: machineId, callerPermissionMode: 'read-only',
+                    sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+                    agentStartContext: { caller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 },
+                        baseline: { machineId, directory: harness.baseDir }, roles: {}, ledSubtreeSessionIds: [],
+                        workDepthLimit: 4, callerPermissionCeiling: 'read-only' },
+                } as const;
+                const result = await executor.execute('review.start', input, context);
+                expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+                if (!result.ok) throw new Error(result.error);
+                const receipt = readReviewStartActionResultV1(result.result, { reviewers });
+                if (receipt.kind !== 'native' || !receipt.reviewRound) throw new Error('Expected the admitted Review');
+                const artifactId = receipt.reviewRound.reviewId;
+                expect(await db.reviewMetadata.findUnique({ where: { artifactId } })).toMatchObject({ projectSourceId: source.source.id });
+                const grants = await db.artifactGrant.findMany({ where: { artifactId } });
+                expect(grants).toMatchObject(reviewCreationPolicy === 'private_default' ? [] : [{ teamId: team.id,
+                    accessLevel: 'edit', requiredByTeamPolicy: reviewCreationPolicy === 'team_required' }]);
+                expect(grants).toHaveLength(reviewCreationPolicy === 'private_default' ? 0 : 1);
+                const grant = { actorAccountId: owner.id, artifactId, principal: { kind: 'account' as const, accountId: outsider.id }, accessLevel: 'view' as const };
+                expect(await inTx(tx => setArtifactAccessGrantInTx(tx, grant))).toMatchObject({ ok: false, error: 'artifact_access_forbidden' });
+                expect(await db.artifactGrant.findMany({ where: { artifactId } })).toEqual(grants);
+                expect(await inTx(tx => setTeamPolicyInTx(tx, { actorAccountId: owner.id, teamId: team.id, externalSharingPolicy: 'allowed' }))).toMatchObject({ ok: true });
+                expect(await inTx(tx => setArtifactAccessGrantInTx(tx, grant))).toMatchObject({ ok: true });
+                if (reviewCreationPolicy === 'team_required' && reviewerKind === 'engine') {
+                    // A stamped but inaccessible checkout cannot turn the next Review into a private Record.
+                    const missing = createSessionOwnerMetadataV1({ metadata: { ...metadata, workspaceId: randomUUID() } });
+                    if (!missing.ok) throw new Error('Expected canonical owner metadata');
+                    await db.session.update({ where: { id: session.id }, data: {
+                        ownerMetadata: JSON.stringify(createPlainSessionOwnerMetadataEnvelopeV1(missing.ownerMetadata)),
+                    } });
+                    const before = await db.reviewMetadata.count();
+                    expect(await executor.execute('review.start', input, context)).toMatchObject({
+                        ok: false, errorCode: 'project_association_unavailable',
+                    });
+                    expect(await db.reviewMetadata.count()).toBe(before);
+                }
+            });
+        });
 
     it.each(['plain', 'e2ee'] as const)('reads the admitted aggregate and refuses another Account (%s)', async encryptionMode => {
         const owner = await db.account.create({ data: { encryptionMode } });

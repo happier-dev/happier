@@ -70,21 +70,21 @@ export function createCliSessionStatusActionDeps(
       const { getSessionStatus } = await import("@/session/services/getSessionStatus");
       const read = () => getSessionStatus({ credentials, idOrPrefix: sessionId, live: live === true,
         ...(context?.expectedSessionAddress ? { expectedSessionAddress: context.expectedSessionAddress } : {}),
-        ...(includeAcceptedWorkspace === true ? { includeAcceptedWorkspace: true, readAcceptedWorkspace: async (metadata: unknown, resolvedSessionId: string) => {
-          if (await projectAccountAdmission(serverId ?? undefined, context)) return undefined;
+        ...(includeAcceptedWorkspace === true ? { includeAcceptedWorkspace: true, readAcceptedWorkspaceContext: async (metadata: unknown, resolvedSessionId: string) => {
+          const unavailable = { projectContextSource: { kind: 'unavailable' as const } };
+          if (await projectAccountAdmission(serverId ?? undefined, context)) return unavailable;
           try {
             await assertProjectRequesterCurrent(context);
             const [{ readProjectAccountRows }, { resolveSessionProjectKeyV1, workspaceAddressFromRefV1 }] = await Promise.all([
               import('@/workspaces/projectAccountRows'), import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1'),
             ]);
+            const { resolveSessionProjectContextSourceV1 } = await import('@happier-dev/protocol/projects/projectListProjectionV1');
             const homeId = await resolveProjectHomeIdentity();
-            const workspaceId = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
-              ? Reflect.get(metadata, 'workspaceId') : undefined;
             const accountId = readAccountIdFromToken(credentials.token);
-            if (!context?.externalActionExecutionAuthorization && !accountId) return undefined;
+            if (!context?.externalActionExecutionAuthorization && !accountId) return unavailable;
             if (params.savedSecretOperationContext && (params.savedSecretOperationContext.credentials.token !== credentials.token
               || params.savedSecretOperationContext.serverHttpBaseUrl.replace(/\/+$/, '')
-                !== (params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl()).replace(/\/+$/, ''))) return undefined;
+                !== (params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl()).replace(/\/+$/, ''))) return unavailable;
             const authority: ProjectAccountRowsInput = context?.externalActionExecutionAuthorization
               ? projectRowsAuthority(context, effectActionId, operationSignal)
               : { credentials, serverId: projectHomeId, ...(operationSignal ? { signal: operationSignal } : {}),
@@ -94,22 +94,20 @@ export function createCliSessionStatusActionDeps(
                     && (await params.savedSecretOperationContext?.isCurrent(operationSignal) ?? true) } };
             const pendingRegistration = waitForPendingAcceptedSessionWorkspace(resolvedSessionId, operationSignal);
             if (pendingRegistration) await pendingRegistration;
-            // An accepted id needs one row; older path-associated Sessions use the canonical Home-scoped census.
+            // Source association belongs to the accepted Project, including its sibling checkouts.
             const rows = await readProjectAccountRows({ ...authority,
-              selection: typeof workspaceId === 'string' && workspaceId.trim()
-                ? { key: { kind: 'workspace-ref', serverId: homeId, id: workspaceId.trim() } }
-                : { kinds: ['workspace-ref'], serverId: homeId } });
+              selection: { kinds: ['workspace-ref'], serverId: homeId } });
             await assertProjectRequesterCurrent(context);
-            if (await projectAccountAdmission(serverId ?? undefined, context)) return undefined;
+            if (await projectAccountAdmission(serverId ?? undefined, context)) return unavailable;
             operationSignal?.throwIfAborted();
             const resolved = resolveSessionProjectKeyV1(metadata, homeId, rows.workspaceRefs);
-            if (resolved.kind !== 'resolved' || !resolved.ref) return undefined;
-            return { checkout: workspaceAddressFromRefV1(resolved.ref),
-              ...(resolved.ref.repositoryIdentity ? { repository: resolved.ref.repositoryIdentity } : {}) };
+            return { projectContextSource: resolveSessionProjectContextSourceV1({ resolution: resolved, workspaceRefs: rows.workspaceRefs }),
+              ...(resolved.kind === 'resolved' && resolved.ref ? { acceptedWorkspace: { checkout: workspaceAddressFromRefV1(resolved.ref),
+                ...(resolved.ref.repositoryIdentity ? { repository: resolved.ref.repositoryIdentity } : {}) } } : {}) };
           } catch {
             operationSignal?.throwIfAborted();
             // Unavailable or inadmissible private rows do not turn into a guessed checkout.
-            return undefined;
+            return unavailable;
           }
         } } : {}),
         ...(operation ? { operation } : {}), ...(credentialPurpose ? { credentialPurpose } : {}),

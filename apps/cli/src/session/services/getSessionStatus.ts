@@ -31,6 +31,7 @@ export type GetSessionStatusResult =
   | Readonly<{ ok: true; session: SessionSummary; agentState: AgentStateSummary | null; awareness: SessionAwarenessProjectionV1; readiness?: SessionReadinessV1;
       connectedServices?: SessionStatusResult['connectedServices'];
       acceptedWorkspace?: SessionAcceptedWorkspaceV1;
+      projectContextSource?: SessionStatusResult['projectContextSource'];
       agentTarget?: SessionStatusResult['agentTarget'];
       compaction: NonNullable<SessionStatusResult['compaction']>;
       pendingRequests: SessionStatusResult['pendingRequests'] }>
@@ -75,7 +76,9 @@ export async function getSessionStatus(params: Readonly<{
   live: boolean;
   readiness?: boolean;
   includeAcceptedWorkspace?: boolean;
-  readAcceptedWorkspace?: (metadata: unknown, sessionId: string) => Promise<SessionAcceptedWorkspaceV1 | undefined>;
+  readAcceptedWorkspaceContext?: (metadata: unknown, sessionId: string) => Promise<Readonly<{
+    acceptedWorkspace?: SessionAcceptedWorkspaceV1; projectContextSource: NonNullable<SessionStatusResult['projectContextSource']>;
+  }>>;
   operation?: 'conversation' | 'credential';
   credentialPurpose?: QualifiedConnectedAccountPurposeV1;
   credentialTeamSelection?: QualifiedConnectedAccountPurposeTeamResourceSelectionV1;
@@ -176,9 +179,9 @@ export async function getSessionStatus(params: Readonly<{
   const agentTarget = resolveAgentExecutionTargetFromSessionMetadata(ownerMetadata);
   // A readable shared Session does not admit the viewing Account's private checkout census.
   const explicitAccess = sessionTarget.rawSession.effectiveAccess !== undefined || sessionTarget.rawSession.share !== undefined;
-  const acceptedWorkspace = params.includeAcceptedWorkspace === true && ownerMetadata && explicitAccess
+  const workspaceContext = params.includeAcceptedWorkspace === true && ownerMetadata && explicitAccess
     && readSessionAccessProjectionRoleV1(sessionTarget.rawSession) === 'owner'
-    ? await params.readAcceptedWorkspace?.(ownerMetadata, sessionTarget.sessionId) : undefined;
+    ? await params.readAcceptedWorkspaceContext?.(ownerMetadata, sessionTarget.sessionId) : undefined;
   params.signal?.throwIfAborted();
   const awareness = projectCliSessionAwarenessFromPresentationV1({
     row: sessionTarget.rawSession,
@@ -192,7 +195,7 @@ export async function getSessionStatus(params: Readonly<{
       agentId: resolveAgentIdFromSessionMetadata(ownerMetadata) ?? '', metadata: ownerMetadata,
     }),
     ...(agentTarget ? { agentTarget } : {}),
-    ...(acceptedWorkspace ? { acceptedWorkspace } : {}),
+    ...(workspaceContext ?? (params.includeAcceptedWorkspace === true ? { projectContextSource: { kind: 'unavailable' as const } } : {})),
     ...(connectedServices.success ? { connectedServices: projectConnectedServiceBindingsForChild(connectedServices.data) } : {}),
     session: summarizeSessionRecord({
       credentials: params.credentials,

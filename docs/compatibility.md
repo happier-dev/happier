@@ -958,6 +958,16 @@ mixed-development adapter changes.
 
 ## Review rosters and completion (unreleased 0.3)
 
+Session status reads with `includeAcceptedWorkspace` also project the accepted
+Project's `projectContextSource`: the existing personal, source, or unavailable
+result derived from that Account's checkout census. Both CLI and UI publish it;
+initial native and Workflow Review creation consume it as `projectSourceId`.
+The server's Review creation policy remains the audience authority. An
+unavailable association preserves `project_association_unavailable` before a
+Record is created; later rounds retain the Record's admitted Source. The status
+field is optional for existing readers, and this unreleased 0.3 producer and
+consumer change requires matching source without a migration or wire epoch.
+
 Review rounds optionally retain `reviewerAgentIds`, keyed by admitted reviewer
 slot, beside `reviewerDisplayNames`. Settled `reviewerOutcomes` carry the same
 optional qualified contribution key as `agentId`. Session admission obtains both

@@ -1,6 +1,6 @@
 import type { ProjectAccountOrganizationV1, ProjectAccountRowKeyV1 } from './projectAccountRowsV1.js';
 import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '../workspaces/workspaceRefV1.js';
-import { projectWorkspaceRefV1, workspaceAddressFromRefV2 } from '../workspaces/workspaceRefResolutionV1.js';
+import { projectWorkspaceRefV1, workspaceAddressFromRefV2, type SessionProjectKeyResolutionV1 } from '../workspaces/workspaceRefResolutionV1.js';
 import { resolveWorkspaceSyncExecutionMachineIdV1 } from '../workspaces/workspaceSyncTopology.js';
 import { isManagedWorkspaceRefV2, QualifiedProjectKeyV1Schema, WorkspaceAddressV2Schema, WorkspaceRefV2MachineWriteSchema } from '../workspaces/workspaceRefV1.js';
 import { ProjectAccountWorkspaceRefKeyV1Schema } from './workspaceRefKeyV1.js';
@@ -125,9 +125,16 @@ export function projectProjectListV1(input: Readonly<{
 }
 
 /** Context follows the accepted qualified Project anchor; competing Sources cannot select a writer. */
+export const ProjectContextSourceResolutionV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('personal') }),
+  z.strictObject({ kind: z.literal('source'), sourceId: z.string().check(z.minLength(1)) }),
+  z.strictObject({ kind: z.literal('unavailable') }),
+]));
+export type ProjectContextSourceResolutionV1 = z.infer<typeof ProjectContextSourceResolutionV1Schema>;
+
 export function resolveProjectContextSourceV1(input: Readonly<{
   projectRef: QualifiedProjectKeyV1; workspaceRefs: readonly WorkspaceRefV1[]; organizationPresent: boolean;
-}>): Readonly<{ kind: 'personal' } | { kind: 'source'; sourceId: string } | { kind: 'unavailable' }> {
+}>): ProjectContextSourceResolutionV1 {
   const target = QualifiedProjectKeyV1Schema.safeParse(input.projectRef);
   if (!target.success) return { kind: 'unavailable' };
   const projection = projectProjectListV1({ serverId: target.data.serverId, workspaceRefs: input.workspaceRefs });
@@ -138,4 +145,14 @@ export function resolveProjectContextSourceV1(input: Readonly<{
   if (sources.size > 1) return { kind: 'unavailable' };
   const sourceId = sources.values().next().value;
   return sourceId === undefined ? { kind: 'personal' } : { kind: 'source', sourceId };
+}
+
+/** Source admission consumes the accepted Session identity; an unavailable census is never personal. */
+export function resolveSessionProjectContextSourceV1(input: Readonly<{
+  resolution: SessionProjectKeyResolutionV1; workspaceRefs: readonly WorkspaceRefV1[];
+}>): ProjectContextSourceResolutionV1 {
+  if (input.resolution.kind === 'none') return { kind: 'personal' };
+  if (input.resolution.kind === 'unavailable') return input.resolution;
+  return resolveProjectContextSourceV1({ projectRef: input.resolution.projectKey,
+    workspaceRefs: input.workspaceRefs, organizationPresent: false });
 }

@@ -36,7 +36,7 @@ import { resolveProjectedConnectedAccountServiceKeys } from '@/sync/domains/conn
 import { readTeamCredentialResourceCatalogs } from '@/sync/store/teams/teamsSnapshots';
 import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTargetKey } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { readSessionAcceptedWorkspace } from '@/sync/domains/session/sessionAcceptedWorkspace';
+import { readSessionAcceptedWorkspaceContext } from '@/sync/domains/session/sessionAcceptedWorkspace';
 import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { resolveDisplayIdentityForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
@@ -86,7 +86,7 @@ export async function readUiSessionStatus(
       ...(system ? { systemPurpose: system.key ?? null } : {}),
       encryption: isDataKeyAuthCredentials(account.credentials) ? { type: 'dataKey' }
         : isLegacyAuthCredentials(account.credentials) ? { type: 'legacy' } : null });
-    const acceptedWorkspace = includeAcceptedWorkspace === true ? readSessionAcceptedWorkspace(session, account.accountLifetime.scope, storage.getState()) : undefined;
+    const workspaceContext = includeAcceptedWorkspace === true ? readSessionAcceptedWorkspaceContext(session, account.accountLifetime.scope, storage.getState()) : undefined;
     const agentTarget = resolveAgentExecutionTargetFromSessionMetadata(metadata);
     const pending = listPendingRequests(readPendingRequestFactsFromSession(session), []);
     const pendingRequests = projectSessionStatusPendingRequestsV1(pending);
@@ -95,7 +95,7 @@ export async function readUiSessionStatus(
       pendingRequests,
       agentState: session.agentState ? { controlledByUser: session.agentState.controlledByUser === true, pendingRequestsCount: pending.length } : null,
       ...(agentTarget ? { agentTarget } : {}),
-      ...(acceptedWorkspace ? { acceptedWorkspace } : {}) };
+      ...workspaceContext };
     if (readiness !== true) return result;
     // Diagnostics keep stable attribution when control admission correctly refuses an offline Machine.
     const target = resolveDisplayIdentityForSessionFromState({ state: storage.getState(),

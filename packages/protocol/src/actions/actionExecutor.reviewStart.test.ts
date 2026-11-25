@@ -73,6 +73,30 @@ const workflowStartContext: AgentStartContextV1 = {
 };
 
 describe('createActionExecutor (review.start)', () => {
+  it('retains the Project Source for a detached Review addressed through a profile Home alias', async () => {
+    const records = createInMemoryReviewRecordPortV1();
+    let reviewId = '';
+    const executor = createActionExecutor({
+      reviewRecords: () => records,
+      // The host's Account-row and Machine transports are the external boundaries.
+      projectWorkspaceRefs: async () => ({ workspaceRefs: [{ id: 'checkout', serverId: 'srv_home',
+        machineId: 'machine', rootPath: '/repo', createdAtMs: 1, source: { sourceId: 'project-source', revision: 1 } }] }),
+      resolveServerProfileScopeId: id => id === 'profile-home' ? 'srv_home' : id,
+      executionRunCheckProtocolV2: async () => ({ ok: true }),
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+      executionRunStart: async (_sessionId, input) => {
+        reviewId = ReviewRoundBindingV1Schema.parse((input.intentInput as Readonly<Record<string, unknown>>).reviewRound).reviewId;
+        return { runId: 'run', callId: 'call', sidechainId: 'call' };
+      },
+    });
+    expect(await executor.execute('review.start', { target: { kind: 'detached' }, cwd: '/repo',
+      scope: 'repository', instructions: 'Review.', reviewers: [{ kind: 'engine', engineId: 'codex' }] }, {
+      surface: 'ui', serverId: 'profile-home', executionRunTargetMachineId: 'machine',
+      externalActionTarget: { kind: 'machine', machineId: 'machine', project: { machineId: 'machine', directory: '/repo' } },
+    })).toMatchObject({ ok: true });
+    expect(records.readMetadata(reviewId)).toMatchObject({ projectSourceId: 'project-source' });
+  });
+
   it.each(['Session title', 'Agent label', 'long qualified identity'] as const)('persists an existing Session reviewer identity from its %s', async nameSource => {
     const records = createInMemoryReviewRecordPortV1();
     const localId = nameSource === 'long qualified identity' ? 'r'.repeat(250) : 'reviewer';
@@ -117,7 +141,8 @@ describe('createActionExecutor (review.start)', () => {
       expect.objectContaining({ reviewerId: 'step-1-reviewer-1', displayName: name, agentId }),
       expect.objectContaining({ reviewerId: 'step-2-reviewer-1', displayName: name, agentId }),
     ]));
-    expect(reads).toEqual([{ sessionId: 'reviewer-session', serverId: 'reviewer-home' }]);
+    expect(reads).toEqual([{ sessionId: 'source', serverId: 'home' },
+      { sessionId: 'reviewer-session', serverId: 'reviewer-home' }]);
     expect(catalogs).toEqual(nameSource !== 'Agent label' ? [] : ['reviewer-machine']);
   });
   it('retains host role custody for native review starts without a child-depth stamp', async () => {

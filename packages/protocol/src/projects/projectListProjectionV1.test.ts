@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { projectProjectListV1, projectScopeKeysV1, resolveProjectContextSourceV1 } from './projectListProjectionV1.js';
+import { projectProjectListV1, projectScopeKeysV1, resolveProjectContextSourceV1, resolveSessionProjectContextSourceV1 } from './projectListProjectionV1.js';
 import { WorkspaceAddressV1Schema, WorkspaceAddressV2Schema } from '../workspaces/workspaceRefV1.js';
 
 describe('qualified Project context Source association', () => {
+  it('retains the admitted Session association cause and resolves its Source from the whole Project', () => {
+    const workspace = { id: 'checkout', serverId: 'home', projectKey: 'project', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
+    const resolved = { kind: 'resolved' as const, projectKey: { serverId: 'home', projectKey: 'project' }, ref: workspace };
+    expect(resolveSessionProjectContextSourceV1({ resolution: { kind: 'none' }, workspaceRefs: [] })).toEqual({ kind: 'personal' });
+    expect(resolveSessionProjectContextSourceV1({ resolution: { kind: 'unavailable' }, workspaceRefs: [] })).toEqual({ kind: 'unavailable' });
+    expect(resolveSessionProjectContextSourceV1({ resolution: resolved, workspaceRefs: [workspace] })).toEqual({ kind: 'personal' });
+    const sourcedSibling = { ...workspace, id: 'sibling', source: { sourceId: 'source', revision: 1 } };
+    expect(resolveSessionProjectContextSourceV1({ resolution: resolved, workspaceRefs: [workspace, sourcedSibling] }))
+      .toEqual({ kind: 'source', sourceId: 'source' });
+    expect(resolveSessionProjectContextSourceV1({ resolution: resolved, workspaceRefs: [workspace, sourcedSibling,
+      { ...sourcedSibling, id: 'competing', source: { sourceId: 'other', revision: 1 } }] })).toEqual({ kind: 'unavailable' });
+  });
   it('uses accepted anchors, refuses unknown or competing Sources, and retains personal Projects', () => {
     const projectRef = { serverId: 'home', projectKey: 'project' };
     const workspace = { id: 'checkout', serverId: 'home', projectKey: 'project', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };

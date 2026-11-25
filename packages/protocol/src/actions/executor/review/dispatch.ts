@@ -25,7 +25,7 @@ import { REVIEW_HUMAN_ACTION_IDS_V1 } from '../../actionIdsReviewHumanV1.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import { createActionExecuteFailureError, isActionOutcomeUnknownErrorCodeV1, projectActionFailureCauseV1 } from '../../actionExecutionResult.js';
-import { captureReviewComparisonV1, dispatchReviewRoundAction, resolveReviewComparisonTargetV1 } from './rounds.js';
+import { captureReviewComparisonV1, dispatchReviewRoundAction, resolveReviewComparisonTargetV1, resolveReviewProjectSourceV1 } from './rounds.js';
 import type { ScmComparison } from '../../../scm/comparison.js';
 import { ScmStatusSnapshotResponseSchema } from '../../../scm/index.js';
 import { prepareReviewRoundV1, preparedReviewTitleV1, resolveReviewComparisonSourceV1 } from '../../../reviews/prepareReviewRoundV1.js';
@@ -364,6 +364,8 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const transcript = transcriptReviewers.length > 0 && reviewInput.sourceSession
           ? await readReviewTranscriptInput(reviewInput.sourceSession, executeHostChild, ctx) : null;
         if (transcript && !transcript.ok) return transcript;
+        const projectSourceId = reviewInput.reviewRound ? undefined
+          : await resolveReviewProjectSourceV1(deps, ctx, sourceSessionId, serverId ?? undefined, comparisonCwd, executeHostChild);
         if (workflowComposition) {
           // Retain admitted ordinary reviewer prompts so Workflow leaves do not reread the source.
           const records = deps.reviewRecords?.(ctx);
@@ -408,6 +410,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             ...(initialComparison ? { comparison: initialComparison } : {}),
             ...(comparisonCapture ? { comparisonCapture: comparisonCapture.input } : {}),
             reviewStart: { reviewId: globalThis.crypto.randomUUID(),
+              ...(projectSourceId ? { projectSourceId } : {}),
               subjectKind,
               sourceKind: creatingWorkflowRunId ? 'workflow' : 'direct',
               ...(ctx.actionCaller?.kind === 'workflowRun' ? { workflowId: ctx.actionCaller.workflowId } : {}),
@@ -600,6 +603,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           ...(initialComparison ? { comparison: initialComparison } : {}),
           ...(comparisonCapture ? { comparisonCapture: comparisonCapture.input } : {}),
           reviewStart: { reviewId,
+            ...(projectSourceId ? { projectSourceId } : {}),
             subjectKind,
             sourceKind: creatingWorkflowRunId ? 'workflow' : 'direct',
             ...(ctx.actionCaller?.kind === 'workflowRun' ? { workflowId: ctx.actionCaller.workflowId } : {}),

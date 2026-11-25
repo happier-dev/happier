@@ -15,6 +15,38 @@ import { RpcError } from '../../../rpc/errors.js';
 import { invokeHostReviewedChildV1 } from '../deploymentRoleChild.js';
 import type { JsonObject } from '../../../json/strictJsonValue.js';
 import { createActionExecuteFailureError } from '../../actionExecutionResult.js';
+import { WorkspaceRefV1Schema } from '../../../workspaces/workspaceRefV1.js';
+import { resolveSessionProjectKeyV1 } from '../../../workspaces/workspaceRefResolutionV1.js';
+import { resolveSessionProjectContextSourceV1, type ProjectContextSourceResolutionV1 } from '../../../projects/projectListProjectionV1.js';
+
+/** Initial Review creation consumes the same admitted Project association in native and Workflow paths. */
+export async function resolveReviewProjectSourceV1(deps: ActionExecutorDeps, ctx: ActionExecutorContext,
+  sessionId: string | undefined, serverId: string | undefined, cwd: string | undefined,
+  executeHostChild: RoundActionInvocation['executeHostChild']): Promise<string | undefined> {
+  let source: ProjectContextSourceResolutionV1 | undefined;
+  if (sessionId && deps.sessionStatusGet) {
+    const response = await executeHostChild('session.status.get', { sessionId, live: false, includeAcceptedWorkspace: true }, ctx);
+    if (!response.ok) throw createActionExecuteFailureError(response);
+    const status = SessionStatusResultSchema.safeParse(response.result);
+    if (!status.success || status.data.session.id !== sessionId) throw new RpcError('invalid_action_output', 'invalid_action_output');
+    source = status.data.projectContextSource;
+  } else if (!sessionId && deps.projectWorkspaceRefs) {
+    const project = ctx.workflowStartProject ?? (ctx.externalActionTarget?.kind === 'machine' ? ctx.externalActionTarget.project : undefined);
+    const machineId = project?.machineId ?? (ctx.externalActionTarget?.kind === 'machine' ? ctx.externalActionTarget.machineId : undefined)
+      ?? ctx.executionRunTargetMachineId ?? ctx.agentStartContext?.baseline.machineId;
+    const rows = await deps.projectWorkspaceRefs({ serverId, includeUsageProjects: true }, ctx);
+    if ('ok' in rows && rows.ok === false) throw createActionExecuteFailureError(rows);
+    if (!('workspaceRefs' in rows)) throw new RpcError('invalid_action_output', 'invalid_action_output');
+    const refs = rows.workspaceRefs.map(ref => WorkspaceRefV1Schema.parse(ref));
+    const normalizeServerId = deps.resolveServerProfileScopeId;
+    source = resolveSessionProjectContextSourceV1({ workspaceRefs: refs,
+      resolution: resolveSessionProjectKeyV1({ machineId, path: project?.directory ?? cwd,
+        ...(project && 'workspaceRefId' in project ? { workspaceId: project.workspaceRefId } : {}) }, ctx.serverIdentityId ?? serverId ?? '', refs,
+        normalizeServerId ? { normalizeServerId: id => normalizeServerId(id) ?? '' } : {}) });
+  }
+  if (source?.kind === 'unavailable') throw new RpcError('project_association_unavailable', 'project_association_unavailable');
+  return source?.kind === 'source' ? source.sourceId : undefined;
+}
 
 /** Retain the same Machine authority the Review's SCM operation uses. */
 export async function resolveReviewComparisonTargetV1(deps: ActionExecutorDeps, ctx: ActionExecutorContext,
