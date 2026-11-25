@@ -543,7 +543,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   applySuggestionRef.current = applyChosenSuggestion;
 
   const back = React.useCallback(() => {
-    if (addingMachine) setAddingMachine(false);
+    if (addingMachine) returnFromMachineSetup();
     else if (step === 'deploy') {
       if (deployFrame) deployFrame.back();
       else leaveDeploy();
@@ -560,7 +560,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     )
       setStep('describe');
     else close();
-  }, [addingMachine, auto.stop, close, create?.kind, deployFrame, leaveDeploy, step, suggestion]);
+  }, [addingMachine, auto.stop, close, create?.kind, deployFrame, leaveDeploy, returnFromMachineSetup, step, suggestion]);
   const pageBack = usePageBackControl('newApp.back', back);
 
   const deployStep = step === 'deploy' ? deployFrame?.step ?? 'where' : null;
@@ -671,6 +671,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   // A selected managed creation owns Cancel, including its disabled state while acquisition is pending.
   const machineOwnsExit = addingMachine && machineCreationDraft !== null;
   const showBack = !machineOwnsExit && (
+    addingMachine ||
     (step === 'auto' && (autoKind === 'describe' || autoKind === 'nothing' || autoKind === 'failed')) ||
     step === 'deploy' ||
     step === 'describe' ||

@@ -192,7 +192,10 @@ function suggestionBoundary(overrides: Ports) {
   execute.mockImplementation(executor.execute);
 }
 
-async function openDescribe(name: string) {
+async function openDescribe(
+  name: string,
+  render: (view: React.ReactElement<React.ComponentProps<typeof NewAppScreen>>) => ReturnType<typeof renderScreen> = renderScreen,
+) {
   const fixture = await createPlainPromptLibraryCatalogHomeFixture(
     `https://${name}.test`,
     {
@@ -203,7 +206,7 @@ async function openDescribe(name: string) {
     { handleRequest: async () => null },
   );
   const onClose = vi.fn();
-  const screen = await renderScreen(<NewAppScreen onClose={onClose} />);
+  const screen = await render(<NewAppScreen onClose={onClose} />);
   await waitForHomeGovernance(() =>
     expect(screen.findByTestId('newApp.describeApp')).toBeTruthy(),
   );
@@ -638,6 +641,37 @@ it('says why no agent can suggest, per Machine, starting no run; Choose a starte
     );
     await screen.unmount();
   } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
+it('returns from machine setup to Describe without losing the draft', async () => {
+  suggestionBoundary({ machinesList: async () => ({ items: [] }) });
+  type DialogChrome = Parameters<NonNullable<React.ComponentProps<typeof NewAppScreen>['setChrome']>>[0];
+  function Dialog({ screen }: { screen: React.ReactElement<React.ComponentProps<typeof NewAppScreen>> }) {
+    const [chrome, setChrome] = React.useState<DialogChrome>(null);
+    return <>{React.cloneElement(screen, { setChrome })}{chrome?.kind === 'card' ? chrome.footer : null}</>;
+  }
+  const { fixture, screen, onClose } = await openDescribe(
+    'auto-machine-setup-back',
+    (view) => renderScreen(<Dialog screen={view} />),
+  );
+  try {
+    await screen.pressByTestIdAsync('newApp.describeApp');
+    await screen.pressByTestIdAsync('newApp.continue');
+    const description = 'An invoice app for independent bookshops';
+    await act(async () => screen.changeTextByTestId('newApp.auto.description', description));
+    await screen.pressByTestIdAsync('newApp.auto.suggest');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.addMachine')).toBeTruthy());
+    await screen.pressByTestIdAsync('newApp.auto.addMachine');
+    expect(screen.findByTestId('newApp.addMachine')).toBeTruthy();
+    await screen.pressByTestIdAsync('newApp.back');
+    expect(screen.findByTestId('newApp.auto.description')?.props.value).toBe(description);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(calls('execution.run.start')).toHaveLength(0);
+  } finally {
+    await screen.unmount();
     await standardCleanup();
     await fixture.dispose();
   }
