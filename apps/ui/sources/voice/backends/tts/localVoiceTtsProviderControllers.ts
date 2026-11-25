@@ -36,6 +36,7 @@ export type VoiceReadAloudSource = Readonly<{ sessionAddress: SessionAddress; ro
 export type LocalVoiceTtsRequest = Readonly<{
     sessionId?: string | null;
     text: string;
+    readAloudChunkChars?: number;
     settings: Readonly<Pick<Settings, 'voice'>>;
     preparation?: BundledSpeechPreparation;
     tts: VoiceLocalTtsSettings;
@@ -330,6 +331,7 @@ export async function speakWithBundledSpeechTts(
     const runtime = runtimeModule.createBundledSpeechRuntime({ registry });
     await runtime.speak(providerId, {
         text: ctx.text,
+        readAloudChunkChars: ctx.readAloudChunkChars,
         providerConfig: readVoiceProviderSettingsConfig(
             voiceSettingsParse(ctx.settings?.voice),
             providerId,

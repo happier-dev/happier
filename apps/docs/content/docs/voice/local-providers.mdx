@@ -376,6 +376,10 @@ Google Cloud TTS is batched separately by its
 [5,000-byte UTF-8 limit](https://docs.cloud.google.com/text-to-speech/quotas), so
 multibyte text is measured in bytes rather than estimated from character count.
 
+For long Read Aloud messages, buffered speech starts with the first sentence
+when it fits. Later batches group sentences using the Voice streaming chunk
+size while respecting the service’s input limit.
+
 ## Google providers
 
 ### Google Gemini STT

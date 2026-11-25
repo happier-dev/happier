@@ -7,6 +7,7 @@ import {
   type LocalVoiceTtsProviderController,
   type LocalVoiceTtsProviderId,
 } from './localVoiceTtsProviderControllers';
+import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePlaybackController';
 
 export function createLocalVoiceTtsController(options?: Readonly<{
@@ -81,6 +82,7 @@ export function createLocalVoiceTtsController(options?: Readonly<{
         await localVoiceRuntimeController.prepareForReadAloud();
         if (!current()) return { status: 'cancelled' };
         await dispatchSpeech({ ...ctx,
+          readAloudChunkChars: readLocalConversationVoiceSettings(ctx.settings.voice).streaming.ttsChunkChars,
           registerPlaybackStopper: playback.registerStopper.captureAttempt!(),
           onSpeaking: () => { if (current()) { publish('speaking'); ctx.onSpeaking(); } },
         });

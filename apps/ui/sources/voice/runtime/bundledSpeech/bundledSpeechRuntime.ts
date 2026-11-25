@@ -121,6 +121,7 @@ export function createBundledSpeechRuntime(input: Readonly<{
     },
     async speak(providerId: string, params: Readonly<{
       text: string;
+      readAloudChunkChars?: number;
       providerConfig: unknown;
       preparation?: BundledSpeechPreparation;
       originMachineId?: string | null;
@@ -156,7 +157,7 @@ export function createBundledSpeechRuntime(input: Readonly<{
       if (!correspondence.synthesize) throw createRuntimeError('provider_settings_invalid');
       const batches = batchSpeechTextForSynthesis(params.text, resolveVoiceSpeechSynthesisInputLimits({
         contribution: declaration, settings: config,
-      }));
+      }), { readAloudChunkChars: params.readAloudChunkChars });
       const abortController = new AbortController();
       const playback = createVoicePlaybackController();
       const registerPlaybackOnly = playback.registerStopper.captureAttempt?.() ?? playback.registerStopper;

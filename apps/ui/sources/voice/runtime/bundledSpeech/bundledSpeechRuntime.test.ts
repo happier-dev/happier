@@ -331,6 +331,32 @@ describe('bundledSpeechRuntime', () => {
     expect(speech.encodedAudio.start).toHaveBeenCalledTimes(received.length);
   });
 
+  it.each([
+    [undefined, ['First sentence.', 'Second sentence. Third sentence.', 'Last sentence.']],
+    [24, ['First sentence.', 'Second sentence.', 'Third sentence.', 'Last sentence.']],
+  ] as const)('starts long read-aloud early and groups later sentences within the provider cap %s', async (maxInputUtf8Bytes, expected) => {
+    const declaration = maxInputUtf8Bytes === undefined ? CATALOG_TTS_DECLARATION : {
+      ...CATALOG_TTS_DECLARATION, limits: { synthesize: { maxInputUtf8Bytes } },
+    };
+    const runtime = runtimeFor([declaration]);
+    const registerPlaybackStopper = () => () => {};
+    await runtime.speak(CATALOG_TTS_ID, {
+      text: 'First sentence. Second sentence. Third sentence. Last sentence.',
+      readAloudChunkChars: 34,
+      providerConfig: config,
+      registerPlaybackStopper,
+    });
+    expect(inputs()).toEqual(expected);
+
+    await runtime.speak(CATALOG_TTS_ID, {
+      text: 'Yes. All done.',
+      readAloudChunkChars: 34,
+      providerConfig: config,
+      registerPlaybackStopper,
+    });
+    expect(inputs().slice(expected.length)).toEqual(['Yes. All done.']);
+  });
+
   it('batches whole replies by the selected character limit and cancels remaining batches during playback', async () => {
     const declaration = { ...CATALOG_TTS_DECLARATION, limits: { synthesize: { maxInputCharacters: 20 } } };
     let stop: (() => void) | undefined;

@@ -309,7 +309,15 @@ export function resolveVoiceSpeechSegmentLength(text: string, options: Readonly<
 }
 
 /** Ordered synthesis batches; never split a UTF-16 surrogate pair. */
-export function batchSpeechTextForSynthesis(text: string, limits: VoiceSpeechSynthesisInputLimits): string[] {
+export function batchSpeechTextForSynthesis(
+  text: string,
+  limits: VoiceSpeechSynthesisInputLimits,
+  options?: Readonly<{ readAloudChunkChars?: number }>,
+): string[] {
+  const readAloudChunkChars = options?.readAloudChunkChars;
+  // The latency target is soft at one code point. The synthesis declaration still sets the hard ceiling.
+  const maxCharacters = Math.min(limits.maxInputCharacters ?? Infinity,
+    readAloudChunkChars === undefined ? Infinity : Math.max(2, readAloudChunkChars));
   const batches: string[] = [];
   let remaining = text.trim();
   while (remaining) {
@@ -318,20 +326,24 @@ export function batchSpeechTextForSynthesis(text: string, limits: VoiceSpeechSyn
     for (const character of remaining) {
       const point = character.codePointAt(0)!;
       const size = point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4;
-      if ((limits.maxInputCharacters !== undefined && end + character.length > limits.maxInputCharacters)
+      if (end + character.length > maxCharacters
         || (limits.maxInputUtf8Bytes !== undefined && bytes + size > limits.maxInputUtf8Bytes)) break;
       end += character.length;
       bytes += size;
     }
     if (end === 0) throw Object.assign(new Error('provider_settings_invalid'), { code: 'provider_settings_invalid' });
     if (end < remaining.length) {
+      const preferFirstSentence = readAloudChunkChars !== undefined && batches.length === 0;
       let sentence = 0;
       let clause = 0;
       let word = 0;
       for (let index = 0; index < end; index += 1) {
         if (isSpeechSentenceBoundary(remaining, index)) {
           const boundary = speechSentenceEnd(remaining, index);
-          if (boundary <= end) sentence = boundary;
+          if (boundary <= end) {
+            sentence = boundary;
+            if (preferFirstSentence) break;
+          }
         } else if (isSpeechClauseBoundary(remaining, index)) clause = index + 1;
         else if (/\s/u.test(remaining[index]!)) word = index + 1;
       }
