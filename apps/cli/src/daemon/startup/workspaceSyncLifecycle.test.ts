@@ -1,16 +1,19 @@
 import { once } from 'node:events';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { expect, it, onTestFailed, vi } from 'vitest';
+import { readFile, readdir } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
+import { expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { ProjectAccountRowV1Schema, type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { WorkspaceSyncRelationshipCreateResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import * as installationStore from '@/daemon/identity/store';
 import { getActiveProjectAccountRowsSnapshot, readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
 import { deriveWorkspaceSyncEndpointId } from '@/workspaces/sync/transport/workspaceSyncBrokerProtocol';
+import { readWorkspaceSyncFinalReadyFactAtPath, writeWorkspaceSyncFinalReadyFact } from '@/workspaces/sync/workspaceSyncFinalReadyFact';
+import { resolveWorkspaceSyncWorkerTarget } from '@/workspaces/sync/workspaceSyncPreparation';
 import { composeBindChildSourcePhaseTestRuntime } from './createProductionDaemonWorkspaceSyncRuntime.testkit';
 
 const socketIo = vi.hoisted(() => vi.fn());
@@ -24,9 +27,20 @@ it('recovers a Watching Fresh copy on native redial, ends its writer loan on Sto
   const rows: ProjectAccountRowV1[] = [];
   const homeRows = createProjectAccountRowsHttpBoundary(rows);
   let offlineMachine: string | undefined;
+  let targetMaterialization: string | undefined;
+  const identity = vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({
+    version: 1, createdAt: 1, installationId: 'target-parent-installation', publicKey: 'fixture', privateKey: 'fixture',
+  });
+  // The two fixture runtimes share a process; only the target reads installation identity for READY restore.
+  onTestFinished(() => { identity.mockRestore(); });
   const fixture = await composeBindChildSourcePhaseTestRuntime({
     socketIo, withScmRuntime: true, projectRowsFromHttp: true, separateTargetParent: true, remoteSeed: true,
     loopbackWorkspaceSync: true, workerRunAtMost: 1,
+    prepareActiveServerDirectory: async directory => {
+      if (basename(dirname(dirname(directory))) === 'target-parent') {
+        targetMaterialization = join(directory, 'workspace-sync', 'materialization');
+      }
+    },
     readAdditionalHttpPostResponse: async (url, body) =>
       url.includes('/v1/account/project-rows/') ? await homeRows(url, body) : undefined,
     handleAdditionalSocketAck: async raw => {
@@ -91,11 +105,46 @@ it('recovers a Watching Fresh copy on native redial, ends its writer loan on Sto
   phase = 'redial the target through the source broker';
   const recoveredStream = await openNativeStream();
   expect(await fixture.parent.workspaceSync.controller.get(ingress.operationId)).toMatchObject({ state: 'watching' });
+  phase = 'reload the retained signed READY binding from a committed Worker copy';
+  const committedRows = [...rows];
+  await fixture.targetParent!.stop();
+  await recoveredStream.done;
+  const materialization = targetMaterialization!;
+  const readyFiles = (await readdir(materialization)).filter(name => name.endsWith('.ready.json'));
+  expect(readyFiles).toHaveLength(1);
+  const readyPath = join(materialization, readyFiles[0]!);
+  const ready = await readWorkspaceSyncFinalReadyFactAtPath(readyPath);
+  if (ready?.v !== 1) throw new Error('The original copy has no READY fact');
+  // Older signed creation wrote the admitted binding before Home stamped the commit.
+  // Replace only the persisted READY record. The Home rows, root and receipt came from Create.
+  await writeWorkspaceSyncFinalReadyFact(readyPath, { ...ready, v: 2, requesterCopyCustody: {
+    accountServerId: fixture.serverId,
+    actorAccountId: 'owner',
+    sourceWriter: { machineId: fixture.sourceRef.machineId, installationId: 'parent-installation' },
+    sourceWorkspace: { id: fixture.sourceRef.id, machineId: fixture.sourceRef.machineId, rootPath: fixture.sourceRef.rootPath },
+    target: { machineId: fixture.targetRef.machineId, installationId: 'target-parent-installation' },
+    relationship: { ...watched.relationship, committedAtMs: null },
+  } });
+  const archivedReady = await readFile(readyPath, 'utf8');
+  await fixture.restartTargetParent();
+  await fixture.restartSourceParent();
+  await fixture.settleProjects();
+  const status = await fixture.parent.workspaceSync.controller.get(ingress.operationId);
+  expect(status).toMatchObject({ state: 'watching' });
+  const current = getActiveProjectAccountRowsSnapshot()!;
+  expect(current.relationships).toEqual([watched.relationship]);
+  expect(rows).toEqual(committedRows);
+  expect(resolveWorkspaceSyncWorkerTarget({ serverId: fixture.serverId, sourceWorkspaceRefId: fixture.sourceRef.id,
+    targetMachineId: fixture.targetRef.machineId, workspaceRefs: current.workspaceRefs, relationships: current.relationships,
+    relationshipStatuses: [status!],
+  })).toMatchObject({ ok: true, target: { id: watched.result.targetWorkspaceRefId } });
+  expect(await readFile(readyPath, 'utf8')).toBe(archivedReady);
+  const reloadedStream = await openNativeStream();
   const stop = fixture.parentRpcHandlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TERMINATE)!;
   phase = 'Stop the Watching copy';
   await expect(stop({ relationshipId: ingress.operationId })).resolves.toEqual({ ok: true });
   phase = 'observe the recovered stream close after Stop';
-  await recoveredStream.done;
+  await reloadedStream.done;
   await expect(fixture.targetParent!.acquireWorkspaceSyncMachineIngress(ingress)).rejects.toMatchObject({ code: 'peer_unavailable' });
   await expectKeptFiles(watched);
 
