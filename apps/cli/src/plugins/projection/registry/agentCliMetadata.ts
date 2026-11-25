@@ -14,7 +14,7 @@ export { readDeclaredAgentTitle } from '@happier-dev/agents/declaredAgentTitle';
 import type { CliAuthSpec, CliAuthStatusDraft } from '@/capabilities/cliAuth/types';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { readJsonFileSafe } from '@/capabilities/cliAuth/shared';
-import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import { resolveNativeAgentCliAuthPaths } from '@/capabilities/cliAuth/resolveNativeAgentCliAuthPaths';
 import { readAgentExecutionRunCapabilities, readAgentSessionCapabilities } from './agentContributionDefinition';
 import { resolveFirstPartyLegacyAgentConnectedAccountServiceId } from './connectedAccountPurposeCompatibility';
 import type { ResolvedCatalogEntry, ResolvedContributionProvenance } from './types';
@@ -52,9 +52,9 @@ function recordHasCredentialToken(record: Record<string, unknown>, depth = 0): b
     return false;
 }
 
-function hasFileCredential(credentialPaths: readonly string[], processEnv: NodeJS.ProcessEnv): boolean {
+function hasFileCredential(credentialPaths: readonly string[]): boolean {
     return credentialPaths.some((path) => {
-        const record = readJsonFileSafe(expandHomeDirPath(path, processEnv, process.platform));
+        const record = readJsonFileSafe(path);
         return record !== null && typeof record === 'object' && !Array.isArray(record)
             && recordHasCredentialToken(record as Record<string, unknown>);
     });
@@ -66,6 +66,7 @@ function hasFileCredential(credentialPaths: readonly string[], processEnv: NodeJ
  */
 export function createNativeAgentCliAuthStaticProbe(
     cli: PluginAgentCliMetadata,
+    nativeHome?: Parameters<typeof resolveNativeAgentCliAuthPaths>[1],
 ): NativeAgentCliAuthStaticProbe | null {
     const environmentVariables = cli.auth.environmentVariables ?? [];
     const credentialPaths = cli.auth.credentialPaths ?? [];
@@ -79,7 +80,10 @@ export function createNativeAgentCliAuthStaticProbe(
             if (hasEnvironmentCredential(environmentVariables, processEnv)) {
                 return { state: 'logged_in', method: 'api_key_env', source: 'env' };
             }
-            if (hasFileCredential(credentialPaths, processEnv)) {
+            let paths: readonly string[];
+            try { paths = resolveNativeAgentCliAuthPaths(credentialPaths, nativeHome, processEnv); }
+            catch { return { state: 'unknown', reason: 'probe_failed' }; }
+            if (hasFileCredential(paths)) {
                 return { state: 'logged_in', method: 'credentials_file', source: 'file' };
             }
             return null;
@@ -88,8 +92,11 @@ export function createNativeAgentCliAuthStaticProbe(
     });
 }
 
-export function createNativeAgentCliAuthSpec(cli: PluginAgentCliMetadata): CliAuthSpec {
-    const staticProbe = createNativeAgentCliAuthStaticProbe(cli);
+export function createNativeAgentCliAuthSpec(
+    cli: PluginAgentCliMetadata,
+    nativeHome?: Parameters<typeof resolveNativeAgentCliAuthPaths>[1],
+): CliAuthSpec {
+    const staticProbe = createNativeAgentCliAuthStaticProbe(cli, nativeHome);
     return {
         binaryNames: [
             cli.executable.binaryName,

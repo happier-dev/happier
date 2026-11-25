@@ -1,10 +1,8 @@
 import { stat } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve } from 'node:path';
 import { resolveConfiguredNativeHomePath, resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 
-import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
-
 import { detectNativeAgentCliAuthStatus } from './detectNativeAgentCliAuthStatus';
+import { resolveNativeAgentCliAuthPaths } from './resolveNativeAgentCliAuthPaths';
 import type { CliAuthStatus } from './types';
 
 /**
@@ -82,14 +80,9 @@ async function readSignInState(
   platform: NodeJS.Platform = process.platform,
 ): Promise<string | null> {
   if (!declared || declared.paths.length === 0 || !declared.platforms.includes(platform)) return null;
-  const resolvedHome = nativeHome ? readConfigDir(nativeHome, env) : null;
-  const defaultHome = nativeHome ? resolve(resolveHomeDirFromEnvironment(env), nativeHome.defaultRelativePath) : null;
-  const locations = declared.paths.map((path) => {
-    const expanded = resolve(expandHomeDirPath(path, env));
-    if (!resolvedHome || !defaultHome || resolvedHome === defaultHome) return expanded;
-    const inside = relative(defaultHome, expanded);
-    return inside && !inside.startsWith('..') && !isAbsolute(inside) ? join(resolvedHome, inside) : expanded;
-  });
+  let locations: readonly string[];
+  try { locations = resolveNativeAgentCliAuthPaths(declared.paths, nativeHome, env); }
+  catch { return null; }
   const facts = await Promise.all([...new Set(locations)].sort().map(async (location) => [location,
     statMetadata(await stat(location).catch(() => null))]));
   return JSON.stringify(facts);

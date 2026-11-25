@@ -649,6 +649,7 @@ export function projectAgentCliAuthCatalogEntry(params: Readonly<{
     pluginId: string;
     cliAuth: AgentCliAuthContributionV1;
     cli: PluginAgentCliMetadata;
+    nativeHome?: ResolvedCatalogEntry['connectedAccountNativeHome'];
     runtimeSpec?: AgentCliRuntimeDescriptor | null;
     systemTools: readonly PluginSystemToolContributionV1[];
     agentCliSystemTool?: AgentCliSystemToolBinding | null;
@@ -656,7 +657,7 @@ export function projectAgentCliAuthCatalogEntry(params: Readonly<{
     retirementSignal?: AbortSignal;
     isCurrent(): boolean;
 }>): Pick<ResolvedCatalogEntry, 'getCliAuthSpec'> {
-    const staticProbe = createNativeAgentCliAuthStaticProbe(params.cli);
+    const staticProbe = createNativeAgentCliAuthStaticProbe(params.cli, params.nativeHome);
     const admittedSystemToolIds = new Set<string>();
     for (const request of params.hostAccess?.required ?? []) {
         if (request.capability !== 'process') continue;

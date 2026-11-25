@@ -13,6 +13,7 @@ import type { ManagedServiceSessionBaseUrlResolver, ManagedServiceSessionClientA
 import { projectTargetProviderRuntimes } from '../lifecycle/contributions/targetProviders';
 import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginServices } from '@happier-dev/plugin-sdk';
+import { createNativeAgentCliAuthSpec } from '../../projection/registry/agentCliMetadata';
 
 export function mergePluginDiagnostics(
     left: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>,
@@ -193,6 +194,15 @@ export function projectActivatedAgentContributions(
             );
         }
         registeredAgentRuntimeCatalogHooksProjected = true;
+        const connectedAccountLaunch = runtime.connectedAccountLaunch
+            ? projectAgentConnectedAccountLaunchCatalogEntry({
+                pluginId: runtime.pluginId, agentId: agent.id,
+                connectedAccountLaunch: runtime.connectedAccountLaunch,
+                hostAccess: agent.hostAccess, isCurrent: runtime.isCurrent,
+            })
+            : null;
+        const cli = agent.cliMetadata;
+        const nativeHome = connectedAccountLaunch?.connectedAccountNativeHome;
         return Object.freeze({
             ...agent,
             catalogEntry: Object.freeze({
@@ -240,6 +250,9 @@ export function projectActivatedAgentContributions(
                             : {}),
                     })
                     : {}),
+                ...(cli && !runtime.cliAuth && connectedAccountLaunch
+                    ? { getCliAuthSpec: async () => createNativeAgentCliAuthSpec(cli, nativeHome) }
+                    : {}),
                 ...(runtime.cliAuth && agent.cliMetadata
                     ? projectAgentCliAuthCatalogEntry({
                         ...(agentIsolation ? { agentIsolation } : {}),
@@ -247,6 +260,7 @@ export function projectActivatedAgentContributions(
                         pluginId: runtime.pluginId,
                         cliAuth: runtime.cliAuth,
                         cli: agent.cliMetadata,
+                        nativeHome,
                         retirementSignal: resolveAgentPreflightLifecycle
                             ? AbortSignal.any([runtime.retirementSignal, resolveAgentPreflightLifecycle(runtime.pluginId).retirementSignal])
                             : runtime.retirementSignal,
@@ -257,15 +271,7 @@ export function projectActivatedAgentContributions(
                         isCurrent: runtime.isCurrent,
                     })
                     : {}),
-                ...(runtime.connectedAccountLaunch
-                    ? projectAgentConnectedAccountLaunchCatalogEntry({
-                        pluginId: runtime.pluginId,
-                        agentId: agent.id,
-                        connectedAccountLaunch: runtime.connectedAccountLaunch,
-                        hostAccess: agent.hostAccess,
-                        isCurrent: runtime.isCurrent,
-                    })
-                    : {}),
+                ...connectedAccountLaunch,
                 ...(runtime.accountSettings && resolveAgentPluginSettings
                     ? projectAgentAccountSettingsCatalogEntry({
                         accountSettings: runtime.accountSettings,

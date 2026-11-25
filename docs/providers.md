@@ -145,6 +145,11 @@ an installed CLI can still have unknown authentication. The hook lists only
 installed CLIs; it does not infer presence from login state or credential source.
 An older peer omitting this optional field leaves presence unknown.
 
+Native credential-file presence follows the Agent's declared native home in the
+final launch environment, including Muse's `XDG_CONFIG_HOME/muse/auth.json`.
+A configured home never borrows credentials from the default home. An isolated
+OS-user probe leaves file inspection to that user's native command.
+
 Cursor subscription usage reads the DashboardService current-period usage RPC
 with the stored OAuth access token through the existing daemon quota coordinator.
 API-key mode remains unavailable. This RPC is undocumented and may change without

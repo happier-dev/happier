@@ -1,5 +1,5 @@
 import type { PluginAgentDefinition } from '@happier-dev/plugin-sdk/agents';
-import { MUSE_NATIVE_HOME } from '../connectedAccounts/declarations.js';
+import { MUSE_NATIVE_AUTH_FILE_ID, MUSE_NATIVE_HOME } from '../connectedAccounts/declarations.js';
 import { MUSE_MSP_LAUNCH } from './msp.js';
 
 export const MUSE_DIRECT_AUTH_ENV_KEYS = ['META_API_KEY'] as const;
@@ -33,6 +33,7 @@ export const museCliSupport = {
   auth: {
     support: 'login_terminal',
     environmentVariables: [...MUSE_DIRECT_AUTH_ENV_KEYS],
+    credentialPaths: [`~/${MUSE_NATIVE_HOME.defaultRelativePath}/${MUSE_NATIVE_AUTH_FILE_ID}`],
     loginLaunches: [{ kind: 'primary', args: ['login'] }],
   },
 } satisfies NonNullable<PluginAgentDefinition['declaration']['cli']>;

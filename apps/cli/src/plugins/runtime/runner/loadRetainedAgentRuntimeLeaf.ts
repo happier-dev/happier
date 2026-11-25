@@ -2,6 +2,7 @@ import { realpath } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
+import { createNativeAgentCliAuthSpec } from '../../projection/registry/agentCliMetadata';
 
 import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginAgentContributionV2 } from '@happier-dev/protocol/plugins/contributions/agentContributionV2';
@@ -224,6 +225,14 @@ async function projectRetainedAgentCatalogEntry(input: Readonly<{
             },
         } : {}),
         catalogEntry: Object.freeze({ ...declaredEntry, ...eager?.catalogEntry,
+            ...(attested.declaredAgent.cli?.auth.credentialPaths?.length ? {
+                getCliAuthSpec: async () => {
+                    const catalog = await acquire();
+                    const spec = await catalog?.catalogEntry?.getCliAuthSpec?.();
+                    if (!spec) throw new Error('Retained Agent auth catalog is unavailable');
+                    return spec;
+                },
+            } : {}),
             getConnectedServiceStateSharingDescriptor: async () => {
                 const catalog = await acquire();
                 const descriptor = await catalog?.catalogEntry?.getConnectedServiceStateSharingDescriptor?.();
@@ -296,8 +305,11 @@ async function acquireRetainedAgentCatalogEntry(input: Readonly<{
             pluginId: attested.binding.pluginId, agentId: declaredEntry.id,
             connectedAccountLaunch: launch, hostAccess: attested.manifest.hostAccess, isCurrent: () => true,
         }) : null;
+        const cli = attested.declaredAgent.cli;
         return Object.freeze({
             catalogEntry: Object.freeze({ ...declaredEntry,
+                ...(cli ? { getCliAuthSpec: async () => createNativeAgentCliAuthSpec(cli,
+                    projected?.connectedAccountNativeHome) } : {}),
                 ...(registration.value.vendorResumeSupport
                     ? projectAgentExperimentalVendorResumeSupportCatalogEntry({
                         vendorResumeSupport: registration.value.vendorResumeSupport,

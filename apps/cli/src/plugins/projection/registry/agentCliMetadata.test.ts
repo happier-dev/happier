@@ -1,12 +1,22 @@
 import { PluginAgentContributionV2Schema, type PluginAgentCliMetadata } from '@happier-dev/protocol';
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { createManifestAgentCatalogEntry, createNativeAgentCliAuthSpec } from './agentCliMetadata';
 import { resolveAgentSkillsCapability } from '@/agent/skills/resolveAgentSkillsCapability';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { PLUGIN_MANIFEST } from '@happier-dev/plugins-muse';
+import { buildMuseNativeAuth } from '../../../../../../packages/plugins/muse/src/connectedAccounts/nativeAuth';
+import { MUSE_NATIVE_HOME } from '../../../../../../packages/plugins/muse/src/connectedAccounts/declarations';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { createResolvedContributionRegistry } from './createResolvedContributionRegistry';
+import { projectLoadedPluginContributes } from './fullProjection';
+import { activatePluginRuntimeRegistry } from '@/plugins/runtime/lifecycle/manager';
+import { projectActivatedAgentContributions } from '@/plugins/runtime/composition/activatedContributions';
+import { createBundledActivationSourceResolver } from '@/plugins/runtime/bundledActivationSource';
+import { bindPluginRuntimeSourceAuthority } from '@/plugins/runtime/sourceAuthority';
 
 function metadata(params: Readonly<{
   environmentVariables?: readonly string[];
@@ -41,6 +51,61 @@ afterEach(() => {
 });
 
 describe('native Agent CLI auth metadata', () => {
+  it('reads the actual Muse native login from its final configured home without borrowing another home', async () => {
+    const directory = createTempDirSync('happier-muse-native-auth-');
+    const manifest = normalizePluginManifestV2(PLUGIN_MANIFEST);
+    const pluginRootPath = resolve('../../packages/plugins/muse');
+    const loaded = { pluginId: manifest.id, manifest, pluginRootPath,
+        manifestPath: join(pluginRootPath, 'plugin.json'), daemonEntryPath: '@happier-dev/plugins-muse',
+        devDaemonEntryPath: null, sourceSpec: { kind: 'bundled', locator: '@happier-dev/plugins-muse' } } as const;
+    const base = createResolvedContributionRegistry(projectLoadedPluginContributes({
+      loadResult: { loadedPlugins: [loaded],
+      diagnosticsByPluginId: {} }, provenance: 'first_party',
+    }));
+    const activated = await activatePluginRuntimeRegistry({ contributes: base, generation: 1, pluginIds: [manifest.id],
+      resolveActivationSource: createBundledActivationSourceResolver({
+        bundledPackageNames: ['@happier-dev/plugins-muse'], bundledDeclarations: [loaded],
+        resolveDevelopmentSourceAuthority: ({ rootPath }) => {
+          const authority = bindPluginRuntimeSourceAuthority({ custody: { kind: 'development', registeredRootId: rootPath },
+            resolvedRoot: rootPath, observedRevision: 1 });
+          return authority.kind === 'development' ? authority : null;
+        },
+      }),
+    });
+    try {
+      const entry = projectActivatedAgentContributions(base, activated, () => true).agents[0]?.catalogEntry;
+      expect({ nativeHome: entry?.connectedAccountNativeHome, diagnostics: activated.diagnosticsByPluginId })
+        .toMatchObject({ nativeHome: MUSE_NATIVE_HOME });
+      const spec = await entry?.getCliAuthSpec?.();
+      const home = join(directory, 'session-home');
+      const config = join(directory, 'selected-config');
+      const env = { HOME: home, USERPROFILE: home };
+      const auth = buildMuseNativeAuth({ access_token: 'fixture-access-token', api_key: 'fixture-inference-key',
+        api_base_url: 'https://api.meta.ai', obtained_via: 'native-login', mechanism: 'oauth' });
+      const writeAuth = (root: string, content = JSON.stringify(auth)) => {
+        mkdirSync(join(root, 'muse'), { recursive: true });
+        writeFileSync(join(root, 'muse', 'auth.json'), content);
+      };
+      writeAuth(join(home, '.config'));
+      await expect(spec?.detectAuthStatus?.({ resolvedPath: '/unused', processEnv: env }))
+        .resolves.toMatchObject({ state: 'logged_in', source: 'file' });
+      const selected = { ...env, XDG_CONFIG_HOME: config };
+      await expect(spec?.detectAuthStatus?.({ resolvedPath: '/unused', processEnv: selected }))
+        .resolves.toMatchObject({ state: 'logged_out', reason: 'missing_credentials' });
+      writeAuth(config, '{invalid');
+      await expect(spec?.detectAuthStatus?.({ resolvedPath: '/unused', processEnv: selected }))
+        .resolves.toMatchObject({ state: 'logged_out', reason: 'missing_credentials' });
+      writeAuth(config);
+      await expect(spec?.detectAuthStatus?.({ resolvedPath: '/unused', processEnv: selected }))
+        .resolves.toMatchObject({ state: 'logged_in', source: 'file' });
+      await expect(spec?.detectAuthStatus?.({ resolvedPath: '/unused', processEnv: { ...env, XDG_CONFIG_HOME: 'relative' } }))
+        .resolves.toMatchObject({ state: 'unknown', reason: 'probe_failed' });
+      await expect(spec?.detectAuthStatus?.({ resolvedPath: '/unused', processEnv: selected,
+        nativeExecution: { agentIsolation: { read: () => undefined }, cwd: directory,
+          processEnv: selected, signal: new AbortController().signal } }))
+        .resolves.toMatchObject({ state: 'unknown', reason: 'unsupported' });
+    } finally { await activated.dispose(); removeTempDirSync(directory); }
+  });
   it('reads implicit credentials from each invoking Session while preserving explicit environments', async () => {
     vi.stubEnv('HAPPIER_AUTH_METADATA_KEY', 'host-key');
     const spec = createNativeAgentCliAuthSpec(metadata({ environmentVariables: ['HAPPIER_AUTH_METADATA_KEY'] }));
