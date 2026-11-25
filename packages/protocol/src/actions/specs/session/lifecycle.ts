@@ -25,7 +25,12 @@ import { CheckpointCodeRollbackActionRequestSchema, CheckpointCodeRollbackResult
 import { SessionCheckpointRequestV1Schema, SessionCheckpointResultV1Schema, SessionRestoreRequestV1Schema, SessionRestoreResultV1Schema } from '../../../sessions/control/checkpoints/v1.js';
 import { SessionHandoffAbortRequestSchema, SessionHandoffCommitRequestSchema, SessionHandoffPrepareTargetResultGetRequestSchema, SessionHandoffPrepareTargetResultGetResponseSchema, SessionHandoffPrepareTargetRequestSchema, SessionHandoffPrepareTargetResumeRequestSchema, SessionHandoffPrepareTargetResumeResponseSchema, SessionHandoffStatusGetRequestSchema, SessionHandoffActionResultV1Schema, refineSessionHandoffStateTransferV3 } from '../../../sessions/control/handoff/handoffSchemas.js';
 import { SessionHandoffStateTransferSchema } from '../../../sessions/control/handoff/handoffTypes.js';
-import { SESSION_HANDOFF_SOURCE_EXPORT_FAILURE_CODE, SessionHandoffSourceExportFailureDetailsV1Schema } from '../../../sessions/control/handoff/handoffStatus.js';
+import {
+  SESSION_HANDOFF_SOURCE_EXPORT_FAILURE_CODE,
+  SESSION_HANDOFF_TARGET_IDENTITY_CONFLICT_CODE,
+  SessionHandoffSourceExportFailureDetailsV1Schema,
+  SessionHandoffTargetImportFailureDetailsV1Schema,
+} from '../../../sessions/control/handoff/handoffStatus.js';
 import { SESSION_HANDOFF_ACTION_ID_V1 } from '../../actionIds.js';
 import { HandoffTargetReplacementApprovalV1Schema } from '../../../sessions/control/handoff/handoffTargetReplacementApprovalV1.js';
 import { HandoffWorkspaceActionV1Schema } from '../../../sessions/control/handoff/workspaceSyncSchemas.js';
@@ -106,9 +111,15 @@ export const SessionHandoffInputFieldsSchema = lazyZodSchema(() => z.strictObjec
 export function projectSessionHandoffFailureDetails(
   actionId: string,
   failure: Readonly<{ errorCode: string; details?: unknown }>,
-): z.infer<typeof SessionHandoffSourceExportFailureDetailsV1Schema> | undefined {
-  if (actionId !== SESSION_HANDOFF_ACTION_ID_V1 || failure.errorCode !== SESSION_HANDOFF_SOURCE_EXPORT_FAILURE_CODE) return undefined;
-  return SessionHandoffSourceExportFailureDetailsV1Schema.safeParse(failure.details).data;
+) {
+  if (actionId !== SESSION_HANDOFF_ACTION_ID_V1) return undefined;
+  switch (failure.errorCode) {
+    case SESSION_HANDOFF_SOURCE_EXPORT_FAILURE_CODE:
+      return SessionHandoffSourceExportFailureDetailsV1Schema.safeParse(failure.details).data;
+    case SESSION_HANDOFF_TARGET_IDENTITY_CONFLICT_CODE:
+      return SessionHandoffTargetImportFailureDetailsV1Schema.safeParse(failure.details).data;
+  }
+  return undefined;
 }
 
 export const SessionHandoffInputSchema = lazyZodSchema(() => SessionHandoffInputFieldsSchema.check(z.superRefine(refineSessionHandoffStateTransferV3)));

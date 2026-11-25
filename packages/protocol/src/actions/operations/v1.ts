@@ -25,8 +25,13 @@ import { PluginActionFailureResponseV1Schema } from '../../plugins/actions/failu
 
 import { SessionForkStrategySchema } from '../../sessions/fork.js';
 import { SESSION_HANDOFF_ACTION_ID_V1 } from '../actionIds.js';
-import { SESSION_HANDOFF_SOURCE_EXPORT_FAILURE_CODE, SessionHandoffSourceExportFailureDetailsV1Schema,
-  SessionHandoffSourceStoppedV1Schema } from '../../sessions/control/handoff/handoffStatus.js';
+import {
+  SESSION_HANDOFF_SOURCE_EXPORT_FAILURE_CODE,
+  SESSION_HANDOFF_TARGET_IDENTITY_CONFLICT_CODE,
+  SessionHandoffSourceExportFailureDetailsV1Schema,
+  SessionHandoffSourceStoppedV1Schema,
+  SessionHandoffTargetImportFailureDetailsV1Schema,
+} from '../../sessions/control/handoff/handoffStatus.js';
 import { isProjectCheckoutRemovalActionIdV1 } from '../projectActionIdsV1.js';
 import { ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema } from '../projectSetupConsentFailure.js';
 import { ProjectWorkerNoAcceptanceFailureDetailsV1Schema, readProjectWorkerNoAcceptanceFailureV1 } from '../projectWorkerRefusal.js';
@@ -347,7 +352,12 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
 const ActionOperationHandoffExportFailureV1Schema = lazyZodSchema(() => z.strictObject({
   ...ActionOperationFailureV1Schema.shape,
   errorCode: z.literal(SESSION_HANDOFF_SOURCE_EXPORT_FAILURE_CODE),
-  details: SessionHandoffSourceExportFailureDetailsV1Schema,
+  details: z.pick(SessionHandoffSourceExportFailureDetailsV1Schema, { diagnostics: true }),
+}));
+const ActionOperationHandoffTargetImportFailureV1Schema = lazyZodSchema(() => z.strictObject({
+  ...ActionOperationFailureV1Schema.shape,
+  errorCode: z.literal(SESSION_HANDOFF_TARGET_IDENTITY_CONFLICT_CODE),
+  details: z.pick(SessionHandoffTargetImportFailureDetailsV1Schema, { diagnostics: true }),
 }));
 export type ActionOperationFailureV1 = Readonly<z.infer<typeof ActionOperationFailureV1ReadSchema>>;
 
@@ -368,7 +378,11 @@ export const ActionOperationFailureV1ReadSchema = lazyZodSchema(() => z.pipe(z.t
     ...(record.failureCause !== undefined ? { failureCause: readActionFailureCauseV1(record.failureCause) }
       : 'cause' in record ? { failureCause: UNKNOWN_ACTION_FAILURE_CAUSE_V1 } : {}),
   };
-}), z.union([ActionOperationFailureV1Schema, ActionOperationHandoffExportFailureV1Schema])));
+}), z.union([
+  ActionOperationFailureV1Schema,
+  ActionOperationHandoffExportFailureV1Schema,
+  ActionOperationHandoffTargetImportFailureV1Schema,
+])));
 
 /** Actual command/output target, independent of the operation's observation custody. */
 export const ProjectCommandAttachmentV1Schema = lazyZodSchema(() => z.strictObject({
@@ -626,8 +640,8 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
     context.addIssue({ code: 'custom', path: ['error'], message: 'Errors require failure settlement or an unconfirmed observation.' });
   }
   if (snapshot.actionId !== SESSION_HANDOFF_ACTION_ID_V1 && snapshot.error?.details
-    && 'diagnostics' in snapshot.error.details && snapshot.error.errorCode === SESSION_HANDOFF_SOURCE_EXPORT_FAILURE_CODE) {
-    context.addIssue({ code: 'custom', path: ['error', 'details'], message: 'Only Session handoff retains source export diagnostics.' });
+    && 'diagnostics' in snapshot.error.details) {
+    context.addIssue({ code: 'custom', path: ['error', 'details'], message: 'Only Session handoff retains handoff diagnostics.' });
   }
   if (snapshot.result !== undefined && snapshot.state !== 'succeeded') {
     // This new Action returns closed domain refusals, not physical success.

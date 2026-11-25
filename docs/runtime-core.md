@@ -3745,7 +3745,10 @@ identifies the linked source root, Claude projects directory, Session directory,
 or transcript file. These diagnostics contain fixed codes and omit paths,
 Session identifiers, and transcript content. The direct Action reply, current
 operation read, and exact request replay retain the same typed diagnostic.
-Replay also carries the existing source-stop recovery marker when recorded.
+The current operation read exposes confirmed source-stop recovery on
+`error.handoffRecovery`. Exact replay adds that coordinator-confirmed marker
+to its failure details. Operation settlement retains only the projected diagnostics
+from the executor's details.
 The older V1 operation RPC returns only the failure code and message. Earlier
 stored failures without diagnostics keep reading without them.
 A linked source remains exclusive. For a Session without a linked source, Claude export uses the admitted native
@@ -3764,8 +3767,11 @@ the import, and a byte-identical existing transcript can be reused. The CLI
 retains the typed refusal through member execution and the durable target job.
 `prepareTargetResult.get` returns its `failureCause` with phase
 `session_handoff.target_import`, the typed refusal code and, when supplied by the
-Agent, `nativeErrorCode`. This carrier omits paths, names and messages; path-kind
-diagnostics require the Action owner's closed failure-details contract.
+Agent, `nativeErrorCode`. The Action failure-details contract can carry the same
+closed diagnostics on `target_identity_conflict` through the direct reply, V2
+operation read and exact replay. This requires the target-job producer to attach
+the diagnostics to the Action failure. The current result-get carrier supplies
+the native code alone.
 
 `SessionHandle.watch` follows committed retained transcript rows through the shared socket source and delivers complete text before advancing its reconnect frontier. Provisional stream deltas do not become retained message events. Cancellation ends the watcher; credential and plugin-occurrence checks prevent further delivery after retirement.
 

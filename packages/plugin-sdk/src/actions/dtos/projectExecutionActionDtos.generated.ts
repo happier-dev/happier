@@ -330,9 +330,27 @@ export type ProjectExecutionActionResultById = {
                             pathKind: 'claude_projects_dir' | 'linked_source_root' | 'session_dir' | 'transcript_file';
                         };
                     }[];
-                    handoffRecovery?: undefined | {
-                        kind: 'session_handoff_source_stopped';
-                    };
+                };
+                error: string;
+                requestId?: string | undefined;
+                effectAttempted?: boolean | undefined;
+                failureCause?: ActionFailureCauseV1 | undefined;
+                setupRetry?: undefined | {
+                    runId: string;
+                    invocationId: string;
+                };
+                handoffRecovery?: undefined | {
+                    kind: 'session_handoff_source_stopped';
+                };
+            } | {
+                errorCode: 'target_identity_conflict';
+                details: {
+                    diagnostics: {
+                        code: 'invalid_session_id' | 'lookup_failed' | 'not_directory' | 'not_regular_file' | 'permission_denied' | 'root_mismatch' | 'transcript_content_mismatch' | 'transcript_identity_changed' | 'transcript_missing';
+                        details: {
+                            pathKind: 'claude_projects_dir' | 'session_dir' | 'transcript_file';
+                        };
+                    }[];
                 };
                 error: string;
                 requestId?: string | undefined;
@@ -3309,9 +3327,27 @@ export type ProjectExecutionActionResultById = {
                             pathKind: 'claude_projects_dir' | 'linked_source_root' | 'session_dir' | 'transcript_file';
                         };
                     }[];
-                    handoffRecovery?: undefined | {
-                        kind: 'session_handoff_source_stopped';
-                    };
+                };
+                error: string;
+                requestId?: string | undefined;
+                effectAttempted?: boolean | undefined;
+                failureCause?: ActionFailureCauseV1 | undefined;
+                setupRetry?: undefined | {
+                    runId: string;
+                    invocationId: string;
+                };
+                handoffRecovery?: undefined | {
+                    kind: 'session_handoff_source_stopped';
+                };
+            } | {
+                errorCode: 'target_identity_conflict';
+                details: {
+                    diagnostics: {
+                        code: 'invalid_session_id' | 'lookup_failed' | 'not_directory' | 'not_regular_file' | 'permission_denied' | 'root_mismatch' | 'transcript_content_mismatch' | 'transcript_identity_changed' | 'transcript_missing';
+                        details: {
+                            pathKind: 'claude_projects_dir' | 'session_dir' | 'transcript_file';
+                        };
+                    }[];
                 };
                 error: string;
                 requestId?: string | undefined;
@@ -6288,9 +6324,27 @@ export type ProjectExecutionActionResultById = {
                             pathKind: 'claude_projects_dir' | 'linked_source_root' | 'session_dir' | 'transcript_file';
                         };
                     }[];
-                    handoffRecovery?: undefined | {
-                        kind: 'session_handoff_source_stopped';
-                    };
+                };
+                error: string;
+                requestId?: string | undefined;
+                effectAttempted?: boolean | undefined;
+                failureCause?: ActionFailureCauseV1 | undefined;
+                setupRetry?: undefined | {
+                    runId: string;
+                    invocationId: string;
+                };
+                handoffRecovery?: undefined | {
+                    kind: 'session_handoff_source_stopped';
+                };
+            } | {
+                errorCode: 'target_identity_conflict';
+                details: {
+                    diagnostics: {
+                        code: 'invalid_session_id' | 'lookup_failed' | 'not_directory' | 'not_regular_file' | 'permission_denied' | 'root_mismatch' | 'transcript_content_mismatch' | 'transcript_identity_changed' | 'transcript_missing';
+                        details: {
+                            pathKind: 'claude_projects_dir' | 'session_dir' | 'transcript_file';
+                        };
+                    }[];
                 };
                 error: string;
                 requestId?: string | undefined;

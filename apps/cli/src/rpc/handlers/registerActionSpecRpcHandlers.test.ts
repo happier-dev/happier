@@ -15,6 +15,8 @@ import { createDirectTransferServerLifecycle } from '@/machines/transfer/directT
 import { createPreparedFilesystemTransferActionExecutor, projectPreparedFilesystemActionResult } from '@/machines/transfer/createPreparedFilesystemTransferActionExecutor';
 import { createDeploymentChildRequesterHarness } from '@/testkit/backends/deploymentChildRequesterHarness';
 
+import { handoffTargetImportDetailsCases } from '@/daemon/actionOperations/testFixtures/handoffTargetImportDetails';
+
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
 import {
     REQUIRED_GENERIC_ACTION_SPEC_RPC_SCOPES,
@@ -172,6 +174,22 @@ describe('ActionSpec-derived RPC registrar', () => {
         expect(module.unwrapActionResultForRpc('projects.script.run', failure)).toEqual(envelope);
         const wrongCode = { ...envelope, errorCode: 'handoff_failed' };
         expect(module.unwrapActionResultForRpc('session.handoff', { ...failure, errorCode: wrongCode.errorCode })).toEqual(wrongCode);
+    });
+
+    it.each(handoffTargetImportDetailsCases)('projects a target import refusal with $label', ({ details, public: isPublic }) => {
+        const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'target_identity_conflict',
+            error: 'Target import refused', details,
+            failureCause: { phase: 'session_handoff.target_import', errorClass: 'Error',
+                errorCode: 'target_identity_conflict', httpStatus: null } });
+        const { details: _privateDetails, ...envelope } = failure;
+        expect(module.unwrapActionResultForRpc('session.handoff', failure)).toEqual(isPublic ? failure : envelope);
+        expect(module.unwrapActionResultForRpc('projects.script.run', failure)).toEqual(envelope);
+        const wrongCode = { ...envelope, errorCode: 'source_export_failed' };
+        expect(module.unwrapActionResultForRpc('session.handoff', { ...failure, errorCode: wrongCode.errorCode })).toEqual(wrongCode);
+        if (isPublic) {
+            const replay = { ...failure, details: { ...details, handoffRecovery: { kind: 'session_handoff_source_stopped' } } };
+            expect(module.unwrapActionResultForRpc('session.handoff', replay)).toEqual(replay);
+        }
     });
 
     it('preserves public Run Action quota details through RPC projection', () => {

@@ -48,6 +48,14 @@ const baseSnapshot = {
 } as const;
 
 describe('Action operation v1 contract', () => {
+  it('accepts serialized target import diagnostics only on the matching Session handoff refusal', () => {
+    const details = { diagnostics: [{ code: 'transcript_identity_changed', details: { pathKind: 'transcript_file' } }] };
+    const error = { errorCode: 'target_identity_conflict', error: 'Target import refused', details };
+    const wire = { ...baseSnapshot, actionId: 'session.handoff', state: 'failed', startedAt: 110, settledAt: 120, error };
+    expect(ActionOperationSnapshotV1Schema.parse(JSON.parse(JSON.stringify(wire)))).toHaveProperty('error', error);
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...wire, actionId: 'session.fork' }).success).toBe(false);
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...wire, error: { ...error, errorCode: 'source_export_failed' } }).success).toBe(false);
+  });
   it('carries the pending SSH trust question on an admitted standalone task without a managed Machine', () => {
     const domainRef = { kind: 'systemTask', id: 'prepare-trust', taskKind: 'remote.ssh.bootstrapMachine.v1',
       prompt: { kind: 'ssh.trustHost', message: 'Trust this guest?', host: '192.168.64.7', keyType: 'ssh-ed25519',

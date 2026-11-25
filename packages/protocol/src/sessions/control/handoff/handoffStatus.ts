@@ -36,9 +36,15 @@ export const ClaudeHandoffTargetImportDiagnosticV1Schema = lazyZodSchema(() => z
 export type ClaudeHandoffTargetImportDiagnosticV1 = z.infer<typeof ClaudeHandoffTargetImportDiagnosticV1Schema>;
 
 export const SESSION_HANDOFF_SOURCE_EXPORT_FAILURE_CODE = 'source_export_failed' as const;
+export const SESSION_HANDOFF_TARGET_IDENTITY_CONFLICT_CODE = 'target_identity_conflict' as const;
 
 export const SessionHandoffSourceExportFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
   diagnostics: z.array(ClaudeHandoffExportDiagnosticV1Schema),
+  handoffRecovery: z.optional(SessionHandoffSourceStoppedV1Schema),
+}));
+
+export const SessionHandoffTargetImportFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  diagnostics: z.array(ClaudeHandoffTargetImportDiagnosticV1Schema),
   handoffRecovery: z.optional(SessionHandoffSourceStoppedV1Schema),
 }));
 
@@ -52,7 +58,7 @@ const MAX_RECOVERY_ACTIONS = 50;
 export const SESSION_HANDOFF_PREPARE_TARGET_FAILURE_MESSAGE_MAX_LENGTH = 2_000;
 
 export const SessionHandoffPrepareTargetFailureCodeSchema = lazyZodSchema(() => z.enum([
-  'target_identity_conflict',
+  SESSION_HANDOFF_TARGET_IDENTITY_CONFLICT_CODE,
   'agent_version_unsupported',
   'existing_session_state_unavailable',
   'existing_session_state_unsupported',

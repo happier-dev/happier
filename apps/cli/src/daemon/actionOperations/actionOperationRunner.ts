@@ -3,7 +3,7 @@ import { MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/
 import { randomUUID } from 'node:crypto';
 import { LOCAL_SERVICE_LAUNCHER_START_ACTION_ID_V1 } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { raceWithAbort } from '@happier-dev/cli-common/plugins/http';
-import { isProjectCheckoutRemovalActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { isProjectCheckoutRemovalActionIdV1, SESSION_HANDOFF_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { createPendingSessionBirth } from './pendingSessionBirth';
 import { MACHINE_REACHABILITY_ACTION_IDS_V1, MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
@@ -613,14 +613,15 @@ export function createActionOperationRunner(deps: Readonly<{
               }
             }
           } else {
-            const handoffRecovery = action.actionId === 'session.handoff' && nativeOutcome?.ok === false
+            const isHandoff = action.actionId === SESSION_HANDOFF_ACTION_ID_V1;
+            const handoffRecovery = isHandoff && nativeOutcome?.ok === false
               && nativeOutcome.details && typeof nativeOutcome.details === 'object'
               && 'handoffRecovery' in nativeOutcome.details
               ? ActionOperationFailureV1Schema.shape.handoffRecovery.safeParse(nativeOutcome.details.handoffRecovery)
               : null;
             const handoffDetails = projectSessionHandoffFailureDetails(action.actionId, executionResult);
             const failure = { errorCode: executionResult.errorCode, error: executionResult.error,
-              ...(handoffDetails ? { details: handoffDetails } : {}),
+              ...(handoffDetails ? { details: { diagnostics: handoffDetails.diagnostics } } : {}),
               ...(handoffRecovery?.success ? { handoffRecovery: handoffRecovery.data } : {}),
               ...(executionResult.requestId !== undefined ? { requestId: executionResult.requestId } : {}),
               ...(executionResult.effectAttempted !== undefined ? { effectAttempted: executionResult.effectAttempted } : {}),
@@ -646,6 +647,10 @@ export function createActionOperationRunner(deps: Readonly<{
                 })
                 : null;
             deps.store.fail(operationId, reviewedFailure?.success ? reviewedFailure.data : failure, failureResult);
+            if (isHandoff) {
+              const { details: _executorDetails, ...refusal } = executionResult;
+              return { ...refusal, ...(failure.details ? { details: failure.details } : {}) };
+            }
           }
           return executionResult;
         } catch (error) {
