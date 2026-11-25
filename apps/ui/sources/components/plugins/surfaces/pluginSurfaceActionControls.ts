@@ -12,6 +12,9 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 import { PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isDatabaseActionIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { isEnvironmentDatabaseAdmissionV1, projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizePluginUiMountedContributedActionReferenceV1, type PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -65,7 +68,8 @@ function resolveMountedControlAction(pluginId: string, action: PluginUiMountedAc
     const contributed = hostId?.success ? null : normalizePluginUiMountedContributedActionReferenceV1({
         callerPluginId: pluginId, action,
     });
-    return { hostId, contributed };
+    const environmentDatabaseCandidate = contributed !== null && isDatabaseActionIdV1(formatQualifiedPluginActionId(contributed));
+    return { hostId, contributed, environmentDatabaseCandidate };
 }
 
 type Binding = {
@@ -95,7 +99,7 @@ export function createPluginSurfaceActionControls(input: Readonly<{
     projectionScope?: ServerAccountScope;
     signal: AbortSignal;
     isCurrent(): boolean;
-    isActionAvailable?(): boolean;
+    canManageActions?(): boolean;
     captureCurrentBinding(): () => boolean;
 }>): PluginSurfaceActionControls {
     const controls = new Map<string, Binding>();
@@ -103,12 +107,19 @@ export function createPluginSurfaceActionControls(input: Readonly<{
     const inline = new Map<string, number>();
     let snapshot: readonly MountedPluginActionControl[] = Object.freeze([]);
     let slotSnapshot: readonly MountedPluginActionControl[] = snapshot;
-    const emptySnapshot: readonly MountedPluginActionControl[] = Object.freeze([]);
+    let environmentSnapshot = snapshot;
+    let environmentSlotSnapshot = snapshot;
+    const readVisible = (all: typeof snapshot, environment: typeof snapshot) =>
+        all.length === environment.length || input.canManageActions?.() !== false ? all : environment;
+    const canPresent = (action: Binding['action']) => action.environmentDatabaseCandidate || input.canManageActions?.() !== false;
     let disposed = false;
     const current = () => !disposed && !input.signal.aborted && input.isCurrent();
     const publish = () => {
         snapshot = Object.freeze([...controls.values()].map(binding => binding.view));
         slotSnapshot = inline.size === 0 ? snapshot : Object.freeze(snapshot.filter(view => !inline.has(view.id)));
+        environmentSnapshot = Object.freeze(snapshot.filter(view => controls.get(view.id)!.action.environmentDatabaseCandidate));
+        environmentSlotSnapshot = inline.size === 0 ? environmentSnapshot
+            : Object.freeze(environmentSnapshot.filter(view => !inline.has(view.id)));
         for (const listener of listeners) listener();
     };
     const placeInline = (id: string) => {
@@ -151,6 +162,7 @@ export function createPluginSurfaceActionControls(input: Readonly<{
             const subscription = options?.actionControlSubscription;
             if (!subscription || controls.has(payload.subscriptionId)) return createPluginSurfaceHostApiError('unavailable');
             const action = resolveMountedControlAction(input.pluginId, payload.action);
+            if (!canPresent(action)) return createPluginSurfaceHostApiError('unavailable', ['host_api_method_unavailable:actionControl']);
             const binding: Binding = { action, publish: subscription.publish,
                 abort: new AbortController(),
                 view: Object.freeze({ id: payload.subscriptionId, presentation: payload.presentation, busy: false,
@@ -185,7 +197,7 @@ export function createPluginSurfaceActionControls(input: Readonly<{
     };
 
     // The one person-admission path, shared by slot buttons and host inline editors.
-    const execute = async ({ hostId, contributed }: Binding['action'], preparation: PluginUiActionControlPreparationV1,
+    const execute = async ({ hostId, contributed, environmentDatabaseCandidate }: Binding['action'], preparation: PluginUiActionControlPreparationV1,
         signal: AbortSignal, requestId: string, reviewedInput?: PluginUiJsonValueV1): Promise<PluginUiActionControlExecutionV1> => {
         let execution: PluginUiActionControlExecutionV1;
         if (!hostId?.success && !contributed) execution = { ok: false, errorCode: 'invalid_action', error: 'invalid_action' };
@@ -206,10 +218,18 @@ export function createPluginSurfaceActionControls(input: Readonly<{
             if (!dispatch) {
                 return { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required', effectAttempted: false };
             }
-            const result = await dispatch(hostId?.success ? hostId.data : ACTION_INVOKE_ACTION_ID_V1,
-                hostId?.success ? preparation.input : { action: contributed!,
-                    ...(machineId ? { expectedContributorOccurrenceId: occurrenceId } : {}),
-                    ...(preparation.input === undefined ? {} : { input: preparation.input }) }, context);
+            const actionId = hostId?.success ? hostId.data : ACTION_INVOKE_ACTION_ID_V1;
+            const actionInput = hostId?.success ? preparation.input : { action: contributed!,
+                ...(machineId ? { expectedContributorOccurrenceId: occurrenceId } : {}),
+                ...(preparation.input === undefined ? {} : { input: preparation.input }) };
+            // The declaration can render the control before there are operands. Only the prepared
+            // Environment invocation takes the existing Home route with Machine Use.
+            if (environmentDatabaseCandidate && input.canManageActions
+                && !isEnvironmentDatabaseAdmissionV1(projectDeploymentReadAdmissionV1(actionId, actionInput))
+                && !input.canManageActions()) {
+                return { ok: false, errorCode: 'unavailable', error: 'unavailable', effectAttempted: false };
+            }
+            const result = await dispatch(actionId, actionInput, context);
             execution = PluginUiActionControlExecutionV1Schema.parse(projectNativeJsonValueForTransport(result));
         }
         return execution;
@@ -217,13 +237,14 @@ export function createPluginSurfaceActionControls(input: Readonly<{
     const commit = <Value>(binding: PluginUiActionBinding<Value>, value: Value,
         options?: Readonly<{ signal?: AbortSignal }>): Promise<unknown> => invokePluginUiActionBinding(binding, value, {
         signal: input.signal, preparationSignal: options?.signal,
-        available: input.isActionAvailable?.() !== false, isCurrent: current,
+        available: input.canManageActions?.() !== false, isCurrent: current,
         captureCurrentBinding: input.captureCurrentBinding,
         execute: (action, preparation, signal) => execute(resolveMountedControlAction(input.pluginId, action), preparation, signal, randomUUID()),
     });
     const press = async (id: string, reviewedInput?: PluginUiJsonValueV1): Promise<void> => {
         const binding = controls.get(id);
-        if (input.isActionAvailable?.() === false || !binding || !live(id, binding) || binding.view.busy || binding.view.presentation.disabled) return;
+        if (!binding || !live(id, binding) || binding.view.busy || binding.view.presentation.disabled
+            || !canPresent(binding.action)) return;
         const requestId = randomUUID();
         // Optional Machine admission can change without replacing the mounted
         // Account control. Bind authority to this preparation, not its lifetime.
@@ -283,8 +304,8 @@ export function createPluginSurfaceActionControls(input: Readonly<{
     };
     input.signal.addEventListener('abort', dispose, { once: true });
     return Object.freeze({ projectionScope: input.projectionScope,
-        getSnapshot: () => input.isActionAvailable?.() === false ? emptySnapshot : snapshot,
-        getSlotSnapshot: () => input.isActionAvailable?.() === false ? emptySnapshot : slotSnapshot, placeInline, subscribe: (listener: () => void) => {
+        getSnapshot: () => readVisible(snapshot, environmentSnapshot),
+        getSlotSnapshot: () => readVisible(slotSnapshot, environmentSlotSnapshot), placeInline, subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => { listeners.delete(listener); };
     }, handleRequest, press, commit, invalidatePreparations: () => {

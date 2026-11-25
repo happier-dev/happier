@@ -1110,8 +1110,9 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             { action, input: parsed.data.input }));
     };
     const isMethodAvailable = (method: PluginUiHostMethodV1, payload?: unknown): boolean => {
-        if ((method === 'executeAction' || method === 'admitAction'
-            || method === 'actionControl') && !canManageActions() && !isEnvironmentDatabaseCall(method, payload)) return false;
+        // Control registration carries presentation only. The control owner checks the prepared invocation.
+        if ((method === 'executeAction' || method === 'admitAction')
+            && !canManageActions() && !isEnvironmentDatabaseCall(method, payload)) return false;
         return method === 'context' || method === 'openSurface' || method === 'openConnectedAccounts'
             || (isInteractionCurrent() && (((canAdmitHostReads || hasAccountResources()) && (method === 'readResource' || method === 'watchResource'))
                 || !isDaemonOwnedPluginSurfaceMethod(method) || isDaemonInteractionEnabled(false)));
@@ -1389,7 +1390,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             },
             ...(areServerAccountScopesEqual(homeFamilyScope, getActiveServerAccountScope()) ? { projectionScope: homeFamilyScope } : {}),
             signal: mountLifetime.signal, isCurrent: isInteractionCurrent,
-            isActionAvailable: canManageActions,
+            canManageActions,
             captureCurrentBinding: () => {
                 const authorityKey = readMachineAuthorityKey(readActionInputFacts());
                 return () => isInteractionCurrent() && authorityKey === readMachineAuthorityKey(readActionInputFacts());

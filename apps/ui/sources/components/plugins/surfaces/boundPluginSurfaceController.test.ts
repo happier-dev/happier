@@ -1,6 +1,13 @@
 import {
     createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
 import {
+    DATABASE_EDITS_APPLY_ACTION_ID_V1,
+    DATABASE_STATEMENT_RUN_ACTION_ID_V1,
+} from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import type { PluginUiActionControlEventV1 } from '@happier-dev/protocol/plugins/ui';
+import {
     DaemonPluginActionSchemasReadResponseSchema,
     type PluginProjectedActionV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
@@ -28,7 +35,8 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { createDeferred, createMachineFixture, renderHook, renderScreen } from '@/dev/testkit';
-import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createActionExecutorBoundaryFixture, createUiActionExecutorBoundary } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { log } from '@/log';
 import { t } from '@/text';
@@ -153,7 +161,7 @@ beforeEach(() => {
         machineListStatusByServerId: { [FACTS.serverId]: 'idle' } });
 });
 
-it.each(['own', 'parent'] as const)('keeps a Can-use plugin view readable while withdrawing live Action methods (%s binding)', bindingOwner => {
+it.each(['own', 'parent'] as const)('keeps a Can-use plugin view readable while withdrawing unscoped execution (%s binding)', async bindingOwner => {
     const previous = storage.getState();
     onTestFinished(() => storage.setState(previous));
     const shared = createMachineFixture({ id: FACTS.machineId, isShared: true,
@@ -167,7 +175,15 @@ it.each(['own', 'parent'] as const)('keeps a Can-use plugin view readable while 
     expect(controller.installedMethods).toContain('readResource');
     expect(controller.installedMethods).toContain('context');
     expect(controller.installedMethods).not.toContain('executeAction');
-    expect(controller.installedMethods).not.toContain('actionControl');
+    if (parent) {
+        expect(controller.installedMethods).not.toContain('actionControl');
+    } else {
+        expect(controller.installedMethods).toContain('actionControl');
+        await expect(Promise.resolve(controller.hostApi.handleRequest(request('actionControl', { kind: 'bind',
+            subscriptionId: 'unscoped', action: 'projects.compute.exec', presentation: { title: 'Run' } }), {
+            actionControlSubscription: { retain: () => {}, publish: () => {} },
+        }))).resolves.toMatchObject({ code: 'unavailable' });
+    }
     expect(controller.actionsReadOnly).toBe(true);
     storage.setState({ machineListByServerId: { [FACTS.serverId]: [{ ...shared, access: { ...shared.access!, role: 'manage' } }] } });
     expect(controller.installedMethods).toContain('executeAction');
@@ -196,6 +212,92 @@ it('admits Can-use executeAction only for a database Action on an Environment da
         .resolves.toMatchObject(methodRefusal);
     await expect(Promise.resolve(controller.hostApi.handleRequest(request('executeAction', { action: 'install', input: {} }))))
         .resolves.toMatchObject(methodRefusal);
+});
+
+it('runs and applies through a Can-use mount, preserving exact review and Environment refusals', async () => {
+    const shared = createMachineFixture({ id: FACTS.machineId, isShared: true,
+        access: { role: 'use', accessState: 'ready', resourceMode: 'plain', custodian: { accountId: 'owner', displayName: 'Owner' } } });
+    const owned = storage.getState().machineListByServerId[FACTS.serverId]!;
+    const run = parseQualifiedPluginActionId(DATABASE_STATEMENT_RUN_ACTION_ID_V1);
+    const apply = parseQualifiedPluginActionId(DATABASE_EDITS_APPLY_ACTION_ID_V1);
+    if (!run || !apply) throw new Error('Invalid database Action identity');
+    const target = { kind: 'deployment_service', environment: { serverId: FACTS.serverId, projectSourceId: 'source',
+        environmentId: 'environment' }, deploymentId: 'deployment', targetLinkId: 'link', serviceId: 'database', database: 'app' };
+    const statement = { target, mode: 'read', executionMode: 'transaction', operation: 'statement.run',
+        statements: [{ sql: 'SELECT 1', parameters: [] }] };
+    const reviewed = { target, operation: 'edits.apply', relation: { schema: 'public', name: 'dbw_f3' },
+        changes: [{ kind: 'insert', values: [{ column: 'id', value: { kind: 'default' } }] }] };
+    let revoked = false;
+    const effects: string[] = [];
+    const executor = createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
+        invokeContributedAction: async ({ action, context }) => {
+            expect(context).toMatchObject({ authority: 'present_user', actionCaller: { kind: 'host' } });
+            expect(context).not.toHaveProperty('chosenMachine');
+            if (action.localId === apply.localId) {
+                expect(context.presentUserApproval).toMatchObject({ actionId: ACTION_INVOKE_ACTION_ID_V1 });
+                if (revoked) return { ok: false, errorCode: 'database_not_an_editor', error: 'database_not_an_editor', effectAttempted: false };
+            }
+            effects.push(action.localId);
+            return { ok: true, result: null };
+        },
+    }), CURRENT_ACCOUNT_LIFETIME.scope.accountId);
+    const execute = createFrontDoorActionExecute(executor);
+    async function exercise(editor: boolean) {
+        storage.setState({ machineListByServerId: { [FACTS.serverId]: editor ? [shared] : owned } });
+        const controller = createBoundPluginSurfaceController({
+            facts: { ...FACTS, pluginId: run.pluginId, executionOrigin: {
+                ...FACTS.executionOrigin, materializationRef: { ...FACTS.executionOrigin.materializationRef, pluginId: run.pluginId },
+            }, resolveContributedAction: identity => ({
+                ...resolveDaemonTargetAction(identity), occurrenceId: FACTS.occurrenceId,
+                ...(identity.localId === apply.localId ? { confirmation: { title: 'Apply', mountedReview: 'exact_input' } } : {}),
+            }) },
+            binding: { executeHostAction: execute },
+        });
+        const controlRequest = (payload: unknown) => ({ ...request('actionControl', payload),
+            surface: controller.surfaceContext });
+        let input: PluginUiJsonValueV1 = statement;
+        const events: PluginUiActionControlEventV1[] = [];
+        async function bind(id: string, action: string, title: string) {
+            const binding = await controller.hostApi.handleRequest(controlRequest({ kind: 'bind',
+                subscriptionId: id, action, presentation: { title } }), { actionControlSubscription: {
+                retain: () => {},
+                publish: event => {
+                    events.push(event);
+                    if (event.kind === 'prepare') void controller.hostApi.handleRequest(controlRequest({ kind: 'prepared',
+                        subscriptionId: id, requestId: event.requestId, preparation: { input } }));
+                },
+            } });
+            expect(binding).toBeNull();
+        }
+        try {
+            // Review evidence belongs to the Action's author, as in the linked Workbench.
+            const controls = controller.actionControls!;
+            await bind('run', run.localId, 'Run');
+            await bind('apply', apply.localId, 'Apply to Production');
+            expect(controls.getSnapshot()).toMatchObject([{ id: 'run' }, { id: 'apply' }]);
+            await controls.press('run');
+            expect(events.at(-1), JSON.stringify(events.at(-1))).toMatchObject({ kind: 'settled', execution: { ok: true } });
+            input = reviewed;
+            await controls.press('apply', reviewed);
+            expect(events.at(-1), JSON.stringify(events.at(-1))).toMatchObject({ kind: 'settled', execution: { ok: true } });
+            if (editor) {
+                input = { ...reviewed, changes: [] };
+                await controls.press('apply', reviewed);
+                expect(events.at(-1)).toMatchObject({ execution: { ok: false, errorCode: 'approval_stale' } });
+                input = { ...statement, target: { kind: 'manual', associationId: 'other' } };
+                await controls.press('run');
+                expect(events.at(-1)).toMatchObject({ kind: 'settled',
+                    execution: { ok: false, errorCode: 'unavailable', effectAttempted: false } });
+                revoked = true;
+                input = reviewed;
+                await controls.press('apply', reviewed);
+                expect(events.at(-1)).toMatchObject({ kind: 'settled', execution: { ok: false, errorCode: 'database_not_an_editor' } });
+            }
+        } finally { controller.dispose(); }
+    }
+    await exercise(false);
+    await exercise(true);
+    expect(effects).toEqual([run.localId, apply.localId, run.localId, apply.localId]);
 });
 
 describe('mounted host Resource admission', () => {
