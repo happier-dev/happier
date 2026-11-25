@@ -186,7 +186,7 @@ const HostedPersonalHomeClaim = React.memo(function HostedPersonalHomeClaim(prop
     const { scope } = props;
     const control = useLocalRelayRuntimeControl({ runner: props.runner, actionScope: scope, onApprovalPending: props.requestApproval });
     const [claiming, setClaiming] = React.useState(false);
-    const [failed, setFailed] = React.useState(false);
+    const [notice, setNotice] = React.useState<string | null>(null);
     const profile = getServerProfileById(scope.serverId);
     const purpose = control.status?.purpose;
     const hostsThisHome = !control.isUnavailable
@@ -196,16 +196,19 @@ const HostedPersonalHomeClaim = React.memo(function HostedPersonalHomeClaim(prop
 
     const makeOwner = React.useCallback(async () => {
         setClaiming(true);
-        setFailed(false);
+        setNotice(null);
         try {
             const outcome = await control.claimOwner(scope.accountId);
-            // A refusal is data (`HomeOwnerClaimCommandOutputV1`), not a task failure. An owner
-            // already present is not a failure either: the Home re-read below shows who it is.
             const answer = outcome.status === 'completed'
                 ? HomeOwnerClaimCommandOutputV1Schema.safeParse(outcome.result.data)
                 : null;
-            setFailed(!answer?.success
-                || (answer.data.result.status !== 'claimed' && answer.data.result.status !== 'already_owned'));
+            switch (answer?.success ? answer.data.result.status : undefined) {
+                case 'claimed': break;
+                case 'already_owned': setNotice(t('homeGovernance.claim.hostAlreadyOwned')); break;
+                case 'target_inactive': setNotice(t('homeGovernance.claim.hostAccountInactive')); break;
+                case 'target_not_found': setNotice(t('homeGovernance.errorAccountNotFound')); break;
+                default: setNotice(t('homeGovernance.claim.hostFailed')); break;
+            }
             // Whatever the command answered (claimed, or someone already owns it), the Home says who owns it now.
             await refreshHomeGovernanceSnapshot(scope);
         } finally {
@@ -221,9 +224,9 @@ const HostedPersonalHomeClaim = React.memo(function HostedPersonalHomeClaim(prop
                 testID="home-claim-host"
                 tone="neutral"
                 title={t('homeGovernance.claim.hostTitle', { home: props.homeName })}
-                description={failed ? t('homeGovernance.claim.hostFailed') : t('homeGovernance.claim.hostBody')}
-                accessibilityLiveRegion={failed ? 'assertive' : undefined}
-                action={{
+                description={notice ?? t('homeGovernance.claim.hostBody')}
+                accessibilityLiveRegion={notice ? 'assertive' : undefined}
+                action={notice ? undefined : {
                     label: t('homeGovernance.claim.makeOwner'),
                     onPress: () => { void makeOwner(); },
                     loading: claiming,

@@ -215,7 +215,11 @@ describe('HomeClaimSetup on the hosting desktop', () => {
         expect(screen.getTextContent()).not.toContain('homeGovernance.claim.hostFailed');
     });
 
-    it('says the claim did not happen when the command refuses the Account, and still re-reads the Home', async () => {
+    it.each([
+        { result: { status: 'target_inactive' }, message: 'homeGovernance.claim.hostAccountInactive' },
+        { result: { status: 'target_not_found' }, message: 'homeGovernance.errorAccountNotFound' },
+        { result: { status: 'already_owned', activeOwnerCount: 1 }, message: 'homeGovernance.claim.hostAlreadyOwned' },
+    ])('explains $result.status without repeating the local claim and still re-reads the Home', async ({ result, message }) => {
         const serverId = await addPersonalHome();
         harness.answer(serverId, GOVERNANCE_PATH, { status: 409, body: { error: 'home_governance_setup_required' } });
         const desktop = createDesktopBridge({ kind: 'personal-home', canonicalServerUrl: PERSONAL_HOME_URL });
@@ -232,10 +236,12 @@ describe('HomeClaimSetup on the hosting desktop', () => {
             intent: 'initial_claim',
             homeServerIdentityId: 'srv_personal_home_1',
             targetAccountId: 'owner',
-            result: { status: 'target_inactive' },
+            result,
         });
 
-        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('homeGovernance.claim.hostFailed'));
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.findByTestId('home-claim-host-make-owner')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('common.retry');
         await waitForHomeGovernance(() => expect(harness.requestsFor(GOVERNANCE_PATH).length).toBeGreaterThan(0));
     });
 
