@@ -5,14 +5,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1, AutomationActionAdmitRequestV1Schema, AutomationActionAdmitResultV1Schema } from '@happier-dev/protocol/automations/automationActionOccurrenceV1';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { WorkflowRunListResultV1Schema, WorkflowRunGetResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { AutomationDefinitionDetailSchema, buildAccountStoredContentCompatibilityHttpHeadersV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 import { fetchJson } from '../../src/testkit/http';
+import { createIsolatedFakeClaudeControlShim } from '../../src/testkit/fakeClaude';
 import { waitFor } from '../../src/testkit/timing';
 
 import { WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -27,13 +28,9 @@ import { assertAutomationStatusPublicationEconomy } from '../../src/testkit/auto
 describe('Automations everywhere: selected attached summaries', () => {
   let fixture: TeamSetupFFixture | undefined;
   let savedCheckEndpoint: ReturnType<typeof createServer> | undefined;
-  let consentClient: Awaited<ReturnType<(typeof import('@happier-tests/ui-action-client'))['connectUiPersonActionClient']>> | undefined;
   afterEach(async () => {
     try {
-      try { await consentClient?.close(); } finally {
-        consentClient = undefined;
-        await fixture?.stop();
-      }
+      await fixture?.stop();
     } finally {
       fixture = undefined;
       const endpoint = savedCheckEndpoint;
@@ -177,7 +174,11 @@ describe('Automations everywhere: selected attached summaries', () => {
     })).toMatchObject({ ok: true, result: { sets: [], attached: [], skippedNotSharedCount: 0, nextCursor: null } });
     // A direct person grant, without a Team audience, must join the source
     // Trigger to the invoking Account's consent and actual Run.
-    const actorMachine = await fixture.enrollDaemon(reader, { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
+    const actorAgent = await createIsolatedFakeClaudeControlShim({
+      testDir, invocationId: 'attached-consent', captureEnvironmentKeys: [], logFullStdin: false,
+    });
+    const actorMachine = await fixture.enrollDaemon(reader, { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
+      HAPPIER_CLAUDE_PATH: actorAgent.executablePath } });
     const actorSession = await fixture.assertKnownGoodSessionControl(reader, actorMachine);
     const actorSubject = { kind: 'machine', ...actorMachine.target };
     const actorGrant = await reader.executeAsPerson('machines.access.grant.set', { ...actorMachine.target,
@@ -218,41 +219,46 @@ describe('Automations everywhere: selected attached summaries', () => {
     if (!beforeConsent.ok) throw new Error(beforeConsent.errorCode);
     expect(WorkflowTriggerListResultV1Schema.parse(beforeConsent.result).attached?.map(row => row.triggerId).sort())
       .toEqual(directTriggers.map(row => row.triggerId).sort());
-    // Keep the real UI origin alive while its Inbox consent replays the command.
-    const { connectUiPersonActionClient } = await import('@happier-tests/ui-action-client');
-    const actorHome = { serverUrl: fixture.actionServerApiUrl, addressAnchorUrl: fixture.server.baseUrl,
-      accountSecret: reader.auth.accountSigningSeed };
-    const connectActor = () => connectUiPersonActionClient(actorHome);
-    const actorHomeIdentityId = fixture.serverId;
-    const actorContext = (serverId: string) => ({ surface: 'ui' as const, authority: 'present_user' as const,
-      actionCaller: { kind: 'host' as const }, serverId, serverIdentityId: actorHomeIdentityId, actionRequestId: randomUUID() });
-    consentClient = await connectActor();
-    const invoked = await consentClient.executeConfirmed('machines.command.run', {
-      command: process.platform === 'win32' ? 'echo checked' : 'printf checked',
-    }, { ...actorContext(consentClient.serverId), defaultSessionId: actorSession.sessionId,
-      presentUserConfirmation: { actionId: 'machines.command.run' },
-      externalActionTarget: { kind: 'machine', machineId: actorMachine.target.machineId,
-        project: { machineId: actorMachine.target.machineId, directory: actorMachine.workspaceDir } } });
-    expect(invoked.ok, JSON.stringify(invoked)).toBe(true);
-    if (!invoked.ok) throw new Error(invoked.errorCode);
-    const approval = ActionApprovalRequestCreatedResultSchema.parse(invoked.result);
-    const readDirectApproval = async (artifactId = approval.artifactId) => {
+    const readDirectApproval = async (artifactId: string) => {
       const result = await reader.execute('approval.request.get', { artifactId });
       expect(result.ok, JSON.stringify(result)).toBe(true);
       if (!result.ok) throw new Error(result.errorCode);
-      return ApprovalRequestGetResultV1Schema.parse(result.result).request;
+      const request = ApprovalRequestGetResultV1Schema.parse(result.result).request;
+      if (!('automaticChecks' in request)) throw new Error('Direct-person receipt is missing automatic checks');
+      return request;
     };
-    expect(await readDirectApproval()).toMatchObject({ status: 'open', automaticChecks: { phase: 'consent',
-      consents: [expect.objectContaining(directSource)] } });
-    const allowed = await consentClient.executeConfirmed('approval.request.decide', {
-      artifactId: approval.artifactId, decision: 'approve', triggerConsent: { ...directSource, decision: 'allow' },
-    }, actorContext(consentClient.serverId));
-    expect(allowed, JSON.stringify(allowed)).toMatchObject({ ok: true });
-    await waitFor(async () => (await readDirectApproval()).status === 'executed',
-      { context: 'Direct-person consent check and original command settle', failFast: true });
-    expect(await readDirectApproval()).toMatchObject({ execution: { ok: true } });
-    await consentClient.close();
-    consentClient = undefined;
+    const consentCommand = async (command: string, prompt: object) => {
+      const result = await fixture!.executeSessionMcpAction(reader, {
+        sessionId: actorSession.sessionId, logPath: actorAgent.logPath,
+      }, 'machines.command.run', { command });
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      if (!result.ok) throw new Error(result.errorCode);
+      const { artifactId } = ActionApprovalRequestCreatedResultSchema.parse(result.result);
+      const opened = await readDirectApproval(artifactId);
+      expect(opened).toMatchObject(prompt);
+      await reader.withPersonActionClient(async execute => {
+        const allowed = await execute('approval.request.decide', {
+          artifactId, decision: 'approve', triggerConsent: { ...directSource, decision: 'allow' },
+        });
+        expect(allowed, JSON.stringify(allowed)).toMatchObject({ ok: true });
+        if (opened.automaticChecks?.humanApprovalRequired && !opened.automaticChecks.humanDecision) {
+          const approved = await execute('approval.request.decide', { artifactId, decision: 'approve' });
+          expect(approved, JSON.stringify(approved)).toMatchObject({ ok: true });
+        }
+      });
+      let settled = await readDirectApproval(artifactId);
+      await waitFor(async () => {
+        settled = await readDirectApproval(artifactId);
+        return settled.status === 'executed';
+      }, { context: 'Direct-person consent check and original command settle', failFast: true }).catch(cause => {
+        throw new Error(JSON.stringify({ status: settled.status, phase: settled.automaticChecks?.phase,
+          consents: settled.automaticChecks?.consents.map(consent => consent.decision),
+          humanApproval: settled.automaticChecks?.humanDecision?.kind, executionError: settled.execution?.errorCode }), { cause });
+      });
+      expect(settled).toMatchObject({ execution: { ok: true } });
+    };
+    await consentCommand(process.platform === 'win32' ? 'echo checked' : 'printf checked',
+      { status: 'open', automaticChecks: { phase: 'consent', consents: [expect.objectContaining(directSource)] } });
     const consentIndex = await fetchJson<unknown>(`${fixture.server.baseUrl}${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`, {
       headers: { Authorization: `Bearer ${reader.credentials.token}`,
         ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) },
@@ -302,27 +308,8 @@ describe('Automations everywhere: selected attached summaries', () => {
     expect(await reader.execute('workflow.trigger.list', { subject: actorSubject })).toMatchObject({ ok: true,
       result: { attached: expect.arrayContaining([expect.objectContaining({ triggerId: directSource.triggerId,
         lastRun: expect.objectContaining({ id: actorRun.id }) })]) } });
-    // A new real UI client reads the paused index through ordinary composition.
-    consentClient = await connectActor();
-    const renewed = await consentClient.executeConfirmed('machines.command.run', {
-      command: process.platform === 'win32' ? 'echo checked again' : 'printf checked-again',
-    }, { ...actorContext(consentClient.serverId), defaultSessionId: actorSession.sessionId,
-      presentUserConfirmation: { actionId: 'machines.command.run' },
-      externalActionTarget: { kind: 'machine', machineId: actorMachine.target.machineId,
-        project: { machineId: actorMachine.target.machineId, directory: actorMachine.workspaceDir } } });
-    expect(renewed.ok, JSON.stringify(renewed)).toBe(true);
-    if (!renewed.ok) throw new Error(renewed.errorCode);
-    const renewedApproval = ActionApprovalRequestCreatedResultSchema.parse(renewed.result);
-    expect(await readDirectApproval(renewedApproval.artifactId)).toMatchObject({ automaticChecks: { phase: 'consent' } });
-    const renewedAllow = await consentClient.executeConfirmed('approval.request.decide', {
-      artifactId: renewedApproval.artifactId, decision: 'approve', triggerConsent: { ...directSource, decision: 'allow' },
-    }, actorContext(consentClient.serverId));
-    expect(renewedAllow, JSON.stringify(renewedAllow)).toMatchObject({ ok: true });
-    await waitFor(async () => (await readDirectApproval(renewedApproval.artifactId)).status === 'executed',
-      { context: 'Second direct-person consent check settles', failFast: true });
-    expect(await readDirectApproval(renewedApproval.artifactId)).toMatchObject({ execution: { ok: true } });
-    await consentClient.close();
-    consentClient = undefined;
+    await consentCommand(process.platform === 'win32' ? 'echo checked again' : 'printf checked-again',
+      { automaticChecks: { phase: 'consent' } });
     const renewedIndex = await fetchJson<unknown>(`${fixture.server.baseUrl}${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`, { headers: actorHeaders });
     expect(renewedIndex.status).toBe(200);
     const renewedConsent = ActionAutomationIndexV1Schema.parse(renewedIndex.data).rows.find(row =>
