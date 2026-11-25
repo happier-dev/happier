@@ -8,6 +8,7 @@ import { SETTINGS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/settin
 import { SESSION_AWARENESS_OPERATIONAL_PRIMARY_PRECEDENCE_V1, SessionAwarenessProjectionV1Schema, type SessionOperationalReasonV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import { SessionActivityCompatibilityResultV1Schema } from '@happier-dev/protocol/sessions/awareness/action';
 import { PluginUiHostApiErrorCodeV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { ActionAutomationNoticeV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { VoiceAttemptFailureKindSchema, VoiceAttemptRecoveryActionSchema } from '@happier-dev/protocol/voice/attemptPresentation';
 import { WorkflowValidationIssueV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { ConnectedServiceCredentialHealthStatusV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
@@ -577,7 +578,13 @@ export function redactVoiceActionExecutionResultForProvider(
       return { ok: false, errorCode: 'privacy_disabled', error: 'privacy_disabled' };
     }
     const voiceApprovalGuidance = readVoiceApprovalGuidance(record.voiceApprovalGuidance);
-    return { ok: true, result: voiceApprovalGuidance ? { ...body, voiceApprovalGuidance } : result };
+    // A skipped or unchecked Automation is the person's to hear; only the typed notice passes.
+    const automationNotices = Array.isArray(record.automationNotices) ? record.automationNotices.flatMap(notice => {
+      const parsed = ActionAutomationNoticeV1Schema.safeParse(notice);
+      return parsed.success ? [parsed.data] : [];
+    }) : [];
+    return { ok: true, result: voiceApprovalGuidance ? { ...body, voiceApprovalGuidance } : result,
+      ...(automationNotices.length ? { automationNotices } : {}) };
   }
   return redactVoiceToolResultForProvider(toolName, value, prefs);
 }

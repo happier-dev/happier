@@ -60,6 +60,9 @@ describe('redactVoiceToolResultValue', () => {
       failureCause: { phase: 'dispatch', errorCode: null, errorClass: 'Error', httpStatus: null } },
     { ok: false, toolName: 'workflow_run_start', errorCode: 'approval_result_held', error: 'approval_result_held' },
     { ok: true, toolName: 'memorySearch', result: { hits: [] } },
+    // A skipped enabled check stays visible to the person (02-action-triggers.md R17/R24 Skip notice).
+    { ok: true, toolName: 'connected_services_authentication_begin_connect', result: { status: 'awaitingOAuth', attemptId: 'attempt' },
+      automationNotices: [{ code: 'action_automation_skipped', reason: 'machineRequired', automationId: 'automation', triggerId: 'trigger', workflowId: 'workflow' }] },
   ])('keeps the reverse Voice receipt parseable ($errorCode)', ({ toolName, ...receipt }) => {
     expect(UiActionDispatchResultV1Schema.safeParse({ v: 1, execution: receipt }).success).toBe(true);
     const execution = redactVoiceActionExecutionResultForProvider(toolName,
