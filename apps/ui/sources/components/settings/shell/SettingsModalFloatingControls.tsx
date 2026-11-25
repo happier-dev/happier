@@ -11,7 +11,7 @@ import {
 } from '@/components/settings/navigation/settingsRouteRegistry';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { DefaultBackButton } from '@/components/navigation/Header';
-import { resolveSettingsRouteTitleKey } from '@/components/settings/navigation/settingsRouteRegistry';
+import { useSettingsParentTitle } from '@/components/settings/navigation/settingsRouteRegistry';
 import { NavigationBackChromeProvider } from '@/components/ui/layout/NavigationBackChrome';
 import { useSettingsRailVisible } from './settingsRailVisibility';
 import { useNavigationTitleChromePublisher, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
@@ -193,8 +193,7 @@ export function SettingsFloatingControlsHost(props: Readonly<{
     const setChromeBack = publisher?.setBack;
     const rootPhoneHost = chromeShowsTitle && props.collectionRootPathname === undefined;
     // The bar names the parent; the page names itself.
-    const parentTitleKey = resolveSettingsRouteTitleKey(back.parentPathname);
-    const parentTitle = parentTitleKey ? t(parentTitleKey) : undefined;
+    const parentTitle = useSettingsParentTitle(back.parentPathname);
     const navigationBack = React.useMemo(() => back.visible
         ? <SettingsBarBackButton onPress={back.handleBack} parentTitle={parentTitle} /> : null, [back.handleBack, back.visible, parentTitle]);
     React.useEffect(() => {

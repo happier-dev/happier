@@ -3,7 +3,7 @@ import { ownChromeHeaderLeft } from '@/components/navigation/ownChromeHeaderItem
 import type { NativeStackNavigationOptions } from '@react-navigation/native-stack';
 import { useLocalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 
-import type { TranslationKeyNoParams } from '@/text';
+import { t, type TranslationKeyNoParams } from '@/text';
 import { DefaultBackButton } from '@/components/navigation/Header';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -238,6 +238,17 @@ export function useSettingsParentBack(tag: string, presentation?: SettingsParent
     return { parentPathname, goToParent };
 }
 
+/**
+ * The name a settings page's Back gives the page it returns to: one Team's own page by that Team's name, as its
+ * header names it; any other page by its registry title. Every settings Back (the phone bar's and the floating
+ * one) takes it from here.
+ */
+export function useSettingsParentTitle(parentPathname: string | null, translate: Translate = t): string | undefined {
+    const teamTitle = useTeamRouteTitle(parentPathname);
+    const parentTitleKey = resolveSettingsRouteTitleKey(parentPathname);
+    return teamTitle ?? (parentTitleKey ? translate(parentTitleKey) : undefined);
+}
+
 function SettingsParentBackButton({
     accessibilityLabel,
     tintColor,
@@ -252,22 +263,19 @@ function SettingsParentBackButton({
 }>): React.ReactElement | null {
     const pathname = usePathname();
     const { parentPathname, goToParent } = useSettingsParentBack('SettingsParentBackButton.back', { machineAddPushesWays: true });
-    // A parent that is one Team's page is named by that Team, as its own header names it.
-    const teamTitle = useTeamRouteTitle(parentLabel ? parentPathname : null);
+    const parentTitle = useSettingsParentTitle(parentLabel ? parentPathname : null, parentLabel);
 
     if (!shouldShowSettingsParentBackButton({ pathname, hideOnTopLevel })) {
         return null;
     }
 
-    const parentTitleKey = parentLabel ? resolveSettingsRouteTitleKey(parentPathname) : null;
     // The one Back of a phone on every platform: Android and the web draw it in the app's bar, iPhone stands it
     // in the native bar as its own item (`unstable_headerLeftItems`, without the shared glass background).
     return React.createElement(DefaultBackButton, {
         accessibilityLabel,
         ...(tintColor ? { tintColor } : {}),
         onPress: goToParent,
-        ...(parentLabel && teamTitle ? { label: teamTitle }
-            : parentLabel && parentTitleKey ? { label: parentLabel(parentTitleKey) } : {}),
+        ...(parentLabel && parentTitle ? { label: parentTitle } : {}),
     });
 }
 
