@@ -904,7 +904,7 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
     const encryptedArtifacts = accountMode === 'e2ee'
         ? createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: accountMode }) : null;
     let artifact = {
-        id: SAVED_TRIGGER_WORKFLOW_ID, ownerAccountId: 'account-a', access: 'owner', encryptionMode: 'plain',
+        id: SAVED_TRIGGER_WORKFLOW_ID, ownerAccountId: 'account-a', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
         header: encodePlainArtifactStoredContent(WorkflowDefinitionArtifactHeaderV1Schema.parse({ kind: 'workflow-definition.v1',
             definitionId: SAVED_TRIGGER_WORKFLOW_ID, revision: { headerVersion: 1, bodyVersion: 1 },
             metadata: { title: 'Saved workflow' }, previewSteps: [] })),
@@ -970,6 +970,13 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
         if (request.path === '/v1/features/authenticated') return Response.json(features);
         if (request.path === '/v1/account/encryption/currentness') {
             return Response.json(currentness);
+        }
+        if (!encryptedArtifacts && request.path === '/v1/artifacts/read' && request.method === 'POST') {
+            const { createArtifactReadBatchHttpResponse } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+            return createArtifactReadBatchHttpResponse(request.body, artifactId =>
+                includeSavedArtifact && artifactId === artifact.id
+                    ? { artifactId, ok: true, artifact, recipientCensus: null }
+                    : { artifactId, ok: false, error: 'artifact_not_found', status: 404, retryable: false });
         }
         if (encryptedArtifacts && request.path.startsWith('/v1/artifacts')) {
             if (request.method === 'POST' && request.path === '/v1/artifacts') {
@@ -1187,7 +1194,17 @@ describe('WorkflowEditorHostScreen composition', () => {
             .toBe(title);
     });
 
-    it('presents the Account Action Machine Skip after native Save while agent Save retains its refusal without a dialog', async () => {
+    it('publishes a named Account Action Machine Skip after native Save and leaves agent refusals with their caller', async () => {
+        const { readPresentationNotices, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
+        const expectNamedSkip = async (workflow: string) => {
+            const message = t('workflows.triggers.checks.skippedNeedsMachine', { workflow });
+            await vi.waitFor(() => expect(readPresentationNotices().filter(notice => notice.message === message))
+                .toMatchObject([{ message, severity: 'info' }]));
+            for (const notice of readPresentationNotices()) {
+                if (notice.message === message) retirePresentationNotice(notice.key);
+            }
+            expect(readAlert()).toBeUndefined();
+        };
         const boundary = await serveMountedDraftActionHome(undefined, true, undefined, undefined, 'plain', [], [], {
             v: 1, rows: [{ automationId: 'save-check', triggerId: 'before-save', triggerRevision: 1,
                 workflowId: SAVED_TRIGGER_WORKFLOW_ID, workflowRevision: 1, ownerAccountId: 'account-a',
@@ -1207,11 +1224,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             .toBe('Renamed saved workflow');
         expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
         expect(boundary.requests.some(request => request.path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1)).toBe(true);
-        expect(readAlert()).toMatchObject({ message: t('workflows.triggers.checks.skippedNeedsMachine', {
-            workflow: t('workflows.triggers.checks.aCheck'),
-        }) });
-        expect(visibleModals().filter(modal => modal.type === 'alert')).toHaveLength(1);
-        await pressAlertButton('cancel');
+        await expectNamedSkip('Renamed saved workflow');
         const { createFrontDoorActionExecute, createFrontDoorUiActionExecutor, createFrontDoorRuntimeActionExecutor } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
         const execute = createFrontDoorActionExecute();
         await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Agent renamed workflow' }));
@@ -1265,11 +1278,7 @@ describe('WorkflowEditorHostScreen composition', () => {
                         context: { surface: 'ui', serverId: boundary.scope.serverId } });
                 expect(result).toMatchObject({ definitionId: SAVED_TRIGGER_WORKFLOW_ID });
             });
-            expect(readAlert()).toMatchObject({ message: t('workflows.triggers.checks.skippedNeedsMachine', {
-                workflow: t('workflows.triggers.checks.aCheck'),
-            }) });
-            expect(visibleModals().filter(modal => modal.type === 'alert')).toHaveLength(1);
-            await pressAlertButton('cancel');
+            await expectNamedSkip(`${mode} Save`);
         }
         const current = await getWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID });
         await act(async () => expect(await mounted!.executeForCaller('workflow.definition.update', {
