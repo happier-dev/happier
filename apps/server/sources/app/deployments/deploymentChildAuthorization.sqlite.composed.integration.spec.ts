@@ -225,6 +225,9 @@ describe('deployment children retain their controller Action authority', () => {
         'settles an interrupted receipt only for its requester and captured controller installation (%s)',
         checkInterruptedReceiptSettlement,
     );
+    it.each([['plain', 'vercel'], ['e2ee', 'vercel'], ['plain', 'cloudflare-workers'], ['e2ee', 'cloudflare-workers'],
+        ['e2ee', 'cloudflare-pages']] as const)(
+        'admits a hosted collector bearer only after acknowledged sync in a %s Account on %s', checkHostedCollectorAssignment);
     if (postgresMembershipContract) {
         // The disposable provider contract selects the backend-independent cases.
         registerPlainDeployCandidateCases();
@@ -7158,10 +7161,10 @@ describe('deployment children retain their controller Action authority', () => {
             }, { authentication: 'real' });
         });
 
-    it.each([['plain', 'vercel'], ['e2ee', 'vercel'], ['plain', 'cloudflare-workers'], ['e2ee', 'cloudflare-workers'],
-        ['e2ee', 'cloudflare-pages']] as const)(
-        'admits a hosted collector bearer only after acknowledged sync in a %s Account on %s', async (contentMode, targetKind) => {
-        const f = await fixture('account', 'account', { contentMode, readableEnvironment: true, platformTarget: 'vercel' });
+    async function checkHostedCollectorAssignment(contentMode: 'plain' | 'e2ee',
+        targetKind: 'vercel' | 'cloudflare-workers' | 'cloudflare-pages') {
+        const f = await fixture(contentMode === 'plain' && targetKind === 'vercel' ? 'team' : 'account',
+            'account', { contentMode, readableEnvironment: true, platformTarget: 'vercel' });
         const actionId = 'deployments.environments.telemetry.set';
         const effectActionId = 'deployments.bindings.set';
         const target = { kind: 'machine' as const, machineId: f.controller.id };
@@ -7176,8 +7179,9 @@ describe('deployment children retain their controller Action authority', () => {
         const acknowledgement = { telemetryMachineId: selected,
             telemetryTokenHash: createHash('sha256').update(exporterBearer).digest('hex') };
         const collector = createTelemetryAssignments();
+        const assignmentEnvironments = [f.environment.id];
         async function admit(machineId: string, bearer = exporterBearer) {
-            const rows = await db.deploymentEnvironment.findMany({ where: { telemetryMachineId: machineId, id: f.environment.id },
+            const rows = await db.deploymentEnvironment.findMany({ where: { telemetryMachineId: machineId, id: { in: assignmentEnvironments } },
                 select: { id: true, telemetryTokenHash: true } });
             collector.replace(rows.map(({ id, telemetryTokenHash }) => ({ environmentId: id, tokenHash: telemetryTokenHash })));
             const request = new IncomingMessage(new Socket());
@@ -7227,9 +7231,29 @@ describe('deployment children retain their controller Action authority', () => {
             } };
         }
 
-        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+        await withAuthenticatedTestApp(app => {
+            registerDeploymentRoutes(app);
+            artifactsRoutes(app);
+        }, async app => {
             const submit = (write: Awaited<ReturnType<typeof preparedWrite>>, payload = write.body as unknown) =>
                 app.inject({ method: 'POST', url: path, payload: payload as Record<string, unknown>, headers: write.headers(payload) });
+            async function settle(owner: typeof f, session: string, expectedTargetLinkRevision: number,
+                reported?: typeof acknowledgement) {
+                const receipt = await db.deployment.update({ where: { id: owner.receipt.id }, data: { state: 'running' } });
+                const body = { kind: 'settle' as const, serverId, environmentId: owner.environment.id, deploymentId: receipt.id,
+                    actionOperationId: receipt.actionOperationId, expectedRevision: receipt.revision,
+                    machineId: owner.controller.id, installationId: owner.controller.installationId,
+                    state: 'succeeded' as const, expectedTargetLinkRevision, ...reported };
+                const proof = signMachineInstallationProof({ payload: { version: 1, machineId: owner.controller.id,
+                    installationId: owner.controller.installationId, accountId: owner.account.id, deploymentTransition: {
+                        serverId, environmentId: owner.environment.id, deploymentId: receipt.id, actionOperationId: receipt.actionOperationId,
+                        expectedRevision: receipt.revision, requestBodyDigest: computeDeploymentTransitionRequestDigestV1(body),
+                    } }, privateKey: owner.controller.keys.secretKey });
+                return app.inject({ method: 'POST',
+                    url: `/v1/deployments/environments/${owner.environment.id}/deployments/${receipt.id}/transitions`,
+                    headers: { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${session}` },
+                    payload: { ...body, proof } });
+            }
             expect(await admit(selected)).toMatchObject({ accepted: false, status: 401 });
             const first = await preparedWrite(f.environmentRevision, f.link.revision);
             const session = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -7329,28 +7353,60 @@ describe('deployment children retain their controller Action authority', () => {
                 expect(await admit(selected)).toMatchObject({ accepted: true, context: { environmentId: f.environment.id } });
             }
 
-            const rotated = await preparedWrite(environmentRevision, linkRevision, { rotate: true });
-            expect((await submit(rotated)).statusCode).toBe(200);
-            expect(await admit(selected)).toMatchObject({ accepted: false, status: 401 });
-
             const nextBearer = 'synthetic-rotated-exporter-bearer';
             const rotatedAcknowledgement = { ...acknowledgement, telemetryTokenHash: createHash('sha256').update(nextBearer).digest('hex') };
-            expect(await admit(selected, nextBearer)).toMatchObject({ accepted: false, status: 401 });
+            const rotated = await preparedWrite(environmentRevision, linkRevision, { rotate: true });
+            expect((await submit(rotated)).statusCode).toBe(200);
+            expect(await admit(selected)).toMatchObject({ accepted: true, context: { environmentId: f.environment.id } });
             const next = await preparedWrite(environmentRevision + 1, linkRevision + 1);
             expect((await submit(next, { ...next.body, telemetrySyncAcknowledgement: rotatedAcknowledgement })).statusCode).toBe(200);
-            expect(await admit(selected, nextBearer)).toMatchObject({ accepted: true });
+
+            if (f.team) {
+                const other = await fixture('account', 'account', { contentMode, readableEnvironment: true, platformTarget: 'vercel' });
+                assignmentEnvironments.push(other.environment.id);
+                await db.deploymentTargetLink.update({ where: { id: other.link.id }, data: { targetKind: 'vercel' } });
+                await db.deploymentEnvironment.update({ where: { id: other.environment.id }, data: { telemetryMachineId: selected } });
+                await db.teamMembership.create({ data: { teamId: f.team.id, accountId: other.account.id, role: 'member' } });
+                const reader = await auth.createToken(other.account.id, undefined, { kind: 'account', authority: 'present_user' });
+                const headers = { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${reader}` };
+                const summary = await app.inject({ method: 'GET', url: `${path.slice(0, -'/bindings'.length)}?serverId=${serverId}`, headers });
+                expect(summary.statusCode, summary.body).toBe(200);
+                expect(summary.body).not.toContain('telemetryPendingTokenHash');
+                expect(summary.body).not.toContain(rotatedAcknowledgement.telemetryTokenHash);
+                const link = await app.inject({ method: 'GET', url: `/v1/artifacts/${next.body.targetLinkContent.contentArtifactId}`, headers });
+                expect(link.statusCode, link.body).toBe(200);
+                const storedLink = ArtifactHttpReadV1Schema.parse(link.json());
+                expect(storedLink.body).toBeTruthy();
+                const linkContents = JSON.stringify(decodePlainArtifactStoredContent(storedLink.body!));
+                expect(linkContents).not.toContain('telemetryPendingTokenHash');
+                expect(linkContents).not.toContain(rotatedAcknowledgement.telemetryTokenHash);
+                const refused = await settle(other, reader, other.link.revision, rotatedAcknowledgement);
+                expect(refused.json()).toMatchObject({ ok: false, error: 'deployment_access_denied' });
+            }
+
+            expect(await admit(selected)).toMatchObject({ accepted: true, context: { environmentId: f.environment.id } });
+            expect(await admit(selected, nextBearer)).toMatchObject({ accepted: false, status: 401 });
+            const stale = await settle(f, session, linkRevision + 1);
+            expect(stale.statusCode).toBe(409);
+            expect(await admit(selected)).toMatchObject({ accepted: true, context: { environmentId: f.environment.id } });
+            const serving = await settle(f, session, linkRevision + 2);
+            expect(serving.statusCode, serving.body).toBe(200);
+            expect(await admit(selected, nextBearer)).toMatchObject({ accepted: true, context: { environmentId: f.environment.id } });
             expect(await admit(selected)).toMatchObject({ accepted: false, status: 401 });
-            const moved = await preparedWrite(environmentRevision + 2, linkRevision + 2, { collector: f.member.id });
+            const moved = await preparedWrite(environmentRevision + 2, linkRevision + 3, { collector: f.member.id });
             expect((await submit(moved)).statusCode).toBe(200);
             expect(await admit(selected, nextBearer)).toMatchObject({ accepted: false, status: 401 });
             expect(await admit(f.member.id, nextBearer)).toMatchObject({ accepted: false, status: 401 });
-            const resync = await preparedWrite(environmentRevision + 3, linkRevision + 3, { collector: f.member.id });
+            const resync = await preparedWrite(environmentRevision + 3, linkRevision + 4, { collector: f.member.id });
             const restored = await submit(resync, { ...resync.body,
                 telemetrySyncAcknowledgement: { ...rotatedAcknowledgement, telemetryMachineId: f.member.id } });
             expect(restored.statusCode, restored.body).toBe(200);
             expect(await admit(f.member.id, nextBearer)).toMatchObject({ accepted: true });
+            const off = await preparedWrite(environmentRevision + 4, linkRevision + 5, { collector: null });
+            expect((await submit(off)).statusCode).toBe(200);
+            expect(await admit(f.member.id, nextBearer)).toMatchObject({ accepted: false, status: 401 });
         }, { authentication: 'real' });
-    });
+    }
 
     it.each(['plain', 'e2ee'] as const)('admits a %s reviewed public collector Domain read only for its enrolled collector App', async mode => {
         // Plan 115: a Vercel monitored Environment exports to the selected collector's public

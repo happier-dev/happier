@@ -9,7 +9,7 @@ import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
 import { admitDeploymentDefinitionMachinesInTx, readDeploymentDefinitionMachinesInTx, deploymentFailure, type DeploymentAuthentication } from './deploymentAdmission';
 import { admitDeploymentStoredContentInTx, deploymentContentReference } from './deploymentStoredContent';
 import { deploymentIntentDigest, loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx, type AdmittedDeploymentEnvironment } from './deploymentEnvironmentService';
-import { publishDeploymentChangesInTx } from './deploymentPublication';
+import { clearedDeploymentTelemetryPendingAssignment, publishDeploymentChangesInTx } from './deploymentPublication';
 import { deploymentInProgressStates } from './deploymentAcceptedExecution';
 import { readLatestDeploymentTeardownInTx, hasCurrentDeploymentTeardownProofInTx } from './deploymentTeardownProof';
 
@@ -221,7 +221,8 @@ export async function linkDeploymentTargetForAdmittedEnvironmentInTx(tx: Tx, act
             state: previous?.machines.find(member => member.machineId === machine.machineId && member.installationId === machine.installationId)?.state ?? 'joining' })) },
     } });
     const changed = await tx.deploymentEnvironment.updateMany({ where: { id: loaded.row.id, revision: input.expectedRevision },
-        data: { ...(input.role === 'runtime' ? { runtimeTargetLinkId: link.id, pendingDeployContent: getActivePrismaRuntime().DbNull } : {}),
+        data: { ...(input.role === 'runtime' ? { runtimeTargetLinkId: link.id, pendingDeployContent: getActivePrismaRuntime().DbNull,
+            ...clearedDeploymentTelemetryPendingAssignment } : {}),
             revision: { increment: 1 } } });
     if (changed.count !== 1) throw new Error('Locked deployment Environment changed during target association');
     await saveRepeatKey(tx, repeatKey, `${digest}:${link.id}`, defaultRepeatKeyExpiresAt(now));

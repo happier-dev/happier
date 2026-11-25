@@ -16,7 +16,7 @@ import { admitDeploymentMachinesInTx, deploymentFailure, canDeployDeploymentEnvi
 import { loadDeploymentEnvironmentInTx, loadDeploymentEnvironmentCustodyInTx, lockDeploymentEnvironmentInTx, updateDeploymentEnvironmentInTx,
     type AdmittedDeploymentEnvironment } from './deploymentEnvironmentService';
 import { admitDeploymentStoredContentInTx, deploymentContentReference, updateDeploymentStoredContentInTx } from './deploymentStoredContent';
-import { publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx, readDeploymentTelemetryPublicationAccountIdsInTx, stampDeploymentTelemetryAssignmentInTx } from './deploymentPublication';
+import { clearedDeploymentTelemetryPendingAssignment, publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx, readDeploymentTelemetryPublicationAccountIdsInTx, stampDeploymentTelemetryAssignmentInTx } from './deploymentPublication';
 import { readDeploymentTargetsInTx } from './deploymentTargetLinkService';
 import { readDeploymentDomainInventoryInTx, prepareDeploymentTeardownDomainsInTx } from './deploymentDomainService';
 import { admitDeploymentPendingInTx } from './deploymentPendingService';
@@ -420,6 +420,10 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
             href: `/deployments/environments/${encodeURIComponent(row.environmentId)}/deployments/${encodeURIComponent(busy.id)}` };
     }
     if (input.expectedTargetLinkRevision !== undefined && input.expectedTargetLinkRevision !== link.revision) return deploymentFailure('deployment_conflict');
+    const vercel = link.sourceKind === 'plugin' && link.targetKind === 'vercel';
+    if (vercel && (input.telemetryMachineId !== undefined || input.telemetryTokenHash !== undefined)) {
+        return deploymentFailure('deployment_access_denied');
+    }
     if (input.teardownProof && (input.teardownProof.removeEnvironment && !removeEnvironment
         || removeEnvironment && !completeTeardown)) return deploymentFailure('deployment_conflict');
     if (input.teardownProof && teardownSubjects) {
@@ -455,12 +459,18 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
         ...(removeEnvironment ? { environmentRemoval: { telemetryMachineId: loaded.row.telemetryMachineId,
             savedSecretResourceIds: (readDeploymentBindingSavedSecretRevisionsV1(loaded.row.referencedSavedSecretRevisions) ?? []).map(capture => capture.resourceId) } } : {}),
     }) : undefined;
-    // Only a successful serving activation publishes the token actually delivered by its admitted executor.
-    const deliveredTelemetry = input.kind === 'settle' && row.operation !== 'teardown'
+    const pendingVercelTelemetry = vercel && input.kind === 'settle' && input.state === 'succeeded'
+        && row.operation === 'deploy' && row.cancelRequestedAt === null
+        && loaded.row.telemetryMachineId && loaded.row.telemetryPendingTokenHash
+        && loaded.row.telemetryPendingTargetLinkId === link.id
+        && loaded.row.telemetryPendingTargetLinkRevision === input.expectedTargetLinkRevision
+        ? { machineId: loaded.row.telemetryMachineId, tokenHash: loaded.row.telemetryPendingTokenHash } : null;
+    // Serving activation uses Home's acknowledged Vercel revision or the native executor's delivery.
+    const deliveredTelemetry = pendingVercelTelemetry ?? ( input.kind === 'settle' && row.operation !== 'teardown'
         && (input.state === 'succeeded' || input.state === 'running_unverified')
         && input.telemetryMachineId && input.telemetryMachineId === loaded.row.telemetryMachineId
         && input.telemetryTokenHash && input.telemetryTokenHash !== loaded.row.telemetryTokenHash
-        ? { machineId: input.telemetryMachineId, tokenHash: input.telemetryTokenHash } : null;
+        ? { machineId: input.telemetryMachineId, tokenHash: input.telemetryTokenHash } : null);
     if (input.contentUpdate) {
         const updated = await updateDeploymentStoredContentInTx(tx, actorAccountId, loaded, nextContent, input.contentUpdate,
             DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, deliveredTelemetry
@@ -480,6 +490,9 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     if (changed.count !== 1) throw new Error('Locked deployment receipt changed during transition');
     if (deliveredTelemetry) {
         await stampDeploymentTelemetryAssignmentInTx(tx, loaded.row.id, deliveredTelemetry);
+        if (pendingVercelTelemetry) {
+            await tx.deploymentEnvironment.update({ where: { id: loaded.row.id }, data: clearedDeploymentTelemetryPendingAssignment });
+        }
         await publishDeploymentTelemetryMachinesInTx(tx, [deliveredTelemetry.machineId]);
     }
     if (input.expectedTargetLinkRevision !== undefined) {

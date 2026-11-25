@@ -3864,6 +3864,9 @@ model DeploymentEnvironment {
     telemetryMachineId String?
     telemetryMachine Machine? @relation("DeploymentTelemetry", fields: [telemetryMachineId], references: [id], onDelete: Restrict)
     telemetryTokenHash String?
+    telemetryPendingTokenHash String?
+    telemetryPendingTargetLinkId String?
+    telemetryPendingTargetLinkRevision Int?
     telemetryMetricsEnabled Boolean @default(false)
     telemetryAppLlmCostEnabled Boolean @default(false)
     telemetryExceptionsEnabled Boolean @default(false)

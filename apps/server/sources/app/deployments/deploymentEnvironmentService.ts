@@ -32,7 +32,7 @@ import { resolveDeploymentEnvironmentAdmissionInTx, admitDeploymentMachineInTx, 
     admitDeploymentDefinitionMachinesInTx, readDeploymentDefinitionMachinesInTx,
     type DeploymentAuthentication, type DeploymentSourceAdmission } from './deploymentAdmission';
 import { deploymentContentReference, readPlainDeploymentEnvironmentContentInTx, readPlainDeploymentTargetLinkContentInTx, admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
-import { publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx, readDeploymentTelemetryPublicationAccountIdsInTx, stampDeploymentTelemetryAssignmentInTx } from './deploymentPublication';
+import { clearedDeploymentTelemetryPendingAssignment, publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx, readDeploymentTelemetryPublicationAccountIdsInTx, stampDeploymentTelemetryAssignmentInTx } from './deploymentPublication';
 import { syncEnvironmentSecretGrantsInTx, readEnvironmentMachineSecretGrantsInTx } from './environmentSecretGrantRepository';
 import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, createProjectSourceInTx,
     resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
@@ -674,9 +674,11 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         include: { machines: { orderBy: { position: 'asc' } } },
     }) : null;
     const platformRuntime = link?.sourceKind === 'plugin' && !placement && !databaseReadBinding;
-    const clearsTelemetryStamp = telemetryChanged || (telemetryRotated && platformRuntime && link.targetKind !== 'cloudflare-workers');
-    const telemetryPublicationMachineIds = telemetryChanged || telemetryCapabilitiesChanged || syncAcknowledgement
-        || (clearsTelemetryStamp && loaded.row.telemetryTokenHash !== null) ? [loaded.row.telemetryMachineId, telemetryMachineId] : [];
+    const firstTelemetryStamp = syncAcknowledgement && (telemetryChanged || loaded.row.telemetryTokenHash === null)
+        ? { machineId: syncAcknowledgement.telemetryMachineId, tokenHash: syncAcknowledgement.telemetryTokenHash } : null;
+    const telemetryPublicationMachineIds = telemetryChanged || telemetryCapabilitiesChanged || firstTelemetryStamp
+        || (syncAcknowledgement && link?.targetKind === 'cloudflare-workers')
+        ? [loaded.row.telemetryMachineId, telemetryMachineId] : [];
     const resourceIds = [...new Set([
         ...input.referencedSavedSecretRevisions,
         ...(readDeploymentBindingSavedSecretRevisionsV1(loaded.row.referencedSavedSecretRevisions) ?? []),
@@ -1003,8 +1005,14 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
             data: { ...deploymentContentReference(linkCandidate), revision: { increment: 1 } } });
         if (updated.count !== 1) throw new Error('Locked deployment TargetLink changed during binding CAS');
     }
-    const data = { ...deploymentContentReference(input), ...(telemetryChanged ? { telemetryMachineId } : {}),
-        ...(clearsTelemetryStamp ? { telemetryTokenHash: null } : {}),
+    // Acknowledged Vercel variables are consumed by a build of this exact Link revision.
+    const pendingTelemetry = linkCandidate && syncAcknowledgement && !firstTelemetryStamp
+        && syncAcknowledgement.telemetryTokenHash !== loaded.row.telemetryTokenHash
+        ? { telemetryPendingTokenHash: syncAcknowledgement.telemetryTokenHash, telemetryPendingTargetLinkId: linkCandidate.targetLinkId,
+            telemetryPendingTargetLinkRevision: linkCandidate.expectedTargetLinkRevision + 1 }
+        : telemetryChanged || syncAcknowledgement ? clearedDeploymentTelemetryPendingAssignment : {};
+    const data = { ...deploymentContentReference(input), ...(telemetryChanged ? { telemetryMachineId, telemetryTokenHash: null } : {}),
+        ...pendingTelemetry,
         ...(telemetryCapabilitiesChanged ? { telemetryMetricsEnabled: telemetryCapabilities.metrics,
             telemetryAppLlmCostEnabled: telemetryCapabilities.appLlmCost, telemetryExceptionsEnabled: telemetryCapabilities.exceptions } : {}), ...(placement ? { buildMachineId,
             ...(placement.edgeMachineId !== undefined ? { edgeMachineId: placement.edgeMachineId } : {}),
@@ -1027,9 +1035,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
             ...referencedSavedSecretRevisions.map(capture => capture.resourceId),
         ]);
     }
-    if (syncAcknowledgement) await stampDeploymentTelemetryAssignmentInTx(tx, loaded.row.id, {
-        machineId: syncAcknowledgement.telemetryMachineId, tokenHash: syncAcknowledgement.telemetryTokenHash,
-    });
+    if (firstTelemetryStamp) await stampDeploymentTelemetryAssignmentInTx(tx, loaded.row.id, firstTelemetryStamp);
     if (telemetryPublicationMachineIds.length > 0)
         await publishDeploymentTelemetryMachinesInTx(tx, telemetryPublicationMachineIds);
     await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, loaded.row.revision + 1);

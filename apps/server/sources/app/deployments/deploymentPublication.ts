@@ -17,6 +17,12 @@ export async function readDeploymentTelemetryPublicationAccountIdsInTx(tx: Tx, m
     return [...audiences.values()].flat();
 }
 
+export const clearedDeploymentTelemetryPendingAssignment = {
+    telemetryPendingTokenHash: null,
+    telemetryPendingTargetLinkId: null,
+    telemetryPendingTargetLinkRevision: null,
+} as const;
+
 export class DeploymentTelemetryAssignmentConflictError extends Error {
     constructor() {
         super('The collector already has this bearer assigned to another Environment');

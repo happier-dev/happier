@@ -12,7 +12,7 @@ import { deploymentIntentDigest, loadDeploymentEnvironmentInTx, lockDeploymentEn
 import { deploymentInProgressStates } from './deploymentAcceptedExecution';
 import { readDeploymentPendingContent } from './deploymentPendingService';
 import { readDeploymentDomainInventoryInTx } from './deploymentDomainService';
-import { publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx } from './deploymentPublication';
+import { clearedDeploymentTelemetryPendingAssignment, publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx } from './deploymentPublication';
 import { withdrawEnvironmentSecretGrantsInTx } from './environmentSecretGrantRepository';
 import { readDeploymentTeardownSubjectsInTx } from './deploymentTeardownSubjects';
 import { readLatestDeploymentTeardownInTx, hasCurrentDeploymentTeardownProofInTx } from './deploymentTeardownProof';
@@ -155,7 +155,7 @@ export async function unlinkDeploymentTargetInTx(tx: Tx, actorAccountId: string,
         data: targetDisposition(now, input.detachKeepRunning) });
     if (changed.count !== 1) throw new Error('Locked deployment link changed during disposition');
     const environment = await tx.deploymentEnvironment.updateMany({ where: { id: loaded.row.id, revision: loaded.row.revision },
-        data: { ...(selected ? { runtimeTargetLinkId: null } : {}), revision: { increment: 1 } } });
+        data: { ...(selected ? { runtimeTargetLinkId: null, ...clearedDeploymentTelemetryPendingAssignment } : {}), revision: { increment: 1 } } });
     if (environment.count !== 1) throw new Error('Locked deployment Environment changed during disposition');
     const revision = loaded.row.revision + 1, targetLinkRevision = link.revision + 1;
     await saveRepeatKey(tx, key, `${digest}:${revision}:${targetLinkRevision}:${input.detachKeepRunning ? 1 : 0}`, defaultRepeatKeyExpiresAt(now));
@@ -224,7 +224,8 @@ export async function removeAdmittedDeploymentEnvironmentInTx(tx: Tx, input: Rea
     await tx.deploymentTargetLink.updateMany({ where: { environmentId: environment.id, deletedAt: null, detachedAt: null },
         data: targetDisposition(now, input.detachKeepRunning) });
     const changed = await tx.deploymentEnvironment.updateMany({ where: { id: environment.id, revision: environment.revision },
-        data: { deletedAt: now, runtimeTargetLinkId: null, telemetryMachineId: null, telemetryTokenHash: null, revision: { increment: 1 } } });
+        data: { deletedAt: now, runtimeTargetLinkId: null, telemetryMachineId: null, telemetryTokenHash: null, ...clearedDeploymentTelemetryPendingAssignment,
+            revision: { increment: 1 } } });
     if (changed.count !== 1) throw new Error('Locked deployment Environment changed during deletion');
     await publishSavedSecretUsageChangesInTx(tx,
         (readDeploymentBindingSavedSecretRevisionsV1(environment.referencedSavedSecretRevisions) ?? []).map(capture => capture.resourceId));
