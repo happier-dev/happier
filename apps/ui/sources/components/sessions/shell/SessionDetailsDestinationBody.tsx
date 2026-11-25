@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { Href } from 'expo-router';
-import { useRouteLaunchCurtainHold } from '@/components/appShell/workspace/useRouteLaunchCurtainHold';
+import { DestinationBodyLoading } from '@/components/appShell/workspace/DestinationBodyLoading';
 import { useDestinationParams, useDestinationRouter, useDestinationFocus, useDestinationVisibility, useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import type { DetailsTab } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 
@@ -29,7 +29,6 @@ import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForR
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { isSessionRouteHydrationAvailable, isSessionRouteHydrationMissing } from '@/sync/domains/session/sessionRouteHydrationState';
 import { SessionFullscreenPaneSafeAreaView } from '@/components/sessions/panes/SessionFullscreenPaneSafeAreaView';
-import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { SessionBoardControllerProvider } from '@/components/sessions/board/SessionBoardControllerProvider';
@@ -47,11 +46,6 @@ function ClassicSessionDetailsSurface(props: React.ComponentProps<typeof Session
     return <SessionBoardControllerProvider sessionId={props.sessionId} serverId={props.routeServerId}>
         <SessionDetailsPanel {...props} />
     </SessionBoardControllerProvider>;
-}
-
-function SessionDetailsRouteLoading({ initialLoading, serverId }: Readonly<{ initialLoading: boolean; serverId: string | null }>) {
-    useRouteLaunchCurtainHold(initialLoading, serverId);
-    return <PaneLoadingFallback />;
 }
 
 export function SessionDetailsDestinationBody() {
@@ -230,9 +224,9 @@ export function SessionDetailsDestinationBody() {
                         />
                 )
             ) : (
-                <SessionDetailsRouteLoading
-                    initialLoading={routeHydrationState.kind === 'loading'}
-                    serverId={routeHydrationState.serverId ?? routeScope.serverId}
+                <DestinationBodyLoading
+                    holdLaunchCurtain={routeHydrationState.kind === 'loading'}
+                    routeServerId={routeHydrationState.serverId ?? routeScope.serverId}
                 />
             )}
         </SessionFullscreenPaneSafeAreaView>

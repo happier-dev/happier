@@ -56,7 +56,8 @@ it('keeps the launched Session covered across its chunk and body read, and lets 
     const screen = await renderScreen(tree('view-launch-cold', 'loading'));
     const curtain = () => screen.root.findByType('CurtainProbe').props.state;
     try {
-        expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('workspace-destination-body-loading-header')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('workspace-destination-body-loading-rows')).toHaveLength(1);
         launch.releaseShell();
         await launch.paint();
         expect(curtain()).toBe('up');

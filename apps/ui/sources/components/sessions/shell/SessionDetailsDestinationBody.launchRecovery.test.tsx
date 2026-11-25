@@ -56,7 +56,10 @@ it('reveals cold Details recovery when the exact read is stale and no new Sessio
     let replacement: ReturnType<typeof sync.ensureSessionVisibleForMessageRoute> | undefined;
     try {
         await requestStarted.promise;
-        expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
+        const loading = 'workspace-destination-body-loading';
+        expect(screen.findAllHostsByTestId(`${loading}-header`)).toHaveLength(1);
+        expect(screen.findAllHostsByTestId(`${loading}-rows`)).toHaveLength(1);
+        expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(0);
         launch.releaseShell();
         await launch.paint();
         expect(curtain()).toBe('up');
@@ -74,10 +77,10 @@ it('reveals cold Details recovery when the exact read is stale and no new Sessio
         });
         await launch.paint();
         expect(curtain()).toBe('leaving');
-        expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
+        expect(screen.findAllHostsByTestId(`${loading}-rows`)).toHaveLength(1);
         await act(async () => { launch.finish(); });
         expect(curtain()).toBe('gone');
-        expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
+        expect(screen.findAllHostsByTestId(`${loading}-rows`)).toHaveLength(1);
         expect(storage.getState().sessions[id]).toBeUndefined();
     } finally {
         staleResponse.resolve();

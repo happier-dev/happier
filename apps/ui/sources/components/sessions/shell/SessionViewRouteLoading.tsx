@@ -1,13 +1,11 @@
 import * as React from 'react';
 
-import { useRouteLaunchCurtainHold } from '@/components/appShell/workspace/useRouteLaunchCurtainHold';
-import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
+import { DestinationBodyLoading } from '@/components/appShell/workspace/DestinationBodyLoading';
 
 export function SessionViewRouteLoading({
     testID,
     initialLoading,
     serverId,
 }: Readonly<{ testID?: string; initialLoading: boolean; serverId: string | null }>) {
-    useRouteLaunchCurtainHold(initialLoading, serverId);
-    return <PaneLoadingFallback testID={testID} />;
+    return <DestinationBodyLoading testID={testID} holdLaunchCurtain={initialLoading} routeServerId={serverId} />;
 }

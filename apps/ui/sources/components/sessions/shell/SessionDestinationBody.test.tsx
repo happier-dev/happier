@@ -245,6 +245,10 @@ describe('bare Session Details address', () => {
                         expect(boundary.componentRequests.some(request => request.path.endsWith(`/${id}`))).toBe(true);
                     });
                     expect(screen.findAllByType(SessionView)).toHaveLength(0);
+                    const loading = 'workspace-destination-body-loading';
+                    expect(screen.findAllHostsByTestId(`${loading}-header`)).toHaveLength(1);
+                    expect(screen.findAllHostsByTestId(`${loading}-rows`)).toHaveLength(1);
+                    expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(0);
                     await act(async () => { releaseRead.resolve(); });
                     await vi.waitFor(() => {
                         const view = screen.findAllByType(SessionView)[0];
@@ -407,7 +411,7 @@ describe('SessionDestinationBody workspace activation', () => {
             try {
                 await vi.waitFor(() => expect(coldReadStarted).toBe(true));
                 expect(readHomeShownUnavailable(serverId)).toBe(false);
-                expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
+                expect(screen.findAllHostsByTestId('workspace-destination-body-loading-rows')).toHaveLength(1);
                 launch.releaseShell();
                 await launch.paint();
                 expect(curtain()).toBe('up');
@@ -417,7 +421,7 @@ describe('SessionDestinationBody workspace activation', () => {
                 expect(curtain()).toBe('leaving');
                 await act(async () => { launch.finish(); });
                 await screen.update(tree('warm-curtain-session'));
-                expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
+                expect(screen.findAllHostsByTestId('workspace-destination-body-loading-rows')).toHaveLength(1);
                 await launch.paint();
                 expect(curtain()).toBe('gone');
             } finally {
@@ -487,7 +491,7 @@ describe('SessionDestinationBody workspace activation', () => {
                 });
                 try {
                     await vi.waitFor(() => expect(sessionReads).toBe(1));
-                    expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
+                    expect(screen.findAllHostsByTestId('workspace-destination-body-loading-rows')).toHaveLength(1);
                     expect(storage.getState().sessions['cold-atmosphere']).toBeUndefined();
                     expect(screen.findAllByType(SessionView)).toHaveLength(0);
                     // docs/surface-states.md: panes inherit the shell coat; unknown

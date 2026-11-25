@@ -8,7 +8,6 @@ import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { CurtainProbe, startTestLaunchCurtain } from '@/dev/testkit/harness/launchCurtainHarness';
 import { createPlainSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
-import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
@@ -149,17 +148,17 @@ describe('Session Details destination Board composition', () => {
         const screen = await renderScreen(tree('cold-curtain-details'));
         const curtain = () => screen.root.findByType('CurtainProbe').props.state;
         try {
-            expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
+            expect(screen.findAllHostsByTestId('workspace-destination-body-loading-rows')).toHaveLength(1);
             launch.releaseShell();
             await launch.paint();
             expect(curtain()).toBe('up');
             await act(async () => { coldDetails.resolve(); });
-            await vi.waitFor(() => expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(0));
+            await vi.waitFor(() => expect(screen.findAllHostsByTestId('workspace-destination-body-loading-rows')).toHaveLength(0));
             await launch.paint();
             expect(curtain()).toBe('leaving');
             await act(async () => { launch.finish(); });
             await screen.update(tree('warm-curtain-details'));
-            expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
+            expect(screen.findAllHostsByTestId('workspace-destination-body-loading-rows')).toHaveLength(1);
             await launch.paint();
             expect(curtain()).toBe('gone');
         } finally {

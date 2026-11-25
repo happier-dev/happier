@@ -15,7 +15,6 @@ import { executeWorkspaceEntityDrop, resolveWorkspaceEntityDrop, WORKSPACE_ENTIT
 import { describePaneDropDestination, presentPaneDropAdmission } from '@/components/appShell/splitCanvas/presentation/paneDropPresentation';
 import { createWorkspaceDropScene, readWorkspaceTabTitle } from './workspaceDropScene';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
@@ -23,6 +22,7 @@ import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
+import { DestinationBodyLoading } from './DestinationBodyLoading';
 import { DestinationInstanceHost } from './DestinationInstanceHost';
 import { PageAtmosphereStage } from '@/components/atmosphere/PageAtmosphereStage';
 import { useOptionalWorkspaceNavigation, useWorkspacePresentationVisibility, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
@@ -260,7 +260,7 @@ const RetainedWorkspaceTab = React.memo(function RetainedWorkspaceTab(props: Rea
                 pathname={pathname ?? ''} focused={props.focused} visible={props.visible}
                 navigation={props.navigation} phone={props.phone}>
                     {pathname ? <PageAtmosphereStage pathname={pathname} params={props.target.params}>
-                        <React.Suspense fallback={<PaneLoadingFallback />}>
+                        <React.Suspense fallback={<DestinationBodyLoading holdLaunchCurtain={false} />}>
                             <DestinationBody target={props.target} pathname={pathname}
                                 renderSession={renderSession} renderSessionDetails={renderSessionDetails} />
                         </React.Suspense>

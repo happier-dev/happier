@@ -5,7 +5,6 @@ import { expect, vi } from 'vitest';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { readHomeShownUnavailable } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
-import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { createDeferred, renderScreen } from '@/dev/testkit';
 import { createPlainSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { CurtainProbe, startTestLaunchCurtain } from '@/dev/testkit/harness/launchCurtainHarness';
@@ -50,7 +49,7 @@ export function installSessionLaunchReachabilityTest(kind: 'session' | 'sessionD
             await requested.promise;
             expect(storage.getState().sessions[id]).toBeUndefined();
             expect(readHomeShownUnavailable(serverId)).toBe(false);
-            expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
+            expect(screen.findAllHostsByTestId('workspace-destination-body-loading-rows')).toHaveLength(1);
             launch.releaseShell();
             await launch.paint();
             expect(curtain()).toBe('up');
@@ -63,7 +62,7 @@ export function installSessionLaunchReachabilityTest(kind: 'session' | 'sessionD
             expect(curtain()).toBe('leaving');
             await act(async () => { launch.finish(); });
             expect(curtain()).toBe('gone');
-            expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
+            expect(screen.findAllHostsByTestId('workspace-destination-body-loading-rows')).toHaveLength(1);
             expect(storage.getState().sessions[id]).toBeUndefined();
         } finally {
             await screen.unmount();

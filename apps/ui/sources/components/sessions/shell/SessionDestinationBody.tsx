@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useRouteLaunchCurtainHold } from '@/components/appShell/workspace/useRouteLaunchCurtainHold';
+import { DestinationBodyLoading } from '@/components/appShell/workspace/DestinationBodyLoading';
 import { useDestinationParams, useDestinationFocus, useDestinationVisibility, useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -33,7 +33,6 @@ import {
 import { markSessionRouteEnteredForSessionUiTelemetry } from '@/sync/runtime/performance/sessionUiTelemetry';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
-import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { AtmosphereSurfaceFrame } from '@/components/atmosphere/AtmosphereSurfaceFrame';
 import {
     serverAccountScopeKeySuffix,
@@ -95,10 +94,9 @@ const selectSessionSurfaceFacts = (scope: PaneScopeState | null) => ({
 /** Focus and visibility are read here, in the leaf that draws them: a tab switch does not render the body. */
 function SessionLoadingAtmosphere(props: Readonly<{ address: SessionAddress }>) {
     const focused = useDestinationFocus();
-    useRouteLaunchCurtainHold(true, props.address.serverId);
     const visible = useDestinationVisibility();
     return <AtmosphereSurfaceFrame surface={{ session: props.address }} session focused={focused} visible={visible}>
-        <PaneLoadingFallback />
+        <DestinationBodyLoading routeServerId={props.address.serverId} />
     </AtmosphereSurfaceFrame>;
 }
 
