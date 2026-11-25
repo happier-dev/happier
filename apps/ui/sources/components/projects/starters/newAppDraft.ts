@@ -145,7 +145,7 @@ export function readStarterCreateOutcome(
     if (code === 'outcome_unknown' && !resume)
       return {
         kind: 'outcomeUnknown',
-        repositoryUrl: text(value.repositoryUrl) ?? resume?.repositoryUrl ?? null,
+        repositoryUrl: text(value.repositoryUrl),
       };
     return {
       kind: 'failed',
