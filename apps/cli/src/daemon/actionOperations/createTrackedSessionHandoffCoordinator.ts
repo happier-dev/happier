@@ -442,6 +442,9 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
       // The member capture's root is the requested path itself (any other path is refused).
       if (captured.data.capture === 'member') memberCapture = captured.data;
     }
+    const handoffRoot = hostInput.context?.externalActionExecutionAuthorization;
+    const personHandoffRoot = handoffRoot?.binding.actionId === 'session.handoff'
+      && handoffRoot.binding.accountId !== handoffRoot.binding.custodianAccountId ? handoffRoot : undefined;
     const releaseMemberCapture = async () => {
       if (!memberCapture || !workspaceAction || !targetPath || !sourceWorkspaceRootPath) return;
       // Terminal release runs even after cancellation; only this operation's own capture is released.
@@ -664,12 +667,15 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
       publishOwnerUpdate: hostInput.publishOwnerUpdate,
       workspaceSyncAdapter: deps.workspaceSyncAdapter,
       // Only the requester this ingress admitted above; no requester keeps today's call.
-      // Its admitted session.handoff root rides in-process only: a link the person's handoff creates is
-      // theirs, signed with that root (ruling 2026-11-24 23:16Z (a)).
+      // For another person's handoff (the root's signed Account is not the SOURCE custodian), its admitted
+      // session.handoff root and this ingress's admission currentness ride in-process only: the link that
+      // handoff creates is theirs, signed with that root (ruling 2026-11-24 23:16Z (a)). The SOURCE
+      // owner's own handoff keeps today's context.
       ...(requester ? { workspaceSyncContext: { signal: hostInput.signal, requesterSessionBootstrap: requester,
         ...(admission ? { machineAdmission: admission } : {}),
-        ...(hostInput.context?.externalActionExecutionAuthorization ? { localActionContext: {
-          externalActionExecutionAuthorization: hostInput.context.externalActionExecutionAuthorization } } : {}) } } : {}),
+        ...(personHandoffRoot && hostInput.context?.verifyMachineAdmissionCurrent ? {
+          verifyMachineAdmissionCurrent: hostInput.context.verifyMachineAdmissionCurrent,
+          localActionContext: { externalActionExecutionAuthorization: personHandoffRoot } } : {}) } } : {}),
       ...(hostInput.localPreparation && targetMachineId === hostInput.localPreparation.machineId
         && !hostInput.context?.externalActionExecutionAuthorization
         ? { wait: (signal: AbortSignal, status: SessionHandoffStatus) => hostInput.localPreparation!.waitForChange(status, signal) }

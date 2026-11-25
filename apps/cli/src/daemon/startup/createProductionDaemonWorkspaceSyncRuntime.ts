@@ -1750,7 +1750,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     const handoffRoot = context?.localActionContext?.externalActionExecutionAuthorization;
     const handoffRequester = context?.requesterSessionBootstrap;
     if (request.action.kind === 'create_relationship' && handoffRoot?.binding.actionId === 'session.handoff'
-      && handoffRequester && context && !context.callerInputAuthorization && handoffRoot.binding.accountId !== installedAccountId
+      && handoffRequester && context && !context.callerInputAuthorization
       && !runtime?.handoffAdapter.resolvePrivateExecution?.({ operationId: request.operationId })
       && !canUseInstalledRelationshipOwner(context)) {
       const handoff = handoffRoot.binding.handoffAdmission;

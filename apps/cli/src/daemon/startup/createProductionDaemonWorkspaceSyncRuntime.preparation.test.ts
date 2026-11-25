@@ -545,6 +545,8 @@ describe('signed Project clean preparation', () => {
             throw homeRefusal();
           }
         } else if (!presented || presented.token !== root.token || presented.binding.actionId !== 'session.handoff'
+          // The installed writer re-checks the person's Machine admission before any forwarded work (apiMachine).
+          || !context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()
           || source?.operationId !== presented.binding.requestId || source.sourceMachineId !== handoff.sourceMachineId
           || source.sourceSessionId !== handoff.sessionId || source.originalActionEnvelope
           || claimed?.installationId !== presented.binding.installationId
@@ -612,8 +614,11 @@ describe('signed Project clean preparation', () => {
         serverHttpBaseUrl: 'https://bind-child-home.invalid', isCurrent: async () => true,
         isRetainedCustodyCurrent: async () => true }),
     } as unknown as AdmittedRequesterSessionBootstrap;
+    // The coordinator's context: its admitted root and the ingress's admission currentness ride only for
+    // another person's handoff; the SOURCE owner's own handoff keeps today's context.
     const context: RpcHandlerContext = { signal: new AbortController().signal, requesterSessionBootstrap,
-      machineAdmission: admission, localActionContext: { externalActionExecutionAuthorization: admittedRoot } };
+      machineAdmission: admission, ...(person === 'owner' ? {} : { verifyMachineAdmissionCurrent: async () => true,
+        localActionContext: { externalActionExecutionAuthorization: admittedRoot } }) };
     const settled = await runWithServerHttpBaseUrl('https://bind-child-home.invalid',
       () => fixture.parent.handoffAdapter.prepare(input, undefined, context)).then(value => ({ value }), (error: unknown) => ({ error }));
     const refusal = 'error' in settled && settled.error && typeof settled.error === 'object' ? settled.error : undefined;
