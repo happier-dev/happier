@@ -95,6 +95,7 @@ describe('Review requested-person HTTP flow', () => {
 
     it('publishes changed verdicts to the person, skips exact replays, and refuses agent-origin verdicts', async () => {
         const person = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const otherPerson = await db.account.create({ data: { encryptionMode: 'plain' } });
         const review = await db.artifact.create({ data: { id: randomUUID(), accountId: person.id,
             header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array(),
             reviewMetadata: { create: { subjectKind: 'comparison', sourceKind: 'direct', state: 'completed',
@@ -120,9 +121,18 @@ describe('Review requested-person HTTP flow', () => {
                 expect((await post(personToken, 'reviewers', { roundOrdinal: 2,
                     reviewers: [{ principal: { kind: 'account', accountId: person.id }, required: true }] })).statusCode).toBe(200);
                 expect(publications()).toEqual([reviewChange]);
+                const spoofed = await post(personToken, 'verdicts', {
+                    roundOrdinal: 2, verdict: 'approve', accountId: otherPerson.id,
+                });
+                expect(spoofed.statusCode).toBe(400);
+                expect(spoofed.json()).toEqual({ error: 'review_invalid_request' });
+                expect(await db.reviewVerdict.count({ where: { reviewId: review.id } })).toBe(0);
+                expect(publications()).toEqual([reviewChange]);
                 expect((await post(personToken, 'verdicts', { roundOrdinal: 2, verdict: 'approve' })).statusCode).toBe(200);
                 expect(publications()).toEqual([reviewChange, reviewChange]);
                 const approved = await db.reviewVerdict.findFirstOrThrow({ where: { reviewId: review.id } });
+                expect(approved).toMatchObject({ accountId: person.id, verdict: 'approve', revision: 1 });
+                expect(await db.reviewVerdict.count({ where: { reviewId: review.id, accountId: otherPerson.id } })).toBe(0);
                 expect((await post(terminalToken, 'verdicts', { roundOrdinal: 2, verdict: 'approve' })).statusCode).toBe(200);
                 expect(publications()).toEqual([reviewChange, reviewChange]);
                 expect(await db.reviewVerdict.findFirstOrThrow({ where: { reviewId: review.id } })).toEqual(approved);
