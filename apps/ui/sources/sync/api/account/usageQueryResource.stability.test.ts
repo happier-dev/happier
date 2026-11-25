@@ -12,6 +12,7 @@ import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema
 import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore } from './usageQueryResource';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { storage } from '@/sync/domains/state/storage';
+import { t } from '@/text';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -24,7 +25,7 @@ import { invalidateUsageQueryResources, readUiUsageQueryBatch } from './usageQue
 import { computePluginUiArtifactSha256Digest } from '@/sync/domains/plugins/ui/artifactIntegrity';
 import * as platformDigest from '@/platform/digest';
 import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
-import { describeUsagePagePendingSources, readUsagePageFreshness } from '@/components/settings/usage/widgets/usageBodyKit';
+import { describeUsagePagePendingSources, readUsagePageFreshness, usageSourceTitle } from '@/components/settings/usage/widgets/usageBodyKit';
 
 let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 afterEach(async () => {
@@ -219,7 +220,7 @@ it('reuses contribution references across equal refetches without whole-populati
     } finally { stop(); }
 });
 
-it('keeps completed source dates and a quiet header while the same query rereads in the background', async () => {
+it('keeps the accounting date and shows Activity reading after a failed private evidence read', async () => {
     const held = createDeferred<void>();
     let hold = false;
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-header-refresh.test', accountId: 'account-a' }],
@@ -238,6 +239,9 @@ it('keeps completed source dates and a quiet header while the same query rereads
     const query = normalizeUsageQuery({ period: { startMs: 1000, endMs: 2000 } });
     const input = { queries: [query] };
     const settled = await readUiUsageQueryBatch(captured, input);
+    expect(settled.results[0]?.sources).toContainEqual(expect.objectContaining({
+        source: 'how_you_work', status: 'error', errorCode: 'update_required', asOfMs: expect.any(Number),
+    }));
     const asOf = readUsagePageFreshness(settled.results).asOfMs;
     expect(asOf).not.toBeNull();
     hold = true;
@@ -251,10 +255,12 @@ it('keeps completed source dates and a quiet header while the same query rereads
     try {
         await progress.promise;
         expect(shown.results[0]?.pending).toBe(true);
-        expect.soft(readUsagePageFreshness(shown.results).asOfMs).toBe(asOf);
-        expect.soft(describeUsagePagePendingSources(shown.results)).toBeNull();
-        expect.soft(shown.results[0]?.sources.find(source => source.source === 'how_you_work')?.asOfMs)
-            .toBe(settled.results[0]?.sources.find(source => source.source === 'how_you_work')?.asOfMs);
+        expect(shown.results[0]?.accounting).toEqual(settled.results[0]?.accounting);
+        expect(readUsagePageFreshness(shown.results).asOfMs).toBe(asOf);
+        expect(shown.results[0]?.sources).toContainEqual({ source: 'how_you_work', status: 'pending' });
+        expect(describeUsagePagePendingSources(shown.results)).toBe(t('usage.board.page.coveragePending', {
+            sources: usageSourceTitle('how_you_work'),
+        }));
     } finally { held.resolve(); await reading; }
 });
 
