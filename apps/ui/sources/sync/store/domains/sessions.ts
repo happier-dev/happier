@@ -125,7 +125,11 @@ import {
 import { resolveWorkspaceTargetForSessionFromState } from '@/sync/domains/session/resolveWorkspaceTargetForSessionFromState';
 import { preserveSessionRuntimeLocalMetadata } from '@/sync/domains/session/preserveSessionRuntimeLocalMetadata';
 import { readSessionOwnerMetadataView, SESSION_OWNER_METADATA_PROJECTION } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { areSessionListDocumentAdmissionsEqual, SESSION_LIST_DOCUMENT_ADMISSION } from '@/sync/domains/session/sessionDocumentAdmission';
+import {
+    admitOpenedSessionListDisplayMetadata,
+    areSessionListDocumentAdmissionsEqual,
+    SESSION_LIST_DOCUMENT_ADMISSION,
+} from '@/sync/domains/session/sessionDocumentAdmission';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { createKeyedTimeoutScheduler } from '@/utils/time/keyedTimeoutScheduler';
@@ -1867,7 +1871,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                             metadataUnavailable: incoming.metadataUnavailable,
                             encryptedContentAvailability: incoming.encryptedContentAvailability,
                             [SESSION_OWNER_METADATA_PROJECTION]: owner,
-                            [SESSION_LIST_DOCUMENT_ADMISSION]: incomingAdmission,
+                            [SESSION_LIST_DOCUMENT_ADMISSION]: admitOpenedSessionListDisplayMetadata(admission, incoming),
                         });
                     }
                     const withStaleFields = preserveSessionListRenderableStaleFields(previous, candidate);
