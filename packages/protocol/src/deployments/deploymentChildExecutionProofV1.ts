@@ -4,6 +4,9 @@ import { RPC_METHODS } from '../rpc/methods.js';
 import { ExternalActionRequestIdV1Schema, ExternalActionMachineRpcSourceExecutionV1Schema } from '../actions/externalActionApi.js';
 import { DeploymentIdentifierV1Schema } from './deploymentIdentifiersV1.js';
 import { deploymentChildEffectActionIdForRootV1 } from './deploymentActionIdsV1.js';
+import { BACKUP_RECEIVER_SETUP_CHILDREN_V1 } from '../machines/managed/actionIdsV1.js';
+import { readReviewedMachineRpcChildFamilyV1 } from '../machines/peer/mediation/rpc/reviewedChildFamilyV1.js';
+import { isDeploymentBackupConfigureNativeAdmissionV1 } from './deploymentCandidatePublicationV1.js';
 
 export const DeploymentArchiveOriginV1Schema = lazyZodSchema(() => z.strictObject({
     environmentId: DeploymentIdentifierV1Schema, deploymentId: DeploymentIdentifierV1Schema,
@@ -25,8 +28,24 @@ export const DeploymentChildExecutionProofV1Schema = lazyZodSchema(() => z.stric
         rootFingerprint: z.string().check(z.regex(/^[a-f0-9]{64}$/u)),
     })),
 }).check(z.refine(value => {
-    const routing = value.externalActionExecution.deploymentChildRouting;
-    return routing !== undefined && value.method === `${routing.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`
+    const execution = value.externalActionExecution;
+    const routing = execution.deploymentChildRouting;
+    if (!routing) {
+        const { authorization, reviewedChild, effectActionId } = execution;
+        const binding = authorization.binding;
+        const admission = binding.deploymentNativeAdmission;
+        const child = BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply;
+        return !value.archiveOrigin && !value.nativeIncumbentSource && !execution.managedAdmission && value.paramsPresent
+            && isDeploymentBackupConfigureNativeAdmissionV1(admission)
+            && admission.receiverMachineId !== undefined && admission.receiverInstallationId !== undefined
+            && reviewedChild?.role === child.role && effectActionId === child.action
+            && value.method === `${admission.receiverMachineId}:${child.action}`
+            && authorization.requesterAccountContext?.installationId === admission.receiverInstallationId
+            && readReviewedMachineRpcChildFamilyV1({ binding, effectActionId, method: child.action,
+                target: { machineId: admission.receiverMachineId, installationId: admission.receiverInstallationId },
+                reviewedChild }) === 'backup_receiver_setup';
+    }
+    return value.method === `${routing.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`
         && value.externalActionExecution.effectActionId === routing.actionId
         && deploymentChildEffectActionIdForRootV1(value.externalActionExecution.authorization.binding.actionId,
             value.externalActionExecution.authorization.binding.deploymentPreparationAdmission,

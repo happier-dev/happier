@@ -926,7 +926,8 @@ async function prepareRequesterAccountActionContextWithCustody(
             ...(input.purpose.kind === 'machine_rpc' ? { method: input.purpose.method,
               reviewedChild: input.purpose.reviewedChild } : {}) } } : {}),
           ...(deploymentChild ? { forwardedDeploymentChild: deploymentChild } : {}),
-          ...(deploymentChild && input.deploymentChildExecution ? { deploymentChildExecution: input.deploymentChildExecution } : {}),
+          ...(input.deploymentChildExecution && (deploymentChild || moveRecipient)
+            ? { deploymentChildExecution: input.deploymentChildExecution } : {}),
           ...(signal ? { signal } : {}) }));
         if (!projected) return null;
         phase = 'requester_executor';

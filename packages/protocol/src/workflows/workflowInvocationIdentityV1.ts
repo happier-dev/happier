@@ -3,8 +3,9 @@ import { bytesToHex } from '@noble/hashes/utils';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import type { WorkflowDefinitionV1 } from './workflowV1.js';
 import type { ActionId } from '../actions/actionIds.js';
-import type { ReviewedActionChildHttpProofV1 } from '../actions/externalActionApi.js';
-import { MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
+import { isDeploymentBackupConfigureNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
+import type { ExternalActionExecutionAuthorizationBindingV1, ReviewedActionChildHttpProofV1 } from '../actions/externalActionApi.js';
+import { BACKUP_RECEIVER_SETUP_CHILDREN_V1, MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
 
 /** Home and the combined Setup producer bind storage to the same original invocation. */
 export function deriveMachineSetupCombinedRunIdV1(input: Readonly<{
@@ -16,6 +17,20 @@ export function deriveMachineSetupCombinedRunIdV1(input: Readonly<{
 }>): string {
   return deriveWorkflowReplacementId([input.actionId ?? MACHINE_SETUP_APPLY_ACTION_ID_V1, input.homeId, input.accountId, input.requestId,
     ...(input.reviewedChild ? ['reviewed-action-child', input.reviewedChild.role, input.reviewedChild.inputDigest] : [])]);
+}
+
+/** The Backup Setup Run belongs to the exact reviewed root and installed receiver. */
+export function deriveBackupReceiverSetupRunIdV1(
+  binding: ExternalActionExecutionAuthorizationBindingV1,
+  child: ReviewedActionChildHttpProofV1,
+): string | null {
+  const native = binding.deploymentNativeAdmission;
+  const apply = BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply;
+  if (child.actionId !== apply.action || child.role !== apply.role || !binding.requestEnvelopeDigest
+    || !isDeploymentBackupConfigureNativeAdmissionV1(native) || !native.receiverMachineId || !native.receiverInstallationId) return null;
+  return deriveWorkflowReplacementId([apply.action, binding.serverIdentityId, binding.accountId,
+    binding.requestId, child.role, child.inputDigest, native.environmentId, native.receiverMachineId,
+    native.receiverInstallationId, binding.requestEnvelopeDigest]);
 }
 
 /** One Discussion mutation identity for one accepted leaf attempt, shared by all transports and recovery. */

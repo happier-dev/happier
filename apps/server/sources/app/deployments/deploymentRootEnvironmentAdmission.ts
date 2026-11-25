@@ -207,6 +207,7 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
       // Setting up the receiver is Manage on that Machine; its nested Setup rides this admission.
       const receiver = receivers.get(nativeAdmission.receiverMachineId);
       if (receiver?.kind !== 'admitted' || receiver.role !== 'manage' ||
+        receiver.installationId !== nativeAdmission.receiverInstallationId ||
         await admitDeploymentMachineInTx(tx, environment.admission.owner,
           nativeAdmission.receiverMachineId, 'target')) return { ok: false, phase: 'configure_receiver' };
     }

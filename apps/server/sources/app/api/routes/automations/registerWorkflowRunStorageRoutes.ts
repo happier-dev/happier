@@ -4,7 +4,7 @@ import { z } from "zod/mini";
 import { extend } from "zod/mini";
 import { AutomationAccountCurrentnessWitnessV1Schema } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
-import { isWorkflowRunExecutorStorageOperationV1 } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
+import { isWorkflowRunExecutorStorageOperationV1, WORKFLOW_RUN_STORAGE_HTTP_PATH as PATH } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
 import { WorkflowInvocationLifecycleV1Schema, WorkflowRunDirectOriginV1Schema, WorkflowRunStateV1Schema, WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { WorkflowInvocationListRequestV1Schema, WorkflowRunListRequestV1Schema, WorkflowRunSummariesRequestV1Schema, WorkflowRunWaitConditionsV1Schema, WorkflowRunReadStateSetRequestV1Schema, WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { WorkflowDefinitionIdV1Schema, WorkflowInvocationRecordIdSchema } from '@happier-dev/protocol/workflows/workflowIdsV1';
@@ -59,7 +59,6 @@ import {
     type AutomationWorkerPublisherDependencies,
 } from "./automationWorkerPublisher";
 
-const PATH = "/v3/automations/runs/workflow-storage";
 const PageByteLimitSchema = z.number().check(z.int(), z.positive(), z.maximum(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES), z.int());
 const InvocationContentWriteShape = {
     publisherMachineId: z.optional(z.string().check(z.minLength(1))), runId: z.string().check(z.minLength(1)), invocationId: z.string().check(z.minLength(1)),

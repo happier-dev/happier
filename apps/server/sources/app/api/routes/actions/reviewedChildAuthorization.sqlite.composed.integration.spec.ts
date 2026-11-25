@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { decodeBase64 } from 'privacy-kit';
+import nacl from 'tweetnacl';
 import { Server } from 'socket.io';
 import axios from 'axios';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
     DeploymentDomainMutationResultV1Schema, DeploymentChildRpcV1Schema, projectDeploymentChildRoutingV1,
     DeploymentTargetLinkInputV1Schema, DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentGetInputV1Schema,
     DeploymentTransitionInputV1Schema, DeploymentBindingsSetResultV1Schema,
@@ -50,10 +51,16 @@ import { readEnvironmentDomainSecretLaunchAdmissionForHost, readEnvironmentSecre
 import * as installationStore from '../../../../../../cli/src/daemon/identity/store';
 import { registerExternalActionRoutes } from './registerExternalActionRoutes';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { BACKUP_RECEIVER_SETUP_CHILDREN_V1, SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { isDeploymentBackupConfigureNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
+import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { encodeStoredCredentials } from '../../../../../../cli/src/persistence';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { verifyExternalActionMachineRpcExecution } from '@/app/auth/externalActionExecutionAuthorization';
-import { deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
+import { deriveBackupReceiverSetupRunIdV1, deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import { registerWorkflowRunStorageRoutes } from '../automations/registerWorkflowRunStorageRoutes';
 import { registerAccountEncryptionRoutes } from '../account/registerAccountEncryptionRoutes';
 import { registerAccountProfileRoute } from '../account/registerAccountProfileRoute';
@@ -1442,6 +1449,85 @@ describe('public roots through real reviewed-child packet producers', () => {
                     });
                 expect(domainResult).toMatchObject({ ok: true });
             } finally { identity.mockRestore(); restoreHttp(); }
+        } finally { await f.close(); }
+    });
+
+    it('confines a Backup receiver’s reviewed Setup Apply to its own Home Run storage', async () => {
+        const f = await deploymentFixture();
+        try {
+            const keys = nacl.sign.keyPair();
+            await db.machine.update({ where: { id: f.machine.id }, data: { active: true } });
+            const receiver = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.account.id,
+                installationId: crypto.randomUUID(), installationPublicKey: keys.publicKey, active: true,
+                metadata: f.machine.metadata, metadataVersion: 1,
+                dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
+            const rootInput = { serverId: f.serverId, environmentId: f.environment.id,
+                expectedRevision: f.environment.revision, intent: 'test' as const,
+                destinationSetup: { kind: 'anotherMachine' as const, machineId: receiver.id,
+                    expectedInstallationId: receiver.installationId!, receiverInputs: {} },
+                configuration: { configRevision: 1, destinationRef: { pluginId: 'happier.backup.local', localId: 'open' },
+                    occurrenceId: 'destination', config: { path: '/private/repository' }, credentialBindings: [],
+                    sources: [{ kind: 'dump', sourceId: 'database', service: 'postgres', consistency: 'logical' }],
+                    ownership: { environmentId: f.environment.id, prefix: 'owner-prefix' }, retention: { kind: 'keepEverything' } } };
+            const root = await f.mint('deployments.backups.configure', rootInput, true);
+            const admission = root.binding.deploymentNativeAdmission;
+            expect(isDeploymentBackupConfigureNativeAdmissionV1(admission)).toBe(true);
+            const child = BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply;
+            const setup = { homeId: f.serverId, machineId: receiver.id,
+                sources: [{ kind: 'direct', setup: {} }] };
+            const params = { homeId: f.serverId, machineId: receiver.id,
+                targets: [{ ...setup, desiredRevision: 0, recipePlans: [] }] };
+            const reviewedChild = { actionId: child.action, role: child.role,
+                inputDigest: computeActionInputApprovalDigestV1(child.action, params) };
+            const authorization = sealExternalActionRequesterAccountContextV1({ authorization: root,
+                credentials: encodeStoredCredentials({ token: f.presentUserToken, encryption: null }),
+                installationPublicKey: keys.publicKey, randomBytes: nacl.randomBytes,
+                purpose: { kind: 'machine_rpc', method: child.action, params, reviewedChild,
+                    recipient: { machineId: receiver.id, installationId: receiver.installationId! } } });
+            const signed = { effectActionId: child.action, target: root.binding.target,
+                installationId: root.binding.installationId, reviewedChild };
+            const method = `${receiver.id}:${child.action}`;
+            const requestId = crypto.randomUUID();
+            const originalActionEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1,
+                requestId: root.binding.requestId, target: root.binding.target, input: rootInput });
+            const packet = { method, requestId, params, originalActionEnvelope, externalActionExecution: { v: 1 as const, authorization, ...signed,
+                machineSignature: signExternalActionMachineRpcRequestV1({ ...signed, authorizationToken: root.token,
+                    requesterAccountContext: authorization.requesterAccountContext, event: SOCKET_RPC_EVENTS.CALL,
+                    method, requestId, params, privateKey: f.keyPair.secretKey }) } };
+            expect(await verifyExternalActionMachineRpcExecution(packet.externalActionExecution,
+                { method, requestId, params, originalActionEnvelope })).not.toBeNull();
+            const runId = deriveBackupReceiverSetupRunIdV1(root.binding, reviewedChild);
+            if (!runId) throw new Error('Expected the reviewed Setup Run identity');
+            const path = '/v3/automations/runs/workflow-storage';
+            const get = { operation: 'get', runId, publisherMachineId: receiver.id };
+            const send = (body: unknown, options?: { path?: string; privateKey?: Uint8Array; installationId?: string }) => {
+                const url = options?.path ?? path;
+                return f.resourceApp.inject({ method: 'POST', url,
+                    headers: createExternalActionAuthorizedRequestHeaders({ authorization, target: signed.target, effectActionId: signed.effectActionId,
+                        installationId: options?.installationId ?? receiver.installationId!,
+                        privateKey: options?.privateKey ?? keys.secretKey,
+                        method: 'POST', path: url, body, deploymentChildExecution: packet }), payload: body });
+            };
+            const first = await send(get);
+            expect(first.statusCode, first.body).toBe(404);
+            expect(first.json()).toEqual({ error: 'run_not_found' });
+            expect((await send({ ...get, runId: crypto.randomUUID() })).statusCode).toBe(401);
+            expect((await send({ ...get, publisherMachineId: f.machine.id })).statusCode).toBe(401);
+            expect((await send(get, { installationId: f.machine.installationId!, privateKey: f.keyPair.secretKey })).statusCode).toBe(401);
+            expect((await send({ ...get, operation: 'cancel', expectedRevision: 0 })).statusCode).toBe(401);
+            expect((await send({ machineId: receiver.id },
+                { path: `/v3/automations/runs/${runId}/requester-custody-unavailable` })).statusCode).toBe(401);
+            const otherAccount = await db.account.create({ data: { publicKey: crypto.randomUUID() } });
+            await db.automationRun.create({ data: { id: runId, accountId: otherAccount.id, originKind: 'direct', causeKind: null,
+                workflowAcceptedSnapshotEnvelope: '{}', workflowCustodyState: 'pending', scheduledAt: new Date(), dueAt: new Date(),
+                assignments: { create: { machineId: receiver.id, admittedMachineInstallationId: receiver.installationId } } } });
+            try {
+                expect((await send(get)).statusCode).toBe(401);
+            } finally {
+                await db.account.delete({ where: { id: otherAccount.id } });
+            }
+            await db.machine.update({ where: { id: receiver.id }, data: { revokedAt: new Date() } });
+            expect((await send(get)).statusCode).toBe(401);
         } finally { await f.close(); }
     });
 

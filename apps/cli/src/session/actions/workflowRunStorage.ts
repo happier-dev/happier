@@ -1,5 +1,7 @@
 import type { CliActionDepsParams } from './cliActionDeps/types';
 import { isWorkflowRunExecutorStorageOperationV1 } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
+import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { BACKUP_RECEIVER_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createWorkflowRunStorageClient } from '@/daemon/workflows/workflowRunStorageClient';
@@ -35,7 +37,10 @@ export function createCliWorkflowRunStorage(
     const requester = retainedRequesterContext
       ? readRequesterAccountActionTransportContext(retainedRequesterContext.externalActionExecutionAuthorization)
       : combined ? readRequesterAccountActionContext(combined.context.externalActionExecutionAuthorization) : null;
-    const requesterHttp = requester || retainedRequesterContext ? undefined : combined?.context.externalActionExecutionAuthorization?.requesterHttpProjection;
+    const backupReceiverSetup = combined?.parent.actionId === BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply.action
+      && readHostAdmittedReviewedChildV1(combined.context)?.role === BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply.role;
+    const requesterHttp = backupReceiverSetup || !requester && !retainedRequesterContext
+      ? combined?.context.externalActionExecutionAuthorization?.requesterHttpProjection : undefined;
     // The existing Account socket supplies content-free wakes only; every
     // signed request below retains its original requester effect authority.
     const token = requester?.credentials.token ?? params.token;
@@ -45,7 +50,7 @@ export function createCliWorkflowRunStorage(
     // Content mode and keys remain the encryption owner's decision.
     const assertRetainedRequester = () => {
       const context = retainedRequesterContext ?? combined?.context;
-      if (context && (context.externalActionExecutionAuthorization || context.externalActionCredential)
+      if (backupReceiverSetup ? !requesterHttp : context && (context.externalActionExecutionAuthorization || context.externalActionCredential)
         && !requester && !requesterHttp) {
         throw Object.assign(new Error('run_access_denied'), { code: 'run_access_denied' });
       }
@@ -93,7 +98,10 @@ export function createCliWorkflowRunStorage(
         ...(machineId ? { machineId } : {}),
         serverHttpBaseUrl,
         ...(caller && 'actionId' in caller && !retainedRequesterContext ? { resolveAuthorizationHeaders: (request) => resolveServerRequestHeaders(caller.context, caller.actionId, request) }
-          : combined && requesterHttp ? { resolveAuthorizationHeaders: (request) => resolveServerRequestHeaders(combined.context, combined.parent.actionId, request) } : {}),
+          : combined && requesterHttp ? { resolveAuthorizationHeaders: (request) => backupReceiverSetup
+            ? requesterHttp.createRequestHeaders({ ...request, effectActionId: combined.parent.actionId,
+                ...(options?.signal ? { signal: options.signal } : {}) })
+            : resolveServerRequestHeaders(combined.context, combined.parent.actionId, request) } : {}),
       }).execute(
         operation as Parameters<ReturnType<typeof createWorkflowRunStorageClient>['execute']>[0],
         { ...(options?.signal ? { signal: options.signal } : {}),

@@ -1,4 +1,4 @@
-import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { BACKUP_RECEIVER_SETUP_CHILDREN_V1, MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { readFiniteCommandFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/finiteCommandFailureV1';
 import { isPluginError, type PluginErrorContractData } from '@happier-dev/protocol/plugins/errors';
@@ -1268,7 +1268,8 @@ export class RpcHandlerManager {
                     // The exact signed child/SOURCE request was admitted above.
                     // Private preparation shares its local cancellation lifetime.
                     ...(serviceMoveChild ? { verifyServiceMoveChildCurrent: async () => !controller.signal.aborted } : {}),
-                    ...(decryptedDeploymentChild && workspaceSyncSourceExecution?.success
+                    ...(workspaceSyncSourceExecution?.success && (decryptedDeploymentChild
+                        || serviceMoveChild && childFamily === 'backup_receiver_setup' && targetMethod === BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply.action)
                         ? { deploymentChildExecution: workspaceSyncSourceExecution.data } : {}),
                     ...(finitePreparation ? { verifyWorkspaceSyncPrepareCurrent: async () => !controller.signal.aborted } : {}),
                     signal: controller.signal }));

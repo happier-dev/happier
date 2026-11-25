@@ -68,6 +68,7 @@ export const DeploymentBackupConfigureNativeAdmissionV1Schema = lazyZodSchema(()
   kind: z.literal('backupConfigure'), actionId: z.literal(DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1),
   environmentId: id, expectedRevision: revision, intent: DeploymentBackupConfigureIntentV1Schema,
   receiverMachineId: z.optional(id),
+  receiverInstallationId: z.optional(id),
   inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
 }));
 export type DeploymentBackupConfigureNativeAdmissionV1 = z.infer<typeof DeploymentBackupConfigureNativeAdmissionV1Schema>;
@@ -128,7 +129,10 @@ export function projectDeploymentNativeAdmissionV1(actionId: string, input: unkn
     const value = DeploymentBackupConfigureInputV1Schema.parse(input);
     return DeploymentBackupConfigureNativeAdmissionV1Schema.parse({ kind: 'backupConfigure', actionId,
       environmentId: value.environmentId, expectedRevision: value.expectedRevision, intent: value.intent,
-      ...('destinationSetup' in value && value.destinationSetup ? { receiverMachineId: value.destinationSetup.machineId } : {}),
+      ...('destinationSetup' in value && value.destinationSetup ? {
+        receiverMachineId: value.destinationSetup.machineId,
+        receiverInstallationId: value.destinationSetup.expectedInstallationId,
+      } : {}),
       inputDigest: computeCanonicalDomainSeparatedDigest('happier-deployment-backup-configure-input-v1',
         [createCanonicalJsonSigningInput(value)]) });
   }

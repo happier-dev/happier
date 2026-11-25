@@ -1,3 +1,5 @@
+export const WORKFLOW_RUN_STORAGE_HTTP_PATH = '/v3/automations/runs/workflow-storage';
+
 /**
  * The storage owner admits these reads and durable intents through ordinary
  * Account credentials. All other operations require the exact worker publisher;

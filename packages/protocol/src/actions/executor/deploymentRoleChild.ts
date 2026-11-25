@@ -9,7 +9,7 @@ import { isDeploymentChildEffectActionIdV1, isDeploymentDomainAddActionIdV1, dep
 import { DeploymentBindingsPatchInputV1Schema } from '../../deployments/deploymentBindingPatchV1.js';
 import { projectDeploymentReadAdmissionV1, readDeploymentDatabaseReadAccessBindingChildV1 } from '../../deployments/deploymentReadAdmissionV1.js';
 import { DeploymentSecretBindingSourceV1Schema } from '../../deployments/storedAppInputV1.js';
-import { isManagedOpaquePresetReviewedChildRootActionV1 } from '../../machines/managed/actionIdsV1.js';
+import { BACKUP_RECEIVER_SETUP_CHILDREN_V1, isManagedOpaquePresetReviewedChildRootActionV1 } from '../../machines/managed/actionIdsV1.js';
 import { projectDeploymentNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1,
   isDeploymentBackupConfigureNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1, type DeploymentNativeAdmissionV1 } from '../../deployments/deploymentCandidatePublicationV1.js';
 import type { WorkflowApprovedOperationV1 } from '../approvedOperationV1.js';
@@ -419,7 +419,11 @@ export function retainHostReviewedChildAdmissionV1(context: ActionExecutorContex
 export function retainHostReviewedChildOperationContextV1(context: ActionExecutorContext, actionId: string,
   input: unknown): ((operationContext: ActionExecutorContext) => ActionExecutorContext) | undefined {
   const proof = readProof(context, actionId, input);
-  if (proof?.operation?.[deploymentRoleChild] !== true) return undefined;
+  if (!proof) return undefined;
+  const backupApply = BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply;
+  const admittedBackupApply = proof[deploymentRoleChild] === true && proof.receivingAdmission
+    && proof.reviewedChild?.actionId === backupApply.action && proof.reviewedChild.role === backupApply.role;
+  if (proof.operation?.[deploymentRoleChild] !== true && !admittedBackupApply) return undefined;
   return operationContext => {
     const { signal: _callerSignal, ...admittedProof } = proof;
     const retainedProof: ChildProof = { ...admittedProof,

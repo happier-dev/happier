@@ -3,7 +3,7 @@ import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/action
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupPlanResultV1Schema, buildMachineSetupTargetApplyInput, machineSetupPlanInputFromApplyTargetV1, type MachineSetupApplyInputV1, type MachineSetupApplyTargetV1, type MachineSetupCombinedPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { resolveCombinedActionWorkflowHostV1, prepareWorkflowRunStartV1 } from '@happier-dev/protocol/workflows/workflowStartPreparationV1';
-import { deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
+import { deriveBackupReceiverSetupRunIdV1, deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import type { ActionExecutorContext, ActionExecutorDeps, WorkflowActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
 import { selectMachineSetupRecipeItemsV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { MachineSetupPlanResultV1, MachineSetupPlanReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -288,7 +288,8 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
         return failure('admission_unavailable');
       const binding = context.externalActionExecutionAuthorization?.binding;
       const reviewedChild = binding ? readHostAdmittedReviewedChildV1(context) : null;
-      const runId = deriveMachineSetupCombinedRunIdV1({ homeId: binding?.serverIdentityId ?? reviewed.homeId,
+      const backupRunId = binding && reviewedChild ? deriveBackupReceiverSetupRunIdV1(binding, reviewedChild) : null;
+      const runId = backupRunId ?? deriveMachineSetupCombinedRunIdV1({ homeId: binding?.serverIdentityId ?? reviewed.homeId,
         accountId: binding?.accountId ?? context.runtimeAccountId,
         requestId: binding?.requestId ?? context.actionRequestId,
         ...(reviewedChild ? { reviewedChild } : {}) });

@@ -42,7 +42,8 @@ import { isSessionStopChildEffectV1, isSessionStopPhaseRootV1 } from '@happier-d
 import { ExternalActionManagedControlAdmissionV1Schema, isExternalActionRequestVersionAllowedForAccountModeV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { personalSavedSecretResourceMutationActionIdV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionIdsV1';
 import { PROJECT_READINESS_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
-import { isMachineSetupCombinedRunHttpPurpose } from '@/app/auth/externalActionMachineSetupWorkflowPurpose';
+import { WORKFLOW_RUN_STORAGE_HTTP_PATH } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
+import { isBackupReceiverSetupRunHttpPurpose, isMachineSetupCombinedRunHttpPurpose } from '@/app/auth/externalActionMachineSetupWorkflowPurpose';
 import { MACHINE_RESOURCES_OUTCOMES_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineResourcesActionIdsV1';
 import { MACHINE_OUTCOME_SUMMARY_PREFIX } from '@happier-dev/protocol/machines/resources/machineOutcomeSummaryV1';
 import { readManagedBoundSessionHttpPurpose } from './externalActionManagedSessionPurpose';
@@ -215,7 +216,7 @@ import { readExternalActionPendingResetStartPurpose, isExternalActionPendingRese
 import { isExternalActionApprovalReplyPurpose } from './externalActionApprovalReplyPurpose';
 import { isExternalActionApprovalArtifactPurpose } from './externalActionApprovalArtifactPurpose';
 import { deriveActionChildRequestIdV1, deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
-import { MACHINE_SETUP_APPLY_ACTION_ID_V1, SESSION_AGENT_READINESS_CHILDREN_V1,
+import { BACKUP_RECEIVER_SETUP_CHILDREN_V1, MACHINE_SETUP_APPLY_ACTION_ID_V1, SESSION_AGENT_READINESS_CHILDREN_V1,
     isMachineSetupCombinedActionIdV1, isMachineSetupNativeCodecActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { isArtifactSignedInLinkCreateHttpPurpose, readExternalActionArtifactSignedInLinkPurpose } from './externalActionArtifactSignedInLinkPurpose';
 import { isExternalActionDeploymentPendingCancelPurpose } from './externalActionDeploymentPendingCancelPurpose';
@@ -1908,6 +1909,41 @@ function readActionBrokerHttpPurpose(proof: ExternalActionExecutionRequestProof)
 function isExactExecutionMachineLookup(machineId: string, proof: ExternalActionExecutionRequestProof): boolean {
     return proof.method.toUpperCase() === 'GET' && proof.body === undefined
         && proof.path === `/v1/machines/${encodeURIComponent(machineId)}`;
+}
+
+/** Consume the source-signed child and the exact installed receiver on the existing child HTTP carrier. */
+async function verifyBackupReceiverSetupRunHttp(proof: ExternalActionExecutionRequestProof,
+    effectActionId: string, target: ExternalActionTargetV1): Promise<VerifiedExternalActionExecutionRequest | null> {
+    const packet = proof.deploymentChildExecution;
+    const execution = packet?.externalActionExecution;
+    const child = execution?.reviewedChild;
+    if (!packet || !execution || !child || proof.reviewedChild
+        || execution.deploymentChildRouting || !packet.paramsPresent
+        || execution.authorization.token !== proof.authorizationToken
+        || effectActionId !== BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply.action
+        || execution.effectActionId !== effectActionId || !sameStrictJsonValue(target, execution.target)
+        || proof.method !== 'POST' || proof.path !== WORKFLOW_RUN_STORAGE_HTTP_PATH) return null;
+    const verified = await verifyExternalActionMachineRpcExecution(execution, {
+        method: packet.method, requestId: packet.requestId,
+        paramsPresent: true, paramsDigest: packet.paramsDigest, backupSetupRunContinuation: true,
+        resolveCurrentSessionMachine: proof.resolveCurrentSessionMachine,
+    });
+    const admission = verified?.binding.deploymentNativeAdmission;
+    if (!verified || !isDeploymentBackupConfigureNativeAdmissionV1(admission)
+        || !admission.receiverMachineId || !admission.receiverInstallationId) return null;
+    const receiver = await db.machine.findUnique({ where: { id: admission.receiverMachineId }, select: {
+        accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true,
+    } });
+    if (!receiver?.installationPublicKey || receiver.installationId !== admission.receiverInstallationId
+        || classifyMachineAvailabilityState(receiver) !== 'available'
+        || !verifyExternalActionMachineRequestV1({ authorizationToken: proof.authorizationToken, effectActionId,
+            target, installationId: admission.receiverInstallationId, requestId: verified.binding.requestId,
+            method: proof.method, path: proof.path, body: proof.body, deploymentChildExecution: packet,
+            ...(proof.idempotencyKey === undefined ? {} : { idempotencyKey: proof.idempotencyKey }),
+            publicKey: receiver.installationPublicKey, signature: proof.machineSignature })
+        || !await isBackupReceiverSetupRunHttpPurpose(verified.binding, child, proof)) return null;
+    return { ...verified, deploymentChildSigner: { machineId: admission.receiverMachineId,
+        installationId: admission.receiverInstallationId, custodianAccountId: receiver.accountId } };
 }
 
 async function verifyCommon(
@@ -4494,6 +4530,11 @@ async function isSessionSectionHttpPurpose(verified: VerifiedSignedChildRequest,
 export async function verifyExternalActionDomainExecutionRequest(
     proof: ExternalActionExecutionRequestProof,
 ): Promise<VerifiedExternalActionExecutionRequest | null> {
+    if (proof.deploymentChildExecution && !proof.deploymentChildExecution.externalActionExecution.deploymentChildRouting) {
+        const target = decodeExternalActionResolvedTargetV1(proof.encodedTarget);
+        const verified = target && await verifyBackupReceiverSetupRunHttp(proof, proof.effectActionId, target);
+        return verified || refuseExternalActionExecutionRequest('deployment_child_http', proof);
+    }
     const verified = await verifyCommon(proof);
     if (!verified) return null;
     const refuse = (phase: ExternalActionAuthorizationRefusalPhase, failure?: ActionExecuteFailure, reason?: DeploymentChildHttpRefusalReason) =>
@@ -5614,6 +5655,8 @@ export async function verifyExternalActionMachineRpcExecution(
         nativeCredentialSpawnChildIssuance?: true;
         /** Host-only: verifyCommon authenticated the installed receiver's read continuation signature. */
         admittedReadContinuation?: true;
+        /** Host-only: the exact Setup Run HTTP purpose verifies the receiver signature and address. */
+        backupSetupRunContinuation?: true;
         workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
         workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
         workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
@@ -5852,6 +5895,34 @@ export async function verifyExternalActionMachineRpcExecution(
         return { binding, effectActionId: execution.effectActionId, target: execution.target, principal,
             effectiveAuthority: principal.authority, deploymentChildAdmission, deploymentChildCodecAdmission: destinationCodec };
     }
+    if (request.backupSetupRunContinuation) {
+        const admission = binding.deploymentNativeAdmission;
+        const child = BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply;
+        if (!isDeploymentBackupConfigureNativeAdmissionV1(admission)
+            || !admission.receiverMachineId || !admission.receiverInstallationId
+            || binding.actionId !== DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1
+            || execution.effectActionId !== child.action || execution.reviewedChild?.actionId !== child.action
+            || execution.reviewedChild.role !== child.role
+            || request.method !== `${admission.receiverMachineId}:${child.action}`
+            || execution.authorization.requesterAccountContext?.installationId !== admission.receiverInstallationId
+            || execution.installationId !== binding.installationId || execution.managedAdmission || execution.deploymentChildExecution
+            || request.paramsPresent !== true || request.paramsDigest === undefined || request.params !== undefined) return null;
+        const source = await db.machine.findUnique({ where: { id: binding.machineId }, select: {
+            accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true,
+        } });
+        const current = await verifyCurrentExternalActionPrincipal(binding);
+        const principal = current && projectVerifiedExternalActionBoundPrincipal(binding, current);
+        if (!principal || !source?.installationPublicKey || source.accountId !== binding.custodianAccountId
+            || source.installationId !== binding.installationId || classifyMachineAvailabilityState(source) !== 'available'
+            || !verifyExternalActionMachineRpcRequestV1({ reviewedChild: execution.reviewedChild,
+                requesterAccountContext: execution.authorization.requesterAccountContext, authorizationToken: execution.authorization.token,
+                effectActionId: execution.effectActionId, target: execution.target, installationId: execution.installationId,
+                event: SOCKET_RPC_EVENTS.CALL, method: request.method, requestId: request.requestId,
+                paramsPresent: true, paramsDigest: request.paramsDigest,
+                publicKey: source.installationPublicKey, signature: execution.machineSignature })) return null;
+        return { binding, effectActionId: execution.effectActionId, target: execution.target,
+            principal, effectiveAuthority: principal.authority };
+    }
     if (request.paramsPresent !== undefined || request.paramsDigest !== undefined) return null;
 
     // The one cross-Machine child owner names the family; this verifier keeps its operand checks.
@@ -5928,6 +5999,9 @@ export async function verifyExternalActionMachineRpcExecution(
         const bindingAction = ActionIdSchema.safeParse(binding.actionId);
         if (!machine?.installationPublicKey || machine.installationId !== binding.installationId
             || classifyMachineAvailabilityState(machine) !== 'available' || destination.kind !== 'admitted'
+            || backupReceiverChild && execution.effectActionId === BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply.action
+                && (!isDeploymentBackupConfigureNativeAdmissionV1(binding.deploymentNativeAdmission)
+                    || destination.installationId !== binding.deploymentNativeAdmission.receiverInstallationId)
             || !principal || !await hasCurrentExecutionMachineAdmission(binding) || !bindingAction.success
             || !resolveCredentialActionAdmissionV1({ spec: getActionSpec(bindingAction.data), authority: principal.authority,
                 grant: 'grant' in binding ? binding.grant : null }).ok

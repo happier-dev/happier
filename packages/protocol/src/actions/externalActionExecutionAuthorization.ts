@@ -205,7 +205,7 @@ export function computeExternalActionMachineRpcParamsDigestV1(params: unknown): 
 /** Drop bulky ciphertext, retaining the exact digest already authenticated by the source signature. */
 export function projectDeploymentChildExecutionProofV1(value: WorkspaceSyncSourceExecutionV1): DeploymentChildExecutionProofV1 {
   const packet = WorkspaceSyncSourceExecutionV1Schema.parse(value);
-  if (!packet.externalActionExecution.deploymentChildRouting || !packet.originalActionEnvelope) {
+  if (!packet.originalActionEnvelope) {
     throw new TypeError('Deployment HTTP custody requires its exact original child packet');
   }
   return DeploymentChildExecutionProofV1Schema.parse({ method: packet.method, requestId: packet.requestId,

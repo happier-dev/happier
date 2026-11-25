@@ -1,3 +1,5 @@
+import { WORKFLOW_RUN_STORAGE_HTTP_PATH } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
+import { BACKUP_RECEIVER_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { deliverExternalActionRequest } from './deliverExternalActionRequest';
 import { reportRequesterMachineUse } from './machine/requesterMachineNotice';
 export { deliverExternalActionRequest } from './deliverExternalActionRequest';
@@ -2116,6 +2118,16 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
           privateKey: input.privateKey, method: request.method, path: request.path, body: request.body,
           deploymentChildExecution: packet, ...(referenceRead ? { reviewedChild: reference } : {}),
           ...(request.nativeIncumbentSource ? { deploymentNativeIncumbentSource: request.nativeIncumbentSource } : {}),
+        }) : null;
+      }
+      const setupPacket = input.forwardedMove && input.deploymentChildExecution;
+      if (setupPacket && setupPacket.externalActionExecution.reviewedChild?.role === BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply.role
+        && request.method === 'POST' && request.path === WORKFLOW_RUN_STORAGE_HTTP_PATH) {
+        if (request.effectActionId !== BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply.action) return null;
+        return await locallyCurrent(request.signal) ? createExternalActionAuthorizedRequestHeaders({
+          authorization, effectActionId: request.effectActionId, target: input.target,
+          installationId: input.installationId, privateKey: input.privateKey,
+          method: request.method, path: request.path, body: request.body, deploymentChildExecution: setupPacket,
         }) : null;
       }
       if (input.forwardedMove && isSessionStopChildRootV1(authorization.binding.actionId)

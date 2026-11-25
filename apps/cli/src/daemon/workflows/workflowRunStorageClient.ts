@@ -1,6 +1,6 @@
 import axios from '@/api/client/credentialAxios';
 import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
-import { isWorkflowRunExecutorStorageOperationV1 } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
+import { isWorkflowRunExecutorStorageOperationV1, WORKFLOW_RUN_STORAGE_HTTP_PATH } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
 import type { WorkflowRunStorageOperation } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
 export type { WorkflowRunStorageOperation } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
@@ -19,7 +19,7 @@ import {
   type CreatePluginInstallationPublisherHeader,
 } from '@/plugins/installations/publisherProof';
 
-export const WORKFLOW_RUN_STORAGE_HTTP_PATH = '/v3/automations/runs/workflow-storage';
+export { WORKFLOW_RUN_STORAGE_HTTP_PATH } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
 
 /** Keep the first storage boundary's safe cause when the coordinator parks a Run. */
 export function readWorkflowRunStorageFailure(error: unknown): Readonly<{ failureCause: ActionFailureCauseV1; message: string }> | null {
@@ -43,7 +43,7 @@ export function createWorkflowRunStorageClient(params: Readonly<{
   machineId?: string;
   serverHttpBaseUrl?: string;
   createPublisherHeader?: CreatePluginInstallationPublisherHeader;
-  resolveAuthorizationHeaders?: (request: Readonly<{ method: 'POST'; path: string; body: unknown }>) => Readonly<Record<string, string>> | null;
+  resolveAuthorizationHeaders?: (request: Readonly<{ method: 'POST'; path: string; body: unknown }>) => Readonly<Record<string, string>> | null | Promise<Readonly<Record<string, string>> | null>;
 }>) {
   const readDefaultBaseUrl = captureServerHttpBaseUrl();
   const readBaseUrl = () => params.serverHttpBaseUrl ?? readDefaultBaseUrl();
@@ -65,7 +65,7 @@ export function createWorkflowRunStorageClient(params: Readonly<{
           ? await createPublisherHeader({ method: 'POST', path: WORKFLOW_RUN_STORAGE_HTTP_PATH, body })
           : null;
         const authorizationHeaders = params.resolveAuthorizationHeaders
-          ? params.resolveAuthorizationHeaders({ method: 'POST', path: WORKFLOW_RUN_STORAGE_HTTP_PATH, body })
+          ? await params.resolveAuthorizationHeaders({ method: 'POST', path: WORKFLOW_RUN_STORAGE_HTTP_PATH, body })
           : { Authorization: `Bearer ${params.token}` };
         if (!authorizationHeaders) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
         const { buildCurrentAccountStoredContentCompatibilityHttpHeaders } = await import("@/api/clientCompatibility/cliClientCompatibility");
