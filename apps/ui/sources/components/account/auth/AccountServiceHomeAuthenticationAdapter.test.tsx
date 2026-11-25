@@ -19,7 +19,6 @@ import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { AccountServiceHomeAuthenticationAdapter } from './AccountServiceHomeAuthenticationAdapter';
 import { HomeAuthenticationFlow } from './HomeAuthenticationFlow';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { t } from '@/text';
 
 installTokenStorageWebPlatformMocks();
 installTerminalRouteCommonModuleMocks();
@@ -136,13 +135,16 @@ describe('AccountServiceHomeAuthenticationAdapter', () => {
         async (kind) => {
             const { fixture, input } = await createSavedHome(kind);
             const screen = await renderAdapter(input, fixture.home.homeServerIdentityId);
+            const { t: translate } = await vi.importActual<typeof import('@/text')>('@/text');
 
             await vi.waitFor(() => expect(screen.findByTestId('account-service-home-auth-unavailable')).not.toBeNull());
             expect(screen.findAllByType(HomeAuthenticationFlow)).toHaveLength(0);
-            expect(screen.findByType(SurfaceStateCard).props.title).toBe(t('common.error'));
-            expect(screen.getTextContent()).toContain(t('errors.operationFailed'));
-            expect(screen.getTextContent()).not.toContain(t('welcome.serverUnavailableTitle'));
-            expect(screen.getTextContent()).not.toContain(t('welcome.signInServiceUnavailableTitle'));
+            const notice = screen.findByType(SurfaceStateCard).props;
+            expect(notice.title).toBe(translate(kind === 'update_required' ? 'welcome.homeSignInClientUpdateTitle' : 'common.error'));
+            expect(notice.reason).toBe(kind === 'update_required' ? undefined : translate('errors.operationFailed'));
+            expect(notice.action?.label).toBe(translate('common.back'));
+            expect(screen.getTextContent()).not.toContain(translate('welcome.serverUnavailableTitle'));
+            expect(screen.getTextContent()).not.toContain(translate('welcome.signInServiceUnavailableTitle'));
         },
     );
 });

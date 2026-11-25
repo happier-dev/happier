@@ -15970,6 +15970,9 @@ settingsSession: {
     linkOrRestoreAccount: "Vincular ou restaurar conta",
     loginWithMobileApp: "Fazer login com aplicativo móvel",
     serverUnavailableTitle: "Não é possível conectar ao Home",
+    homeSignInRefusedTitle: "Este Home não pode disponibilizar o início de sessão.",
+    homeSignInPolicyUnavailableTitle: "A política de início de sessão deste Home está indisponível.",
+    homeSignInClientUpdateTitle: "Atualize o Happier para iniciar sessão",
     serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
       `Não conseguimos conectar a ${serverUrl}. Tente novamente ou escolha outro Relay para continuar.`,
     serverIncompatibleTitle: "Home não suportado",

@@ -16074,6 +16074,9 @@ settingsSession: {
     linkOrRestoreAccount: "Collega o ripristina account",
     loginWithMobileApp: "Accedi con l'app mobile",
     serverUnavailableTitle: "Impossibile raggiungere l’Home",
+    homeSignInRefusedTitle: "Questo Home non può offrire l’accesso.",
+    homeSignInPolicyUnavailableTitle: "La policy di accesso di questo Home non è disponibile.",
+    homeSignInClientUpdateTitle: "Aggiorna Happier per accedere",
     serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
       `Non riusciamo a connetterci a ${serverUrl}. Riprova o scegli un altro Relay per continuare.`,
     serverIncompatibleTitle: "Home non supportato",

@@ -1,4 +1,5 @@
 import type { HomeAuthenticationExecution } from '@/auth/capabilities/authMethodCapabilities';
+import type { HomeAuthEntryRefusal } from '@/auth/entry/authEntryClient';
 import { authProviderRegistry, getAuthProvider, normalizeProviderId } from '@/auth/providers/registry';
 import type { AuthEntryProviderPresentationV1 } from '@happier-dev/protocol/auth/entry';
 import { asIconName } from '@/components/ui/icons/asIconName';
@@ -17,6 +18,19 @@ export type HomeAuthenticationActionPresentation = Readonly<{
     description?: string;
     iconName: IconName;
 }>;
+
+export function describeHomeAuthEntryRefusal(refusal: HomeAuthEntryRefusal): Readonly<{ title: string; reason?: string }> {
+    switch (refusal.reason) {
+        case 'authentication_policy_unavailable':
+            return { title: t('welcome.homeSignInPolicyUnavailableTitle'), reason: t('identityAdministration.providerContactAdmin') };
+        case 'entry_not_available':
+            return { title: t('welcome.homeSignInRefusedTitle'), reason: t('identityAdministration.providerContactAdmin') };
+        case 'client_update_required':
+            return { title: t('welcome.homeSignInClientUpdateTitle') };
+        case 'not_account_service':
+            return { title: t('welcome.signInServiceUnsupportedTitle') };
+    }
+}
 
 /**
  * The one presentation owner for a Home authentication action.

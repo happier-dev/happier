@@ -46,7 +46,7 @@ afterEach(async () => {
 
 async function createRecoveryHome(entryGate?: Promise<void>) {
     const fixture = createDirectoryHttpFixture();
-    const state = { healthReady: true, featureReady: true, entryReady: true, requests: [] as URL[] };
+    const state = { healthReady: true, featureReady: true, entryReady: true, entryRefusal: null as object | null, requests: [] as URL[] };
     setRuntimeFetch(async (input, init) => {
         const url = new URL(String(input));
         state.requests.push(url);
@@ -58,6 +58,7 @@ async function createRecoveryHome(entryGate?: Promise<void>) {
         }
         if (url.pathname === '/v1/features' && !state.featureReady) return Response.json({ invalid: true });
         if (url.pathname === '/v1/auth/entry' && !state.entryReady) return Response.json({ v: 999 });
+        if (url.pathname === '/v1/auth/entry' && state.entryRefusal) return Response.json(state.entryRefusal);
         if (url.pathname === '/v1/auth/entry') await entryGate;
         if (url.pathname === '/v1/features' || url.pathname === '/v1/auth/entry') return fixture.request(url.origin, url.pathname + url.search, init);
         return new Response('{}', { status: 404 });
@@ -178,6 +179,21 @@ describe('HomeRecoveryAuthenticationFlow', () => {
         await screen.pressByTestIdAsync('home-recovery-authentication-unavailable-action');
         await vi.waitFor(() => expect(screen.findByTestId('home-auth-key_challenge-login-keyed')).not.toBeNull());
         expect(getActiveServerSnapshot()).toEqual(focused);
+    });
+
+    it.each([
+        { state: 'denied', reason: 'entry_not_available', title: 'This Home can’t offer sign-in.', recovery: 'Contact a Home administrator' },
+        { state: 'unavailable', reason: 'authentication_policy_unavailable', title: 'This Home’s sign-in policy is unavailable.', recovery: 'Contact a Home administrator' },
+        { state: 'update_required', reason: 'client_update_required', title: 'Update Happier to sign in', recovery: undefined },
+    ])('presents $reason from the exact Home without offering Retry', async ({ state, reason, title, recovery }) => {
+        const { selected, state: wire } = await createRecoveryHome();
+        wire.entryRefusal = { v: 1, scope: { kind: 'home' }, state, reason, autoRedirect: null };
+        const screen = await renderRecovery(selected.id);
+        await vi.waitFor(() => expect(screen.findByTestId('home-recovery-authentication-unavailable')).not.toBeNull());
+        expect(screen.findByType(SurfaceStateCard).props.title).toBe(title);
+        expect(screen.findByType(SurfaceStateCard).props.reason).toBe(recovery);
+        expect(screen.findByTestId('home-recovery-authentication-unavailable-action')).toBeNull();
+        expect(screen.findAllByType(HomeAuthenticationFlow)).toHaveLength(0);
     });
 
     it('shows an unavailable saved Home after its failed health check and recovers on Retry', async () => {

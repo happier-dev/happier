@@ -7,6 +7,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
 import { HomeAuthenticationFlow } from './HomeAuthenticationFlow';
+import { describeHomeAuthEntryRefusal } from './homeAuthenticationActionPresentation';
 import { useExactSavedHomeAuthenticationCatalog } from './useExactSavedHomeAuthenticationCatalog';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
@@ -114,22 +115,22 @@ function HomeRecoveryAuthenticationFlowBody(props: HomeRecoveryAuthenticationFlo
         });
     }
 
+    const refusal = catalog.refusal ? describeHomeAuthEntryRefusal(catalog.refusal) : undefined;
     return step({
         testID: 'home-recovery-authentication-unavailable-step',
         title: heading,
-        // What failed, why, and Try again, as the step's one door-width notice.
         body: <SurfaceStateCard testID="home-recovery-authentication-unavailable" size="line" lineLayout="notice"
             kind="warning"
-            title={catalog.state === 'ready'
+            title={refusal?.title ?? (catalog.state === 'ready'
                 ? t('welcome.signInServiceMethodlessTitle')
                 : catalog.incompatible
                 ? t('welcome.serverIncompatibleTitle')
-                : t('welcome.serverUnavailableTitle')}
-            reason={catalog.state === 'ready'
+                : t('welcome.serverUnavailableTitle'))}
+            reason={refusal ? refusal.reason : catalog.state === 'ready'
                 ? label
                 : t(catalog.incompatible ? 'welcome.serverIncompatibleBody' : 'welcome.serverUnavailableBody', { serverUrl: label })}
             actionGlyph="retry"
-            action={{ label: t('common.retry'), onPress: catalog.retry }}
+            action={refusal ? undefined : { label: t('common.retry'), onPress: catalog.retry }}
             accessibilitySemantics="status" />,
     });
 }

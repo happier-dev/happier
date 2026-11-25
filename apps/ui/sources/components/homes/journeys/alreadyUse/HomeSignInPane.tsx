@@ -78,6 +78,7 @@ export function HomeSignInPane(props: Readonly<{
             ...(isPersonalHome ? { isPersonalHome: true as const } : {}),
             retentionDisclosure: undefined,
             authEntryUnavailable: false,
+            authEntryRefusal: catalog.refusal,
         },
         place: { address, label: label === address ? undefined : label },
         showGreeting: true,

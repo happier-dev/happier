@@ -2,7 +2,7 @@ import type { IconName } from '@/components/ui/icons/Icon';
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
 import type { OrganizationPolicyField } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 import { getAuthProvider } from '@/auth/providers/registry';
-import { describeHomeAuthenticationAction } from '@/components/account/auth/homeAuthenticationActionPresentation';
+import { describeHomeAuthenticationAction, describeHomeAuthEntryRefusal } from '@/components/account/auth/homeAuthenticationActionPresentation';
 import type { RelayRetentionDisclosureModel } from '@/components/onboarding/unauthShell/RelayRetentionDisclosure';
 import type { OrganizationPolicyManagedDisplay } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { t } from '@/text';
@@ -33,7 +33,7 @@ type Notice = Readonly<{
 /** Display-only payload shared by live Welcome and the opening window. */
 /** The facts about the Home a welcome is for: the focused Home's entry options, or one exact Home's catalog. */
 export type WelcomeHomeFacts = Pick<AuthEntryOptions, 'homeLabel' | 'serverAvailability' | 'showAuthActions'
-    | 'authenticationActions' | 'isPersonalHome' | 'retentionDisclosure' | 'authEntryUnavailable'>;
+    | 'authenticationActions' | 'isPersonalHome' | 'retentionDisclosure' | 'authEntryUnavailable' | 'authEntryRefusal'>;
 
 export type WelcomeEntryViewModel = Readonly<{
     /** The one quiet line naming the Home this welcome belongs to, above its heading (a Home reached by address). */
@@ -189,12 +189,13 @@ export function projectWelcomeEntryViewModel(
         });
     } else if (status === 'unavailable' || status === 'incompatible') {
         const incompatible = status === 'incompatible';
+        const refusal = options.authEntryRefusal ? describeHomeAuthEntryRefusal(options.authEntryRefusal) : undefined;
         notices.push({
             slot: 'home',
             testID: 'welcome-auth-blocked', kind: 'unavailable',
-            title: t(incompatible ? 'welcome.serverIncompatibleTitle' : 'welcome.serverUnavailableTitle'),
-            reason: t(incompatible ? 'welcome.serverIncompatibleBody' : 'welcome.serverUnavailableBody', { serverUrl: home }),
-            action: retry('welcome-auth-blocked-retry'),
+            title: refusal?.title ?? t(incompatible ? 'welcome.serverIncompatibleTitle' : 'welcome.serverUnavailableTitle'),
+            reason: refusal ? refusal.reason : t(incompatible ? 'welcome.serverIncompatibleBody' : 'welcome.serverUnavailableBody', { serverUrl: home }),
+            action: refusal ? undefined : retry('welcome-auth-blocked-retry'),
         });
     } else if (status && options.authEntryUnavailable) {
         notices.push({

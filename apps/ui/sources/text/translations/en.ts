@@ -18994,6 +18994,9 @@ const enWelcome = {
   linkOrRestoreAccount: 'Link or restore account',
   loginWithMobileApp: 'Login with mobile app',
   serverUnavailableTitle: 'Can’t reach Home',
+  homeSignInRefusedTitle: "This Home can’t offer sign-in.",
+  homeSignInPolicyUnavailableTitle: "This Home’s sign-in policy is unavailable.",
+  homeSignInClientUpdateTitle: "Update Happier to sign in",
   serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
     `We can’t connect to ${serverUrl}. Retry or choose a different Home to continue.`,
   serverIncompatibleTitle: 'Home not supported',

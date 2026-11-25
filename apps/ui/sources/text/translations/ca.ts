@@ -14893,6 +14893,9 @@ settingsSession: {
         linkOrRestoreAccount: 'Enllaça o restaura un compte',
         loginWithMobileApp: 'Inicia sessió amb l\'aplicació mòbil',
         serverUnavailableTitle: 'No es pot connectar al Home',
+        homeSignInRefusedTitle: "Aquest Home no pot oferir l’inici de sessió.",
+        homeSignInPolicyUnavailableTitle: "La política d’inici de sessió d’aquest Home no està disponible.",
+        homeSignInClientUpdateTitle: "Actualitza Happier per iniciar la sessió",
         serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
             `No podem connectar-nos a ${serverUrl}. Torna-ho a provar o tria un altre Relay per continuar.`,
         serverIncompatibleTitle: 'Home no compatible',

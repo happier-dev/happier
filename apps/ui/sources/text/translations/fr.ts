@@ -15734,6 +15734,9 @@ settingsSession: {
     linkOrRestoreAccount: "Lier ou restaurer un compte",
     loginWithMobileApp: "Se connecter avec l’app mobile",
     serverUnavailableTitle: "Home injoignable",
+    homeSignInRefusedTitle: "Ce Home ne peut pas proposer de connexion.",
+    homeSignInPolicyUnavailableTitle: "La politique de connexion de ce Home est indisponible.",
+    homeSignInClientUpdateTitle: "Mettez Happier à jour pour vous connecter",
     serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
       `Impossible de se connecter à ${serverUrl}. Réessaie ou choisis un autre Relay pour continuer.`,
     serverIncompatibleTitle: "Home non pris en charge",

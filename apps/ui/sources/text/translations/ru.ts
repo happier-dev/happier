@@ -15683,6 +15683,9 @@ settingsSession: {
     linkOrRestoreAccount: "Связать или восстановить аккаунт",
     loginWithMobileApp: "Войти через мобильное приложение",
     serverUnavailableTitle: "Не удаётся подключиться к Home",
+    homeSignInRefusedTitle: "Войти в этот Home сейчас нельзя.",
+    homeSignInPolicyUnavailableTitle: "Политика входа этого Home недоступна.",
+    homeSignInClientUpdateTitle: "Обновите Happier, чтобы войти",
     serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
       `Мы не можем подключиться к ${serverUrl}. Повторите попытку или выберите другой Relay, чтобы продолжить.`,
     serverIncompatibleTitle: "Home не поддерживается",

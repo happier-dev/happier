@@ -15689,6 +15689,9 @@ settingsSession: {
     linkOrRestoreAccount: "Połącz lub przywróć konto",
     loginWithMobileApp: "Zaloguj się przez aplikację mobilną",
     serverUnavailableTitle: "Nie można połączyć się z Home",
+    homeSignInRefusedTitle: "Ten Home nie może udostępnić logowania.",
+    homeSignInPolicyUnavailableTitle: "Zasady logowania tego Home są niedostępne.",
+    homeSignInClientUpdateTitle: "Zaktualizuj Happier, aby się zalogować",
     serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
       `Nie możemy połączyć się z ${serverUrl}. Spróbuj ponownie lub wybierz inny Relay, aby kontynuować.`,
     serverIncompatibleTitle: "Home nie jest obsługiwany",

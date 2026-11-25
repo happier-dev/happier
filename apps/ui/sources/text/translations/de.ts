@@ -15923,6 +15923,9 @@ settingsSession: {
         linkOrRestoreAccount: 'Konto verknüpfen oder wiederherstellen',
         loginWithMobileApp: 'Mit der mobilen App anmelden',
         serverUnavailableTitle: 'Home nicht erreichbar',
+        homeSignInRefusedTitle: "Dieses Home kann keine Anmeldung anbieten.",
+        homeSignInPolicyUnavailableTitle: "Die Anmelderichtlinie dieses Home ist nicht verfügbar.",
+        homeSignInClientUpdateTitle: "Aktualisiere Happier, um dich anzumelden",
         serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
             `Wir erreichen nicht: ${serverUrl}. Versuch es noch einmal oder wähl ein anderes Relay, um weiterzumachen.`,
         serverIncompatibleTitle: 'Home nicht unterstützt',

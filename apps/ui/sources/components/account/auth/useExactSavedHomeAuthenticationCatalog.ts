@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { acquireAccountServiceAuthTransport } from '@/auth/accountDirectory/accountDirectoryAuthClient';
-import { fetchHomeAuthEntry } from '@/auth/entry/authEntryClient';
+import { fetchHomeAuthEntry, readHomeAuthEntryRefusal, type HomeAuthEntryRefusal } from '@/auth/entry/authEntryClient';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { retryServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { resolveServerProfileScopeId, type ServerProfile } from '@/sync/domains/server/serverProfiles';
@@ -20,6 +20,7 @@ export type ExactSavedHomeAuthenticationCatalog = Readonly<{
     keyChallengeV2Available: boolean;
     /** Whether an `unavailable` Home answered as incompatible rather than unreachable. */
     incompatible: boolean;
+    refusal?: HomeAuthEntryRefusal;
     retry: () => void;
 }>;
 
@@ -31,7 +32,7 @@ type TransportState =
 type EntryState =
     | Readonly<{ kind: 'loading' }>
     | Readonly<{ kind: 'ready'; observation: UsableAuthEntryObservation }>
-    | Readonly<{ kind: 'unavailable'; incompatible: boolean }>;
+    | Readonly<{ kind: 'unavailable'; incompatible: boolean; refusal?: HomeAuthEntryRefusal }>;
 
 const NO_ACTIONS: AuthenticationActions = [];
 
@@ -114,6 +115,7 @@ export function useExactSavedHomeAuthenticationCatalog(
                 kind: 'unavailable',
                 incompatible: entry.kind === 'incompatible'
                     || (entry.kind === 'ready' && entry.projection.state === 'update_required'),
+                refusal: readHomeAuthEntryRefusal(entry),
             });
         }).catch(() => {
             if (current) setEntryState({ kind: 'unavailable', incompatible: false });
@@ -142,6 +144,7 @@ export function useExactSavedHomeAuthenticationCatalog(
             keyChallengeV2Available: false,
             incompatible: snapshot.status === 'unsupported'
                 || (entryState.kind === 'unavailable' && entryState.incompatible),
+            refusal: entryState.kind === 'unavailable' ? entryState.refusal : undefined,
             retry,
         };
     }

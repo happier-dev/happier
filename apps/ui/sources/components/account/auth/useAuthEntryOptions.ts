@@ -6,7 +6,7 @@ import type { HomeSignInServicePolicyV1 } from '@happier-dev/protocol/features/p
 
 import type { AccountDirectoryAuthTransport } from '@/auth/accountDirectory/accountDirectoryAuthClient';
 import type { HomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';
-import { fetchHomeAuthEntry } from '@/auth/entry/authEntryClient';
+import { fetchHomeAuthEntry, readHomeAuthEntryRefusal, type HomeAuthEntryRefusal } from '@/auth/entry/authEntryClient';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useFeatureLocalPolicySettings } from '@/hooks/server/useFeatureLocalPolicySettings';
 import { resolveRuntimeFeatureDecisionFromSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
@@ -60,6 +60,7 @@ export type AuthEntryOptions = Readonly<{
      * Home usable and offers one retry rather than hiding it.
      */
     authEntryUnavailable: boolean;
+    authEntryRefusal?: HomeAuthEntryRefusal;
     serverUrlForCopy: string;
     showAuthActions: boolean;
     /** What the Home deletes, or that it could not be checked; never absent once the Home answered. */
@@ -101,6 +102,7 @@ type ObservedAuthEntryOptions = Pick<
     AuthEntryOptions,
     | 'showAuthActions'
     | 'authEntryUnavailable'
+    | 'authEntryRefusal'
     | 'authenticationCatalog'
     | 'authenticationActions'
     | 'keyChallengeV2Available'
@@ -336,10 +338,13 @@ export function useAuthEntryOptions(): AuthEntryOptions {
                 options: { ...observation.options, authEntryUnavailable: true },
             });
         };
-        const commitTerminalUnavailable = (availability: Extract<AuthEntryServerAvailability, 'unavailable' | 'incompatible'>) => {
+        const commitTerminalUnavailable = (
+            availability: Extract<AuthEntryServerAvailability, 'unavailable' | 'incompatible'>,
+            authEntryRefusal?: HomeAuthEntryRefusal,
+        ) => {
             if (!mounted) return;
             lastUsableObservationRef.current = null;
-            setOptions(createUnobservedAuthEntryOptions());
+            setOptions({ ...createUnobservedAuthEntryOptions(), authEntryRefusal });
             setServerAvailability(availability);
         };
         const forceServerCheck = serverCheckNonce > consumedForcedServerCheckNonceRef.current;
@@ -441,14 +446,14 @@ export function useAuthEntryOptions(): AuthEntryOptions {
                 if (authEntry.kind === 'incompatible'
                     || (authEntry.kind === 'ready' && authEntry.projection.state === 'update_required')) {
                     releaseEnrollmentTransport();
-                    commitTerminalUnavailable('incompatible');
+                    commitTerminalUnavailable('incompatible', readHomeAuthEntryRefusal(authEntry));
                     return;
                 }
                 if (authEntry.kind === 'ready' && authEntry.projection.state !== 'ready') {
                     releaseEnrollmentTransport();
                     // The Home answered and refused entry. That is its decision,
                     // not an outage to paper over with the feature catalog.
-                    commitTerminalUnavailable('unavailable');
+                    commitTerminalUnavailable('unavailable', readHomeAuthEntryRefusal(authEntry));
                     return;
                 }
                 // A failed live probe (outage or timeout of the request-scoped

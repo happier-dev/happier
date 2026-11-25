@@ -16138,6 +16138,9 @@ settingsSession: {
     linkOrRestoreAccount: "アカウントをリンクまたは復元",
     loginWithMobileApp: "モバイルアプリでログイン",
     serverUnavailableTitle: "Home に接続できません",
+    homeSignInRefusedTitle: "この Home ではサインインできません。",
+    homeSignInPolicyUnavailableTitle: "この Home のサインインポリシーを利用できません。",
+    homeSignInClientUpdateTitle: "Happier を更新してサインイン",
     serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
       `${serverUrl} に接続できません。再試行するか、別の Relay を選んで続行してください。`,
     serverIncompatibleTitle: "サポートされていない Home",

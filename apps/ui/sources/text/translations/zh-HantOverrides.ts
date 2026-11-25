@@ -12964,6 +12964,9 @@ settingsSession: {
         linkOrRestoreAccount: '連結或恢復帳戶',
         loginWithMobileApp: '使用行動應用程式登入',
         serverUnavailableTitle: '無法連線到 Home',
+        homeSignInRefusedTitle: "此 Home 無法提供登入。",
+        homeSignInPolicyUnavailableTitle: "此 Home 的登入政策無法使用。",
+        homeSignInClientUpdateTitle: "更新 Happier 以登入",
         serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
             `無法連線到 ${serverUrl}。請重試或選擇其他 Relay 以繼續。`,
         serverIncompatibleTitle: '不支援的 Home',

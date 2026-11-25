@@ -19,6 +19,18 @@ export type AuthEntryFetchResult =
 
 export type HomeAuthEntryFetchResult = AuthEntryFetchResult;
 
+type HomeAuthEntryProjection = Extract<AuthEntryProjectionV1, { scope: { kind: 'home' } }>;
+export type HomeAuthEntryRefusal = Exclude<HomeAuthEntryProjection, { state: 'ready' }>;
+
+function isHomeAuthEntryProjection(projection: AuthEntryProjectionV1): projection is HomeAuthEntryProjection {
+    return projection.scope.kind === 'home';
+}
+
+export function readHomeAuthEntryRefusal(result: HomeAuthEntryFetchResult): HomeAuthEntryRefusal | undefined {
+    if (result.kind !== 'ready' || !isHomeAuthEntryProjection(result.projection)) return undefined;
+    return result.projection.state === 'ready' ? undefined : result.projection;
+}
+
 type AuthEntryTransportInput = Readonly<{
     endpointUrl?: string;
     runtimeOrigin?: string | null;

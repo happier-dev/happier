@@ -8,6 +8,7 @@ import { resumeAccountServicePostAuth, type AccountPostAuthInput, type AccountPo
 import { t } from '@/text';
 
 import { HomeAuthenticationFlow } from './HomeAuthenticationFlow';
+import { describeHomeAuthEntryRefusal } from './homeAuthenticationActionPresentation';
 import { useExactSavedHomeAuthenticationCatalog } from './useExactSavedHomeAuthenticationCatalog';
 
 export function AccountServiceHomeAuthenticationAdapter(props: Readonly<{
@@ -23,8 +24,9 @@ export function AccountServiceHomeAuthenticationAdapter(props: Readonly<{
     const catalog = useExactSavedHomeAuthenticationCatalog(resolved.kind === 'resolved' ? resolved.profile : null);
 
     if (resolved.kind !== 'resolved' || catalog.state === 'unavailable') {
+        const refusal = catalog.refusal ? describeHomeAuthEntryRefusal(catalog.refusal) : undefined;
         return <SurfaceStateCard testID="account-service-home-auth-unavailable" kind="error"
-            title={t('common.error')} reason={t('errors.operationFailed')}
+            title={refusal?.title ?? t('common.error')} reason={refusal ? refusal.reason : t('errors.operationFailed')}
             accessibilitySemantics="alert" action={{ label: t('common.back'), onPress: props.onBack }} />;
     }
     if (catalog.state === 'loading') {
