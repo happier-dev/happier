@@ -35,7 +35,6 @@ describe('managed Provider registration', () => {
         registration.api.providers.registerRequestCostParser('gateway', requestCost);
         const [published] = registration.commit();
         if (published?.family !== 'providers') throw new Error('Expected Provider registration');
-        expect(published.value.managedRuntime).toBe(runtime);
         expect(published.value.catalogParsers?.['catalog-v1']).toBe(catalog);
         expect(published.value.usageParsers?.['usage-v1']).toBe(usage);
         expect(published.value.requestCostParser).toBe(requestCost);
@@ -54,16 +53,17 @@ describe('managed Provider registration', () => {
         expect(published.value.catalogParsers).toEqual({ 'catalog-v1': parse });
     });
 
-    it('uses the current trusted runtime callback and its original receiver after commit', async () => {
+    it('calls the committed runtime callback on its live receiver after commit', async () => {
         const registration = scope();
         const runtime = {
-            marker: 'current',
-            async start() { return { marker: 'initial' } as never; },
+            marker: 'initial',
+            async start() { return { marker: this.marker } as never; },
         } satisfies ManagedProviderRuntime & { marker: string };
         registration.api.providers.register('gateway', runtime);
         const [published] = registration.commit();
         if (published?.family !== 'providers') throw new Error('Expected Provider registration');
-        runtime.start = async function () { return { marker: this.marker } as never; };
+        runtime.marker = 'current';
+        runtime.start = async () => ({ marker: 'replacement' }) as never;
         await expect(published.value.managedRuntime?.start({} as never, {} as never))
             .resolves.toEqual({ marker: 'current' });
     });

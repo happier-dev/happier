@@ -668,13 +668,13 @@ describe('plugin registration scope targets', () => {
         expect(replacement).not.toHaveBeenCalled();
     });
 
-    it('retains a trusted class-based Composer reference runtime through its declared family', async () => {
+    it('captures the Composer callback at commit and uses the live class receiver', async () => {
         class ComposerRuntime {
-            readonly marker = 'captured';
+            marker = 'initial';
             readonly unrelated = true;
 
             async search() {
-                return { marker: this.marker } as never;
+                return { marker: `original:${this.marker}` } as never;
             }
 
             async resolve() {
@@ -695,21 +695,19 @@ describe('plugin registration scope targets', () => {
             'issues',
             runtime as ComposerReferenceRuntime,
         );
-        (runtime as unknown as { search: () => Promise<unknown> }).search = async () => ({
-            marker: 'replacement',
-        });
+        runtime.search = async function () {
+            return { marker: `committed:${this.marker}` } as never;
+        };
 
         const [registration] = scope.commit();
         if (registration?.family !== 'composerReferences') {
             throw new Error('Expected committed Composer registration');
         }
 
-        (runtime as unknown as { search: () => Promise<unknown> }).search = async () => ({
-            marker: 'late',
-        });
+        runtime.marker = 'live';
+        runtime.search = async () => ({ marker: 'late' }) as never;
         const signal = new AbortController().signal;
         await expect(registration.value.search('issue', { signal } as PluginInvocationContext))
-            .resolves.toEqual({ marker: 'late' });
-        expect(registration.value).toBe(runtime);
+            .resolves.toEqual({ marker: 'committed:live' });
     });
 });
