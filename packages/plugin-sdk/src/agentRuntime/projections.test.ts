@@ -64,10 +64,10 @@ function propertyType(
     : undefined;
 }
 
-function runtimeEventPayloadTypeOwner(
+function runtimeEventPayloadTypeSymbol(
   program: ts.Program,
   schemaExportName: 'AgentSessionRuntimeEventSchema',
-): string {
+): ts.Symbol {
   const checker = program.getTypeChecker();
   const schemaSymbol = moduleExports(program, 'src/agentRuntime/projections.ts')
     .find((candidate) => candidate.name === schemaExportName);
@@ -89,9 +89,9 @@ function runtimeEventPayloadTypeOwner(
     })
     : undefined;
   const inputType = toolCallType && propertyType(checker, toolCallType, 'input');
-  const owner = inputType?.aliasSymbol?.declarations?.[0]?.getSourceFile().fileName;
-  if (!owner) throw new Error(`Missing ${schemaExportName} tool-call input type owner`);
-  return owner;
+  const symbol = inputType?.aliasSymbol;
+  if (!symbol) throw new Error(`Missing ${schemaExportName} tool-call input type owner`);
+  return canonicalSymbol(program, symbol);
 }
 
 const APPROVED_VALUE_ONLY_EXPORTS = [
@@ -632,16 +632,12 @@ describe('Agent runtime package-local publication projection', () => {
     }
   }, 120_000);
 
-  it('keeps runtime-event schema public output declarations on the SDK strict-JSON projection', () => {
+  it('publishes the same strict-JSON type for runtime-event input and SDK authors', () => {
     const program = createSdkProgram();
 
-    for (const schemaName of ['AgentSessionRuntimeEventSchema'] as const) {
-      // The SDK declares strict JSON exactly once, at the public `/protocol`
-      // facade; `identity.ts` only republishes that declaration as `JsonValue`.
-      const owner = runtimeEventPayloadTypeOwner(program, schemaName);
-      expect(owner).toMatch(/packages\/plugin-sdk\/src\/protocol\/protocolFacade\.ts$/u);
-      expect(owner).not.toMatch(/[\\/]@happier-dev[\\/]protocol[\\/]/u);
-    }
+    expect(runtimeEventPayloadTypeSymbol(program, 'AgentSessionRuntimeEventSchema')).toBe(
+      exportedSymbol(program, 'src/identity.ts', 'JsonValue'),
+    );
   }, 120_000);
 
   it('routes portable Protocol runtime schemas and types through the narrow runtime owner', async () => {
