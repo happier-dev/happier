@@ -554,6 +554,7 @@ async function executeRpcForwardCall(params: Readonly<{
             } finally {
                 if (correlation || params.outerRequestId || targetRequestId) log({
                     module: 'websocket-rpc', event: 'rpc-target-ack', ...correlation,
+                    level: failure && failure !== 'cancelled' ? 'warn' : 'info',
                     outerRequestId: params.outerRequestId === undefined ? undefined : projectRpcLogId(params.outerRequestId),
                     operationId: params.operationId === undefined ? undefined : projectRpcLogId(params.operationId),
                     targetRequestId: targetRequestId ?? correlation?.requestId,

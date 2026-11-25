@@ -136,11 +136,11 @@ describe('forwardRpcCall', () => {
     });
 
     it.each([
-        { status: 'received', cancellable: true }, { status: 'disconnected', cancellable: true },
-        { status: 'cancelled', cancellable: true }, { status: 'timeout', cancellable: true },
-        { status: 'request_error', cancellable: true },
-        { status: 'received', cancellable: false }, { status: 'disconnected', cancellable: false },
-    ] as const)('joins target lookup, submission and $status ACK without content (cancellable=$cancellable)', async ({ status, cancellable }) => {
+        { status: 'received', cancellable: true, level: 'info' }, { status: 'disconnected', cancellable: true, level: 'warn' },
+        { status: 'cancelled', cancellable: true, level: 'info' }, { status: 'timeout', cancellable: true, level: 'warn' },
+        { status: 'request_error', cancellable: true, level: 'warn' },
+        { status: 'received', cancellable: false, level: 'info' }, { status: 'disconnected', cancellable: false, level: 'warn' },
+    ] as const)('joins target lookup, submission and $status ACK without content (cancellable=$cancellable)', async ({ status, cancellable, level }) => {
         const io = new Server();
         const method = 'machine-1:daemon.vitals.get';
         const outerRequestId = 'bf2c794c-a17c-4d92-8e02-a94d86fea3c9';
@@ -189,7 +189,7 @@ describe('forwardRpcCall', () => {
             }
             expect(events()).toHaveLength(status === 'received' ? 3 : 4);
             expect(events().filter(event => event.event === 'rpc-target-ack')).toEqual([expect.objectContaining({
-                event: 'rpc-target-ack', requestId: 'relay-trace-1', outerRequestId, operationId, method,
+                event: 'rpc-target-ack', level, requestId: 'relay-trace-1', outerRequestId, operationId, method,
                 callerSocketId: 'browser-namespace', targetSocketId: 'daemon-namespace', targetMachineId: 'machine-1',
                 status: status === 'received' ? 'received' : 'failed',
                 ...(status === 'received' ? {} : { failure: status }),
