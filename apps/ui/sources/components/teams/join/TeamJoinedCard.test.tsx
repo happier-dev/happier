@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import 'fake-indexeddb/auto';
 
+import type { OpenJoinedTeam } from './TeamJoinedCard';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import {
   resetRuntimeFetch,
@@ -105,7 +106,8 @@ async function renderJoined(
     username?: string | null;
     home: Home;
     askFirst?: boolean;
-    setupContinuation?: Readonly<{ label: string; onContinue: () => Promise<void> | void }>;
+    mountedCommands?: boolean;
+    setupContinuation?: Readonly<{ label: string; onContinue: OpenJoinedTeam }>;
   }>,
 ) {
   const { settingsParse } = await import('@/sync/domains/settings/settings');
@@ -142,7 +144,10 @@ async function renderJoined(
       />
     </InjectedAuthProvider>
   );
-  const screen = await renderScreen(renderCard(account.credentials));
+  const content = renderCard(account.credentials);
+  const screen = params.mountedCommands
+    ? await (await import('@/dev/testkit/harness/mountedCurrentUiContext')).renderMountedCurrentUiContext(content)
+    : await renderScreen(content);
   return { screen, onOpenTeam, events, renderCard };
 }
 
@@ -178,6 +183,38 @@ describe('TeamJoinedCard', () => {
   it('has no second way on when there is nothing to set up', async () => {
     const { screen } = await renderJoined({ outcome: 'already_member', name: 'Ada', home: { nameRequests: [], failName: false } });
     expect(screen.findByTestId('joined-open-team')).toBeNull();
+  }, 40_000);
+
+  it.each([
+    ['team', 'arrived'], ['setup', 'arrived'], ['setup', 'blocked'],
+  ] as const)('lets an agent open the joined %s destination and reports %s without saving a name', async (destination, outcome) => {
+    const home: Home = { nameRequests: [], failName: false };
+    const setupLabel = 'Set up for Product Reliability';
+    const onSetup = vi.fn(async () => outcome);
+    const { onOpenTeam } = await renderJoined({
+      outcome: 'joined', name: null, home, mountedCommands: true,
+      setupContinuation: { label: setupLabel, onContinue: onSetup },
+    });
+    const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+    const reader = readCurrentUiContextActionReader({ surface: 'agent' });
+    expect(reader?.readCurrentUiContext()).toBeTruthy();
+    const { t } = await import('@/text');
+    const title = destination === 'team' ? t('teams.join.openTeam', { team: 'Product Reliability' }) : setupLabel;
+    const command = reader?.readCurrentUiContext()?.commands.find(item => item.title === title);
+    expect(command, title).toBeDefined();
+    const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    await act(async () => {
+      const result = await createDefaultActionExecutor().execute(
+        ACTION_ID_FAMILIES_V1.current_ui_context[1], { commandId: command!.id }, { surface: 'agent' },
+      );
+      expect(result).toMatchObject(outcome === 'blocked'
+        ? { ok: false, errorCode: 'current_ui_navigation_unavailable' }
+        : { ok: true });
+    });
+    expect(onOpenTeam).toHaveBeenCalledTimes(destination === 'team' ? 1 : 0);
+    expect(onSetup).toHaveBeenCalledTimes(destination === 'setup' ? 1 : 0);
+    expect(home.nameRequests).toEqual([]);
   }, 40_000);
 
   it('asks an unnamed Account for its name, even with a username, and saves it before opening the Team', async () => {

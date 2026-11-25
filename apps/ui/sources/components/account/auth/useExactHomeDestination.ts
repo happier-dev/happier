@@ -8,6 +8,8 @@ export type ExactHomeDestinationState =
     /** Focus could not be established; the person stays here and may try again. */
     | Readonly<{ kind: 'blocked'; retry: () => void }>;
 
+export type ExactHomeArrivalOutcome = 'arrived' | 'blocked' | 'retired';
+
 const IDLE: ExactHomeDestinationState = Object.freeze({ kind: 'idle' as const });
 const FOCUSING: ExactHomeDestinationState = Object.freeze({ kind: 'focusing' as const });
 
@@ -21,7 +23,7 @@ export type ExactHomeArrival = Readonly<{
      * otherwise leave a committed mutation's affordance mounted and invite a
      * second submission of a bearer that has already been consumed.
      */
-    continueThrough: (open: () => Promise<boolean>) => Promise<void>;
+    continueThrough: (open: () => Promise<boolean>, onArrival?: () => void) => Promise<ExactHomeArrivalOutcome>;
 }>;
 
 /**
@@ -44,25 +46,31 @@ export function useExactHomeArrival(): ExactHomeArrival {
         };
     }, []);
 
-    const continueThrough = React.useCallback(async (open: () => Promise<boolean>): Promise<void> => {
+    const continueThrough = React.useCallback(async (
+        open: () => Promise<boolean>,
+        onArrival?: () => void,
+    ): Promise<ExactHomeArrivalOutcome> => {
         setState(FOCUSING);
         const opening = Promise.resolve().then(open);
         openingRef.current = opening;
         let reached = false;
         try {
             reached = await opening;
+            if (reached && mountedRef.current && openingRef.current === opening) onArrival?.();
         } catch {
             // A rejected focus/refresh is the same recoverable arrival failure as
             // an explicit false result. The committed operation happened before
             // this owner, so retry must retain only this opener.
+            reached = false;
         }
-        if (!mountedRef.current || openingRef.current !== opening) return;
+        if (!mountedRef.current || openingRef.current !== opening) return 'retired';
         openingRef.current = null;
         if (reached) {
             setState(IDLE);
-            return;
+            return 'arrived';
         }
-        setState({ kind: 'blocked', retry: () => { void continueThrough(open); } });
+        setState({ kind: 'blocked', retry: () => { void continueThrough(open, onArrival); } });
+        return 'blocked';
     }, []);
 
     return React.useMemo(() => ({ state, continueThrough }), [continueThrough, state]);
@@ -93,32 +101,20 @@ export function useExactHomeDestination(params: Readonly<{
      * Team admission opens that Team, everything else returns to the Home — and
      * both must wait for the same focus rather than growing a second owner.
      */
-    continueToHome: (serverId: string, arrive?: () => void) => Promise<void>;
+    continueToHome: (serverId: string, arrive?: () => void) => Promise<ExactHomeArrivalOutcome>;
 }> {
     const arrival = useExactHomeArrival();
-    const mountedRef = React.useRef(true);
     const paramsRef = React.useRef(params);
     paramsRef.current = params;
 
-    React.useEffect(() => {
-        mountedRef.current = true;
-        return () => { mountedRef.current = false; };
-    }, []);
-
     const { continueThrough } = arrival;
-    const continueToHome = React.useCallback(async (
+    const continueToHome = React.useCallback((
         serverId: string,
         arrive?: () => void,
-    ): Promise<void> => {
-        await continueThrough(async () => {
-            const focused = await focusExactHomeAndRefresh({
-                serverId,
-                refreshAuth: paramsRef.current.refreshAuth,
-            });
-            if (focused && mountedRef.current) (arrive ?? paramsRef.current.onFocused)?.();
-            return focused;
-        });
-    }, [continueThrough]);
+    ) => continueThrough(
+        () => focusExactHomeAndRefresh({ serverId, refreshAuth: paramsRef.current.refreshAuth }),
+        () => (arrive ?? paramsRef.current.onFocused)?.(),
+    ), [continueThrough]);
 
     return React.useMemo(
         () => ({ ...arrival, continueToHome }),

@@ -6,7 +6,7 @@ import type { TeamInvitationAcceptResultV1 } from '@happier-dev/protocol/teams';
 import { TeamEntryIdentity } from '@/components/teams/entry/TeamEntryIdentity';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
-import { TeamJoinedCard, type TeamSetupContinuation } from './TeamJoinedCard';
+import { TeamJoinedCard, type OpenJoinedTeam, type TeamSetupContinuation } from './TeamJoinedCard';
 import { resolveTeamJoinPresentation } from './teamJoinOutcome';
 
 type TeamAdmissionSuccess = Extract<TeamInvitationAcceptResultV1, { outcome: 'joined' | 'already_member' }>;
@@ -19,7 +19,7 @@ export const TeamJoinedContent = React.memo(function TeamJoinedContent(props: Re
   result: TeamAdmissionSuccess;
   teamName: string;
   accountScope: ServerAccountScope | null;
-  onOpenTeam: () => Promise<void> | void;
+  onOpenTeam: OpenJoinedTeam;
   setupContinuation?: TeamSetupContinuation;
   summary?: React.ReactNode;
 }>) {

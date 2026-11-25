@@ -6,8 +6,10 @@ import type { TeamInvitationAcceptResultV1 } from '@happier-dev/protocol/teams';
 
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { AccountNameField } from '@/components/account/AccountNameField';
+import type { ExactHomeArrivalOutcome } from '@/components/account/auth/useExactHomeDestination';
 import { useSyncedAccountName } from '@/components/account/useSyncedAccountName';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 import { WelcomeActionList } from '@/components/onboarding/preAuth/WelcomeActionList';
@@ -29,9 +31,11 @@ type TeamAdmissionSuccess = Extract<
   { outcome: 'joined' | 'already_member' }
 >;
 
+export type OpenJoinedTeam = () => Promise<ExactHomeArrivalOutcome | void> | ExactHomeArrivalOutcome | void;
+
 export type TeamSetupContinuation = Readonly<{
   label: string;
-  onContinue: () => Promise<void> | void;
+  onContinue: OpenJoinedTeam;
 }>;
 
 /**
@@ -49,7 +53,7 @@ export function TeamJoinedCard(
     teamName: string;
     /** The Account that was admitted, on the Home that admitted it. */
     accountScope: ServerAccountScope | null;
-    onOpenTeam: () => Promise<void> | void;
+    onOpenTeam: OpenJoinedTeam;
     setupContinuation?: TeamSetupContinuation;
     /** Static summary for the design specimen. Live admissions bind their Team here. */
     summary?: React.ReactNode;
@@ -77,6 +81,7 @@ export function TeamJoinedCard(
 
   const [name, setName] = React.useState('');
   const [nameError, setNameError] = React.useState<string | null>(null);
+  const hasNameDraft = Boolean(asksName && name.trim());
   const autoFocus = useDeviceType() !== 'phone';
 
   // How the admitted Account is named, remembered while its profile is the one in sync so a
@@ -84,11 +89,14 @@ export function TeamJoinedCard(
   const admittedLabel = React.useRef<string | null>(null);
   if (syncedName?.label) admittedLabel.current = syncedName.label;
 
+  const openTeamLabel = t('teams.join.openTeam', { team: props.teamName });
+  const continueJoined = (destination: 'team' | 'setup') =>
+    (destination === 'setup' ? props.setupContinuation?.onContinue ?? props.onOpenTeam : props.onOpenTeam)();
   const continuationDestination = React.useRef<'team' | 'setup'>(props.setupContinuation ? 'setup' : 'team');
   const [opening, finishJoined] = useHappyAction(async (destination: 'team' | 'setup') => {
     continuationDestination.current = destination;
     const setup = destination === 'setup' ? props.setupContinuation : undefined;
-    if ((setup || (asksName && name.trim()))
+    if ((setup || hasNameDraft)
       && !areServerAccountScopesEqual(getActiveServerAccountScope(), props.accountScope)) {
       const message = admittedLabel.current
         ? t('teams.join.nameAccountSwitched', { account: admittedLabel.current })
@@ -97,7 +105,7 @@ export function TeamJoinedCard(
       setNameError(message);
       return;
     }
-    if (asksName && name.trim()) {
+    if (hasNameDraft) {
       setNameError(null);
       try {
         const credentials = getCurrentAuth()?.credentials;
@@ -109,11 +117,27 @@ export function TeamJoinedCard(
       }
     }
     // Native confirmation and name saving finish here before the explicit continuation.
-    if (focused.current) await (setup?.onContinue ?? props.onOpenTeam)();
+    if (focused.current) await continueJoined(destination);
   });
   const openTeam = React.useCallback(() => {
     finishJoined(props.setupContinuation ? 'setup' : 'team');
   }, [finishJoined, props.setupContinuation]);
+
+  // The name draft belongs to the person editing it. An agent can set a name through the Account Action.
+  const invokeJoined = async (destination: 'team' | 'setup') => {
+    if (!focused.current || !accountExecution.isCurrent()) return false;
+    const outcome = await continueJoined(destination);
+    if (outcome === 'blocked') {
+      return { ok: false as const, code: 'unavailable' as const, errorCode: 'current_ui_navigation_unavailable' };
+    }
+    return outcome !== 'retired';
+  };
+  useCurrentUiContextLocalCommands(isFocused && accountExecution.ready && !hasNameDraft && !opening ? [
+    { key: OPEN_TEAM_ACTION_ID, title: openTeamLabel, invoke: () => invokeJoined('team') },
+    ...(props.setupContinuation ? [
+      { key: 'team-joined-setup', title: props.setupContinuation.label, invoke: () => invokeJoined('setup') },
+    ] : []),
+  ] : [], { contextKey: props.result.teamId });
 
   // The page heading already says "You've joined <Team>" (TeamEntryIdentity), so this body is
   // what comes next: the name colleagues see, then one way on. No card: the joined state reads
@@ -159,7 +183,7 @@ export function TeamJoinedCard(
           testID={`${props.testID}-action`}
           actionId={OPEN_TEAM_ACTION_ID}
           primary
-          title={props.setupContinuation?.label ?? t('teams.join.openTeam', { team: props.teamName })}
+          title={props.setupContinuation?.label ?? openTeamLabel}
           iconName={props.setupContinuation ? 'caret-right' : undefined}
           onPress={openTeam}
         />
@@ -170,7 +194,7 @@ export function TeamJoinedCard(
           <TextLinkButton
             testID={`${props.testID}-open-team`}
             tone="strong"
-            label={t('teams.join.openTeam', { team: props.teamName })}
+            label={openTeamLabel}
             disabled={opening}
             onPress={() => finishJoined('team')}
           />

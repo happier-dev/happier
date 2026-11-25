@@ -46,7 +46,7 @@ import {
 import { resolveTeamJoinPresentation } from '@/components/teams/join/teamJoinOutcome';
 import { describeTeamInvitationPreviewRefusal, TeamInvitationPreviewDetails } from '@/components/teams/join/TeamInvitationPreviewDetails';
 import { TeamInvitationJoinActions, TeamInvitationOffer } from '@/components/teams/entry/TeamInvitationOffer';
-import { TeamJoinedCard } from '@/components/teams/join/TeamJoinedCard';
+import { TeamJoinedCard, type OpenJoinedTeam } from '@/components/teams/join/TeamJoinedCard';
 import { useTeamInvitationPreview, type TeamInvitationPreviewState } from '@/hooks/teams/useTeamInvitationPreview';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { resolveFeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
@@ -239,9 +239,9 @@ type TeamAuthEntrySurfaceProps = Readonly<{
         invitation:
             | Readonly<{ token: string; accountScope?: ServerAccountScope }>
             | Readonly<{ continuation: TeamInvitationPostAuthContinuationV1; accountScope?: ServerAccountScope }>;
-        onAdmissionComplete: (result: InvitationAdmissionSuccess) => Promise<void> | void;
+        onAdmissionComplete: (result: InvitationAdmissionSuccess) => ReturnType<OpenJoinedTeam>;
         /** Optional member setup continues the same admitted Account after its name step. */
-        onSetupTeam?: (result: InvitationAdmissionSuccess) => Promise<void> | void;
+        onSetupTeam?: (result: InvitationAdmissionSuccess) => ReturnType<OpenJoinedTeam>;
     }>
 );
 
@@ -779,9 +779,10 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                         title={invitation
                             ? t('teams.join.openTeam', { team: teamName })
                             : t('common.continue')}
-                        onPress={() => invitation
-                            ? props.onAdmissionComplete?.({ outcome: 'already_member', teamId: projection.team.teamId })
-                            : props.onContinue?.()}
+                        onPress={async () => {
+                            if (invitation) await props.onAdmissionComplete?.({ outcome: 'already_member', teamId: projection.team.teamId });
+                            else await props.onContinue?.();
+                        }}
                     />
                 ) : invitation && accountScope ? (
                     invitationIsJoinable ? (

@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 
 import { createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 
-import { useExactHomeArrival } from './useExactHomeDestination';
+import { useExactHomeArrival, type ExactHomeArrivalOutcome } from './useExactHomeDestination';
 
 afterEach(() => {
     standardCleanup();
@@ -16,8 +16,8 @@ describe('useExactHomeArrival', () => {
         let invocation = 0;
         const open = () => ++invocation === 1 ? first.promise : latest.promise;
         const hook = await renderHook(() => useExactHomeArrival());
-        let firstArrival!: Promise<void>;
-        let latestArrival!: Promise<void>;
+        let firstArrival!: Promise<ExactHomeArrivalOutcome>;
+        let latestArrival!: Promise<ExactHomeArrivalOutcome>;
         act(() => {
             firstArrival = hook.getCurrent().continueThrough(open);
             latestArrival = hook.getCurrent().continueThrough(open);
@@ -25,13 +25,13 @@ describe('useExactHomeArrival', () => {
 
         await act(async () => {
             first.reject(new Error('The earlier focus failed'));
-            await firstArrival;
+            expect(await firstArrival).toBe('retired');
         });
         expect(hook.getCurrent().state.kind).toBe('focusing');
 
         await act(async () => {
             latest.resolve(true);
-            await latestArrival;
+            expect(await latestArrival).toBe('arrived');
         });
         expect(hook.getCurrent().state.kind).toBe('idle');
     });
@@ -43,7 +43,7 @@ describe('useExactHomeArrival', () => {
         const hook = await renderHook(() => useExactHomeArrival());
 
         await act(async () => {
-            await hook.getCurrent().continueThrough(open);
+            expect(await hook.getCurrent().continueThrough(open)).toBe('blocked');
         });
 
         expect(open).toHaveBeenCalledTimes(1);

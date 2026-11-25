@@ -146,18 +146,16 @@ export const TeamJoinScreen = React.memo(function TeamJoinScreen(props: Readonly
             await getCurrentAuth()?.refreshFromActiveServer();
         }, []),
     });
-    const openTeamOnExactHome = React.useCallback(async (
+    const openTeamOnExactHome = React.useCallback((
         serverId: string,
         teamId: string,
         page: 'team' | 'setup' = 'team',
-    ): Promise<void> => {
-        await destination.continueToHome(serverId, () => {
-            routerRef.current.replace((page === 'setup' ? teamSetupPath : teamDetailPath)({
-                serverId: resolveServerProfileScopeIdForIdentifier(serverId),
-                teamId,
-            }));
-        });
-    }, [destination.continueToHome]);
+    ) => destination.continueToHome(serverId, () => {
+        routerRef.current.replace((page === 'setup' ? teamSetupPath : teamDetailPath)({
+            serverId: resolveServerProfileScopeIdForIdentifier(serverId),
+            teamId,
+        }));
+    }), [destination.continueToHome]);
 
     React.useEffect(() => {
         navigation?.setOptions?.({ title: t('teams.title') });
@@ -421,9 +419,7 @@ export const TeamJoinScreen = React.memo(function TeamJoinScreen(props: Readonly
             // changes which Home is focused.
             onRecoverIdentity={recoveringIdentity ? undefined : () => setRecoveringIdentity(true)}
             onSelectAction={(next) => setSelection(next)}
-            onAdmissionComplete={(result) => {
-                void openTeamOnExactHome(target.serverId, result.teamId);
-            }}
+            onAdmissionComplete={(result) => openTeamOnExactHome(target.serverId, result.teamId)}
             onSetupTeam={(result) => openTeamOnExactHome(target.serverId, result.teamId, 'setup')}
         />
     );
