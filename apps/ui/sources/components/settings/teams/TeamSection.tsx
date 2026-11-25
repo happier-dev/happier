@@ -245,18 +245,27 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
             </ItemList>
         );
     // While the Team is read, one quiet line waits where the page's sections begin (as on the Team's Overview).
-    const loadingPage = (testID: string) => conditionPage(
-        props.renderLoading?.({
+    const loadingPage = (testID: string) => {
+        const body = props.renderLoading?.({
             row: directoryRow,
             scope: projection?.scope ?? null,
             address: projection?.address ?? null,
             homeName: projection?.homeName ?? ('homeName' in binding ? binding.homeName : undefined),
-        }) ?? <SurfaceStateCard testID={testID} size="line" kind="loading" title={t('teams.loading')} accessibilitySemantics="status" />,
-        props.renderLoadingHeader?.({
+        }) ?? <SurfaceStateCard testID={testID} size="line" kind="loading" title={t('teams.loading')} accessibilitySemantics="status" />;
+        const loadingHeader = props.renderLoadingHeader?.({
             homeName: projection?.homeName ?? ('homeName' in binding ? binding.homeName : undefined),
             scope: projection?.scope ?? null,
-        }) ?? renderPlainHeader(undefined, true),
-    );
+        }) ?? renderPlainHeader(undefined, true);
+        if (embedded || props.presentation === 'virtualized-list' || props.childRendersHeader) return conditionPage(body, loadingHeader);
+        // The loaded page's own structure (its header slot, then its body under the Team's key), so a header and a
+        // body that render the loaded page's own elements stay mounted when the Team answers: no remount, no lost focus.
+        return (
+            <ItemList pageColumn={props.pageColumn} {...props.listScroll}>
+                <>{loadingHeader}</>
+                <React.Fragment key={scopeKey}>{body}</React.Fragment>
+            </ItemList>
+        );
+    };
 
     if (!projection) {
         switch (binding.kind) {

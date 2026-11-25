@@ -524,6 +524,9 @@ describe('the Authentication page while its Team is read', () => {
             });
         }
         harness.answer(serverId, '/v1/teams/get', { body: teamSummaryFixture(), respondAfter: new Promise<void>(() => {}) });
+        // The page's own reads start beside the Team's read and are still running.
+        harness.answer(serverId, connectionsPath, { body: {}, respondAfter: new Promise<void>(() => {}) });
+        harness.answer(serverId, sourcesPath, { body: {}, respondAfter: new Promise<void>(() => {}) });
         const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId={serverId} teamId="team-1" />);
         await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/teams/get').length).toBeGreaterThan(0));
         await waitForHomeGovernance(() => expect(screen.findHostByTestId('team-page-header')).not.toBeNull());
@@ -539,10 +542,74 @@ describe('the Authentication page while its Team is read', () => {
         ['teams.authentication.directory.section', 'teams.authentication.directory.overviewSubtitle'],
     ];
 
-    it('draws every section with its title and description from the first frame, with one reserved row each, when nothing of the Team is known', async () => {
+    it('draws every section from the first frame when nothing of the Team is known: both policy rows in their segmented shape, and the held "+"s', async () => {
         const screen = await heldAuthentication({ directoryRow: null });
         expect(sections(screen)).toEqual(PAGE_SECTIONS);
-        expect(screen.findAllByType(ItemLoadStateRows).map((node) => node.props.rows ?? 2)).toEqual([1, 1, 1, 1]);
+        // Every Team has both policy rows: they stand as segmented rows with nothing chosen yet, read-only.
+        for (const testID of ['team-admission-mode', 'team-authentication-policy-mode']) {
+            const row = screen.findAllByType(Item).find((node) => node.props.testID === testID);
+            expect(row?.props).toMatchObject({ disabled: true, accessoryLayout: 'stacked', subtitle: 'common.loading' });
+            expect(row?.props.rightElement).toBeTruthy();
+        }
+        // Connections and the directory each wait on one quiet line, beside the section "+" they will have.
+        expect(screen.findAllByType(ItemLoadStateRows)).toHaveLength(0);
+        expect(stateLine(screen, 'team-authentication-loading')).toBeDefined();
+        expect(stateLine(screen, 'team-authentication-directory-loading')).toBeDefined();
+        expect(screen.findByTestId('team-authentication-add-connection')).not.toBeNull();
+        expect(screen.findByTestId('team-authentication-directory-add')).not.toBeNull();
+    });
+
+    it('keeps one mounted policy row and the known directory line from the reserve through the live page', async () => {
+        const { applyTeamsDirectoryPage } = await import('@/sync/store/teams/teamsSnapshots');
+        const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
+        const { teamDirectoryQueryKeyV1 } = await import('@happier-dev/protocol/teams');
+        const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+        const team = teamSummaryFixture({ directoryMembership: null, capabilities: teamCapabilitiesFixture({ manageAuthentication: true }) });
+        applyTeamsDirectoryPage({
+            scope: createServerAccountScope(resolveServerProfileScopeIdForIdentifier(serverId), 'account-1')!,
+            queryKey: teamDirectoryQueryKeyV1({ v: 1, scope: 'member', archived: 'active' }),
+            items: [team], observedAt: 1,
+        });
+        const teamRead = createDeferred<void>();
+        const connectionsRead = createDeferred<void>();
+        const sourcesRead = createDeferred<void>();
+        harness.answer(serverId, '/v1/teams/get', { body: team, respondAfter: teamRead.promise });
+        harness.answer(serverId, connectionsPath, { body: TeamIdentityConnectionListResultV1Schema.parse({
+            items: [], eligibleProviders: identityFixture.current.eligibleProviders,
+            admissionModeApplicability: identityFixture.current.admissionModeApplicability, memberSignInUrl: null,
+        }), respondAfter: connectionsRead.promise });
+        harness.answer(serverId, sourcesPath, { body: TeamDirectorySourcePageV1Schema.parse({ items: [], nextCursor: null }), respondAfter: sourcesRead.promise });
+        harness.answer(serverId, '/v1/identity/github-apps/list', { body: githubApps });
+        harness.answer(serverId, '/v1/auth/entry', { body: AuthEntryProjectionV1Schema.parse({ v: 1, scope: { kind: 'home' }, state: 'ready', actions: [], autoRedirect: null }) });
+        const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId={serverId} teamId="team-1" />);
+        const policyRow = () => screen.findHostByTestId('team-admission-mode');
+        const directoryShowsItsLine = () => {
+            expect(stateLine(screen, 'team-authentication-directory')?.title).toBe('teams.authentication.directory.empty');
+            expect(screen.findAllByType(ItemLoadStateRows).filter((node) => node.props.testID === 'team-authentication-directory-loading')).toHaveLength(0);
+        };
+        await waitForHomeGovernance(() => expect(policyRow()).not.toBeNull());
+        const reserved = policyRow()!.instance;
+        directoryShowsItsLine();
+
+        // The Team answers: the page is live while its connection and directory reads run.
+        await React.act(async () => { teamRead.resolve(); });
+        await waitForHomeGovernance(() => expect(harness.requestsFor(sourcesPath).length).toBeGreaterThan(0));
+        expect(policyRow()!.instance).toBe(reserved);
+        directoryShowsItsLine();
+
+        // The connections answer: still the same row.
+        await React.act(async () => { connectionsRead.resolve(); });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-authentication-add-menu')).not.toBeNull());
+        expect(policyRow()!.instance).toBe(reserved);
+        directoryShowsItsLine();
+
+        await React.act(async () => { sourcesRead.resolve(); });
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId('team-authentication-directory-add')?.props.disabled).not.toBe(true));
+        expect(policyRow()!.instance).toBe(reserved);
+        directoryShowsItsLine();
+        // The page's reads start once and are not asked again when the Team answers.
+        expect(harness.requestsFor(connectionsPath)).toHaveLength(1);
+        expect(harness.requestsFor(sourcesPath)).toHaveLength(1);
     });
 
     it('draws the policy rows the Team summary already holds and reserves only what it does not know', async () => {

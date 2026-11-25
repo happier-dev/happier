@@ -256,6 +256,29 @@ describe('Team overview: Shared with this Team', () => {
     ).toEqual([]);
   });
 
+  it('draws the Team section from the Team at once and holds the never-seen shared section at the empty card\'s shape', async () => {
+    const serverId = await addHome([]);
+    let answerSummary!: () => void;
+    harness.answer(serverId, SUMMARY.path, {
+      body: { teamId: 'team-1', kinds: [] },
+      respondAfter: new Promise<void>((resolve) => { answerSummary = resolve; }),
+    });
+    const screen = await renderScreen(<InPanes serverId={serverId} teamId="team-1" />);
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-identity'));
+    // The Team's own rows come from the Team: they never wait on the summary.
+    expect(ids(screen)).toEqual(expect.arrayContaining(['team-overview-members', 'team-overview-groups']));
+    // Never seen: the section stands in the empty card's own row, unseen, so the card it becomes is the same box.
+    const reserve = screen.tree.root.findByProps({ testID: 'team-overview-shared-reserve' });
+    const heldRow = reserve.findByProps({ testID: 'team-overview-shared-empty' });
+    expect(heldRow.props.title).toBe(t('teams.overview.shared.emptyTitle', { team: teamSummaryFixture().name }));
+    expect(heldRow.props.subtitle).toBe(t('teams.overview.shared.emptyBody'));
+    expect(reserve.props.accessibilityElementsHidden).toBe(true);
+
+    await act(async () => { answerSummary(); });
+    await vi.waitFor(() => expect(ids(screen)).not.toContain('team-overview-shared-reserve'));
+    expect(ids(screen)).toContain('team-overview-shared-empty');
+  });
+
   it('holds the Team identity while the Team is read, and lets the shared rows arrive above nothing on screen', async () => {
     const serverId = await addHome([
       { kind: 'machines', status: 'available', count: 2 },
@@ -279,11 +302,12 @@ describe('Team overview: Shared with this Team', () => {
     expect(ids(screen)).not.toContain('team-page-header');
     expect(reserved()).toEqual([]);
 
-    // The Team answered: the shared section holds its one known row, and the Team section waits below it.
+    // The Team answered: the shared section holds its never-seen shape, and the Team section is drawn under it.
     await act(async () => { answerTeam(); });
     await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-identity'));
     expect(reserved()).toEqual(['team-overview-shared-loading-skeleton:0']);
-    expect(ids(screen)).not.toContain('team-overview-members');
+    expect(ids(screen)).toContain('team-overview-shared-reserve');
+    expect(ids(screen)).toContain('team-overview-members');
 
     await act(async () => { answerSummary(); });
     await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-shared:sessions'));
@@ -328,7 +352,7 @@ describe('Team overview: Shared with this Team', () => {
     expect(order.indexOf('team-overview-role')).toBeLessThan(order.indexOf('team-overview-home'));
   });
 
-  it('keeps a member\'s Leave Team under the sections: it arrives with them, never above where they land', async () => {
+  it('keeps a member\'s Leave Team under the sections, drawn with them while the summary is read', async () => {
     const serverId = await addHome([]);
     let answerSummary!: () => void;
     harness.answer(serverId, '/v1/teams/get', {
@@ -340,9 +364,12 @@ describe('Team overview: Shared with this Team', () => {
     });
     const screen = await renderScreen(<InPanes serverId={serverId} teamId="team-1" />);
     await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-identity'));
-    expect(ids(screen)).not.toContain('team-overview-leave');
+    const order = ids(screen);
+    expect(order).toContain('team-overview-leave');
+    expect(order.indexOf('team-overview-shared-reserve')).toBeLessThan(order.indexOf('team-overview-leave'));
     await act(async () => { answerSummary(); });
-    await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-leave'));
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-shared-empty'));
+    expect(ids(screen)).toContain('team-overview-leave');
   });
 
   it('keeps the last-known invitation to share while a refresh runs', async () => {

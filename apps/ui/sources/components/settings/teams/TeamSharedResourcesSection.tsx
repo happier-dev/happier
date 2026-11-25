@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet, View } from 'react-native';
 
 import {
   TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1,
@@ -23,8 +24,9 @@ import { TEAM_SHARED_KIND_PRESENTATION, readTeamSharedListKind } from './shared/
 import { teamCredentialsPath, teamSessionsPath, teamSharedCollectionPath, teamSharedKindPath } from './teamsRoutes';
 
 /**
- * While its one summary read runs the section holds its first row: there is always one (a shared kind, or the
- * invitation to share), but how many follow is not known, so no more are guessed.
+ * While its one summary read runs with nothing last-known, the section holds the empty card's own box (the
+ * invitation to share, drawn unseen) with one quiet row over it: a Team with nothing shared (the usual answer)
+ * lands in exactly that box, and nothing under the section moves. How many kinds a Team has shared is never guessed.
  */
 const LOADING_ROWS = 1;
 
@@ -133,13 +135,22 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
         })}
       >
         {loadingWithNothing ? (
-          <ItemLoadStateRows
-            testID="team-overview-shared-loading"
-            state={{ kind: 'loading' }}
-            rows={LOADING_ROWS}
-            lines={1}
-            leadingMark="logo"
-          />
+          <View>
+            <View testID="team-overview-shared-reserve" style={styles.unseen} accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants" aria-hidden pointerEvents="none">
+              <SharedEmptyRow teamName={props.teamName} />
+            </View>
+            <View style={styles.over}>
+              <ItemLoadStateRows
+                testID="team-overview-shared-loading"
+                state={{ kind: 'loading' }}
+                rows={LOADING_ROWS}
+                lines={1}
+                leadingMark="logo"
+                showDivider={false}
+              />
+            </View>
+          </View>
         ) : null}
         {failedWithNothing ? (
           <ItemLoadStateRows
@@ -156,16 +167,7 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
         ) : null}
         {empty ? (
           // The lab's empty row (L12 empty): what isn't here yet and where sharing starts, as a row of the group.
-          <Item
-            testID="team-overview-shared-empty"
-            icon={<Icon name="users" />}
-            title={t('teams.overview.shared.emptyTitle', {
-              team: props.teamName,
-            })}
-            subtitle={t('teams.overview.shared.emptyBody')}
-            mode="info"
-            showChevron={false}
-          />
+          <SharedEmptyRow teamName={props.teamName} />
         ) : null}
         {rows.map((row) => {
           const presentation = TEAM_SHARED_KIND_PRESENTATION[row.kind];
@@ -224,4 +226,23 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
         })}
       </ItemGroup>
     );
+});
+
+/** The invitation to share, as one row of the section; the never-seen reserve draws it unseen for its box. */
+function SharedEmptyRow(props: Readonly<{ teamName: string }>) {
+  return (
+    <Item
+      testID="team-overview-shared-empty"
+      icon={<Icon name="users" />}
+      title={t('teams.overview.shared.emptyTitle', { team: props.teamName })}
+      subtitle={t('teams.overview.shared.emptyBody')}
+      mode="info"
+      showChevron={false}
+    />
+  );
+}
+
+const styles = StyleSheet.create({
+  unseen: { opacity: 0 },
+  over: { position: 'absolute', top: 0, left: 0, right: 0 },
 });

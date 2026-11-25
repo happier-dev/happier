@@ -52,13 +52,14 @@ import {
   teamAcceptedSignInSummary,
   teamAdmissionModeConsequence,
   teamAdmissionModeLabel,
+  teamAdmissionModeSegmentLabel,
 } from '../teamPolicyPresentation';
 import {
   directorySourcePresentationState,
   directorySourceStateLabel,
 } from './directoryAdministrationPresentation';
 import { useDirectoryAdministration } from './useDirectoryAdministration';
-import { TeamAuthenticationPolicySections } from './TeamAuthenticationPolicySections';
+import { ADMISSION_MODES, TeamAuthenticationPolicySections } from './TeamAuthenticationPolicySections';
 import { TeamMemberSignInLinkSection } from './TeamMemberSignInLinkSection';
 import { TeamGitHubAppsSection } from './TeamGitHubAppScreens';
 import {
@@ -82,6 +83,8 @@ import {
 } from '../collection/teamsCreateGuidanceText';
 import { createIdentityAdministrationClient } from './identityAdministrationClient';
 import { Icon } from '@/components/ui/icons/Icon';
+import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 
 /** Consume the catalog's exact Team-owned GitHub creation decision. */
 function githubAppCreationAvailable(
@@ -104,18 +107,21 @@ const AuthorizedAuthenticationContent = React.memo(
     }>,
   ) {
     const router = useRouter();
+    // The page is mounted once from the reserve (a held context, which asks no approval) through the live Team:
+    // its reads start with the reserve and the Team's answer does not start them again.
+    const requestApproval = useEventCallback(props.context.requestApproval);
     const { state, refresh } = useIdentityAdministration(
       props.scope,
       props.address.teamId,
-      props.context.requestApproval,
+      requestApproval,
     );
     const client = React.useMemo(
       () =>
         createIdentityAdministrationClient(props.scope, {
-          onApprovalPending: props.context.requestApproval,
+          onApprovalPending: requestApproval,
         }),
       [
-        props.context.requestApproval,
+        requestApproval,
         props.scope.accountId,
         props.scope.serverId,
       ],
@@ -258,16 +264,17 @@ const AuthorizedAuthenticationContent = React.memo(
           : null;
       return (
         <>
+          {null}
           {homeMethodsNotice}
           <TeamAuthenticationPolicySections
             context={props.context}
-            connections={[]}
+            connections={NO_CONNECTIONS}
             connectionsCurrent={false}
             admissionModeApplicability={null}
             homeMethods={homeMethods}
             homeMethodsCurrent={currentHomeEntry?.status === 'ready'}
           />
-          <ItemGroup
+          <SettingAnchor setting={TEAM_AUTHENTICATION_SETTINGS.settings.connections}><ItemGroup
             title={t('teams.authentication.connectionsSection')}
             description={t('teams.authentication.connectionsDescription')}
             action={state.kind === 'loading' ? <HeldSectionAction kind="connection" /> : undefined}
@@ -299,7 +306,10 @@ const AuthorizedAuthenticationContent = React.memo(
                 accessibilitySemantics="alert"
               />
             )}
-          </ItemGroup>
+          </ItemGroup></SettingAnchor>
+          {/* The directory is read on its own: it never waits on, or fails with, the connections. */}
+          <DirectorySection scope={props.scope} address={props.address}
+            knownEmpty={props.context.team.directoryMembership === null} />
         </>
       );
     }
@@ -453,7 +463,8 @@ const AuthorizedAuthenticationContent = React.memo(
             ) : null}
           </ItemGroup>
         </SettingAnchor>
-        <DirectorySection scope={props.scope} address={props.address} />
+        <DirectorySection scope={props.scope} address={props.address}
+          knownEmpty={props.context.team.directoryMembership === null} />
         {/* The page members are sent to. It carries no bearer, so it is
             shown to any administrator who can read this screen. */}
         <TeamMemberSignInLinkSection
@@ -530,6 +541,8 @@ const DirectorySection = React.memo(function DirectorySection(
   props: Readonly<{
     scope: Parameters<typeof useDirectoryAdministration>[0];
     address: Parameters<typeof teamDirectoryPath>[0];
+    /** The Team summary says the Team has no directory: its line stands while the sources are read. */
+    knownEmpty: boolean;
   }>,
 ) {
   const router = useRouter();
@@ -555,7 +568,9 @@ const DirectorySection = React.memo(function DirectorySection(
       ) : state.kind === 'loading' ? <HeldSectionAction kind="directory" /> : undefined}
     >
       <SettingAnchor setting={TEAM_AUTHENTICATION_SETTINGS.settings.directory}>
-        {state.kind === 'loading' ? (
+        {state.kind === 'loading' && props.knownEmpty ? (
+          <DirectoryEmptyLine />
+        ) : state.kind === 'loading' ? (
           <ItemLoadStateRows
             testID="team-authentication-directory-loading"
             state={{ kind: 'loading' }}
@@ -823,13 +838,7 @@ function TeamConnectionsReserve(props: Readonly<{ team: TeamSectionContext['team
       accessibilityLabel={t('common.loading')}
     />
   ) : (
-    <SurfaceStateCard
-      testID="team-authentication-loading"
-      kind="loading"
-      size="line"
-      title={t('common.loading')}
-      accessibilitySemantics="status"
-    />
+    <QuietLoadingLine testID="team-authentication-loading" />
   );
 }
 
@@ -862,14 +871,6 @@ type AuthenticationLoadingKnown = Parameters<
  * What the row does not say is reserved: one row per section, or the connections the policy names.
  */
 function AuthenticationLoading(known: AuthenticationLoadingKnown) {
-  const reserve = (rows: number, lines: 1 | 2 = 2) => (
-    <ItemLoadStateRows
-      state={{ kind: 'loading' }}
-      rows={rows}
-      lines={lines}
-      accessibilityLabel={t('teams.loading')}
-    />
-  );
   const team = known.row;
   const held: TeamSectionContext | null =
     team && known.scope && known.address && known.homeName !== undefined
@@ -887,53 +888,78 @@ function AuthenticationLoading(known: AuthenticationLoadingKnown) {
           settleLeave: NO_OP,
         }
       : null;
-  if (held && !held.team.capabilities.manageAuthentication) {
-    return <AuthenticationFacts context={held} />;
-  }
+  // The same element the live page renders, so the page stays mounted when the Team answers.
+  if (held) return <TeamAuthenticationBody context={held} />;
   return (
     <>
-      {held ? (
-        <TeamAuthenticationPolicySections
-          context={held}
-          connections={[]}
-          connectionsCurrent={false}
-          admissionModeApplicability={null}
-          homeMethods={[]}
-          homeMethodsCurrent={false}
-        />
-      ) : (
-        <>
-          <ItemGroup
-            title={t('teams.authentication.policy.admissionSection')}
-            description={t('teams.authentication.policy.admissionHelp')}
-          >
-            {reserve(1)}
-          </ItemGroup>
-          <ItemGroup
-            title={t('teams.authentication.policy.acceptedSection')}
-            description={t('teams.authentication.policy.acceptedHelp')}
-          >
-            {reserve(1)}
-          </ItemGroup>
-        </>
-      )}
+      <ItemGroup
+        title={t('teams.authentication.policy.admissionSection')}
+        description={t('teams.authentication.policy.admissionHelp')}
+      >
+        <HeldPolicyRow testID="team-admission-mode" title={t('teams.authentication.policy.admissionRow')}
+          options={ADMISSION_MODES.map((mode) => ({ id: mode, label: teamAdmissionModeSegmentLabel(mode) }))} />
+      </ItemGroup>
+      <ItemGroup
+        title={t('teams.authentication.policy.acceptedSection')}
+        description={t('teams.authentication.policy.acceptedHelp')}
+      >
+        <HeldPolicyRow testID="team-authentication-policy-mode" title={t('teams.authentication.policy.acceptedRow')}
+          options={[
+            { id: 'inherit', label: t('teams.authentication.policy.acceptedInherit') },
+            { id: 'restricted', label: t('teams.authentication.policy.acceptedRestricted') },
+          ]} />
+      </ItemGroup>
       <ItemGroup
         title={t('teams.authentication.connectionsSection')}
         description={t('teams.authentication.connectionsDescription')}
-        action={held ? <HeldSectionAction kind="connection" /> : undefined}
+        action={<HeldSectionAction kind="connection" />}
       >
-        {held ? <TeamConnectionsReserve team={held.team} /> : reserve(1, 1)}
+        <QuietLoadingLine testID="team-authentication-loading" />
       </ItemGroup>
       <ItemGroup
         title={t('teams.authentication.directory.section')}
         description={t('teams.authentication.directory.overviewSubtitle')}
-        action={held ? <HeldSectionAction kind="directory" /> : undefined}
+        action={<HeldSectionAction kind="directory" />}
       >
-        {held?.team.directoryMembership === null ? (
-          <DirectoryEmptyLine />
-        ) : reserve(1)}
+        <QuietLoadingLine testID="team-authentication-directory-loading" />
       </ItemGroup>
     </>
+  );
+}
+
+type HeldPolicyOption = Readonly<{ id: string; label: string }>;
+
+/**
+ * A policy row every Team has, before anything of the Team is known: its title, its segments with none chosen
+ * (read-only), and one quiet line where the chosen option's consequence lands, so the row is the row that arrives.
+ */
+function HeldPolicyRow(props: Readonly<{ testID: string; title: string; options: readonly HeldPolicyOption[] }>) {
+  return (
+    <SegmentedChoiceItem<string>
+      testID={props.testID}
+      title={props.title}
+      subtitle={t('common.loading')}
+      subtitleLines={0}
+      accessoryLayout="stacked"
+      options={props.options}
+      value={null}
+      onChange={NO_OP}
+      disabled
+      testIDPrefix={props.testID}
+    />
+  );
+}
+
+/** One quiet line in the empty line's own shape (the same line component), so what lands replaces it in place. */
+function QuietLoadingLine(props: Readonly<{ testID: string }>) {
+  return (
+    <SurfaceStateCard
+      testID={props.testID}
+      kind="loading"
+      size="line"
+      title={t('common.loading')}
+      accessibilitySemantics="status"
+    />
   );
 }
 
@@ -950,6 +976,26 @@ function DirectoryEmptyLine() {
   );
 }
 
+/**
+ * The page under its header, for the held Team (the reserve) and the live one alike: one element type in one place,
+ * so its rows, controls and reads stay mounted across the handover.
+ */
+const TeamAuthenticationBody = React.memo(function TeamAuthenticationBody(props: Readonly<{ context: TeamSectionContext }>) {
+  const { context } = props;
+  return context.team.capabilities.manageAuthentication ? (
+    <AuthorizedAuthenticationContent context={context} scope={context.scope} address={context.address} />
+  ) : (
+    <SettingSection
+      section={TEAM_AUTHENTICATION_SETTINGS.sectionRefs.accepted}
+      answersFor={Object.values(TEAM_AUTHENTICATION_SETTINGS.sectionRefs)}
+    >
+      <AuthenticationFacts context={context} />
+    </SettingSection>
+  );
+});
+
+const NO_CONNECTIONS: readonly never[] = [];
+
 export const TeamAuthenticationSettingsScreen = React.memo(
   function TeamAuthenticationSettingsScreen(
     props: Readonly<{
@@ -965,24 +1011,7 @@ export const TeamAuthenticationSettingsScreen = React.memo(
         description={t('teams.pages.authentication')}
         renderLoading={AuthenticationLoading}
       >
-        {(context) =>
-          context.team.capabilities.manageAuthentication ? (
-            <AuthorizedAuthenticationContent
-              context={context}
-              scope={context.scope}
-              address={context.address}
-            />
-          ) : (
-            <SettingSection
-              section={TEAM_AUTHENTICATION_SETTINGS.sectionRefs.accepted}
-              answersFor={Object.values(
-                TEAM_AUTHENTICATION_SETTINGS.sectionRefs,
-              )}
-            >
-              <AuthenticationFacts context={context} />
-            </SettingSection>
-          )
-        }
+        {(context) => <TeamAuthenticationBody context={context} />}
       </TeamSection>
     );
   },

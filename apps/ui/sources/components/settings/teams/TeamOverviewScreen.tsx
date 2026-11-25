@@ -32,7 +32,7 @@ import { askTeamManagersText } from './collection/teamsCreateGuidanceText';
 import { directorySourcePresentationState } from './identity/directoryAdministrationPresentation';
 import { useDirectoryAdministration } from './identity/useDirectoryAdministration';
 import { TeamSection } from './TeamSection';
-import { TeamSharedResourcesSection, isTeamSharedResourcesSummaryPending } from './TeamSharedResourcesSection';
+import { TeamSharedResourcesSection } from './TeamSharedResourcesSection';
 import { TeamSharedKindBody, TeamSharedKindShareAction, useTeamSharedPresetScroll } from './shared/TeamSharedKindScreen';
 import { TEAM_SHARED_KIND_PRESENTATION, readTeamSharedListKind } from './shared/teamSharedKindPresentation';
 import type { TeamSectionContext } from './teamSectionContext';
@@ -375,11 +375,10 @@ const TeamOverviewBody = React.memo(function TeamOverviewBody(
   ).length;
   const directoryNames = sources.map((source) => source.displayName);
   const faces = roster.rows.slice(0, MEMBER_PREVIEW_COUNT);
-  // How many kinds are shared is not known until the summary answers: the Team section waits for it, so the
-  // shared rows arrive above nothing that is already on screen.
+  // The Team section is the Team's own: it is drawn from the Team at once. The shared section above it holds its
+  // last-known kinds, or the empty card's box when never seen, so the summary's answer moves nothing below it.
   const sharing = setupSteps === null;
   const sharedSummary = useTeamSharedResourcesSummary({ scope: context.scope, address, enabled: sharing });
-  const sharedPending = sharing && isTeamSharedResourcesSummaryPending(sharedSummary);
 
   // A just-created Team's page is its setup: only the destinations the steps lead to stay.
   const shown = (id: (typeof destinations)[number]) =>
@@ -407,7 +406,7 @@ const TeamOverviewBody = React.memo(function TeamOverviewBody(
         <TeamSharedResourcesSection context={context} summary={sharedSummary} besidePage={props.sharedBeside} />
       )}
 
-      {sharedPending ? null : <ItemGroup
+      <ItemGroup
         title={t('teams.overview.teamSection')}
         description={
           manages
@@ -496,10 +495,10 @@ const TeamOverviewBody = React.memo(function TeamOverviewBody(
             onPress={() => router.push(teamSettingsPath(address))}
           />
         ) : null}
-      </ItemGroup>}
+      </ItemGroup>
 
-      {/* What closes the page (a member's Leave Team) arrives with the sections above it, never under the wait. */}
-      {sharedPending ? null : props.trailing}
+      {/* What closes the page (a member's Leave Team) stands under the sections, drawn with them. */}
+      {props.trailing}
     </>
   );
 });

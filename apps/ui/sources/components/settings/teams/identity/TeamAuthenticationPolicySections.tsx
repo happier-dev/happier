@@ -28,7 +28,8 @@ import { teamAdmissionModeSegmentLabel, teamAdmissionModeConsequence } from '../
 import { identityConnectionDiscriminator } from './identityAdministrationPresentation';
 import { TEAM_AUTHENTICATION_SETTINGS } from './teamAuthenticationSettings';
 
-const ADMISSION_MODES: readonly TeamAdmissionModeV1[] = Object.freeze([
+/** Every admission mode, in the order its segments stand (the held row before the Team is known draws the same). */
+export const ADMISSION_MODES: readonly TeamAdmissionModeV1[] = Object.freeze([
     'invite_only',
     'provisioned',
     'jit',
