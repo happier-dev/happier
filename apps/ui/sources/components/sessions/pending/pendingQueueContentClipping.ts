@@ -50,7 +50,7 @@
  */
 import { HAPPIER_PAGE_METRICS, HAPPIER_TYPE_SCALE } from '@happier-dev/plugin-ui/presentation';
 import { HAPPIER_SPACE_STEPS } from '@happier-dev/plugin-ui/environment';
-import type { PendingMessagePresentation } from './pendingMessageVisualState';
+import { paintsPendingMessageActionRow, type PendingMessagePresentation } from './pendingMessageVisualState';
 
 export type PendingQueueMessagePresentation = 'head' | 'backlog';
 
@@ -124,11 +124,29 @@ export function resolvePendingMessageGapPx(params: Readonly<{ isLastInScrollCont
     return params.isLastInScrollContent ? 0 : PENDING_QUEUE_MESSAGE_GAP_PX;
 }
 
-/** The head's own bound: {@link PENDING_QUEUE_HEAD_MAX_LINES} painted lines plus its bubble padding. */
-export function resolvePendingQueueHeadMaxHeightPx(lineHeightPx: number): number {
+/**
+ * The status and action strip one pending utterance paints under its bubble (0 when it paints none). The block's
+ * bound and the size estimate read this one answer, so the bound never cuts the strip off its row.
+ */
+export function resolvePendingMessageActionBandPx(
+    row: Pick<PendingMessagePresentation, 'canMutate' | 'canReorder' | 'isHostInput'>,
+    platformIsWeb: boolean,
+    queueLength: number,
+): number {
+    return paintsPendingMessageActionRow({ platformIsWeb, canReorderPendingMessages: queueLength > 1 && row.canReorder })
+        && row.canMutate && !row.isHostInput ? PENDING_MESSAGE_ACTION_ROW_HEIGHT_PX : 0;
+}
+
+/**
+ * The head's own bound: {@link PENDING_QUEUE_HEAD_MAX_LINES} painted lines plus its bubble padding, then the
+ * status and action strip the head paints under them, so a head that fits its lines is a whole row (its
+ * status and the way forward never sit behind the inner scroll).
+ */
+export function resolvePendingQueueHeadMaxHeightPx(lineHeightPx: number, headActionBandPx: number): number {
     return PENDING_QUEUE_SCROLL_PADDING_TOP_PX
         + PENDING_QUEUE_MESSAGE_BUBBLE_PADDING_PX
-        + PENDING_QUEUE_HEAD_MAX_LINES * lineHeightPx;
+        + PENDING_QUEUE_HEAD_MAX_LINES * lineHeightPx
+        + headActionBandPx;
 }
 
 /**
@@ -143,8 +161,10 @@ export function resolvePendingQueueScrollMaxHeightPx(params: Readonly<{
     discardedCount: number;
     queueMaxHeightPx: number;
     lineHeightPx: number;
+    /** {@link resolvePendingMessageActionBandPx} for the head row. */
+    headActionBandPx: number;
 }>): number {
-    const headMaxHeightPx = resolvePendingQueueHeadMaxHeightPx(params.lineHeightPx);
+    const headMaxHeightPx = resolvePendingQueueHeadMaxHeightPx(params.lineHeightPx, params.headActionBandPx);
     const isSoleUtterance = params.pendingCount === 1 && params.discardedCount === 0;
     return isSoleUtterance ? headMaxHeightPx : headMaxHeightPx + params.queueMaxHeightPx;
 }

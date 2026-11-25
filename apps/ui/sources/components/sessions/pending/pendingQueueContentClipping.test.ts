@@ -13,6 +13,8 @@ import {
     resolvePendingQueueMessagePresentation,
     resolvePendingQueueScrollMaxHeightPx,
     PENDING_QUEUE_TOP_INSET_PX,
+    PENDING_MESSAGE_ACTION_ROW_HEIGHT_PX,
+    resolvePendingMessageActionBandPx,
 } from './pendingQueueContentClipping';
 
 const QUEUE_MAX_HEIGHT_PX = 80;
@@ -51,7 +53,7 @@ describe('pending queue geometry', () => {
      */
     it('never leaves the pending block taller than the committed row around the same bubble', () => {
         const pendingNonBubblePx = PENDING_HEADER_PX
-            + resolvePendingQueueHeadMaxHeightPx(LINE_PX)
+            + resolvePendingQueueHeadMaxHeightPx(LINE_PX, 0)
             - (PENDING_QUEUE_HEAD_MAX_LINES * LINE_PX)
             - 16 // the bubble's own paddingVertical, which the committed row also paints
             + resolvePendingMessageGapPx({ isLastInScrollContent: true });
@@ -66,8 +68,21 @@ describe('pending queue geometry', () => {
 
     it('guarantees the head six painted lines before it scrolls', () => {
         // scroll paddingTop 6 + bubble paddingVertical 16 + 6 lines.
-        expect(resolvePendingQueueHeadMaxHeightPx(LINE_PX)).toBe(6 + 16 + 6 * LINE_PX);
+        expect(resolvePendingQueueHeadMaxHeightPx(LINE_PX, 0)).toBe(6 + 16 + 6 * LINE_PX);
         expect(PENDING_QUEUE_HEAD_MAX_LINES).toBe(6);
+    });
+
+    it('holds a whole head row: six lines, then the status and action strip it paints under them', () => {
+        const row = { canMutate: true, canReorder: false, isHostInput: false };
+        const bandPx = resolvePendingMessageActionBandPx(row, true, 1);
+        expect(bandPx).toBe(PENDING_MESSAGE_ACTION_ROW_HEIGHT_PX);
+        expect(resolvePendingQueueScrollMaxHeightPx({
+            pendingCount: 1, discardedCount: 0, queueMaxHeightPx: QUEUE_MAX_HEIGHT_PX, lineHeightPx: LINE_PX, headActionBandPx: bandPx,
+        })).toBe(6 + 16 + 6 * LINE_PX + PENDING_MESSAGE_ACTION_ROW_HEIGHT_PX);
+        // A row that paints no strip (native without reordering, a host line, a read-only viewer) adds nothing.
+        expect(resolvePendingMessageActionBandPx(row, false, 1)).toBe(0);
+        expect(resolvePendingMessageActionBandPx({ ...row, isHostInput: true }, true, 1)).toBe(0);
+        expect(resolvePendingMessageActionBandPx({ ...row, canMutate: false }, true, 1)).toBe(0);
     });
 
     it('bounds a lone utterance at exactly the head bound', () => {
@@ -76,7 +91,8 @@ describe('pending queue geometry', () => {
             discardedCount: 0,
             queueMaxHeightPx: QUEUE_MAX_HEIGHT_PX,
             lineHeightPx: LINE_PX,
-        })).toBe(resolvePendingQueueHeadMaxHeightPx(LINE_PX));
+            headActionBandPx: 0,
+        })).toBe(resolvePendingQueueHeadMaxHeightPx(LINE_PX, 0));
     });
 
     /**
@@ -90,19 +106,21 @@ describe('pending queue geometry', () => {
             discardedCount: 0,
             queueMaxHeightPx: QUEUE_MAX_HEIGHT_PX,
             lineHeightPx: LINE_PX,
+            headActionBandPx: 0,
         });
 
-        expect(queue).toBe(resolvePendingQueueHeadMaxHeightPx(LINE_PX) + QUEUE_MAX_HEIGHT_PX);
-        expect(queue).toBeGreaterThan(resolvePendingQueueHeadMaxHeightPx(LINE_PX));
+        expect(queue).toBe(resolvePendingQueueHeadMaxHeightPx(LINE_PX, 0) + QUEUE_MAX_HEIGHT_PX);
+        expect(queue).toBeGreaterThan(resolvePendingQueueHeadMaxHeightPx(LINE_PX, 0));
     });
 
     it('treats a lone tombstone, and one queued row beside one, as a queue', () => {
-        const head = resolvePendingQueueHeadMaxHeightPx(LINE_PX);
+        const head = resolvePendingQueueHeadMaxHeightPx(LINE_PX, 0);
         for (const counts of [{ pendingCount: 1, discardedCount: 1 }, { pendingCount: 0, discardedCount: 1 }]) {
             expect(resolvePendingQueueScrollMaxHeightPx({
                 ...counts,
                 queueMaxHeightPx: QUEUE_MAX_HEIGHT_PX,
                 lineHeightPx: LINE_PX,
+                headActionBandPx: 0,
             })).toBe(head + QUEUE_MAX_HEIGHT_PX);
         }
     });

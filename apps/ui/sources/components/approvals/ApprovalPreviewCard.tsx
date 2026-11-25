@@ -155,7 +155,8 @@ function HomeLayoutGroupPreview(props: Readonly<{
     const viewer = useAccountSettingsScope();
     const layout = useApprovalHomeLayoutItemReading(props.serverId ?? null, viewer?.serverId);
     const widgets = props.widgetIds.map(id => layout.readName(id) ?? t('common.unavailable'));
-    return <ApprovalPreviewText summary={readApprovalPreviewSummary(props.preview, props.request, undefined, widgets)} numberOfLines={2} />;
+    // The page reads the whole sentence; the tray card draws it in its own bounded line (its render scope).
+    return <ApprovalPreviewText summary={readApprovalPreviewSummary(props.preview, props.request, undefined, widgets)} />;
 }
 
 /** A host that sets the request's summary sentence in its own line (the composer tray's card) draws it there. */
@@ -167,14 +168,14 @@ export function ApprovalPreviewSummaryRenderScope(props: Readonly<{ render: Appr
     return <ApprovalPreviewSummaryRenderContext.Provider value={props.render}>{props.children}</ApprovalPreviewSummaryRenderContext.Provider>;
 }
 
-function ApprovalPreviewText(props: Readonly<{ summary: string | null; numberOfLines?: number }>) {
+function ApprovalPreviewText(props: Readonly<{ summary: string | null }>) {
     const render = React.useContext(ApprovalPreviewSummaryRenderContext);
     if (!props.summary) return null;
     if (render) return <>{render(props.summary)}</>;
 
     return (
         <View style={styles.card}>
-            <Text style={styles.summary} numberOfLines={props.numberOfLines}>{props.summary}</Text>
+            <Text style={styles.summary}>{props.summary}</Text>
         </View>
     );
 }

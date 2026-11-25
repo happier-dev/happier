@@ -58,6 +58,7 @@ import {
     resolvePendingMessageGapPx,
     resolvePendingQueueMessagePresentation,
     resolvePendingQueueScrollMaxHeightPx,
+    resolvePendingMessageActionBandPx,
 } from './pendingQueueContentClipping';
 import { useTerminalComposerClearAction } from '@/components/sessions/terminalComposer/useTerminalComposerClearAction';
 import { usePendingInputInterruptAndRunAction } from './usePendingInputInterruptAndRunAction';
@@ -1266,6 +1267,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         discardedCount,
         queueMaxHeightPx: maxHeightPx,
         lineHeightPx: transcriptMarkdownTextStyle.lineHeight,
+        headActionBandPx: pendingPresentation.shownRows[0]
+            ? resolvePendingMessageActionBandPx(pendingPresentation.shownRows[0], isWeb, pendingMessages.length) : 0,
     });
     const canExpandPendingQueue = pendingCount > 0 && effectiveScrollContentHeightPx > collapsedMaxHeight;
     const isQueueExpanded = canExpandPendingQueue && isPendingQueueExpanded;

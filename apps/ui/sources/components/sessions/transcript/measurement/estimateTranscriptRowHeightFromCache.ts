@@ -1,5 +1,4 @@
 import {
-    paintsPendingMessageActionRow,
     resolvePendingMessageRowsForTranscript,
     resolvePendingMessageContentPresentation,
 } from '@/components/sessions/pending/pendingMessageVisualState';
@@ -13,6 +12,7 @@ import {
     estimatePendingFollowNoticeBodyHeightPx,
     resolvePendingMessageGapPx,
     resolvePendingQueueScrollMaxHeightPx,
+    resolvePendingMessageActionBandPx,
 } from '@/components/sessions/pending/pendingQueueContentClipping';
 import { resolveTranscriptUtteranceIdentity } from '@/components/sessions/transcript/motion/transcriptFreshnessGate';
 import { resolveMessageStructuredReferences } from '@/components/sessions/transcript/references/messageStructuredReferences';
@@ -401,12 +401,7 @@ function estimatePendingQueueRowPx(
         // PER ROW, from this row's own delivery-mutation policy — the same gate the block paints
         // the reorder handle from (`hasEffectPossibleDelivery`). Hoisting it for the block would
         // mis-model a mixed queue by 20px per row.
-        if (paintsPendingMessageActionRow({
-            platformIsWeb,
-            canReorderPendingMessages: row.queueLength > 1 && row.canReorder,
-        }) && row.canMutate && !row.isHostInput) {
-            scrollContentPx += PENDING_QUEUE_MESSAGE_ACTION_ROW_PX;
-        }
+        scrollContentPx += resolvePendingMessageActionBandPx(row, platformIsWeb, row.queueLength);
     }
     if (item.discardedMessages.length > 0) {
         scrollContentPx += PENDING_QUEUE_DISCARDED_SECTION_PX;
@@ -434,6 +429,7 @@ function estimatePendingQueueRowPx(
         discardedCount: item.discardedMessages.length,
         queueMaxHeightPx: PENDING_QUEUE_SCROLL_MAX_HEIGHT_PX,
         lineHeightPx: transcriptMarkdownTextStyle.lineHeight,
+        headActionBandPx: pendingRows[0] ? resolvePendingMessageActionBandPx(pendingRows[0], platformIsWeb, pendingRows[0].queueLength) : 0,
     }));
     return PENDING_QUEUE_TOP_INSET_PX + scrollBoxPx;
 }

@@ -10,14 +10,15 @@ import type { PendingDeliveryFailureCauseV1 } from '@happier-dev/protocol/sessio
 import { t } from '@/text';
 import { resolvePendingMessagesPresentationByRecipient } from './pendingMessageVisualState';
 import { installPendingMessagesCommonModuleMocks } from './pendingMessagesTestHelpers';
-import { resolvePendingQueueHeadMaxHeightPx } from './pendingQueueContentClipping';
+import { PENDING_MESSAGE_ACTION_ROW_HEIGHT_PX, resolvePendingQueueHeadMaxHeightPx } from './pendingQueueContentClipping';
 import { writeSessionExplicitStopV1ToMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 /** `transcriptMarkdownTextStyle.lineHeight` in the test theme. */
 const LINE_PX = 24;
 /** The head stays fully visible; the collapsed backlog scrolls in the compact strip beneath it. */
-const QUEUE_CAP_PX = resolvePendingQueueHeadMaxHeightPx(LINE_PX) + 80;
+// Web paints the head's status and action strip, which the head bound holds with its lines.
+const QUEUE_CAP_PX = resolvePendingQueueHeadMaxHeightPx(LINE_PX, PENDING_MESSAGE_ACTION_ROW_HEIGHT_PX) + 80;
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -2239,7 +2240,7 @@ describe('PendingMessagesTranscriptBlock', () => {
             }));
 
             const scroll = screen.findByTestId('pendingMessages.scroll');
-            expect(scroll!.props.style?.maxHeight).toBe(resolvePendingQueueHeadMaxHeightPx(LINE_PX));
+            expect(scroll!.props.style?.maxHeight).toBe(resolvePendingQueueHeadMaxHeightPx(LINE_PX, PENDING_MESSAGE_ACTION_ROW_HEIGHT_PX));
             expect(scroll!.props.style?.maxHeight).toBeGreaterThan(80);
             expect(screen.findByType('MarkdownView' as any)).toBeTruthy();
             expect(screen.findByTestId('pendingMessages.viewMore:p1')).toBeNull();
