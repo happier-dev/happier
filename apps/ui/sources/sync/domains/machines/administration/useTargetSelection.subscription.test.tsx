@@ -18,7 +18,7 @@ import * as machineDisplayNames from '@/utils/sessions/machineDisplayNames';
 
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from './selectionPreferences';
 import { useMachineAdministrationExecutionTargetBinding } from './useExecutionTargetBinding';
-import { useMachineAdministrationTargetSelection } from './useTargetSelection';
+import { useMachineAdministrationSelectedTarget, useMachineAdministrationTargetSelection } from './useTargetSelection';
 import { useManagedControllerScope } from '@/components/settings/machines/managed/useManagedControllerScope';
 import { createManagedControllerMachineFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
@@ -51,6 +51,57 @@ afterEach(async () => {
 });
 
 describe('machine administration target demand', () => {
+    it('wakes only the Machine Administration readers whose named preference changes', async () => {
+        const previous = storage.getState();
+        const selectionKey = MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.providers;
+        const siblingKey = MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.agents;
+        const initial = { serverIdentityId: 'srv_named_preference', machineId: 'initial' };
+        const scope = { serverId: initial.serverIdentityId, accountId: 'named-preference-owner' };
+        storage.setState(state => ({
+            settingsScope: scope,
+            settings: { ...state.settings, machineAdministrationTargetsLocalV1: { [selectionKey]: initial } },
+        }));
+        const basicCounter = createRenderCommitCounter();
+        const pickerCounter = createRenderCommitCounter();
+        const basic = await renderHook(() => {
+            useRenderCommitCounter(basicCounter);
+            return useMachineAdministrationSelectedTarget(selectionKey);
+        });
+        const picker = await renderHook(() => {
+            useRenderCommitCounter(pickerCounter);
+            return useMachineAdministrationTargetSelection(selectionKey, { enabled: false });
+        });
+        const publishTargets = async (target: typeof initial, sibling: typeof initial) => act(async () => {
+            storage.getState().applySettingsLocal({
+                machineAdministrationTargetsLocalV1: { [selectionKey]: target, [siblingKey]: sibling },
+            });
+        });
+        try {
+            expect(basic.getCurrent()).toEqual(initial);
+            expect(picker.getCurrent().selectedTarget).toEqual(initial);
+            basicCounter.reset();
+            pickerCounter.reset();
+            for (let index = 0; index < 10; index += 1) {
+                await publishTargets({ ...initial }, { ...initial, machineId: `sibling-${index}` });
+            }
+            expect([basicCounter.read(), pickerCounter.read()]).toEqual([
+                { renders: 0, commits: 0 }, { renders: 0, commits: 0 },
+            ]);
+
+            const next = { ...initial, machineId: 'next' };
+            await publishTargets(next, { ...initial, machineId: 'sibling-9' });
+            expect(basic.getCurrent()).toEqual(next);
+            expect(picker.getCurrent().selectedTarget).toEqual(next);
+            expect([basicCounter.read(), pickerCounter.read()]).toEqual([
+                { renders: 1, commits: 1 }, { renders: 1, commits: 1 },
+            ]);
+        } finally {
+            await picker.unmount();
+            await basic.unmount();
+            storage.setState(previous);
+        }
+    });
+
     it('resolves the initial controller once across availability waves and never replaces a person\'s choice', async () => {
         const previous = storage.getState();
         const home = await network.addHome('https://administration-arrival-waves.example.test', 'arrival-owner', {

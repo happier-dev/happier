@@ -21,15 +21,14 @@ import {
 } from '@/sync/domains/machines/resolveServerScopedMachines';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storageStore';
-import {
-    useSetting,
-    useActiveServerAccountScope,
-} from '@/sync/store/hooks';
+import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { useSettingsSelector } from '@/sync/store/settingsReadHooks';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { useSettingActionWriter } from '@/components/settings/catalog/useSettingActionWriter';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import type { Settings } from '@/sync/domains/settings/settings';
 import { readMachineAdministrationTargetObservation,
     rememberMachineAdministrationTargetObservation, useMachineAdministrationTargetObservation } from '@/sync/domains/state/machineAdministrationUiState';
 
@@ -154,12 +153,18 @@ export type MachineAdministrationTargetSelectionOptions = Readonly<{
     rows?: 'choices' | 'selected';
 }>;
 
+function useStoredMachineAdministrationTarget(scope: AccountSettingsScope | null, selectionKey: string): MachineAdministrationTargetV1 | null {
+    const observed = useMachineAdministrationTargetObservation(scope, selectionKey);
+    const select = React.useCallback((settings: Settings) => (
+        readSelectedMachineAdministrationTarget(settings.machineAdministrationTargetsLocalV1, selectionKey, observed)
+    ), [selectionKey, observed]);
+    return useSettingsSelector(select, ['machineAdministrationTargetsLocalV1']);
+}
+
 /** Consume the existing choice without mounting a picker or demanding its inventory. */
 export function useMachineAdministrationSelectedTarget(selectionKey: string): MachineAdministrationTargetV1 | null {
-    const selections = useSetting('machineAdministrationTargetsLocalV1');
     const scope = useAccountSettingsScope();
-    const observed = useMachineAdministrationTargetObservation(scope, selectionKey);
-    return readSelectedMachineAdministrationTarget(selections, selectionKey, observed);
+    return useStoredMachineAdministrationTarget(scope, selectionKey);
 }
 
 /** Presentation-only canonical Administration rows, without creating a persisted selection. */
@@ -251,10 +256,9 @@ export function useMachineAdministrationTargetSelection(
 ): MachineAdministrationTargetSelectionV1 {
     const enabled = options.enabled !== false;
     const explicitSelection = options.explicitSelection ?? 'live';
-    const selections = useSetting('machineAdministrationTargetsLocalV1');
     const expectedSettingsScope = useAccountSettingsScope();
     const writeSetting = useSettingActionWriter();
-    const automaticTarget = useMachineAdministrationTargetObservation(expectedSettingsScope, selectionKey);
+    const selectedTarget = useStoredMachineAdministrationTarget(expectedSettingsScope, selectionKey);
     const activeAccountScope = useActiveServerAccountScope();
     const requestedInitialTarget = options.initialTarget ?? null;
     const initialTargetKey = options.initialTarget === undefined ? undefined : JSON.stringify(requestedInitialTarget);
@@ -276,7 +280,7 @@ export function useMachineAdministrationTargetSelection(
         setInitialTargetIntentState(released);
     }, [initialTargetKey]);
     const initialTargetPending = initialTargetKey !== undefined && !initialTargetIntent.current.applied;
-    const storedTarget = initialTargetPending ? initialTarget : readSelectedMachineAdministrationTarget(selections, selectionKey, automaticTarget);
+    const storedTarget = initialTargetPending ? initialTarget : selectedTarget;
     const selectionRevisionRef = React.useRef<MachineAdministrationSelectionRevisionState>({
         selectionKey,
         target: storedTarget,
