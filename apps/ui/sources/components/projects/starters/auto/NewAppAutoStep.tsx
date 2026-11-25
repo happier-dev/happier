@@ -19,24 +19,14 @@ import { projectReportedSteps } from '@/components/systemTasks/planChecklist/pro
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import type { InteractionTransientQuestionV1 } from '@happier-dev/protocol/plugins/interactions/transientV1';
-import type { LlmTaskRunnerConfigV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
+import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import { TransientQuestionFields, useTransientQuestionAnswers, type TransientQuestionAnswerState } from '@/components/appShell/plugins/TransientQuestionForm';
 
 import { NewAppDeploySummary } from '../NewAppDeploySteps';
 import { DeploySuggestionCardTiles, type NewAppAutoCard } from './DeploySuggestionCards';
-import { DeploySuggestionRunnerSetting } from '@/components/settings/deployments/DeploySuggestionRunnerSetting';
-import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { DeploySuggestionRunnerField } from '@/components/settings/deployments/DeploySuggestionRunnerSetting';
 
 export type { NewAppAutoCard, NewAppAutoFact } from './DeploySuggestionCards';
-
-/** Another runner for the next Try again: Settings' own control, writing the same setting (F-RUNNERPICK). */
-function FailedRunnerChoice(props: Readonly<{ serverId: string; machineId: string; limited?: LlmTaskRunnerConfigV1 }>) {
-  const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
-  const execution = useMountedActionExecution(binding?.scope);
-  return <DeploySuggestionRunnerSetting serverId={props.serverId} machineId={props.machineId} execution={execution}
-    {...(props.limited ? { limited: props.limited } : {})} testIDPrefix="newApp.auto.runner" />;
-}
 
 /** A Machine that can't run the suggestion right now, in its owner's words, with that reason's next step. */
 export type NewAppAutoMachine = Readonly<{
@@ -82,11 +72,13 @@ export type NewAppAutoView =
   /** The suggestion owner's typed failure code, kept for the Details disclosure, and why, in words. */
   | Readonly<{
       kind: 'failed'; code: string; reason: string;
-      /**
-       * Where the failed Run ran, for choosing another runner there; null when no runner was reached. `limited`: the
-       * runner that hit a usage limit, whose Agent's other routes the choice offers (Providers ORCH 11-21 17:11Z).
-       */
-      runner: Readonly<{ serverId: string; machineId: string; limited?: LlmTaskRunnerConfigV1 }> | null;
+      /** A runner choice for the next retry on the Machine where the failed Run ran. */
+      runner: Readonly<{
+        serverId: string;
+        machineId: string;
+        choice: LlmTaskRunnerChoiceV1 | null | undefined;
+        onChange: (value: LlmTaskRunnerChoiceV1) => void;
+      }> | null;
     }>;
 
 export function NewAppAutoStep(
@@ -171,8 +163,9 @@ export function NewAppAutoStep(
           secondaryAction={{ label: t('newApp.auto.chooseStarter'), onPress: props.onChooseStarter, testID: 'newApp.auto.chooseStarter' }}
         />
       ) : null}
-      {view.kind === 'failed' && view.runner ? <FailedRunnerChoice serverId={view.runner.serverId} machineId={view.runner.machineId}
-        {...(view.runner.limited ? { limited: view.runner.limited } : {})} /> : null}
+      {view.kind === 'failed' && view.runner ? <DeploySuggestionRunnerField serverId={view.runner.serverId}
+        machineId={view.runner.machineId} value={view.runner.choice} disabled={view.runner.choice === undefined}
+        testIDPrefix="newApp.auto.runner" onChange={view.runner.onChange} /> : null}
       {view.kind === 'working' && checklist ? (
         // The checklist is the card under its title (one card, as the Setup tab's run); where the work runs is the
         // section's description, on its inset.

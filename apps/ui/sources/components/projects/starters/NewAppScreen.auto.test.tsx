@@ -812,6 +812,45 @@ it('a run that hit a usage limit opens the runner choice on the Agent that hit i
   expect(other.runnerValue, 'any other failure keeps the stored choice').not.toMatchObject({ modelSelection: expect.anything() });
 });
 
+it('uses the recovery runner on one retry without changing the Account preference', async () => {
+  const run = terminal(undefined).run;
+  const otherRunner = { ...runner, v: 1 as const, modelSelection: { ...runner.modelSelection, modelId: 'alternate-model' } };
+  const started = vi.fn<NonNullable<Ports['executionRunStart']>>(async () =>
+    ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }));
+  suggestionBoundary({
+    agentsModelsList: async ({ choice }) => ({ llmTaskRunner: { ok: true, source: 'auto', title: 'Claude',
+      runner: choice && 'modelSelection' in choice ? choice : runner } }),
+    executionRunStart: started,
+    executionRunWait: async () => ({ ok: true, status: 'failed', result: { run: {
+      ...run, status: 'failed', error: { code: 'usage_limit', message: 'Usage limit reached.' },
+    } } }),
+  });
+  const { fixture, screen } = await openDescribe('auto-one-time-recovery-runner');
+  try {
+    await screen.pressByTestIdAsync('newApp.describeApp');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A bakery page'));
+    await screen.pressByTestIdAsync('newApp.auto.suggest');
+    const { LlmTaskRunnerPicker } = await import('@/components/settings/llmTasks/LlmTaskRunnerPicker');
+    const picker = () => screen.findAllByType(LlmTaskRunnerPicker).find(node => node.props.task === 'deploy_suggestion');
+    await waitForHomeGovernance(() => expect(picker()?.props.disabled).toBe(false));
+    await act(async () => picker()!.props.onChange(otherRunner));
+    await screen.pressByTestIdAsync('newApp.auto.tryAgain');
+    await waitForHomeGovernance(() => expect(started).toHaveBeenCalledTimes(2));
+    expect(started.mock.calls[0]?.[1]).toMatchObject({ modelSelection: { modelId: 'default' } });
+    expect(started.mock.calls[1]?.[1]).toMatchObject({ modelSelection: { modelId: 'alternate-model' } });
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.tryAgain')).toBeTruthy());
+    await screen.pressByTestIdAsync('newApp.auto.tryAgain');
+    await waitForHomeGovernance(() => expect(started).toHaveBeenCalledTimes(3));
+    expect(started.mock.calls[2]?.[1]).toMatchObject({ modelSelection: { modelId: 'default' } });
+    expect(fixture.settingsWrites()).toBe(0);
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
 it('when every suggestion is dropped it says it couldn’t suggest, and Try again runs once more (journey-deploy F3)', async () => {
   suggestionBoundary({
     executionRunWait: async () => ({

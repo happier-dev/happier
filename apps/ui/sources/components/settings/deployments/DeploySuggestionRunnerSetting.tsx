@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { isLlmTaskRunnerAutoV1, type LlmTaskRunnerChoiceV1, type LlmTaskRunnerConfigV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
+import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import type { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useThisComputerMachineId } from '@/components/machines/add/useMachineAddPaths';
 import { presentSettingWriteFailure } from '@/components/settings/shell/writeFailure';
@@ -26,25 +26,28 @@ export function useDeploymentSuggestionRunner(lifetime: ServerAccountScopeLifeti
     return value?.lifetime === lifetime ? value.choice : undefined;
 }
 
-/**
- * Describe your app runs on the background-task runner this picks (the same picker commit messages use). Settings and a
- * failed suggestion both render it and write the one `deploySuggestionRunnerV1` setting through `settings.set`.
- */
+export function DeploySuggestionRunnerField(props: Readonly<{
+    serverId: string;
+    machineId: string | null;
+    value: LlmTaskRunnerChoiceV1 | null | undefined;
+    disabled: boolean;
+    testIDPrefix: string;
+    onChange: (value: LlmTaskRunnerChoiceV1) => void;
+}>) {
+    return <ItemGroup title={t('projects.deployments.autoSectionTitle')}>
+        <LlmTaskRunnerPicker task="deploy_suggestion" value={props.value} machineId={props.machineId} serverId={props.serverId}
+            engineFieldTitle={t('projects.deployments.autoAgentTitle')} disabled={props.disabled}
+            testIDPrefix={props.testIDPrefix} onChange={props.onChange} />
+    </ItemGroup>;
+}
+
+/** The deliberate Account preference for the Describe your app runner. */
 export function DeploySuggestionRunnerSetting(props: Readonly<{
     serverId: string;
     execution: ReturnType<typeof useMountedActionExecution>;
-    /** The Machine whose runners the picker reads; this computer by default. */
-    machineId?: string | null;
-    /**
-     * A failed suggestion's runner that hit a usage limit. While the stored choice is still Auto, the picker opens on it,
-     * so its Runs through choice lists that Agent's other routes; picking one writes an explicit runner (the person's
-     * visible retry; Auto reads no quota per selection, Providers ORCH 11-21 17:11Z).
-     */
-    limited?: LlmTaskRunnerConfigV1;
     testIDPrefix: string;
 }>) {
     const stored = useDeploymentSuggestionRunner(props.execution.binding ?? null);
-    const choice = props.limited && isLlmTaskRunnerAutoV1(stored) ? props.limited : stored;
     const thisComputer = useThisComputerMachineId();
     const { execution } = props;
     const write = React.useCallback((value: LlmTaskRunnerChoiceV1) => { void (async () => {
@@ -53,9 +56,6 @@ export function DeploySuggestionRunnerSetting(props: Readonly<{
             if (!result.ok) presentSettingWriteFailure(result);
         } catch (error) { presentSettingWriteFailure(error); }
     })(); }, [execution]);
-    return <ItemGroup title={t('projects.deployments.autoSectionTitle')}>
-        <LlmTaskRunnerPicker task="deploy_suggestion" value={choice} machineId={props.machineId ?? thisComputer} serverId={props.serverId}
-            engineFieldTitle={t('projects.deployments.autoAgentTitle')} disabled={!execution.ready || stored === undefined}
-            testIDPrefix={props.testIDPrefix} onChange={write} />
-    </ItemGroup>;
+    return <DeploySuggestionRunnerField serverId={props.serverId} machineId={thisComputer} value={stored}
+        disabled={!execution.ready || stored === undefined} testIDPrefix={props.testIDPrefix} onChange={write} />;
 }

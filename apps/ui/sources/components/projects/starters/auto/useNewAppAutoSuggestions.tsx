@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { isLlmTaskRunnerAutoV1, type LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import { validateDeploySuggestionV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
 import type { InteractionTransientQuestionAnswerV1 } from '@happier-dev/protocol/plugins/interactions/transientV1';
 import type {
@@ -51,6 +52,7 @@ type Phase =
       runner: Runner | null;
       /** The person skipped the questions that came with these cards. */
       skippedQuestions?: boolean;
+      retryChoice?: LlmTaskRunnerChoiceV1;
     }>;
 
 export type NewAppAutoChosen = Readonly<{
@@ -118,6 +120,10 @@ export function useNewAppAutoSuggestions(
   }, [params.active, stop]);
   React.useEffect(() => () => abort.current?.abort(), []);
 
+  const retryChoice = phase.kind === 'settled' ? phase.retryChoice : undefined;
+  const changeRetryChoice = React.useCallback((choice: LlmTaskRunnerChoiceV1) => setPhase(current =>
+    current.kind === 'settled' && current.outcome.kind === 'failed' ? { ...current, retryChoice: choice } : current), []);
+
   const runSuggestion = React.useCallback((followUp?: Readonly<{
     answers?: Readonly<Record<string, InteractionTransientQuestionAnswerV1>>;
     note?: string;
@@ -141,7 +147,7 @@ export function useNewAppAutoSuggestions(
       ...(previous && previous.connections === connections ? { catalog: previous.catalog } : {}),
       ...(answers ? { answers } : {}),
       ...(followUp?.note === undefined ? {} : { note: followUp.note }),
-      choice: runnerChoice,
+      choice: retryChoice ?? runnerChoice,
       signal: controller.signal,
       onProgress: (progress) => {
         if (progress.kind === 'run') runStop.current = progress.stop;
@@ -174,7 +180,7 @@ export function useNewAppAutoSuggestions(
       if (outcome.kind === 'recommendations') { lastRecommendations.current = outcome; setChosenCardId(cardId(0)); }
       setPhase({ kind: 'settled', outcome, runner });
     });
-  }, [binding, connections, description, params.serverId, runnerChoice]);
+  }, [binding, connections, description, params.serverId, retryChoice, runnerChoice]);
 
   const suggest = React.useCallback(() => runSuggestion(), [runSuggestion]);
   const answerQuestions = React.useCallback((answers: Readonly<Record<string, InteractionTransientQuestionAnswerV1>>) =>
@@ -254,15 +260,18 @@ export function useNewAppAutoSuggestions(
       };
     }
     if (outcome.kind === 'questions') return { kind: 'questions', questions: outcome.questions.questions, skippable: false };
-    if (outcome.kind === 'failed') return { kind: 'failed', code: outcome.code, reason: failedReason(outcome, phase.runner),
-      runner: phase.runner && params.serverId ? { serverId: params.serverId, machineId: phase.runner.machineId,
-        // A usage limit offers the same Agent's other routes: the choice opens on the runner that hit it.
-        ...(outcome.stage === 'run' && isUsageLimitedRuntimeIssue(outcome.runError?.runtimeIssueV1 ?? { code: outcome.code })
-          ? { limited: outcome.runner } : {}) } : null };
+    if (outcome.kind === 'failed') {
+      // With Auto, open a usage-limit recovery on the runner that hit the limit so its other routes are available.
+      const previousRunner = runnerChoice !== undefined && isLlmTaskRunnerAutoV1(runnerChoice) && outcome.stage === 'run'
+        && isUsageLimitedRuntimeIssue(outcome.runError?.runtimeIssueV1 ?? { code: outcome.code }) ? outcome.runner : runnerChoice;
+      return { kind: 'failed', code: outcome.code, reason: failedReason(outcome, phase.runner),
+        runner: phase.runner && params.serverId ? { serverId: params.serverId, machineId: phase.runner.machineId,
+          choice: phase.retryChoice ?? previousRunner, onChange: changeRetryChoice } : null };
+    }
     // Why the check dropped each part of the answer, by its typed reason, for Details.
     const reasons = [...new Set([...outcome.dropped, ...outcome.droppedQuestions].map((row) => row.reason))];
     return { kind: 'nothing', code: reasons.length ? reasons.join(', ') : null };
-  }, [declaredPlans, openMachineSetup, params.serverId, pendingQuestions, phase, stop, theme.colors.text.secondary]);
+  }, [changeRetryChoice, declaredPlans, openMachineSetup, params.serverId, pendingQuestions, phase, runnerChoice, stop, theme.colors.text.secondary]);
 
   const settled = phase.kind === 'settled' ? phase.outcome : phase.kind === 'working' ? lastRecommendations.current : null;
   const chosen = React.useMemo((): NewAppAutoChosen | null => {
