@@ -13,11 +13,11 @@ import { applyTrustedLocalPluginFixture } from '../../src/testkit/externalSessio
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { createIsolatedFakeClaudeControlShim } from '../../src/testkit/fakeClaude';
 import { fetchJson } from '../../src/testkit/http';
-import { waitFor } from '../../src/testkit/timing';
 import { AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1 } from '../../../protocol/src/automations/automationActionOccurrenceV1';
 import { repoRootDir } from '../../src/testkit/paths';
 import { buildCurrentSourcePublicPluginFixture } from '../../src/testkit/pluginPlatform/currentManagedStackPluginUiQa';
 import { reviewRunHasChildSession } from '../../src/testkit/automationsEverywhereReviewRun';
+import { waitForWorkflowChildSession } from '../../src/testkit/workflowChildSession';
 
 describe('AE.P02.F10-plugin-reverse-ui', () => {
   let fixture: TeamSetupFFixture | undefined;
@@ -98,7 +98,7 @@ describe('AE.P02.F10-plugin-reverse-ui', () => {
         triggers: [{ automationId: saved.set.automationId, triggerId: saved.triggerId, triggerRevision: saved.triggerRevision }] });
       expect(fixture.takeRequestObservations().filter(request => request.method === 'POST'
         && request.path === AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1)).toHaveLength(1);
-      await waitFor(async () => {
+      await waitForWorkflowChildSession(async () => {
         const response = await fetchJson<unknown>(`${fixture!.server.baseUrl}/v3/automations/${encodeURIComponent(saved.set.automationId)}/runs`, {
           headers: { Authorization: `Bearer ${actor.credentials.token}`,
             ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) },
@@ -109,7 +109,7 @@ describe('AE.P02.F10-plugin-reverse-ui', () => {
         return observed.length === 1 && reviewRunHasChildSession(actor, observed[0]!.id, {
           parentSessionId: session.sessionId, machineId: machine.target.machineId, path: machine.workspaceDir,
         });
-      }, { failFast: true, context: 'Reverse UI-hosted plugin effect starts one review Run' });
+      }, 'Reverse UI-hosted plugin effect starts one review Run');
     } finally { await ui.close(); }
   }, 0);
 });

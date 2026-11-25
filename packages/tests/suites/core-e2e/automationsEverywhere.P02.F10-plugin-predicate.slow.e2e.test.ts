@@ -10,6 +10,7 @@ import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibili
 import { applyTrustedLocalPluginFixture } from '../../src/testkit/externalSessionLiveLifecycleFixture';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { reviewRunHasChildSession } from '../../src/testkit/automationsEverywhereReviewRun';
+import { waitForWorkflowChildSession } from '../../src/testkit/workflowChildSession';
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
 import { ApprovalQueueListResultV1Schema, ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
@@ -81,8 +82,8 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
     expect(homeOccurrences).toHaveLength(1);
     expect(homeOccurrences[0]).toMatchObject({ evidence: { phase: 'after', status: 'succeeded' } });
     expect(JSON.stringify(homeOccurrences)).not.toContain(privateHomeName);
-    await waitFor(() => reviewStarted(homeTrigger.set.automationId),
-      { failFast: true, context: 'Home effect starts one review Run before plugin installation' });
+    await waitForWorkflowChildSession(() => reviewStarted(homeTrigger.set.automationId),
+      'Home effect starts one review Run before plugin installation');
     fixture.takeRequestObservations();
     failTerminalCallback = true;
     const retainedHomeName = 'native-home-result-survives-observer-failure';
@@ -148,14 +149,14 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
     await invoke('setup', 'preview');
     expect(await runs(setup.set.automationId)).toEqual([]);
     await invoke('setup', 'save');
-    await waitFor(() => reviewStarted(setup.set.automationId),
-      { failFast: true, context: 'Plugin save starts its one review Run' });
+    await waitForWorkflowChildSession(() => reviewStarted(setup.set.automationId),
+      'Plugin save starts its one review Run');
     await invoke('read', 'save');
     expect(await runs(setup.set.automationId)).toHaveLength(1);
     expect(await runs(effect.set.automationId)).toEqual([]);
     await invoke('effect', 'save');
-    await waitFor(() => reviewStarted(effect.set.automationId),
-      { failFast: true, context: 'Ordinary plugin effect starts its one review Run' });
+    await waitForWorkflowChildSession(() => reviewStarted(effect.set.automationId),
+      'Ordinary plugin effect starts its one review Run');
     expect(await runs(setup.set.automationId)).toHaveLength(1);
     expect(fixture.readActionOccurrences().filter(event => event.evidence.actionId === actionId('effect'))).toHaveLength(1);
     fixture.takeRequestObservations();
@@ -335,7 +336,7 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
     expect(liveOccurrences[0]).toMatchObject({ evidence: { actionId: liveActionId, requestId: liveRequestId, phase: 'after', status: 'succeeded' },
       triggers: [{ automationId: liveSaved.set.automationId, triggerId: liveSaved.triggerId, triggerRevision: liveSaved.triggerRevision }] });
     expect(JSON.stringify([liveDecision, liveOccurrences, await readLiveApproval()])).not.toContain(liveSentinel);
-    await waitFor(async () => {
+    await waitForWorkflowChildSession(async () => {
       const response = await fetchJson<unknown>(`${fixture!.server.baseUrl}/v3/automations/${encodeURIComponent(liveSaved.set.automationId)}/runs`, {
         headers: { Authorization: `Bearer ${actor.credentials.token}`,
           ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) },
@@ -350,6 +351,6 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
       return reviewRunHasChildSession(actor, run.id, {
         parentSessionId: session.sessionId, machineId: machine.target.machineId, path: machine.workspaceDir,
       });
-    }, { failFast: true, context: 'Retained live plugin starts one safe review Run' });
+    }, 'Retained live plugin starts one safe review Run');
   }, 0);
 });
