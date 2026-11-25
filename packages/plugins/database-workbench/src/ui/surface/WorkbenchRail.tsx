@@ -7,12 +7,13 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/prot
 import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 import {
   Action,
-  Button,
   ErrorState,
   Icon,
   LoadingState,
   Popover,
   Row,
+  Select,
+  SettingRow,
   Stack,
   Text,
   usePluginTranslation,
@@ -161,15 +162,14 @@ function MachineAgentAccess({ targetKey, level }: Readonly<{ targetKey: string; 
     setNotice('code' in result ? { execution: result }
       : { text: t('plugins.database.access.changeFailed', 'The access change could not be confirmed.'), error: true });
   }
+  const agentsTitle = t('plugins.database.access.agents', 'Agents');
   return <Stack gap="small">
-    <Text tone="secondary" variant="meta" value={agentAccessLabel(t, level)} />
-    <Row gap="small" wrap>
-      {(Object.keys(choices) as DatabaseAgentAccessV1[]).map(agentAccess => (
-        <Button key={agentAccess} title={choices[agentAccess]} size="small"
-          variant={agentAccess === selected ? 'secondary' : 'plain'}
-          disabled={notice?.pending} onPress={() => setDraft(agentAccess)} />
-      ))}
-    </Row>
+    {/* The Environment's own agent choice and this one are one concept: a titled row with the shared choice
+        control. Four long options make it a field select (the control table), on its label's line or beneath. */}
+    <SettingRow title={agentsTitle} hint={agentAccessLabel(t, level)} layout="adaptive"
+      control={<Select presentation="field" label={agentsTitle} value={selected} disabled={notice?.pending}
+        options={(Object.keys(choices) as DatabaseAgentAccessV1[]).map(agentAccess => ({ value: agentAccess, label: choices[agentAccess] }))}
+        onChange={value => { const next = (Object.keys(choices) as DatabaseAgentAccessV1[]).find(key => key === value); if (next) setDraft(next); }} />} />
     <Action.Control action={setAgentAccess} title={t('plugins.database.access.save', 'Save')}
       disabled={selected === level || notice?.pending}
       reviewedInput={input}

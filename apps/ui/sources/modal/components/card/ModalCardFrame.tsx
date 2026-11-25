@@ -376,8 +376,11 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                         <RoundButtonSizeScope size="normal" presentation="uniform">{props.footer}</RoundButtonSizeScope>
                     </View>
                 ) : null}
-                {sheet && (props.sheetBottomInset ?? 0) > 0 ? (
-                    <SheetSafeAreaFoot inset={props.sheetBottomInset ?? 0} testID={props.testID ? `${props.testID}.safe-area-foot` : undefined} />
+                {sheet ? (
+                    <SheetSafeAreaFoot inset={props.sheetBottomInset ?? 0}
+                        // A footer's own padding ends the sheet; a body's last control gets the same room below it.
+                        endInset={framed && props.footer != null ? 0 : theme.space.s12}
+                        testID={props.testID ? `${props.testID}.safe-area-foot` : undefined} />
                 ) : null}
                 {framed && !fullscreen ? <SurfaceRim role="floating" radius={theme.borderRadius.modalCard} border="modal" /> : null}
             </GlassSurface>
@@ -387,11 +390,13 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
 }
 
 /**
- * The home-indicator strip a phone sheet keeps under its content. A raised keyboard already covers
- * that strip and the frame rides the keyboard, so the sheet then ends at the keyboard's top instead
- * of leaving a second edge above it. Its own leaf, so only sheets follow the keyboard.
+ * The foot a phone sheet keeps under its content: the room its last control needs (`endInset`), then the
+ * home-indicator strip. A raised keyboard already covers that strip and the frame rides the keyboard, so the
+ * sheet then ends its content at the keyboard's top instead of leaving a second edge above it. Its own leaf,
+ * so only sheets follow the keyboard.
  */
-function SheetSafeAreaFoot(props: Readonly<{ inset: number; testID?: string }>): React.ReactElement | null {
+function SheetSafeAreaFoot(props: Readonly<{ inset: number; endInset: number; testID?: string }>): React.ReactElement | null {
     const keyboardHeight = useKeyboardHeight();
-    return keyboardHeight > 0 ? null : <View testID={props.testID} pointerEvents="none" style={{ height: props.inset }} />;
+    const height = props.endInset + (keyboardHeight > 0 ? 0 : props.inset);
+    return height > 0 ? <View testID={props.testID} pointerEvents="none" style={{ height }} /> : null;
 }

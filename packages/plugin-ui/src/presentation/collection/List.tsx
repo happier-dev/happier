@@ -1086,7 +1086,9 @@ export function HappierListItem({
               style={stackPageAccessory
                 ? {
                   alignSelf: 'stretch',
-                  alignItems: 'stretch',
+                  // An operation (a button) moved beneath keeps its own width on the text edge; a wrapping control
+                  // or content placed beneath by design spans the row.
+                  alignItems: accessoryWraps === true || accessoryBelow === true ? 'stretch' : 'flex-start',
                   // Beneath the text, on its edge: past the glyph column and the gap after it.
                   ...(icon ? { flexBasis: '100%', paddingLeft: HAPPIER_PAGE_METRICS.rowLeadingColumnPx + HAPPIER_PAGE_METRICS.rowLeadingGapPx } : {}),
                 }
@@ -1289,7 +1291,7 @@ export function HappierListItem({
           ? {
               alignSelf: 'stretch',
               // Like core's stacked page controls: a field spans the row; a bounded control keeps its own width.
-              alignItems: 'stretch',
+              alignItems: accessoryWraps === true || accessoryBelow === true ? 'stretch' : 'flex-start',
               paddingLeft: pageSection.rowInsetPx,
               paddingRight: pageSection.rowInsetPx,
               paddingBottom: HAPPIER_PAGE_METRICS.rowPaddingVerticalPx,

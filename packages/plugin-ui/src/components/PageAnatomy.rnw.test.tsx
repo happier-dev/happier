@@ -497,6 +497,8 @@ describe('plugin page anatomy through the shared page owners', () => {
     // Too narrow for both: the control drops beneath the label, on the label's edge.
     expect(control().style.paddingLeft).toBe(`${HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx}px`);
     expect(control().style.alignSelf).toBe('stretch');
+    // A wrapping (adaptive) control spans the row beneath its label.
+    expect(control().style.alignItems).toBe('stretch');
     mount.unmount();
   });
 
@@ -541,6 +543,8 @@ describe('plugin page anatomy through the shared page owners', () => {
     // A phone row: the label alone would keep its column, but the body would be squeezed, so the operation moves beneath.
     layout(row, 358);
     expect(container().style.alignSelf).toBe('stretch');
+    // Beneath, an operation keeps its own width on the body's text edge rather than spanning the row.
+    expect(container().style.alignItems).toBe('flex-start');
     mount.unmount();
   });
 

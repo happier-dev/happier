@@ -410,11 +410,12 @@ describe('ModalCardFrame', () => {
         );
     });
 
-    it.each([[0, 34], [300, 0]] as const)('pads a sheet by the home indicator only while no keyboard covers it (keyboard %s)', async (keyboard, foot) => {
-        keyboardBoundary.height = keyboard;
+    async function sheetFoot(props: Readonly<{ keyboard: number; sheetBottomInset: number; footer?: boolean }>) {
+        keyboardBoundary.height = props.keyboard;
         const { ModalCardFrame } = await import('./ModalCardFrame');
         const screen = await renderScreen(React.createElement(ModalCardFrame, {
-            children: React.createElement('Child'), title: 'Model', presentation: 'sheet', sheetBottomInset: 34, testID: 'sheet',
+            children: React.createElement('Child'), title: 'Model', presentation: 'sheet', sheetBottomInset: props.sheetBottomInset, testID: 'sheet',
+            ...(props.footer ? { footer: React.createElement('Footer') } : {}),
         }));
         // The sheet's foot: its own padding plus any spacer it keeps below the content.
         const padded = screen.findAll((node) => typeof node.type === 'string'
@@ -422,7 +423,21 @@ describe('ModalCardFrame', () => {
             .reduce((sum, node) => sum + (flattenStyle(node.props.style).paddingBottom as number), 0);
         const spacer = screen.findAllHostsByTestId('sheet.safe-area-foot')
             .reduce((sum, node) => sum + ((flattenStyle(node.props.style).height as number | undefined) ?? 0), 0);
-        expect(padded + spacer).toBe(foot);
+        return padded + spacer;
+    }
+
+    it('ends a sheet body with its own inset, and adds the home indicator only while no keyboard covers it', async () => {
+        // Without a safe area (a browser) the last control still stands off the sheet's bottom edge.
+        const end = await sheetFoot({ keyboard: 0, sheetBottomInset: 0 });
+        expect(end).toBeGreaterThan(0);
+        expect(await sheetFoot({ keyboard: 0, sheetBottomInset: 34 })).toBe(34 + end);
+        expect(await sheetFoot({ keyboard: 300, sheetBottomInset: 34 })).toBe(end);
+    });
+
+    it('lets a sheet footer keep its own padding as the bottom inset', async () => {
+        const withFooter = await sheetFoot({ keyboard: 0, sheetBottomInset: 34, footer: true });
+        const footerOnly = await sheetFoot({ keyboard: 300, sheetBottomInset: 34, footer: true });
+        expect(withFooter - footerOnly).toBe(34);
     });
 
     it('renders a close button that calls onClose', async () => {
