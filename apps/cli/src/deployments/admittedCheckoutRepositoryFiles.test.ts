@@ -9,6 +9,7 @@ import {
   createLocalScmRepositoryFixture,
   runScmExecutable,
 } from '@/testkit/scm/scmBackendContractFixtures';
+import { projectActionOperationFailure } from '@/daemon/actionOperations/actionOperationFailure';
 import { createAdmittedCheckoutRepositoryFiles } from './admittedCheckoutRepositoryFiles';
 import { createDeploymentGitRegistry } from './targets/ownServer/exactCommitRelease.testkit';
 
@@ -80,8 +81,11 @@ it('preserves a PR temporary worktree when original cleanup custody is unavailab
   const worktreePath = join(root, 'temporary-pr');
   runScmExecutable(root, 'git', ['worktree', 'add', '--quiet', '-b', 'temporary-pr', worktreePath]);
   const files = createAdmittedCheckoutRepositoryFiles({ root, context: own(), registry });
-  await expect(files.executeScm('scm.worktree.remove', { cwd: root, worktreePath, confirmed: true,
-    authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN })).rejects.toMatchObject({ code: 'project_setup_operation_unavailable' });
+  const removal = files.executeScm('scm.worktree.remove', { cwd: root, worktreePath, confirmed: true,
+    authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN });
+  await expect(removal.catch(error => projectActionOperationFailure(error, 'action_failed', 'scm.worktree.remove')))
+    .resolves.toMatchObject({ ok: false, errorCode: 'project_setup_operation_unavailable',
+      failureCause: { phase: 'scm.worktree.remove', errorCode: 'project_setup_operation_unavailable' } });
   expect(await readFile(join(worktreePath, 'tracked.txt'), 'utf8')).toBe('original\n');
   expect(existsSync(join(root, '.git'))).toBe(true);
 });

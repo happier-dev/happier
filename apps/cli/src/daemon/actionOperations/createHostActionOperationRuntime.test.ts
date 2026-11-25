@@ -6,6 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { getActionSpec, listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
 import type { PtyExitEvent, PtyProcess } from '@/terminal/pty/provider';
 import { executeProjectFiniteProcess } from '@/workspaces/projectSetup/projectSetupExecution';
@@ -503,7 +504,9 @@ describe('finite host operation custody', () => {
         context.operationAcceptance?.accept({ kind: 'admitted', receiptId: 'receipt' });
         accepted();
         await completion;
-        if (outcome === 'thrown') throw Object.assign(new Error('Deployment image is unavailable.'), { code: 'deployment_image_unavailable' });
+        if (outcome === 'thrown') throw createActionExecuteFailureError({
+          ok: false, errorCode: 'deployment_image_unavailable', error: 'Deployment image is unavailable.',
+        });
         return terminal;
       };
       const invoke = (approved: boolean) => runtime.runActionOperation({ actionId: 'deployments.deploy', input: {

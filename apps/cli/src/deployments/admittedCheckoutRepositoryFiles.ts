@@ -92,7 +92,9 @@ export function createAdmittedCheckoutRepositoryFiles(
         ...(input.registry ? { registry: input.registry } : {}),
         removeWorktree: async removal => {
           const admittedRuntime = await input.resolveRemovalRuntime?.(context);
-          if (!admittedRuntime) throw Object.assign(new Error('project_setup_operation_unavailable'), { code: 'project_setup_operation_unavailable' });
+          if (!admittedRuntime) throw createActionExecuteFailureError({
+            ok: false, errorCode: 'project_setup_operation_unavailable', error: 'project_setup_operation_unavailable',
+          });
           const { prepareProjectCheckoutRemoval, requireProjectCheckoutRemovalOperation } = await import('@/workspaces/projectSetup/projectCheckoutRemoval');
           const { runtime, ingress } = admittedRuntime;
           const operation = requireProjectCheckoutRemovalOperation(context);
