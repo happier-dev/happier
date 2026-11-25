@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { voiceRuntimeLevelStore } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
 import type { VoiceRuntimeLevelWriter } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
 import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings } from '@/text';
@@ -43,6 +43,9 @@ const { useVoiceSurfaceModel } = await import('./useVoiceSurfaceModel');
 const { VoiceSurfaceView } = await import('./VoiceSurfaceView');
 const { getStorage } = await import('@/sync/domains/state/storage');
 const { voiceSettingsParse } = await import('@/sync/domains/settings/voiceSettings');
+const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+const { projectLocalVoiceCapturePartial, clearLocalVoiceCapturePartial } = await import('@/voice/transcript/voiceConversationTranscript');
+const { resetVoiceActivityFeedExpansionForTests, setVoiceActivityFeedExpanded } = await import('./voiceActivityFeedExpansionStore');
 const initialStorageState = getStorage().getState();
 const previousLanguage = getPreferredLanguage();
 
@@ -85,6 +88,8 @@ describe('Voice surface model audio-level render budget', () => {
 
     afterEach(() => {
         standardCleanup();
+        clearLocalVoiceCapturePartial();
+        resetVoiceActivityFeedExpansionForTests();
         getStorage().setState(initialStorageState, true);
         setPreferredLanguageFromSettings(previousLanguage);
     });
@@ -167,5 +172,41 @@ describe('Voice surface model audio-level render budget', () => {
         await act(async () => {
             screen.tree.unmount();
         });
+    }, 120_000);
+
+    it('only renders the full transcript when expanded and catches up immediately on reveal', async () => {
+        const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+        const providerId = 'local_conversation';
+        const carrier = { serverId: 'home', sessionId: 'render-cost-carrier' };
+        getStorage().setState(state => ({
+            sessions: { ...state.sessions, [carrier.sessionId]: createSessionFixture({
+                id: carrier.sessionId, serverId: carrier.serverId,
+            }) },
+            settings: { ...state.settings, voice: voiceSettingsParse({
+                ...state.settings.voice, providerId,
+                ui: { ...state.settings.voice.ui, activityFeedEnabled: true, activityFeedAutoExpandOnStart: false },
+            }) },
+        }));
+        voiceSessionBindingStore.getState().bind({
+            adapterId: providerId, controlSessionId: 's1', conversationSessionId: carrier.sessionId,
+            conversationSessionAddress: carrier, targetSessionAddress: null,
+            transcriptMode: 'native_session', updatedAt: Date.now(),
+        });
+        setVoiceSessionSnapshot({ adapterId: providerId, sessionId: 's1', status: 'connected', mode: 'listening', canStop: true });
+        const screen = await renderScreen(<VoiceSurfaceModelProbe />);
+        try {
+            const baseline = renderCounter.current;
+            expect(baseline).toBeGreaterThan(0);
+            act(() => projectLocalVoiceCapturePartial(carrier.sessionId, 'One changed partial'));
+            expect.soft(renderCounter.current - baseline).toBe(0);
+            act(() => setVoiceActivityFeedExpanded(true));
+            expect(screen.getTextContent()).toContain('One changed partial');
+            const expanded = renderCounter.current;
+            act(() => projectLocalVoiceCapturePartial(carrier.sessionId, 'The next changed partial'));
+            expect(renderCounter.current - expanded).toBe(1);
+            expect(screen.getTextContent()).toContain('The next changed partial');
+        } finally {
+            await screen.unmount();
+        }
     }, 120_000);
 });

@@ -125,10 +125,8 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
      * `VOICE_SETTINGS_PROVIDER_FOCUS_TARGET` remains that screen's focus target;
      * the model does not project a control for it.
      */
-    // Cheap synchronous derivation from the voice setting. Computed up front so the
-    // store hook can avoid subscribing to (and projecting) sessionMessages when the
-    // activity feed is hidden.
     const activityFeedEnabled = voice?.ui?.activityFeedEnabled === true;
+    const { expanded } = useVoiceActivityFeedExpansion();
     const {
         activeControlSession,
         currentSession,
@@ -138,7 +136,7 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
         activeControlSessionId: snap.sessionId ?? null,
         providerId,
         surfaceSessionId: props.sessionAddress?.sessionId ?? props.sessionId ?? null,
-        transcriptEnabled: activityFeedEnabled,
+        transcriptEnabled: activityFeedEnabled && expanded,
         voiceSettings: voice,
         voicePrivacy,
     });
@@ -167,7 +165,6 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
     );
     const baseAttemptControl = useVoiceAttemptControl(idleTarget);
     const providerLabel = baseAttemptControl.serviceTitle ?? null;
-    const activityFeedExpansion = useVoiceActivityFeedExpansion();
     const attemptId = getVoiceSessionAttemptId();
     React.useEffect(() => {
         reconcileVoiceActivityFeedExpansion({
@@ -176,7 +173,6 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
             autoExpand: canonicalVoice.ui.activityFeedAutoExpandOnStart,
         });
     }, [activityFeedEnabled, attemptId, canonicalVoice.ui.activityFeedAutoExpandOnStart]);
-    const expanded = activityFeedExpansion.expanded;
     const onToggleExpanded = React.useCallback(() => {
         fireAndForget(executePresentationAction('ui.voice_global.transcript.set_visible', { visible: !expanded }),
             { tag: 'VoiceSurface.transcript' });
