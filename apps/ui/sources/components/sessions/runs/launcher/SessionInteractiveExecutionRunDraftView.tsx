@@ -223,6 +223,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     composerHang: {
         marginHorizontal: -COMPOSER_CONTENT_HORIZONTAL_INSET,
     },
+    memberTitle: {
+        color: theme.colors.text.primary,
+    },
     foot: {
         color: theme.colors.text.secondary,
         ...Typography.variant('meta'),
@@ -1249,7 +1252,9 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             const profile = parseQualifiedPluginContributionKey(profileId);
             const profileChoice = options.profileChoices.find(candidate => candidate.id === profileId);
             const member = presentReviewLauncherReviewer(reviewer, index, reviewers, choice, options.backendChoices, reviewInheritedModel);
-            const renderDetail = () => <><Text variant="label" emphasis="strong" testID="review-runner-member-title">{member.label}</Text>
+            // Only a numbered panel member needs its name over the detail; a lone reviewer's row already says it.
+            const renderDetail = () => <>{member.label !== choice.title ? <Text variant="label" emphasis="strong"
+                style={styles.memberTitle} testID="review-runner-member-title">{member.label}</Text> : null}
                 {choice.reviewInventoryItem?.runnerAgents?.length ? <ExecutionRunEngineRunnerPicker engine={choice}
                 choices={options.backendChoices} sessionId={props.sessionId} serverId={serverId} machineId={machineId}
                 actionInput={engineInput} selected={parsed.success ? parsed.data : null} setActionInput={setEngineInput}
