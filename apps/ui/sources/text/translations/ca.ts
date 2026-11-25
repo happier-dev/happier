@@ -17685,6 +17685,7 @@ La meva pregunta: `,
             sharedUpdate: {
               title: "Canvis a la configuració compartida",
               check: "Comprova si la configuració compartida ha canviat",
+              unchangedHere: ({ name }: { name: string }) => `${name} no canvia el que s’executa aquí: el repositori o els teus canvis ja defineixen tot el que fa.`,
               checking: ({ name }: { name: string }) => `Comprovant si ${name} ha canviat…`,
               unreadable: "No s’ha pogut llegir la configuració compartida",
               keepsReviewed: "Continues fent servir la còpia que vas revisar.",

@@ -18788,6 +18788,7 @@ settingsSession: {
           empty: "このチェックアウトには共有できるセットアップがまだありません。",
           notAttached: ({ source }: { source: string }) => `保存しましたが、まだ ${source} に追加されていません`,
           notAttachedBody: "セットアップは保存されています。もう一度試してソースに追加してください。",
+          unchangedHere: ({ name }: { name: string }) => `${name} はここで実行される内容を変えません。設定される内容はすべて、リポジトリかあなた自身の変更ですでに決まっています。`,
           shared: ({ source }: { source: string }) => `${source} とセットアップを共有しました`,
           artifactTitle: ({ source }: { source: string }) => `${source} のセットアップ`,
         },

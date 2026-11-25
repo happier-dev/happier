@@ -18991,6 +18991,7 @@ settingsSession: {
             sharedUpdate: {
               title: "Änderungen am geteilten Setup",
               check: "Geteiltes Setup auf Änderungen prüfen",
+              unchangedHere: ({ name }: { name: string }) => `${name} ändert nichts an dem, was hier läuft: Das Repository oder deine eigenen Änderungen legen schon alles fest, was es setzt.`,
               checking: ({ name }: { name: string }) => `${name} wird auf Änderungen geprüft…`,
               unreadable: "Das geteilte Setup konnte nicht gelesen werden",
               keepsReviewed: "Du verwendest weiter die Kopie, die du geprüft hast.",

@@ -18700,6 +18700,7 @@ settingsSession: {
           empty: "Ten checkout nie ma jeszcze konfiguracji do udostępnienia.",
           notAttached: ({ source }: { source: string }) => `Zapisano, ale jeszcze nie dodano do ${source}`,
           notAttachedBody: "Konfiguracja jest zapisana. Spróbuj ponownie, aby dodać ją do źródła.",
+          unchangedHere: ({ name }: { name: string }) => `${name} nie zmienia tego, co tu działa: repozytorium lub Twoje własne zmiany już ustawiają wszystko, co ono ustawia.`,
           shared: ({ source }: { source: string }) => `Udostępniono konfigurację w ${source}`,
           artifactTitle: ({ source }: { source: string }) => `Konfiguracja ${source}`,
         },

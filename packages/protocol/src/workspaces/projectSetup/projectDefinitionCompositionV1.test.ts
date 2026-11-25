@@ -85,3 +85,20 @@ describe('effective Project definition', () => {
   });
 
 });
+  it('counts what an unaccepted Source setup changes in the composed definition, as its review lists it', () => {
+    // The repository already declares the variable and step the Source shares, and a personal change keeps the script.
+    const repositoryManifest: ProjectManifestV1 = { version: 1, workspace: { setup: [command('pnpm install')] },
+      environmentVariables: [{ name: 'DATABASE_URL', kind: 'config', required: true }] };
+    const setupOverrides: ProjectManifestV1 = { version: 1, scripts: { lint: { source: command('mine') } } };
+    const pending = (manifest: ProjectManifestV1) => resolveProjectDefinitionV1({ repositoryManifest, setupOverrides,
+      pendingSharedSetup: { source: { id: 'source', name: 'Acme dev setup' }, setup: { ...sharedBasis }, manifest } });
+    const same = pending({ version: 1, workspace: { setup: [command('pnpm install')] },
+      environmentVariables: [{ name: 'DATABASE_URL', kind: 'config', required: true }],
+      scripts: { lint: { source: command('shared lint') } } });
+    expect(same.pendingSharedSetup?.summary).toEqual([]);
+    const adds = pending({ version: 1, workspace: { setup: [command('pnpm install'), command('pnpm build')] },
+      environmentVariables: [{ name: 'DATABASE_URL', kind: 'config', required: true }, { name: 'REGION', kind: 'config', required: false }] });
+    expect(adds.pendingSharedSetup?.summary).toEqual([
+      { kind: 'environmentVariables', count: 1 }, { kind: 'workspaceSetup', count: 1 },
+    ]);
+  });

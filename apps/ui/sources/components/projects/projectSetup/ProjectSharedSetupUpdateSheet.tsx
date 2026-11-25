@@ -6,7 +6,7 @@ import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import {
   projectSharedSetupChangeRowsV1,
   type ProjectSharedSetupChangeRowV1,
-} from '@happier-dev/protocol/projects/projectSetupChangeV1';
+} from '@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 
@@ -307,7 +307,19 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
               />
             ))}
           </ItemGroup>
-        ) : null}
+        ) : (
+          // Every edit it carries is already decided by the repository or the person's own changes; taking it
+          // still records its content (A §3 override-only), so the sheet says what Use does here.
+          <ItemGroup surface="none">
+            <Item
+              mode="info"
+              testID="project-shared-setup-update.unchangedHere"
+              showChevron={false}
+              title={t('projects.scripts.sharedUpdate.unchangedHere', { name })}
+              titleLines={0}
+            />
+          </ItemGroup>
+        )}
         {needsPreparation ? <ItemGroup
           surface="none"
           title={props.pending ? t('projects.scripts.sharedUpdate.pendingRuns') : t('projects.scripts.sharedUpdate.after')}

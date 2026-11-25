@@ -18828,6 +18828,7 @@ settingsSession: {
           empty: "У этого checkout пока нет настройки для отправки.",
           notAttached: ({ source }: { source: string }) => `Сохранено, но ещё не добавлено в ${source}`,
           notAttachedBody: "Настройка сохранена. Повторите, чтобы добавить её в источник.",
+          unchangedHere: ({ name }: { name: string }) => `${name} не меняет то, что здесь запускается: репозиторий или ваши собственные изменения уже задают всё, что она задаёт.`,
           shared: ({ source }: { source: string }) => `Настройка передана в ${source}`,
           artifactTitle: ({ source }: { source: string }) => `Настройка ${source}`,
         },

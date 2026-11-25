@@ -14441,6 +14441,7 @@ settingsSession: {
               check: "檢查共享設定的變更",
               checking: ({ name }: { name: string }) => `正在檢查 ${name} 的變更…`,
               unreadable: "無法讀取共享設定",
+              unchangedHere: ({ name }: { name: string }) => `${name} 不會改變這裡執行的內容：儲存庫或你自己的變更已經設定了它設定的所有內容。`,
               keepsReviewed: "你仍在使用你檢查過的副本。",
               current: ({ name }: { name: string }) => `你正在使用最新的 ${name}。`,
               titleChanged: "設定已變更",

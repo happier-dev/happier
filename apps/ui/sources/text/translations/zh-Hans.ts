@@ -18494,6 +18494,7 @@ settingsSession: {
           empty: "此检出还没有可共享的设置。",
           notAttached: ({ source }: { source: string }) => `已保存，但尚未添加到 ${source}`,
           notAttachedBody: "设置已保存。请重试以将其添加到源。",
+          unchangedHere: ({ name }: { name: string }) => `${name} 不会改变这里运行的内容：仓库或你自己的更改已经设置了它设置的所有内容。`,
           shared: ({ source }: { source: string }) => `已与 ${source} 共享设置`,
           artifactTitle: ({ source }: { source: string }) => `${source} 设置`,
         },

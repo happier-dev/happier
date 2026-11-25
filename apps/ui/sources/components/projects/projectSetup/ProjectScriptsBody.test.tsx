@@ -3199,11 +3199,18 @@ describe('Project setup layers on the Scripts page (plan A L6)', () => {
       sharedSetupChange: { ...offer, setupReadiness: { kind: 'notRequired', reviewedEffectDigest: hash } },
     };
     const screen = await render('page', 'scripts.pendingShared');
-    expect(textOf(screen, 'scripts.pendingShared')).toContain('projects.scripts.pendingShared.line');
+    // The row and the review count one derivation: a setup whose edits are all masked claims no additions.
+    expect(textOf(screen, 'scripts.pendingShared')).not.toContain('projects.scripts.pendingShared.line');
+    expect(textOf(screen, 'scripts.pendingShared')).toContain('Acme web');
     const reviewReads = () => shared.calls.filter(call => call.actionId === 'projects.inspect'
       && (call.input as { reviewSharedSetup?: unknown }).reviewSharedSetup !== undefined);
     expect(reviewReads()).toHaveLength(0);
     await act(async () => { await screen.pressByTestIdAsync('scripts.pendingShared.review'); });
+    // Use still takes the Source's content (A §3 override-only), so the review says it changes nothing that runs here.
+    await vi.waitFor(() => {
+      expect(textOf(review, 'project-shared-setup-update.unchangedHere')).toContain('projects.scripts.sharedUpdate.unchangedHere');
+    });
+    expect(review.findByTestId('project-shared-setup-update.changes')).toBeNull();
     expect(showModal).toHaveBeenCalledWith(expect.objectContaining({
       props: expect.objectContaining({ sourceId: 'src-acme-web', sourceName: 'Acme web', pending: true }),
       chrome: expect.objectContaining({ title: 'projects.scripts.sharedUpdate.titlePending' }) }));

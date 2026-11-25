@@ -18749,6 +18749,7 @@ settingsSession: {
           empty: "Ce checkout n’a pas encore de configuration à partager.",
           notAttached: ({ source }: { source: string }) => `Enregistrée, mais pas encore ajoutée à ${source}`,
           notAttachedBody: "Votre configuration est enregistrée. Réessayez pour l’ajouter à la source.",
+          unchangedHere: ({ name }: { name: string }) => `${name} ne change pas ce qui s’exécute ici : le dépôt ou vos propres modifications définissent déjà tout ce qu’elle fixe.`,
           shared: ({ source }: { source: string }) => `Configuration partagée avec ${source}`,
           artifactTitle: ({ source }: { source: string }) => `Configuration de ${source}`,
         },
