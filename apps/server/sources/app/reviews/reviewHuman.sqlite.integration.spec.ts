@@ -5,6 +5,9 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from
 import { encodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { REVIEW_NEW_ROUND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { createReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { REVIEW_HUMAN_ACTION_IDS_V1, isReviewHumanActionIdV1 } from '@happier-dev/protocol/actions/actionIdsReviewHumanV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createReviewHumanActionExecutorV1 } from '@happier-dev/protocol/reviews/reviewHumanTransportV1';
@@ -198,7 +201,7 @@ describe('Review requested-person HTTP flow', () => {
         }, { authentication: 'real' });
     });
 
-    it('renews required and optional requested people through Artifact HTTP without changing history or access', async () => {
+    it('captures a fresh comparison and renews requested people through New round without changing history or access', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const optional = await db.account.create({ data: { encryptionMode: 'plain' } });
         const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -208,7 +211,10 @@ describe('Review requested-person HTTP flow', () => {
         const outsiderToken = await createAccountTokenForTests(outsider.id, { kind: 'account', authority: 'present_user' });
         const reviewId = randomUUID();
         const header = encodePlainArtifactStoredContent({ kind: 'review.v1', v: 1, reviewId, title: 'Round history' });
-        const firstRound = { ordinal: 1, state: 'completed', startedAt: 10, finishedAt: 20, reviewerIds: [], runs: [] };
+        const source = { kind: 'workingTree', area: 'pending' } as const;
+        const firstRound = { ordinal: 1, state: 'completed', startedAt: 10, finishedAt: 20, reviewerIds: [], runs: [],
+            comparisonId: 'a'.repeat(64), comparisonCapture: { target: { kind: 'machine', machineId: 'review-machine' },
+                input: { cwd: '/review-repo', source, comparisonId: 'a'.repeat(64) } } };
         const metadata = { projectSourceId: null, workflowId: null, subjectKind: 'comparison', sourceKind: 'direct' };
         await withAuthenticatedTestApp(registerHttpRoutes, async app => {
             const headers = (token: string) => ({ authorization: `Bearer ${token}`,
@@ -236,11 +242,38 @@ describe('Review requested-person HTTP flow', () => {
             const oldRequests = await db.reviewRequestedReviewer.findMany({ where: { reviewId, roundOrdinal: 1 }, orderBy: { id: 'asc' } });
             const oldVerdicts = await db.reviewVerdict.findMany({ where: { reviewId, roundOrdinal: 1 }, orderBy: { accountId: 'asc' } });
             const grants = await db.artifactGrant.findMany({ where: { artifactId: reviewId }, orderBy: { id: 'asc' } });
-            const next = await post(ownerToken, `/v1/artifacts/${reviewId}`, { header, expectedHeaderVersion: 2,
-                body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, rounds: [firstRound,
-                    { ordinal: 2, state: 'running', startedAt: 30, finishedAt: null, reviewerIds: [], runs: [] }] }) }), expectedBodyVersion: 2,
-                reviewMetadata: { ...metadata, currentRoundOrdinal: 2, state: 'running', startedAt: 30, finishedAt: null } });
-            expect(next.json()).toMatchObject({ success: true });
+            // Use the real client storage owner against this authenticated HTTP
+            // server. Only the remote Machine's SCM transport is substituted.
+            const cliStorePath = '../../../../cli/src/api/artifacts/accountArtifactStore';
+            const cliServerUrlPath = '../../../../cli/src/api/client/serverHttpBaseUrl';
+            const { createAccountArtifactStore, createAcknowledgedAccountArtifactTransport } = await import(cliStorePath);
+            const { runWithServerHttpBaseUrl } = await import(cliServerUrlPath);
+            const baseUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+            await runWithServerHttpBaseUrl(baseUrl, async () => {
+                const store = createAccountArtifactStore({ credentials: { token: ownerToken, encryption: null },
+                    getAccountEncryptionMode: async () => 'plain' });
+                const records = createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(store));
+                const captured: unknown[] = [];
+                const executor = createActionExecutor({ reviewRecords: () => records,
+                    scmActionExecute: async ({ actionId, input, context }) => {
+                        expect(actionId).toBe('scm.diffSummary.capture');
+                        const request = ScmComparisonCaptureInputSchema.parse(input);
+                        expect(request).toMatchObject({ cwd: '/review-repo', source });
+                        expect(request.comparisonId).toBeUndefined();
+                        expect(context.externalActionTarget).toMatchObject({ kind: 'machine', machineId: 'review-machine' });
+                        captured.push(request);
+                        return ScmComparisonCaptureOutputSchema.parse({ success: true, comparison: { id: 'b'.repeat(64), source,
+                            repository: { rootPath: '/review-repo' }, endpoints: {},
+                            inventory: { state: 'complete', files: [], reasons: [] } }, metadata: { source, sourceKey: 'fresh-working-tree' } });
+                    },
+                });
+                const result = await executor.execute(REVIEW_NEW_ROUND_ACTION_ID_V1, { reviewId }, { surface: 'ui' });
+                expect(result, JSON.stringify(result))
+                    .toMatchObject({ ok: true, result: { reviewRound: { reviewId, roundOrdinal: 2 }, comparisonId: 'b'.repeat(64) } });
+                expect(captured).toHaveLength(1);
+                expect((await records.read(reviewId))?.rounds.map(round => round.comparisonId))
+                    .toEqual(['a'.repeat(64), 'b'.repeat(64)]);
+            });
             for (const token of [ownerToken, optionalToken]) {
                 const human = await app.inject({ method: 'GET', url: `/v1/reviews/${reviewId}/human`, headers: headers(token) });
                 expect(human.json()).toMatchObject({ roundOrdinal: 2, needsYou: { requestedVerdict: true, canSubmitVerdict: true } });
