@@ -16,7 +16,7 @@ import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, 
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { deriveArtifactStoredKindV1, REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
-import { getReviewListSnapshot, reviewListKey } from '@/sync/store/domains/reviews/list';
+import { getReviewListSnapshot, retireReviewList, reviewListKey } from '@/sync/store/domains/reviews/list';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { AppShellColumnContext } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { WorkspaceRouteBody } from '@/app/(app)/reviews';
@@ -34,6 +34,8 @@ import { settingsParse } from '@/sync/domains/settings/settings';
 import { UniversalSearchRuntimeProvider, type UniversalSearchRuntime } from '@/components/appShell/search/UniversalSearchRuntimeContext';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { ResourceSpaceMembershipMutationV1Schema } from '@happier-dev/protocol/collections/spaces/resourceSpaceMembershipV1';
+import { ReviewListRequestV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
 
 const routerPush = vi.hoisted(() => vi.fn());
 const membershipAlert = vi.hoisted(() => vi.fn());
@@ -377,6 +379,102 @@ describe('/reviews live host', () => {
             if (allowed) expect(membershipAlert).not.toHaveBeenCalled();
         } finally {
             await screen.unmount();
+            restorePopoverGlobals();
+            storage.setState({ profileScope: previous.profileScope, settingsScope: previous.settingsScope,
+                settingsVersion: previous.settingsVersion, settings: previous.settings });
+            publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
+        }
+    });
+
+    it('retains a phone menu association across saved views and remount without Session tag writes', async () => {
+        const serverUrl = 'https://reviews-retained-spaces.example';
+        const serverId = await homes.addHome({ serverUrl, name: 'Reviews', accountId: 'alice' });
+        await setActiveServerId(serverId, { scope: 'device' });
+        const previous = storage.getState();
+        const previousApplied = getAppliedActiveServerSnapshot();
+        const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+        const connection = await restoreServerAccountForTest({ serverUrl, accountId: 'alice', request: homes.request });
+        await sync.awaitBootstrapForegroundAcquisition();
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+        const base = createDefaultCollectionSpaceV1('review');
+        const scope = { serverId, accountId: 'alice' };
+        storage.setState({ profileScope: scope, settingsScope: scope, settingsVersion: 1,
+            settings: settingsParse({ collectionSpacesEnabled: true, [COLLECTION_SPACE_ENABLEMENT_SETTING_KEYS_V1.review]: true,
+                collectionSpacesV1: { v: 1, spaces: [
+                    { ...base, id: 'release', name: 'Release', membership: { mode: 'manual_only' } },
+                    { ...base, id: 'other-view', name: 'Other view', filter: { state: 'running' } },
+                ] } }) });
+        const definitions = storage.getState().settings.collectionSpacesV1;
+        const items: ReviewListResponseV1['items'] = ['shared-review', 'neighbor'].map(reviewId => ({
+            reviewId, projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct',
+            state: reviewId === 'neighbor' ? 'running' : 'completed', currentRoundOrdinal: 1,
+            startedAt: 1, finishedAt: reviewId === 'neighbor' ? null : 2, createdAt: 1, updatedAt: 2,
+            counts: { total: 0, needsDecision: 0 }, needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you',
+                needsYou: false, requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false },
+        }));
+        // HTTP is the boundary. The retained response models the server's personal association;
+        // mounted selection, Action admission, serialization and the Review store remain real.
+        let member = false;
+        const changes: boolean[] = [];
+        homes.answer(serverId, 'POST /v2/session-organization/resource-space-memberships', { select: input => {
+            const request = ResourceSpaceMembershipMutationV1Schema.parse(input);
+            expect(request).toEqual({ resourceKind: 'artifact', resourceId: 'shared-review', operation: 'add', spaceId: 'release' });
+            const changed = !member;
+            member = true;
+            changes.push(changed);
+            return { body: { changed } };
+        } });
+        const queries: ReturnType<typeof ReviewListRequestV1Schema.parse>[] = [];
+        homes.answer(serverId, 'POST /v1/reviews/list', { select: input => {
+            const request = ReviewListRequestV1Schema.parse(input);
+            queries.push(request);
+            return { body: { items: request.spaceId === 'release' ? member ? [items[0]] : []
+                : request.state === 'running' ? [items[1]] : items, cursor: null } };
+        } });
+        const restorePopoverGlobals = withPopoverWebGlobals();
+        const page = () => <PluginSurfaceFocusEligibilityProvider active presentationActive><WorkspaceRouteBody /></PluginSurfaceFocusEligibilityProvider>;
+        let screen = await renderScreen(page());
+        try {
+            const { ContextMenu } = await import('@happier-dev/plugin-ui');
+            const row = () => screen.findAll(node => node.props.testID === 'reviews:row:shared-review'
+                && Array.isArray(node.props.secondaryActions))[0];
+            await waitForHomeGovernance(() => expect(row()).toBeDefined());
+            // Repeating Add from All is idempotent at the HTTP owner, without changing another view.
+            for (let index = 0; index < 2; index++) {
+                await act(async () => { row()!.findByType(ContextMenu).props.onSelect('add:release'); });
+                await waitForHomeGovernance(() => expect(changes).toHaveLength(index + 1));
+            }
+            expect(changes).toEqual([true, false]);
+            await screen.pressByTestIdAsync('reviews-space-strip:release');
+            await waitForHomeGovernance(() => expect(queries.at(-1)).toMatchObject({ spaceId: 'release', spaceMembershipMode: 'manual_only' }));
+            await waitForHomeGovernance(() => expect(row()).toBeDefined());
+            expect(screen.findHostByTestId('reviews:row:neighbor')).toBeNull();
+            const releaseQuery = queries.at(-1)!;
+            const beforeReload = queries.length;
+            await screen.unmount();
+            // A reload loses the volatile list snapshot; the remount must read the persisted association.
+            retireReviewList(reviewListKey(scope, releaseQuery));
+            screen = await renderScreen(page());
+            await waitForHomeGovernance(() => expect(queries.length).toBeGreaterThan(beforeReload));
+            expect(queries.at(-1)).toEqual(releaseQuery);
+            await waitForHomeGovernance(() => expect(row()).toBeDefined());
+            expect(screen.findHostByTestId('reviews:row:neighbor')).toBeNull();
+            await screen.pressByTestIdAsync('reviews-space-strip:other-view');
+            await waitForHomeGovernance(() => expect(screen.findHostByTestId('reviews:row:neighbor')).not.toBeNull());
+            expect(screen.findHostByTestId('reviews:row:shared-review')).toBeNull();
+            await screen.pressByTestIdAsync('reviews-space-strip:release');
+            await waitForHomeGovernance(() => expect(row()).toBeDefined());
+            expect(changes).toEqual([true, false]);
+            const writes = homes.requests.filter(request => request.method === 'POST'
+                && request.path.startsWith('/v2/session-organization/'));
+            expect(writes.map(request => request.path)).toEqual([
+                '/v2/session-organization/resource-space-memberships', '/v2/session-organization/resource-space-memberships',
+            ]);
+            expect(storage.getState().settings.collectionSpacesV1).toEqual(definitions);
+            expect(membershipAlert).not.toHaveBeenCalled();
+        } finally {
+            await screen.unmount();
+            await connection.dispose();
             restorePopoverGlobals();
             storage.setState({ profileScope: previous.profileScope, settingsScope: previous.settingsScope,
                 settingsVersion: previous.settingsVersion, settings: previous.settings });
