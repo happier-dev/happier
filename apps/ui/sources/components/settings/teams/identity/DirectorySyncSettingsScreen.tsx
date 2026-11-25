@@ -3,7 +3,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { AppState, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { HAPPIER_STATE_SIZE_METRICS } from '@happier-dev/plugin-ui/presentation';
-import type { TeamDirectorySourceSetupOptionV1, TeamDirectorySourceSetupOptionsV1 } from '@happier-dev/protocol/teams';
+import { isTeamLegacyCredentialRefusalV1, type TeamDirectorySourceSetupOptionV1, type TeamDirectorySourceSetupOptionsV1 } from '@happier-dev/protocol/teams';
 
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
@@ -23,6 +23,8 @@ import type { ActionApprovalRegistration } from '@/components/approvals/actionAp
 
 import { TeamSection } from '../TeamSection';
 import { teamDirectorySourcePath } from '../teamsRoutes';
+import { teamReadFailureLabel } from '../teamMutationPresentation';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 import { directorySourcePresentationState, directorySourceStateLabel } from './directoryAdministrationPresentation';
 import { createIdentityAdministrationClient, executeIdentityAdministrationRead } from './identityAdministrationClient';
 import { useDirectoryAdministration } from './useDirectoryAdministration';
@@ -57,6 +59,23 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
 }>) {
     const router = useRouter();
     const { state, refresh, loadMore } = useDirectoryAdministration(props.scope, props.address.teamId, true, props.requestApproval);
+    const readRecovery = useTeamReadFailureAction(props.address);
+    const readFailure = state.kind === 'loading' ? null : state.failure;
+    const moreFailure = state.kind === 'ready' && state.nextCursor !== null && !state.stale;
+    const readTestID = state.kind === 'unavailable' ? 'team-directory-sources-unavailable'
+        : moreFailure ? 'team-directory-sources-load-more' : 'team-directory-stale';
+    const retry = moreFailure && readFailure?.code !== 'invalid_team_cursor' ? () => void loadMore() : refresh;
+    const domainFailure = readFailure?.domainFailure;
+    const readMessage = readFailure
+        ? readFailure.code === 'invalid_team_cursor' || isTeamLegacyCredentialRefusalV1(domainFailure?.code, domainFailure?.details)
+            ? teamReadFailureLabel(domainFailure ?? { kind: 'invalid', code: readFailure.code, retryable: false })
+            : identityAdministrationFailureMessage(readFailure.code)
+        : null;
+    const readAction = domainFailure
+        ? readRecovery(domainFailure, { onPress: retry, testIDPrefix: readTestID, reloadsFirstPage: true })
+        : readFailure?.retryable && identityAdministrationFailure(readFailure.code).kind !== 'policy_unavailable'
+            ? { label: t('common.retry'), onPress: retry, testID: `${readTestID}-retry` }
+            : undefined;
     const bindingKey = serverAccountScopedTeamKey(props.scope, props.address);
     const client = React.useMemo(
         () => createIdentityAdministrationClient(props.scope, {
@@ -302,11 +321,9 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
                     testID="team-directory-sources-unavailable"
                     kind="error"
                     size="line"
-                    title={identityAdministrationFailureMessage(state.failure.code)}
+                    title={readMessage ?? identityAdministrationFailureMessage(state.failure.code)}
                     diagnosticCode={state.failure.code}
-                    action={state.failure.retryable && identityAdministrationFailure(state.failure.code).kind !== 'policy_unavailable'
-                        ? { label: t('common.retry'), onPress: refresh }
-                        : undefined}
+                    action={readAction}
                     accessibilitySemantics="alert"
                 />
             </ItemGroup>
@@ -321,13 +338,13 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
     const empty = state.items.length === 0 && !state.nextCursor;
     return (
         <>
-            {state.stale ? (
+            {state.stale && readMessage ? (
                 <AttentionBanner
                     testID="team-directory-stale"
-                    title={t('teams.unavailable.offline')}
+                    title={readMessage}
                     description={t('teams.stale.label')}
                     accessibilityLiveRegion="polite"
-                    action={{ label: t('common.retry'), onPress: refresh }}
+                    action={readAction}
                 />
             ) : null}
             <SettingSection section={DIRECTORY_SETTINGS.sectionRefs.actions}>{empty ? (
@@ -386,8 +403,8 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
                         testID="team-directory-sources-load-more"
                         kind="error"
                         size="line"
-                        title={identityAdministrationFailureMessage(state.failure.code)}
-                        action={{ label: t('common.retry'), onPress: () => void loadMore() }}
+                        title={readMessage ?? identityAdministrationFailureMessage(state.failure.code)}
+                        action={readAction}
                     />
                 ) : state.nextCursor && !state.stale ? (
                     <Item

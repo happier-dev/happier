@@ -42,9 +42,9 @@ function setup(ids: string[] = ['installation-1'], nextCursor: string | null = n
 function connection(id = 'connection-1') {
     return teamIdentityConnectionFixture({ id, provider: { id: 'provider-1', kind: 'workos_sso', displayName: 'WorkOS' }, externalReference: { v: 1, kind: 'workos_sso', organizationId: null, connectionId: null }, settings: { v: 1, kind: 'workos_sso' }, enabled: false, firstEnabledAt: null, state: 'setting_up', lastObservation: null });
 }
-async function renderDirectory() {
+async function renderDirectory(readyTestID = 'team-directory-source-add') {
     const screen = await renderScreen(<DirectorySyncSettingsScreen serverId={serverId} teamId="team-1" />);
-    await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-source-add'), screen.getTextContent()).not.toBeNull());
+    await waitForHomeGovernance(() => expect(screen.findByTestId(readyTestID), screen.getTextContent()).not.toBeNull());
     return screen;
 }
 async function openSetup(screen: Awaited<ReturnType<typeof renderDirectory>>) {
@@ -116,6 +116,30 @@ describe('DirectorySyncSettingsScreen through real Home governance', () => {
         expect(requestsAt(listPath)[1]?.path).toContain('cursor=cursor-1');
         await screen.pressByTestIdAsync('team-directory-source-directory-51');
         expect(routerPush).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/authentication/directory/directory-51`);
+    });
+    it('refreshes directory sources from the first page after an invalidated cursor', async () => {
+        harness.answer(serverId, listPath, { select: (_input, request) => new URL(request.url).searchParams.has('cursor')
+            ? { status: 400, body: { error: 'invalid_team_cursor' } }
+            : { body: TeamDirectorySourcePageV1Schema.parse({ items: [directorySource('directory-1')], nextCursor: 'cursor-1' }) } });
+        const screen = await renderDirectory();
+        await screen.pressByTestIdAsync('team-directory-sources-load-more');
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('teams.errors.listCursorExpired'));
+        expect(screen.findByTestId('team-directory-sources-load-more-retry')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('common.retry');
+        harness.answer(serverId, listPath, { body: TeamDirectorySourcePageV1Schema.parse({ items: [directorySource('directory-current')], nextCursor: null }) });
+        await screen.pressByTestIdAsync('team-directory-sources-load-more-reload');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-source-directory-current')).not.toBeNull());
+        expect(new URL(requestsAt(listPath).at(-1)!.path, 'https://app.example').searchParams.has('cursor')).toBe(false);
+    });
+    it('offers the exact Team sign-in when reading directory sources requires it', async () => {
+        harness.answer(serverId, listPath, { status: 403, body: { error: 'team_authentication_required' } });
+        const screen = await renderDirectory('team-directory-sources-unavailable');
+        expect(screen.getTextContent()).toContain('identityAdministration.errorAuthenticationRequired');
+        expect(screen.findByTestId('team-directory-sources-unavailable-retry')).toBeNull();
+        await screen.pressByTestIdAsync('team-directory-sources-unavailable-sign-in');
+        const destination = new URL(routerPush.mock.lastCall?.[0] ?? '', 'https://app.example');
+        expect(destination.pathname).toBe('/teams/team-1/sign-in');
+        expect(destination.searchParams.get('serverId')).toBe(serverId);
     });
     it('retains a source but refuses its stale cursor after a failed refresh', async () => {
         harness.answer(serverId, listPath, { body: TeamDirectorySourcePageV1Schema.parse({ items: [directorySource('directory-1')], nextCursor: 'cursor-1' }) });
