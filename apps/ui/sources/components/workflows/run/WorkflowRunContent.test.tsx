@@ -232,7 +232,10 @@ function flattenTestStyle(style: unknown): Record<string, unknown> {
   return {};
 }
 
-async function renderContent(overrides: Partial<ContentProps> = {}) {
+async function renderContent(
+  overrides: Partial<ContentProps> = {},
+  wrapContent?: (content: React.ReactElement) => React.ReactElement,
+) {
   let modals: ReturnType<typeof useModal>['state']['modals'] = [];
   function ObserveModals() {
     modals = useModal().state.modals;
@@ -283,7 +286,11 @@ async function renderContent(overrides: Partial<ContentProps> = {}) {
         : null,
   });
   publishInvocationFixture(props);
-  await screen.update(React.createElement(WorkflowRunContent, props));
+  const updateContent = (changes: Partial<ContentProps> = {}) => {
+    const content = <WorkflowRunContent {...props} {...changes} />;
+    return screen.update(wrapContent?.(content) ?? content);
+  };
+  await updateContent();
   let mounted = true;
   const retire = async () => {
     if (mounted) await screen.update(<></>);
@@ -291,6 +298,7 @@ async function renderContent(overrides: Partial<ContentProps> = {}) {
   retireContents.push(retire);
   return {
     ...screen,
+    updateContent,
     update: async (element: React.ReactElement) => {
       if (element.type === WorkflowRunContent) publishInvocationFixture(element.props as ContentProps);
       await screen.update(element);
@@ -379,7 +387,10 @@ it.each(['flow', 'steps'] as const)('measures a 500-item %s arrival without waki
     id: `budget-item-${index}`, parentRecordId: root.id, memberOrdinal: String(index), sequence: String(index + 1),
     lifecycle: index === 499 ? 'running' : 'completed',
   }))];
-  const screen = await renderContent({ definition, invocations, view });
+  let commits = 0;
+  const screen = await renderContent({ definition, invocations, view }, content => (
+    <React.Profiler id="arrival" onRender={() => { commits += 1; }}>{content}</React.Profiler>
+  ));
   const reset = () => { for (const counter of arrivalCosts.values()) counter.reset(); };
   const read = () => [...arrivalCosts].filter(([id]) => id.includes('budget-') && !id.includes('budget-499'))
     .reduce((sum, [, counter]) => sum + counter.read().renders, 0);
@@ -388,14 +399,8 @@ it.each(['flow', 'steps'] as const)('measures a 500-item %s arrival without waki
   expect(read()).toBe(0);
   const changed = invocations.map(row => row.id === 'budget-item-499'
     ? createWorkflowInvocationIndexFixture({ ...row, lifecycle: 'completed', contentRevision: '1' }) : row);
-  let commits = 0;
-  await screen.update(<React.Profiler id="arrival" onRender={() => { commits += 1; }}>
-    <WorkflowRunContent {...screen.contentProps} invocations={invocations} />
-  </React.Profiler>);
   reset(); commits = 0;
-  await screen.update(<React.Profiler id="arrival" onRender={() => { commits += 1; }}>
-    <WorkflowRunContent {...screen.contentProps} invocations={changed} />
-  </React.Profiler>);
+  await screen.updateContent({ invocations: changed });
   const measured = { view, items: 500, commits, unrelatedRowHostRenders: read(),
     changedRows: [...arrivalCosts].filter(([id, counter]) => id.includes('budget-499') && counter.read().renders > 0).length };
   console.info('FIN-FLOWBUDGET Run arrival', measured);
@@ -419,16 +424,14 @@ it.each(['flow', 'steps'] as const)('selects a node in a 500-item %s with only t
     id: `selection-item-${index}`, parentRecordId: root.id, memberOrdinal: String(index), sequence: String(index + 1),
     lifecycle: 'completed',
   }))];
-  const screen = await renderContent({ definition, invocations, view, selectedInvocationId: 'selection-item-0' });
   let commits = 0;
-  const content = (selectedInvocationId: string) => <React.Profiler id="selection" onRender={() => { commits += 1; }}>
-    <WorkflowRunContent {...screen.contentProps} selectedInvocationId={selectedInvocationId} />
-  </React.Profiler>;
-  await screen.update(content('selection-item-0'));
+  const screen = await renderContent({ definition, invocations, view, selectedInvocationId: 'selection-item-0' }, content => (
+    <React.Profiler id="selection" onRender={() => { commits += 1; }}>{content}</React.Profiler>
+  ));
   for (const selected of [1, 2]) {
     for (const counter of costs.values()) counter.reset();
     commits = 0;
-    await screen.update(content(`selection-item-${selected}`));
+    await screen.updateContent({ selectedInvocationId: `selection-item-${selected}` });
     const changedRows = [...costs].filter(([id, counter]) =>
       /(?:flow-node-selection-\d+|steps-selection-\d+-block)$/.test(id) && counter.read().renders > 0).map(([id]) => id);
     const rowRenders = changedRows.reduce((total, id) => total + (costs.get(id)?.read().renders ?? 0), 0);
