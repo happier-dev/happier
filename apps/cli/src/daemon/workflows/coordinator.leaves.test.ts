@@ -227,9 +227,10 @@ describe('workflow Action leaves', () => {
   ] as const)(
     'keeps accepted Machine A at the actual %s transport and never resends it on replay (deferred=%s)', async (actionId, deferred) => {
       const acceptedMachineId = 'machine-a';
+      const homeId = 'srv_workflow_finite';
       const directory = await realpath(await mkdtemp(join(tmpdir(), 'happier-workflow-finite-')));
       onTestFinished(async () => { await rm(directory, { recursive: true, force: true }); });
-      const sourceWorkspace = { serverId: 'home', workspaceId: 'workspace-a', machineId: acceptedMachineId, rootPath: directory };
+      const sourceWorkspace = { serverId: homeId, workspaceId: 'workspace-a', machineId: acceptedMachineId, rootPath: directory };
       const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'finite', actionId, input: actionId === 'projects.script.run'
         ? { workspace: deferred ? { kind: 'item', field: 'value' } : { kind: 'literal', value: sourceWorkspace },
           selection: { kind: 'literal', value: { kind: 'named', name: 'test' } } }
@@ -246,7 +247,7 @@ describe('workflow Action leaves', () => {
       if (!accepted.ok) throw new Error(accepted.error.code);
       const requests: unknown[] = [];
       const executor = createActionExecutor(createCliActionDeps({ mode: 'plain', ctx: null, token: 'token', sessionId: 'origin',
-        serverId: 'home', serverHttpBaseUrl: 'http://127.0.0.1:3005',
+        serverId: 'home', serverIdentityId: homeId, serverHttpBaseUrl: 'http://127.0.0.1:3005',
         machineActionDirectTargetTransport: { machineId: acceptedMachineId, invoke: async (method, request) => {
           requests.push({ method, request });
           // Use the receiving finite owner's real pre-admission refusal, not a
@@ -260,11 +261,15 @@ describe('workflow Action leaves', () => {
         resolveWorkspace: createCoordinatorWorkspaceResolver({ store, projectWorkspace: accepted.snapshot.workspaceTarget.project,
           scm: createGitWorkflowWorkspaceTestDependencies() }),
         action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation', bypassApprovals: true,
+          serverId: homeId, serverIdentityId: homeId,
           externalActionTarget: { kind: 'machine', machineId: acceptedMachineId,
             project: { machineId: acceptedMachineId, directory } } }),
           observeRun: async () => { throw new Error('Refused finite work has no native Run'); } } });
       const input = { ...accepted.snapshot, runId: `finite-${actionId}`, inputs: {} };
-      expect(await coordinator.run(input)).toMatchObject({ state: 'outcome_uncertain', reason: 'machine_admission_required' });
+      const outcome = await coordinator.run(input);
+      expect(outcome, JSON.stringify({ requests, invocations: store.list() })).toMatchObject({
+        state: 'outcome_uncertain', reason: 'machine_admission_required',
+      });
       expect(requests).toEqual([{ method: getActionSpec(actionId).bindings?.rpcMethod,
         request: expect.objectContaining({ choice: { kind: 'primary' } }) }]);
       const execution = store.list().find((row) => row.blockId === 'finite')?.execution;
