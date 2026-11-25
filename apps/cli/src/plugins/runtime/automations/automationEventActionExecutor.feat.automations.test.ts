@@ -1959,15 +1959,22 @@ it.each([
   expect(admitted).toHaveLength(1);
 });
 
-it.each(['before', 'after'] as const)('preserves only a native after Action selector Skip (phase: %s)', async phase => {
+it.each([
+  { phase: 'before', shared: true },
+  { phase: 'after', shared: true },
+  { phase: 'before', shared: false },
+  { phase: 'after', shared: false },
+] as const)('keeps private After Skip evidence and excludes shared triggers without consent (shared=$shared, $phase)', async ({ phase, shared }) => {
   const { createActionAutomationHttpPortV1 } = await import('@happier-dev/protocol/actions/executor/actionAutomationAdmission');
   const { automationSubjectKeyV1 } = await import('@happier-dev/protocol/automations/automationSubjectV1');
   const { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
   const subject = { kind: 'machine' as const, serverId: 'home', machineId: 'subject-machine' };
-  const row = { automationId: 'shared-completion', triggerId: triggerIdFor('completion'), triggerRevision: 1,
-    workflowId: 'workflow', workflowRevision: 1, ownerAccountId: 'author', reachesOthers: true,
+  const row = { automationId: shared ? 'shared-completion' : 'completion',
+    triggerId: triggerIdFor('completion'), triggerRevision: 1,
+    workflowId: 'workflow', workflowRevision: 1,
+    ...(shared ? { ownerAccountId: 'author', reachesOthers: true } : { ownerAccountId: 'account' }),
     actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], phase, ...(phase === 'before' ? { mode: 'notify' as const } : {}),
-    subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject, 'workflow') };
+    subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject, shared ? 'workflow' : undefined) };
   const port = createActionAutomationHttpPortV1({ accountId: 'account', request: async (_path, request) => {
     if (request.method === 'GET') return { v: 1, rows: [row] };
     throw new Error('A selector Skip cannot admit an occurrence');
@@ -1978,14 +1985,15 @@ it.each(['before', 'after'] as const)('preserves only a native after Action sele
   });
   const result = await executor({ actionId: 'automation.event.admit', caller: actionCaller, input: {
     eventRef: { pluginId: actionCaller.pluginId, localId: 'deployment-failed' }, sourceInstanceId: 'native-receipts',
-    occurrenceId: 'shared-receipt-terminal', occurredAt: 100, observationReceivedAt: 101, payload: {}, definitions: [],
+    occurrenceId: shared ? 'shared-receipt-terminal' : 'receipt-terminal',
+    occurredAt: 100, observationReceivedAt: 101, payload: {}, definitions: [],
     subjectContexts: [{ role: 'operand', subject }],
   } });
-  if (phase === 'before') {
+  if (phase === 'before' || shared) {
     expect(result).toEqual({ results: [] });
     return;
   }
   expect(result).toMatchObject({ ok: false, errorCode: 'automation_event_host_evidence_unavailable',
-    automationNotices: [{ code: 'action_automation_skipped', reason: 'machineRequired',
+    automationNotices: [{ code: 'action_automation_skipped', reason: 'content_unavailable',
       automationId: row.automationId, triggerId: row.triggerId, workflowId: row.workflowId }] });
 });

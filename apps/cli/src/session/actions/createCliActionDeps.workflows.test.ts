@@ -386,10 +386,16 @@ describe('createCliActionDeps workflow boundary', () => {
   it.each(['compiled_cli_missing_runtime', 'account_person', 'compiled_cli', 'compiled_cli_no_target', 'compiled_cli_missing_machine', 'bound_cli', 'standalone_mcp', 'standalone_mcp_unbound', 'standalone_mcp_ask', 'terminal_person', 'agent_process', 'session_custody', 'inherited_custody'] as const)(
     'retains only a person CLI starter through credentialed daemon admission and stored Workflow materialization (%s)', async actor => {
     const originalExitCode = process.exitCode;
-    // Private daemon control uses Axios.request; retain its real loopback HTTP
-    // while the separate Account Home methods stay explicit boundary fixtures.
+    // Private daemon control retains real loopback HTTP. Home serves the
+    // authenticated Automation index consulted before the terminal effect.
     const nativeAxios = await vi.importActual<typeof import('axios')>('axios');
-    http.request.mockImplementation(nativeAxios.default.request);
+    http.request.mockImplementation(async request => {
+      if (request.url === `${serverApiUrl}${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`) {
+        expect(request.method).toBe('GET');
+        return { status: 200, data: { v: 1, rows: [] } };
+      }
+      return nativeAxios.default.request(request);
+    });
     const channel = await createRequesterCurrentnessSocketHarness();
     // Run the unbound receiver first, before the real daemon registry exists.
     // Do not shut down the shared controller needed by the following cases.
@@ -665,11 +671,19 @@ describe('createCliActionDeps workflow boundary', () => {
         expect(http.post.mock.calls.filter(([, body]) => body.operation === 'admit')).toEqual([]);
         return;
       }
-      if (actor === 'account_person') expect(daemonNetworkRequests).toEqual([
-        'GET /v1/account/profile', 'GET /v1/account/encryption/currentness', 'GET /v2/account/settings',
-        'POST /v1/actions/workflow.run.start/execution-authorization/verify',
-        'POST /v3/automations/runs/workflow-storage:get', 'POST /v3/automations/runs/workflow-storage:admit',
-      ]);
+      if (actor === 'account_person') {
+        // Saved-Home CLI approval observation opens the original request once
+        // when the Account stream connects, alongside Workflow admission.
+        const isApprovalRead = (request: string) => request.startsWith('GET /v1/artifacts/');
+        expect(daemonNetworkRequests.filter(isApprovalRead)).toEqual([
+          expect.stringMatching(/^GET \/v1\/artifacts\/[0-9a-f-]+$/),
+        ]);
+        expect(daemonNetworkRequests.filter(request => !isApprovalRead(request))).toEqual([
+          'GET /v1/account/profile', 'GET /v1/account/encryption/currentness', 'GET /v2/account/settings',
+          'POST /v1/actions/workflow.run.start/execution-authorization/verify',
+          'POST /v3/automations/runs/workflow-storage:get', 'POST /v3/automations/runs/workflow-storage:admit',
+        ]);
+      }
       expect(commandResult, JSON.stringify({ execution, output })).toMatchObject({ ok: true });
       expect(actor === 'bound_cli' ? commandResult.data.result : commandResult.data).toMatchObject({ admission: 'created' });
       const admitted = http.post.mock.calls.find(([, body]) => body.operation === 'admit')?.[1];

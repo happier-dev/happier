@@ -200,7 +200,10 @@ describe('scoped Automation daemon admission', () => {
       } }),
     });
     if (differentMachine) {
-      await expect(admission).resolves.toEqual({ state: 'failed', reason: 'source_unavailable', admission: 'refused' });
+      await expect(admission).resolves.toEqual({
+        state: 'failed', reason: 'target_unavailable', targetUnavailableReason: 'session_unavailable',
+        blockId: 'continue', admission: 'refused',
+      });
       expect(snapshots).toEqual([]);
       expect(await resolveWorkflowSessionConversation({ credentials, sessionId, machineId })).toBeNull();
       return;

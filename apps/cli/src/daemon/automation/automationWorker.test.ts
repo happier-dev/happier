@@ -2306,9 +2306,10 @@ describe('automationWorker', () => {
         ]);
         holdSettledAssignmentRefresh = false;
         for (const release of releaseSettledAssignmentRefreshes) release();
+        // Accepted graph rows precede actual process admission. Observe the
+        // replacement at the native boundary before closing this fixture.
+        await waitForCondition(() => activeStartingSockets.size === budget);
         if (budget === DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE) {
-          // Accepted graph rows precede the replacement's actual process admission.
-          await waitForCondition(() => activeStartingSockets.size === budget);
           projectedBudget = 2;
           await worker.refreshAssignments();
           expect(startingSockets.length).toBeGreaterThanOrEqual(budget);
