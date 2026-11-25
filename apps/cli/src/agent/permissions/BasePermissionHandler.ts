@@ -4433,15 +4433,7 @@ export abstract class BasePermissionHandler {
         // Retire preparation before awaiting durable cancellation, so shared
         // hydration cannot advance a cancelled request into publication.
         this.cancelUncoordinatedPendingRequests(pendingSnapshot, reason);
-        // After rejoin the request, not host-local yield intent, retains the
-        // waiting turn. Capture it before cancellation retires the request.
-        const questionWaitTurnIds = preserveQuestions ? [] : this.requestStore.listOutstandingRequests()
-            .filter(request => request.source === SESSION_NEEDS_YOU_REQUEST_SOURCE && request.questionV1?.mode === 'wait')
-            .flatMap(request => request.turnId ? [request.turnId] : []);
-        await Promise.all([
-            this.requestCoordinator.cancelAll(reason, { ...(scope ? { scope } : {}), ...(preserveQuestions ? { preserveQuestions } : {}) }),
-            ...(!preserveQuestions ? [this.session.clearQuestionWaitTurn?.(questionWaitTurnIds)] : []),
-        ]);
+        await this.requestCoordinator.cancelAll(reason, { ...(scope ? { scope } : {}), ...(preserveQuestions ? { preserveQuestions } : {}) });
         for (const [requestId, pending] of pendingSnapshot) {
             if (this.pendingRequests.get(requestId) === pending) this.pendingRequests.delete(requestId);
         }

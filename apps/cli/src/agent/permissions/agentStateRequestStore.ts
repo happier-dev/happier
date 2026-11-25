@@ -3,7 +3,7 @@ import { NativePermissionChoiceAnswerV1Schema, NativePermissionChoicesV1Schema, 
 import { readRunScopedExecutionPermissionRequestIdentity } from '@happier-dev/protocol/execution/runs/runPrimitives';
 import type { AgentState } from '@/api/types';
 import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
-import { HAPPIER_ACTION_REQUEST_SOURCE, isAgentStructuredQuestionRequest, isDurableAgentStructuredQuestionRequest, resolveAgentRequestKind } from '@/agent/permissions/requestKind';
+import { HAPPIER_ACTION_REQUEST_SOURCE, SESSION_NEEDS_YOU_REQUEST_SOURCE, isAgentStructuredQuestionRequest, isDurableAgentStructuredQuestionRequest, resolveAgentRequestKind } from '@/agent/permissions/requestKind';
 import {
     applyAgentStateRequestPushNotifiedAt,
     clonePlainObjectToNullProto,
@@ -253,6 +253,7 @@ type SessionLike = Readonly<{
     subscribeToSessionConnectionState?: (listener: (state: Readonly<{ phase: string }>) => void) => () => void;
     getArchivedAtSnapshot?: () => number | null | undefined;
     onArchivedAtChange?: (listener: (archivedAt: number | null) => void) => () => void;
+    clearQuestionWaitTurn?: (sourceTurnIds: readonly string[]) => void | Promise<void>;
     getAgentStateResponseTargetDispatcher?: () => AgentStateResponseTargetDispatcher;
     captureSessionFollowRuleEvidence?: (event: FollowEventV1) => SessionFollowRuleSourceEvidenceV1 | null;
     notifySessionFollowRuleRequestCommitted?: (occurrence: Readonly<{
@@ -1424,7 +1425,18 @@ export class AgentStateRequestStore {
         decision?: string;
         requestIds: readonly string[];
     }>): Promise<readonly AgentStateRequestCancellation[]> {
-        return await this.cancelRequests(params);
+        const canceled = await this.cancelRequests(params);
+        if (!params.preserveQuestions && this.session?.clearQuestionWaitTurn) {
+            // The completed occurrence retains the exact source Turn after a host
+            // rejoin. Archive and explicit Stop use the same withdrawal result.
+            const turnIds = canceled.flatMap(({ completedRequest }) =>
+                completedRequest.source === SESSION_NEEDS_YOU_REQUEST_SOURCE
+                && typeof completedRequest.turnId === 'string'
+                && SessionQuestionContextV1Schema.safeParse(completedRequest.questionV1).data?.mode === 'wait'
+                    ? [completedRequest.turnId] : []);
+            await this.session.clearQuestionWaitTurn(turnIds);
+        }
+        return canceled;
     }
 
     async cancelRequestsByOwner(params: Readonly<{

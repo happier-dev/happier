@@ -1,4 +1,6 @@
+import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
+import { listPendingRequests } from '@happier-dev/session-core/pending';
 import type { AgentState } from '@/api/types';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { BasePermissionHandler } from './BasePermissionHandler';
@@ -14,6 +16,18 @@ class QuestionSession {
     yielded: string[] = [];
     waitingTurnId: string | null = null;
     stoppedQuestionTurnIds: string[] = [];
+    private readonly archiveEvents = new EventEmitter();
+    private archivedAt: number | null = null;
+    getArchivedAtSnapshot() { return this.archivedAt; }
+    onArchivedAtChange(listener: (archivedAt: number | null) => void) {
+        this.archiveEvents.on('archive', listener);
+        return () => this.archiveEvents.off('archive', listener);
+    }
+    publishArchiveSnapshot(archivedAt: number | null) {
+        if (this.archivedAt === archivedAt) return;
+        this.archivedAt = archivedAt;
+        this.archiveEvents.emit('archive', archivedAt);
+    }
     wireProtocolVersion: number | undefined = 4;
     getServerFeaturesSnapshot(): CliServerFeaturesSnapshot | undefined {
         return this.wireProtocolVersion === undefined ? undefined : { status: 'ready', features: FeaturesResponseSchema.parse({
@@ -36,7 +50,7 @@ class QuestionSession {
     }
     async yieldQuestionTurn(turnId: string) {
         // Model the runtime boundary only: ending a turn cannot precede persistence.
-        expect(Object.values(this.state.requests ?? {})).toHaveLength(1);
+        expect(Object.values(this.state.requests ?? {}).some(request => request.turnId === turnId)).toBe(true);
         this.yielded.push(turnId);
         this.waitingTurnId = turnId;
         return true;
@@ -175,6 +189,55 @@ describe('needs-you at the registered question owner', () => {
         expect(session.stoppedQuestionTurnIds).toEqual(['turn']);
         expect(session.state.requests).toEqual({});
         expect(session.state.completedRequests?.action).toMatchObject({ status: 'canceled' });
+    });
+
+    it('settles both retained waits on Archive and keeps the Inbox clear through replay and Unarchive', async () => {
+        const session = new QuestionSession();
+        new QuestionHandler(session as never);
+        const inbox = () => listPendingRequests({
+            sessionId: session.sessionId, active: false, agentState: session.state,
+            permissionRelationship: 'owner', actionConfirmations: null, presentationCompletedRequests: null, projected: null,
+        });
+        for (const turnId of ['first-wait', 'second-wait']) {
+            const result = await session.call({ ...form, mode: 'wait' }, { ...origin, sessionActionOrigin: {
+                ...origin.sessionActionOrigin!, sourceTurnId: turnId, requestId: turnId,
+            } });
+            expect(result).toMatchObject({ ok: true, requestId: turnId });
+        }
+        expect(inbox()).toHaveLength(2);
+
+        session.publishArchiveSnapshot(42);
+        await vi.waitFor(() => expect(session.state.requests).toEqual({}));
+        for (const requestId of ['first-wait', 'second-wait']) {
+            expect(session.state.completedRequests?.[requestId]).toMatchObject({
+                status: 'canceled', decision: 'abort', reason: 'Session archived',
+            });
+        }
+        await vi.waitFor(() => expect(session.stoppedQuestionTurnIds).toEqual(['first-wait', 'second-wait']));
+        expect(session.waitingTurnId).toBeNull();
+        expect(inbox()).toEqual([]);
+        const closed = structuredClone(session.state);
+
+        session.publishArchiveSnapshot(42);
+        session.publishArchiveSnapshot(null);
+        for (const id of ['first-wait', 'second-wait']) {
+            const answer = session.rpcHandlerManager.handlers.get('session.user_action.answer');
+            expect(await answer?.({ id, approved: true, answers: { revision: ['main'] } }, { signal: origin.signal }))
+                .toMatchObject({ ok: false, errorCode: 'permission_request_not_found' });
+        }
+        expect(session.state).toEqual(closed);
+        expect(session.stoppedQuestionTurnIds).toEqual(['first-wait', 'second-wait']);
+        expect(inbox()).toEqual([]);
+    });
+
+    it('archives a Session without a question or waiting Turn', async () => {
+        const session = new QuestionSession();
+        new QuestionHandler(session as never);
+        session.publishArchiveSnapshot(42);
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(session.state.requests).toEqual({});
+        expect(session.state.completedRequests).toEqual({});
+        expect(session.stoppedQuestionTurnIds).toEqual([]);
     });
 
     it.each(['native', 'authored'] as const)('withdraws an asking agent\'s %s question and retains its reason', async (source) => {
