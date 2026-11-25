@@ -60,6 +60,14 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
  * agent-only `execution.run.ensure`.
  */
 const UI_CALLER = { surface: 'ui' } as const;
+const UI_RUNTIME_ACCOUNT_CONTEXT = {
+  ...UI_CALLER,
+  serverId: 'server_1',
+  hostReviewedChild: undefined,
+  sessionApprovalConsents: null,
+  // The executor creates this invocation-local callback; its identity is not caller input.
+  executeHostReviewedChildAction: expect.any(Function),
+};
 const ACTIVE_TURN_AUTHORITY = {
   kind: 'admittedSessionInputV1',
   admittedPermissionCeiling: 'read-only',
@@ -985,7 +993,8 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     expect(executionRunWait).toHaveBeenCalledWith(
       null,
       { runId: 'run_1', timeoutSeconds: 12 },
-      { serverId: 'server_1', originSessionId: 's1', surface: 'ui' },
+      { serverId: 'server_1', originSessionId: 's1', surface: 'ui',
+        runtimeAccountContext: { ...UI_RUNTIME_ACCOUNT_CONTEXT, defaultSessionId: 's1' } },
     );
     expect(executionRunCheckProtocolV2).toHaveBeenCalledWith(
       null,
@@ -996,7 +1005,8 @@ describe('createActionExecutor run options parity (model + effort)', () => {
         runScopedAgentBindings: false,
         secretReferenceOverlay: false,
       },
-      { serverId: 'server_1', originSessionId: 's1', surface: 'ui' },
+      { serverId: 'server_1', originSessionId: 's1', surface: 'ui',
+        runtimeAccountContext: { ...UI_RUNTIME_ACCOUNT_CONTEXT, defaultSessionId: 's1' } },
     );
   });
 
@@ -1612,7 +1622,8 @@ describe('createActionExecutor run options parity (model + effort)', () => {
         runScopedAgentBindings: false,
         secretReferenceOverlay: false,
       },
-      { serverId: 'server_1', originSessionId: 's1', surface: 'ui' },
+      { serverId: 'server_1', originSessionId: 's1', surface: 'ui',
+        runtimeAccountContext: { ...UI_RUNTIME_ACCOUNT_CONTEXT, defaultSessionId: 's1' } },
     );
     expect(executionRunStart).not.toHaveBeenCalled();
   });
@@ -1684,7 +1695,8 @@ describe('createActionExecutor run options parity (model + effort)', () => {
         runScopedAgentBindings: false,
         secretReferenceOverlay: true,
       },
-      { serverId: 'server_1', surface: 'ui' },
+      { serverId: 'server_1', surface: 'ui',
+        runtimeAccountContext: { ...UI_RUNTIME_ACCOUNT_CONTEXT, defaultSessionId: 's1' } },
     );
     expect(executionRunStart).not.toHaveBeenCalled();
   });
@@ -1713,7 +1725,8 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     expect(executionRunWait).toHaveBeenCalledWith(
       null,
       { runId: 'run_1' },
-      { serverId: 'server_1', originSessionId: 's1', exactMachineId: 'machine_2', surface: 'ui' },
+      { serverId: 'server_1', originSessionId: 's1', exactMachineId: 'machine_2', surface: 'ui',
+        runtimeAccountContext: { ...UI_RUNTIME_ACCOUNT_CONTEXT, defaultSessionId: 's1' } },
     );
   });
 
@@ -1742,7 +1755,8 @@ describe('createActionExecutor run options parity (model + effort)', () => {
         runScopedAgentBindings: false,
         secretReferenceOverlay: false,
       },
-      { serverId: 'server_1', targetMachineId: 'machine_mounted', surface: 'ui' },
+      { serverId: 'server_1', targetMachineId: 'machine_mounted', surface: 'ui',
+        runtimeAccountContext: { ...UI_RUNTIME_ACCOUNT_CONTEXT, executionRunTargetMachineId: 'machine_mounted' } },
     );
     expect(executionRunStart).toHaveBeenCalledWith(
       null,
