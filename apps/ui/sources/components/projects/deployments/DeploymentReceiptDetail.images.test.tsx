@@ -501,10 +501,11 @@ describe('Receipt → upload provenance', () => {
 
 describe('Receipt → running, not verified', () => {
   it.each([
-    { definition: 'stored', opens: true, verified: false },
-    { definition: 'repository', opens: false, verified: false },
-    { definition: 'stored', opens: false, verified: true },
-  ] as const)('a $definition definition offers its Compose file as the next action: $opens (live checked: $verified)', async ({ definition, opens, verified }) => {
+    { definition: 'stored', opens: true, verified: false, historical: false },
+    { definition: 'repository', opens: false, verified: false, historical: false },
+    { definition: 'stored', opens: false, verified: true, historical: false },
+    { definition: 'stored', opens: false, verified: true, historical: true },
+  ] as const)('a $definition definition offers its Compose file as the next action: $opens (live checked: $verified, historical: $historical)', async ({ definition, opens, verified, historical }) => {
     const serving = createDeploymentReceiptHeaderV1({ state: 'running_unverified' });
     const initial = createDeploymentEnvironmentDetailV1();
     const base = verified ? {
@@ -520,7 +521,8 @@ describe('Receipt → running, not verified', () => {
     const detail = definition === 'stored' ? { ...base, content: { ...base.content, definition: {
       kind: 'stored' as const, document: 'services: {app: {image: app:1}}', profiles: [], services: ['app'],
       contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` as const } } } : base;
-    const receipt = createDeploymentReceiptDetailV1({ deployment: serving });
+    const receipt = createDeploymentReceiptDetailV1({ deployment: historical
+      ? { ...serving, id: 'older-deployment' } : serving });
     const controller = createDeploymentReadControllerV1({ scope, transport: {
       listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
       readEnvironment: async () => ({ ok: true, value: detail }),
@@ -543,7 +545,7 @@ describe('Receipt → running, not verified', () => {
       if (verified) {
         await act(async () => { await controller.refreshDemanded(); });
         expect(screen.findByTestId(notice)).toBeNull();
-        expect(screen.findByTestId('project-deployments.receipt.facts.health')).not.toBeNull();
+        expect(screen.findByTestId('project-deployments.receipt.facts.health') !== null).toBe(!historical);
         return;
       }
       await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(notice), node => node !== null); });

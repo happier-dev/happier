@@ -63,6 +63,7 @@ import {
   deploymentOperationLabel,
   deploymentRevisionLabel,
   deploymentSourceLabel,
+  deploymentSettledReceiptState,
   deploymentStateLabel,
   deploymentStateNotice,
   deploymentWorkStatus,
@@ -358,9 +359,10 @@ export const DeploymentReceiptDetail = React.memo(
       machineNames[machineId] ?? t('projects.deployments.aMachine');
     const images = 'images' in content ? content.images : NO_IMAGES;
     const currentHealth = serving ? environmentValue?.healthAggregate : undefined;
-    const notice = deployment.state === 'running_unverified'
-      && !deploymentEnvironmentVerificationPending(deployment.state, currentHealth?.status)
-      ? null : deploymentStateNotice(deployment.state, facts.failure);
+    const noticeState = serving ? deployment.state : deploymentSettledReceiptState(deployment.state);
+    const notice = noticeState === 'running_unverified'
+      && !deploymentEnvironmentVerificationPending(noticeState, currentHealth?.status)
+      ? null : deploymentStateNotice(noticeState, facts.failure);
     // Domains are read only while this receipt serves natively, so a historical one never borrows them.
     const live = resolveDeploymentLiveAddress({ ...value, facts }, nativeAddressDemand ? domains.result.items : [], serving);
     const outcomeUrl = live?.url ?? null;
