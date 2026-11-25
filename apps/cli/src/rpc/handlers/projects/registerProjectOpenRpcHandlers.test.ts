@@ -1525,7 +1525,7 @@ describe('Project Open RPC', () => {
       if (fault === 'engine_refusal') {
         expect(nativeEngineRefused).toBe(true);
         expect(opened, JSON.stringify(admissionDiagnostics?.mock.calls)).toMatchObject({ kind: 'refused',
-          code: 'engine_unavailable', effectAttempted: true });
+          code: 'workspace_sync_unavailable', effectAttempted: true });
         const graph = rows.find(row => row.key.kind === 'relationship-graph');
         if (!graph?.content) throw new Error('Expected the acknowledged rollback graph');
         expect(cipher.open(graph.key, graph.content).value).toMatchObject({ relationships: [] });
@@ -2056,7 +2056,7 @@ describe('Project Open RPC', () => {
     expect(nativeRefused, JSON.stringify(diagnostic.mock.calls)).toBe(true);
     // The existing wire result carries the refusal across Machines without Error identity.
     expect(ProjectOpenSyncMaterializationResultV1Schema.parse(JSON.parse(JSON.stringify(result))))
-      .toEqual({ kind: 'refused', code: 'engine_unavailable' });
+      .toEqual({ kind: 'refused', code: 'workspace_sync_unavailable' });
     const graph = rows.find(row => row.key.kind === 'relationship-graph');
     expect(graph?.content).toMatchObject({ t: 'plain', v: { value: { relationships: [] } } });
     expect(native.commands.some(command => command.t === 'terminate')).toBe(true);

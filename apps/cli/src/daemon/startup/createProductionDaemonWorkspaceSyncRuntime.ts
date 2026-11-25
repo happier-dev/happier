@@ -3698,6 +3698,9 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   }>): Promise<Readonly<{ relationshipId: string; targetWorkspace: WorkspaceAddressV2; baseline?: WorkspaceManifest;
     contentPolicyDigest: WorkspaceContentPolicyV1['policyDigest'] }>> => {
       let custodyCaptured = false;
+      const reportCleanupFailure = (error: unknown) => {
+        factories.warn('Failed to release managed Project Sync custody', projectActionFailureCauseV1(error));
+      };
       try {
       request.signal?.throwIfAborted();
       const credentials = request.credentials ?? input.credentials;
@@ -3757,7 +3760,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         if (!copyOnce && !request.openProject) await runtime.handoffAdapter.bindPrivateExecutionRelationship?.(retained.input.operationId, relationshipId);
         if (request.sourceWorkspace || sourceMachineId !== input.localMachineId || copyOnce) {
           if (!request.openProject) throw compositionError('workspace_sync_update_required', 'The reviewed Project child is unavailable');
-          await requesterRelationshipOwner(retained).materializeEndpoints({ serverId: semanticServerId, purpose: 'project_files',
+          const endpoints = await requesterRelationshipOwner(retained).materializeEndpoints({ serverId: semanticServerId, purpose: 'project_files',
             sourceMachineId, sourceWorkspaceRefId: source.workspaceRef.id, sourceRootPath: source.workspaceRef.rootPath,
             targetManaged: { managedId: target.workspaceRef.managedId, controller }, targetWorkspaceRefId: target.workspaceRef.id,
             targetRootPath: target.workspaceRef.rootPath, ...(request.signal ? { signal: request.signal } : {}) });
@@ -3773,9 +3776,14 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
                       contentPolicy,
                       flushBeforeCommit: true } } };
           const opened = await request.openProject(projectRequest);
-          if (opened.kind !== 'opened') throw compositionError(opened.kind === 'refused' ? opened.code : 'indeterminate', 'Project target Open did not settle');
+          if (opened.kind === 'refused') {
+            const refusal = compositionError(opened.code, 'Project target Open refused');
+            if (opened.failureCause) Object.assign(refusal, { failureCause: opened.failureCause });
+            return await endpoints.withdrawTarget(refusal);
+          }
+          if (opened.kind !== 'opened') throw compositionError('indeterminate', 'Project target Open did not settle');
           const settledRelationshipId = runtime.handoffAdapter.resolvePrivateExecution?.({ operationId: retained.input.operationId })?.relationshipId ?? relationshipId;
-          if (copyOnce) await runtime.handoffAdapter.releasePrivateExecution?.(retained.input.operationId);
+          if (copyOnce) await runtime.handoffAdapter.releasePrivateExecution?.(retained.input.operationId).catch(reportCleanupFailure);
           else {
             await refreshPrivateRows(retained.execution, request.signal);
             await runtime.handoffAdapter.bindPrivateExecutionRelationship?.(retained.input.operationId, settledRelationshipId, 'relationship');
@@ -3799,11 +3807,11 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         await runtime.handoffAdapter.bindPrivateExecutionRelationship?.(retained.input.operationId, relationshipId, 'relationship');
         return { relationshipId, targetWorkspace: workspaceAddressFromRefV2(target.workspaceRef), contentPolicyDigest: contentPolicy.policyDigest };
       } catch (error) {
-        if (!known) await runtime.handoffAdapter.releasePrivateExecution?.(retained.input.operationId);
+        if (!known) await runtime.handoffAdapter.releasePrivateExecution?.(retained.input.operationId).catch(reportCleanupFailure);
         throw error;
       }
       } finally {
-        if (!custodyCaptured) await request.releaseCustody?.();
+        if (!custodyCaptured) await request.releaseCustody?.().catch(reportCleanupFailure);
       }
   };
 

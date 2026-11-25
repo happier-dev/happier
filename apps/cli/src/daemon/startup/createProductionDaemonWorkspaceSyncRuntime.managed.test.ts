@@ -46,6 +46,57 @@ it('refuses another Account before opening managed relationship channels', async
     requesterAccountId: 'other' })).rejects.toMatchObject({ code: 'project_requester_authority_unavailable' });
 });
 
+it.each(['released', 'cleanup refused'] as const)('withdraws the managed destination on a typed Project Open refusal (%s)', async cleanup => {
+  const directory = await mkdtemp(join(tmpdir(), 'managed-sync-open-refusal-'));
+  const targetRootPath = join(directory, 'target');
+  await mkdir(targetRootPath);
+  await writeFile(join(targetRootPath, 'keep'), 'existing payload');
+  const serverId = 'srv_managed_open_refusal';
+  const serverUrl = 'https://managed-open-refusal.invalid';
+  const token = [Buffer.from('{}').toString('base64url'), Buffer.from('{"sub":"owner"}').toString('base64url'), 'signature'].join('.');
+  const credentials = { token, encryption: null };
+  const custody = { serverId, accountId: 'owner', serverHttpBaseUrl: serverUrl, isCurrent: async () => true };
+  await seedTestServerProfile({ id: serverId, homeId: serverId, serverUrl });
+  const http = createProjectAccountRowsHttpBoundary([]);
+  const post = vi.spyOn(axios, 'post').mockImplementation(http);
+  const get = vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200,
+    data: String(url).endsWith('/v1/account/profile') ? { id: 'owner' } : { mode: 'plain', updatedAt: 0 },
+  }));
+  const native = createWorkspaceSyncNativeProcessTestBoundary();
+  const runtime = await runWithServerHttpBaseUrl(serverUrl, () => createProductionDaemonWorkspaceSyncRuntime({
+    happyHomeDir: directory, activeServerDir: join(directory, 'server'), activeServerId: serverId, localMachineId: 'host',
+    releaseChannel: 'publicdev', credentials,
+    openManagedWorkspaceTarget: async () => { throw new Error('A refused Open cannot acquire native target custody'); },
+  }, { ...native.factories, resolveRootOwnershipDirectory: () => join(directory, 'locks') }));
+  onTestFinished(async () => {
+    await runtime.stop();
+    post.mockRestore(); get.mockRestore(); withdrawActiveProjectAccountRowsSnapshot();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const readRows = () => runWithServerHttpBaseUrl(serverUrl, () => readProjectAccountRows({ credentials, sessionCustody: custody,
+    serverId, selection: { kinds: ['workspace-ref', 'relationship-graph'] } }));
+  const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'workspace_root_in_use', httpStatus: 403 };
+  let custodyReleased = false;
+  const outcome = runtime.prepareManagedProjectFilesSeed({ sourceRootPath: join(directory, 'source'), targetRootPath,
+    targetManaged: { managedId: 'sandbox', controller: { machineId: 'host', installationId: 'installation' } },
+    requesterAccountId: 'owner', credentials, accountRowsCustody: custody,
+    releaseCustody: async () => {
+      if (custodyReleased) return;
+      custodyReleased = true;
+      if (cleanup === 'cleanup refused') throw new Error('Home refused requester custody release');
+    },
+    openProject: async () => {
+      expect((await readRows()).workspaceRefs).toContainEqual(expect.objectContaining({ rootPath: targetRootPath }));
+      return { kind: 'refused', code: 'workspace_root_in_use', failureCause };
+    },
+  });
+  await expect(outcome).rejects.toMatchObject({ code: 'workspace_root_in_use' });
+  expect((await readRows()).workspaceRefs).not.toContainEqual(expect.objectContaining({ rootPath: targetRootPath }));
+  await expect(outcome).rejects.toMatchObject({ failureCause });
+  expect(custodyReleased).toBe(true);
+  await expect(readFile(join(targetRootPath, 'keep'), 'utf8')).resolves.toBe('existing payload');
+});
+
 it('persists a requester relationship, flushes native channels, and reopens without replacing guest files', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'managed-sync-requester-'));
   const sourceRootPath = join(directory, 'host');

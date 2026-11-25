@@ -198,6 +198,8 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   /** Real Git worktree plus installed remote-seed ports, without lending Parent Account access. */
   gitWorktreeSeed?: boolean;
   remoteSeed?: boolean;
+  /** Replace the native carrier with the target authority's real localhost ingress. */
+  loopbackWorkspaceSync?: boolean;
   /** Real finite conflict payload publication/download through the loopback boundary. */
   resolutionTransfer?: boolean;
   missingTargetParents?: boolean;
@@ -451,6 +453,8 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   const productions: Awaited<ReturnType<typeof createProductionDaemonWorkspaceSyncRuntime>>[] = [];
   const daemonRuntimes = new Map<string, DaemonWorkspaceSyncRuntime>();
   const nativeCarrierRuntimes = new Map<string, DaemonMachineIrohRuntime>();
+  let sourceBrokerClient: WorkspaceSyncBrokerClient | undefined;
+  let targetParent: Awaited<ReturnType<typeof createProductionDaemonWorkspaceSyncRuntime>> | undefined;
   let parentManagedWorkspaceSync: DaemonWorkspaceSyncRuntime['managedWorkspaceSync'] | undefined;
   let pluginRuntimeLease: PluginRuntimeRegistryLease | undefined;
   let finishInitialization = () => {};
@@ -609,6 +613,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
               brokerInstanceId: broker.brokerInstanceId, launchNonce: broker.launchNonce,
               launchSecret: input.launchSecret, sidecarPid: process.pid });
             brokerClient = client;
+            if (options.loopbackWorkspaceSync && machineId === sourceRef.machineId) sourceBrokerClient = client;
             client.onCommand(async (request, signal) => {
               if (request.t === 'resume') {
                 const session = sessions.get(request.sessionIdentifier);
@@ -649,7 +654,11 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     async function openSeedTunnel(request: Extract<WorkspaceSyncMachineTunnelOpenInput, { flow: 'file_transfer' }>): Promise<FiniteTransferMachineTunnel>;
     async function openSeedTunnel(request: Extract<WorkspaceSyncMachineTunnelOpenInput, { flow: 'workspace_sync' }>): Promise<WorkspaceSyncMachineTunnel>;
     async function openSeedTunnel(request: WorkspaceSyncMachineTunnelOpenInput): Promise<FiniteTransferMachineTunnel | WorkspaceSyncMachineTunnel> {
-      if (request.flow !== 'file_transfer') throw new Error('This seed fixture does not open a Mutagen tunnel');
+      if (request.flow === 'workspace_sync') {
+        if (!options.loopbackWorkspaceSync || !targetParent) throw new Error('The loopback Sync target is unavailable');
+        const ingress = await targetParent.acquireWorkspaceSyncMachineIngress(request);
+        return { localPort: ingress.port, localCapability: ingress.localCapability, observedPath: 'direct', close: ingress.close };
+      }
       expect(request).toMatchObject({ sourceMachineId: targetRef.machineId,
         targetMachineId: sourceRef.machineId, flow: 'file_transfer' });
       if (!seedTransferLifecycle) throw new Error('The source transfer lifecycle is unavailable');
@@ -798,7 +807,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   await registerSeedExport(registrar);
   registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: registrar, service: parent.workspaceSync });
   const child = await compose(childRef.machineId);
-  let targetParent = options.separateTargetParent && !options.ordinaryTarget ? await compose(targetRef.machineId) : undefined;
+  targetParent = options.separateTargetParent && !options.ordinaryTarget ? await compose(targetRef.machineId) : undefined;
   const targetChild = options.withTargetChildRuntime ? await compose(targetChildRef.machineId) : undefined;
   const physicalTarget = targetParent ?? (options.ordinaryTarget ? targetChild : undefined);
   if (physicalTarget) registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: { registerHandler(method, handler) {
@@ -842,6 +851,10 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     },
     sourceRef, childRef, childInstallationId, targetRef, projection, managedChild, callWorkspaceSourcePhase, parentRpcHandlers: handlers,
     get targetParent() { return targetParent; },
+    openSourceNativeStream: async (endpointId: string) => {
+      if (!sourceBrokerClient) throw new Error('Source native process boundary is unavailable');
+      return sourceBrokerClient.openStream(endpointId);
+    },
     restartSourceParent: async (construct?: Parameters<typeof compose>[1]) => {
       await parent.stop();
       parent = await compose(sourceRef.machineId, construct);
