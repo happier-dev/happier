@@ -16,10 +16,9 @@ import {
   usePluginTranslation,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
-import { formatCount, formatDuration, formatPercent } from './format.js';
+import { displayDatabaseStatementShape, formatCount, formatDuration, formatPercent } from './format.js';
 import { StatementDetail } from './StatementDetail.js';
 import { summarizeChanges, type StatementView } from './statements.js';
-import { displayDatabaseStatementShape } from '@happier-dev/databases/statements';
 
 const EMPTY_SET: ReadonlySet<string> = new Set();
 

@@ -18,11 +18,10 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/prot
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { Action, Button, EmptyState, ErrorState, Item, ItemGroup, Row, Select, Stack, Text, usePluginTranslation } from '@happier-dev/plugin-ui';
 import { type PluginActionExecution, useExecutePluginAction } from '@happier-dev/plugin-ui/hostApi';
-import { displayDatabaseStatementShape } from '@happier-dev/databases/statements';
 import { useWorkbenchInstance } from '../../hooks.js';
 import { ACTIVITY_READ } from './ActivityView.js';
 import { FindingBrief } from './FindingBrief.js';
-import { formatCount, formatDuration, formatMoment } from './format.js';
+import { displayDatabaseStatementShape, formatCount, formatDuration, formatMoment } from './format.js';
 import { STATEMENTS_BY_TOTAL_TIME } from './statements.js';
 import { InsightsSchemaSelection, insightsSchemaStatsSelection } from './TablesView.js';
 

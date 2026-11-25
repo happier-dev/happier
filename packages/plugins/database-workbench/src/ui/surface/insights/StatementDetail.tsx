@@ -10,6 +10,7 @@ import {
   usePluginTranslation,
 } from '@happier-dev/plugin-ui';
 import {
+  displayDatabaseStatementShape,
   formatCount,
   formatDuration,
   formatPercent,
@@ -18,7 +19,6 @@ import type { StatementView } from './statements.js';
 import { projectDatabaseStatementMetrics } from '../../../insights/presentation.js';
 import { workbenchTargetKey } from '../../../targetIdentity.js';
 import { FindingBrief } from './FindingBrief.js';
-import { displayDatabaseStatementShape } from '@happier-dev/databases/statements';
 
 /**
  * One statement: its shape, what it costs, what changed since your last look, and where to go next. The same body

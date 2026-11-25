@@ -24,9 +24,8 @@ import {
 import { useDatabaseActivity, useWorkbenchInstance } from '../../hooks.js';
 import { databaseActionSettlement } from '../../actionSettlement.js';
 import { WORKBENCH_DISPLAY_PAGE_ROWS } from '../mount.js';
-import { formatElapsed } from './format.js';
+import { displayDatabaseStatementShape, formatElapsed } from './format.js';
 import { InsightsSetup } from './InsightsSetup.js';
-import { displayDatabaseStatementShape } from '@happier-dev/databases/statements';
 
 type ActivityObservation = Extract<
   DatabaseStatsObservationV1,

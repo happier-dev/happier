@@ -21,8 +21,7 @@ import {
 } from '@happier-dev/plugin-sdk/ui';
 import { Button, EmptyState, ErrorState, Item, ItemGroup, Stack, Text, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
 import { usePluginHostApi } from '@happier-dev/plugin-ui/hostApi';
-import { displayDatabaseStatementShape } from '@happier-dev/databases/statements';
-import { formatCount } from './format.js';
+import { displayDatabaseStatementShape, formatCount } from './format.js';
 import { FindingBrief } from './FindingBrief.js';
 
 function projectSources(snapshot: PluginUiTargetedContributionsV1 | undefined, database: DatabaseDescriptorV1) {
