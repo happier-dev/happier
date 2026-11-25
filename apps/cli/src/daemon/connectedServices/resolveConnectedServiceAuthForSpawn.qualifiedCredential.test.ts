@@ -57,6 +57,8 @@ vi.mock('undici', async importOriginal => {
 });
 
 const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' } as const;
+// Keep real loopback HTTP separate from the provider transport replaced below.
+const loopbackFetch = globalThis.fetch;
 const credentials = { token: 'test-token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) } };
 const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
 let lease: PluginRuntimeRegistryLease;
@@ -562,6 +564,7 @@ fi
     { provider: 'anthropic' as const, service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, purpose: 'anthropic-model-request' },
     { provider: 'openai' as const, service, purpose: 'openai-codex-model-request' },
   ])('prepares OpenCode $provider OAuth startup from qualified authority without pre-seeded native auth', async ({ provider, service: selectedService, purpose }) => {
+    const model = provider === 'openai' ? 'gpt-5.4-mini' : 'claude-haiku-4-5';
     const sessionId = `opencode-${provider}`;
     const expiresAt = Date.now() + 3_600_000;
     const account = { service: selectedService, accountId: sessionId };
@@ -607,7 +610,7 @@ fi
     const scope = declaration.authorizedPurposes.find((candidate) => candidate.purpose.purpose === purpose)!;
     const active = purposeOwner.activateSessionPurposeBindings({ sessionId, purposes: declaration.purposes, bindings: [{ purpose: scope.purpose, target: { kind: 'account', account } }] });
     const controller = new AbortController();
-    const connectedAccounts = createStablePluginConnectedAccountsHost(purposeOwner).bind({
+    const connectedAccounts = createStablePluginConnectedAccountsHost(purposeOwner.owner).bind({
       plugin: { id: 'happier.agent.opencode', version: '1.0.0' },
       contribution: { id: 'opencode', qualifiedId: 'happier.agent.opencode/agents/opencode' },
       occurrenceId: sessionId, correlationId: sessionId, surface: 'agent', session: { id: sessionId },
@@ -682,6 +685,9 @@ fi
       const scoped = resolveExplicitSpawnScopedEnvironmentFromProcessEnv(child.extraEnvForChild);
       const request: AgentSessionOpenRequest = {
         kind: 'create', sessionId, cwd: directory,
+        configuration: { mode: { value: null, updatedAtMs: 0 },
+          model: { value: `${provider}/${model}`, updatedAtMs: 1, selectionSource: 'explicit' },
+          modelOverrides: {}, provider: { value: null, updatedAtMs: 0 } },
         // The daemon marks host materialization as explicit child environment;
         // runner dispatch forwards exactly that scope to the shared launch owner.
         launchEnvironment: resolveNativeAgentLaunchEnvironment({ processEnv: child.extraEnvForChild, environmentVariables: scoped?.env }),
@@ -691,10 +697,10 @@ fi
       // Prove the exact selected credential is available through the real established plugin owner.
       expect(await established.readCredentialRevision({ account })).toBe(revision);
       prepared = await prepareOpenCodeQualifiedConnectedAccounts(request, context);
-      // A reconnect invalidates the Account projection, not necessarily this
-      // purpose's credential. The real host watch must preserve this launch.
+      // Reconnect this selected service through the daemon's scoped invalidation
+      // contract. A global source invalidation also retires unversioned native reads.
       for (const invalidate of purposeInvalidations) invalidate();
-      purposeOwner.invalidate();
+      purposeOwner.invalidate({ services: [selectedService] });
       await new Promise<void>(resolve => setImmediate(resolve));
       expect(prepared.isInvalidated()).toBe(false);
       const requestAuth = await connectedAccounts.materialize(purpose, {
@@ -764,7 +770,6 @@ fi
       const held = new Promise<void>(resolve => { releaseRead = resolve; });
       const started = new Promise<void>(resolve => { readStarted = resolve; });
       const requests: Array<{ authorization: string | null; accountId: string | null; model: string }> = [];
-      const model = provider === 'openai' ? 'gpt-5.4-mini' : 'claude-haiku-4-5';
       let descriptor: Awaited<ReturnType<typeof registry.activate>> | undefined;
       let restoreTimeout: (() => void) | undefined;
       try {
@@ -782,7 +787,7 @@ fi
         expect(descriptor.path).toBe(capabilityPath);
         process.env[CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV] = env[CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV];
         globalThis.fetch = async (input, init) => {
-          if (String(input).startsWith(`http://127.0.0.1:${address.port}/`)) return await originalFetch(input, init);
+          if (String(input).startsWith(`http://127.0.0.1:${address.port}/`)) return await loopbackFetch(input, init);
           const headers = new Headers(init?.headers);
           requests.push({ authorization: headers.get('authorization'), accountId: headers.get('chatgpt-account-id'), model: JSON.parse(String(init?.body)).model });
           return new Response('READY', { status: 200 });
@@ -821,7 +826,7 @@ fi
             configHome, spec, provider, model });
           // The next negative still consumes the generated leaf in this process.
           globalThis.fetch = async (input, init) => {
-            if (String(input).startsWith(`http://127.0.0.1:${address.port}/`)) return await originalFetch(input, init);
+            if (String(input).startsWith(`http://127.0.0.1:${address.port}/`)) return await loopbackFetch(input, init);
             throw new Error('A refused capability reached vendor IO');
           };
         }
