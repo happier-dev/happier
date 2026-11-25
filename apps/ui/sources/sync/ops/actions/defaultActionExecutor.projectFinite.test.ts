@@ -197,9 +197,9 @@ describe('Project finite delivery through the default UI Action host', () => {
     it('composes Team setup through real Actions and opens an editable first task only on request', async () => {
         const [{ runTeamSetupPlan, openTeamSetupFirstTask },
             { createFrontDoorActionExecute }, { OpenProjectResultV1Schema },
-            { SessionAuthoringOpenResultV1Schema }, { readNewSessionDraftFromRepository }, { router }] = await Promise.all([
+            { readNewSessionDraftFromRepository }, { router }] = await Promise.all([
             import('@/components/teams/setup/teamSetupPlan'), import('./frontDoorRuntimeActionExecutor'),
-            import('@happier-dev/protocol/projects/openProjectV1'), import('@happier-dev/protocol/plugins/ui'),
+            import('@happier-dev/protocol/projects/openProjectV1'),
             import('@/components/sessions/composer/newSessionDraftRepositoryAdapter'), import('expo-router'),
         ]);
         const { useTeamSetupPlan } = await import('@/components/teams/setup/useTeamSetupPlan');
@@ -223,11 +223,16 @@ describe('Project finite delivery through the default UI Action host', () => {
             } });
             const firstResponse = createDeferred<void>();
             const issuedRequestIds: string[] = [];
+            const opened = OpenProjectResultV1Schema.parse({ kind: 'opened',
+                workspace: { serverId, workspaceId: 'team-project', machineId: 'source', rootPath: '/team/repo' },
+                directory: '/team/repo', setup: 'notRequired' });
+            const refused = OpenProjectResultV1Schema.parse({ kind: 'refused', code: 'project_setup_review_unavailable' });
             homes.answer(requesterHomeId, '/v1/actions/projects.open', { select: body => {
                 const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
                 issuedRequestIds.push(request.envelope.requestId);
+                const result = issuedRequestIds.length === 2 ? refused : opened;
                 return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'projects.open',
-                    requestId: request.envelope.requestId, execution: { ok: true, result: response } }),
+                    requestId: request.envelope.requestId, execution: { ok: true, result } }),
                     ...(issuedRequestIds.length === 1 ? { respondAfter: firstResponse.promise } : {}) };
             } });
             const { createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
@@ -236,10 +241,6 @@ describe('Project finite delivery through the default UI Action host', () => {
                 workspaceRefs: [{ id: 'team-project', serverId, machineId: 'source', rootPath: '/team/repo', createdAtMs: 1 }],
             }) });
             vi.mocked(router.push).mockClear();
-            const opened = OpenProjectResultV1Schema.parse({ kind: 'opened',
-                workspace: { serverId, workspaceId: 'team-project', machineId: 'source', rootPath: '/team/repo' },
-                directory: '/team/repo', setup: 'notRequired' });
-            response = opened;
             const executeAction = createFrontDoorActionExecute(createDefaultActionExecutor());
             const context = { serverId, expectedAccountId: scope.accountId,
                 surface: 'ui' as const, authority: 'present_user' as const };
@@ -263,8 +264,7 @@ describe('Project finite delivery through the default UI Action host', () => {
                 selection: { team: { serverId, teamId: 'joined-team' }, lifetime: { scope, isCurrent: () => current,
                     onRetire: cancel => { retire = cancel; return { dispose() {} }; } },
                     sources: ['first', 'second', 'third'].map(id => ({ id, revision: 2, name: `Team ${id}` })), },
-                onRepositoryOpened: id => { response = id === 'first' ? OpenProjectResultV1Schema.parse({
-                    kind: 'refused', code: 'project_setup_review_unavailable' }) : opened; } }); });
+            }); });
             await vi.waitFor(() => expect(issuedRequestIds).toHaveLength(1));
             const selected = controller.getCurrent().batch;
             expect(selected).toMatchObject({ running: true, selection: { team: { serverId, teamId: 'joined-team' },
@@ -277,9 +277,9 @@ describe('Project finite delivery through the default UI Action host', () => {
             firstResponse.resolve();
             let setup!: Awaited<ReturnType<typeof runTeamSetupPlan>>;
             await act(async () => { setup = await setupPromise; });
-            expect(setup).toMatchObject({ machine: null, machineSettlement: null, repositories: [
+            expect(setup).toMatchObject({ completed: false, machine: null, machineSettlement: null, repositories: [
                 { id: 'first', result: { ok: true, result: opened } },
-                { id: 'second', result: { ok: true, result: { kind: 'refused', code: 'project_setup_review_unavailable' } } },
+                { id: 'second', result: { ok: false, errorCode: 'project_setup_review_unavailable', requestId: issuedRequestIds[1] } },
                 { id: 'third', result: { ok: true, result: opened } },
             ] });
             expect(homes.requestsFor('/v1/actions/projects.open')).toHaveLength(3);
@@ -301,11 +301,10 @@ describe('Project finite delivery through the default UI Action host', () => {
             storage.getState().activateProfileScope(scope);
             const { prepareLocalSessionDraftScope } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
             await prepareLocalSessionDraftScope(scope);
-            const firstTask = await openTeamSetupFirstTask({ executeAction, context, project: opened,
+            const draft = await openTeamSetupFirstTask({ executeAction, context, project: opened,
+                lifetime: { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
                 machineId: 'source', prompt: 'Explore this Team project' });
-            expect(firstTask, JSON.stringify(firstTask)).toMatchObject({ ok: true, result: { kind: 'opened' } });
-            if (!firstTask.ok) throw new Error(firstTask.errorCode);
-            const draft = SessionAuthoringOpenResultV1Schema.parse(firstTask.result);
+            expect(draft).toMatchObject({ kind: 'opened' });
             if (draft.kind !== 'opened') throw new Error('Editable composer did not open');
             expect(readNewSessionDraftFromRepository({ scope, draftId: draft.draftId }))
                 .toMatchObject({ input: 'Explore this Team project', selectedMachineId: 'source', selectedPath: '/team/repo' });
@@ -1311,6 +1310,9 @@ describe('Project finite delivery through the default UI Action host', () => {
                     .toMatchObject({ operationId: 'remembered-setup', setupReview: { reviewedEffectDigest } }));
                 onChanged.mockClear();
             }
+            // The mounted operation follows its owner separately from the
+            // foreground consent decision tested here.
+            const callsBeforeDecision = calls.length;
             await act(async () => {
                 await controller.getCurrent().prepare(reviewedEffectDigest, consentScope);
             });
@@ -1337,7 +1339,7 @@ describe('Project finite delivery through the default UI Action host', () => {
                 expect(controller.getCurrent().setupOperation?.snapshot.setupReview).toBeUndefined();
                 // Resolve the retained invocation once, then refresh its executable review
                 // before remembering Trust and observe that same invocation after the write.
-                expect(calls).toEqual([expect.objectContaining({ token: requesterToken, request: expect.objectContaining({
+                expect(calls.slice(callsBeforeDecision)).toEqual([expect.objectContaining({ token: requesterToken, request: expect.objectContaining({
                     method: `source:${ACTION_OPERATION_RPC_METHODS_V2.get}`, params: { operationId: 'remembered-setup' },
                 }) }), expect.objectContaining({ token: requesterToken, request: expect.objectContaining({
                     method: `source:${ACTION_OPERATION_RPC_METHODS_V2.get}`, params: { operationId: 'remembered-setup', refreshSetupReview: true },
