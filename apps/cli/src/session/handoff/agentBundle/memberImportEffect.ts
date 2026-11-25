@@ -1,3 +1,5 @@
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readSessionHandoffTypedImportFailureCode, SessionHandoffTypedImportError } from './import';
 import type { HandoffImportResultV1 } from '@happier-dev/agents';
 import { loadAdmittedPluginProcessRegistrations } from '@/plugins/runtime/lifecycle/activation/admittedProcessPlugins';
 import type { AdmittedBackgroundServicePlugin } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessSource';
@@ -22,7 +24,7 @@ export type MemberSessionImportEffect = Readonly<{
 /** The Agent's native result, or its typed failure, for the host to project once. */
 export type MemberSessionImportRecord =
   | Readonly<{ t: 'imported'; value: HandoffImportResultV1 }>
-  | Readonly<{ t: 'failed'; code: string; message: string }>;
+  | Readonly<{ t: 'failed'; code: string; message: string; failureCause?: ActionFailureCauseV1 }>;
 
 function readCode(error: unknown): string {
   return error &&
@@ -76,6 +78,11 @@ async function importAsMember(
       { bundle: request.bundle, targetDirectory: request.targetDirectory },
       context,
     );
+    if (!imported.ok) {
+      const typedCode = readSessionHandoffTypedImportFailureCode(imported);
+      if (typedCode) throw new SessionHandoffTypedImportError({ code: typedCode,
+        message: imported.message, diagnostics: imported.diagnostics });
+    }
     if (!imported.ok)
       throw Object.assign(new Error(imported.message ?? imported.code), {
         code: imported.code,
@@ -98,6 +105,7 @@ export async function executeMemberSessionImport(
     return {
       t: 'failed',
       code: readCode(error),
+      failureCause: projectActionFailureCauseV1(error, 'session_handoff.target_import', { allowUnknownErrorCode: true }),
       message:
         error instanceof Error && error.message ? error.message : readCode(error),
     };

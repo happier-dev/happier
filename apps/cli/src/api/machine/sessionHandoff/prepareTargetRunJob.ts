@@ -1,3 +1,5 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readSessionHandoffTypedImportFailureCode } from '../../../session/handoff/agentBundle/import';
 import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 import type { RuntimeDescriptorV1, SessionHandoffPrepareTargetFailure, SessionHandoffPrepareTargetRequest, SessionHandoffPrepareTargetResultGetSuccessResponse, SessionHandoffResumePlan, SessionHandoffStatus } from '@happier-dev/protocol';
 
@@ -72,12 +74,8 @@ export type RunSessionHandoffPrepareTargetJobInput = Readonly<{
 }>;
 
 function resolveTypedImportFailure(error: unknown): SessionHandoffPrepareTargetFailure | null {
-  if (!error || typeof error !== 'object') return null;
-  const code = (error as Readonly<{ code?: unknown }>).code;
-  return code === 'target_identity_conflict' || code === 'agent_version_unsupported'
-    || code === 'existing_session_state_unavailable' || code === 'existing_session_state_unsupported'
-    ? { code }
-    : null;
+  const code = readSessionHandoffTypedImportFailureCode(error);
+  return code ? { code } : null;
 }
 
 function resolveTypedImportFailureMessage(
@@ -439,6 +437,7 @@ export async function runSessionHandoffPrepareTargetJob(
         ...(currentJob?.cancelRequestedAtMs ? { cancelRequestedAtMs: currentJob.cancelRequestedAtMs, abortedAtMs: failedAtMs } : { failedAtMs }),
         ...(lastErrorCode ? { lastErrorCode } : {}),
         lastErrorMessage,
+        ...(typedImportFailure ? { failureCause: projectActionFailureCauseV1(error, 'session_handoff.target_import', { allowUnknownErrorCode: true }) } : {}),
         status: failedStatus,
       }));
     }

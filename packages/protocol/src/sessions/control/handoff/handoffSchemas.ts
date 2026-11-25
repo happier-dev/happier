@@ -7,6 +7,7 @@ import {
 import { RuntimeDescriptorV1Schema } from '../../metadata/runtimeDescriptorV1.js';
 import { AgentExecutionTargetV1Schema } from '../../../agents/executionTargetV1.js';
 import { NonBlankOpaqueIdentifierSchema } from '../../../strings/opaqueIdentifier.js';
+import { ActionFailureCauseV1Schema } from '../../../actions/actionExecutionResult.js';
 
 import {
   SessionHandoffStorageModeSchema,
@@ -416,12 +417,14 @@ const SessionHandoffPrepareTargetResultGetFailureResponseSchema = lazyZodSchema(
     ]),
     error: z
       .string().check(z.minLength(1), z.maxLength(SESSION_HANDOFF_PREPARE_TARGET_FAILURE_MESSAGE_MAX_LENGTH)),
+    failureCause: z.optional(ActionFailureCauseV1Schema),
   }),
   z.strictObject({
     ok: z.literal(false),
     errorCode: SessionHandoffPrepareTargetFailureCodeSchema,
     error: z
       .string().check(z.minLength(1), z.maxLength(SESSION_HANDOFF_PREPARE_TARGET_FAILURE_MESSAGE_MAX_LENGTH)),
+    failureCause: z.optional(ActionFailureCauseV1Schema),
   }),
 ]));
 

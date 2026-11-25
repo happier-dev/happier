@@ -19,7 +19,7 @@ const AGENT_ID = 'member-handoff-agent';
 
 // The member Workspace effect child: its frame pipe, service bridge, plugin admission and
 // activation stay real. The OS identity switch belongs to the exec launch owner's suites.
-it('creates the contained cwd and imports through the admitted Agent plugin in the member Workspace effect child', async () => {
+it.each([false, true])('imports or retains the native cause in the member Workspace effect child (refused=%s)', async (refused) => {
   const directory = await mkdtemp(join(tmpdir(), 'handoff-member-effect-'));
   const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
     plugins: [
@@ -56,6 +56,7 @@ it('creates the contained cwd and imports through the admitted Agent plugin in t
             surfaces: { handoff: {
               exportBundle: async () => ({ ok: false, code: 'unsupported' }),
               importBundle: async (request) => {
+                if (${refused}) return { ok: false, code: 'target_identity_conflict', diagnostics: [{ code: 'transcript_content_mismatch', details: { pathKind: 'transcript_file' } }] };
                 await writeFile(join(request.targetDirectory, 'imported.txt'), String(request.bundle.transcriptBase64));
                 return { ok: true, value: { providerSessionId: String(request.bundle.remoteSessionId),
                   launch: { directory: request.targetDirectory, environmentVariables: {} } } };
@@ -150,6 +151,11 @@ it('creates the contained cwd and imports through the admitted Agent plugin in t
     );
     await settled;
     expect(failure).toBeUndefined();
+    if (refused) {
+      expect(record).toMatchObject({ t: 'failed', code: 'target_identity_conflict', failureCause: {
+        phase: 'session_handoff.target_import', errorCode: 'target_identity_conflict', nativeErrorCode: 'transcript_content_mismatch' } });
+      return;
+    }
     expect(record, JSON.stringify(record)).toMatchObject({
       t: 'imported',
       value: {

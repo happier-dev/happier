@@ -3760,7 +3760,12 @@ existing handoff diagnostic field. The diagnostic identifies the directory or
 transcript check that failed and distinguishes an unreadable location, a wrong
 entry type, different transcript bytes, and a transcript that changed during
 comparison. It carries only a cause code and path kind. A clean target accepts
-the import, and a byte-identical existing transcript can be reused.
+the import, and a byte-identical existing transcript can be reused. The CLI
+retains the typed refusal through member execution and the durable target job.
+`prepareTargetResult.get` returns its `failureCause` with phase
+`session_handoff.target_import`, the typed refusal code and, when supplied by the
+Agent, `nativeErrorCode`. This carrier omits paths, names and messages; path-kind
+diagnostics require the Action owner's closed failure-details contract.
 
 `SessionHandle.watch` follows committed retained transcript rows through the shared socket source and delivers complete text before advancing its reconnect frontier. Provisional stream deltas do not become retained message events. Cancellation ends the watcher; credential and plugin-occurrence checks prevent further delivery after retirement.
 

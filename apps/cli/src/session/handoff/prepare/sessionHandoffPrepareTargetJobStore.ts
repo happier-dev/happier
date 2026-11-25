@@ -1,3 +1,4 @@
+import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { lazyDefinition, lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readdir, readFile, rename } from 'node:fs/promises';
@@ -34,6 +35,7 @@ const SessionHandoffPrepareTargetJobRecordV1Schema = lazyZodSchema(() => z
     failedAtMs: z.optional(z.number().check(z.int(), z.minimum(0))),
     lastErrorMessage: z.optional(z.string().check(z.minLength(1))),
     lastErrorCode: z.optional(z.string().check(z.minLength(1))),
+    failureCause: z.optional(ActionFailureCauseV1Schema),
     status: SessionHandoffStatusSchema,
     // Persist the validated prepare-target request so the daemon can resume/restart the job after a restart,
     // even when callers keep polling status/result without issuing a second PREPARE_TARGET call.
@@ -163,6 +165,7 @@ const sessionHandoffPrepareTargetJobV2CommonShape = lazyDefinition(() => ({
   failedAtMs: z.optional(z.number().check(z.int(), z.minimum(0))),
   lastErrorMessage: z.optional(z.string().check(z.minLength(1))),
   lastErrorCode: z.optional(z.string().check(z.minLength(1))),
+    failureCause: z.optional(ActionFailureCauseV1Schema),
   status: SessionHandoffStatusSchema,
   prepareTargetRequest: z.optional(SessionHandoffPrepareTargetRequestSchema),
   prepareTargetResult: z.optional(SessionHandoffPrepareTargetResultGetSuccessResponseSchema),

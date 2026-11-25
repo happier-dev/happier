@@ -1,3 +1,4 @@
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
   createSessionHandoffPrepareTargetJobStore,
   type SessionHandoffPrepareTargetJobRecord,
@@ -107,6 +108,7 @@ export function buildPrepareJobRecord(input: Readonly<{
   failedAtMs?: number;
   lastErrorMessage?: string;
   lastErrorCode?: string;
+  failureCause?: ActionFailureCauseV1;
 }>): SessionHandoffPrepareTargetJobRecordInput {
   return {
     jobId: input.jobId,
@@ -119,6 +121,7 @@ export function buildPrepareJobRecord(input: Readonly<{
     ...(input.failedAtMs ? { failedAtMs: input.failedAtMs } : {}),
     ...(input.lastErrorMessage ? { lastErrorMessage: input.lastErrorMessage } : {}),
     ...(input.lastErrorCode ? { lastErrorCode: input.lastErrorCode } : {}),
+    ...(input.failureCause ? { failureCause: input.failureCause } : {}),
     status: input.status,
     ...(input.prepareTargetRequest ? { prepareTargetRequest: input.prepareTargetRequest } : {}),
     ...(input.prepareTargetResult ? { prepareTargetResult: input.prepareTargetResult } : {}),

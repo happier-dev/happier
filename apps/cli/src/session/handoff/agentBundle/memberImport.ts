@@ -179,6 +179,7 @@ export async function prepareMemberSessionHandoffImport(
             ? new SessionHandoffTypedImportError({
                 code: typed,
                 message: record.message,
+                failureCause: record.failureCause,
               })
             : Object.assign(new Error(record.message), { code: record.code });
         }

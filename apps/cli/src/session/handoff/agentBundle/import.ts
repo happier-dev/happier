@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1, readActionErrorCodeV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ImportedSessionHandoffBundle, SessionHandoffAgentBundle } from '../types';
 import { projectSessionMetadataForAgentHandoff, readProviderSessionIdSessionState, resolveAgentIdFromSessionMetadata, type HandoffImportResultV1 } from '@happier-dev/agents';
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
@@ -16,15 +17,23 @@ export type SessionHandoffTypedImportFailureCode =
 
 export class SessionHandoffTypedImportError extends Error {
   readonly code: SessionHandoffTypedImportFailureCode;
+  readonly failureCause: ActionFailureCauseV1;
 
   constructor(input: Readonly<{
     code: SessionHandoffTypedImportFailureCode;
     message?: string;
     cause?: unknown;
+    failureCause?: ActionFailureCauseV1;
+    diagnostics?: readonly Readonly<{ code: string }>[];
   }>) {
     super(input.message ?? input.code, input.cause === undefined ? undefined : { cause: input.cause });
     this.name = 'SessionHandoffTypedImportError';
     this.code = input.code;
+    const nativeErrorCode = readActionErrorCodeV1(input.diagnostics?.[0]);
+    this.failureCause = input.failureCause ?? {
+      ...projectActionFailureCauseV1({ code: input.code }, 'session_handoff.target_import', { allowUnknownErrorCode: true }),
+      ...(nativeErrorCode ? { nativeErrorCode } : {}),
+    };
   }
 }
 
@@ -64,6 +73,7 @@ export async function importSessionHandoffAgentBundle(params: Readonly<{
         code,
         message: error instanceof Error ? error.message : undefined,
         cause: error,
+        failureCause: projectActionFailureCauseV1(error, 'session_handoff.target_import', { allowUnknownErrorCode: true }),
       });
     }
     throw error;
@@ -74,6 +84,7 @@ export async function importSessionHandoffAgentBundle(params: Readonly<{
       throw new SessionHandoffTypedImportError({
         code: typedCode,
         message: imported.message,
+        diagnostics: imported.diagnostics,
       });
     }
     throw new Error(imported.message ?? `Session handoff import failed: ${imported.code}`);
