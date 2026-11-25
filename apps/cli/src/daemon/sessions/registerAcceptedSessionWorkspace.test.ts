@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { setImmediate } from 'node:timers/promises';
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectAccountRowMutationRequestV1Schema, ProjectAccountRowReadRequestV1Schema, buildProjectAccountRowPhysicalKeyV1, type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
@@ -27,12 +28,17 @@ import { createAcceptedSessionWorkspaceRegistration } from './registerAcceptedSe
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { SessionMetadataOwnerPatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { mergeSessionMetadataForStartup } from '@/agent/runtime/mergeSessionMetadataForStartup';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 
 const execFileAsync = promisify(execFile);
 afterEach(() => vi.restoreAllMocks());
 
 describe('accepted Session workspace registration', () => {
-  it('registers true SCM roots and joins only a unique proven hosting anchor without resurrecting Hide', async () => {
+  it.each([
+    { name: 'settles accepted-workspace status reads after in-flight registration', checkStatus: true },
+    { name: 'registers true SCM roots and joins only a unique proven hosting anchor without resurrecting Hide', checkStatus: false },
+  ])('$name', async ({ checkStatus }) => {
     const scratch = await mkdtemp(join(tmpdir(), 'happier-accepted-workspace-'));
     const root = await realpath(scratch);
     const directory = join(root, 'packages', 'app');
@@ -73,6 +79,8 @@ describe('accepted Session workspace registration', () => {
     let currentSessionMetadata = createTestMetadata({ path: directory, machineId: 'machine-a' });
     let currentSessionVersion = 0;
     let conflictOnNextMetadataPatch: (() => void) | null = null;
+    let atNextRowWrite: (() => Promise<'conflict' | 'refused'>) | undefined;
+    let registrationConflicts = 0;
     const metadataPatches: ReturnType<typeof SessionMetadataOwnerPatchV1Schema.parse>[] = [];
     vi.spyOn(axios, 'patch').mockImplementation(async (_url, body) => {
       const patch = SessionMetadataOwnerPatchV1Schema.parse(body);
@@ -103,8 +111,12 @@ describe('accepted Session workspace registration', () => {
         accountEncryptionMode: 'plain', storedContentMode: 'plain', metadata: currentSessionMetadata, agentState: null });
       const session = createSessionRecordFixture({ id: 'accepted-session', encryptionMode: 'plain',
         metadataVersion: currentSessionVersion, agentStateVersion: currentSessionVersion,
-        ...(requesterRead || ownerProjection === 'owner' ? { metadataLayoutVersion: 1,
-          metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata } : {}),
+        ...(requesterRead || ownerProjection === 'owner' ? {
+          metadataLayoutVersion: 1, metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata,
+          ...(checkStatus && fields.displayProjectionV1 ? {
+            displayProjectionV1: { ...fields.displayProjectionV1, sourceMetadataVersion: currentSessionVersion },
+          } : {}),
+        } : {}),
         projectKey: publishedProjectKey,
         ...(publishedProjectKeyNone ? { projectKeyNone: true as const } : {}),
         ...(requesterRead || ownerProjection === 'owner' ? { share: null } : ownerProjection === 'recipient' ? {
@@ -126,6 +138,17 @@ describe('accepted Session workspace registration', () => {
         return { status: 200, data: row ? { status: 'present', row } : { status: 'absent' } };
       }
       const request = ProjectAccountRowMutationRequestV1Schema.parse(body);
+      if (atNextRowWrite) {
+        const settleWrite = atNextRowWrite;
+        atNextRowWrite = undefined;
+        const outcome = await settleWrite();
+        if (outcome === 'refused') return { status: 400, data: { status: 'invalid-request' } };
+        registrationConflicts = 3;
+      }
+      if (registrationConflicts > 0) {
+        registrationConflicts--;
+        return { status: 409, data: { status: 'conflict', key: request.mutations[0]!.key, revision: -1 } };
+      }
       requests.push(request);
       const acknowledged: ProjectAccountRowV1[] = [];
       for (const mutation of request.mutations) {
@@ -162,6 +185,61 @@ describe('accepted Session workspace registration', () => {
     };
     const metadata = createTestMetadata({ path: directory });
     try {
+      if (checkStatus) {
+        const statusMetadata = { ...metadata, path: root, machineId: 'machine-a' };
+        currentSessionMetadata = statusMetadata;
+        const credentials = {
+          token: `header.${Buffer.from(JSON.stringify({ sub: 'project-owner' })).toString('base64url')}.signature`,
+          encryption: null,
+        };
+        const statusExecutor = createActionExecutor(createCliActionDeps({
+          credentials, token: credentials.token, sessionId: 'cli-global', mode: 'plain', ctx: null,
+          serverId: profile.id, serverHttpBaseUrl: profile.serverUrl,
+        }));
+        const readStatus = (signal?: AbortSignal) => statusExecutor.execute(
+          'session.status.get', { sessionId: 'accepted-session', includeAcceptedWorkspace: true },
+          { surface: 'ui', authority: 'present_user', ...(signal ? { signal } : {}) },
+        );
+        const startPendingRegistration = async () => {
+          const writing = Promise.withResolvers<void>();
+          const settledWrite = Promise.withResolvers<'conflict' | 'refused'>();
+          atNextRowWrite = () => {
+            writing.resolve();
+            return settledWrite.promise;
+          };
+          const registration = register(statusMetadata, 'accepted-session');
+          void registration.catch(() => {});
+          await Promise.race([writing.promise, registration]);
+          return { registration, settleWrite: settledWrite.resolve };
+        };
+        const beforeRegistration = await readStatus();
+        expect(beforeRegistration).toMatchObject({ ok: true, result: { session: { id: 'accepted-session' } } });
+        expect(beforeRegistration).not.toHaveProperty('result.acceptedWorkspace');
+
+        const refused = await startPendingRegistration();
+        const refusedRead = readStatus();
+        const statusBeforeRefusedWrite = await Promise.race([refusedRead, setImmediate('waiting' as const)]);
+        refused.settleWrite('refused');
+        await expect(refused.registration).rejects.toMatchObject({ code: 'project_account_rows_invalid-request' });
+        expect(statusBeforeRefusedWrite).toBe('waiting');
+        expect(await refusedRead).toEqual(beforeRegistration);
+
+        const pending = await startPendingRegistration();
+        const checkoutRead = readStatus();
+        const reader = new AbortController();
+        const cancelledRead = readStatus(reader.signal);
+        await setImmediate();
+        reader.abort();
+        const cancelled = await cancelledRead;
+        pending.settleWrite('conflict');
+        await pending.registration;
+        expect(cancelled).toMatchObject({ ok: false, errorCode: 'cancelled' });
+        expect(await checkoutRead).toMatchObject({ ok: true, result: { acceptedWorkspace: {
+          checkout: { rootPath: root, serverId: 'srv_rf10_home', machineId: 'machine-a' },
+          repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/repository' },
+        } } });
+        return;
+      }
       ownerProjection = 'recipient';
       await expect(register(metadata, 'accepted-session')).rejects.toMatchObject({ code: 'workspace_registration_requester_channel_unavailable' });
       ownerProjection = 'missing';

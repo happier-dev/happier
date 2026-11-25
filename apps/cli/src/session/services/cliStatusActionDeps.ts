@@ -21,6 +21,7 @@ import type { CliProjectAdmission } from '@/session/actions/cliActionDeps/projec
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
 import type { createCliMachineInventoryActionDeps } from '@/session/actions/cliActionDeps/machineInventory';
 import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
+import { waitForPendingAcceptedSessionWorkspace } from '@/daemon/sessions/registerAcceptedSessionWorkspace';
 
 type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionStatusGet' | 'sessionWorkStateGet' | 'sessionWaitIdle'>;
 export function createCliSessionStatusActionDeps(
@@ -69,7 +70,7 @@ export function createCliSessionStatusActionDeps(
       const { getSessionStatus } = await import("@/session/services/getSessionStatus");
       const read = () => getSessionStatus({ credentials, idOrPrefix: sessionId, live: live === true,
         ...(context?.expectedSessionAddress ? { expectedSessionAddress: context.expectedSessionAddress } : {}),
-        ...(includeAcceptedWorkspace === true ? { includeAcceptedWorkspace: true, readAcceptedWorkspace: async (metadata: unknown) => {
+        ...(includeAcceptedWorkspace === true ? { includeAcceptedWorkspace: true, readAcceptedWorkspace: async (metadata: unknown, resolvedSessionId: string) => {
           if (await projectAccountAdmission(serverId ?? undefined, context)) return undefined;
           try {
             await assertProjectRequesterCurrent(context);
@@ -91,6 +92,8 @@ export function createCliSessionStatusActionDeps(
                   serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
                   isCurrent: async () => !await projectAccountAdmission(serverId ?? undefined, context)
                     && (await params.savedSecretOperationContext?.isCurrent(operationSignal) ?? true) } };
+            const pendingRegistration = waitForPendingAcceptedSessionWorkspace(resolvedSessionId, operationSignal);
+            if (pendingRegistration) await pendingRegistration;
             // An accepted id needs one row; older path-associated Sessions use the canonical Home-scoped census.
             const rows = await readProjectAccountRows({ ...authority,
               selection: typeof workspaceId === 'string' && workspaceId.trim()

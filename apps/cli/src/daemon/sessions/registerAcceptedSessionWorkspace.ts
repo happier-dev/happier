@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { addAbortListener } from 'node:events';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
@@ -18,6 +19,24 @@ import type { AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncrypti
 export type AcceptedSessionWorkspaceCustody = Pick<AdmittedRequesterSessionBootstrap,
   'credentials' | 'attribution' | 'serverHttpBaseUrl' | 'getBoundSessionId' | 'isCurrent'> & Readonly<{ release(): Promise<void> }>;
 
+const pendingBySessionId = new Map<string, Promise<void>>();
+
+/** Wait for this process's current registration before reading the accepted rows. */
+export function waitForPendingAcceptedSessionWorkspace(sessionId: string, signal?: AbortSignal): Promise<void> | undefined {
+  const pending = pendingBySessionId.get(sessionId);
+  if (!pending) return undefined;
+  // The writer owns failure reporting. The reader consumes the rows after settlement.
+  const settled = pending.then(() => undefined, () => undefined);
+  if (!signal) return settled;
+  return new Promise<void>((resolve, reject) => {
+    const abort = addAbortListener(signal, () => reject(signal.reason));
+    void settled.then(() => {
+      abort[Symbol.dispose]();
+      resolve();
+    });
+  });
+}
+
 /** Accepted Session facts enrich the private checkout library through its existing row writer. */
 export function createAcceptedSessionWorkspaceRegistration(input: Readonly<{
   credentials: StoredCredentials;
@@ -29,7 +48,7 @@ export function createAcceptedSessionWorkspaceRegistration(input: Readonly<{
     resolve(sessionId: string): Promise<AcceptedSessionWorkspaceCustody | null>;
   }>;
 }>): (metadata: Metadata, sessionId: string) => Promise<void> {
-  return async (metadata, sessionId) => {
+  const register = async (metadata: Metadata, sessionId: string): Promise<void> => {
     // Session-private managed folders never become Account Projects, even if an Agent initializes SCM there.
     const managed = readSessionDirectoryKind(metadata) === 'managed';
     const observedPlacement = { ...metadata, machineId: input.machineId };
@@ -124,5 +143,12 @@ export function createAcceptedSessionWorkspaceRegistration(input: Readonly<{
         throw Object.assign(new Error(code), { code });
       }
     } finally { await custody?.release(); }
+  };
+  return (metadata, sessionId) => {
+    const pending = register(metadata, sessionId).finally(() => {
+      if (pendingBySessionId.get(sessionId) === pending) pendingBySessionId.delete(sessionId);
+    });
+    pendingBySessionId.set(sessionId, pending);
+    return pending;
   };
 }

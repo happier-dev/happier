@@ -75,7 +75,7 @@ export async function getSessionStatus(params: Readonly<{
   live: boolean;
   readiness?: boolean;
   includeAcceptedWorkspace?: boolean;
-  readAcceptedWorkspace?: (metadata: unknown) => Promise<SessionAcceptedWorkspaceV1 | undefined>;
+  readAcceptedWorkspace?: (metadata: unknown, sessionId: string) => Promise<SessionAcceptedWorkspaceV1 | undefined>;
   operation?: 'conversation' | 'credential';
   credentialPurpose?: QualifiedConnectedAccountPurposeV1;
   credentialTeamSelection?: QualifiedConnectedAccountPurposeTeamResourceSelectionV1;
@@ -178,7 +178,7 @@ export async function getSessionStatus(params: Readonly<{
   const explicitAccess = sessionTarget.rawSession.effectiveAccess !== undefined || sessionTarget.rawSession.share !== undefined;
   const acceptedWorkspace = params.includeAcceptedWorkspace === true && ownerMetadata && explicitAccess
     && readSessionAccessProjectionRoleV1(sessionTarget.rawSession) === 'owner'
-    ? await params.readAcceptedWorkspace?.(ownerMetadata) : undefined;
+    ? await params.readAcceptedWorkspace?.(ownerMetadata, sessionTarget.sessionId) : undefined;
   params.signal?.throwIfAborted();
   const awareness = projectCliSessionAwarenessFromPresentationV1({
     row: sessionTarget.rawSession,
