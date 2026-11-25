@@ -15,7 +15,8 @@ import type {
 import type { TranslationKeyNoParams } from '@/text/i18n';
 import { t } from '@/text';
 import { formatAutomationRunCauseLabel } from '@/components/automations/list/automationListFormatting';
-import { formatWorkflowConversationProblem } from '@/components/workflows/presentation/workflowProblemPresentation';
+import { describeWorkflowOperationProblem, formatWorkflowConversationProblem } from '@/components/workflows/presentation/workflowProblemPresentation';
+import { WORKFLOW_STEP_PREPARATION_FAILED } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import type { WorkflowInvocationStructureEntry } from './workflowInvocationStructure';
 import { findWorkflowBlock, findWorkflowBlockListRef, getWorkflowBlockList } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
@@ -331,8 +332,10 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
     // cause when present, and recognize only that exact historical code, never arbitrary prose.
     const startupRecovery = presentSessionStartupFailureRecovery([runtimeIssue?.code, params.progress?.reason?.failureCause?.errorCode,
         params.progress?.reason?.code, params.progress?.reason?.message]);
+    const preparationFailure = params.progress?.reason?.code === WORKFLOW_STEP_PREPARATION_FAILED
+        ? describeWorkflowOperationProblem(WORKFLOW_STEP_PREPARATION_FAILED).message : null;
     const headline = failed && params.progress?.reason
-        ? describeRecordedTransportFailure(params.progress.reason.code)
+        ? preparationFailure ?? describeRecordedTransportFailure(params.progress.reason.code)
             // A classified cause keeps the transport failure under its outer disposition (for example a reset Start).
             ?? describeRecordedTransportFailure(params.progress.reason.failureCause?.errorCode ?? '')
             ?? startupRecovery?.cause

@@ -21568,6 +21568,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
             owner_metadata_unavailable: "此对话没有可读的所有者元数据或工作文件夹。",
         },
         workspaceRestore: '无法恢复工作区。没有做任何更改。',
+        stepPreparation: 'Happier 无法准备此步骤。未向代理发送任何输入。',
         workspaceUnavailable: "所选文件夹在此机器上不存在或无法访问。请选择可访问的文件夹。",
         workspaceConflict: "所选文件夹已不再匹配此工作区。请重新选择工作区。",
         committedRevisionUnavailable: "此工作流需要已提交的仓库版本。请提交项目，或选择已有提交的仓库。",

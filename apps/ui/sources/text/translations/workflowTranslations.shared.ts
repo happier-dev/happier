@@ -1036,6 +1036,7 @@ export const en = {
             owner_metadata_unavailable: "This conversation has no readable owner metadata or working folder.",
         },
         workspaceRestore: 'The workspace could not be restored. Nothing was changed.',
+        stepPreparation: 'Happier couldn’t prepare this step. No input was sent to the agent.',
         workspaceUnavailable: 'The selected folder is missing or cannot be accessed on this machine. Choose an accessible folder.',
         workspaceConflict: 'The selected folder no longer matches this workspace. Choose the workspace again.',
         committedRevisionUnavailable: 'This workflow needs a committed repository revision. Commit the project or choose a repository with a commit.',

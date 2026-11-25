@@ -21628,6 +21628,7 @@ const es = translated(workflowValueReferenceTranslations.es, {
             owner_metadata_unavailable: "Esta conversación no tiene metadatos del propietario o una carpeta de trabajo legibles.",
         },
         workspaceRestore: 'No se ha podido restaurar el espacio de trabajo. No se ha cambiado nada.',
+        stepPreparation: 'Happier no ha podido preparar este paso. No se ha enviado ninguna entrada al agente.',
         workspaceUnavailable: "La carpeta seleccionada no existe o no es accesible en esta máquina. Elige una carpeta accesible.",
         workspaceConflict: "La carpeta seleccionada ya no corresponde a este espacio de trabajo. Vuelve a seleccionar el espacio de trabajo.",
         committedRevisionUnavailable: "Este flujo necesita una revisión confirmada del repositorio. Crea un commit del proyecto o elige un repositorio que tenga un commit.",

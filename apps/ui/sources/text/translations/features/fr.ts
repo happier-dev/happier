@@ -21749,6 +21749,7 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
             owner_metadata_unavailable: "Cette conversation n’a pas de métadonnées du propriétaire ou de dossier de travail lisibles.",
         },
         workspaceRestore: 'L’espace de travail n’a pas pu être restauré. Rien n’a été modifié.',
+        stepPreparation: 'Happier n’a pas pu préparer cette étape. Aucune entrée n’a été envoyée à l’agent.',
         workspaceUnavailable: "Le dossier sélectionné est introuvable ou inaccessible sur cette machine. Choisissez un dossier accessible.",
         workspaceConflict: "Le dossier sélectionné ne correspond plus à cet espace de travail. Sélectionnez à nouveau l’espace de travail.",
         committedRevisionUnavailable: "Ce workflow nécessite une révision enregistrée dans le dépôt. Créez un commit du projet ou choisissez un dépôt contenant un commit.",

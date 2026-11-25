@@ -19,6 +19,12 @@ export type ServerEndpointErrorClassification = Readonly<{
   retryAfterMs?: number;
 }>;
 
+type ServerEndpointErrorOptions = Readonly<{
+  featureAbsentStatusCodes?: readonly number[];
+  /** Disable prose matching when the caller also handles errors from local code. */
+  allowMessageHeuristics?: boolean;
+}>;
+
 export const NETWORK_ERROR_CODES = [
   'ECONNABORTED',
   'ECONNREFUSED',
@@ -165,7 +171,7 @@ function readPreservedStatus(error: unknown): number | null {
 
 export function classifyServerEndpointError(
   error: unknown,
-  options: Readonly<{ featureAbsentStatusCodes?: readonly number[] }> = {},
+  options: ServerEndpointErrorOptions = {},
 ): ServerEndpointErrorClassification {
   // Domain errors retain the original transport as their cause. An unknown
   // wrapper code/message must not hide that transport's recovery disposition.
@@ -183,7 +189,7 @@ export function classifyServerEndpointError(
 
 function classifyServerEndpointErrorAtCause(
   error: unknown,
-  options: Readonly<{ featureAbsentStatusCodes?: readonly number[] }>,
+  options: ServerEndpointErrorOptions,
 ): ServerEndpointErrorClassification {
   const statusCode = readPreservedStatus(error) ?? undefined;
   if (statusCode === 401 || statusCode === 403) {
@@ -236,12 +242,14 @@ function classifyServerEndpointErrorAtCause(
   if (isNetworkConnectionErrorCode(code)) {
     return { kind: 'network', retryable: true, retryAfterMs: readRetryAfterMs(error) };
   }
-  const message = readErrorMessage(error);
-  if (isTimeoutMessage(message)) {
-    return { kind: 'timeout', retryable: true, retryAfterMs: readRetryAfterMs(error) };
-  }
-  if (isNetworkMessage(message)) {
-    return { kind: 'network', retryable: true, retryAfterMs: readRetryAfterMs(error) };
+  if (options.allowMessageHeuristics !== false) {
+    const message = readErrorMessage(error);
+    if (isTimeoutMessage(message)) {
+      return { kind: 'timeout', retryable: true, retryAfterMs: readRetryAfterMs(error) };
+    }
+    if (isNetworkMessage(message)) {
+      return { kind: 'network', retryable: true, retryAfterMs: readRetryAfterMs(error) };
+    }
   }
   if (readRetryableHint(error)) {
     return { kind: 'network', retryable: true, retryAfterMs: readRetryAfterMs(error) };

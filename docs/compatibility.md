@@ -155,6 +155,13 @@ strict storage routes reject the added request field. The inspected `../0.2`
 frontier `24731ff73c0e032af6ee6b1347b0fceef947949b` has no Workflow storage route;
 no released-client adapter or wire epoch change is added.
 
+Unexpected step preparation failures settle the invocation and Run through
+their existing failure path with `workflow_step_preparation_failed`. The
+invocation keeps a safe diagnostic class and phase. The Run summary and
+invocation reason already accept codes as strings, so this adds a presentation
+code within the existing records. Structured retryable transport failures retain
+the existing worker recovery path.
+
 ## Detached Workflow Project context (unreleased 0.3)
 
 Private detached Workflow correspondence retains the optional, qualified

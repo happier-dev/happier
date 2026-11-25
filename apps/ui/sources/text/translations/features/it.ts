@@ -21692,6 +21692,7 @@ const it = translated(workflowValueReferenceTranslations.it, {
             owner_metadata_unavailable: "Questa conversazione non ha metadati del proprietario o una cartella di lavoro leggibili.",
         },
         workspaceRestore: 'Non è stato possibile ripristinare lo spazio di lavoro. Non è stato cambiato nulla.',
+        stepPreparation: 'Happier non ha potuto preparare questo passaggio. Nessun input è stato inviato all’agente.',
         workspaceUnavailable: "La cartella selezionata non esiste o non è accessibile su questa macchina. Scegli una cartella accessibile.",
         workspaceConflict: "La cartella selezionata non corrisponde più a questo spazio di lavoro. Seleziona di nuovo lo spazio di lavoro.",
         committedRevisionUnavailable: "Questo workflow richiede una revisione del repository con un commit. Crea un commit del progetto o scegli un repository che ne contenga uno.",

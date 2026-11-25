@@ -21628,6 +21628,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
             owner_metadata_unavailable: "この会話には読み取れる所有者メタデータまたは作業フォルダがありません。",
         },
         workspaceRestore: 'ワークスペースを復元できませんでした。何も変更されていません。',
+        stepPreparation: 'Happier はこのステップを準備できませんでした。エージェントには入力を送信していません。',
         workspaceUnavailable: "選択したフォルダがこのマシンに存在しないか、アクセスできません。アクセスできるフォルダを選んでください。",
         workspaceConflict: "選択したフォルダはこのワークスペースと一致しなくなりました。ワークスペースを選び直してください。",
         committedRevisionUnavailable: "このワークフローにはコミット済みのリポジトリのリビジョンが必要です。プロジェクトをコミットするか、コミットのあるリポジトリを選んでください。",

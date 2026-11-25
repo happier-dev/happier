@@ -385,6 +385,78 @@ describe('workflow detached Execution Run step executor', () => {
     expect(reads).toBe(1);
   });
 
+  it.each(['invalid_selection', 'unexpected_error', 'storage_unavailable'] as const)(
+    'settles or reclaims detached preparation according to the failure (%s)',
+    async (failure) => {
+      const store = createInMemoryWorkflowCoordinatorStore();
+      const params = baseParams();
+      const projectContext = ProjectSessionDefaultsContextSelectionV1Schema.parse({
+        projectRef: { serverId: 'project-home', projectKey: 'project-1' },
+      });
+      const storageError = new Error('conversation read failed', {
+        cause: Object.assign(new Error('storage unavailable'), { status: 503 }),
+      });
+      const executeAction = vi.fn(async () => { throw new Error('No native Action should run in this fixture'); });
+      const reads = vi.fn(async () => {
+        if (failure === 'storage_unavailable') throw storageError;
+        if (failure === 'unexpected_error') throw new TypeError('timeout is not valid here');
+        return null;
+      });
+      const deps = {
+        actionExecutor: { execute: executeAction },
+        workDepth: 0,
+        buildActionContext,
+        resolveSharedRunConversation: reads,
+        resolveProducerConversation: async () => null,
+      };
+      const prepareStep = vi.fn(async (input: Parameters<typeof prepareWorkflowDetachedExecutionRunStep>[1]) => {
+        // Feed a retained selection that the current reader cannot parse. The
+        // cut-replay harness instead loads the old reader and passes valid data.
+        const execution = failure === 'invalid_selection' && !process.env.HAPPIER_TEST_READY311_SELECTION
+          ? { ...input.execution, projectContext: { ...projectContext, oldProjectField: true } }
+          : input.execution;
+        return { preparedStep: await prepareWorkflowDetachedExecutionRunStep(deps, { ...input, execution }) };
+      });
+      const run = () => createWorkflowCoordinator({
+        store,
+        prepareStep,
+        executeStep: createWorkflowDetachedExecutionRunStepExecutor(deps),
+        resolveWorkspace: async () => ({ ok: true, workspace: params.workspace }),
+      }).run({
+        runId: params.runId,
+        definition: { version: 1, inputs: [], defaults: { ...params.execution, projectContext }, blocks: [params.step] },
+        inputs: {},
+        executionTarget: { kind: 'detached_run' },
+        authorization: params.authorization,
+      });
+      const first = await run().catch((error: unknown) => error);
+      const leaf = () => store.list().find(row => row.blockId === params.step.id);
+      const firstRows = store.list();
+      const replay = await run().catch((error: unknown) => error);
+      expect(prepareStep.mock.calls[0]?.[0].execution.projectContext).toEqual(projectContext);
+      expect(executeAction).not.toHaveBeenCalled();
+      if (failure === 'storage_unavailable') {
+        expect(first).toBe(storageError);
+        expect(replay).toBe(storageError);
+        expect(prepareStep).toHaveBeenCalledTimes(2);
+        expect(leaf()).toMatchObject({ lifecycle: 'pending' });
+        expect(leaf()?.reason).toBeUndefined();
+      } else {
+        // Under the old boundary both claims prepare the same pending leaf.
+        expect(prepareStep).toHaveBeenCalledTimes(1);
+        expect(first).toEqual({ state: 'failed', reason: 'workflow_step_preparation_failed' });
+        expect(replay).toEqual(first);
+        expect(leaf()).toMatchObject({
+          lifecycle: 'failed',
+          reason: 'workflow_step_preparation_failed',
+          failureCause: { phase: 'workflow.step.prepare', errorClass: failure === 'invalid_selection' ? '$ZodError' : 'TypeError' },
+        });
+        expect(leaf()?.execution).toBeUndefined();
+        expect(store.list()).toEqual(firstRows);
+      }
+    },
+  );
+
   it('retains the classified detached startup failure cause on the Workflow invocation', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const params = baseParams({ execution: { agentTarget: CLAUDE_TARGET, permissionMode: 'default',

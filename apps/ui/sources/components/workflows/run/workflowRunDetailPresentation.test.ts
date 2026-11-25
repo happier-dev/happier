@@ -20,6 +20,7 @@ import {
 } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 
 import { t } from '@/text';
+import { resolveWorkflowRunProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
 import { resolveManagedMachineWorkStatus } from '@/components/work/status/resolveWorkStatusTone';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -78,6 +79,19 @@ describe('managed workflow Run presentation', () => {
         });
 
         expect(formatWorkflowRunOriginLabel(origin)).toContain(t('automations.pluralEditor.lifecycleEvent.sessionStarted'));
+    });
+
+    it('shows why preparation failed on the invocation and on the Run before invocation data arrives', () => {
+        const code = 'workflow_step_preparation_failed';
+        const run = createWorkflowRunSummaryFixture({ state: 'failed', errorCode: code });
+        const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
+        const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+            blockKind: 'step', attempt: '0', logicalInvocationRecordId: invocation.id,
+            invocationPath: { blockId: 'work', scope: [] }, reason: { code } });
+        const recovery = projectWorkflowInvocationRecovery({ run, invocation, progress, machineHomeDirectory: null });
+        const runProblem = resolveWorkflowRunProblemPresentation(run);
+        expect(runProblem).toMatchObject({ code, message: 'Happier couldn’t prepare this step. No input was sent to the agent.' });
+        expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code, headline: runProblem?.message });
     });
 
     it.each(['agent_signed_out', 'agent_cli_missing'])('shows the typed %s start refusal and offers another agent', code => {

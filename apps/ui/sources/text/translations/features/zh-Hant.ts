@@ -21568,6 +21568,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
             owner_metadata_unavailable: "此對話沒有可讀取的擁有者中繼資料或工作資料夾。",
         },
         workspaceRestore: '無法還原工作區。沒有做任何變更。',
+        stepPreparation: 'Happier 無法準備此步驟。未向代理程式傳送任何輸入。',
         workspaceUnavailable: "所選資料夾在此機器上不存在或無法存取。請選擇可存取的資料夾。",
         workspaceConflict: "所選資料夾已不再符合此工作區。請重新選擇工作區。",
         committedRevisionUnavailable: "此工作流程需要已提交的儲存庫版本。請提交專案，或選擇已有提交的儲存庫。",

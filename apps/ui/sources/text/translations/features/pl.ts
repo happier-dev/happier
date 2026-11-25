@@ -21716,6 +21716,7 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
             owner_metadata_unavailable: "Ta rozmowa nie ma czytelnych metadanych właściciela lub folderu roboczego.",
         },
         workspaceRestore: 'Nie udało się przywrócić obszaru roboczego. Nic nie zostało zmienione.',
+        stepPreparation: 'Happier nie mógł przygotować tego kroku. Do agenta nie wysłano żadnych danych wejściowych.',
         workspaceUnavailable: "Wybranego folderu nie ma na tej maszynie lub nie można uzyskać do niego dostępu. Wybierz dostępny folder.",
         workspaceConflict: "Wybrany folder nie odpowiada już temu obszarowi roboczemu. Wybierz obszar roboczy ponownie.",
         committedRevisionUnavailable: "Ten przepływ wymaga rewizji repozytorium zapisanej w commicie. Utwórz commit projektu lub wybierz repozytorium z commitem.",

@@ -1,4 +1,4 @@
-import { classifyWorkflowHoldV1, classifyWorkflowReviewEntryV1, projectWorkflowLoopItemDisplayLabelV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { classifyWorkflowHoldV1, classifyWorkflowReviewEntryV1, projectWorkflowLoopItemDisplayLabelV1, WORKFLOW_STEP_PREPARATION_FAILED } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { readWorkflowActionFieldTextEncodingV1 } from '@happier-dev/protocol/workflows/workflowActionTextV1';
 import { readWorkflowActionOutputSchemaV1 } from '@happier-dev/protocol/actions/actionCatalog';
@@ -21,6 +21,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema, REVIEW_SETTLE_ROUND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { projectMachineSetupAcceptedAppBlockIds } from '@/machines/setup/acceptedAppRuns';
+import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { getWorkflowActionOutputKindV1, WorkflowMachineCommandOutputV1Schema } from '@happier-dev/protocol/workflows/stepActionsV1';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -764,6 +765,9 @@ function persistedFailure(record: WorkflowCoordinatorInvocation, automationCause
       }
       if (record.execution?.kind === 'action' && record.execution.actionId === REVIEW_SETTLE_ROUND_ACTION_ID_V1) {
         // The Review round is settled. A parent waiting on the child needs its terminal refusal.
+        return new WorkflowLeafFailure('failed', code, true);
+      }
+      if (code === WORKFLOW_STEP_PREPARATION_FAILED) {
         return new WorkflowLeafFailure('failed', code, true);
       }
       // A persisted definitive leaf failure remains collectable after process
@@ -2586,6 +2590,20 @@ async function executeStepBlock(
         ...(frame.item ? { item: frame.item } : {}),
         ...(frame.iteration ? { iteration: frame.iteration } : {}),
         ...(context.signal ? { signal: context.signal } : {}),
+      }).catch(async (error: unknown) => {
+        if (context.signal?.aborted || error instanceof WorkflowControlBoundary || error instanceof WorkflowRuntimeInterruption
+          || classifyServerEndpointError(error, { allowMessageHeuristics: false }).retryable
+          || parseActionExecuteFailure(error)) throw error;
+        // Preparation precedes native dispatch. An unexpected local failure has
+        // no effect to reconcile, and rejoining the same accepted input repeats it.
+        const failed = await context.deps.store.commitFact({
+          key,
+          lifecycle: 'failed',
+          reason: WORKFLOW_STEP_PREPARATION_FAILED,
+          failureCause: projectActionFailureCauseV1(error, 'workflow.step.prepare'),
+        });
+        nativeTerminalCommitted = true;
+        throw persistedFailure(failed, context.automationCause)!;
       });
       if (!rejoining) assertWorkflowAbortSignal(context);
       if (preparedStep?.failure) {

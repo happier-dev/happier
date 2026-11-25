@@ -108,6 +108,7 @@ const WORKFLOW_PROBLEM_SHAPES = {
     continuation_unavailable: { messageKey: 'workflows.problem.conversationUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
     workflow_workspace_restore_unavailable: { messageKey: 'workflows.problem.workspaceRestore', repair: 'none', accessibilitySemantics: 'alert' },
     workflow_workspace_restore_failed: { messageKey: 'workflows.problem.workspaceRestore', repair: 'retry', accessibilitySemantics: 'alert' },
+    workflow_step_preparation_failed: { messageKey: 'workflows.problem.stepPreparation', repair: 'none', accessibilitySemantics: 'alert' },
     workflow_wait_self_dependency: { messageKey: 'workflows.problem.waitSelfDependency', repair: 'none', accessibilitySemantics: 'alert' },
     ineligible_state: { messageKey: 'workflows.problem.ineligible', repair: 'refresh', accessibilitySemantics: 'status' },
     custody_pending: { messageKey: 'workflows.problem.custodyPending', repair: 'refresh', accessibilitySemantics: 'status' },

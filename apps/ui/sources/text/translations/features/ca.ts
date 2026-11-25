@@ -21706,6 +21706,7 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
             owner_metadata_unavailable: "Aquesta conversa no té metadades del propietari o carpeta de treball llegibles.",
         },
         workspaceRestore: 'No s’ha pogut restaurar l’espai de treball. No s’ha canviat res.',
+        stepPreparation: 'Happier no ha pogut preparar aquest pas. No s’ha enviat cap entrada a l’agent.',
         workspaceUnavailable: "La carpeta seleccionada no existeix o no és accessible en aquesta màquina. Tria una carpeta accessible.",
         workspaceConflict: "La carpeta seleccionada ja no correspon a aquest espai de treball. Torna a seleccionar l’espai de treball.",
         committedRevisionUnavailable: "Aquest flux necessita una revisió confirmada del repositori. Crea un commit del projecte o tria un repositori amb un commit.",

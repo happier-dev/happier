@@ -878,9 +878,11 @@ export const WorkflowInvocationRetryInputV1Schema = lazyZodSchema(() => z.strict
 export type WorkflowInvocationRetryInputV1 = z.infer<typeof WorkflowInvocationRetryInputV1Schema>;
 
 export const AUTOMATION_EVENT_WATCHER_NOT_CURRENT = 'event_watcher_not_current';
+export const WORKFLOW_STEP_PREPARATION_FAILED = 'workflow_step_preparation_failed';
 
 const WORKFLOW_OPERATION_ERROR_CODES_WITHOUT_DETAILS_V1 = [
   AUTOMATION_EVENT_WATCHER_NOT_CURRENT,
+  WORKFLOW_STEP_PREPARATION_FAILED,
   'not_authenticated',
   'admission_unavailable', 'invalid_token',
   'run_not_found', 'visible_team_not_granted',

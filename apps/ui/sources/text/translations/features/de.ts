@@ -21199,6 +21199,7 @@ const de = translated(workflowValueReferenceTranslations.de, {
             owner_metadata_unavailable: "Diese Unterhaltung hat keine lesbaren Eigentümermetadaten oder keinen Arbeitsordner.",
         },
         workspaceRestore: 'Der Arbeitsbereich konnte nicht wiederhergestellt werden. Es wurde nichts geändert.',
+        stepPreparation: 'Happier konnte diesen Schritt nicht vorbereiten. Es wurde keine Eingabe an den Agenten gesendet.',
         workspaceUnavailable: "Der ausgewählte Ordner fehlt oder ist auf diesem Rechner nicht zugänglich. Wähle einen zugänglichen Ordner.",
         workspaceConflict: "Der ausgewählte Ordner entspricht diesem Arbeitsbereich nicht mehr. Wähle den Arbeitsbereich erneut aus.",
         committedRevisionUnavailable: "Dieser Workflow benötigt einen Commit im Repository. Erstelle einen Commit des Projekts oder wähle ein Repository mit einem Commit.",
