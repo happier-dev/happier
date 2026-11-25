@@ -9,6 +9,7 @@ import {
   type TriageSourceEntrySnapshotV1,
   type TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
+import type { TriageDetailSourceStatusV1 } from '@happier-dev/triage-sources/ui';
 import { isTriageReviewRequestedReasonV1, readTriageAttentionReasonDangerV1, readTriageAttentionReasonIconV1 } from '../../corpus/attention/deriveAttention.js';
 import { projectPullRequestStatusFactsV1, type PullRequestStatusFactsV1 } from '../../sessions/pullRequestGlance/glanceModel.js';
 
@@ -118,6 +119,7 @@ export type TriageDetailHeaderV1 = Readonly<{
    * until that read lands, so the header's cells hold their place; `null` for any other kind (an issue, an error group).
    */
   pullRequestFacts: PullRequestStatusFactsV1 | null;
+  sourceStatus?: TriageDetailSourceStatusV1;
   /** The entry is a Review: its body is the shared Review summary, whose verdict sentence says what waits on the reader. */
   review: boolean;
 }>;
@@ -176,6 +178,7 @@ export type TriageDetailHeaderInputV1 = Readonly<{
   pullRequestStatus?: TriagePullRequestStatusV1 | null;
   /** That status has not arrived yet because the source is still reading it: the cells say "Reading…". */
   pullRequestStatusReading?: boolean;
+  sourceStatus?: TriageDetailSourceStatusV1;
   /** The terminal detail outcome owns the status line. */
   pullRequestDetailFailed?: boolean;
   /** The reader's words, for the author line ("You"); English fallbacks when absent. */
@@ -271,6 +274,7 @@ export function projectTriageDetailHeaderV1(
     pullRequestFacts: kind?.workflowSubject !== 'pullRequest' || input.pullRequestDetailFailed === true || row.presence.kind === 'absent' ? null
       : projectPullRequestStatusFactsV1(input.pullRequestStatus ?? null, readPullRequestLinkState(present?.snapshot.state.presentation),
         { reading: input.pullRequestStatusReading === true }),
+    ...(input.sourceStatus === undefined ? {} : { sourceStatus: input.sourceStatus }),
     review: isReviewTriageEntryRefV1(row.entryRef),
   });
 }

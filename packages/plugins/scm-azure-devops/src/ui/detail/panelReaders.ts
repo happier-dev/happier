@@ -523,6 +523,7 @@ export type AzurePoliciesViewV1 = Readonly<{
 
 export function useAzurePolicies(
   input: TriageDetailSurfaceInputV1,
+  mounted?: Readonly<{ active: boolean }>,
 ): Readonly<{ state: AzureReadStateV1<AzurePoliciesViewV1>; refresh: () => void }> {
   const action = useMemo(
     () => ({
@@ -561,7 +562,7 @@ export function useAzurePolicies(
     };
   }, [entry, execute]);
 
-  return useAzureSettledRead(read, active, activeSignal);
+  return useAzureSettledRead(read, active && mounted?.active !== false, activeSignal, mounted !== undefined);
 }
 
 /* ------------------------------------------------------------------- threads */

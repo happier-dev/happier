@@ -296,7 +296,7 @@ type ChecksRollupLine = Readonly<{
  * The one sentence a checks rollup says (lab `checksRight`): the failing count leads in the danger
  * tone, the rest of the line stays quiet. Null when the rollup does not state enough to say anything.
  */
-function useChecksRollupLine(rollup: TriageDetailChecksRollupV1 | null, latestCommit: boolean): ChecksRollupLine | null {
+export function useChecksRollupLine(rollup: TriageDetailChecksRollupV1 | null, latestCommit: boolean): ChecksRollupLine | null {
   const text = usePluginTranslation();
   const count = useStoryCount();
   if (rollup === null || rollup.failingCount === undefined || rollup.runningCount === undefined) return null;

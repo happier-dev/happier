@@ -373,6 +373,15 @@ export type GitlabProjectedApprovalStateV1 = Readonly<{
   userCanApprove?: boolean;
 }>;
 
+export function projectGitlabApprovalDecision(
+  state: Pick<GitlabProjectedApprovalStateV1, 'approvalsLeft' | 'approvalsRequired' | 'approvedBy'>,
+): 'reviewRequired' | 'approved' | null {
+  if (state.approvalsLeft === undefined) return null;
+  if (state.approvalsLeft > 0) return 'reviewRequired';
+  return state.approvalsLeft === 0 && ((state.approvalsRequired ?? 0) > 0 || state.approvedBy.length > 0)
+    ? 'approved' : null;
+}
+
 export function projectGitlabApprovalState(
   body: unknown,
   _bounds: GitlabDetailBoundsV1,

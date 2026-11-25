@@ -71,6 +71,8 @@ import {
   TriageDetailChangeSummary,
   TriageDetailChecks,
   type TriageActivityEventV1,
+  type TriageDetailSourceStatusV1,
+  useTriageEvidenceDisclosure,
   useTriagePageRefresh,
   useTriageSourcePanelIntentV1,
   useTriageSourcePanelPagingV1,
@@ -103,6 +105,7 @@ import type {
   AzureProjectedThreadRowV1,
 } from '../triage/detail/projection.js';
 
+import { AZURE_MERGE_STATUS_FACT_ID } from '../triage/observation.js';
 import { AzureMutationControls, AzureThreadStatusControl } from './detail/mutations.js';
 import {
   AzureReviewPublicationControls,
@@ -281,10 +284,7 @@ const AZURE_POLICY_ROLLUP_V1: Readonly<Record<string, 'passing' | 'failing' | 'r
   notApplicable: 'none',
 });
 
-function AzureStoryChecks({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement | null {
-  const { state } = useAzurePolicies(input);
-  if (state.kind !== 'ready' || state.failure !== null) return null;
-  const view = state.value;
+function projectAzurePolicyRollup(view: AzurePoliciesViewV1) {
   // Counts need every evaluation: an unread or unparsed row could be the failing one. A shortened
   // display name is not such a row; its status was read whole.
   if (view.evaluationsPartial || view.omittedRowCount > 0) return null;
@@ -301,7 +301,7 @@ function AzureStoryChecks({ input }: Readonly<{ input: TriageDetailSurfaceInputV
       failing.push({ id: row.evaluationId, name: row.displayName ?? row.evaluationId });
     }
   }
-  return <TriageDetailChecks title="Policies" titleKey="plugins.azureDevops.ui.tab.policies" rollup={rollup} failing={failing} />;
+  return { rollup, failing };
 }
 
 function AzureStoryChanges({ input, iterations, onRefreshIterations }: Readonly<{
@@ -339,6 +339,7 @@ function OverviewPanel({
   locale,
   nowMs,
   onRefreshIterations,
+  policyRollup,
   withWrites = true,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
@@ -347,6 +348,7 @@ function OverviewPanel({
   locale: string;
   nowMs: number;
   onRefreshIterations: () => void;
+  policyRollup?: ReturnType<typeof projectAzurePolicyRollup>;
   /** False when the Triage detail places the write controls in its header (r0.42). */
   withWrites?: boolean;
 }>): React.ReactElement {
@@ -367,7 +369,8 @@ function OverviewPanel({
   return (
       <TriageDetailStory kind={withWrites ? undefined : 'ask'}
         changes={withWrites ? null : <AzureStoryChanges input={input} iterations={iterations} onRefreshIterations={onRefreshIterations} />}
-        checks={withWrites ? null : <AzureStoryChecks input={input} />}>
+        checks={policyRollup == null ? null : <TriageDetailChecks title="Policies" titleKey="plugins.azureDevops.ui.tab.policies"
+          rollup={policyRollup.rollup} failing={policyRollup.failing} />}>
         {input.observation.snapshot.summary === undefined ? null : <Text value={input.observation.snapshot.summary} />}
         <SettledReadEvidence state={iterations} />
         {iterations.kind !== 'unavailable' ? null : (
@@ -598,9 +601,12 @@ function FilesPanel({
 
 /* -------------------------------------------------------------------- Policies */
 
-function PoliciesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
+function StandalonePoliciesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
+  return <PoliciesPanel controller={useAzurePolicies(input)} />;
+}
+
+function PoliciesPanel({ controller }: Readonly<{ controller: ReturnType<typeof useAzurePolicies> }>): React.ReactElement {
   const text = usePluginTranslation();
-  const controller = useAzurePolicies(input);
   const state: AzureReadStateV1<AzurePoliciesViewV1> = controller.state;
 
   if (state.kind === 'loading') {
@@ -1056,6 +1062,25 @@ function AzureDetailBody({
   const overview = React.useMemo(() => projectAzureDetailOverview(input), [input]);
 
   const iterations = useAzureIterations(input);
+  const offerStatus = useTriageEvidenceDisclosure().primaryWrite?.offerStatus;
+  const mountedPanel = input.panel;
+  const publishesStatus = offerStatus !== undefined && mountedPanel !== undefined && mountedPanel !== 'actions';
+  const policies = useAzurePolicies(input, { active: publishesStatus || mountedPanel === 'overview' || mountedPanel === 'checks' });
+  const policyView = policies.state.kind === 'ready' && policies.state.failure === null ? policies.state.value : null;
+  const policyRollup = React.useMemo(() => policyView === null ? null : projectAzurePolicyRollup(policyView), [policyView]);
+  const checksReading = policies.state.kind === 'loading';
+  const merge = overview.fields.find((field) => field.kind === 'status' && field.id === AZURE_MERGE_STATUS_FACT_ID);
+  const mergeValue = merge?.kind === 'status' ? merge.value : undefined;
+  const mergeTone = merge?.kind === 'status' ? merge.tone : undefined;
+  React.useLayoutEffect(() => {
+    if (!publishesStatus || offerStatus === undefined) return;
+    const checks: TriageDetailSourceStatusV1['checks'] = checksReading ? 'reading'
+      : policyRollup !== null && policyView?.statuses.length === 0 && policyRollup.rollup.failingCount === 0
+        && policyRollup.rollup.runningCount === 0 && policyRollup.rollup.passingCount === 0 ? 'empty' : policyRollup;
+    offerStatus({ kind: 'detail', merge: mergeValue === undefined || mergeTone === undefined ? null
+      : { value: mergeValue, tone: mergeTone }, checks });
+    return () => offerStatus(null);
+  }, [checksReading, mergeTone, mergeValue, offerStatus, policyRollup, policyView?.statuses.length, publishesStatus]);
 
   const panels: Readonly<Record<AzureDetailTabIdV1, React.ReactNode>> = {
     overview: (
@@ -1084,7 +1109,7 @@ function AzureDetailBody({
         onRefreshIterations={iterations.refresh}
       />
     ),
-    policies: <PoliciesPanel input={input} />,
+    policies: <StandalonePoliciesPanel input={input} />,
   };
 
   // The Triage detail asked for one panel (r0.42): its frame draws the tabs.
@@ -1107,12 +1132,13 @@ function AzureDetailBody({
                 locale={locale}
                 nowMs={nowMs}
                 onRefreshIterations={iterations.refresh}
+                policyRollup={policyRollup}
                 withWrites={false}
               />
             ),
             activity: panels.activity,
             files: panels.files,
-            checks: panels.policies,
+            checks: <PoliciesPanel controller={policies} />,
             actions: <AzureActionsPanel input={input} overview={overview} />,
           }}
         />

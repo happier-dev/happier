@@ -104,7 +104,7 @@ function useGitlabPagedWalk<TRow>(
   readPage: PageReader<TRow>,
   enabled: boolean,
   disabledFailure: TriageSourceFailureV1,
-  options: Readonly<{ retainOnRefresh?: boolean; retainAcrossLeave?: boolean }> = {},
+  options: Readonly<{ retainOnRefresh?: boolean; retainAcrossLeave?: boolean; active?: boolean }> = {},
 ): GitlabPagedControllerV1<TRow> {
   const [state, dispatch] = useReducer(
     gitlabPagedReducer<TRow>,
@@ -194,7 +194,7 @@ function useGitlabPagedWalk<TRow>(
   useEffect(() => {
     // A plane's first request is issued here — when its tab becomes active — and
     // never on mount of the detail surface.
-    if (!active) return undefined;
+    if (!active || options.active === false) return undefined;
     interval.current = activeSignal;
     const retained = options.retainAcrossLeave === true && settledWalk.current;
     // A retaining panel returns to the pages the reader already loaded and to
@@ -217,7 +217,7 @@ function useGitlabPagedWalk<TRow>(
       inFlightContinuation.current = null;
       dispatch({ kind: 'panelLeft' });
     };
-  }, [active, activeSignal, options.retainAcrossLeave, startWalk]);
+  }, [active, activeSignal, options.active, options.retainAcrossLeave, startWalk]);
 
   const loadMore = useCallback(() => {
     const pageSignal = interval.current;
@@ -559,6 +559,7 @@ export type GitlabPipelinesControllerV1 = GitlabPagedControllerV1<GitlabProjecte
  */
 export function useGitlabPipelines(
   input: TriageDetailSurfaceInputV1,
+  mounted?: Readonly<{ active: boolean }>,
 ): GitlabPipelinesControllerV1 {
   const action = useMemo(
     () => ({ pluginId: GITLAB_PLUGIN_ID, localId: GITLAB_TRIAGE_DETAIL_ACTION_IDS.listPipelines }),
@@ -605,7 +606,8 @@ export function useGitlabPipelines(
     return { kind: 'page' as const, page: toPage(page) };
   }, [execute, instance, localRef, routingToken]);
 
-  const controller = useGitlabPagedWalk(readPage, routingToken !== null, ROUTE_UNAVAILABLE);
+  const controller = useGitlabPagedWalk(readPage, routingToken !== null, ROUTE_UNAVAILABLE, mounted === undefined
+    ? {} : { active: mounted.active, retainAcrossLeave: true });
   return useMemo(() => ({ ...controller, rollup }), [controller, rollup]);
 }
 
@@ -645,6 +647,7 @@ export type GitlabApprovalsControllerV1 = Readonly<{
  */
 export function useGitlabApprovals(
   input: TriageDetailSurfaceInputV1,
+  mounted?: Readonly<{ active: boolean }>,
 ): GitlabApprovalsControllerV1 {
   const action = useMemo(
     () => ({ pluginId: GITLAB_PLUGIN_ID, localId: GITLAB_TRIAGE_DETAIL_ACTION_IDS.readApprovals }),
@@ -658,7 +661,7 @@ export function useGitlabApprovals(
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    if (!active) return undefined;
+    if (!active || mounted?.active === false) return undefined;
     // `attempt` is the reader's explicit refresh. It re-enters this effect,
     // which is the same code path the first read takes — there is no second read
     // owner and no automatic poll.
@@ -698,9 +701,9 @@ export function useGitlabApprovals(
     })();
     return () => {
       left = true;
-      setState({ kind: 'loading' });
+      if (mounted === undefined) setState({ kind: 'loading' });
     };
-  }, [active, activeSignal, attempt, execute, instance, localRef, routingToken]);
+  }, [active, activeSignal, attempt, mounted?.active, execute, instance, localRef, routingToken, input.observation.sourceUpdatedAtMs]);
 
   const refresh = useCallback(() => {
     setAttempt((current) => current + 1);

@@ -464,6 +464,7 @@
   "plugins.triage.surface.detail.openedBy": "{author} opened {age}",
   "plugins.triage.surface.detail.via": "via {name}",
   "plugins.triage.surface.detail.facts.status": "Status",
+  "plugins.triage.surface.detail.facts.unavailable": "Not available from this source",
   "plugins.triage.surface.detail.facts.checks": "Checks",
   "plugins.triage.surface.detail.facts.reviewers": "Reviewers",
   "plugins.triage.surface.detail.reviewers.more": "{names} +{count}",

@@ -131,25 +131,27 @@ export function projectGitlabIssueState(
  * them as a hard block gives a permanently disabled Merge button, and rendering them
  * as mergeable arms a button that answers `405`.
  */
+export const GITLAB_MERGE_STATUS_FACT_ID = 'gitlab/merge-status';
+
 export function projectGitlabMergeStatusFact(
   detailedMergeStatus: string | null,
 ): GitlabRowFact | null {
   const merge = projectGitlabMergeStatus(detailedMergeStatus);
   if (merge.state === 'mergeable') {
-    return { id: 'gitlab/merge-status', importance: 'secondary', value: { kind: 'status', label: 'Mergeable', tone: 'success' } };
+    return { id: GITLAB_MERGE_STATUS_FACT_ID, importance: 'secondary', value: { kind: 'status', label: 'Mergeable', tone: 'success' } };
   }
   if (merge.state === 'conflicts') {
-    return { id: 'gitlab/merge-status', importance: 'secondary', value: { kind: 'status', label: 'Conflicts', tone: 'danger' } };
+    return { id: GITLAB_MERGE_STATUS_FACT_ID, importance: 'secondary', value: { kind: 'status', label: 'Conflicts', tone: 'danger' } };
   }
   switch (detailedMergeStatus) {
     case 'draft_status':
-      return { id: 'gitlab/merge-status', importance: 'secondary', value: { kind: 'status', label: 'Draft', tone: 'warning' } };
+      return { id: GITLAB_MERGE_STATUS_FACT_ID, importance: 'secondary', value: { kind: 'status', label: 'Draft', tone: 'warning' } };
     case 'checking':
     case 'unchecked':
     case 'preparing':
     case 'approvals_syncing':
     case 'ci_still_running':
-      return { id: 'gitlab/merge-status', importance: 'secondary', value: { kind: 'status', label: 'Computing', tone: 'info' } };
+      return { id: GITLAB_MERGE_STATUS_FACT_ID, importance: 'secondary', value: { kind: 'status', label: 'Computing', tone: 'info' } };
     default:
       // An unrecognized value is omitted rather than guessed. Omitted means *this
       // provider did not report it here*, which is not the same as a blocked merge.

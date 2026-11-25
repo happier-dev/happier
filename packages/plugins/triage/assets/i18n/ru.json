@@ -463,6 +463,7 @@
   "plugins.triage.surface.detail.openedBy": "{author} открыл(а) {age}",
   "plugins.triage.surface.detail.via": "через {name}",
   "plugins.triage.surface.detail.facts.status": "Статус",
+  "plugins.triage.surface.detail.facts.unavailable": "Недоступно в этом источнике",
   "plugins.triage.surface.detail.facts.checks": "Проверки",
   "plugins.triage.surface.detail.facts.reviewers": "Рецензенты",
   "plugins.triage.surface.detail.reviewers.more": "{names} +{count}",

@@ -27,12 +27,13 @@ function newestOverview(current: GitlabOverviewValueV1 | null, candidate: Gitlab
 }
 
 /** Opening and completed writes supply this same read; standalone panels still read on activation. */
-export function useGitlabOverview(input: TriageDetailSurfaceInputV1): GitlabOverviewControllerV1 {
+export function useGitlabOverview(input: TriageDetailSurfaceInputV1, enabled = true): GitlabOverviewControllerV1 {
   const action = useMemo(() => ({ pluginId: GITLAB_PLUGIN_ID, localId: GITLAB_TRIAGE_DETAIL_ACTION_IDS.readOverview }), []);
   const { execute } = useExecutePluginAction(action);
   const { instance, localRef } = useTriageDetailRequest(input);
   const routingToken = useGitlabRoutingToken(input);
-  const { active, activeSignal } = useTabPanelActivity();
+  const { active: panelActive, activeSignal } = useTabPanelActivity();
+  const active = panelActive && enabled;
   const seed = useMemo(() => {
     const parsed = GitlabOpeningDetailV1Schema.safeParse(input.detailData);
     return parsed.success && parsed.data.overview.kind === 'overview' ? parsed.data.overview : null;

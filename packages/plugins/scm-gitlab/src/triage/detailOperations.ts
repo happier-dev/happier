@@ -61,6 +61,7 @@ import {
   type GitlabDetailContinuationProvenanceV1,
 } from './detail/continuation.js';
 import { GITLAB_MAX_DETAIL_PAGE_SIZE_V1, type GitlabDetailRouteInputV1 } from './detail/routes.js';
+import { projectGitlabApprovalDecision } from './detail/projection.js';
 import { boundGitlabText } from './mapping/bounded.js';
 import {
   readGitlabActivityEventsPage,
@@ -182,9 +183,7 @@ export async function readGitlabPullRequestStatus(input: unknown, context: Plugi
     read.pullRequest.reviewers.filter((name) => !approvedNames.has(name))
       .forEach((name, index) => appendReviewer(name, pendingReviewers[index]!.text, 'pending'));
     review = {
-      decision: read.pullRequest.changesRequested ? 'changesRequested'
-        : state.approvalsLeft !== undefined && state.approvalsLeft > 0 ? 'reviewRequired'
-          : state.approvalsLeft === 0 && ((state.approvalsRequired ?? 0) > 0 || state.approvedBy.length > 0) ? 'approved' : null,
+      decision: read.pullRequest.changesRequested ? 'changesRequested' : projectGitlabApprovalDecision(state),
       reviewers,
       incomplete: state.omittedApproverCount > 0 || reviewers.length < approvedBy.length + pendingReviewers.length,
     };

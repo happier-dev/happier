@@ -86,7 +86,9 @@ import {
   projectTriageDetailFieldTextV1 as fieldValueText,
 } from '@happier-dev/triage-protocol/v1';
 
+import { GITLAB_MERGE_STATUS_FACT_ID } from '../triage/mapping/gitlabEntry.js';
 import { readGitlabTriageKindId } from '../triage/contribution.js';
+import { projectGitlabApprovalDecision } from '../triage/detail/projection.js';
 import type {
   GitlabProjectedActivityEventRowV1,
   GitlabProjectedChangedFileRowV1,
@@ -109,7 +111,10 @@ import {
   useGitlabOverview,
   useGitlabPipelines,
   useGitlabRawDiff,
+  type GitlabApprovalsControllerV1,
   type GitlabApprovalsViewV1,
+  type GitlabOverviewControllerV1,
+  type GitlabPipelinesControllerV1,
   type GitlabRawDiffStateV1,
   type GitlabPagedControllerV1,
 } from './detail/panelReaders.js';
@@ -125,11 +130,14 @@ import {
   type TriageRawDiffFilesV1,
   TriageDetailChangeSummary,
   TriageDetailChecks,
+  TriageDetailInstance,
   TriageDetailPanel,
   TriageDetailStory,
   type TriageActivityEventV1,
   type TriageActivityKindV1,
   useTriagePageRefresh,
+  useTriageEvidenceDisclosure,
+  type TriageDetailSourceStatusV1,
   useTriageSourcePanelIntentV1,
   useTriageSourcePanelPagingV1,
   type TriageSourcePanelCommandV1,
@@ -328,12 +336,6 @@ function gitlabEffectiveInput(
   };
 }
 
-/** The write controls as the Triage detail header's `actions` panel (r0.42). */
-function GitlabActionsPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement | null {
-  const controller = useGitlabOverview(input);
-  return <GitlabMutationControls input={gitlabEffectiveInput(input, controller.value)} />;
-}
-
 function GitlabStoryChanges({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
   const text = usePluginTranslation();
   const controller = useGitlabChanges(input);
@@ -354,18 +356,25 @@ function GitlabStoryChanges({ input }: Readonly<{ input: TriageDetailSurfaceInpu
   </TriageDetailChangeSummary>;
 }
 
-function GitlabStoryChecks({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement | null {
-  const { state, rollup } = useGitlabPipelines(input);
+function GitlabStoryChecks({ state, rollup }: GitlabPipelinesControllerV1): React.ReactElement | null {
   return <TriageDetailChecks title="Pipelines" titleKey="plugins.gitlab.ui.tabs.pipelines" rollup={state.kind === 'ready' ? rollup : null}>
     <PageFailureBanner state={state} />
   </TriageDetailChecks>;
+}
+
+function StandaloneOverviewPanel(props: Readonly<{ input: TriageDetailSurfaceInputV1; locale: string; nowMs: number }>): React.ReactElement {
+  const controller = useGitlabOverview(props.input);
+  const input = gitlabEffectiveInput(props.input, controller.value);
+  return <OverviewPanel {...props} input={input} controller={controller} body={projectGitlabDetailBody(input)} />;
 }
 
 function OverviewPanel({
   input,
   locale,
   nowMs,
-  withWrites = true,
+  controller,
+  body,
+  pipelines,
 }: Readonly<{
   /**
    * The mounted input, carried alongside the projected body for one reason: the
@@ -376,16 +385,14 @@ function OverviewPanel({
   input: TriageDetailSurfaceInputV1;
   locale: string;
   nowMs: number;
-  /** False when the Triage detail places the write controls in its header (r0.42). */
-  withWrites?: boolean;
+  controller: GitlabOverviewControllerV1;
+  body: ReturnType<typeof projectGitlabDetailBody>;
+  pipelines?: GitlabPipelinesControllerV1;
 }>): React.ReactElement {
   const text = usePluginTranslation();
-  // The story rail (r0.42) draws the facts only: no empty-state stand-ins and no Re-read chrome.
-  const story = !withWrites;
-  const controller = useGitlabOverview(input);
-  const effectiveInput = gitlabEffectiveInput(input, controller.value);
-  const body = projectGitlabDetailBody(effectiveInput);
-  const description = controller.value?.description ?? effectiveInput.observation.snapshot.summary;
+  // The story draws the facts without standalone write controls or empty-state chrome.
+  const story = pipelines !== undefined;
+  const description = controller.value?.description ?? input.observation.snapshot.summary;
   const statusFields = body.fields.filter(
     (field): field is Extract<GitlabDetailFieldV1, { kind: 'status' }> => field.kind === 'status',
   );
@@ -400,9 +407,9 @@ function OverviewPanel({
   });
 
   return (
-      <TriageDetailStory kind={withWrites ? undefined : input.observation.entryRef.kindId === 'issue' ? 'report' : 'ask'}
-        changes={withWrites || input.observation.entryRef.kindId === 'issue' ? null : <GitlabStoryChanges input={input} />}
-        checks={withWrites || input.observation.entryRef.kindId === 'issue' ? null : <GitlabStoryChecks input={input} />}>
+      <TriageDetailStory kind={!story ? undefined : input.observation.entryRef.kindId === 'issue' ? 'report' : 'ask'}
+        changes={!story || input.observation.entryRef.kindId === 'issue' ? null : <GitlabStoryChanges input={input} />}
+        checks={pipelines === undefined || input.observation.entryRef.kindId === 'issue' ? null : <GitlabStoryChecks {...pipelines} />}>
         {controller.failure === null ? null : (
           <Banner
             tone="warning"
@@ -464,7 +471,7 @@ function OverviewPanel({
         {input.observation.entryRef.kindId === 'merge-request' && input.admittedReview
           ? <AdmittedHappierReviewSummary key={input.admittedReview.reviewId} reviewId={input.admittedReview.reviewId} />
           : null}
-        {withWrites ? <GitlabMutationControls input={effectiveInput} /> : null}
+        {story ? null : <GitlabMutationControls input={input} />}
         {story && controller.failure === null ? null : (
           <RefreshRow
             onRefresh={() => { void controller.refresh(); }}
@@ -689,7 +696,7 @@ function useGitlabEventWalks(input: TriageDetailSurfaceInputV1): GitlabEventWalk
   return [state, label, milestone];
 }
 
-function MergeRequestActivityPanel(props: Readonly<{ input: TriageDetailSurfaceInputV1; locale: string; nowMs: number }>): React.ReactElement {
+function MergeRequestActivityPanel(props: Readonly<{ input: TriageDetailSurfaceInputV1; locale: string; nowMs: number; approvals?: GitlabApprovalsControllerV1 }>): React.ReactElement {
   const proposals = useReviewCommentProposalsForEntry({
     linkedSessionIds: props.input.linkedSessions.map((session) => session.sessionId),
     entry: { kind: 'pullRequest', url: props.input.observation.locator.webUrl },
@@ -704,7 +711,7 @@ function MergeRequestActivityPanel(props: Readonly<{ input: TriageDetailSurfaceI
       notes={notes}
       discussions={discussions}
       events={events}
-      header={<MergeRequestReviewHeader input={props.input} proposals={proposals} />}
+      header={<MergeRequestReviewHeader input={props.input} proposals={proposals} approvals={props.approvals} />}
     />
   );
 }
@@ -931,17 +938,20 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
 
 /* -------------------------------------------------------------------- Pipelines */
 
+function StandalonePipelinesPanel(props: Readonly<{ input: TriageDetailSurfaceInputV1; locale: string; nowMs: number }>): React.ReactElement {
+  return <PipelinesPanel locale={props.locale} nowMs={props.nowMs} controller={useGitlabPipelines(props.input)} />;
+}
+
 function PipelinesPanel({
-  input,
+  controller,
   locale,
   nowMs,
 }: Readonly<{
-  input: TriageDetailSurfaceInputV1;
+  controller: GitlabPipelinesControllerV1;
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
   const text = usePluginTranslation();
-  const controller = useGitlabPipelines(input);
   const { rollup, state } = controller;
   const loadMore = useTriageSourcePanelPagingV1('pipelines', text('plugins.gitlab.ui.showOlderPipelines', 'Show older pipelines'),
     state.canLoadMore, state.pending, controller.loadMore);
@@ -1059,9 +1069,12 @@ function PipelinesPanel({
  * account sees working approval state with one explanatory line — not a tab that reports the whole
  * feature as unavailable, which is what a coarse "approvals are Premium" reading would produce.
  */
-function ApprovalsSection({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
+function StandaloneApprovalsSection({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
+  return <ApprovalsSection controller={useGitlabApprovals(input)} />;
+}
+
+function ApprovalsSection({ controller }: Readonly<{ controller: GitlabApprovalsControllerV1 }>): React.ReactElement {
   const text = usePluginTranslation();
-  const controller = useGitlabApprovals(input);
   const state: GitlabReadStateV1<GitlabApprovalsViewV1> = controller.state;
 
   if (state.kind === 'loading') {
@@ -1232,9 +1245,10 @@ function DiscussionThread({ input, row, proposals }: Readonly<{
 }
 
 /** The merge request's review state and its publication controls, above its Activity. */
-function MergeRequestReviewHeader({ input, proposals }: Readonly<{
+function MergeRequestReviewHeader({ input, proposals, approvals }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   proposals: ReviewCommentProposalReadV1;
+  approvals?: GitlabApprovalsControllerV1;
 }>): React.ReactElement {
   // Publishing a review is one task: while its step is open, the review summary and approvals step aside.
   const [publishing, setPublishing] = React.useState(false);
@@ -1242,7 +1256,8 @@ function MergeRequestReviewHeader({ input, proposals }: Readonly<{
     <Stack gap="large">
       {input.admittedReview && !publishing ? <AdmittedHappierReviewSummary key={input.admittedReview.reviewId} reviewId={input.admittedReview.reviewId} /> : null}
       <GitlabMergeRequestPublicationControls input={input} proposals={proposals} open={publishing} onOpenChange={setPublishing} />
-      {publishing ? null : <ApprovalsSection input={input} />}
+      {publishing ? null : approvals === undefined
+        ? <StandaloneApprovalsSection input={input} /> : <ApprovalsSection controller={approvals} />}
     </Stack>
   );
 }
@@ -1365,18 +1380,49 @@ function GitlabDetailBody({
   );
   // One render-time read, passed down as data, so no child owns a hidden clock.
   const nowMs = Date.now();
-  const body = React.useMemo(() => projectGitlabDetailBody(input), [input]);
+  const mountedPanel = input.panel;
+  const offerStatus = useTriageEvidenceDisclosure().primaryWrite?.offerStatus;
+  const publishesStatus = offerStatus !== undefined && kindId === 'merge-request'
+    && mountedPanel !== undefined && mountedPanel !== 'actions';
+  const overview = useGitlabOverview(input, mountedPanel !== undefined);
+  const effectiveInput = React.useMemo(() => gitlabEffectiveInput(input, overview.value), [input, overview.value]);
+  const body = React.useMemo(() => projectGitlabDetailBody(effectiveInput), [effectiveInput]);
+  const pipelines = useGitlabPipelines(input, { active: kindId === 'merge-request'
+    && (publishesStatus || mountedPanel === 'overview' || mountedPanel === 'checks') });
+  const merge = body.fields.find((field) => field.kind === 'status' && field.id === GITLAB_MERGE_STATUS_FACT_ID);
+  const mergeValue = merge?.kind === 'status' ? merge.value : undefined;
+  const mergeTone = merge?.kind === 'status' ? merge.tone : undefined;
+  const approvals = useGitlabApprovals(input, { active: publishesStatus });
+  const review = React.useMemo((): TriageDetailSourceStatusV1['review'] => {
+    if (approvals.state.kind === 'loading') return 'reading';
+    if (approvals.state.kind !== 'ready') return undefined;
+    const { value } = approvals.state;
+    const kind = projectGitlabApprovalDecision(value);
+    return kind === null ? undefined : { kind, people: kind === 'approved' ? value.approvedBy : [] };
+  }, [approvals.state]);
+  const { state: pipelineState, rollup } = pipelines;
+  const checksRead = pipelineState.kind;
+  const noPipelines = pipelineState.kind === 'ready' && pipelineState.rows.length === 0
+    && pipelineState.incomplete === null && !pipelineState.canLoadMore && pipelineState.omittedRowCount === 0;
+  React.useLayoutEffect(() => {
+    if (!publishesStatus || offerStatus === undefined) return;
+    const checks: TriageDetailSourceStatusV1['checks'] = checksRead === 'idle' || checksRead === 'loading'
+      ? 'reading' : noPipelines ? 'empty' : checksRead === 'ready' ? { rollup } : null;
+    offerStatus({ kind: 'detail', merge: mergeValue === undefined || mergeTone === undefined ? null
+      : { value: mergeValue, tone: mergeTone }, checks, ...(review === undefined ? {} : { review }) });
+    return () => offerStatus(null);
+  }, [checksRead, mergeTone, mergeValue, noPipelines, offerStatus, publishesStatus, review, rollup]);
 
   const visible = gitlabVisibleDetailTabs(kindId);
   const tab = gitlabResolveSelectedTab(selected, visible);
 
   const panels: Readonly<Record<GitlabDetailTabIdV1, React.ReactNode>> = {
-    overview: <OverviewPanel input={input} locale={locale} nowMs={nowMs} />,
+    overview: <StandaloneOverviewPanel input={input} locale={locale} nowMs={nowMs} />,
     activity: kindId === 'merge-request'
       ? <MergeRequestActivityPanel input={input} locale={locale} nowMs={nowMs} />
       : <IssueActivityPanel input={input} locale={locale} nowMs={nowMs} />,
     changes: <ChangesPanel input={input} />,
-    pipelines: <PipelinesPanel input={input} locale={locale} nowMs={nowMs} />,
+    pipelines: <StandalonePipelinesPanel input={input} locale={locale} nowMs={nowMs} />,
     reviews: <ReviewsPanel input={input} locale={locale} nowMs={nowMs} />,
     comments: <CommentsPanel input={input} locale={locale} nowMs={nowMs} />,
     'work-sessions': <WorkSessionsPanel sessions={body.linkedSessions} />,
@@ -1396,10 +1442,11 @@ function GitlabDetailBody({
             .filter((declaration) => ['overview', 'activity', 'changes', 'pipelines'].includes(declaration.id))
             .map((declaration) => [declaration.id === 'changes' ? 'files' : declaration.id === 'pipelines' ? 'checks' : declaration.id, declaration.retention]))}
           panels={{
-            overview: <OverviewPanel input={input} locale={locale} nowMs={nowMs} withWrites={false} />,
-            activity: panels.activity,
-            ...(kindId === 'merge-request' ? { files: panels.changes, checks: panels.pipelines } : {}),
-            actions: <GitlabActionsPanel input={input} />,
+            overview: <OverviewPanel input={effectiveInput} locale={locale} nowMs={nowMs} controller={overview} body={body} pipelines={pipelines} />,
+            activity: publishesStatus
+              ? <MergeRequestActivityPanel input={input} locale={locale} nowMs={nowMs} approvals={approvals} /> : panels.activity,
+            ...(kindId === 'merge-request' ? { files: panels.changes, checks: <PipelinesPanel locale={locale} nowMs={nowMs} controller={pipelines} /> } : {}),
+            actions: <GitlabMutationControls input={effectiveInput} />,
           }}
         />
       </Screen>
@@ -1463,7 +1510,9 @@ function GitlabDetailSurface(context: RenderContext): React.ReactElement {
     );
   }
 
-  return <GitlabDetailBody input={admitted.input} kindId={admitted.kindId} />;
+  return <TriageDetailInstance scrollOwner={admitted.input.panelScrollOwner}>
+    <GitlabDetailBody input={admitted.input} kindId={admitted.kindId} />
+  </TriageDetailInstance>;
 }
 
 /**

@@ -39,7 +39,6 @@ import {
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
 import type {
-  SessionPullRequestNativeStatusV1,
   TriageConfiguredSourceInstanceV1,
   TriageDetailSurfaceInputV1,
   TriageLinkedSessionProjectionV1,
@@ -63,6 +62,7 @@ import {
   type TriageDetailPanelNavigationV1,
   type TriageSourcePanelActionsV1,
   type TriageDetailPrimaryWriteV1,
+  type TriageDetailStatusOfferV1,
 } from '@happier-dev/triage-sources/ui';
 
 import {
@@ -973,10 +973,10 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   }, [primaryWriteKey]);
   // The change request's live status for the header's facts, kept per mounted connection like the write it sits beside.
   const [statusRecord, setStatusRecord] = React.useState<Readonly<{
-    key: string | null; value: SessionPullRequestNativeStatusV1 | null;
+    key: string | null; value: TriageDetailStatusOfferV1 | null;
   }> | null>(null);
   const sourceStatus = statusRecord?.key === primaryWriteKey ? statusRecord.value : null;
-  const offerStatus = React.useCallback((value: SessionPullRequestNativeStatusV1 | null) => {
+  const offerStatus = React.useCallback((value: TriageDetailStatusOfferV1 | null) => {
     setStatusRecord((current) => value === null && current?.key !== primaryWriteKey
       ? current : { key: primaryWriteKey, value });
   }, [primaryWriteKey]);
@@ -998,7 +998,8 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     : false;
   const sourceDescriptor = props.lastKnown === true ? null : readTriageSourceDescriptorV1(context, row.entryRef.source);
   // The header's change facts read the source's own live status offer, the value its write carries: never a second read.
-  const pullRequestStatus = sourceStatus === null || sourceStatus.kind === 'unavailable' ? null : sourceStatus.value;
+  const detailSourceStatus = sourceStatus?.kind === 'detail' ? sourceStatus : undefined;
+  const pullRequestStatus = sourceStatus?.kind === 'current' || sourceStatus?.kind === 'stale' ? sourceStatus.value : null;
   // A source need not offer live PR status. Only the detail's own pending read can hold these cells open.
   const statusReading = sourceStatus === null && detail?.kind === 'reading';
   const detailFailed = readFailure !== undefined || detail?.kind === 'unreachable'
@@ -1011,10 +1012,11 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     linkedSessions,
     linkedSessionsHasMore,
     pullRequestStatus,
+    sourceStatus: detailSourceStatus,
     pullRequestStatusReading: statusReading,
     pullRequestDetailFailed: detailFailed,
     text,
-  }), [detailFailed, linkedSessions, linkedSessionsHasMore, props.connectionLabel, props.lanes, pullRequestStatus, row, sourceDescriptor, statusReading, text]);
+  }), [detailFailed, detailSourceStatus, linkedSessions, linkedSessionsHasMore, props.connectionLabel, props.lanes, pullRequestStatus, row, sourceDescriptor, statusReading, text]);
 
   const completePostMutation = props.completePostMutation;
   const refreshLinkedSessions = detail?.kind === 'ready' ? detail.refreshLinkedSessions : undefined;

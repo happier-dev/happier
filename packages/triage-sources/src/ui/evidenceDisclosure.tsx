@@ -1,8 +1,9 @@
 import * as React from 'react';
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginUiActionControlController, PluginUiContributionIdentityV1 } from '@happier-dev/plugin-sdk/ui';
-import type { SessionPullRequestNativeStatusV1 } from '@happier-dev/triage-protocol/v1';
+import type { SessionPullRequestNativeStatusV1, TriageRowFactStatusToneV1 } from '@happier-dev/triage-protocol/v1';
 
+import type { TriageDetailChecksRollupV1, TriageDetailFailingCheckV1 } from './detailStory.js';
 import { resolveTriageCrossCopyContext } from './crossCopyContext.js';
 import type { TriageEvidenceCandidateV1, TriageSourcePanelOperationV1, TriageSourcePanelResultV1 } from './sourcePanelProtocol.js';
 export type { TriageEvidenceCandidateV1 } from './sourcePanelProtocol.js';
@@ -52,16 +53,29 @@ export type TriageDetailPrimaryWriteV1 = Readonly<{
   execute(methodId?: string): Promise<void>;
 }>;
 
+/** The facts already projected by a contributor's mounted detail. Null means the read did not supply the fact. */
+export type TriageDetailSourceStatusV1 = Readonly<{
+  kind: 'detail';
+  merge: Readonly<{ value: string; tone: TriageRowFactStatusToneV1 }> | null;
+  checks: 'reading' | 'empty' | Readonly<{
+    rollup: TriageDetailChecksRollupV1;
+    failing?: readonly TriageDetailFailingCheckV1[];
+  }> | null;
+  review?: 'reading' | Readonly<{ kind: 'approved' | 'reviewRequired'; people: readonly string[] }>;
+}>;
+
+export type TriageDetailStatusOfferV1 = SessionPullRequestNativeStatusV1 | TriageDetailSourceStatusV1;
+
 export type TriageDetailPrimaryWriteHostV1 = Readonly<{
   /** Allows the source's existing actions panel to consume the same offer. */
   value?: TriageDetailPrimaryWriteV1 | null;
   offer(write: TriageDetailPrimaryWriteV1 | null): void;
   /**
    * The change request's live status for the header's facts row, offered whether or not a write is: a merged pull
-   * request still has a diff size and reviewers. The same value a write carries as `nativeStatus`, never a second
-   * read; `null` withdraws it.
+   * request can still have checks. The contributor offers its native status or the facts its detail already reads.
+   * `null` withdraws the offer.
    */
-  offerStatus?(status: SessionPullRequestNativeStatusV1 | null): void;
+  offerStatus?(status: TriageDetailStatusOfferV1 | null): void;
 }>;
 
 /**

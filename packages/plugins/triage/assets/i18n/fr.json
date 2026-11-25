@@ -463,6 +463,7 @@
   "plugins.triage.surface.detail.openedBy": "{author} l’a ouvert {age}",
   "plugins.triage.surface.detail.via": "via {name}",
   "plugins.triage.surface.detail.facts.status": "Statut",
+  "plugins.triage.surface.detail.facts.unavailable": "Indisponible auprès de cette source",
   "plugins.triage.surface.detail.facts.checks": "Vérifications",
   "plugins.triage.surface.detail.facts.reviewers": "Relecteurs",
   "plugins.triage.surface.detail.reviewers.more": "{names} +{count}",

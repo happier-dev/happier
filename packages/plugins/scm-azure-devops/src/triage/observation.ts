@@ -261,6 +261,8 @@ function projectRowFacts(facts: readonly AzureRowFact[]): Readonly<{
   return { facts: projected, truncated: labelSummary.truncated };
 }
 
+export const AZURE_MERGE_STATUS_FACT_ID = 'azure-devops/merge-status';
+
 function projectRowFact(fact: Exclude<AzureRowFact, Readonly<{ kind: 'label' }>>): TriageRowFactV1 {
   switch (fact.kind) {
     case 'reviewerVote':
@@ -276,7 +278,7 @@ function projectRowFact(fact: Exclude<AzureRowFact, Readonly<{ kind: 'label' }>>
       };
     case 'mergeStatus':
       return {
-        id: 'azure-devops/merge-status',
+        id: AZURE_MERGE_STATUS_FACT_ID,
         label: 'Merge',
         importance: 'primary',
         value: {
