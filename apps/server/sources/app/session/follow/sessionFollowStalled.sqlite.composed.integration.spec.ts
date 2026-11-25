@@ -1484,7 +1484,7 @@ describe('session → Follow WorkerUpdate acceptance', () => {
         expect(await db.sessionMessage.count({ where: { sessionId: f.destination.id, acceptedTurnId: 'receiver-turn' } })).toBe(1);
     });
 
-    it('rejoins accepted original custody after a pre-commit ACK failure, new occurrence, publisher restart and route change', async () => {
+    it('rejoins accepted original custody after a pre-commit ACK failure and leaves the unrepresented suffix in order', async () => {
         const f = await fixture();
         await f.follow();
         const original = await f.originals();
@@ -1495,6 +1495,7 @@ describe('session → Follow WorkerUpdate acceptance', () => {
         await Promise.allSettled(f.acknowledgements);
         expect(await db.sessionMessage.count({ where: { sessionId: f.destination.id, acceptedTurnId: 'receiver-turn' } })).toBe(1);
         const secondSeq = await f.appendReport('Occurrence B');
+        const suffix = [await f.appendReport('Occurrence C'), await f.appendReport('Occurrence D')];
         await db.session.update({ where: { id: f.destination.id }, data: { publisherGeneration: 2n } });
         await f.detachManager();
         await f.follow({ preset: 'everything' });
@@ -1508,9 +1509,23 @@ describe('session → Follow WorkerUpdate acceptance', () => {
         expect(await Promise.all(f.acknowledgements.slice(1))).toEqual([
             expect.objectContaining({ ok: true, delivered: expect.objectContaining({ transcriptSeq: secondSeq }) }),
         ]);
+        const pending = await db.sessionPendingMessage.findMany({
+            where: { sessionId: f.destination.id, status: 'queued' },
+            orderBy: [{ position: 'asc' }, { createdAt: 'asc' }, { localId: 'asc' }],
+        });
+        expect(pending.map(row => {
+            const occurrence = readStoredSessionInputAdmissionReceipt(row.inputAdmissionReceipt)?.followDeliveryV1?.original;
+            return occurrence && 'sourceMessage' in occurrence ? occurrence.sourceMessage.seq : null;
+        })).toEqual(suffix);
+        expect(await db.sessionMessage.count({ where: { sessionId: f.destination.id, acceptedTurnId: 'receiver-turn' } })).toBe(2);
+        for (const row of pending) {
+            const next = await original.prepare('natural');
+            expect(next?.representedFollowLocalInputIds).toEqual([row.localId]);
+            await original.accept(next!);
+        }
         expect((await f.observe()).observations).toEqual([]);
         expect(await original.prepare('natural')).toBeNull();
-        expect(await db.sessionMessage.count({ where: { sessionId: f.destination.id, acceptedTurnId: 'receiver-turn' } })).toBe(2);
+        expect(await db.sessionMessage.count({ where: { sessionId: f.destination.id, acceptedTurnId: 'receiver-turn' } })).toBe(4);
     });
 
     it.each([
