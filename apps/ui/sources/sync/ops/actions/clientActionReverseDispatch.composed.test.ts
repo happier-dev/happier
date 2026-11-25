@@ -141,7 +141,7 @@ afterEach(async () => {
 });
 
 describe('admitted app Actions and daemon-to-app continuations', () => {
-  it('runs the same reviewed Team Setup batch for Joined Setup and an Agent on the requester App', async () => {
+  it.each(['agent', 'cli'] as const)('runs the same reviewed Team Setup batch for Joined Setup and a %s caller on the requester App', async surface => {
     const actionId = TEAM_SETUP_RUN_ACTION_ID_V1;
     const machine = createMachineFixture({ id: 'selected-machine', activeAt: Date.now(),
       storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
@@ -199,15 +199,15 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
         },
       }));
       const caller = createActionExecutor({ clientActionExecute: reverse });
-      const agent = (actionRequestId: string) => caller.execute(actionId, input, {
-        surface: 'agent', authority: 'account_automation', runtimeAccountId: 'relay-account',
-        defaultSessionId: 'background-session', serverId, actionRequestId, signal,
+      const requestReview = (actionRequestId: string) => caller.execute(actionId, input, {
+        surface, authority: surface === 'cli' ? 'present_user' : 'account_automation', runtimeAccountId: 'relay-account',
+        ...(surface === 'agent' ? { defaultSessionId: 'background-session' } : {}), serverId, actionRequestId, signal,
       });
       expect(await receive({ v: 1, actionId, input, context: { surface: 'ui', authority: 'present_user' } }, { signal }))
         .toMatchObject({ execution: { ok: false, errorCode: 'admission_unavailable' } });
-      expect(await agent('decline')).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+      expect(await requestReview('decline')).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
       expect(openPaths).toEqual([]);
-      expect(await agent('accept')).toMatchObject(accepted);
+      expect(await requestReview('accept')).toMatchObject(accepted);
       expect(review).toHaveBeenCalledTimes(2);
       expect(openPaths).toEqual(['/waiting', '/ready']);
     } finally {

@@ -1082,12 +1082,12 @@ export function resolveActionExecutionPlacementForInput(
 }
 
 export function requiresRequesterAppReview(
-  spec: Pick<ActionSpec, 'approvalPolicy'>,
+  spec: Pick<ActionSpec, 'approvalPolicy' | 'cli'>,
   input: unknown,
   caller: Readonly<{ kind: string }> | undefined,
   surface: keyof ActionSurfaces | null | undefined,
 ): boolean {
-  if (surface !== 'agent' && surface !== 'mcp') return false;
+  if (surface !== 'agent' && surface !== 'mcp' && !(surface === 'cli' && spec.cli)) return false;
   const review = spec.approvalPolicy?.requesterAppReview;
   return review === true || review?.(input, caller) === true;
 }

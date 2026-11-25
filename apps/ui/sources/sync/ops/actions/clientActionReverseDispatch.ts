@@ -4,6 +4,7 @@ import {
     withoutClientActionInput,
 } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { getActionSpec, requiresRequesterAppReview } from '@happier-dev/protocol/actions/actionSpecs';
+import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
 import { projectKnownAccountAuthorityRetirementReceipt } from '@happier-dev/protocol/actions/accountAuthorityRetirement';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createActionConfirmationPresenter } from './actionConfirmationPresenter';
@@ -39,8 +40,9 @@ export function createUiClientActionReverseHandler(binding: Readonly<{
             };
             const execution = spec.approvalPolicy?.requesterAppReview
                 ? await (async () => {
+                    const personAtCli = admitted.surface === 'cli' && isPresentUserHostInvocation(admitted);
                     if (!requiresRequesterAppReview(spec, input, admitted.actionCaller, admitted.surface)
-                        || admitted.authority !== 'account_automation' || admitted.externalActionCredential) {
+                        || (admitted.authority !== 'account_automation' && !personAtCli) || admitted.externalActionCredential) {
                         return failure('admission_unavailable').execution;
                     }
                     // The Machine can propose an exact input. Only a press on the

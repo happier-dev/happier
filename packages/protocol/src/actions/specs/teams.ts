@@ -588,7 +588,8 @@ function createTeamActionSpecs(): TeamActionSpecs {
     id: TEAM_SETUP_RUN_ACTION_ID_V1, title: 'Set up Team projects',
     description: 'Ask the requester to review the selected Machine setup and checkouts on their App, then run them in order.',
     executionPlacement: 'client', requiredAuthority: 'account_automation', safety: 'danger', sideEffectClass: 'write',
-    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false }, placements: [],
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false }, placements: [],
+    cli: { commands: [], acceptsServerId: true, requiresServerId: true },
     inputSchema: TeamSetupBatchInputV1Schema, outputSchema: TeamSetupBatchResultV1Schema,
     approval: { flow: 'blocking', result: 'required' }, approvalPolicy: { uiConfirmation: 'policy', requesterAppReview: true },
     approvalPresentation: { summary: (value, context) => {

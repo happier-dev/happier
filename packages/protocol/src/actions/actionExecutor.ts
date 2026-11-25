@@ -3884,7 +3884,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
       options?.onAutomationAdmission?.(ctx);
     }
-    if (actionId === TEAM_SETUP_RUN_ACTION_ID_V1 && !existingAdmission && isPresentUserHostInvocation(ctx)) {
+    if (actionId === TEAM_SETUP_RUN_ACTION_ID_V1 && !requesterAppReview && !existingAdmission && isPresentUserHostInvocation(ctx)) {
       const setup = TeamSetupBatchInputV1Schema.parse(admittedInput);
       if (!ctx.serverId || !isSameHome(setup.serverId, ctx.serverId, ctx) || !isSameHome(setup.homeId, ctx.serverId, ctx)) {
         return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
@@ -4734,7 +4734,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // A captured keyholder can execute this exact client Action locally.
       // Preserve generic reverse delivery only when that native port is absent.
       const hasNativeClientEffect = actionId === 'teams.credentials.usage.export' && deps.teamCredentialUsageExport !== undefined
-        || actionId === TEAM_SETUP_RUN_ACTION_ID_V1 && isPresentUserHostInvocation(ctx)
+        || actionId === TEAM_SETUP_RUN_ACTION_ID_V1 && !requesterAppReview && isPresentUserHostInvocation(ctx)
         || isMachineManagedInstallationActionIdV1(actionId) && deps.machineManagedInstallationRespond !== undefined
         || isPluginCollectionSharingActionIdV1(actionId) && deps.pluginCollectionSharingAction !== undefined;
       if (admittedClientContext && deps.clientActionExecute && !existingAdmission?.clientExecutionContinued
