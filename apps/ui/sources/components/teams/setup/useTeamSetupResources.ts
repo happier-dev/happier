@@ -15,8 +15,8 @@ export type TeamSetupResourceContext = Readonly<Pick<TeamSectionContext, 'scope'
     preview?: boolean;
 }>;
 
-/** Mount after invitation admission; each resource retains its owner's projection and refusal. */
-export function useTeamSetupResources(context: TeamSetupResourceContext) {
+/** Counts and names shared by Joined and the full setup page. */
+export function useTeamSetupResourceSummary(context: TeamSetupResourceContext) {
     const sharedResources = useTeamSharedResourcesSummary({
         scope: context.scope, address: context.address, enabled: !context.preview,
     });
@@ -33,17 +33,30 @@ export function useTeamSetupResources(context: TeamSetupResourceContext) {
         sharedWithTeamId: context.address.teamId,
         repositoryFacts: false,
     });
+    return {
+        sharedResources,
+        defaults,
+        managedDefaultsStatus: context.team.policy.managedDefaultsStatus,
+        preset: !context.preview && placement?.kind === 'preset' ? preset : null,
+        sources,
+    };
+}
+
+/** Setup also needs the credential choices for binding keys. */
+export function useTeamSetupResources(context: TeamSetupResourceContext) {
+    const summary = useTeamSetupResourceSummary(context);
+    const rows = summary.sources.state.rows;
     // Repository-free Sources still carry shared setup/defaults. Keep them visible;
     // only repository selectors can enter the native clone plan.
     const sourceKinds = React.useMemo(() => {
         // The scoped Source catalog distinguishes whole-Team access from the viewer's Group grants.
-        const rows = context.preview ? sources.state.rows.filter(source =>
-            source.sharedWithTeamScope === 'team' || source.sharedWithTeamScope === 'team_and_group') : sources.state.rows;
+        const visible = context.preview ? rows.filter(source =>
+            source.sharedWithTeamScope === 'team' || source.sharedWithTeamScope === 'team_and_group') : rows;
         return {
-            repositorySources: rows.filter(source => source.repository !== undefined),
-            repositoryFreeSources: rows.filter(source => source.repository === undefined),
+            repositorySources: visible.filter(source => source.repository !== undefined),
+            repositoryFreeSources: visible.filter(source => source.repository === undefined),
         };
-    }, [context.preview, sources.state.rows]);
+    }, [context.preview, rows]);
     const credentialFeatureEnabled = useFeatureEnabled('teams.credentialResources', {
         scopeKind: 'spawn', serverId: context.scope.serverId,
     });
@@ -55,11 +68,7 @@ export function useTeamSetupResources(context: TeamSetupResourceContext) {
         scope: context.scope, resources: credentials.resources, enabled: credentialsEnabled,
     });
     return {
-        sharedResources,
-        defaults,
-        managedDefaultsStatus: context.team.policy.managedDefaultsStatus,
-        preset: !context.preview && placement?.kind === 'preset' ? preset : null,
-        sources,
+        ...summary,
         ...sourceKinds,
         credentials,
         credentialsEnabled,
@@ -67,5 +76,4 @@ export function useTeamSetupResources(context: TeamSetupResourceContext) {
     };
 }
 
-/** Owner statuses stay intact for Joined summaries and the demanded setup page. */
 export type TeamSetupResources = ReturnType<typeof useTeamSetupResources>;

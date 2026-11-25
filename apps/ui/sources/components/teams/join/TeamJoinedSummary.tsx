@@ -3,7 +3,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import type { TeamSharedResourceSummaryRowV1 } from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
 
 import {
-  useTeamSetupResources,
+  useTeamSetupResourceSummary,
   type TeamSetupResourceContext,
 } from '@/components/teams/setup/useTeamSetupResources';
 import { TEAM_SHARED_KIND_PRESENTATION } from '@/components/settings/teams/shared/teamSharedKindPresentation';
@@ -122,7 +122,7 @@ export const TeamJoinedSummary = React.memo(function TeamJoinedSummary(
     context: TeamSetupResourceContext;
   }>,
 ) {
-  const resources = useTeamSetupResources(props.context);
+  const resources = useTeamSetupResourceSummary(props.context);
   const { kinds, status } = resources.sharedResources;
   const presetName =
     resources.preset?.state.value && 'name' in resources.preset.state.value

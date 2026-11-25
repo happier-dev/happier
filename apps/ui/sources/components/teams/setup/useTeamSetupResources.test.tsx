@@ -7,6 +7,7 @@ import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/m
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
+import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { act } from 'react-test-renderer';
 
@@ -143,7 +144,11 @@ it.each([
 ])('shows the admitted Project Source total in Joined and setup for $sources', async ({ firstRepository, secondRepository }) => {
     onTestFinished(await installRealActionExecutorModuleLoader());
     const serverId = await homes.addHome({ name: 'Joined Home', serverUrl: 'https://joined-resources.example.test',
-        serverIdentityId: 'srv_joined_resources', accountId: 'member', currentAccount: true, teamsEnabled: true });
+        serverIdentityId: 'srv_joined_resources', accountId: 'member', currentAccount: true,
+        teamsEnabled: true, credentialResourcesEnabled: true });
+    homes.answer(serverId, TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, {
+        body: { resources: [], nextCursor: null, failures: [] },
+    });
     const scopeHook = await renderHook(() => useServerCredentialAccountScopeBinding(serverId));
     await waitForHomeGovernance(() => expect(scopeHook.getCurrent().binding?.isCurrent()).toBe(true));
     const lifetime = scopeHook.getCurrent().binding!;
@@ -185,6 +190,7 @@ it.each([
         expect(screen.getTextContent()).not.toContain(t('teams.join.summary.repositories', { count: 2 }));
         expect(screen.findByTestId('joined-resources-credentials')).not.toBeNull();
         expect(screen.getTextContent()).toContain(t('teams.join.summary.unavailable'));
+        expect(homes.requestsFor(TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1)).toHaveLength(0);
         expect(screen.findByTestId('joined-resources-sessions')).toBeNull();
         expect(screen.findByTestId('joined-action')).not.toBeNull();
     } finally { await screen.unmount(); }
@@ -197,6 +203,7 @@ it.each([
     try {
         const row = secondRepository ? 'team-setup-repository:shared-tools' : 'team-setup-source:shared-tools';
         await waitForHomeGovernance(() => expect(setup.findByTestId(row), setup.getTextContent()).not.toBeNull());
+        await waitForHomeGovernance(() => expect(homes.requestsFor(TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1)).toHaveLength(1));
         expect(setup.findByTestId('team-setup-empty')).toBeNull();
         if (!secondRepository) expect(setup.findByTestId('team-setup-repository-include:shared-tools')).toBeNull();
     } finally { await setup.unmount(); await scopeHook.unmount(); }
