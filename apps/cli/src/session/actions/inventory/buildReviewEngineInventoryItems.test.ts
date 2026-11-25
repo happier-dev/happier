@@ -394,7 +394,7 @@ describe('buildReviewEngineInventoryItems', () => {
     })).map((item) => item.engineId)).toEqual(['claude', 'opencode']);
   });
 
-  it('lists an enabled configured ACP backend using its concrete target identity', async () => {
+  it('projects Session-only and configured ACP reviewers with real catalog readiness and Account exclusions', async () => {
     const contribution = projectManifestAgentContribution({
       pluginId: 'happier.agent.custom-acp', provenance: 'first_party', source: { kind: 'bundled' },
       definition: PluginAgentContributionV2Schema.parse({ id: 'custom-acp', title: 'Custom ACP Agent',
@@ -402,11 +402,26 @@ describe('buildReviewEngineInventoryItems', () => {
           open: ['create'], delivery: ['newTurn'], cancel: true,
         } } }),
     });
-    registryMocks.getResolvedContributionRegistry.mockReturnValue({
-      agentDefinitionsById: new Map([[contribution.id, contribution]]),
-      catalogEntriesById: {},
-      executionRunProfiles: [],
+    const sessionAgent = projectManifestAgentContribution({
+      pluginId: 'acme.review', provenance: 'external', source: { kind: 'path' },
+      definition: PluginAgentContributionV2Schema.parse({ id: 'session-reviewer', title: 'Session reviewer',
+        primary: 'sessions', runtime: { kind: 'custom' }, capabilities: { sessions: {
+          open: ['create'], delivery: ['newTurn'], cancel: true,
+        } } }),
     });
+    const registrySnapshot = { agentDefinitionsById: new Map([contribution, sessionAgent].map(agent => [agent.id, agent])),
+      executionRunProfiles: [] };
+    const profileCatalog = buildExecutionRunProfileCatalog([]);
+    // Machine inventory is the external OS/process observation; projection and readiness remain real.
+    const machinesAgentsList = async () => ({ items: [
+      { agentId: sessionAgent.id, installed: true },
+      { agentId: contribution.id, definitionId: 'review-bot', installed: false },
+    ].map(target => ({ ...target, title: target.agentId, version: null, latestVersion: null,
+      update: { supported: false, command: null }, signIn: { status: 'signedIn', loginSupport: 'unsupported' },
+      platform: { supported: true }, install: { available: true, mode: 'manual', sizeBytes: null, guideUrl: null }, dependencies: [],
+    })) });
+    const readReadiness = (targets: readonly string[]) => readAgentTargetReadinessV1({ machinesAgentsList },
+      'machine-1', targets.map(parseBackendTargetKeyV2), {});
     const acpCatalogSnapshot = { status: 'ready', revision: 3, record: AcpCatalogRecordV1Schema.parse({
       v: 1, definitions: [{
         id: 'review-bot', name: 'review-bot', title: 'Review Bot', launch: { kind: 'command' as const, command: 'review-bot', args: [] },
@@ -421,17 +436,24 @@ describe('buildReviewEngineInventoryItems', () => {
       [targetKey]: { v: 1, updatedAt: 1, ref: { agentTargetKey: targetKey, providerConnectionId: null, modelId: 'configured-review-model' } },
     } });
 
-    expect(await buildReviewEngineInventoryItems({ accountSettings, acpCatalogSnapshot })).toContainEqual(
-      expect.objectContaining({ engineId: targetKey, value: targetKey, label: 'Review Bot',
+    const params = { registrySnapshot, profileCatalog, acpCatalogSnapshot, readReadiness, accountSettings };
+    const inventory = await buildReviewEngineInventory(params);
+    expect(inventory.items).toEqual([
+      expect.objectContaining({ engineId: sessionAgent.id, label: 'Session reviewer', enabled: true,
+        available: true, readiness: 'ready' }),
+      expect.objectContaining({ engineId: targetKey, value: targetKey, label: 'Review Bot', enabled: false,
+        available: false, readiness: 'notInstalled', unavailableCode: 'notInstalled',
         capabilities: { structuredNarration: false, sessionTranscript: true }, launchModelId: 'configured-review-model' }),
-    );
-    expect(await buildReviewEngineInventoryItems({
-      acpCatalogSnapshot,
-      accountSettings: AccountSettingsSchema.parse({
-        ...accountSettings,
-        backendEnabledByTargetKey: { [targetKey]: false },
-      }),
-    })).toEqual([]);
+    ]);
+    const sessionTargetKey = buildBackendTargetKeyV2({ kind: 'agent', identity: sessionAgent.identity! });
+    const disabledSettings = AccountSettingsSchema.parse({ ...accountSettings,
+      backendEnabledByTargetKey: { [targetKey]: false, [sessionTargetKey]: false } });
+    expect((await buildReviewEngineInventory({ ...params, accountSettings: disabledSettings })).items).toEqual([]);
+    const disabled = await buildReviewEngineInventory({ ...params, accountSettings: disabledSettings, includeDisabled: true });
+    expect(disabled.items).toEqual([
+      expect.objectContaining({ engineId: sessionAgent.id, enabled: false, available: false, unavailableCode: 'account_disabled' }),
+      expect.objectContaining({ engineId: targetKey, enabled: false, available: false, unavailableCode: 'account_disabled' }),
+    ]);
   });
 
   it('labels an installed external review Agent with its own declared title', async () => {
