@@ -16,6 +16,7 @@ import {
 import { createSessionFollowSourceHydrator } from './sessionFollowSourceHydrator';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { buildAcpAgentMessageEnvelope } from '@/api/session/acpMessageEnvelope';
+import { encryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
 import { SessionFollowInputV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import { SessionFollowSourceProjectionResponseV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceProjectionV1';
 import { createSessionFollowSourceMaterialResolver } from './sessionFollowSourceMaterialResolver';
@@ -59,7 +60,12 @@ function envelopeFor(observation: { sourceSessionId: string; destinationSessionI
 }
 
 /** HTTP/socket are boundaries; original hydration, budgeting and admission stay real. */
-function originalInputFixture(texts: readonly string[]) {
+function originalInputFixture(texts: readonly string[], encryptionMode: 'plain' | 'e2ee' = 'plain') {
+  const sourceKey = new Uint8Array(32).fill(41);
+  const encrypt = (payload: unknown) => encryptSessionPayload({
+    ctx: { encryptionKey: sourceKey, encryptionVariant: 'dataKey' }, payload,
+  });
+  const metadata = encryptionMode === 'e2ee' ? encrypt({ path: '/source', host: 'test' }) : '{}';
   const deliveries = texts.map((_text, index) => ({ localInputId: `original-input-${index + 1}`, userMessageSeq: 100 + index,
     delivery: SessionFollowInputV1Schema.parse({ v: 1, delivery: 'next_turn', event: { kind: 'message' },
       original: { sourceSessionId: 'source', sourceMessage: { localId: `original-${index + 1}`, seq: index + 1 } } }) }));
@@ -81,23 +87,31 @@ function originalInputFixture(texts: readonly string[]) {
       return { ok: true, v: 1, destinationSessionId: 'destination', sourceSessionId: 'source', delivered: request.consumed }; },
   } });
   const material = createSessionFollowSourceMaterialResolver();
+  const restoreSourceKey = () => material.installPreparedDataKey({ sourceSessionId: 'source', dataKey: sourceKey });
+  if (encryptionMode === 'e2ee') restoreSourceKey();
   const hydrateObservation = createSessionFollowSourceHydrator({ session, credentials: { token: 'token', encryption: null },
     sourceMaterialResolver: material, deps: { fetchRunnerSourceProjection: async request => {
       state.afterFetch();
       if (state.sourceError) throw state.sourceError;
       if (!state.sourceAvailable) return null;
       return SessionFollowSourceProjectionResponseV1Schema.parse({ v: 1,
-        source: { id: 'source', encryptionMode: 'plain', metadata: '{}', archivedAt: null,
+        source: { id: 'source', encryptionMode, metadata, metadataLayoutVersion: 0, archivedAt: null,
           createdAt: 1, updatedAt: 1, active: true, activeAt: 1, thinking: false, thinkingAt: null,
           latestTurnStatus: null, latestTurnStatusObservedAt: null, latestReadyEventSeq: null, latestReadyEventAt: null,
           meaningfulActivityAt: null, agentStateVersion: 0 },
-        messages: texts.flatMap((text, index) => index + 1 > request.afterTranscriptSeq && index + 1 <= request.observedTranscriptSeq
-          ? [{ seq: index + 1, localId: `original-${index + 1}`, createdAt: 1, messageRole: 'agent', content: { t: 'plain', v: {
-            ...buildAcpAgentMessageEnvelope({ provider: 'codex', body: { type: 'message', message: text } }),
-            role: state.corruptSeq === index + 1 ? 'invalid' : 'agent' } } }] : []), hasMore: false });
+        messages: texts.flatMap((text, index) => {
+          const seq = index + 1;
+          if (seq <= request.afterTranscriptSeq || seq > request.observedTranscriptSeq) return [];
+          const payload = { ...buildAcpAgentMessageEnvelope({ provider: 'codex', body: { type: 'message', message: text } }),
+            role: state.corruptSeq === seq ? 'invalid' : 'agent' };
+          return [{ seq, localId: `original-${seq}`, createdAt: 1, messageRole: 'agent',
+            content: encryptionMode === 'e2ee' ? { t: 'encrypted', c: encrypt(payload) } : { t: 'plain', v: payload } }];
+        }), hasMore: false });
     } } });
-  const reconcile = createSessionFollowContextReconciler({ session, hydrateObservation, maxFollowContextUtf8Bytes: 100_000 });
-  return { deliveries, acknowledgements, state, reconcile, dispose: () => material.dispose() };
+  const reconcile = createSessionFollowContextReconciler({
+    session, hydrateObservation, sourceMaterialController: material, maxFollowContextUtf8Bytes: 100_000,
+  });
+  return { deliveries, acknowledgements, state, reconcile, restoreSourceKey, dispose: () => material.dispose() };
 }
 
 describe('Session Follow context reconciler', () => {
@@ -198,6 +212,37 @@ describe('Session Follow context reconciler', () => {
       f.state.revoked = false;
       const recovered = await f.reconcile({ signal: new AbortController().signal, followDeliveries: f.deliveries });
       expect(recovered?.representedFollowLocalInputIds).toEqual(['original-input-1']);
+    } finally { f.dispose(); }
+  });
+
+  it('retries the same encrypted original after source grant withdrawal and publisher replacement', async () => {
+    const f = originalInputFixture(['Original'], 'e2ee');
+    try {
+      const input = { signal: new AbortController().signal, followDeliveries: f.deliveries };
+      const original = f.deliveries[0]!;
+      const prepared = await f.reconcile(input);
+      expect(prepared?.representedFollowLocalInputIds).toEqual([original.localInputId]);
+      expect(await prepared!.recheckAdmission(input.signal)).toBe(true);
+
+      // Home no longer grants this source. The reconciler handles the change
+      // and the real material owner removes the prepared standalone key.
+      f.state.revoked = true;
+      expect(await prepared!.recheckAdmission(input.signal)).toBe(false);
+      f.state.publisherGeneration = '2';
+      f.state.revoked = false;
+
+      const waitingForKey = await f.reconcile(input);
+      expect(waitingForKey?.updates).toMatchObject([{ reason: 'source_unavailable', recentMessages: [] }]);
+      expect(waitingForKey?.representedFollowLocalInputIds ?? []).toEqual([]);
+      expect(f.acknowledgements).toEqual([]);
+
+      f.restoreSourceKey();
+      const recovered = await f.reconcile(input);
+      expect(recovered?.representedFollowLocalInputIds).toEqual([original.localInputId]);
+      recovered!.acknowledgeAccepted({ kind: 'admitted_input', ...original });
+      await vi.waitFor(() => expect(f.acknowledgements).toEqual([
+        expect.objectContaining({ localInputId: original.localInputId, consumed: { ...zeroFrontier, transcriptSeq: 1 } }),
+      ]));
     } finally { f.dispose(); }
   });
 
