@@ -16988,6 +16988,10 @@ const russian: TeamsTranslationRoot = {
             offline: 'Этот Home недоступен, поэтому изменение не отправлено.',
             invalidName: 'Введите название длиной от 1 до 80 символов.',
             invalidDescription: 'Введите описание длиной не более 500 символов.',
+            invalidNameCharacters: "Удалите непечатаемые символы из названия команды.",
+            invalidDescriptionCharacters: "Удалите непечатаемые символы из описания команды.",
+            invalidTeamDetails: "Проверьте данные команды.",
+            createRequestConflict: "Этот запрос мог уже создать команду. Проверьте список команд, прежде чем отправлять новый запрос.",
         },
         directory: {
             loading: 'Загрузка команд…',

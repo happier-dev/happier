@@ -16977,6 +16977,10 @@ const catalan: TeamsTranslationRoot = {
             offline: 'Aquest Home no és accessible, així que el canvi no s’ha enviat.',
             invalidName: 'Introdueix un nom d’entre 1 i 80 caràcters.',
             invalidDescription: 'Introdueix una descripció de 500 caràcters com a màxim.',
+            invalidNameCharacters: "Treu els caràcters no imprimibles del nom de l’equip.",
+            invalidDescriptionCharacters: "Treu els caràcters no imprimibles de la descripció de l’equip.",
+            invalidTeamDetails: "Revisa les dades de l’equip.",
+            createRequestConflict: "Pot ser que aquesta sol·licitud ja hagi creat un equip. Consulta Equips abans de començar-ne una de nova.",
         },
         directory: {
             loading: 'S’estan carregant els equips…',

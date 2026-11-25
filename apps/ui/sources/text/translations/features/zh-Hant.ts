@@ -16839,6 +16839,10 @@ const traditionalChinese: TeamsTranslationRoot = {
             offline: '此 Home 無法連線，變更並未送出。',
             invalidName: '請輸入 1 到 80 個字元的名稱。',
             invalidDescription: '請輸入不超過 500 個字元的描述。',
+            invalidNameCharacters: "請從團隊名稱中移除不可列印的字元。",
+            invalidDescriptionCharacters: "請從團隊描述中移除不可列印的字元。",
+            invalidTeamDetails: "請檢查團隊詳細資料。",
+            createRequestConflict: "此請求可能已建立團隊。提出新請求前，請先查看團隊清單。",
         },
         directory: {
             loading: '正在載入團隊…',

@@ -8,7 +8,7 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 
-import { isTeamCreateOwnerRefusal, teamCreateFailureLabel, teamMutationFailureLabel, teamReadFailureAction, teamReadFailureLabel } from './teamMutationPresentation';
+import { teamMutationFailureLabel, teamReadFailureAction, teamReadFailureLabel } from './teamMutationPresentation';
 
 describe('teamReadFailureLabel', () => {
     it('distinguishes transport loss from a retryable server answer and access refusal', () => {
@@ -51,13 +51,6 @@ describe('teamMutationFailureLabel', () => {
     it('uses a single actionable sentence for a generic Team policy refusal', () => {
         expect(teamMutationFailureLabel({ kind: 'invalid', retryable: false, code: 'invalid_team_input' }, 'policy'))
             .toBe('teams.errors.policySaveFailed');
-    });
-
-    it('keeps managed Team creation causes at the presenter owner', () => {
-        const failure = { kind: 'invalid' as const, retryable: false, code: 'invalid_team_input' };
-        expect(isTeamCreateOwnerRefusal(failure)).toBe(true);
-        expect(teamCreateFailureLabel(failure, false)).toBe('teams.create.initialOwnerRequired');
-        expect(teamCreateFailureLabel(failure, true)).toBe('teams.create.initialOwnerIneligible');
     });
 
     it('distinguishes sign-in qualification from role permission for reads and mutations', () => {

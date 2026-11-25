@@ -48,12 +48,14 @@ import { createTeam, setTeamLogo } from '@/sync/ops/teams/teamOperations';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
 import { t } from '@/text';
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
+import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
+import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 
 import { teamDetailPath, teamsDirectoryPath } from './teamsRoutes';
 import { TeamLogoPicker } from './TeamLogoPicker';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import { isApprovalRequestV2InFlightStatus } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { isTeamCreateOwnerRefusal, teamCreateFailureLabel, teamMutationFailureLabel } from './teamMutationPresentation';
+import { presentTeamCreateFailure, teamMutationFailureLabel } from './teamMutationPresentation';
 
 
 type CommittedTeam = Readonly<{
@@ -414,7 +416,6 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
                 if (uploaded && !committedTeam.logoSource) openCreatedTeam(committedTeam);
                 return;
             }
-            const submittedOwner = mayNameInitialOwner && initialOwner !== null;
             const submission: Omit<CommittedTeam, 'team'> = {
                 scope: selected.scope,
                 logoSource,
@@ -439,6 +440,16 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
                 // must upload to this ID, never repeat Team creation.
                 await uploadLogo(committed);
             };
+            const explainRefusal = (failure: HomeDomainFailure<string>) => {
+                const { message, ownerRecovery } = presentTeamCreateFailure(failure);
+                setError(message);
+                if (ownerRecovery === 'show_picker') {
+                    if (administrationServerId) void refreshHomeGovernanceSnapshot(submission.scope);
+                    else eligibility.refresh();
+                } else if (ownerRecovery === 'choose_another') {
+                    setInitialOwner((current) => current?.accountId === initialOwner?.accountId ? null : current);
+                }
+            };
             const outcome = await createTeam({
                 scope: submission.scope,
                 name: nameValidation.name,
@@ -460,22 +471,13 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
                         setSubmitting(false);
                     }
                 },
-                onApprovalFailed: (code, failure) => setError(teamCreateFailureLabel({
-                    kind: 'unknown', code, retryable: false, details: failure?.details,
-                }, submittedOwner)),
+                onApprovalFailed: (code, failure) => explainRefusal(homeDomainFailureFromActionFailure(failure ?? { errorCode: code }, 'teams.create')),
             });
             if (outcome.kind === 'succeeded') {
                 await commitCreatedTeam(outcome.team);
                 return;
             }
-            // The form is preserved so a rejected submission is never retyped, and
-            // the retry identity is kept so a repeat is the same submission.
-            // Name and description passed the Home's own validators above, so a Home that
-            // still calls the input invalid is refusing the first owner: none was named
-            // under managed creation, or the named Account can no longer hold the Team.
-            const ownerRefused = isTeamCreateOwnerRefusal(outcome.failure);
-            if (ownerRefused && !submittedOwner) eligibility.refresh();
-            setError(teamCreateFailureLabel(outcome.failure, submittedOwner));
+            explainRefusal(outcome.failure);
         } catch (cause) {
             // An explicit UI-approval requirement defers the creation instead of
             // reaching the Home. Registering this exact request is what lets the
@@ -490,7 +492,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
             submissionInFlightRef.current = false;
             setSubmitting(false);
         }
-    }, [selected, nameValidation, descriptionValidation, mayNameInitialOwner, initialOwner, committedTeam, uploadLogo, logoSource, openCreatedTeam, requestApproval, eligibility, approvalPending]);
+    }, [selected, nameValidation, descriptionValidation, mayNameInitialOwner, initialOwner, committedTeam, uploadLogo, logoSource, openCreatedTeam, requestApproval, eligibility, approvalPending, administrationServerId]);
 
     const scopeResolutionPending = requestedServerIds.some((serverId) => {
         const resolution = scopeResolutions.get(serverId);

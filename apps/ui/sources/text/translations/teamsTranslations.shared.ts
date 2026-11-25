@@ -216,6 +216,10 @@ export const english = {
             offline: 'This Home is unreachable, so the change was not sent.',
             invalidName: 'Enter a name between 1 and 80 characters.',
             invalidDescription: 'Enter a description of 500 characters or fewer.',
+            invalidNameCharacters: "Remove non-printing characters from the Team name.",
+            invalidDescriptionCharacters: "Remove non-printing characters from the Team description.",
+            invalidTeamDetails: "Review the Team details.",
+            createRequestConflict: "This request may already have created a Team. Check Teams before starting a new request.",
         },
         directory: {
             loading: 'Loading Teams…',

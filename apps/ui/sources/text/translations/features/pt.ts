@@ -16949,6 +16949,10 @@ const portuguese: TeamsTranslationRoot = {
             offline: 'Este Home está inacessível, por isso a alteração não foi enviada.',
             invalidName: 'Introduza um nome entre 1 e 80 caracteres.',
             invalidDescription: 'Introduza uma descrição com 500 caracteres ou menos.',
+            invalidNameCharacters: "Remova os caracteres não imprimíveis do nome da equipa.",
+            invalidDescriptionCharacters: "Remova os caracteres não imprimíveis da descrição da equipa.",
+            invalidTeamDetails: "Reveja os dados da equipa.",
+            createRequestConflict: "Este pedido pode já ter criado uma equipa. Consulte a lista de equipas antes de iniciar um novo pedido.",
         },
         directory: {
             loading: 'A carregar equipas…',

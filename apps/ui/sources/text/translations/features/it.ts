@@ -16963,6 +16963,10 @@ const italian: TeamsTranslationRoot = {
             offline: 'Questo Home non è raggiungibile, quindi la modifica non è stata inviata.',
             invalidName: 'Inserisci un nome da 1 a 80 caratteri.',
             invalidDescription: 'Inserisci una descrizione di massimo 500 caratteri.',
+            invalidNameCharacters: "Rimuovi i caratteri non stampabili dal nome del team.",
+            invalidDescriptionCharacters: "Rimuovi i caratteri non stampabili dalla descrizione del team.",
+            invalidTeamDetails: "Controlla i dettagli del team.",
+            createRequestConflict: "Questa richiesta potrebbe avere già creato un team. Controlla Team prima di avviare una nuova richiesta.",
         },
         directory: {
             loading: 'Caricamento dei team…',

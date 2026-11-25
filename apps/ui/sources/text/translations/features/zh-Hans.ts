@@ -16839,6 +16839,10 @@ const simplifiedChinese: TeamsTranslationRoot = {
             offline: '此 Home 无法连接，更改未发送。',
             invalidName: '请输入 1 到 80 个字符的名称。',
             invalidDescription: '请输入不超过 500 个字符的描述。',
+            invalidNameCharacters: "请从团队名称中移除不可打印的字符。",
+            invalidDescriptionCharacters: "请从团队说明中移除不可打印的字符。",
+            invalidTeamDetails: "请检查团队详情。",
+            createRequestConflict: "此请求可能已创建团队。发起新请求前，请先查看团队列表。",
         },
         directory: {
             loading: '正在加载团队…',

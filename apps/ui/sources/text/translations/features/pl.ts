@@ -16987,6 +16987,10 @@ const polish: TeamsTranslationRoot = {
             offline: 'Ten Home jest nieosiągalny, więc zmiana nie została wysłana.',
             invalidName: 'Podaj nazwę o długości od 1 do 80 znaków.',
             invalidDescription: 'Podaj opis o długości do 500 znaków.',
+            invalidNameCharacters: "Usuń znaki niedrukowalne z nazwy zespołu.",
+            invalidDescriptionCharacters: "Usuń znaki niedrukowalne z opisu zespołu.",
+            invalidTeamDetails: "Sprawdź dane zespołu.",
+            createRequestConflict: "Ta prośba mogła już utworzyć zespół. Sprawdź listę zespołów przed wysłaniem nowej prośby.",
         },
         directory: {
             loading: 'Wczytywanie zespołów…',

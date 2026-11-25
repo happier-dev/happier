@@ -16778,6 +16778,10 @@ const german: TeamsTranslationRoot = {
             offline: 'Dieses Home ist nicht erreichbar, die Änderung wurde nicht gesendet.',
             invalidName: 'Gib einen Namen mit 1 bis 80 Zeichen ein.',
             invalidDescription: 'Gib eine Beschreibung mit höchstens 500 Zeichen ein.',
+            invalidNameCharacters: "Entferne nicht druckbare Zeichen aus dem Teamnamen.",
+            invalidDescriptionCharacters: "Entferne nicht druckbare Zeichen aus der Teambeschreibung.",
+            invalidTeamDetails: "Prüfe die Teamdetails.",
+            createRequestConflict: "Mit dieser Anfrage wurde möglicherweise schon ein Team erstellt. Prüfe die Teamliste, bevor du eine neue Anfrage startest.",
         },
         directory: {
             loading: 'Teams werden geladen…',

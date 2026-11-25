@@ -17020,6 +17020,10 @@ const french: TeamsTranslationRoot = {
             offline: 'Ce Home est injoignable, la modification n’a pas été envoyée.',
             invalidName: 'Saisis un nom de 1 à 80 caractères.',
             invalidDescription: 'Saisis une description de 500 caractères maximum.',
+            invalidNameCharacters: "Retire les caractères non imprimables du nom de l’équipe.",
+            invalidDescriptionCharacters: "Retire les caractères non imprimables de la description de l’équipe.",
+            invalidTeamDetails: "Vérifie les informations de l’équipe.",
+            createRequestConflict: "Cette demande a peut-être déjà créé une équipe. Consulte Équipes avant de lancer une nouvelle demande.",
         },
         directory: {
             loading: 'Chargement des équipes…',

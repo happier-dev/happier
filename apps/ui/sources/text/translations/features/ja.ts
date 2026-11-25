@@ -16899,6 +16899,10 @@ const japanese: TeamsTranslationRoot = {
             offline: 'この Home に接続できないため、変更は送信されませんでした。',
             invalidName: '1〜80 文字の名前を入力してください。',
             invalidDescription: '説明は 500 文字以内で入力してください。',
+            invalidNameCharacters: "チーム名から印字できない文字を取り除いてください。",
+            invalidDescriptionCharacters: "チームの説明から印字できない文字を取り除いてください。",
+            invalidTeamDetails: "チームの詳細を確認してください。",
+            createRequestConflict: "このリクエストでチームがすでに作成されている可能性があります。新しいリクエストを始める前に、チーム一覧を確認してください。",
         },
         directory: {
             loading: 'チームを読み込んでいます…',

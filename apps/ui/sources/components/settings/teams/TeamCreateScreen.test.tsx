@@ -448,7 +448,9 @@ describe('TeamCreateScreen', () => {
         harness.answer(home, ELIGIBILITY_PATH, {
             body: { teamsEnabled: true, createTeam: true, createTeamForChosenAccount: false },
         });
-        harness.answer(home, TEAM_CREATE_PATH, { status: 400, body: { error: 'invalid_team_input' } });
+        harness.answer(home, TEAM_CREATE_PATH, {
+            status: 400, body: { error: 'invalid_team_input', details: { field: 'initialOwnerAccountId', reason: 'required' } },
+        });
 
         const screen = await renderCreate();
         await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('teams-create-submit'));
@@ -467,6 +469,75 @@ describe('TeamCreateScreen', () => {
         await vi.waitFor(() => {
             expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('teams-create-owner-search');
         });
+        expect(harness.requestsFor(TEAM_CREATE_PATH)).toHaveLength(1);
+        expect(harness.requestsFor(TEAM_CREATE_PATH)[0]?.input).not.toHaveProperty('initialOwnerAccountId');
+        expect(screen.findByTestId('teams-create-name')?.props.value).toBe('Platform');
+        expect(screen.findByTestId('teams-create-submit')?.props.disabled).toBe(true);
+    });
+
+    it.each([
+        ['account_ineligible', 'teams.create.initialOwnerIneligible'],
+        ['account_not_found', 'homeGovernance.errorAccountNotFound'],
+    ] as const)('keeps a named first-owner refusal (%s) distinct without refreshing the unchanged creation policy', async (reason, message) => {
+        const home = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'admin-a', teamsEnabled: true });
+        await harness.selectHomes([home]);
+        harness.answer(home, ELIGIBILITY_PATH, {
+            body: { teamsEnabled: true, createTeam: true, createTeamForChosenAccount: true },
+        });
+        harness.answer(home, HOME_ACCOUNT_SEARCH_PATH, {
+            body: { accounts: [homeAccountPickerRowFixture('owner-grace', 'Grace')] },
+        });
+        harness.answer(home, TEAM_CREATE_PATH, {
+            status: 400, body: { error: 'invalid_team_input', details: { field: 'initialOwnerAccountId', reason } },
+        });
+
+        const screen = await renderCreate();
+        await vi.waitFor(() => expect(screen.findByTestId('teams-create-owner-search')).not.toBeNull());
+        act(() => {
+            screen.changeTextByTestId('teams-create-name', 'Platform');
+            screen.changeTextByTestId('teams-create-owner-search', 'Grace');
+        });
+        await vi.waitFor(() => expect(screen.findByTestId('teams-create-owner:owner-grace')).not.toBeNull());
+        await screen.pressByTestIdAsync('teams-create-owner:owner-grace');
+        const eligibilityReads = harness.requestsFor(ELIGIBILITY_PATH).length;
+        await screen.pressByTestIdAsync('teams-create-submit');
+
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.getTextContent()).not.toContain('teams.create.initialOwnerRequired');
+        expect(screen.getTextContent()).not.toContain('teams.errors.invalidName');
+        expect(harness.requestsFor(TEAM_CREATE_PATH)).toHaveLength(1);
+        expect(harness.requestsFor(TEAM_CREATE_PATH)[0]?.input).toMatchObject({ initialOwnerAccountId: 'owner-grace' });
+        expect(harness.requestsFor(ELIGIBILITY_PATH)).toHaveLength(eligibilityReads);
+        expect(screen.findByTestId('teams-create-name')?.props.value).toBe('Platform');
+        expect(screen.findByTestId('teams-create-submit')?.props.disabled).toBe(true);
+    });
+
+    it.each([
+        { title: 'empty name', status: 400, body: { error: 'invalid_team_input', details: { field: 'name', reason: 'empty' } }, message: 'teams.errors.invalidName' },
+        { title: 'name', status: 400, body: { error: 'invalid_team_input', details: { field: 'name', reason: 'too_long' } }, message: 'teams.errors.invalidName' },
+        { title: 'name characters', status: 400, body: { error: 'invalid_team_input', details: { field: 'name', reason: 'control_characters' } }, message: 'teams.errors.invalidNameCharacters' },
+        { title: 'description', status: 400, body: { error: 'invalid_team_input', details: { field: 'description', reason: 'too_long' } }, message: 'teams.errors.invalidDescription' },
+        { title: 'description characters', status: 400, body: { error: 'invalid_team_input', details: { field: 'description', reason: 'control_characters' } }, message: 'teams.errors.invalidDescriptionCharacters' },
+        { title: 'form details', status: 400, body: { error: 'invalid_team_input' }, message: 'teams.errors.invalidTeamDetails' },
+        { title: 'the previous create request', status: 409, body: { error: 'team_conflict' }, message: 'teams.errors.createRequestConflict' },
+        { title: 'Teams turned off', status: 404, body: { error: 'teams_unavailable' }, message: 'teams.unavailable.disabled' },
+        { title: 'sign-in unavailable', status: 503, body: { error: 'team_authentication_unavailable' }, message: 'teams.credentials.externalApi.authenticationUnavailable' },
+    ])('explains a refusal about $title without asking for a first owner', async ({ status, body, message }) => {
+        const home = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'admin-a', teamsEnabled: true });
+        await harness.selectHomes([home]);
+        harness.answer(home, ELIGIBILITY_PATH, { body: { teamsEnabled: true, createTeam: true, createTeamForChosenAccount: false } });
+        harness.answer(home, TEAM_CREATE_PATH, { status, body });
+
+        const screen = await renderCreate();
+        await vi.waitFor(() => expect(screen.findByTestId('teams-create-submit')).not.toBeNull());
+        act(() => screen.changeTextByTestId('teams-create-name', 'Platform'));
+        const eligibilityReads = harness.requestsFor(ELIGIBILITY_PATH).length;
+        await screen.pressByTestIdAsync('teams-create-submit');
+
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.getTextContent()).not.toContain('teams.create.initialOwnerRequired');
+        expect(screen.findByTestId('teams-create-owner-search')).toBeNull();
+        expect(harness.requestsFor(ELIGIBILITY_PATH)).toHaveLength(eligibilityReads);
     });
 
     it('exposes Home and initial-owner choices as labeled radio groups with checked state', async () => {

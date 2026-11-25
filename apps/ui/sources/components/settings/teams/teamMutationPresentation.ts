@@ -1,5 +1,5 @@
 import { isActionApprovalDeclinedErrorCode, isActionTurnedOffErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { isTeamLegacyCredentialRefusalV1 } from '@happier-dev/protocol/teams';
+import { TeamErrorV1Schema, isTeamLegacyCredentialRefusalV1 } from '@happier-dev/protocol/teams';
 
 import type { AttentionBannerAction } from '@/components/ui/lists/AttentionBanner';
 import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
@@ -95,24 +95,47 @@ function teamFailureLabel(failure: HomeDomainFailure<string>, context?: 'authent
     }
 }
 
-/** Create-specific invalid input causes are decided here, so screens do not interpret Home codes. */
-export function teamCreateFailureLabel(
-    failure: HomeDomainFailure<string>,
-    submittedOwner: boolean,
-): string | null {
-    if (isTeamCreateOwnerRefusal(failure)) {
-        return submittedOwner ? t('teams.create.initialOwnerIneligible') : t('teams.create.initialOwnerRequired');
+/** Present the Home's refusal for either an immediate or an approved creation. */
+export function presentTeamCreateFailure(failure: HomeDomainFailure<string>): Readonly<{
+    message: string | null;
+    ownerRecovery?: 'show_picker' | 'choose_another';
+}> {
+    switch (failure.code) {
+        case 'invalid_team_input': {
+            const body = TeamErrorV1Schema.safeParse(failure.details).data;
+            const details = body?.error === failure.code ? body.details : undefined;
+            if (!details || !('field' in details)) return { message: t('teams.errors.invalidTeamDetails') };
+            switch (details.field) {
+                case 'name':
+                    return { message: details.reason === 'control_characters'
+                        ? t('teams.errors.invalidNameCharacters') : t('teams.errors.invalidName') };
+                case 'description':
+                    return { message: details.reason === 'control_characters'
+                        ? t('teams.errors.invalidDescriptionCharacters') : t('teams.errors.invalidDescription') };
+                case 'initialOwnerAccountId':
+                    if (details.reason === 'required') {
+                        return { message: t('teams.create.initialOwnerRequired'), ownerRecovery: 'show_picker' };
+                    }
+                    if (details.reason === 'account_not_found') {
+                        return { message: t('homeGovernance.errorAccountNotFound'), ownerRecovery: 'choose_another' };
+                    }
+                    if (details.reason === 'account_ineligible') {
+                        return { message: t('teams.create.initialOwnerIneligible'), ownerRecovery: 'choose_another' };
+                    }
+                    return { message: t('teams.errors.invalidTeamDetails') };
+            }
+        }
+        case 'team_conflict':
+            return { message: t('teams.errors.createRequestConflict') };
+        case 'teams_unavailable':
+            return { message: t('teams.unavailable.disabled') };
+        case 'team_authentication_unavailable':
+            return { message: t('teams.credentials.externalApi.authenticationUnavailable') };
+        case 'team_forbidden':
+            return { message: resolveActionExecutionFailureMessage(
+                { ok: false, errorCode: failure.code, details: failure.details }, teamFailureLabel(failure),
+            ) };
+        default:
+            return { message: failure.kind === 'outcome_unknown' ? t('teams.create.outcomeUnknown') : teamMutationFailureLabel(failure) };
     }
-    if (failure.kind === 'invalid') return t('teams.errors.invalidName');
-    if (failure.kind === 'outcome_unknown') return t('teams.create.outcomeUnknown');
-    if (failure.code === 'team_forbidden') {
-        return resolveActionExecutionFailureMessage(
-            { ok: false, errorCode: failure.code, details: failure.details }, teamFailureLabel(failure),
-        );
-    }
-    return teamMutationFailureLabel(failure);
-}
-
-export function isTeamCreateOwnerRefusal(failure: HomeDomainFailure<string>): boolean {
-    return failure.kind === 'invalid' && failure.code === 'invalid_team_input';
 }
