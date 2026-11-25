@@ -13,6 +13,9 @@ export const BUNDLED_MANIFEST_GRAPH = Object.freeze({
 export const ENTRY_GRAPHS = Object.freeze([
   { id: 'daemon-entry-preparation', entry: 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', cwd: 'apps/cli', tsconfig: 'apps/cli/tsconfig.runtime.json' },
   BUNDLED_MANIFEST_GRAPH,
+  { id: 'plugin-sdk-action-type-map', entry: 'packages/plugin-sdk/scripts/generateActionTypeMap.mjs',
+    cwd: 'packages/plugin-sdk', args: ['--check'],
+    postCommitPaths: /^(?:packages\/protocol\/src\/(?:actions|approvals|causes)\/|packages\/plugin-sdk\/(?:scripts\/generateActionTypeMap\.mjs$|src\/actions\/))/u },
   { id: 'daemon', entry: 'apps/cli/src/daemon/startDaemon.ts', cwd: 'apps/cli', tsconfig: 'apps/cli/tsconfig.runtime.json' },
   { id: 'cli', entry: 'apps/cli/src/index.ts', cwd: 'apps/cli', tsconfig: 'apps/cli/tsconfig.runtime.json' },
   { id: 'voice-inference-worker', entry: 'apps/cli/src/daemon/voiceInference/forkedWorker/workerEntry.ts', cwd: 'apps/cli', tsconfig: 'apps/cli/tsconfig.runtime.json' },

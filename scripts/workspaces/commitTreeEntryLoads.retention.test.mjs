@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { createInterface } from 'node:readline';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -92,90 +91,4 @@ test('the gate refuses before materializing when its scratch volume is below the
   assert.equal(result.status, 75, result.stderr);
   assert.match(result.stderr, /COMMIT_GATE_DISK_LOW/u);
   assert.equal(existsSync(cache), false);
-});
-
-for (const changesSource of [false, true]) test(changesSource
-  ? 'the entry check replaces a projection capture that changed another source file'
-  : 'projection and entry checks reuse one tree when a linked directory changes outside the capture', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'p03-tree-reuse-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const repo = join(root, 'repo');
-  const output = join(root, 'projections');
-  const projection = 'packages/plugin-sdk/src/actions/dtos/approvalsActionDtos.generated.ts';
-  const marker = join(root, 'trees');
-  const linked = join(root, 'borrowed-dependency');
-  mkdirSync(linked);
-  writeFileSync(join(linked, 'outside'), 'original');
-  mkdirSync(repo);
-  symlinkSync(linked, join(repo, 'borrowed'), process.platform === 'win32' ? 'junction' : 'dir');
-  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
-  const write = (path, contents) => {
-    const file = join(repo, path);
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, contents);
-  };
-  git('init', '-q');
-  git('config', 'user.name', 'P03 scratch test');
-  git('config', 'user.email', 'p03@test.invalid');
-  write('package.json', '{"name":"scratch","private":true}');
-  write(projection, 'old');
-  write('src/proof.txt', 'original');
-  write('packages/cli-common/registerSourceRuntime.mjs', '');
-  write('apps/stack/scripts/build/source_revision.mjs', 'export async function deriveRevisionGeneratedInputs() {}');
-  write('packages/plugin-sdk/scripts/generateActionTypeMap.mjs', `
-    import { appendFileSync, writeFileSync } from 'node:fs';
-    import { join } from 'node:path';
-    export async function prepareActionTypeMap() {
-      appendFileSync(process.env.P03_TREE_TEST_MARKER, process.cwd() + '\\n');
-      if (${changesSource}) writeFileSync('src/proof.txt', 'mutated');
-      return { outputs: new Map([[join(process.cwd(), ${JSON.stringify(projection)}), 'new']]) };
-    }
-  `);
-  write('apps/stack/scripts/perf/entry-load.mjs', `
-    import { appendFileSync, readFileSync } from 'node:fs';
-    export const ENTRY_GRAPHS = [{ id: 'fixture' }];
-    export async function loadEntryGraph() {
-      appendFileSync(process.env.P03_TREE_TEST_MARKER, process.cwd() + '\\n');
-      if (readFileSync('src/proof.txt', 'utf8') !== 'original') throw new Error('dirty capture');
-      if (readFileSync(${JSON.stringify(projection)}, 'utf8') !== 'new') throw new Error('stale projection');
-      return { graph: 'fixture', status: 'passed', elapsedMs: 0 };
-    }
-  `);
-  git('add', '.');
-  git('commit', '-qm', 'base');
-  const base = git('rev-parse', 'HEAD^{tree}');
-  const child = spawn(process.execPath, [owner, '--entry-load-commit-session'], {
-    cwd: repo, env: { ...process.env, TMPDIR: root, P03_COMMIT_TREE_WORK_DIR: root, P03_TREE_TEST_MARKER: marker },
-    stdio: ['pipe', 'pipe', 'inherit'],
-  });
-  const done = once(child, 'close');
-  const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
-  const receive = async request => {
-    child.stdin.write(JSON.stringify(request) + '\n');
-    const { value } = await lines.next();
-    return JSON.parse(value.slice('HAPPIER_COMMIT_ENTRY_LOAD_RESULT '.length));
-  };
-  try {
-    assert.equal((await lines.next()).value, 'HAPPIER_COMMIT_ENTRY_LOAD_READY');
-    assert.deepEqual(await receive({ repo, tree: base, projectionOutput: output, projections: { approvals: true } }), {});
-    writeFileSync(join(linked, 'outside'), 'independent dependency change');
-    write(projection, readFileSync(join(output, projection)));
-    rmSync(output, { recursive: true });
-    git('add', '--', projection);
-    const tree = git('write-tree');
-    const result = await receive({ repo, base, tree, installDir: repo, root, selected: ['fixture'], graphs: 1, phase: 'commit', waitForDependencies: false });
-    assert.deepEqual(result.findings, []);
-    const [generated, checked] = readFileSync(marker, 'utf8').trim().split('\n');
-    if (changesSource) assert.notEqual(checked, generated);
-    else assert.equal(checked, generated);
-    child.stdin.end();
-    assert.deepEqual(await done, [0, null]);
-    assert.equal(existsSync(generated), false);
-    assert.equal(existsSync(checked), false);
-  } finally {
-    if (child.exitCode === null && child.signalCode === null) {
-      child.stdin.end();
-      await done;
-    }
-  }
 });

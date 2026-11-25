@@ -146,11 +146,12 @@ if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(self)) {
     await loadChild(child, repoArg ? resolve(repoArg.slice('--repo-dir='.length)) : repo);
   } else {
     if (process.argv.length > 2) throw new Error('Usage: entry-load.mjs (via hstack-exec AUTO)');
+    const graphs = ENTRY_GRAPHS.filter(graph => !graph.postCommitPaths);
     let completedGraphs = 0;
     // Also reject an early process.exit(0); a trailing assertion cannot run then.
     process.once('exit', () => {
-      if (completedGraphs !== ENTRY_GRAPHS.length) {
-        writeSync(2, `Entry loads incomplete: ${completedGraphs}/${ENTRY_GRAPHS.length} graph results; missing: ${ENTRY_GRAPHS.slice(completedGraphs).map(graph => graph.id).join(', ')}\n`);
+      if (completedGraphs !== graphs.length) {
+        writeSync(2, `Entry loads incomplete: ${completedGraphs}/${graphs.length} graph results; missing: ${graphs.slice(completedGraphs).map(graph => graph.id).join(', ')}\n`);
         process.exitCode = 1;
       }
     });
@@ -160,7 +161,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(self)) {
     process.once('SIGTERM', cancel);
     try {
       // One process at a time bounds load without inventing a new worker pool.
-      for (const graph of ENTRY_GRAPHS) {
+      for (const graph of graphs) {
         const result = await loadEntryGraph(graph, { signal: controller.signal });
         console.log(JSON.stringify(result));
         completedGraphs += 1;

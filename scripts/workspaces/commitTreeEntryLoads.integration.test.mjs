@@ -344,6 +344,30 @@ test('route composition subsumes standalone server startup and defers preparatio
   assert.deepEqual((await selectCommitTreeEntryGraphs({ repo, base, tree, phase: 'deferred' })).selected, ['prepare-fixture']);
 });
 
+test('selects the Action DTO check only for post-commit Action changes', async t => {
+  const action = 'packages/protocol/src/actions/specs/approvals.ts';
+  const other = 'packages/protocol/src/workspaces/placement.ts';
+  const producer = 'packages/plugin-sdk/scripts/generateActionTypeMap.mjs';
+  const registry = "export const ENTRY_GRAPHS = [{ id: 'action-dtos', entry: " + JSON.stringify(producer)
+    + ", args: ['--check'], postCommitPaths: /^packages.protocol.src.actions./u }];";
+  const { repo, tree: base, write } = miniatureRevision(t, {
+    'apps/stack/scripts/perf/entry-graphs.mjs': registry,
+    [action]: 'export const version = 1;',
+    [other]: 'export const version = 1;',
+    [producer]: 'export {};',
+  });
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  write(other, 'export const version = 2;');
+  git('commit', '-qam', 'unrelated protocol change');
+  const middle = git('rev-parse', 'HEAD');
+  write(action, 'export const version = 2;');
+  git('commit', '-qam', 'Action schema change');
+  const tree = git('rev-parse', 'HEAD');
+  assert.deepEqual((await selectCommitTreeEntryGraphs({ repo, base, tree: middle, phase: 'deferred' })).selected, []);
+  assert.deepEqual((await selectCommitTreeEntryGraphs({ repo, base: middle, tree, phase: 'commit' })).selected, []);
+  assert.deepEqual((await selectCommitTreeEntryGraphs({ repo, base: middle, tree, phase: 'deferred' })).selected, ['action-dtos']);
+});
+
 test('a non-runtime local import closure finding refuses the exact tree before entry probes', async t => {
   const entry = 'packages/protocol/src/index.ts';
   const { repo, tree: base, write } = miniatureRevision(t, {

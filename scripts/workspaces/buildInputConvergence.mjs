@@ -255,7 +255,9 @@ export async function mountCapturedWorkspaceDependencies({ sourceDir, captureDir
   for (const dir of ['', ...workspaceDirs]) {
     const sourceModules = join(installedRoot, dir, 'node_modules');
     const modules = join(captureDir, dir, 'node_modules');
-    await mountInstalledNodeModules({ sourceModules, targetModules: modules, excludedNames: ['@happier-dev'] });
+    // Exact-tree checks may write compiler caches that must stay with the capture.
+    const excludedNames = capturedOnly ? ['@happier-dev', '.cache'] : ['@happier-dev'];
+    await mountInstalledNodeModules({ sourceModules, targetModules: modules, excludedNames });
     await mkdir(join(modules, '@happier-dev'), { recursive: true });
     const installedWorkspaces = capturedOnly ? [] : await readdir(join(sourceModules, '@happier-dev')).catch(error => { if (error.code === 'ENOENT') return []; throw error; });
     for (const name of installedWorkspaces) if (!workspaces.has(`@happier-dev/${name}`)) {

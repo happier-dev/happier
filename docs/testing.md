@@ -147,15 +147,13 @@ The SDK's separate Action/cancellation/cleanup scenario still runs in its existi
 validator suite. Existing package import-order, semantic and performance tests remain necessary for
 their narrower contracts.
 
-The exact-tree commit gate selects affected runtime entry graphs from the
-packet's workspace dependency closure. It reserves entry-load capacity
-before the commit lock and runs the selected graphs on the proposed exact tree.
-It uses that result only if the expected parent still matches the ref at
-publication. When two packets conflict
-only in generated CLI Action projections, the gate runs the bundled-plugin
-generator on the combined source tree before checking it. A conflict in
-authored source still requires the author to reconcile it. Broad entry probes
-run in the rolling post-commit report.
+The exact-tree commit gate selects affected runtime entries from the queued
+packets' workspace dependency closure. Syntax, changed local imports, eager
+cycles, and lockfile checks read Git objects. One transient tree serves all
+selected runtime entries of a passing group. The gate publishes only when
+the expected parent matches the ref. Authors reconcile conflicts in
+generated files and in authored source. Broad entry and generated-output
+checks run in the rolling post-commit report.
 
 ### Primary workload standby preparation (0.3 development)
 
@@ -741,16 +739,14 @@ The shared runtime producer (`source-bundle` running
 are served before ordinary waiters. The rolling HEAD typecheck
 (`scripts/workspaces/commitPackageTypecheck.mjs`) shares the focused-test rank, so
 focused runs are served in arrival order and later focused runs cannot starve it
-(P03 ORCH, 2026-11-17). The commit gate admits affected runtime entry loads as
-`gate-entry-loads` before taking the commit lock. The broker learns memory by command and project selection.
-At its turn the oldest writer takes the ready packets for the same ref and
-composes every patch that applies cleanly in arrival order. It regenerates
-affected approvals DTOs and bundled-plugin outputs once for the combined
-tree. The gate checks each packet's changed syntax, local imports and exports,
-eager import cycles, and dependency inputs. One entry-load check judges the
-combined tree. An affected CLI or daemon entry must load even if the parent
-has the same failure. A refusal splits the group in halves so passing packets
-can land and the gate can report the individual refusal.
+(P03 ORCH, 2026-11-17). At its turn the oldest writer composes clean queued
+patches for the same ref in arrival order. The gate checks each packet's syntax,
+changed local imports and exports, eager import cycles, and lockfile sanity
+from Git objects. A packet that fails one of these checks is excluded before
+composing its successor. For a group with affected runtime entries, one
+`gate-entry-loads` admission covers the combined tree. The grant ends with
+the check. An affected CLI or daemon entry must load even if the parent has
+the same failure. A combined-tree entry refusal splits the group in halves.
 Each packet retains its own commit and post-commit report. The gate publishes
 the passing commit chain with one ref update. It verifies the expected parent
 and order under the lock. New younger arrivals wait for the next group.
@@ -774,8 +770,10 @@ without scanning untouched importers or consulting checkout files.
 The existing rolling checks run full package and app typechecks. An incomplete
 app comparison leaves its checked checkpoint in place so the next run can retry
 the range. The post-commit report compares Protocol and Plugin SDK declarations against
-the exact parent and runs the broader entry, bundle and export checks.
-An entry is newly failing only when its graph name passed at the parent.
+the exact parent and runs broader entry, bundle, export, and generated-output
+checks. Bundled plugin manifests and affected Plugin SDK Action DTOs use
+their canonical generators in check mode. The report compares failures by
+entry graph name against the exact parent.
 The report includes the failure diagnostic and omits progress and resource metrics.
 Findings are attributed to the introducing SHA and sent to its author for
 a fix forward. Before and after the ref update are separate verdicts.
