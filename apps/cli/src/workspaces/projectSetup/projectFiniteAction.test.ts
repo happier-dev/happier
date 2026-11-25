@@ -2489,8 +2489,13 @@ describe('authenticated finite Project Action owner', () => {
             await authority.releaseAllRetainedBootstraps();
             return;
         }
-        await h.rememberSetup(h.operationRuntime.store.get(scope, 'operation')!.setupReview!.reviewedEffectDigest);
-        await h.operationRuntime.handlers.getV2({ operationId: 'operation' });
+        const review = ProjectSetupConsentFailureDetailsV1Schema.parse(h.operationRuntime.store.get(scope, 'operation')!.setupReview);
+        h.waiveSetupApproval();
+        expect(await h.rpcInvoke('projects.prepare', {
+            workspace: h.address, phase: 'teardown', heldOperationId: 'operation',
+            expectedEffectDigest: review.reviewedEffectDigest, consentScope: 'thisTime',
+        }, { ...h.context, callerAuthority: 'present_user', transportRequestId: 'approve-sync-retirement' }))
+            .toMatchObject({ operation: { operationId: 'operation' } });
         await expect.poll(() => h.spawned.length).toBe(1);
         await expect(access(join(h.root, '.happier/project.json'))).resolves.toBeUndefined();
         h.spawned[0]!.pty.exit(exitCode);
@@ -2630,8 +2635,12 @@ describe('authenticated finite Project Action owner', () => {
             setupReview: { reviewedEffectDigest: expect.any(String), reviewedEffect: expect.anything() } });
         expect(JSON.stringify(reviewed)).not.toContain('private-cleanup-sentinel');
         expect(h.spawned).toEqual([]);
-        await h.rememberSetup(reviewed.reviewedEffectDigest);
-        await h.operationRuntime.handlers.getV2({ operationId: 'operation' });
+        h.waiveSetupApproval();
+        expect(await h.rpcInvoke('projects.prepare', {
+            workspace: h.address, phase: 'teardown', heldOperationId: 'operation',
+            expectedEffectDigest: reviewed.reviewedEffectDigest, consentScope: 'thisTime',
+        }, { ...h.context, callerAuthority: 'present_user', transportRequestId: 'approve-worktree-teardown' }))
+            .toMatchObject({ operation: { operationId: 'operation' } });
         await expect.poll(() => h.spawned.length).toBe(1);
         h.spawned[0]!.pty.exit(0);
         await expect.poll(() => h.spawned.length).toBe(2);
