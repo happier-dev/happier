@@ -164,13 +164,12 @@ const TeamManagedOidcProviderEditorAdapter = React.memo(function TeamManagedOidc
                 accessibilitySemantics="alert"
             /></ItemGroup>;
         }
-        const canRetry = retryable && code !== 'team_authentication_unavailable';
         return <ItemGroup><ItemLoadStateRows testID="team-identity-provider-editor" state={{
             kind: 'failed',
-            reason: canRetry ? t('identityAdministration.companySignInReadFailed')
+            reason: retryable ? t('identityAdministration.companySignInReadFailed')
                 : identityAdministrationFailureMessage(code, 'team_managed_provider_read'),
-            onRetry: canRetry ? providers.refresh : undefined,
-            homeServerIds: canRetry ? [props.address.serverId] : undefined,
+            onRetry: retryable ? providers.refresh : undefined,
+            homeServerIds: retryable ? [props.address.serverId] : undefined,
         }} /></ItemGroup>;
     }
     if (providers.state.kind === 'ready' && !provider) {

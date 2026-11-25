@@ -110,6 +110,32 @@ describe('Team-managed provider editor observation', () => {
     });
 });
 
+describe('Team-managed provider validation', () => {
+    it.each([
+        { status: 403, code: 'team_authentication_required', message: 'session.access.authenticationRequired', signIn: true },
+        { status: 503, code: 'team_authentication_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable', signIn: false },
+    ])('keeps the exact $code from validating the saved provider', async ({ status, code, message, signIn }) => {
+        harness.answer(serverId, '/v1/identity/providers/list', { body: { items: [provider()], unreadableCount: 0 } });
+        harness.answer(serverId, providerValidatePath, { status, body: { error: code } });
+        const screen = await renderScreen(<TeamManagedIdentityProviderEditorScreen
+            serverId={serverId} teamId="team-1" connectionId="connection-1" providerId="provider-1"
+        />);
+
+        await waitForHomeGovernance(() => expect(screen.findByTestId('identity-provider-test')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('identity-provider-test');
+        expect(screen.getTextContent().split(message)).toHaveLength(2);
+        expect(screen.findByTestId('identity-provider-validation-retry')).toBeNull();
+        if (signIn) {
+            await screen.pressByTestIdAsync('identity-provider-validation-sign-in');
+            const href = routerPushMock.mock.lastCall?.[0];
+            expect(new URL(href, 'https://app.example').pathname).toBe('/teams/team-1/sign-in');
+        } else {
+            expect(screen.findByTestId('identity-provider-test')?.props.disabled).toBe(true);
+        }
+        expect(harness.requestsFor(providerValidatePath)).toHaveLength(1);
+    });
+});
+
 describe('TeamIdentityProviderSetupScreen through its real Action clients', () => {
     it('creates nothing for WorkOS until the portal opens, then opens it on the new connection', async () => {
         harness.answer(serverId, '/v1/teams/identity/connections/list', { body: TeamIdentityConnectionListResultV1Schema.parse({

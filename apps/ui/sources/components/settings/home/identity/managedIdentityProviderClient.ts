@@ -1,13 +1,13 @@
 import type { z } from 'zod/mini';
 import { homeDomainActionInputSchemaV1, homeDomainActionOutputSchemaV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
-import { type ManagedIdentityProviderActionIdV1, ManagedIdentityProviderCreateInputV1Schema, ManagedIdentityProviderLifecycleInputV1Schema, ManagedIdentityProviderRemovePreflightInputV1Schema, ManagedIdentityProviderRemovePreflightResultV1Schema, ManagedIdentityProviderRemoveResultV1Schema, ManagedIdentityProviderSecretReplaceInputV1Schema, ManagedIdentityProviderTestConsumeInputV1Schema, ManagedIdentityProviderTestConsumeResultV1Schema, ManagedIdentityProviderTestStartInputV1Schema, ManagedIdentityProviderTestStartResultV1Schema, ManagedIdentityProvidersListInputV1Schema, ManagedIdentityProvidersListResultV1Schema, ManagedIdentityProviderUpdateInputV1Schema, ManagedIdentityProviderV1Schema, ManagedOidcIdentityProviderV1Schema } from '@happier-dev/protocol/identity/providers';
+import { type ManagedIdentityProviderActionIdV1, ManagedIdentityProviderCreateInputV1Schema, ManagedIdentityProviderErrorV1Schema, ManagedIdentityProviderLifecycleInputV1Schema, ManagedIdentityProviderRemovePreflightInputV1Schema, ManagedIdentityProviderRemovePreflightResultV1Schema, ManagedIdentityProviderRemoveResultV1Schema, ManagedIdentityProviderSecretReplaceInputV1Schema, ManagedIdentityProviderTestConsumeInputV1Schema, ManagedIdentityProviderTestConsumeResultV1Schema, ManagedIdentityProviderTestStartInputV1Schema, ManagedIdentityProviderTestStartResultV1Schema, ManagedIdentityProvidersListInputV1Schema, ManagedIdentityProvidersListResultV1Schema, ManagedIdentityProviderUpdateInputV1Schema, ManagedIdentityProviderV1Schema, ManagedOidcIdentityProviderV1Schema } from '@happier-dev/protocol/identity/providers';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
-import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
+import { classifyHomeActionOutcome, type HomeActionFailure } from '@/sync/ops/home/homeActionOutcome';
 import { resolveApprovalSettledReadFailure, resolveIdentityAdministrationFailureRetryable } from '@/components/settings/identity/identityAdministrationFailure';
 import {
     awaitActionApprovalResult,
@@ -47,10 +47,31 @@ type ManagedIdentityProviderActionOutputMap = Readonly<{
 export type ManagedIdentityProviderActionOutput<TActionId extends ManagedIdentityProviderActionIdV1> =
     ManagedIdentityProviderActionOutputMap[TActionId];
 
+export type ManagedIdentityProviderFailure = Readonly<{
+    code: string;
+    retryable: boolean;
+    withdrawsObservation?: true;
+    current?: z.infer<typeof ManagedIdentityProviderV1Schema>;
+}>;
+
+export function managedIdentityProviderFailure(failure: HomeActionFailure): ManagedIdentityProviderFailure {
+    const code = homeDomainFailureCode(failure);
+    const error = code === 'identity_provider_revision_conflict'
+        ? ManagedIdentityProviderErrorV1Schema.safeParse(failure.details)
+        : null;
+    return {
+        code,
+        retryable: code !== 'team_authentication_unavailable'
+            && resolveIdentityAdministrationFailureRetryable(failure, code),
+        ...(isAuthoritativeScopedSnapshotRefusalKind(failure.kind) ? { withdrawsObservation: true } : {}),
+        ...(error?.success && error.data.current ? { current: error.data.current } : {}),
+    };
+}
+
 export type ManagedIdentityProviderActionResult<TValue> =
     | Readonly<{ kind: 'succeeded'; value: TValue }>
     | Readonly<{ kind: 'approval_pending'; artifactId: string; approval: ActionApprovalContinuation }>
-    | Readonly<{ kind: 'failed'; failure: Readonly<{ code: string; retryable: boolean; withdrawsObservation?: true }> }>;
+    | Readonly<{ kind: 'failed'; failure: ManagedIdentityProviderFailure }>;
 
 export type ManagedIdentityProviderExecuteOptions<TValue> = Readonly<{
     signal?: AbortSignal;
@@ -90,17 +111,9 @@ export function createManagedIdentityProviderClient(scope: ServerAccountScope): 
                 serverId: scope.serverId,
                 ...(options?.signal ? { signal: options.signal } : {}),
             });
-            const outcome = classifyHomeActionOutcome(actionResult);
+            const outcome = classifyHomeActionOutcome(actionResult, actionId);
             if (outcome.kind === 'failed') {
-                const code = homeDomainFailureCode(outcome.failure);
-                return {
-                    kind: 'failed',
-                    failure: {
-                        code,
-                        retryable: resolveIdentityAdministrationFailureRetryable(outcome.failure, code),
-                        ...(isAuthoritativeScopedSnapshotRefusalKind(outcome.failure.kind) ? { withdrawsObservation: true } : {}),
-                    },
-                };
+                return { kind: 'failed', failure: managedIdentityProviderFailure(outcome.failure) };
             }
             if (outcome.kind === 'approval_pending') {
                 const approval = createHomeActionApprovalContinuation<ManagedIdentityProviderActionOutputMap[TActionId], TActionId>({
@@ -157,10 +170,9 @@ export function executeManagedIdentityProviderRead<TValue>(
             const failure = resolveApprovalSettledReadFailure(code, actionFailure);
             return {
                 kind: 'failed',
-                failure: {
-                    code: failure.code, retryable: failure.retryable,
-                    ...(failure.domainFailure && isAuthoritativeScopedSnapshotRefusalKind(failure.domainFailure.kind)
-                        ? { withdrawsObservation: true } : {}),
+                failure: failure.domainFailure ? managedIdentityProviderFailure(failure.domainFailure) : {
+                    code: failure.code,
+                    retryable: failure.code !== 'team_authentication_unavailable' && failure.retryable,
                 },
             };
         },

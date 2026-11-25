@@ -308,6 +308,13 @@ export function identityAdministrationFailureMessage(code: string, context?: 'ma
             return t(context === 'managed_provider_read' ? 'homeGovernance.forbiddenBody' : 'teams.errors.forbidden');
         }
         if (code === 'team_authentication_unavailable') return t('teams.credentials.externalApi.authenticationUnavailable');
+        if (code === 'identity_provider_disabled') return t('identityAdministration.oidcValidationUnavailable');
+        if (code === 'identity_provider_unreadable') return t('identityAdministration.oidcConfigurationUnreadable');
+    }
+    switch (code) {
+        case 'oidc_discovery_failed': return t('identityAdministration.oidcDiscoveryFailed');
+        case 'oidc_endpoint_forbidden': return t('identityAdministration.oidcEndpointForbidden');
+        case 'oidc_issuer_mismatch': return t('identityAdministration.oidcIssuerMismatch');
     }
     if (code.trim().toLowerCase() === 'workos_platform_unavailable') {
         return t('identityAdministration.errorWorkosPlatformUnavailable');

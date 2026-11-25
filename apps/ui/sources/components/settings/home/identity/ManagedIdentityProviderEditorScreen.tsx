@@ -1,5 +1,7 @@
 import * as React from 'react';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { teamAuthenticationPath } from '@/components/settings/teams/teamsRoutes';
+import { presentTeamSignInRequired } from '@/components/teams/entry/teamSignInRequirement';
 import { AppState } from 'react-native';
 import type { ManagedIdentityProviderOwnerV1, ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/providers';
 
@@ -25,12 +27,14 @@ import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsave
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 
 import { HomeAdministrationSection } from '../governance/HomeAdministrationSection';
 import type { HomeAdministrationContext } from '../governance/homeAdministrationContext';
-import { homeAdministrationIdentityProviderPath } from '../governance/homeAdministrationRoutes';
+import { homeAdministrationIdentityProviderPath, homeAdministrationSignInProvidersPath } from '../governance/homeAdministrationRoutes';
 import { useManagedIdentityProviderClient, useManagedIdentityProviders } from './useManagedIdentityProviders';
+import { managedIdentityProviderFailure, type ManagedIdentityProviderFailure } from './managedIdentityProviderClient';
 import { ManagedOidcProviderFields, managedOidcValidationMessage, type ManagedOidcProviderInputRefs } from './ManagedOidcProviderFields';
 import {
     EMPTY_MANAGED_OIDC_PROVIDER_DRAFT,
@@ -75,6 +79,7 @@ export const ManagedOidcProviderEditorContent = React.memo(function ManagedOidcP
     saveTestId?: string;
 }>) {
     const navigation = useNavigation();
+    const router = useRouter();
     const settings = props.owner.kind === 'home' ? HOME_MANAGED_OIDC_SETTINGS : TEAM_MANAGED_OIDC_SETTINGS;
     const client = useManagedIdentityProviderClient(props.scope);
     const mountedRef = useMountedRef();
@@ -118,7 +123,9 @@ export const ManagedOidcProviderEditorContent = React.memo(function ManagedOidcP
     const [saving, setSaving] = React.useState(false);
     const [testing, setTesting] = React.useState(false);
     const [tested, setTested] = React.useState(false);
-    const [error, setError] = React.useState<string | null>(null);
+    const [error, setError] = React.useState<string | ManagedIdentityProviderFailure | null>(null);
+    const validationFailure = typeof error === 'string' ? null : error;
+    const failureContext = ownerTeamId === null ? 'managed_provider_read' : 'team_managed_provider_read';
     const [validation, setValidation] = React.useState<ReturnType<typeof validateManagedIdentityProviderDraft>>(null);
     // React state disables the rendered controls; this ref closes the smaller
     // same-frame window before that render commits. Save and validation share
@@ -257,6 +264,18 @@ export const ManagedOidcProviderEditorContent = React.memo(function ManagedOidcP
         setTested(true);
     }, [createdProvider, mountedRef]);
 
+    const reportValidationFailure = React.useCallback((failure: ManagedIdentityProviderFailure) => {
+        if (!mountedRef.current) return;
+        if (failure.code === 'identity_provider_revision_conflict') {
+            if (failure.current?.id === provider?.id && failure.current) setCreatedProvider(failure.current);
+            setRevisionConflict(true);
+            announceAccessibilityMessage(t('identityAdministration.settingsChangedElsewhere'));
+            return;
+        }
+        setError(failure);
+        announceAccessibilityMessage(identityAdministrationFailureMessage(failure.code, failure.code === 'identity_provider_invalid' ? undefined : failureContext));
+    }, [failureContext, mountedRef, provider?.id]);
+
     const testConfiguration = React.useCallback(async () => {
         if (!provider || providerDirty || revisionConflict || operationInFlightRef.current !== null) return;
         const operationIdentity = Symbol('validate-managed-identity-provider');
@@ -273,10 +292,12 @@ export const ManagedOidcProviderEditorContent = React.memo(function ManagedOidcP
             } as const;
             const result = await client.execute('identity.providers.validate', input, {
                 onApprovalSucceeded: applyValidationSuccess,
-                onApprovalFailed: reportFailure,
+                onApprovalFailed: (code, cause) => reportValidationFailure(cause
+                    ? managedIdentityProviderFailure(homeDomainFailureFromActionFailure(cause, 'identity.providers.validate'))
+                    : { code, retryable: false }),
             });
             if (result.kind === 'failed') {
-                reportFailure(result.failure.code);
+                reportValidationFailure(result.failure);
                 return;
             }
             if (result.kind === 'approval_pending') {
@@ -290,7 +311,7 @@ export const ManagedOidcProviderEditorContent = React.memo(function ManagedOidcP
             if (operationInFlightRef.current === operationIdentity) operationInFlightRef.current = null;
             setTesting(false);
         }
-    }, [applyValidationSuccess, client, draftOrigin, owner, provider, providerDirty, reportApprovalPending, reportError, reportFailure, revisionConflict]);
+    }, [applyValidationSuccess, client, draftOrigin, owner, provider, providerDirty, reportApprovalPending, reportError, reportValidationFailure, revisionConflict]);
 
     const finishSavedProvider = React.useCallback(async (current: ManagedIdentityProviderV1): Promise<boolean> => {
         if (!mountedRef.current) return false;
@@ -473,7 +494,32 @@ export const ManagedOidcProviderEditorContent = React.memo(function ManagedOidcP
         return <ItemGroup><SurfaceStateCard kind="loading" size="line" title={t('common.loading')} /></ItemGroup>;
     }
     const callbackUrl = provider?.callbackUrl ?? null;
-    const refreshRetryable = props.refreshFailure?.retryable && props.refreshFailure.code !== 'team_authentication_unavailable';
+    const validationSignIn = validationFailure?.code === 'team_authentication_required' && ownerTeamId !== null
+        ? presentTeamSignInRequired({
+            code: validationFailure.code,
+            serverId: props.scope.serverId,
+            teamId: ownerTeamId,
+            accepted: [],
+            navigate: (href) => router.push(href),
+        }) : null;
+    const validationMessage = validationFailure
+        ? validationSignIn?.message ?? identityAdministrationFailureMessage(validationFailure.code, validationFailure.code === 'identity_provider_invalid' ? undefined : failureContext)
+        : typeof error === 'string' ? error : null;
+    const validationRecovery = validationSignIn ? (
+        <Item testID="identity-provider-validation-sign-in" title={validationSignIn.action.label} onPress={validationSignIn.action.onPress} showChevron={false} />
+    ) : validationFailure?.retryable ? (
+        <Item testID="identity-provider-validation-retry" title={t('common.retry')} disabled={saving || providerDirty || !props.mutationsAvailable} onPress={() => void testConfiguration()} showChevron={false} />
+    ) : validationFailure?.code === 'identity_provider_not_found' ? (
+        <Item
+            testID="identity-provider-validation-sign-in-settings"
+            title={t(ownerTeamId === null ? 'homeGovernance.signInProviders.title' : 'teams.tabs.authentication')}
+            onPress={() => router.push(ownerTeamId === null
+                ? homeAdministrationSignInProvidersPath(props.scope.serverId)
+                : teamAuthenticationPath({ serverId: props.scope.serverId, teamId: ownerTeamId }))}
+            showChevron={false}
+        />
+    ) : null;
+    const refreshRetryable = props.refreshFailure?.retryable;
     return (
         <>
             {props.refreshFailure ? <AttentionBanner
@@ -499,9 +545,12 @@ export const ManagedOidcProviderEditorContent = React.memo(function ManagedOidcP
                 </ItemGroup>
             ) : null}
             {props.additionalFields}
-            {revisionConflict && provider ? <ItemGroup description={t('identityAdministration.settingsChangedElsewhere')}>{draftOrigin?.resourceId !== provider.id || provider.revision > draftOrigin.revision ? <Item testID="identity-provider-reload-conflict" title={t('common.refresh')} onPress={reloadConflictedProvider} showChevron={false} /> : props.onRefreshRequested ? <Item testID="identity-provider-refresh-conflict" title={t('common.retry')} onPress={props.onRefreshRequested} showChevron={false} /> : null}</ItemGroup> : null}
-            <ItemGroup description={error ?? undefined}>
-                {provider ? <SettingAnchor setting={settings.settings.validate}><Item testID={`${props.testIdPrefix ?? 'identity-provider'}-test`} title={testing ? t('identityAdministration.validating') : t('identityAdministration.validate')} detail={tested ? t('identityAdministration.validated') : undefined} loading={testing} disabled={saving || testing || providerDirty || revisionConflict || !props.mutationsAvailable} onPress={() => void testConfiguration()} showChevron={false} /></SettingAnchor> : null}
+            {revisionConflict && provider ? <ItemGroup description={t('identityAdministration.settingsChangedElsewhere')}>{draftOrigin?.resourceId !== provider.id || provider.revision > draftOrigin.revision ? <Item testID="identity-provider-reload-conflict" title={t('common.refresh')} onPress={reloadConflictedProvider} showChevron={false} /> : props.onRefreshRequested ? <Item testID="identity-provider-refresh-conflict" title={t('common.refresh')} onPress={props.onRefreshRequested} showChevron={false} /> : null}</ItemGroup> : null}
+            <ItemGroup description={validationMessage ?? undefined}>
+                {validationRecovery}
+                {provider && !(validationFailure?.retryable || validationSignIn)
+                    ? <SettingAnchor setting={settings.settings.validate}><Item testID={`${props.testIdPrefix ?? 'identity-provider'}-test`} title={testing ? t('identityAdministration.validating') : t('identityAdministration.validate')} detail={tested ? t('identityAdministration.validated') : undefined} loading={testing} disabled={Boolean(validationFailure) || saving || testing || providerDirty || revisionConflict || !props.mutationsAvailable} onPress={() => void testConfiguration()} showChevron={false} /></SettingAnchor>
+                    : null}
                 <SettingAnchor setting={settings.settings.save}><Item testID={props.saveTestId ?? `${props.testIdPrefix ?? 'identity-provider'}-save`} title={saving ? t('identityAdministration.saving') : t('identityAdministration.save')} loading={saving} disabled={saving || commitPending || revisionConflict || !dirty || !props.mutationsAvailable} onPress={() => save()} showChevron={false} /></SettingAnchor>
             </ItemGroup>
         </>

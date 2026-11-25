@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ManagedIdentityProviderV1Schema, type ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/providers';
+import { ManagedIdentityProviderErrorCodeV1Schema, ManagedIdentityProviderV1Schema, type ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/providers';
 import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import { findTestInstanceByTypeContainingText } from '@/dev/testkit/render/renderScreen';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -22,6 +22,17 @@ const { Modal } = await import('@/modal');
 let serverId: string;
 const updatePath = '/v1/identity/providers/update';
 const validatePath = '/v1/identity/providers/validate';
+const settledValidationRefusals = [
+    { status: 400, code: 'identity_provider_invalid', message: 'identityAdministration.errorInvalid' },
+    { status: 403, code: 'identity_provider_forbidden', message: 'homeGovernance.forbiddenBody' },
+    { status: 404, code: 'identity_provider_not_found', message: 'identityAdministration.errorMissing' },
+    { status: 409, code: 'identity_provider_unreadable', message: 'identityAdministration.oidcConfigurationUnreadable' },
+    { status: 409, code: 'identity_provider_disabled', message: 'identityAdministration.oidcValidationUnavailable' },
+    { status: 409, code: 'oidc_endpoint_forbidden', message: 'identityAdministration.oidcEndpointForbidden' },
+    { status: 409, code: 'oidc_issuer_mismatch', message: 'identityAdministration.oidcIssuerMismatch' },
+] as const;
+const validationConflict = 'identity_provider_revision_conflict';
+const validationDiscoveryFailed = 'oidc_discovery_failed';
 
 function provider(revision: number): ManagedIdentityProviderV1 {
     return ManagedIdentityProviderV1Schema.parse({
@@ -103,11 +114,50 @@ describe('managed provider failures through the real Action client', () => {
         expect(announceMock).toHaveBeenCalledWith('identityAdministration.errorForbidden');
     });
 
-    it('explains a failed configuration validation with the same vocabulary', async () => {
-        harness.answer(serverId, validatePath, { status: 409, body: { error: 'oidc_discovery_failed' } });
+    it('covers all managed provider refusals the validation route can emit', () => {
+        // These codes belong to provider update and removal. Validation can
+        // emit every other managed-provider code through its declared boundary.
+        const lifecycleOnly = new Set(['identity_provider_issuer_immutable', 'identity_provider_in_use']);
+        expect(new Set([
+            ...settledValidationRefusals.map(refusal => refusal.code),
+            validationConflict,
+            validationDiscoveryFailed,
+        ])).toEqual(new Set(ManagedIdentityProviderErrorCodeV1Schema.options.filter(code => !lifecycleOnly.has(code))));
+    });
+
+    it.each(settledValidationRefusals)('shows the settled $code from configuration validation once and without Retry', async ({ status, code, message }) => {
+        harness.answer(serverId, validatePath, { status, body: { error: code } });
         const screen = await renderEditor();
         await screen.pressByTestIdAsync('identity-provider-test');
-        expect(screen.getTextContent()).toContain('identityAdministration.errorInvalid');
+        expect(screen.getTextContent().split(message)).toHaveLength(2);
+        expect(screen.findByTestId('identity-provider-validation-retry')).toBeNull();
+        expect(screen.findByTestId('identity-provider-test')?.props.disabled).toBe(true);
+        expect(harness.requestsFor(validatePath)).toHaveLength(1);
+    });
+
+    it('retries discovery only after an actual upstream failure', async () => {
+        harness.answer(serverId, validatePath, { status: 502, body: { error: validationDiscoveryFailed } });
+        const screen = await renderEditor();
+        await screen.pressByTestIdAsync('identity-provider-test');
+        expect(screen.getTextContent().split('identityAdministration.oidcDiscoveryFailed')).toHaveLength(2);
+        expect(screen.findByTestId('identity-provider-test')).toBeNull();
+        harness.answer(serverId, validatePath, { body: provider(4) });
+        await screen.pressByTestIdAsync('identity-provider-validation-retry');
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('identityAdministration.validated'));
+        expect(harness.requestsFor(validatePath)).toHaveLength(2);
+    });
+
+    it('uses the provider returned with a validation revision conflict before allowing another check', async () => {
+        const current = { ...provider(5), displayName: 'Current sign-in provider' };
+        harness.answer(serverId, validatePath, { status: 409, body: { error: validationConflict, current } });
+        const screen = await renderEditor();
+        await screen.pressByTestIdAsync('identity-provider-test');
+        expect(screen.getTextContent().split('identityAdministration.settingsChangedElsewhere')).toHaveLength(2);
+        expect(screen.findByTestId('identity-provider-test')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('identity-provider-validation-retry')).toBeNull();
+        await screen.pressByTestIdAsync('identity-provider-reload-conflict');
+        expect(screen.findByTestId('identity-provider-name')?.props.value).toBe('Current sign-in provider');
+        expect(harness.requestsFor(validatePath)).toHaveLength(1);
     });
 
     it('keeps local field validation ahead of network dispatch', async () => {

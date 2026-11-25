@@ -183,6 +183,11 @@ export type OidcEditorWords = Readonly<{
     invalidScopes: string;
     refreshFailed: string;
     refreshFailedHint: string;
+    oidcValidationUnavailable: string;
+    oidcConfigurationUnreadable: string;
+    oidcEndpointForbidden: string;
+    oidcIssuerMismatch: string;
+    oidcDiscoveryFailed: string;
 }>;
 
 
@@ -384,6 +389,11 @@ export const githubAccessWordsEnglish: Pick<Readonly<Record<IdentityAdministrati
 export const oidcEditorWordsEnglish: Pick<Readonly<Record<IdentityAdministrationLanguage, OidcEditorWords>>, "en"> = { en: {
         clientAuthenticationMethod: 'Client authentication', clientSecretPost: 'POST body', clientSecretBasic: 'HTTP Basic', storeRefreshToken: 'Store refresh token', buttonColor: 'Sign-in button color', iconHint: 'Sign-in icon',
         allowRulesHint: 'Enter one value per line. Leave blank for no restriction.', brandingHint: 'Leave blank to use the default sign-in appearance.', invalidScopes: 'Include openid in the requested scopes.', refreshFailed: 'Couldn’t refresh this connection', refreshFailedHint: 'Your edits are kept. Retry to check for changes on the Home.',
+        oidcValidationUnavailable: "This sign-in provider is unavailable for validation.",
+        oidcConfigurationUnreadable: "The Home couldn’t read this provider’s saved settings.",
+        oidcEndpointForbidden: "This Home doesn’t allow one of the provider’s sign-in addresses.",
+        oidcIssuerMismatch: "The issuer reported by the provider doesn’t match the saved issuer URL.",
+        oidcDiscoveryFailed: "The Home couldn’t read the provider’s OpenID Connect configuration.",
     } };
 
 
