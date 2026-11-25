@@ -74,7 +74,7 @@ function anyValue(value: unknown, preserveType = false): TelemetryValue {
     if (item.arrayValue !== undefined) return output('arrayValue', list(record(item.arrayValue).values).map(value => anyValue(value, preserveType)));
     if (item.kvlistValue !== undefined) return output('kvlistValue', attributes(record(item.kvlistValue).values, preserveType));
     if (item.bytesValue instanceof Uint8Array) return output('bytesValue', Buffer.from(item.bytesValue).toString('base64'));
-    if (item.bytesValue !== undefined) return output('bytesValue', text(item.bytesValue) ?? '');
+    if (item.bytesValue !== undefined) return output('bytesValue', Buffer.from(text(item.bytesValue) ?? '', 'base64').toString('base64'));
     return output('emptyValue', null);
 }
 

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import protobuf from 'protobufjs';
 import { createPostgresqlObservationNormalizer } from '@happier-dev/databases/postgresql';
+import { otlpSchema } from './otlp/schema.js';
 import { createCaptureRuntime } from './runtime.js';
 import { captureMigrations } from './store/capture.js';
 import { createCaptureSqliteFixture } from './testing/sqlite.js';
@@ -37,6 +42,91 @@ async function post(endpoint: string, signal: 'traces' | 'logs' | 'metrics', bod
 }
 
 describe('capture runtime through real HTTP and SQLite', () => {
+    it('retains the same log identity and attributes from JSON and protobuf on one receiver', async () => {
+        const f = await fixture();
+        const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition } });
+        const uid = 'capture-parity-log';
+        const entry = { traceId, spanId, timeUnixNano: '1700000000000000000',
+            attributes: [{ key: 'log.record.uid', value: { stringValue: uid } }] };
+        const envelope = (ids: { traceId: string | Buffer; spanId: string | Buffer }, bytesValue: string) =>
+            ({ resourceLogs: [{
+                resource: { attributes: [{ key: 'service.name', value: { stringValue: 'api' } }] },
+                scopeLogs: [{ logRecords: [{ ...entry, ...ids, body: { kvlistValue: { values: [
+                    { key: 'payload', value: { bytesValue } },
+                    { key: 'count', value: { intValue: '9223372036854775807' } },
+                ] } } }] }],
+            }] });
+        const type = protobuf.Root.fromJSON(otlpSchema).lookupType('opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest');
+        const jsonBody = envelope({ traceId, spanId }, '-_8');
+        const binary = type.encode(type.fromObject(envelope({
+            traceId: Buffer.from(traceId, 'hex'), spanId: Buffer.from(spanId, 'hex'),
+        }, '+/8='))).finish();
+        const read = async () => {
+            const rows = await f.runtime.store.list({ worktree: partition, kind: 'log', limit: 10 });
+            expect(rows).toHaveLength(1);
+            expect(rows[0]).toMatchObject({ traceId, spanId, serviceName: 'api' });
+            return { row: rows[0], detail: await f.runtime.store.detail(partition, rows[0]!.id) };
+        };
+        try {
+            const json = await post(receiver.endpoint, 'logs', jsonBody);
+            expect(json.status).toBe(200);
+            expect(await json.json()).toEqual({});
+            const jsonCapture = await read();
+            await f.runtime.clear(partition);
+
+            const proto = await fetch(`${receiver.endpoint}/v1/logs`, { method: 'POST',
+                headers: { 'content-type': 'application/x-protobuf' }, body: Buffer.from(binary) });
+            expect(proto.status).toBe(200);
+            expect((await proto.arrayBuffer()).byteLength).toBe(0);
+            const protobufCapture = await read();
+            expect.soft(jsonCapture.detail).toEqual(protobufCapture.detail);
+            expect.soft(jsonCapture.row).toEqual(protobufCapture.row);
+
+            expect((await post(receiver.endpoint, 'logs', jsonBody)).status).toBe(200);
+            expect(await read()).toEqual(protobufCapture);
+        } finally {
+            await receiver.release();
+            await f.runtime.ingest.settled();
+            f.close();
+        }
+    });
+
+    it('clears stored and pending capture after physical Worktree removal without changing neighboring coverage', async () => {
+        const f = await fixture();
+        const physicalRootIdentity = await mkdtemp(join(tmpdir(), 'happier-capture-removed-'));
+        const pendingPartition = 'account/machine/project/pending';
+        const neighbor = 'account/machine/project/neighbor';
+        const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition, physicalRootIdentity } });
+        const readSelected = () => f.runtime.store.list({ worktree: partition, limit: 10 });
+        try {
+            const response = await post(receiver.endpoint, 'traces', traceRequest());
+            expect(response.status).toBe(200);
+            expect(await response.json()).toEqual({});
+            expect(await readSelected()).toHaveLength(1);
+            const neighborEvent = { id: 'keep', worktree: neighbor, kind: 'log', source: 'otlp', at: 1 } as const;
+            f.runtime.ingest.offer([neighborEvent]);
+            await f.runtime.ingest.settled();
+            const readNeighbor = () => f.runtime.store.list({ worktree: neighbor, limit: 10 });
+            const neighborBefore = await readNeighbor();
+            f.runtime.recordCoverage(neighbor, 'store_busy', '/physical/neighbor');
+            f.runtime.recordCoverage(pendingPartition, 'store_busy', physicalRootIdentity);
+            const beforeRemoval = f.publications.length;
+            await rm(physicalRootIdentity, { recursive: true });
+            await expect(stat(physicalRootIdentity)).rejects.toMatchObject({ code: 'ENOENT' });
+            await f.runtime.removeWorktree(physicalRootIdentity);
+            expect(await readSelected()).toEqual([]);
+            expect(f.runtime.ingest.coverage(pendingPartition)).toEqual({ lostObservations: 0, reason: null });
+            expect(f.runtime.ingest.coverage(neighbor)).toEqual({ lostObservations: 1, reason: 'store_busy' });
+            expect(await readNeighbor()).toEqual(neighborBefore);
+            expect(f.publications.slice(beforeRemoval)).not.toContainEqual([neighbor]);
+        } finally {
+            await receiver.release();
+            await f.runtime.ingest.settled();
+            f.close();
+            await rm(physicalRootIdentity, { recursive: true, force: true });
+        }
+    });
+
     it('lists masked query summaries and first-line log previews and returns full detail on demand', async () => {
         const f = await fixture();
         const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition } });

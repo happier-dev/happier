@@ -1,7 +1,7 @@
 import { maskPostgresqlObservationError } from '@happier-dev/databases/postgresql';
 import type { DeploymentTelemetryAssignmentV1 } from '@happier-dev/plugin-sdk';
 import { metricPointId } from './store/metrics.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { DaemonDatabase } from '@happier-dev/plugin-sdk/storage';
 import { createCaptureStore, type CaptureEvent, type CaptureExceptionEvent } from './store/capture.js';
 import { exceptionFingerprint, exceptionTopFrame } from './exceptions/grouping.js';
@@ -58,7 +58,9 @@ export function createCaptureRuntime(input: {
   ...(context.capabilities?.exceptions === true ? batch.logs.flatMap(log => log.exception ? [exceptionEvent({
    id: `exception:log:${log.recordUid ?? randomUUID()}`, context, origin: 'log', resource: log, exception: log.exception,
    traceId: log.traceId, spanId: log.spanId })] : []) : []),
-  ...batch.logs.map(log => ({ id: randomUUID(), worktree: context.partition, kind: 'log' as const, source: 'otlp' as const,
+  ...batch.logs.map(log => ({
+   id: log.recordUid ? `log:${createHash('sha256').update(log.recordUid).digest('hex')}` : randomUUID(),
+   worktree: context.partition, kind: 'log' as const, source: 'otlp' as const,
    physicalRootIdentity: context.physicalRootIdentity,
    at: Number(BigInt(log.timeUnixNano !== '0' ? log.timeUnixNano : log.observedTimeUnixNano) / 1_000_000n), traceId: log.traceId, spanId: log.spanId,
    serviceName: log.serviceName, severityNumber: log.severityNumber,
@@ -77,7 +79,6 @@ export function createCaptureRuntime(input: {
      ingest.clearCoverage(partition, ingest.coverage(partition).lostObservations);
      await store.forgetWorktree(partition);
     }
-    if (partitions.size) ingest.retry();
    });
   },
   recordCoverage(partition: string, reason: string, physicalRootIdentity?: string) {

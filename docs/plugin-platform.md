@@ -19,6 +19,10 @@ Existing explicit OTLP endpoints are preserved. P6's standalone telemetry
 collector helpers use the same runtime with assignment-token admission; their
 host activation is separate from the local role and remains integration work.
 
+Both OTLP encodings normalize byte values to the same stored representation. A
+log with an emitter-supplied `log.record.uid` uses the same stored ID on replay
+within its capture partition. Logs without an emitter UID receive separate IDs.
+
 Local capture retains the launch owner's physical-root identity alongside its
 worktree partition. After settled removal, the background owner clears all
 matching retained partitions, including unassociated worktrees, using that
