@@ -1,6 +1,6 @@
 import type { DatabaseRelationV1, DatabaseTaskEvidenceV1 } from '@happier-dev/plugin-sdk/database';
 import type { SessionInputHandoffInputV1, SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
-import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import { projectNativeJsonValueForTransport, ProtocolWorkspaceAddressV1Schema } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 import type { WorkbenchControlBinding } from '../ui/models.js';
 import { buildDatabaseFindingBriefV1 } from './brief.js';
@@ -13,6 +13,18 @@ type HandoffOptions = Readonly<{
     idempotencyKey(): string;
     onSettled?(execution: PluginUiActionControlExecution): void;
 }>;
+
+export type DatabaseDraftPlacement = Extract<
+    NonNullable<SessionInputHandoffInputV1['newSession']>['seed']['placement'],
+    { kind: 'exactTarget' }
+>;
+
+export function parseDatabaseWorktreeDraftPlacement(workspace: unknown): (DatabaseDraftPlacement & { directory: string }) | undefined {
+    const parsed = ProtocolWorkspaceAddressV1Schema.safeParse(workspace);
+    if (!parsed.success) return undefined;
+    const { serverId, machineId, rootPath } = parsed.data;
+    return { kind: 'exactTarget', serverId, machineId, directory: rootPath };
+}
 
 /** The Session Action owns destination, editable composition, admission and delivery. */
 export function createDatabaseBriefHandoffControl(

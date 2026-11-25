@@ -14,13 +14,13 @@ import {
   type DatabaseStatsReadV1,
   type DatabaseTargetV1,
 } from '@happier-dev/plugin-sdk/database';
-import { projectNativeJsonValueForTransport, ProtocolWorkspaceAddressV1Schema } from '@happier-dev/plugin-sdk/protocol';
+import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { SessionInputHandoffResultV1Schema, type SessionInputHandoffInputV1 } from '@happier-dev/plugin-sdk/sessions';
 import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 import { Action, Button, ErrorState, Markdown, Row, Stack, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
 import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, useExecutePluginAction, usePluginHostApi, type PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import { buildDatabaseFindingWorkflowSeed } from '../../../insights/findingEventSource.js';
-import { createDatabaseBriefHandoffControl } from '../../../insights/migration.js';
+import { createDatabaseBriefHandoffControl, parseDatabaseWorktreeDraftPlacement } from '../../../insights/migration.js';
 import { useWorkbenchInstance } from '../../hooks.js';
 import { statementByKey } from './statements.js';
 
@@ -118,11 +118,9 @@ export function FindingBrief({ target, recordKey, sourceSelection, request, find
     kind: 'existing',
     session: surface.accountScope ? { selector: 'sessions', addresses: [{ serverId: surface.accountScope.serverId, sessionId: currentSession }] } : currentSession,
   } : null;
-  const workspace = target.kind === 'worktree' ? ProtocolWorkspaceAddressV1Schema.safeParse(target.workspace) : undefined;
-  const newSession: SessionInputHandoffInputV1['newSession'] = { kind: 'new',
-    seed: workspace?.success ? { placement: {
-      kind: 'exactTarget', serverId: workspace.data.serverId, machineId: workspace.data.machineId, directory: workspace.data.rootPath,
-    } } : {},
+  const placement = target.kind === 'worktree' ? parseDatabaseWorktreeDraftPlacement(target.workspace) : undefined;
+  const newSession: SessionInputHandoffInputV1['newSession'] = {
+    kind: 'new', seed: placement ? { placement } : {},
   };
   return <Stack gap="small">
     {brief ? <>

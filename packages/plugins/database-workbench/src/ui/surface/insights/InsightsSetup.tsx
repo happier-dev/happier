@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { DatabaseDescriptorV1, DatabaseStatsObservationV1, DatabaseTargetV1, DatabaseTaskEvidenceV1 } from '@happier-dev/plugin-sdk/database';
 import { DATABASE_STATS_ENABLE_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
-import { projectNativeJsonValueForTransport, ProtocolWorkspaceAddressV1Schema } from '@happier-dev/plugin-sdk/protocol';
+import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { SessionInputHandoffResultV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, usePluginHostApi, type PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import {
@@ -20,7 +20,7 @@ import {
 } from '@happier-dev/plugin-ui';
 import { databaseActionSettlement } from '../../actionSettlement.js';
 import { buildDatabaseFindingBriefV1 } from '../../../insights/brief.js';
-import { createDatabaseBriefHandoffControl } from '../../../insights/migration.js';
+import { createDatabaseBriefHandoffControl, parseDatabaseWorktreeDraftPlacement, type DatabaseDraftPlacement } from '../../../insights/migration.js';
 import type { WorkbenchLaunchInput } from '../mount.js';
 import { STATEMENTS_BY_TOTAL_TIME } from './statements.js';
 
@@ -138,8 +138,8 @@ function EnableStatistics({ target, onRetry }: Readonly<{ target: DatabaseTarget
   </>;
 }
 
-function SetupTaskControl({ task, directory, title, accessibilityLabel, presentation }: Readonly<{
-  task: DatabaseTaskEvidenceV1; directory?: string; title: string; accessibilityLabel?: string;
+function SetupTaskControl({ task, placement, title, accessibilityLabel, presentation }: Readonly<{
+  task: DatabaseTaskEvidenceV1; placement: DatabaseDraftPlacement; title: string; accessibilityLabel?: string;
   /** Host presentation beyond the title: the agent glyph, or the handoff row's purpose line and disclosure. */
   presentation?: Readonly<{ icon?: 'generate' | 'pulse'; description?: string; disclosure?: boolean }>;
 }>) {
@@ -147,9 +147,7 @@ function SetupTaskControl({ task, directory, title, accessibilityLabel, presenta
   const [error, setError] = React.useState<{ title: string; details?: string } | PluginActionExecution | null>(null);
   const control = createDatabaseBriefHandoffControl(() => buildDatabaseFindingBriefV1(task), {
     handoff: { v: 1, sessionChoice: { kind: 'new' }, delivery: 'compose',
-      newSession: { kind: 'new', seed: { placement: { kind: 'exactTarget', ...task.sourceScope,
-        ...(directory === undefined ? {} : { directory }),
-      } } },
+      newSession: { kind: 'new', seed: { placement } },
     },
     idempotencyKey: () => globalThis.crypto.randomUUID(),
     onSettled(execution) {
@@ -179,18 +177,24 @@ function SetupTaskControl({ task, directory, title, accessibilityLabel, presenta
   </>;
 }
 
-export function AddTelemetrySetup({ scope, presentation = 'button' }: Readonly<{
-  scope: Extract<WorkbenchLaunchInput['scope'], { kind: 'worktree' }>;
+type WorktreeScope = Extract<WorkbenchLaunchInput['scope'], { kind: 'worktree' }>;
+
+export function AddTelemetrySetup({ scope }: Readonly<{ scope: WorktreeScope }>) {
+  const placement = parseDatabaseWorktreeDraftPlacement(scope.workspace);
+  return placement ? <TelemetrySetupControl scope={scope} placement={placement} presentation="button" /> : null;
+}
+
+function TelemetrySetupControl({ scope, placement, presentation }: Readonly<{
+  scope: WorktreeScope;
+  placement: DatabaseDraftPlacement;
   /** Beside the statistics setup it is the handoff row (glyph, purpose, disclosure); alone (an empty rail) the one action. */
-  presentation?: 'button' | 'row';
+  presentation: 'button' | 'row';
 }>) {
   const t = usePluginTranslation();
-  const workspace = ProtocolWorkspaceAddressV1Schema.safeParse(scope.workspace);
-  if (!workspace.success) return null;
-  const { serverId, machineId, rootPath } = workspace.data;
+  const { serverId, machineId } = placement;
   return <SetupTaskControl
     task={{ kind: 'add_telemetry', sourceScope: { serverId, machineId }, scope }}
-    directory={rootPath}
+    placement={placement}
     {...(presentation === 'row' ? { presentation: { icon: 'pulse', disclosure: true,
       description: t('plugins.database.insights.setup.telemetryWhy',
         'Prepares a session that sets up OpenTelemetry, so each request’s queries show here.') } } : {})}
@@ -228,7 +232,7 @@ export function InsightsSetup(
     && descriptor.capabilities.some(capability => capability.operation === 'stats.enable' && capability.available);
   const target = descriptor?.target;
   const worktree = target?.kind === 'worktree' ? target : undefined;
-  const machineWorkspace = worktree ? ProtocolWorkspaceAddressV1Schema.safeParse(worktree.workspace) : undefined;
+  const worktreePlacement = worktree ? parseDatabaseWorktreeDraftPlacement(worktree.workspace) : undefined;
   const askForStatistics = target && setup && !canEnable && props.observation.engineId === 'postgresql';
   const sourceScope = descriptor && { serverId: descriptor.placement.serverId, machineId: descriptor.placement.machineId };
   const remediation = props.observation.remediation;
@@ -260,7 +264,8 @@ export function InsightsSetup(
                   {askForStatistics && sourceScope ? <SetupTaskControl
                     task={{ kind: 'enable_pg_stat_statements', engineId: 'postgresql', target, sourceScope,
                       stats: { request: STATEMENTS_BY_TOTAL_TIME, reason: props.observation.reason } }}
-                    {...(machineWorkspace?.success ? { directory: machineWorkspace.data.rootPath } : {})}
+                    placement={{ kind: 'exactTarget', ...sourceScope,
+                      ...(worktreePlacement ? { directory: worktreePlacement.directory } : {}) }}
                     presentation={{ icon: 'generate' }}
                     accessibilityLabel={translate('plugins.database.insights.setup.askAgentLabel', 'Ask an agent to enable pg_stat_statements')}
                     title={translate('plugins.database.insights.setup.askAgent', 'Ask an agent…')} /> : null}
@@ -274,8 +279,9 @@ export function InsightsSetup(
       // A second way to see what each request costs, apart from the statistics setup, after its note (lab dbInsights).
       {...(worktree ? { alternative: <Stack gap="none">
         <Divider />
-        <AddTelemetrySetup presentation="row" scope={{ kind: 'worktree', accountId: worktree.accountId,
-          installationId: worktree.installationId, projectKey: worktree.projectKey, workspace: worktree.workspace }} />
+        {worktreePlacement ? <TelemetrySetupControl placement={worktreePlacement} presentation="row"
+          scope={{ kind: 'worktree', accountId: worktree.accountId, installationId: worktree.installationId,
+            projectKey: worktree.projectKey, workspace: worktree.workspace }} /> : null}
       </Stack> } : {})}
       note={translate(
         'plugins.database.insights.setup.alt',

@@ -527,6 +527,12 @@ describe('Database Insights surfaces', () => {
           input: { forgeEvidence: { items: [{ source: { kind: 'databaseFinding' } }] } },
         } });
         const input = SessionInputHandoffInputV1Schema.parse(call?.[0].input);
+        expect(input.newSession).toEqual({
+          kind: 'new', seed: { placement: {
+            kind: 'exactTarget', serverId: scope.workspace.serverId,
+            machineId: scope.workspace.machineId, directory: scope.workspace.rootPath,
+          } },
+        });
         expect(JSON.parse(input.input.forgeEvidence!.items[0]!.text)).toMatchObject({ task: { ...task,
           sourceScope: { serverId: scope.workspace.serverId, machineId: scope.workspace.machineId },
         } });
@@ -634,9 +640,13 @@ describe('Database Insights surfaces', () => {
       await settle();
       await act(async () => actionControl.press('Add telemetry to this app'));
       const input = SessionInputHandoffInputV1Schema.parse(handoff.mock.calls[0]?.[0].input);
-      expect(input).toMatchObject({ delivery: 'compose', sessionChoice: { kind: 'new' },
-        newSession: { seed: { placement: { kind: 'exactTarget', serverId: scope.workspace.serverId,
-          machineId: scope.workspace.machineId, directory: scope.workspace.rootPath } } },
+      expect(input.delivery).toBe('compose');
+      expect(input.sessionChoice).toEqual({ kind: 'new' });
+      expect(input.newSession).toEqual({
+        kind: 'new', seed: { placement: {
+          kind: 'exactTarget', serverId: scope.workspace.serverId,
+          machineId: scope.workspace.machineId, directory: scope.workspace.rootPath,
+        } },
       });
       expect(JSON.parse(input.input.forgeEvidence!.items[0]!.text)).toMatchObject({ task: { kind: 'add_telemetry', scope } });
     } finally {
@@ -833,8 +843,11 @@ describe('Database Insights surfaces', () => {
       await act(async () => { await actionControl.press('Ask for investigation'); });
       expect(handoff).toHaveBeenCalledTimes(2);
       const newDraft = SessionInputHandoffInputV1Schema.parse(handoff.mock.lastCall?.[0].input);
-      expect(newDraft.newSession?.seed.placement).toEqual({
-        kind: 'exactTarget', serverId: 'home', machineId: 'machine', directory: '/project',
+      expect(newDraft.newSession).toEqual({
+        kind: 'new', seed: { placement: {
+          kind: 'exactTarget', serverId: scope.workspace.serverId,
+          machineId: scope.workspace.machineId, directory: scope.workspace.rootPath,
+        } },
       });
       expect(handoff).toHaveBeenLastCalledWith(expect.objectContaining({
         action: 'session.input.handoff',
