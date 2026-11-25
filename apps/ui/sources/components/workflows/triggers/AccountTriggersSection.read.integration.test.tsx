@@ -342,7 +342,7 @@ describe('Account trigger HTTP read failure and recovery', () => {
         { surface: 'triggers', failure: 'unavailable', Component: AccountTriggersSection, readId: 'account-triggers-read', retryId: 'account-triggers-read-retry', sectionId: 'workflows-column:group:triggers' },
         { surface: 'scheduled', failure: 'offline', Component: ScheduledWorkflowSection, readId: 'scheduled-workflow-read', retryId: 'scheduled-workflow-read-action', sectionId: 'workflows-column:group:scheduled' },
         { surface: 'scheduled', failure: 'unavailable', Component: ScheduledWorkflowSection, readId: 'scheduled-workflow-read', retryId: 'scheduled-workflow-read-action', sectionId: 'workflows-column:group:scheduled' },
-    ] as const)('keeps $surface visible after a $failure remount and retries through its Account owner', async ({ failure, Component, readId, retryId, sectionId }) => {
+    ] as const)('keeps $surface visible after a $failure read and retries through its Account owner', async ({ surface, failure, Component, readId, retryId, sectionId }) => {
         await loadSyncSingletonForTests();
         const { storage } = await import('@/sync/domains/state/storageStore');
         let fail = false;
@@ -379,6 +379,12 @@ describe('Account trigger HTTP read failure and recovery', () => {
         gate = createDeferred<void>();
         const beforeRemount = reads;
         const screen = await renderScreen(<Component />);
+        if (surface === 'scheduled') {
+            await flushHookEffects();
+            expect(reads).toBe(beforeRemount);
+            const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+            await act(async () => publishHomeAccountChange(account.serverId, undefined, { workflowTriggersAffect: true }));
+        }
         await vi.waitFor(() => expect(reads).toBeGreaterThan(beforeRemount));
         expect(screen.findByTestId(readId)).toBeNull();
         await act(async () => gate.resolve());
