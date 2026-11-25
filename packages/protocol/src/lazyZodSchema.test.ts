@@ -45,13 +45,16 @@ describe('lazyZodSchema', () => {
       .toEqual(classic.toJSONSchema(classic.object({ value: concrete }), { target: 'draft-7' }));
   });
 
-  it('keeps cyclic schema dependencies cold when React Fast Refresh registers exports', async () => {
+  it.each([
+    ['native schema', lazyZodSchema],
+    ['derived definition', lazyDefinition],
+  ] as const)('keeps cyclic dependencies cold when Fast Refresh registers a %s', async (name, defer) => {
     const { createRequire } = await import('node:module');
     const refresh: { register(value: unknown, id: string): void } = createRequire(import.meta.url)('react-refresh/runtime');
     let dependency: z.ZodMiniString | undefined;
-    const schema = lazyZodSchema(() => z.strictObject({ accountId: dependency! }));
+    const schema = defer(() => z.strictObject({ accountId: dependency! }));
     // Metro registers exports before a module's cyclic importer has finished.
-    refresh.register(schema, 'cold-question-handler');
+    refresh.register(schema, 'cold-question-handler-' + name);
     dependency = z.string();
     expect(z.toJSONSchema(schema)).toMatchObject({ properties: { accountId: { type: 'string' } } });
     expect(schema.parse({ accountId: 'account' })).toEqual({ accountId: 'account' });

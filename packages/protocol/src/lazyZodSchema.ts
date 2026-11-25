@@ -179,8 +179,9 @@ class LazyDefinitionState<TSchema extends object> implements ProxyHandler<TSchem
 
   get(_target: TSchema, key: PropertyKey): unknown {
     // Fast Refresh probes every exported value before cyclic importers finish.
-    // React's component marker is not schema access and must keep definitions cold.
-    if (!this.schema && this.nativeZodSchema && key === '$$typeof') return undefined;
+    // Protocol definitions are never React components. This probe must leave
+    // derived definitions and native schemas cold until their inputs exist.
+    if (key === '$$typeof' && !this.schema) return undefined;
     // Native parse getters now memoize on first access. Retain the existing
     // cached invocation for frozen facades without prewarming every member.
     if (this.canonicalZodIdentity && typeof key === 'string'
