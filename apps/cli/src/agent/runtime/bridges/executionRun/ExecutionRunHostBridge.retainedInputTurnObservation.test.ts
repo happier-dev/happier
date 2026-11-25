@@ -1,3 +1,4 @@
+import { runWithScmAccountScope } from '@/scm/accountScope';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAgentStaticModels } from '@happier-dev/agents';
 
@@ -492,7 +493,7 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
         } finally { await attachment.release(); await backend.dispose(); }
     });
 
-    it('keeps the SCM baseline in public Run state without writing an empty transcript row', async () => {
+    it('keeps the SCM baseline in public Run state without writing an empty transcript row', async () => runWithScmAccountScope('retained-input-fixture-account', async () => {
         const { internals, attachment, transcriptPublications } = composeRetainedRun();
         const comparison = ScmComparisonSchema.parse({ id: 'baseline-comparison', source: { kind: 'workingTree' },
             repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [] } });
@@ -510,9 +511,9 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
             expect(internals.runs.get('run-1')).toMatchObject({ latestToolResult: { success: true, comparison,
                 outputs: { walkthrough: { state: 'pending' } } }, structuredMeta: { kind: 'scm_diff_summary.v1' } });
         } finally { await attachment.release(); }
-    });
+    }));
 
-    it('publishes a saved-result receipt instead of native JSON and preserves the next prose discussion', async () => {
+    it('publishes a saved-result receipt instead of native JSON and preserves the next prose discussion', async () => runWithScmAccountScope('retained-input-fixture-account', async () => {
         const { internals, attachment, acceptInput, emitRuntimeEvent, transcriptPublications, replyMutations } = composeRetainedRun();
         const comparison = ScmComparisonSchema.parse({ id: 'receipt-comparison', source: { kind: 'workingTree' },
             repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [] } });
@@ -583,7 +584,7 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
             expect(transcriptPublications.filter(item => item.meta?.scmResultUpdate !== undefined)).toHaveLength(1);
             expect(internals.runs.get('run-1')?.structuredMeta).toEqual(saved);
         } finally { await attachment?.release(); }
-    });
+    }));
     it('fulfills and releases only the exact native input after its committed terminal fact', async () => {
         const { internals, attachment, acceptInput, replyMutations, releasedSourceTurns, committedResultLookups } = composeRetainedRun();
         try {
@@ -886,7 +887,7 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
         }
     });
 
-    it('uses the admitted initial basis for optional-ID completion and never lets an old controller resurrect a replacement', async () => {
+    it('uses the admitted initial basis for optional-ID completion and never lets an old controller resurrect a replacement', async () => runWithScmAccountScope('retained-input-fixture-account', async () => {
         const { internals, attachment, emitRuntimeEvent, prepareScmInput } = composeRetainedRun();
         const controller = internals.controllers.get('run-1')!;
         const comparison = ScmComparisonSchema.parse({ id: 'optional-id-comparison', source: { kind: 'workingTree' },
@@ -921,7 +922,7 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
                 revision: manual.result.revision, output: { runId: 'new-run', outputs: { walkthrough: { value: { title: 'New manual title' } } } },
             } });
         } finally { await attachment?.release(); }
-    });
+    }));
     it('observes a findings-only completed review through the real raw host result and RPC projection', async () => {
         const { manager, internals, attachment, emitRuntimeEvent, acceptInput } = composeRetainedRun();
         const controller = internals.controllers.get('run-1')!;
@@ -973,7 +974,7 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
         { modelId: 'selected-model', effectiveModelId: undefined, expectedModelId: 'selected-model' },
         { modelId: 'selected-model', effectiveModelId: 'native-model', expectedModelId: 'native-model' },
         { modelId: undefined, effectiveModelId: undefined, expectedModelId: undefined },
-    ])('observes walkthrough completion through publication with Run model attribution ($expectedModelId)', async ({ modelId, effectiveModelId, expectedModelId }) => {
+    ])('observes walkthrough completion through publication with Run model attribution ($expectedModelId)', async ({ modelId, effectiveModelId, expectedModelId }) => runWithScmAccountScope('retained-input-fixture-account', async () => {
         const { manager, internals, attachment, emitRuntimeEvent, acceptInput } = composeRetainedRun();
         const controller = internals.controllers.get('run-1')!;
         const comparison = ScmComparisonSchema.parse({ id: 'comparison', source: { kind: 'workingTree' },
@@ -1003,8 +1004,8 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
             expect(saved.result.output.outputs?.walkthrough?.state).toBe('complete');
             expect(saved.result.output.producer?.modelId).toBe(expectedModelId);
         } finally { await attachment?.release(); }
-    });
-    it.each(['native-failure', 'malformed-model'] as const)('settles prior admission uncertainty after current %s publishes failed walkthrough output', async (failure) => {
+    }));
+    it.each(['native-failure', 'malformed-model'] as const)('settles prior admission uncertainty after current %s publishes failed walkthrough output', async (failure) => runWithScmAccountScope('retained-input-fixture-account', async () => {
         const { manager, internals, attachment, emitRuntimeEvent, acceptInput } = composeRetainedRun();
         const controller = internals.controllers.get('run-1')!;
         const comparison = ScmComparisonSchema.parse({ id: 'comparison', source: { kind: 'workingTree' },
@@ -1034,8 +1035,8 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
                 .toMatchObject({ kind: 'completed', result: { outputs: { walkthrough: { state: 'failed' } } } });
             expect(internals.controllers.get('run-1')).toBe(controller);
         } finally { await attachment?.release(); }
-    });
-    it('provisions a deferred SCM narrator without admitting its prepared initial prompt', async () => {
+    }));
+    it('provisions a deferred SCM narrator without admitting its prepared initial prompt', async () => runWithScmAccountScope('retained-input-fixture-account', async () => {
         const { manager, internals, attachment, admittedParts } = composeRetainedRun();
         const runtime = internals.controllers.get('run-1')!.backend;
         const comparison = ScmComparisonSchema.parse({ id: 'deferred-comparison', source: { kind: 'workingTree' },
@@ -1069,8 +1070,8 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
             expect(internals.runs.get(started.runId)?.structuredMeta?.payload).toMatchObject({ analysis: { parts: { completed: 0, total: 1 } } });
             expect(internals.runs.get(started.runId)).toMatchObject({ runClass: 'long_lived', status: 'running' });
         } finally { await manager.dispose(); await attachment?.release(); }
-    });
-    it('publishes failed requested output when initial generation completes with malformed prose and preserves it through later discussion', async () => {
+    }));
+    it('publishes failed requested output when initial generation completes with malformed prose and preserves it through later discussion', async () => runWithScmAccountScope('retained-input-fixture-account', async () => {
         const { internals, attachment, emitRuntimeEvent, acceptInput } = composeRetainedRun();
         const controller = internals.controllers.get('run-1')!;
         const comparison = ScmComparisonSchema.parse({ id: 'comparison', source: { kind: 'workingTree' },
@@ -1094,8 +1095,8 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
             await controller.pendingHostBarrier;
             expect(internals.runs.get('run-1')?.structuredMeta).toEqual(saved);
         } finally { await attachment?.release(); }
-    });
-    it.each(['complete', 'malformed-fragment'] as const)('partitions a single rejected occurrence at content boundaries with honest %s coverage', async (outcome) => {
+    }));
+    it.each(['complete', 'malformed-fragment'] as const)('partitions a single rejected occurrence at content boundaries with honest %s coverage', async (outcome) => runWithScmAccountScope('retained-input-fixture-account', async () => {
         const { internals, attachment, emitRuntimeEvent, acceptInput, admittedParts } = composeRetainedRun();
         const controller = internals.controllers.get('run-1')!;
         const diff = '@@ -1,2 +1,2 @@\n-old-a\n+new-a😀\n-old-b\n+new-b😀\n';
@@ -1134,8 +1135,8 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
                     remainingChangeRefs: outcome === 'complete' ? [] : ['change-0'],
                 } } });
         } finally { await attachment?.release(); }
-    });
-    it.each(['rejected', 'outcomeUnknown'] as const)('preserves usable parts after %s continuation admission without poisoning lifecycle custody', async (failure) => {
+    }));
+    it.each(['rejected', 'outcomeUnknown'] as const)('preserves usable parts after %s continuation admission without poisoning lifecycle custody', async (failure) => runWithScmAccountScope('retained-input-fixture-account', async () => {
         const { manager, internals, attachment, emitRuntimeEvent, acceptInput, admittedParts } = composeRetainedRun(failure);
         const controller = internals.controllers.get('run-1')!;
         const comparison = ScmComparisonSchema.parse({ id: 'comparison', source: { kind: 'workingTree' },
@@ -1167,7 +1168,7 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
             expect(internals.controllers.get('run-1')).toBe(controller);
             if (failure === 'outcomeUnknown') await manager.waitForOutput('run-1', { kind: 'review_walkthrough', comparisonId: comparison.id });
         } finally { await attachment?.release(); }
-    });
+    }));
     it('never invents a capacity retry from an unclassified failure or a cancelled controller', async () => {
         const { internals, attachment, emitRuntimeEvent, acceptInput, admittedParts } = composeRetainedRun();
         const controller = internals.controllers.get('run-1')!;
@@ -1188,7 +1189,7 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
         } finally { await attachment?.release(); }
     });
 
-    it('partitions native-rejected evidence through new admissions on the same retained run and publishes integrated output', async () => {
+    it('partitions native-rejected evidence through new admissions on the same retained run and publishes integrated output', async () => runWithScmAccountScope('retained-input-fixture-account', async () => {
         const { internals, attachment, emitRuntimeEvent, acceptInput, admittedParts } = composeRetainedRun();
         const controller = internals.controllers.get('run-1')!;
         const comparison = ScmComparisonSchema.parse({ id: 'comparison', source: { kind: 'workingTree' },
@@ -1239,9 +1240,9 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
             expect(internals.controllers.get('run-1')).toBe(controller);
             expect(controller.runtimeId).toBe('provider-session-1');
         } finally { await attachment?.release(); }
-    });
+    }));
 
-    it('publishes each structured retained turn without finishing the generator or replacing it with ordinary prose', async () => {
+    it('publishes each structured retained turn without finishing the generator or replacing it with ordinary prose', async () => runWithScmAccountScope('retained-input-fixture-account', async () => {
         const { internals, attachment, emitRuntimeEvent, acceptInput } = composeRetainedRun();
         const controller = internals.controllers.get('run-1')!;
         const run = internals.runs.get('run-1')!;
@@ -1278,7 +1279,7 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
             expect(internals.runs.get('run-1')?.structuredMeta).toEqual(previous);
             expect(internals.runs.get('run-1')?.status).toBe('running');
         } finally { await attachment?.release(); }
-    });
+    }));
 
     it('projects the exact native acceptance timestamp for a retained Workflow input', async () => {
         const { internals, attachment, emitRuntimeEvent } = composeRetainedRun();
@@ -1324,7 +1325,7 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
         }
     });
 
-    it('retains the cancelled retained input under the canonical occurrence when the Run is stopped', async () => {
+    it('retains the cancelled retained input under the canonical occurrence when the Run is stopped', async () => runWithScmAccountScope('retained-input-fixture-account', async () => {
         const { manager, internals, attachment, acceptInput } = composeRetainedRun();
         const comparison = ScmComparisonSchema.parse({ id: 'comparison', source: { kind: 'workingTree' },
             repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [] } });
@@ -1357,5 +1358,5 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
         } finally {
             await attachment?.release();
         }
-    });
+    }));
 });
