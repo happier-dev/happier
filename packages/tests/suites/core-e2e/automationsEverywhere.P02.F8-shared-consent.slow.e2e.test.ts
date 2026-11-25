@@ -10,6 +10,7 @@ import type { MachineAccessGrantSetInputV1 } from '@happier-dev/protocol/machine
 import { WorkflowDefinitionCreateResultV1Schema, WorkflowDefinitionEditResultV1Schema, WorkflowRunListResultV1Schema,
   WorkflowRunGetResultV1Schema, WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { SESSION_PERMISSION_MODE_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
 import { ApprovalQueueListResultV1Schema, ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
@@ -292,6 +293,11 @@ describe('AE.P02.F8-shared-consent', () => {
     const machine = await fixture.enrollDaemon(actor, { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
       HAPPIER_CLAUDE_PATH: agent.executablePath } });
     const session = await fixture.assertKnownGoodSessionControl(actor, machine);
+    const permission = await actor.executeAsPerson(SESSION_PERMISSION_MODE_SET_ACTION_ID_V1, {
+      sessionId: session.sessionId, permissionMode: 'default', applyTiming: 'immediate',
+    });
+    expect(permission, JSON.stringify(permission)).toMatchObject({ ok: true, result: { ok: true } });
+    expect(await actor.readSessionMetadata(session.sessionId)).toMatchObject({ permissionMode: 'default' });
     const decidingSession = await fixture.assertKnownGoodSessionControl(actor, machine);
     const reviewTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
     const roleInstructions = `AE_F8_ACTOR_ROLE_${randomUUID()}`;

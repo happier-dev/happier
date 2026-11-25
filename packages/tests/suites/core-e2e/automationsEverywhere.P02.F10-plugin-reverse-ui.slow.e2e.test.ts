@@ -13,6 +13,7 @@ import { applyTrustedLocalPluginFixture } from '../../src/testkit/externalSessio
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { createIsolatedFakeClaudeControlShim } from '../../src/testkit/fakeClaude';
 import { fetchJson } from '../../src/testkit/http';
+import { waitFor } from '../../src/testkit/timing';
 import { AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1 } from '../../../protocol/src/automations/automationActionOccurrenceV1';
 import { repoRootDir } from '../../src/testkit/paths';
 import { buildCurrentSourcePublicPluginFixture } from '../../src/testkit/pluginPlatform/currentManagedStackPluginUiQa';
