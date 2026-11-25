@@ -951,7 +951,7 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
 
     async function registerImage(service: string, revision: string, options?: Readonly<{
         volumes?: readonly string[]; registryReferences?: readonly string[];
-    }>): Promise<DeploymentImageV1> {
+    }>) {
         const imageDirectory = join(directory, `image-${service}-${revision}`);
         // Composed journeys may register the same service/revision more than once
         // while sharing a Docker boundary; keep the fixture registration idempotent.
@@ -967,8 +967,8 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
             config: { mediaType: 'application/vnd.oci.image.config.v1+json', digest: `sha256:${configHex}`, size: config.byteLength }, layers: [] }));
         const manifestHex = createHash('sha256').update(manifestBytes).digest('hex');
         const reference = `example/s0-${service}@sha256:${manifestHex}`;
-        const image: DeploymentImageV1 = { service, platform: 'linux/amd64', configDigest: `sha256:${configHex}`,
-            manifestDigest: `sha256:${manifestHex}`, registryReference: reference };
+        const image = { service, platform: 'linux/amd64', configDigest: `sha256:${configHex}`,
+            manifestDigest: `sha256:${manifestHex}`, registryReference: reference } satisfies DeploymentImageV1;
         await writeFile(join(imageDirectory, configFile), config);
         await writeFile(join(imageDirectory, 'manifest.json'), JSON.stringify([{ Config: configFile, RepoTags: [], Layers: [] }]));
         const archive = join(directory, `image-${service}-${revision}.tar`);
@@ -1111,7 +1111,7 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
         async registerBuildResult(service: string, revision: string) {
             const image = await registerImage(service, revision);
             const state = JSON.parse(await readFile(statePath, 'utf8')) as { buildImages?: Record<string, string> };
-            state.buildImages = { ...state.buildImages, [service]: image.registryReference! };
+            state.buildImages = { ...state.buildImages, [service]: image.registryReference };
             await writeState(state);
             return image;
         },
