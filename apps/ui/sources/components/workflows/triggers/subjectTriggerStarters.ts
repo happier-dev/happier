@@ -22,6 +22,11 @@ const STARTER_EVENT: Readonly<Partial<Record<SubjectSentenceStarter | 'addCheck'
 const isEnvironmentDeployStarter = (starter: string): starter is EnvironmentDeployStarter =>
   starter === 'deploymentFailed' || starter === 'deploymentSucceeded';
 
+/** The saved health transition setup Action binds an existing source on its Home. */
+export function buildSavedHealthTransitionSetupInput(serverId: string, nativeSourceInstanceId: string) {
+  return { v: 1, serverId, nativeSourceInstanceId } as const;
+}
+
 /** The page supplies its subject; the existing contributed setup owns configuring the source. */
 export function subjectStarterEventSeed(
   starter: SubjectSentenceStarter | 'addCheck' | 'deploymentSucceeded' | null,
@@ -55,7 +60,7 @@ export function subjectStarterEventSeed(
         ...(params.newContributedCheck ? { newContributedCheck: params.newContributedCheck } : {}) } };
   }
   return params.serverId
-    ? { eventRef, ...observer, setupInput: { v: 1, serverId: params.serverId, nativeSourceInstanceId } }
+    ? { eventRef, ...observer, setupInput: buildSavedHealthTransitionSetupInput(params.serverId, nativeSourceInstanceId) }
     : undefined;
 }
 

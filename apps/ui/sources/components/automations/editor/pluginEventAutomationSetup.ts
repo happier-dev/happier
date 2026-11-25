@@ -428,6 +428,18 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                         }
                         selection.form.replaceInput(draft);
                     }
+                    // A resource supplies every editable operand. A partial or Account-bearing seed still opens the form.
+                    const setupInput = seed?.setupInput;
+                    if (!saved && !seed?.connectedAccount && setupInput && Object.keys(setupInput).length > 0
+                        && !selection.form.presentation.choosesConnectedAccount
+                        && selection.form.getFields().every(field => readInputPath(setupInput, field.path) !== undefined)) {
+                        const submitted = await selection.form.submit();
+                        if (submitted.kind === 'settled' && submitted.outcome.ok) {
+                            params.onApplying?.();
+                            return await selection.result;
+                        }
+                        if (submitted.kind === 'stale') return await selection.result;
+                    }
                     (params.present ?? presentActionInputForm)({
                         form: selection.form,
                         signal: operationScope.signal,

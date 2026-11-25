@@ -11,6 +11,7 @@ import {
   editWorkflowTriggerDraft,
 } from './workflowTriggerDraft';
 import {
+  buildResourceWorkflowTriggerStartOptions,
   buildWorkflowTriggerStartOptions,
   commitWorkflowTriggerWhen,
   createWorkflowTriggerStartWhen,
@@ -29,6 +30,31 @@ const start = (id: string, previous?: TriggerWhenValue): TriggerWhenValue => {
 const savedId = AutomationTriggerIdSchema.parse('trigger-saved');
 // Lab round 1116c "Add a trigger, grouped once": Time, Sessions ("A session starts" first), …, Actions last.
 const lifecycleKinds = ['sessionStarts', ...Object.keys(AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1).filter(kind => kind !== 'sessionStarts')];
+
+it('prebinds Environment backup and specific Health check Event sources', async () => {
+  const { HEALTH_CHECK_EVENT_REFS_V1 } = await import('@happier-dev/protocol/deployments/healthCheckV1');
+  const { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+  const source = { sourceContractVersion: 1, setupActionRef: HEALTH_CHECK_EVENT_REFS_V1.failed,
+    supportedObservationTransports: ['checkpointedPull' as const], sourceConfigSchema: { type: 'object' as const } };
+  const serverId = 'home';
+  const environment = { kind: 'environment', serverId, environmentId: 'production' } as const;
+  const backup = { ...environment, kind: 'backup' } as const;
+  const health = { kind: 'healthCheck', serverId, sourceInstanceId: 'native-source', checkId: 'readiness' } as const;
+  const backupStart = buildResourceWorkflowTriggerStartOptions({ subject: environment, contextSubjects: [backup],
+    actions: [], machineId: 'observer', events: [{
+      eventRef: { pluginId: HEALTH_CHECK_EVENT_REFS_V1.failed.pluginId, localId: 'backup-failed' },
+      title: 'Backup failed', pluginName: null,
+      automation: { v: 1, eligible: true, source, subjectKinds: ['environment', 'backup'],
+        completesActionIds: [DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1] },
+    }] })[0];
+  const healthStart = buildResourceWorkflowTriggerStartOptions({ subject: health, actions: [], machineId: 'observer', events: [{
+    eventRef: HEALTH_CHECK_EVENT_REFS_V1.failed, title: 'Health check failed', pluginName: null,
+    automation: { v: 1, eligible: true, source, subjectKinds: ['healthCheck'] },
+  }] })[0];
+  expect(backupStart).toMatchObject({ subject: backup, eventSeed: { monitoringMachineId: 'observer', setupInput: { v: 1, serverId } } });
+  expect(healthStart).toMatchObject({ subject: health,
+    eventSeed: { monitoringMachineId: 'observer', setupInput: { v: 1, serverId, nativeSourceInstanceId: health.sourceInstanceId } } });
+});
 
 describe('workflow trigger starts (the "When it runs" card)', () => {
   it('authors contextual Session and PR starts without replacing a deliberate Any scope', () => {

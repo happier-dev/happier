@@ -423,6 +423,23 @@ function durablePushSetupParams(
 }
 
 describe('Plugin Event Automation setup orchestration', () => {
+    it('configures a complete prebound source through the Action form validator without asking for operands', async () => {
+        const base = eligibleEvent();
+        const inputSchema = { type: 'object', properties: { v: { const: 1 }, serverId: { type: 'string' } },
+            required: ['v', 'serverId'], additionalProperties: false };
+        const event = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
+            ...base, setupAction: { ...base.setupAction, inputSchema,
+                inputHints: { fields: [{ path: 'serverId', title: 'Server id', widget: 'text', required: true }] } },
+        });
+        setupSchemas.set(event.setupAction.id, inputSchema);
+        const setupInput = { v: 1, serverId: SERVER_ID };
+        const params = durablePushSetupParams(event);
+        await expect(configurePluginEventAutomationSetup({ ...params, observationTransport: 'checkpointedPull',
+            initialSetupSeed: { eventRef: event.event.identity, setupInput },
+            present: ({ form }) => form.cancel(),
+        })).resolves.toMatchObject({ kind: 'configured' });
+        expect(params.dispatch).toHaveBeenCalledWith(expect.objectContaining({ input: setupInput }));
+    });
     it('reopens a saved source and gives the shared presenter the bound Action and Account', async () => {
         const fixture = eligibleEvent();
         const event = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({

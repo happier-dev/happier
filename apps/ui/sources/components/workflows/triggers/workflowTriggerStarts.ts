@@ -3,6 +3,7 @@ import { isPluginAutomationActionSubjectV1, isPluginAutomationEventSubjectV1 } f
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowDraftDeploymentEventSeedV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
+import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 import { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import type { WorkflowActionSpec } from '../presentation/workflowActionCatalog';
@@ -10,6 +11,7 @@ import type { AutomationTriggerId } from '@happier-dev/protocol/automations/auto
 import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
+import { arePluginContributionIdentitiesEqual } from '@/sync/domains/automations/pluginEventAutomationCurrentness';
 import type { WorkflowActivityLiveFact } from '@/sync/domains/workflows/workflowActivityTypes';
 
 import type { IconName } from '@/components/ui/icons/Icon';
@@ -19,6 +21,7 @@ import { buildTriggerDefinition, createDefaultWhen, isSessionLifecycleWhen, SESS
 import { ACTION_PHASE_GLYPHS, resolveTriggerEventGroup, TRIGGER_LIFECYCLE_GLYPHS } from './triggerEventGroups';
 import { isDeployFinishedTrigger } from './formatTriggerSummary';
 export { isDeployFinishedTrigger } from './formatTriggerSummary';
+import { buildSavedHealthTransitionSetupInput } from './subjectTriggerStarters';
 import { editWorkflowTriggerDraft, type WorkflowTriggerDraft } from './workflowTriggerDraft';
 
 type SessionEventKind = keyof typeof AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1;
@@ -116,8 +119,14 @@ export function buildResourceWorkflowTriggerStartOptions(params: Readonly<{
         const eventSubject = backupCompletion ? params.contextSubjects?.find(candidate => candidate.kind === 'backup'
             && candidate.serverId === subject.serverId && candidate.environmentId === subject.environmentId) : subject;
         if (!eventSubject) continue;
+        const setupInput = eventSubject.kind === 'backup' && event.automation?.completesActionIds?.includes(DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1)
+            ? { v: 1, serverId: eventSubject.serverId }
+            : eventSubject.kind === 'healthCheck' && (
+                arePluginContributionIdentitiesEqual(event.eventRef, HEALTH_CHECK_EVENT_REFS_V1.failed)
+                || arePluginContributionIdentitiesEqual(event.eventRef, HEALTH_CHECK_EVENT_REFS_V1.recovered)
+            ) ? buildSavedHealthTransitionSetupInput(eventSubject.serverId, eventSubject.sourceInstanceId) : {};
         events.push({ id, label: event.title, relation: 'event', subject: eventSubject, when, trigger: null, setupRequired: true,
-            eventSeed: { eventRef: event.eventRef, setupInput: {},
+            eventSeed: { eventRef: event.eventRef, setupInput,
                 ...(params.machineId === null ? {} : { monitoringMachineId: params.machineId }) } });
     }
     return [...events, ...actions];
