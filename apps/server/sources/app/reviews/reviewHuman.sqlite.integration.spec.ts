@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createCipheriv, randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -36,6 +36,62 @@ describe('Review requested-person HTTP flow', () => {
     let harness: LightSqliteHarness;
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'review-human-', initAuth: true, initEncrypt: true }); }, 180_000);
     afterAll(async () => { await harness?.close(); });
+
+    it('keeps sealed Review title and prose out of serialized needs-you facts', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'e2ee' } });
+        const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await makeShareEligibleForTest(owner.id, [recipient.id]);
+        const reviewId = randomUUID();
+        const title = 'private-title-attention-sentinel';
+        const prose = 'private-prose-attention-sentinel';
+        // Client crypto is outside the server boundary; all SQL, admission and HTTP projection remain real.
+        const resourceKey = randomBytes(32);
+        const seal = (value: unknown) => {
+            const nonce = randomBytes(12);
+            const cipher = createCipheriv('aes-256-gcm', resourceKey, nonce);
+            const bytes = Buffer.concat([cipher.update(JSON.stringify(value)), cipher.final()]);
+            return Buffer.concat([nonce, cipher.getAuthTag(), bytes]);
+        };
+        const header = seal({ kind: 'review.v1', reviewId, title });
+        const body = seal({ body: prose });
+        const sealedProse = seal({ reviewId, roundOrdinal: 1, accountId: owner.id, revision: 1, body: prose }).toString('base64');
+        await db.artifact.create({ data: { id: reviewId, accountId: owner.id,
+            kind: encodeArtifactKindV1({ kind: 'other', kindHint: 'review.v1' }), header, body, dataEncryptionKey: randomBytes(80),
+            reviewMetadata: { create: { subjectKind: 'comparison', sourceKind: 'direct', state: 'completed',
+                currentRoundOrdinal: 1, startedAt: new Date(1), finishedAt: new Date(2) } } } });
+        expect(await inTx(tx => setArtifactAccessGrantInTx(tx, { actorAccountId: owner.id, artifactId: reviewId,
+            principal: { kind: 'account', accountId: recipient.id }, accessLevel: 'view' }))).toMatchObject({ ok: true });
+        await withAuthenticatedTestApp(registerHttpRoutes, async app => {
+            const headers = (accountId: string) => ({ 'x-test-user-id': accountId });
+            const requested = await app.inject({ method: 'POST', url: `/v1/reviews/${reviewId}/reviewers`, headers: headers(owner.id),
+                payload: { roundOrdinal: 1, reviewers: [owner.id, recipient.id].map(accountId => ({
+                    principal: { kind: 'account', accountId }, required: true })) } });
+            expect(requested.statusCode, requested.body).toBe(200);
+            const submitted = await app.inject({ method: 'POST', url: `/v1/reviews/${reviewId}/verdicts`, headers: headers(owner.id),
+                payload: { roundOrdinal: 1, verdict: 'comment', content: { t: 'encrypted', c: sealedProse } } });
+            expect(submitted.statusCode, submitted.body).toBe(200);
+            const { resolveReviewAccessInTx } = await import('./reviewAccess');
+            const { readAdmittedReviewNeedsYouInTx } = await import('./reviewHumanService');
+            const facts = await inTx(async tx => {
+                const access = await resolveReviewAccessInTx(tx, { actorAccountId: recipient.id, reviewId });
+                if (!access) throw new Error('Expected the recipient View grant');
+                return readAdmittedReviewNeedsYouInTx(tx, { actorAccountId: recipient.id, reviews: [access] });
+            });
+            const expected = { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: true,
+                requestedVerdict: true, pendingDecisions: false, canSubmitVerdict: true };
+            expect([...facts.values()]).toEqual([expected]);
+            const response = await app.inject({ method: 'GET', url: `/v1/reviews/${reviewId}/human`, headers: headers(recipient.id) });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json().needsYou).toEqual(expected);
+            expect(JSON.stringify(response.json().needsYou)).toBe(JSON.stringify(facts.get(reviewId)));
+            for (const content of [title, prose, header.toString('base64'), body.toString('base64')]) {
+                expect(response.body).not.toContain(content);
+            }
+            // Authorized Review detail carries its sealed verdict; attention facts never do.
+            expect(response.json().verdicts).toEqual([expect.objectContaining({ content: { t: 'encrypted', c: sealedProse } })]);
+            expect(JSON.stringify([...facts.values()])).not.toContain(sealedProse);
+        });
+    });
 
     it('publishes changed verdicts to the person, skips exact replays, and refuses agent-origin verdicts', async () => {
         const person = await db.account.create({ data: { encryptionMode: 'plain' } });
