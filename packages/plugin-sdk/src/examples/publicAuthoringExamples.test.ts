@@ -4028,6 +4028,8 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             key: string;
             language: 'ts' | 'tsx';
             source: string;
+            excerpt: boolean;
+            typecheckOnly: boolean;
         }>> = [];
         for (const documentPath of await listPublishedAuthoringDocumentationFiles()) {
             const relativeDocumentPath = publishedAuthoringDocumentationKey(documentPath);
@@ -4036,10 +4038,19 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                     continue;
                 }
                 const language = block.language as 'ts' | 'tsx';
+                const isContributionGuide = relativeDocumentPath === 'manifest/contributions.mdx';
                 candidates.push({
                     key: `${relativeDocumentPath}#${blockIndex}`,
                     language,
                     source: block.source,
+                    // The Theme excerpt omits the profiles. The Machine role excerpt omits the plugin and runner.
+                    excerpt: isContributionGuide && (
+                        block.source.includes('theme: paperProfile')
+                        || block.source.includes('// ...\n  machineRoles: {')
+                    ),
+                    // This example typechecks against an author-supplied driver without executing it.
+                    typecheckOnly: isContributionGuide
+                        && block.source.includes('declare const runtime: PluginDatabaseEngineRuntimeV1;'),
                 });
             }
         }
@@ -4052,13 +4063,14 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             expect(candidateKeys.map((candidate) => candidate.split('#')[0]), `${key} support files must match a definePlugin document`).toContain(key);
         }
         expect(candidates.length).toBeGreaterThan(0);
+        const snippets = candidates.filter((candidate) => !candidate.excerpt && !excludedExamples.has(candidate.key));
         expect(
-            candidateKeys.filter((key) => !excludedExamples.has(key)),
+            snippets,
             'Every published definePlugin example must be compiled or have an explicit owner-level exclusion',
-        ).toHaveLength(candidates.length - excludedExamples.size);
+        ).toHaveLength(candidates.length - excludedExamples.size - candidates.filter((candidate) => candidate.excerpt).length);
 
         expect(
-            candidates
+            snippets
                 .filter((candidate) => !hasDocumentedPluginDaemonEntrypoint(candidate.source))
                 .map((candidate) => candidate.key),
             'Code-defined plugin documentation must name entrypoints.daemon so the canonical author build and pack path can emit its activation module.',
@@ -4093,7 +4105,6 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             }
         }
 
-        const snippets = candidates.filter((candidate) => !excludedExamples.has(candidate.key));
         const copiedRoot = copyExamplesOutsideWorkspace();
         try {
             writeFileSync(join(copiedRoot, 'package.json'), '{"type":"module"}\n', 'utf8');
@@ -4159,6 +4170,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             ).toBe(0);
 
             for (const [index, snippet] of snippets.entries()) {
+                if (snippet.typecheckOnly) continue;
                 const sourceFile = sourceFiles[index];
                 if (!sourceFile) throw new Error(`Missing compiled documentation source for ${snippet.key}`);
                 const emittedFile = join(copiedRoot, sourceFile.replace(/\.tsx?$/u, '.js'));
