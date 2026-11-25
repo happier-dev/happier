@@ -7158,7 +7158,8 @@ describe('deployment children retain their controller Action authority', () => {
             }, { authentication: 'real' });
         });
 
-    it.each([['plain', 'vercel'], ['e2ee', 'vercel'], ['plain', 'cloudflare-workers'], ['e2ee', 'cloudflare-pages']] as const)(
+    it.each([['plain', 'vercel'], ['e2ee', 'vercel'], ['plain', 'cloudflare-workers'], ['e2ee', 'cloudflare-workers'],
+        ['e2ee', 'cloudflare-pages']] as const)(
         'admits a hosted collector bearer only after acknowledged sync in a %s Account on %s', async (contentMode, targetKind) => {
         const f = await fixture('account', 'account', { contentMode, readableEnvironment: true, platformTarget: 'vercel' });
         const actionId = 'deployments.environments.telemetry.set';
@@ -7261,6 +7262,21 @@ describe('deployment children retain their controller Action authority', () => {
                 const stamped = await submit(first, afterActivation);
                 expect(stamped.statusCode, stamped.body).toBe(200);
                 expect(await admit(selected)).toMatchObject({ accepted: true, context: { environmentId: f.environment.id } });
+
+                const rotated = await preparedWrite(f.environmentRevision + 1, f.link.revision + 1, { rotate: true });
+                const newBearer = 'synthetic-rotated-workers-bearer';
+                expect((await submit(rotated)).statusCode).toBe(200);
+                expect(await admit(selected)).toMatchObject({ accepted: true });
+                expect(await admit(selected, newBearer)).toMatchObject({ accepted: false, status: 401 });
+
+                const { telemetryMachineId: _rotatedPlacement, ...rotatedCurrent } = rotated.body;
+                const switched = await submit(rotated, { ...rotatedCurrent, expectedRevision: f.environmentRevision + 2,
+                    targetLinkContent: { ...rotatedCurrent.targetLinkContent, expectedTargetLinkRevision: f.link.revision + 2 },
+                    telemetrySyncAcknowledgement: { telemetryMachineId: selected,
+                        telemetryTokenHash: createHash('sha256').update(newBearer).digest('hex') } });
+                expect(switched.statusCode, switched.body).toBe(200);
+                expect(await admit(selected, newBearer)).toMatchObject({ accepted: true });
+                expect(await admit(selected)).toMatchObject({ accepted: false, status: 401 });
                 return;
             }
             let environmentRevision = f.environmentRevision;

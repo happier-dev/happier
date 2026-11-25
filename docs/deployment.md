@@ -3397,8 +3397,13 @@ collector bearer.
 
 The reviewed bindings write registers the exporter with the selected collector
 after Vercel acknowledges both managed exporter variables or Cloudflare
-acknowledges activation of both destinations. Rotating the bearer or changing
-the collector clears that registration until the next acknowledged sync.
+acknowledges activation of both destinations. Changing the collector clears
+that registration until the next acknowledged sync. Rotating a Vercel or Pages
+bearer clears that registration until the next acknowledged sync.
+For a running Worker,
+Cloudflare applies the rotated header through the account destination update.
+Happier switches the collector assignment after that update is acknowledged.
+A request already in flight can receive HTTP 401 during the switch.
 Workers still need the Wrangler configuration above to start exporting.
 Pages currently does not consume the managed collector input.
 

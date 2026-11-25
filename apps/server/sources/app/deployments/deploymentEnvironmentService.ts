@@ -661,8 +661,6 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     const telemetryCapabilities = input.telemetryCapabilities === undefined ? previousTelemetryCapabilities
         : resolveDeploymentTelemetryCapabilitiesV1(input.telemetryCapabilities);
     const telemetryCapabilitiesChanged = !isDeepStrictEqual(previousTelemetryCapabilities, telemetryCapabilities);
-    const telemetryPublicationMachineIds = telemetryChanged || telemetryCapabilitiesChanged || telemetryRotated || syncAcknowledgement
-        ? [loaded.row.telemetryMachineId, telemetryMachineId] : [];
     if (input.telemetryMachineId) {
         const alreadyAdmitted = telemetryAdmission?.expectedRevision === input.expectedRevision
             && telemetryAdmission.collector?.machineId === input.telemetryMachineId;
@@ -671,6 +669,14 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
             if (denied) return denied;
         }
     }
+    const link = loaded.row.runtimeTargetLinkId ? await tx.deploymentTargetLink.findFirst({
+        where: { id: loaded.row.runtimeTargetLinkId, environmentId: loaded.row.id, deletedAt: null },
+        include: { machines: { orderBy: { position: 'asc' } } },
+    }) : null;
+    const platformRuntime = link?.sourceKind === 'plugin' && !placement && !databaseReadBinding;
+    const clearsTelemetryStamp = telemetryChanged || (telemetryRotated && platformRuntime && link.targetKind !== 'cloudflare-workers');
+    const telemetryPublicationMachineIds = telemetryChanged || telemetryCapabilitiesChanged || syncAcknowledgement
+        || (clearsTelemetryStamp && loaded.row.telemetryTokenHash !== null) ? [loaded.row.telemetryMachineId, telemetryMachineId] : [];
     const resourceIds = [...new Set([
         ...input.referencedSavedSecretRevisions,
         ...(readDeploymentBindingSavedSecretRevisionsV1(loaded.row.referencedSavedSecretRevisions) ?? []),
@@ -682,11 +688,6 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
                 ...await readDeploymentTelemetryPublicationAccountIdsInTx(tx, telemetryPublicationMachineIds),
             ] });
     }
-    const link = loaded.row.runtimeTargetLinkId ? await tx.deploymentTargetLink.findFirst({
-        where: { id: loaded.row.runtimeTargetLinkId, environmentId: loaded.row.id, deletedAt: null },
-        include: { machines: { orderBy: { position: 'asc' } } },
-    }) : null;
-    const platformRuntime = link?.sourceKind === 'plugin' && !placement && !databaseReadBinding;
     const linkCandidate = input.targetLinkContent;
     const platformVariables = platformRuntime && linkCandidate !== undefined;
     const managedPlatformBindings = platformRuntime && linkCandidate === undefined;
@@ -1003,7 +1004,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         if (updated.count !== 1) throw new Error('Locked deployment TargetLink changed during binding CAS');
     }
     const data = { ...deploymentContentReference(input), ...(telemetryChanged ? { telemetryMachineId } : {}),
-        ...(telemetryChanged || (telemetryRotated && platformRuntime) ? { telemetryTokenHash: null } : {}),
+        ...(clearsTelemetryStamp ? { telemetryTokenHash: null } : {}),
         ...(telemetryCapabilitiesChanged ? { telemetryMetricsEnabled: telemetryCapabilities.metrics,
             telemetryAppLlmCostEnabled: telemetryCapabilities.appLlmCost, telemetryExceptionsEnabled: telemetryCapabilities.exceptions } : {}), ...(placement ? { buildMachineId,
             ...(placement.edgeMachineId !== undefined ? { edgeMachineId: placement.edgeMachineId } : {}),
