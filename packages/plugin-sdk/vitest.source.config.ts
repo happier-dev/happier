@@ -1,4 +1,5 @@
 import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers.ts';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +13,7 @@ import { ISOLATED_EXAMPLE_BUILD_ROOT } from './scripts/buildExampleProjects.mjs'
 import { PLUGIN_SDK_AUTHORED_TEST_INCLUDE } from './vitest.config.ts';
 
 const packageRoot = fileURLToPath(new URL('.', import.meta.url));
+const requireSdkDependency = createRequire(import.meta.url);
 const workspacePackages: readonly WorkspacePackageSpec[] = [
     {
         packageName: '@happier-dev/plugin-sdk',
@@ -77,6 +79,13 @@ export default defineConfig({
         workspacePackages,
         'happier-plugin-sdk-source-workspace-package-sources',
     )],
+    resolve: {
+        // Hosted examples use the same web implementations as the Plugin UI tests.
+        alias: [
+            { find: /^react-native$/u, replacement: requireSdkDependency.resolve('react-native-web/dist/index.js') },
+            { find: /^react-native-svg$/u, replacement: requireSdkDependency.resolve('react-native-svg/lib/module/elements.web.js') },
+        ],
+    },
     test: {
         ...resolveVitestWorkers(),
         setupFiles: ['./src/ui/configureZodLocale.ts'],
@@ -106,6 +115,7 @@ export default defineConfig({
                 // dist copies.
                 inline: [
                     /^@happier-dev\/plugin-sdk(?:\/|$)/,
+                    /^@happier-dev\/plugin-ui(?:\/|$)/,
                     /^@happier-dev\/protocol(?:\/|$)/,
                 ],
             },
