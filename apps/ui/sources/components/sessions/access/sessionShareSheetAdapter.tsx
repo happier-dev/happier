@@ -4,6 +4,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
+import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import type { SelectionListOption, SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
@@ -43,9 +44,12 @@ function SessionChoiceCaret(props: Readonly<{ open?: boolean }>): React.ReactEle
     return <Icon name={props.open ? 'caret-up' : 'caret-down'} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />;
 }
 
-function SessionContextOptionMark(props: Readonly<{ personal: boolean }>): React.ReactElement {
+/** Private is the lock; a Team choice is that Team's own mark, as its Share row and the Teams directory draw it. */
+function SessionContextOptionMark(props: Readonly<{ teamId: string | null; label: string }>): React.ReactElement {
     const { theme } = useUnistyles();
-    return <Icon name={props.personal ? 'lock' : 'users'} size={ICON_SIZE.lg} color={theme.colors.text.secondary} />;
+    return props.teamId === null
+        ? <Icon name="lock" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />
+        : <Avatar id={props.teamId} square size={ICON_SIZE.lg} monogram={props.label} />;
 }
 
 function SessionContextReasonMark(): React.ReactElement {
@@ -253,7 +257,7 @@ export function createSessionShareSheetAdapter(input: Readonly<{
                             key={option.teamId ?? 'personal'}
                             testID={`${idPrefix}session-access-context-${option.teamId ?? 'personal'}`}
                             // Each choice carries its mark so its title lines up with every other row's title.
-                            icon={<SessionContextOptionMark personal={option.teamId === null} />}
+                            icon={<SessionContextOptionMark teamId={option.teamId} label={option.label} />}
                             title={option.label} subtitle={reason?.message} subtitleLines={0}
                             selected={option.teamId === context.primaryTeamId}
                             loading={context.operation === 'saving' && option.teamId === (context.confirmation?.teamId ?? context.primaryTeamId)}

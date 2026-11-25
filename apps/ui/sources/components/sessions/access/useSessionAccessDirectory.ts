@@ -371,7 +371,9 @@ export function useSessionAccessDirectory(input: Readonly<{
         return {
             rows: outcome.value.items.map((team) => {
                 const principalSummary = { kind: 'team' as const, teamId: team.id, name: team.name };
-                const projected = projectSessionAccessPrincipal(principalSummary);
+                const named = projectSessionAccessPrincipal(principalSummary);
+                // The Team's logo joins its mark, as the Teams directory draws it.
+                const projected = team.logo?.url ? { ...named, avatar: { id: team.id, imageUrl: team.logo.url } } : named;
                 const summary = teamStandingSummary(team);
                 const principal = summary ? { ...projected, secondaryLabel: summary,
                     accessibilityLabel: `${projected.displayName}, ${summary}` } : projected;

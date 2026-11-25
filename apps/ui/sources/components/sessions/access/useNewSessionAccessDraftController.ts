@@ -27,6 +27,7 @@ import { useSessionAccessDirectory, type SessionAccessDirectoryTeamContext } fro
 import { createSessionAccessQuery } from './sessionAccessQuery';
 import type {
     SessionAccessEditorActions,
+    SessionAccessCandidateRowModel,
     SessionAccessEditorController,
     SessionAccessGrantRowModel,
     SessionAccessLevel,
@@ -507,31 +508,43 @@ export function useNewSessionAccessDraftController(input: Readonly<{
         loadMoreRecipients: () => {},
     }), [directory, pendingContextDecision, pendingContextTarget, pendingContextTeamId, replace, setContext, submitContext]);
 
+    // A Team whose context choice already says why it is refused, with the step that meets its rule, is that
+    // Team's one row in this sheet: the Teams directory leaves it out instead of saying the reason again.
+    const refusedContextTeamKey = signInReason && signInRefusal
+        ? sessionAccessSubjectKey({ kind: 'team', teamId: signInRefusal.teamId }) : null;
     // Candidate presentation is captured as it is chosen so the selected row
     // keeps its real name without a second identity lookup.
-    const sections = React.useMemo(() => directory.sections.map((section) => ({
-        ...section,
-        ...(section.resolveCandidates ? {
-            resolveCandidates: async (search: string, signal: AbortSignal) => {
-                const candidates = await section.resolveCandidates!(search, signal);
-                setResolvedPrincipals((current) => {
-                    // Copy-on-first-change: unchanged names keep their identity so the
-                    // rows around them are not rebuilt by a search that found nothing new.
-                    const base = current.scopeKey === scopeKey ? current.values : {};
-                    let next: Record<string, SessionAccessPrincipalSummaryV1> | null = null;
-                    for (const candidate of candidates) {
-                        const summary = candidate.principalSummary;
-                        if (!summary || (next ?? base)[candidate.principal.key] === summary) continue;
-                        const updated: Record<string, SessionAccessPrincipalSummaryV1> = next ?? { ...base };
-                        updated[candidate.principal.key] = summary;
-                        next = updated;
-                    }
-                    return next === null ? current : { scopeKey, values: next };
-                });
-                return candidates;
-            },
-        } : {}),
-    })), [directory.sections, scopeKey]);
+    const sections = React.useMemo(() => directory.sections.map((section) => {
+        const offered = section.kind === 'team' && refusedContextTeamKey !== null
+            ? (rows: readonly SessionAccessCandidateRowModel[]) => rows.filter((row) => row.principal.key !== refusedContextTeamKey)
+            : null;
+        return {
+            ...section,
+            // The list keeps resolved rows by this key, so the row it now leaves out is part of it.
+            ...(offered ? { candidates: offered(section.candidates), resolverKey: `${section.resolverKey ?? section.kind}:without:${refusedContextTeamKey}` } : {}),
+            ...(section.resolveCandidates ? {
+                resolveCandidates: async (search: string, signal: AbortSignal) => {
+                    const resolvedCandidates = await section.resolveCandidates!(search, signal);
+                    const candidates = offered ? offered(resolvedCandidates) : resolvedCandidates;
+                    setResolvedPrincipals((current) => {
+                        // Copy-on-first-change: unchanged names keep their identity so the
+                        // rows around them are not rebuilt by a search that found nothing new.
+                        const base = current.scopeKey === scopeKey ? current.values : {};
+                        let next: Record<string, SessionAccessPrincipalSummaryV1> | null = null;
+                        for (const candidate of candidates) {
+                            const summary = candidate.principalSummary;
+                            if (!summary || (next ?? base)[candidate.principal.key] === summary) continue;
+                            const updated: Record<string, SessionAccessPrincipalSummaryV1> = next ?? { ...base };
+                            updated[candidate.principal.key] = summary;
+                            next = updated;
+                        }
+                        return next === null ? current : { scopeKey, values: next };
+                    });
+                    return candidates;
+                },
+            } : {}),
+        };
+    }), [directory.sections, refusedContextTeamKey, scopeKey]);
 
     const defaultGrant = creationDecision?.defaultGrant;
     const differsFromDefault = primaryTeamId === null

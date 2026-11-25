@@ -12,6 +12,7 @@ import { useNewSessionAccessDraftController } from './useNewSessionAccessDraftCo
 import { useNewSessionAccessDraft, type NewSessionAccessDraftState } from './useNewSessionAccessDraft';
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import type { SessionAccessCandidateRowModel } from './sessionAccessEditorTypes';
+import { sessionAccessSubjectKey } from './projectSessionAccessEditorSnapshot';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
@@ -991,6 +992,52 @@ describe('useNewSessionAccessDraft repository currentness', () => {
         await vi.waitFor(() => expect(latest!.model.context?.options.find((option) => option.teamId === 'team-willow')
             ?.blockedReason).toBeUndefined());
         await after.unmount();
+    });
+
+    it('says a refused Team once: its context choice carries the reason and Sign in, and the Teams directory leaves it out', async () => {
+        runTeamActionMock.mockImplementation(async (request) => {
+            if ((request as unknown as { actionId?: string }).actionId !== 'teams.list') {
+                return { kind: 'failed' as const, failure: { kind: 'unreachable' as const, retryable: true, code: null } };
+            }
+            return { kind: 'succeeded', value: { items: [
+                teamSummaryFixture({ id: 'team-willow', name: 'Willow Design Studio',
+                    policy: teamPolicyFixture({ sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed' }) }),
+                teamSummaryFixture({ id: 'team-northwind', name: 'Northwind Field Survey',
+                    policy: teamPolicyFixture({ sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed' }) }),
+            ], nextCursor: null } } as never;
+        });
+        const profile = await upsertServerProfile({ name: 'Refused Team Home', serverUrl: 'https://refused-team-once.example.test' });
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({
+            token: `e30.${Buffer.from(JSON.stringify({ sub: 'creator' })).toString('base64url')}.signature`,
+        });
+        creationDecisionNetworkMode.enabled = true;
+        setRuntimeFetch(async (url, init) => {
+            const parsed = new URL(String(url));
+            if (parsed.pathname === '/v1/auth/ping') return new Response('{}');
+            if (parsed.pathname === '/v1/session-access/principals/resolve') {
+                const body = JSON.parse(String(init?.body ?? '{}')) as { creationTeamId?: string };
+                if (!body.creationTeamId) return new Response(JSON.stringify({ v: 1, principals: [] }));
+                return new Response(JSON.stringify({ v: 1, principals: [], creationDecision: null, creationRefusal: {
+                    v: 1, teamId: 'team-willow', teamName: 'Willow Design Studio',
+                    code: 'session_access_authentication_required', accepted: [{ kind: 'home_method', methodId: 'key_challenge' }],
+                } }));
+            }
+            return new Response('{}', { status: 404 });
+        });
+        let latest: Controller | null = null;
+        await renderScreen(<Probe initial={null} initialPrimaryTeamId="team-willow" availability="available" demanded
+            scope={{ serverId: profile.id, accountId: 'creator' }} onReady={(controller) => { latest = controller; }} />);
+        await vi.waitFor(() => expect(latest!.model.context?.options.find((option) => option.teamId === 'team-willow')
+            ?.blockedReason?.action).toBeDefined());
+        const teams = () => latest!.model.directory.sections.find((section) => section.kind === 'team')!;
+        await vi.waitFor(() => expect(teams().resolved).toBe(true));
+        const willowKey = sessionAccessSubjectKey({ kind: 'team', teamId: 'team-willow' });
+        const northwindKey = sessionAccessSubjectKey({ kind: 'team', teamId: 'team-northwind' });
+        expect(teams().candidates.map((row) => row.principal.key)).toEqual([northwindKey]);
+        let found: readonly SessionAccessCandidateRowModel[] = [];
+        await act(async () => { found = await teams().resolveCandidates!('', new AbortController().signal); });
+        expect(found.map((row) => row.principal.key)).toEqual([northwindKey]);
+        expect(found.map((row) => row.principal.key)).not.toContain(willowKey);
     });
 
     it('retries an unavailable creation decision through the existing content retry action', async () => {

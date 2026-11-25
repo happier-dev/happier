@@ -27,7 +27,12 @@ function SharePrincipalVisual(props: Readonly<{ principal: SharePrincipalPresent
     return <View testID={props.testID} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
         {principal.ref.kind === 'account'
             ? <Avatar id={principal.avatar?.id ?? principal.key} size={size} imageUrl={principal.avatar?.imageUrl ?? null} />
-            : <Icon name="users" size={size} color={theme.colors.text.secondary} />}
+            // A Team is drawn with its own mark, as the Teams directory and the Team sign-in page draw it: the avatar
+            // owner derives its letter and accent from the immutable Team id, with the Team's logo when it has one.
+            : principal.ref.kind === 'team'
+                ? <Avatar id={principal.ref.teamId} square size={size} monogram={principal.displayName}
+                    imageUrl={principal.avatar?.imageUrl ?? null} />
+                : <Icon name="users" size={size} color={theme.colors.text.secondary} />}
     </View>;
 }
 

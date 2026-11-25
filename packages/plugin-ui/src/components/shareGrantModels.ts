@@ -14,8 +14,8 @@ export const SHARE_ACCESS_LEVEL_ORDER: readonly ShareAccessLevel[] = ['view', 'e
 export type ShareUiReason = Readonly<{ code: string; message: string; action?: Readonly<{ label: string; onPress: () => void }> }>;
 export type ShareUiError = ShareUiReason & Readonly<{ retryable: boolean }>;
 /**
- * Inputs for the canonical `Avatar` owner, not a second avatar model. Teams and Groups carry no
- * Account profile and are drawn with their kind glyph instead.
+ * Inputs for the canonical `Avatar` owner, not a second avatar model. A Team carries its logo here
+ * and is drawn with its own mark; Groups carry no profile and are drawn with their kind glyph.
  */
 export type ShareAvatarPresentation = Readonly<{ id: string; imageUrl?: string }>;
 export type SharePrincipalPresentation = Readonly<{
