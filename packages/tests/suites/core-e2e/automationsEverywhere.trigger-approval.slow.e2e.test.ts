@@ -25,6 +25,7 @@ describe('AE approved trigger publication', () => {
     const recipient = await running.createAccount('trigger-recipient');
     const actorId = readAccountIdFromToken(actor.credentials.token);
     const recipientId = readAccountIdFromToken(recipient.credentials.token);
+    if (!actorId || !recipientId) throw new Error('fixture token carries no account id');
     for (const [account, id] of [[actor, actorId], [recipient, recipientId]] as const) {
       expect(await account.executeAsPerson('account.username.set', {
         username: `ae${id.replaceAll('-', '').slice(0, 12)}`,
