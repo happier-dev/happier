@@ -214,7 +214,7 @@ describe('P40 aggregate to one C1 Environment health condition', () => {
             expect(partial.artifact.artifactId).toBe(opened.artifact.artifactId);
             const unknown = await publish('up', 'unknown', 'up');
             expect(unknown.notice).toMatchObject({ type: protection === 'production' ? 'blocked' : 'update', healthPhase: 'open' });
-            expect(unknown.artifact.revision).toBe(partial.artifact.revision);
+            expect(unknown.artifact.revision).toStrictEqual(partial.artifact.revision);
             const edge = await publish('up', 'up', 'down');
             expect(edge.artifact.artifactId).toBe(opened.artifact.artifactId);
             expect(edge.notice?.body).toContain('edge');
