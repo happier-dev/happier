@@ -53,7 +53,8 @@ export async function startAutomaticCheckFixture(mode: 'wait' | 'notify', onFail
       externalActionTarget: { kind: 'machine' as const, machineId: machine.target.machineId,
         project: { machineId: machine.target.machineId, directory: machine.workspaceDir } } };
     return { ...fixture, actor, machine, saved, effectPath, context, agentContext,
-      invoke: () => actor.execute('machines.command.run', { command: effect }, context),
+      // Complete the person's ordinary approval while the independent Notify check is still held.
+      invoke: () => actor.executeReviewed('machines.command.run', { command: effect }, context),
       async invokePending() {
         const lifetime = new AbortController();
         const invocation = actor.execute('machines.command.run', { command: effect }, { ...context, signal: lifetime.signal });
