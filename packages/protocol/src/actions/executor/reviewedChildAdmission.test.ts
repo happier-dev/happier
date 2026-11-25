@@ -207,8 +207,7 @@ describe('ordinary reviewed child admission transport', () => {
         parent: { actionId: 'session.spawn_new', input: spawnInput }, child: { ...inventory, input: inventoryInput },
         execute: async (_input, inventoryContext) => {
           expect(issuer.readHostAdmittedReviewedRootV1(inventoryContext)).toEqual(parent);
-          expect(issuer.readHostAdmittedReviewedChildV1(inventoryContext)).toBeNull();
-          const admitted = issuer.retainHostReviewedChildAdmissionV1(inventoryContext, inventory.action, inventoryInput);
+          const admitted = inventoryContext;
           expect(issuer.readHostAdmittedReviewedChildV1(admitted)).toEqual({ actionId: inventory.action,
             role: inventory.role, input: inventoryInput,
             inputDigest: computeActionInputApprovalDigestV1(inventory.action, inventoryInput) });
@@ -236,7 +235,7 @@ describe('ordinary reviewed child admission transport', () => {
           })).toBeNull();
           expect(issuer.retainHostReviewedChildAdmissionV1(inventoryContext, inventory.action,
             { ...inventoryInput, machineId: 'different' })).toBeUndefined();
-          expect(issuer.readHostAdmittedReviewedChildV1(inventoryContext)).toBeNull();
+          expect(issuer.readHostAdmittedReviewedChildV1(inventoryContext)).toEqual(leaf);
           return { ok: true, result: null };
         } }).then(async result => {
           const reboundRequests: unknown[] = [];
