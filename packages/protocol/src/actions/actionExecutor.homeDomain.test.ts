@@ -1022,10 +1022,10 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     } as unknown as ActionExecutorDeps;
     const executor = createActionExecutor(boundary);
     const remoteDecider = createActionExecutor({ ...boundary,
-      // Exact-daemon RPC boundary; replay and local custody remain real.
-      approvalRequestApprovedReplay: async ({ artifactId, context }) => executor.replayApprovedApprovalRequest({
-        artifactId, callerAuthority: context.authority,
-      }),
+      // Exact-daemon dispatch delivers the decision while the request is still open.
+      approvalRequestApprovedReplay: async ({ artifactId, decision, context, requestId }) => executor.execute(
+        'approval.request.decide', { artifactId, decision }, { ...context, actionRequestId: requestId },
+      ),
     });
     let completedEffects = 0;
 
