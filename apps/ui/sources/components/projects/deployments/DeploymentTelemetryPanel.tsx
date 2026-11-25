@@ -549,13 +549,16 @@ function DeploymentTelemetryTabs(props: Readonly<{
  * The one "…" of a capture view, on an Environment's Telemetry tab and a checkout's Dev servers page: its rare
  * moves (settings, retrying after a gap, turning capture off) and Clear, the destructive one, last.
  */
-export function TelemetryMenu({ onOpenSettings = null, onAddTelemetry = null, openingSetup = false, onRetry = null, onTurnOff = null,
+export function TelemetryMenu({ onOpenSettings = null, onAddTelemetry = null, openingSetup = false, onRetry = null,
+  onRestart = null, restarting = false, onTurnOff = null,
   onClear,
   testID = 'project-deployments.telemetry.menu' }: Readonly<{
   onOpenSettings?: (() => void) | null;
   onAddTelemetry?: (() => void) | null;
   openingSetup?: boolean;
   onRetry?: (() => Promise<void>) | null;
+  onRestart?: (() => void) | null;
+  restarting?: boolean;
   onTurnOff?: (() => Promise<void>) | null;
   onClear: (() => Promise<void>) | null;
   testID?: string;
@@ -571,6 +574,8 @@ export function TelemetryMenu({ onOpenSettings = null, onAddTelemetry = null, op
       title: t('deploymentTelemetry.menu.addTelemetry'), disabled: openingSetup }] : []),
     ...(onRetry ? [{ id: 'retry', testID: `${testID}.retry`,
       title: t('deploymentTelemetry.local.retry'), disabled: retrying }] : []),
+    ...(onRestart ? [{ id: 'restart', testID: `${testID}.restart`,
+      title: t('localServices.actions.restartTitle'), disabled: restarting }] : []),
     ...(onTurnOff ? [{ id: 'turn-off', testID: `${testID}.turn-off`,
       title: t('deploymentTelemetry.local.turnOff'), disabled: turningOff }] : []),
     ...(onClear ? [{ id: 'clear', testID: `${testID}.clear`,
@@ -588,6 +593,7 @@ export function TelemetryMenu({ onOpenSettings = null, onAddTelemetry = null, op
         setOpen(false);
         if (id === 'settings') onOpenSettings?.();
         if (id === 'add-telemetry') onAddTelemetry?.();
+        if (id === 'restart') onRestart?.();
         if (id === 'retry' && onRetry && !retrying) {
           setRetrying(true);
           void onRetry().finally(() => setRetrying(false));

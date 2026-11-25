@@ -318,7 +318,8 @@ export function LocalServiceCaptureView(
           }}
         />
         {/* Retry lives on the gaps line while it shows; the menu keeps the rare moves. */}
-        <TelemetryMenu onRetry={null} onTurnOff={turnOff} onClear={clear} testID={`${testID}-menu`} />
+        <TelemetryMenu onRestart={selected && !restartRequired ? () => { void restart(); } : null}
+          restarting={restarting} onTurnOff={turnOff} onClear={clear} testID={`${testID}-menu`} />
       </View>
     </View>
   );

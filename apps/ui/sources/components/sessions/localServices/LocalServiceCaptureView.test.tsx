@@ -273,7 +273,8 @@ describe('LocalServiceCaptureView', () => {
         return { ok: true, source, coverage, enabled };
       return { ok: true, source, items: [] };
     });
-    const screen = await renderScreen(view(invoke, 'logs'));
+    const run = vi.fn(async () => ({ status: 'succeeded' }));
+    const screen = await renderScreen(view(invoke, 'logs', undefined, true, { name: 'billing-api', run }));
     await settle();
     try {
       expect(screen.findByTestId('capture-off')).not.toBeNull();
@@ -295,6 +296,10 @@ describe('LocalServiceCaptureView', () => {
       });
       expect(screen.findByTestId('capture-off')).toBeNull();
       expect(screen.findByTestId('capture-waiting')).not.toBeNull();
+      await screen.pressByTestIdAsync('capture-menu');
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });
+      await screen.pressByTestIdAsync('capture-menu.restart');
+      await act(async () => { await vi.waitFor(() => expect(run).toHaveBeenCalledOnce()); });
     } finally {
       screen.unmount();
     }
