@@ -12,6 +12,7 @@ import {
     DatabaseEditsApplyInputV1Schema,
     DatabaseOperationResultV1Schema,
     DatabaseRowsReadInputV1Schema,
+    DatabaseWriteStatementInputV1Schema,
 } from '@happier-dev/plugin-sdk/database';
 import { DatabaseDescriptorV1Schema as DatabaseTargetsConnectResultV1Schema } from '@happier-dev/plugin-sdk/database';
 import { startDatabaseWorkbenchAgent, startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
@@ -71,6 +72,15 @@ async function prepare() {
     try { await agent?.stop(); } finally { await fixture.stop(); }
     throw error;
   }
+}
+
+async function listSessionApprovals(
+  fixture: Awaited<ReturnType<typeof startDatabaseWorkbenchInsightsFixture>>,
+  sessionId: string,
+) {
+  const listed = await fixture.owner.execute('approval.request.list', {});
+  if (!listed.ok) throw new Error(`F10 approval list refused (${listed.errorCode})`);
+  return ApprovalQueueListResultV1Schema.parse(listed.result).items.filter(item => item.sessionId === sessionId);
 }
 
 describe.sequential('F10 real agent database access', () => {
@@ -142,11 +152,7 @@ describe.sequential('F10 real agent database access', () => {
       actionId: DATABASE_EDITS_APPLY_ACTION_ID_V1, audience: 'agent', mode: 'allowed',
     });
     if (!allowed.ok) throw new Error(`F10 Agent Allow policy setup refused (${allowed.errorCode})`);
-    async function approvals() {
-      const listed = await fixture.owner.execute('approval.request.list', {});
-      if (!listed.ok) throw new Error(`F10 approval list refused (${listed.errorCode})`);
-      return ApprovalQueueListResultV1Schema.parse(listed.result).items.filter(item => item.sessionId === agent.sessionId);
-    }
+    const approvals = () => listSessionApprovals(fixture, agent.sessionId);
     expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, { target, agentAccess: 'readWriteNoApproval' }))
       .toMatchObject({ ok: true, result: { ok: true, agentAccess: 'readWriteNoApproval' } });
     const control = await settleDatabaseAction(fixture, await agent.execute(DATABASE_EDITS_APPLY_ACTION_ID_V1, input));
@@ -196,5 +202,66 @@ describe.sequential('F10 real agent database access', () => {
       .toMatchObject({ ok: false, errorCode: 'database_agent_access_none' });
     expect((await approvals()).filter(item => item.status === 'open')).toHaveLength(0);
     expect(await fixture.postgres.sql('dbw_selected', 'SELECT note FROM dbw_f10_approval WHERE id = 1')).toBe('before');
+  }, 0);
+
+  it('asks once for three ordered statements and rolls back an allowed batch when its second statement fails', async () => {
+    const { fixture, agent } = prepared;
+    const target = fixture.targets.selected;
+    await fixture.postgres.sql('dbw_selected', 'CREATE TABLE dbw_f10_ordered (id integer PRIMARY KEY, note text)');
+    expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, { target, agentAccess: 'readWriteAsk' }))
+      .toMatchObject({ ok: true, result: { ok: true, agentAccess: 'readWriteAsk' } });
+    expect(await fixture.owner.executeAsPerson('actions.policy.set', {
+      actionId: DATABASE_STATEMENT_RUN_ACTION_ID_V1, audience: 'agent', mode: 'allowed',
+    })).toMatchObject({ ok: true });
+    const read = () => fixture.postgres.sql('dbw_selected', 'SELECT note FROM dbw_f10_ordered WHERE id = 1');
+    const existing = new Set((await listSessionApprovals(fixture, agent.sessionId)).map(item => item.artifactId));
+    const newApprovals = async () => (await listSessionApprovals(fixture, agent.sessionId))
+      .filter(item => !existing.has(item.artifactId));
+    const executeBatch = (statements: string[]) => agent.execute(
+      DATABASE_STATEMENT_RUN_ACTION_ID_V1,
+      DatabaseWriteStatementInputV1Schema.parse({
+        operation: 'statement.run', target, mode: 'write', executionMode: 'transaction',
+        statements: statements.map(sql => ({ sql, parameters: [] })),
+      }),
+    );
+
+    const pending = await executeBatch([
+      "INSERT INTO dbw_f10_ordered VALUES (1, 'first')",
+      "UPDATE dbw_f10_ordered SET note = 'second' WHERE id = 1",
+      'SELECT note FROM dbw_f10_ordered WHERE id = 1',
+    ]);
+    if (!pending.ok) throw new Error(`F10 ordered write refused (${pending.errorCode})`);
+    ActionOperationAcceptedResultSchema.parse(pending.result);
+    await waitFor(async () => (await newApprovals()).some(item => item.status === 'open'), {
+      context: 'F10 ordered write Ask in the Inbox',
+    });
+    const opened = await newApprovals();
+    expect(opened).toMatchObject([{ status: 'open' }]);
+    expect(await read()).toBe('');
+    const { artifactId } = opened[0]!;
+    expect(await fixture.owner.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' }))
+      .toMatchObject({ ok: true });
+    const applied = await settleDatabaseAction(fixture, pending);
+    if (!applied.ok) throw new Error(`F10 ordered write could not settle (${applied.errorCode})`);
+    expect(DatabaseOperationResultV1Schema.parse(applied.result)).toMatchObject({ ok: true, operation: 'statement.run', results: [
+      { affectedRows: '1' },
+      { affectedRows: '1' },
+      { rows: [{ cells: [{ type: 'text', value: 'second' }] }] },
+    ] });
+    expect(await read()).toBe('second');
+    expect(await newApprovals()).toMatchObject([{ artifactId }]);
+
+    expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, { target, agentAccess: 'readWriteNoApproval' }))
+      .toMatchObject({ ok: true, result: { ok: true, agentAccess: 'readWriteNoApproval' } });
+    const rolledBack = await settleDatabaseAction(fixture, await executeBatch([
+      "UPDATE dbw_f10_ordered SET note = 'must-rollback' WHERE id = 1",
+      "INSERT INTO dbw_f10_ordered VALUES (1, 'duplicate')",
+      "UPDATE dbw_f10_ordered SET note = 'must-not-run' WHERE id = 1",
+    ]));
+    if (!rolledBack.ok) throw new Error(`F10 rollback result could not settle (${rolledBack.errorCode})`);
+    expect(DatabaseOperationResultV1Schema.parse(rolledBack.result))
+      .toMatchObject({ ok: false, status: 'failed', cause: { source: 'engine', code: '23505', statementIndex: 1 } });
+    expect(await read()).toBe('second');
+    expect(await newApprovals()).toMatchObject([{ artifactId }]);
   }, 0);
 });
