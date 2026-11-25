@@ -11828,8 +11828,7 @@ export async function startDaemonSessionControlRuntime(
                   installationId: attribution.installationId, scopeId: runId, accountId: attribution.accountId,
                   homeServerIdentityId: authorization.binding.serverIdentityId, serverHttpBaseUrl: params.serverBaseUrl,
                   ...(signal ? { signal } : {}) });
-                return retained ? { credentials: retained.credentials, attribution, serverHttpBaseUrl: params.serverBaseUrl,
-                  getBoundSessionId: () => runId, release: retained.release,
+                return retained ? { credentials: retained.credentials, release: retained.release,
                   isCurrent: async () => !signal?.aborted && await isRetainedCustodyCurrent() } : null;
               },
               resolveCurrentMachineExecutionOriginContext: signal => params.resolveCurrentMachineExecutionOriginContext?.(signal)

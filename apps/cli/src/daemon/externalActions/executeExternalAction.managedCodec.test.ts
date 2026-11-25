@@ -159,7 +159,7 @@ describe('managed controller invocation codec', () => {
 
   // A member's Setup Plan Workflow leaf on another person's Machine carries only the codec.
   // The receiver opens the member's own copies with the Run's retained custody, never the custodian's.
-  it.each(['run custody held', 'run custody absent'] as const)('gives a foreign reviewed Setup leaf its Run requester custody (%s)', async scenario => {
+  it.each(['run custody held', 'run custody absent', 'installed lifetime ended'] as const)('gives a foreign reviewed Setup leaf its Run requester custody (%s)', async scenario => {
     const { createRequesterCurrentnessSocketHarness } = await import('@/testkit/backends/requesterCurrentnessSocketHarness');
     const channel = await createRequesterCurrentnessSocketHarness();
     const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(29));
@@ -186,9 +186,10 @@ describe('managed controller invocation codec', () => {
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } }),
       material: { type: 'dataKey', machineKey: tweetnacl.randomBytes(32) },
       installationPublicKey: keys.publicKey, randomBytes: tweetnacl.randomBytes });
-    const seen: (string | null)[] = [];
+    const seen: ('member' | 'other' | null)[] = [];
     const executor = { execute: async (_actionId: string, _input: unknown, context?: import('@happier-dev/protocol').ActionExecutorContext) => {
-      seen.push(readRequesterAccountActionTransportContext(context?.externalActionExecutionAuthorization)?.credentials.token ?? null);
+      const credentials = readRequesterAccountActionTransportContext(context?.externalActionExecutionAuthorization)?.credentials;
+      seen.push(credentials ? credentials.token === member.token ? 'member' : 'other' : null);
       return { ok: false as const, errorCode: 'captured', error: 'captured' };
     } };
     const custodyReads: string[] = [];
@@ -221,17 +222,17 @@ describe('managed controller invocation codec', () => {
           serverHttpBaseUrl, ownCredentials: owner,
           resolveWorkflowRunRequesterCustody: async (id, attribution) => {
             custodyReads.push(id);
-            return scenario === 'run custody held' && id === runId && attribution.accountId === 'member'
-              ? { credentials: member, attribution, serverHttpBaseUrl, getBoundSessionId: () => runId,
-                isCurrent: async () => true, release: async () => { released += 1; } } : null;
+            return scenario !== 'run custody absent' && id === runId && attribution.accountId === 'member'
+              ? { credentials: member,
+                isCurrent: async () => scenario !== 'installed lifetime ended', release: async () => { released += 1; } } : null;
           },
           resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: target.machineId, serverIdentityId: homeId }),
           createExecutor: () => executor }) });
       expect(result.kind, `${refusalDiagnostic(result)} ${JSON.stringify(refusals)}`).toBe('response');
       expect(custodyReads).toEqual([runId]);
       // Held: the leaf runs on the member's own sign-in. Absent: codec only, so the opener refuses typed.
-      expect(seen).toEqual([scenario === 'run custody held' ? member.token : null]);
-      if (scenario === 'run custody held') expect(released).toBe(1);
+      expect(seen).toEqual([scenario === 'run custody held' ? 'member' : null]);
+      expect(released).toBe(scenario === 'run custody absent' ? 0 : 1);
     } finally { await channel.close(); vi.restoreAllMocks(); }
   });
 });

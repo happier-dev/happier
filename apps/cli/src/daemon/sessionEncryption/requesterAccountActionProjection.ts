@@ -696,10 +696,12 @@ export function readWorkflowSetupRequesterRunId(binding: ExternalActionExecution
     ? binding.workflowActionOrigin!.runId : null;
 }
 
-type RequesterSessionInputCustody = Pick<AdmittedRequesterSessionBootstrap,
-  'credentials' | 'attribution' | 'serverHttpBaseUrl' | 'getBoundSessionId' | 'isCurrent'> & Readonly<{
-    release(): Promise<void>;
-  }>;
+type RequesterInputCustody = Pick<RequesterAccountActionCustody, 'credentials' | 'isCurrent'> & Readonly<{
+  release(): Promise<void>;
+}>;
+
+type RequesterSessionInputCustody = RequesterInputCustody & Pick<AdmittedRequesterSessionBootstrap,
+  'attribution' | 'serverHttpBaseUrl' | 'getBoundSessionId'>;
 
 /** One installed ingress for both existing Action and Machine-RPC authorization carriers. */
 export async function prepareInstalledRequesterAccountActionContext(input: Readonly<{
@@ -713,8 +715,8 @@ export async function prepareInstalledRequesterAccountActionContext(input: Reado
   isRetainedCustodyCurrent?: () => Promise<boolean>;
   /** Existing installed Session owner; never resolves custody by Account alone. */
   resolveRequesterSessionBootstrap?: (sessionId: string, attribution: AdmittedRequesterSessionBootstrap['attribution']) => Promise<RequesterSessionInputCustody | null>;
-  /** Existing Workflow Run custody owner; resolves only the exact Run's retained requester. */
-  resolveWorkflowRunRequesterCustody?: (runId: string, attribution: AdmittedRequesterSessionBootstrap['attribution']) => Promise<RequesterSessionInputCustody | null>;
+  /** Borrows the exact Run's requester custody already matched by the installed Workflow owner. */
+  resolveWorkflowRunRequesterCustody?: (runId: string, attribution: RequesterWorkAttributionV1) => Promise<RequesterInputCustody | null>;
   /** Manager-owned recheck of the exact Home-verified signed SOURCE request, private to preparation. */
   verifyWorkspaceSyncPrepareCurrent?: () => Promise<boolean>;
   /** Manager-owned admission of the exact forwarded finite child. */
@@ -738,11 +740,12 @@ export async function prepareInstalledRequesterAccountActionContext(input: Reado
     return null;
   }
   const binding = input.authorization.binding;
-  const custodySessionId = readOriginalRequesterSessionCustodyId(binding);
-  const reusesSessionCustody = input.purpose.kind === 'external_action'
-    && !input.authorization.requesterAccountContext && custodySessionId !== null;
-  const workflowRunId = input.purpose.kind === 'external_action' ? readWorkflowSetupRequesterRunId(binding) : null;
-  if ((reusesSessionCustody || workflowRunId !== null) && (binding.serverIdentityId !== origin.serverIdentityId
+  const sessionId = readOriginalRequesterSessionCustodyId(binding);
+  const runId = input.purpose.kind === 'external_action' ? readWorkflowSetupRequesterRunId(binding) : null;
+  const custodyKey = input.purpose.kind !== 'external_action' ? null
+    : !input.authorization.requesterAccountContext && sessionId !== null ? { kind: 'session' as const, sessionId }
+    : runId !== null ? { kind: 'run' as const, runId } : null;
+  if (custodyKey && (binding.serverIdentityId !== origin.serverIdentityId
     || binding.machineId !== input.machineId || binding.installationId !== installation.installationId)) {
     refuseExternalActionPhase('requester_session_custody', input.machineId, undefined, {
       ...readSessionInputAdmissionDiagnostic(binding),
@@ -753,15 +756,17 @@ export async function prepareInstalledRequesterAccountActionContext(input: Reado
   const installationPrivateKey = decodeBase64(installation.privateKey, 'base64url');
   const custodyAttribution = { serverId: input.serverId, accountId: binding.accountId, machineId: input.machineId,
     installationId: installation.installationId };
-  const requesterSessionBootstrap = reusesSessionCustody && custodySessionId !== null
-    ? await input.resolveRequesterSessionBootstrap?.(custodySessionId, custodyAttribution) ?? null
-    : workflowRunId !== null ? await input.resolveWorkflowRunRequesterCustody?.(workflowRunId, custodyAttribution) ?? null : null;
-  if (workflowRunId !== null && !requesterSessionBootstrap) {
+  const requesterSessionBootstrap = custodyKey?.kind === 'session'
+    ? await input.resolveRequesterSessionBootstrap?.(custodyKey.sessionId, custodyAttribution) ?? null : null;
+  const runCustody = custodyKey?.kind === 'run'
+    ? await input.resolveWorkflowRunRequesterCustody?.(custodyKey.runId, custodyAttribution) ?? null : null;
+  if (custodyKey?.kind === 'run' && !runCustody) {
     refuseExternalActionPhase('requester_workflow_run_custody', input.machineId, undefined, {
       ...readSessionInputAdmissionDiagnostic(binding), refusalBranch: 'workflow_run_custody',
     });
     return null;
   }
+  const custody = runCustody ?? requesterSessionBootstrap;
   const isCustodyCurrent = async () => {
     const refused = (refusalBranch: string) => {
       recordRequesterCurrentnessRefusal(refusalBranch === 'cancelled' ? 'local_abort_signal' : 'installation_custody');
@@ -770,13 +775,11 @@ export async function prepareInstalledRequesterAccountActionContext(input: Reado
       }); return false;
     };
     if (input.signal?.aborted) return refused('cancelled');
-    if (requesterSessionBootstrap) {
-      if (!await requesterSessionBootstrap.isCurrent()) return refused('session_currentness');
-    }
+    if (custody && !await custody.isCurrent()) return refused('session_currentness');
     if (input.signal?.aborted) return refused('cancelled');
     return true;
   };
-  return await prepareRequesterAccountActionContext({ ...input, installationId: installation.installationId,
+  return await prepareRequesterAccountActionContextWithCustody({ ...input, installationId: installation.installationId,
     ...(requesterSessionBootstrap ? { requesterSessionBootstrap } : {}),
     serverIdentityId: origin.serverIdentityId, installationPrivateKey,
     // SOURCE admission brackets passive preparation with its manager-owned
@@ -808,10 +811,10 @@ export async function prepareInstalledRequesterAccountActionContext(input: Reado
         serverHttpBaseUrl: input.serverHttpBaseUrl,
         ...(input.purpose.kind === 'managed_finite_wake' ? { managedFiniteWakeTarget: input.purpose.target } : {}),
         ...(input.signal ? { signal: input.signal } : {}) }));
-    }, createExecutor: admitted => input.createExecutor(admitted, installation) });
+    }, createExecutor: admitted => input.createExecutor(admitted, installation) }, runCustody);
 }
 
-export async function prepareRequesterAccountActionContext(input: Readonly<{
+type PrepareRequesterAccountActionContextInput = Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
   deploymentChildExecution?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceExecutionV1;
   purpose: ExternalActionRequesterAccountContextPurposeV1;
@@ -829,8 +832,20 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
   isRetainedCustodyCurrent?: () => Promise<boolean>;
   createExecutor(context: RequesterAccountActionContext): NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountExecutor']>;
   signal?: AbortSignal;
-}>): ReturnType<PrepareExternalActionRequesterAccountContext> {
+}>;
+
+export async function prepareRequesterAccountActionContext(
+  input: PrepareRequesterAccountActionContextInput,
+): ReturnType<PrepareExternalActionRequesterAccountContext> {
+  return await prepareRequesterAccountActionContextWithCustody(input, null);
+}
+
+async function prepareRequesterAccountActionContextWithCustody(
+  input: PrepareRequesterAccountActionContextInput,
+  runCustody: RequesterInputCustody | null,
+): ReturnType<PrepareExternalActionRequesterAccountContext> {
   const sessionCustody = input.requesterSessionBootstrap;
+  const custody = runCustody ?? sessionCustody;
   let custodyTransferred = false;
   try {
     const root = ExternalActionExecutionAuthorizationV1Schema.safeParse(input.authorization);
@@ -864,9 +879,7 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
     if (recipient.machineId !== input.machineId || recipient.installationId !== input.installationId) return refused('requester_preparation_recipient');
     const ownAccount = isOriginalOwnAccountActionCustody(root.data.binding)
       || (input.purpose.kind === 'external_action' && isManagedEnrollmentPolicyChildAccountCustody(root.data.binding));
-    // A reviewed Setup leaf's box is its controller codec, which carries no credentials.
-    const workflowRunId = readWorkflowSetupRequesterRunId(root.data.binding);
-    const custodySessionId = readOriginalRequesterSessionCustodyId(root.data.binding) ?? workflowRunId;
+    const custodySessionId = readOriginalRequesterSessionCustodyId(root.data.binding);
     if (sessionCustody && (custodySessionId === null
       || input.purpose.kind !== 'external_action'
       || sessionCustody.getBoundSessionId() !== custodySessionId
@@ -879,10 +892,11 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
     if (!await (input.isCustodyCurrent ?? input.isCurrent)()) return refused(input.isCustodyCurrent
       ? 'requester_preparation_custody' : 'requester_preparation_currentness');
     if (sessionCustody && !await sessionCustody.isCurrent()) return refused('requester_session_currentness');
+    // A reviewed Setup leaf's box is its controller codec, which carries no credentials.
     const hasBox = finiteWake ? Boolean(finiteWake.requesterAccountContext)
-      : workflowRunId === null && Boolean(root.data.requesterAccountContext);
+      : !runCustody && readWorkflowSetupRequesterRunId(root.data.binding) === null && Boolean(root.data.requesterAccountContext);
     const encoded = hasBox ? openExternalActionRequesterAccountContextV1({ ...input, includeInvocation: true }) : null;
-    const retainedCredentials = sessionCustody?.credentials ?? (ownAccount ? input.ownCredentials : undefined);
+    const retainedCredentials = custody?.credentials ?? (ownAccount ? input.ownCredentials : undefined);
     const credentials = hasBox
       ? encoded ? decodeStoredCredentials(encoded.credentials) : null
       : !moveRecipient && !preparation && !finiteWake && retainedCredentials
@@ -893,7 +907,7 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
     if (!credentials) return refused('requester_credentials_open');
     const admitted = await admitRequesterAccountActionContext({ ...input, credentials,
       ...(deploymentChild ? { deploymentChild } : {}),
-      ...(sessionCustody ? { onRetire: () => sessionCustody.release() } : {}),
+      ...(custody ? { onRetire: () => custody.release() } : {}),
       ...(encoded?.invocation ? { invocation: encoded.invocation } : {}) });
     if (!admitted) return refused('requester_account_admission');
     custodyTransferred = true;
@@ -964,7 +978,7 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
         actionsSettings: admitted.accountSettingsContext.settings.actionsSettingsV1,
         ...(encoded?.invocation ? { invocation: encoded.invocation } : {}) };
     } catch (error) { await admitted.dispose(); rethrowRequesterHomeReadFailure(error); return refused(phase, error); }
-  } finally { if (!custodyTransferred) await sessionCustody?.release(); }
+  } finally { if (!custodyTransferred) await custody?.release(); }
 }
 
 export type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
