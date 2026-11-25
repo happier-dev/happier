@@ -1,5 +1,4 @@
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { withoutClientActionInput } from '@happier-dev/protocol/actions/clientDispatchV1';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { readProjectDeploymentDefaultsForHost } from '@/deployments/readProjectDeploymentDefaultsForHost';
 import { AccountApiTokensListActionOutputV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
@@ -28,7 +27,6 @@ export async function prepareCliProjectSourceTeamMove(request: Request, host: Re
     const deps = host.readDeps();
     if (!deps.projectSourcesRead || !deps.deploymentAction || !deps.machineAccessAction || !deps.workflowAction
         || !deps.accountApiTokensListAction) return moveFailure('admission_unavailable');
-    const input = withoutClientActionInput(request.input);
     const preparation = createProjectSourceTeamMovePreparationV1({ accountId: host.accountId,
         credentialAuthorityKind: host.credentialAuthorityKind, invocationSignal: request.context.signal, assertCurrent: host.assertCurrent }, {
         projectSourcesRead: deps.projectSourcesRead, deploymentAction: deps.deploymentAction,
@@ -42,9 +40,9 @@ export async function prepareCliProjectSourceTeamMove(request: Request, host: Re
             return failure ?? selectProjectSourceTeamMoveApiTokensV1(AccountApiTokensListActionOutputV1Schema.parse(response).tokens, environmentIds);
         },
     });
-    const children = await preparation.prepareHostReviewedChildren({ ...request, input });
+    const children = await preparation.prepareHostReviewedChildren(request);
     if (!children || 'ok' in children) return children;
-    const preview = await preparation.buildApprovalPreview(input, request.context, {});
+    const preview = await preparation.buildApprovalPreview(request.input, request.context, {});
     const failure = readActionFailureEnvelope(preview);
     return failure ?? { ...children, approvalPreview: StrictJsonValueSchema.parse(preview) };
 }

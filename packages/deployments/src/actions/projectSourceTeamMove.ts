@@ -1,6 +1,7 @@
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { withoutClientActionInput } from '@happier-dev/protocol/actions/clientDispatchV1';
 import type { ActionExecutorContext, ActionExecutorDeps, HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/executor/types';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { parseActionExecuteFailure, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { ProjectSourcesMoveToTeamInputV1Schema, type ProjectSourcesFailureV1,
     type ProjectSourcesMoveToTeamInputV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
@@ -199,7 +200,7 @@ type ProjectSourceTeamMovePreparationV1 = Required<Pick<ActionExecutorDeps, 'pre
 export function createProjectSourceTeamMovePreparationV1(account: ProjectSourceTeamMoveAccountV1, ports: ProjectSourceTeamMoveReadPortsV1): ProjectSourceTeamMovePreparationV1 {
     let preparation: Readonly<{ key: string; value: Promise<ProjectSourceTeamMoveInventory> }> | undefined;
     const prepare = (raw: unknown, context: ActionExecutorContext) => {
-        const input = ProjectSourcesMoveToTeamInputV1Schema.parse(raw);
+        const input = ProjectSourcesMoveToTeamInputV1Schema.parse(withoutClientActionInput(raw));
         const key = projectSourceTeamMoveInputKey(input);
         if (preparation && preparation.key !== key) throw new ProjectSourceTeamMoveReadFailure(moveFailure('plan_changed'));
         preparation ??= { key, value: readProjectSourceTeamMoveInventoryV1(account, input, context, ports) };
@@ -207,9 +208,11 @@ export function createProjectSourceTeamMovePreparationV1(account: ProjectSourceT
     };
     const prepareFailure = (error: unknown): ActionExecuteFailure => {
         if (error instanceof ProjectSourceTeamMoveReadFailure) return 'errorCode' in error.result ? error.result : moveFailure(error.result.error);
+        const refusal = parseActionExecuteFailure(error);
+        if (refusal) return refusal;
         if (account.invocationSignal?.aborted) return moveFailure('cancelled');
         if (error instanceof Error && 'code' in error && typeof error.code === 'string') return moveFailure(error.code);
-        return moveFailure('home_unreachable');
+        return moveFailure('action_failed');
     };
     const role = (kind: string, id: string) => `${kind}:${id}`;
     const teamPrincipal = (teamId: string) => ({ kind: 'team' as const, teamId });
