@@ -3,9 +3,8 @@ import { projectExternalActionBrowserSessionIdV1 } from './executor/browser.js';
 import { projectWorkspaceSyncAdmissionInputV1 } from '../workspaces/workspaceSyncAdmissionV1.js';
 import { MachineServiceLogsResourceContinuationV1Schema, MachineServiceLogsGenerationV1Schema } from '../daemon/machineServiceLogsResource.js';
 import { z } from '../zodRuntimePolicy.js';
-import { WORKFLOW_RUN_START_ACTION_ID_V1 } from './actionIds.js';
 
-import { AccountApiTokenCredentialV1Schema, AccountApiTokenEncryptionAccessV1Schema, AccountApiTokenSummaryV1Schema } from '../auth/accountApiTokens.js';
+import { AccountApiTokenCredentialV1Schema } from '../auth/accountApiTokens.js';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
 import { ACCOUNT_SCOPED_BLOB_V1_PREFIX_BYTES, ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES, ACCOUNT_SCOPED_SECRETBOX_OVERHEAD_BYTES } from '../crypto/accountScopedCipherEnvelope.js';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
@@ -17,11 +16,9 @@ import { projectDeploymentPreparationAdmissionV1 } from '../deployments/deployme
 import { projectDeploymentNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 import { projectRegistryAppUpdateAdmissionV1 } from '../registries/registryAppUpdateAdmissionV1.js';
 import {
-  ExternalActionActionIdV1Schema, ExternalActionRequestIdV1Schema,
-  ExternalActionTargetV1Schema, ExternalActionApiTokenServerPrincipalV1Schema,
   ExternalActionWorkflowPreparationV1Schema, projectExternalActionWorkflowPreparationTargetV1,
+  ExternalActionTargetV1Schema,
   projectExternalActionPresetPreparationEnvelopeAdmissionV1,
-  ExternalActionAccountAuthenticationV1Schema, ExternalActionTerminalAuthenticationV1Schema,
   ExternalActionExecutionResultV1Schema, ExternalActionRequestEnvelopeV1Schema, ExternalActionRequestEnvelopeV2Schema,
   ExternalActionResponseEnvelopeV2Schema, EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
   EXTERNAL_ACTION_ENCRYPTED_REQUEST_PLAINTEXT_MAX_BYTES_V2,
@@ -44,55 +41,14 @@ import {
   projectExternalActionProjectSourceCheckoutIdV1,
   projectExternalActionTerminalSessionEnvelopeIdV1,
   type ExternalActionRequestEnvelopeV2, type ExternalActionResponseEnvelopeV2, type ExternalActionTargetV1,
-  type ExternalActionExecutionAuthorizationBindingV1,
   type PreparedExternalActionResponseEnvelope,
 } from './externalActionApi.js';
 
-/** Identity/routing objects are closed; opaque domain JSON retains its own schema. */
-const BindingRoutingShape = () => ({
-  serverIdentityId: AccountApiTokenEncryptionAccessV1Schema.shape.serverIdentityId,
-  accountId: ExternalActionApiTokenServerPrincipalV1Schema.shape.accountId,
-  actionId: ExternalActionActionIdV1Schema,
-  requestId: ExternalActionRequestIdV1Schema,
-  target: ExternalActionTargetV1Schema,
-});
-const ApiTokenBindingSchema = lazyZodSchema(() => z.strictObject({
-  serverIdentityId: AccountApiTokenEncryptionAccessV1Schema.shape.serverIdentityId,
-  accountId: ExternalActionApiTokenServerPrincipalV1Schema.shape.accountId,
-  credentialId: AccountApiTokenSummaryV1Schema.shape.tokenId,
-  actionId: ExternalActionActionIdV1Schema,
-  requestId: ExternalActionRequestIdV1Schema,
-  target: ExternalActionTargetV1Schema,
-}));
-const AccountBindingSchema = lazyZodSchema(() => z.strictObject({ ...BindingRoutingShape(),
-  // Ciphertext retains the signed credential kind and epoch, never a PAT-shaped alias or human upgrade.
-  authentication: z.union([z.omit(ExternalActionAccountAuthenticationV1Schema, { evidence: true }),
-    z.omit(ExternalActionTerminalAuthenticationV1Schema, { evidence: true })]),
-}));
-const BindingSchema = lazyZodSchema(() => z.union([ApiTokenBindingSchema, AccountBindingSchema]));
-export type ExternalActionEncryptionBindingV2 = Readonly<z.infer<typeof BindingSchema>>;
-
-/** Retain only the opener's original authenticated data, never its execution credential. */
-export function projectExternalActionEncryptionBindingV2(binding: ExternalActionExecutionAuthorizationBindingV1): ExternalActionEncryptionBindingV2 {
-  const { serverIdentityId, accountId, actionId, requestId, target } = binding;
-  return BindingSchema.parse({ serverIdentityId, accountId, actionId, requestId, target,
-    ...('authentication' in binding
-      ? { authentication: { kind: binding.authentication.kind, tokenEpoch: binding.authentication.tokenEpoch } }
-      : { credentialId: binding.credentialId }),
-  });
-}
-
-/** Original transport and noncredential AAD; current execution still needs fresh authorization. */
-export const ExternalActionRetainedWorkflowRootV1Schema = lazyZodSchema(() => z.strictObject({
-  binding: BindingSchema,
-  envelope: z.union([ExternalActionRequestEnvelopeV1Schema, ExternalActionRequestEnvelopeV2Schema]),
-}).check(z.refine(value => value.binding.actionId === WORKFLOW_RUN_START_ACTION_ID_V1
-  && value.envelope.requestId === value.binding.requestId
-  && value.envelope.target !== undefined
-  && externalActionTargetsEqualV1(value.envelope.target, value.binding.target), {
-  message: 'Retained Workflow transport must match its original binding',
-})));
-export type ExternalActionRetainedWorkflowRootV1 = z.infer<typeof ExternalActionRetainedWorkflowRootV1Schema>;
+import { AccountBindingSchema, ApiTokenBindingSchema, type ExternalActionEncryptionBindingV2 } from './externalActionRetainedWorkflow.js';
+export {
+  ExternalActionRetainedWorkflowRootV1Schema, projectExternalActionEncryptionBindingV2,
+  type ExternalActionEncryptionBindingV2, type ExternalActionRetainedWorkflowRootV1,
+} from './externalActionRetainedWorkflow.js';
 
 /** Same-token encryption-only material; never a bearer or a Home-readable projection. */
 const ApiTokenContentAccessSchema = lazyZodSchema(() => z.strictObject({
@@ -162,8 +118,8 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   projectMachineRuntimeDemand: MachineRuntimeDemandProjector;
   resourceContinuation?: z.infer<typeof MachineServiceLogsResourceContinuationV1Schema>;
   machineServiceLogsGeneration?: z.infer<typeof MachineServiceLogsGenerationV1Schema>;
-  apiTokenContentAccess?: ExternalActionApiTokenContentAccessV2;
   registryThemeContent?: z.infer<typeof ExternalActionRequestEnvelopeV1Schema>['registryThemeContent'];
+  apiTokenContentAccess?: ExternalActionApiTokenContentAccessV2;
   sessionSpawnAdmission?: ExternalActionRequestEnvelopeV2['sessionSpawnAdmission'];
   pluginInvocation?: ExternalActionRequestEnvelopeV2['pluginInvocation'];
   selectedActionInputDigest?: z.infer<typeof ExternalActionRequestEnvelopeV1Schema>['selectedActionInputDigest'];

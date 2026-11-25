@@ -46,7 +46,7 @@ import * as deploymentTemplates from '../../deployments/deploymentTemplateInstan
 import { WorkflowCombinedActionHostReviewV1Schema } from '../../workflows/workflowStartPreparationV1.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { ExternalActionManagedContinuationV1Schema, ExternalActionRequestEnvelopeSchema } from '../../actions/externalActionApi.js';
-import { ExternalActionRetainedWorkflowRootV1Schema } from '../../actions/externalActionEncryption.js';
+import { ExternalActionRetainedWorkflowRootV1Schema } from '../../actions/externalActionRetainedWorkflow.js';
 import { ManagedCredentialInstallInputV1Schema, ManagedCredentialDeliveryResultV1Schema, ManagedNativeCredentialBindingV1Schema } from './credentialDeliveryV1.js';
 import { ManagedCreationScopeRetentionChoiceV1Schema } from './managedMachineV1.js';
 import { ManagedMachineBirthResultV1Schema } from './birthSourceV1.js';
