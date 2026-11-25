@@ -1,3 +1,4 @@
+import { Profiler } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, DATABASE_CAPTURE_STATUS_ACTION_ID_V1, DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, DatabaseCaptureEndpointsListInputV1Schema, type DatabaseCaptureSourceV1 } from '@happier-dev/database-protocol';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
@@ -249,13 +250,26 @@ describe('Environment Telemetry tabs', () => {
       ...(route === '/checkout' ? { nextCursor: before } : {}) }));
     const transport = createTelemetryCaptureFixtureTransport(capture.invoke);
     const detail = setUpDetail();
-    const screen = await renderScreen(panel(finite.invoke, detail, { active: true }, transport));
+    const commits = vi.fn();
+    const screen = await renderScreen(
+      <Profiler id="Environment Telemetry" onRender={commits}>
+        {panel(finite.invoke, detail, { active: true }, transport)}
+      </Profiler>,
+    );
     try {
       await settle();
       expect(screen.findByTestId('telemetry.capture.endpoint.POST /checkout')).not.toBeNull();
       expect(capture.calls).toEqual([expect.objectContaining({ collectorMachineId: 'collector', input: expect.objectContaining({ source }) })]);
       expect(transport.watchers).toBe(1);
       expect(finite.calls).toHaveLength(0);
+      commits.mockClear();
+      vi.useFakeTimers();
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      vi.useRealTimers();
+      expect(finite.calls).toHaveLength(0);
+      expect(capture.calls).toHaveLength(1);
+      expect(commits).toHaveBeenCalledTimes(0);
+
       const initial = DatabaseCaptureEndpointsListInputV1Schema.parse(capture.calls[0]?.input);
       await screen.pressByTestIdAsync('telemetry.capture.endpoints.older');
       await settle();
@@ -264,6 +278,7 @@ describe('Environment Telemetry tabs', () => {
           page: expect.objectContaining({ before }) }) })]);
       expect(screen.findByTestId('telemetry.capture.endpoint.POST /older')).not.toBeNull();
 
+      commits.mockClear();
       route = '/payment';
       await act(async () => transport.invalidate());
       await settle();
@@ -273,13 +288,14 @@ describe('Environment Telemetry tabs', () => {
 
       await settle();
       expect(capture.calls).toHaveLength(2);
+      expect(commits).toHaveBeenCalledTimes(1);
       await screen.update(panel(finite.invoke, detail, { active: false }, transport));
       expect(transport.watchers).toBe(0);
       await act(async () => transport.invalidate());
       await settle();
       expect(capture.calls).toHaveLength(2);
       expect(finite.calls).toHaveLength(1);
-    } finally { await screen.unmount(); }
+    } finally { vi.useRealTimers(); await screen.unmount(); }
   });
 
   it('distinguishes deployment settlement from accepted data and reads only while presented', async () => {

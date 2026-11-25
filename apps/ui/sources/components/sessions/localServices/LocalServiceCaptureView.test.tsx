@@ -1,3 +1,4 @@
+import { Profiler } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import { reportCollectionLayout } from '@/dev/testkit/harness/collectionLayoutHarness';
@@ -114,23 +115,40 @@ describe('LocalServiceCaptureView', () => {
     const capture = machine(() => ({ ok: true, source, items: [] }));
     let current: { lostObservations: number; reason: string | null } = coverage;
     const transport = createTelemetryCaptureFixtureTransport(capture.invoke, () => current);
-    const screen = await renderScreen(view(finite.invoke, 'logs', transport));
+    const commits = vi.fn();
+    const screen = await renderScreen(<Profiler id="Dev servers capture" onRender={commits}>
+      {view(finite.invoke, 'logs', transport)}
+    </Profiler>);
     const statusReads = () => finite.calls.filter(call => call.actionId.endsWith('/capture/status')).length;
     try {
       await settle();
       expect(statusReads()).toBe(1);
+      expect(finite.calls).toHaveLength(1);
+      expect(capture.calls).toHaveLength(1);
+      expect(transport.watchers).toBe(1);
       expect(screen.findByTestId('capture-gaps')).toBeNull();
+      commits.mockClear();
+      vi.useFakeTimers();
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      vi.useRealTimers();
+      expect(finite.calls).toHaveLength(1);
+      expect(capture.calls).toHaveLength(1);
+      expect(commits).not.toHaveBeenCalled();
       current = { lostObservations: 1, reason: 'store_busy' };
       await act(async () => transport.invalidate());
       await settle();
       expect(screen.findByTestId('capture-gaps')).not.toBeNull();
+      expect(commits).toHaveBeenCalledTimes(1);
+      commits.mockClear();
       current = coverage;
       await act(async () => transport.invalidate());
       await settle();
       expect(screen.findByTestId('capture-gaps')).toBeNull();
       expect(statusReads()).toBe(1);
       expect(capture.calls).toHaveLength(3);
+      expect(commits).toHaveBeenCalledTimes(1);
     } finally {
+      vi.useRealTimers();
       await screen.unmount();
     }
   });
