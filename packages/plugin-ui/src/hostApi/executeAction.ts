@@ -1,6 +1,6 @@
-import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
-import { readPluginActionFailureAuthorPayload, type PluginActionFailureAuthorPayloadV1 } from '@happier-dev/protocol/plugins/actions/invocation';
-import { isActionApprovalDeclinedErrorCode, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { defineProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
+import { readPluginActionFailureAuthorPayload } from '@happier-dev/plugin-sdk/actions';
+import { isActionApprovalDeclinedErrorCode, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/plugin-sdk/errors';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isPluginError, readPluginErrorRequestIdV1, type JsonValue, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import type {
@@ -26,6 +26,9 @@ export type {
   PluginUiActionReference as PluginActionReference,
   PluginUiActionResultFor as PluginActionResultFor,
 } from '@happier-dev/plugin-sdk/ui';
+
+type PluginActionFailureAuthorPayloadV1 = ReturnType<typeof readPluginActionFailureAuthorPayload>;
+const StrictJsonValueSchema = defineProtocolJsonValue();
 
 /**
  * The settled fact about one execution (§3.9).

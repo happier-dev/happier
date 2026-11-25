@@ -2025,6 +2025,7 @@
 | `./errors` | `ActionFailureCauseV1ProtocolSchema` | value | any |
 | `./errors` | `ActionFailureCauseV1Schema` | value | any |
 | `./errors` | `PluginError` | value | any |
+| `./errors` | `isActionApprovalDeclinedErrorCode` | value | any |
 | `./errors` | `isActionOutcomeUnknownErrorCodeV1` | value | any |
 | `./errors` | `isPluginError` | value | any |
 | `./errors` | `projectActionFailureCauseV1` | value | any |
