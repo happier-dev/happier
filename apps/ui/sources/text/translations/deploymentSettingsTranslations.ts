@@ -5,7 +5,7 @@ const databaseAccessCopy = {
   title: 'Database access',
   inherited: 'Uses the template Environment’s database access',
   editors: 'Who can edit database rows',
-  agents: 'Agent access',
+  agents: 'Agents',
   openSettings: 'Open Environment settings',
   askManager: 'Only an Environment manager can change access.',
   youManage: 'You manage this Environment, so you can change who edits.',

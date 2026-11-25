@@ -15,6 +15,7 @@ import { resetSavedSecretCatalogEngineForTests, refreshSavedSecretCatalog } from
 import { resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { measureMountedCollections } from '@/dev/testkit/render/renderInCollectionLayout';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { settingsParse } from '@/sync/domains/settings/settings';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -88,7 +89,13 @@ it('saves Environment database editing and agent access in one reviewed revision
     const screen = await renderScreen(element());
     expect(screen.findByTestId(`${section}.save`)?.props.disabled).toBe(true);
     await screen.pressByTestIdAsync(`${section}.editors:managers`);
-    await screen.pressByTestIdAsync(`${section}.agents:none`);
+    // Agents is the same titled field select the workbench access sheet uses: the four levels, the saved one chosen.
+    const agents = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${section}.agents`)!;
+    expect((agents().props.items as readonly { id: string }[]).map(item => item.id))
+      .toEqual(['none', 'read', 'readWriteAsk', 'readWriteNoApproval']);
+    expect(agents().props.selectedId).toBe('read');
+    await act(async () => { agents().props.onSelect('none'); });
+    expect(agents().props.selectedId).toBe('none');
     expect(writes).toHaveLength(0);
     await screen.pressByTestIdAsync(`${section}.save`);
     await vi.waitFor(() => expect(onChanged).toHaveBeenCalledOnce());

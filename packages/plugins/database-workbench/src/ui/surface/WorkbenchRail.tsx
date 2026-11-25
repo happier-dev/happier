@@ -165,8 +165,9 @@ function MachineAgentAccess({ targetKey, level }: Readonly<{ targetKey: string; 
   const agentsTitle = t('plugins.database.access.agents', 'Agents');
   return <Stack gap="small">
     {/* The Environment's own agent choice and this one are one concept, titled "Agents". Four long options make it
-        the shared field select (the control table); in a sheet or popover its title stands above it. */}
-    <Field label={agentsTitle} description={agentAccessLabel(t, level)}>
+        the shared field select (the control table); in a sheet or popover its title stands above it. The select says
+        the level, so no line under it repeats (or, before Save, contradicts) it. */}
+    <Field label={agentsTitle}>
       <Select presentation="field" label={agentsTitle} value={selected} disabled={notice?.pending}
         options={(Object.keys(choices) as DatabaseAgentAccessV1[]).map(agentAccess => ({ value: agentAccess, label: choices[agentAccess] }))}
         onChange={value => { const next = (Object.keys(choices) as DatabaseAgentAccessV1[]).find(key => key === value); if (next) setDraft(next); }} />
@@ -179,15 +180,6 @@ function MachineAgentAccess({ targetKey, level }: Readonly<{ targetKey: string; 
       : notice?.error ? <ErrorState layout="line" title={notice.text} />
       : notice ? <Text tone="secondary" variant="meta" value={notice.text} /> : null}
   </Stack>;
-}
-
-function agentAccessLabel(t: PluginTranslate, access: DatabaseAgentAccessV1): string {
-  switch (access) {
-    case 'none': return t('plugins.database.access.agentsOff', 'Agents can’t use this database.');
-    case 'read': return t('plugins.database.access.agentsRead', 'Agents can read this database.');
-    case 'readWriteAsk': return t('plugins.database.access.agentsAsk', 'Agents can read and ask before writing.');
-    case 'readWriteNoApproval': return t('plugins.database.access.agentsWrite', 'Agents can read and write. Your approval rules still apply.');
-  }
 }
 
 /** One fact line under the name: engine and where it came from, the same facts the Dev servers row shows. */

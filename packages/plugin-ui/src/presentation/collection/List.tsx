@@ -19,6 +19,7 @@ import type {
 import { HappierSpinner } from '../feedback/Spinner.js';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HappierPressable } from '../interaction/Pressable.js';
+import { HappierTextActionEdgeContext } from '../interaction/textActionEdge.js';
 import { HAPPIER_PRESS_FEEDBACK_V1, happierPressTransitionStyle } from '../interaction/pressFeedback.js';
 import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
 import { HappierDivider } from '../content/Foundation.js';
@@ -845,8 +846,13 @@ export function HappierListItem({
     stacked: stackPageAccessory,
     onFieldSaturated: handleFieldSaturated,
   }), [fieldMaxWidthPx, handleFieldSaturated, stackPageAccessory]);
+  // An operation (a button) moved beneath its label or body keeps its own width on the text edge, a plain one with
+  // its label on that edge as the back control does; a wrapping control or content placed beneath by design spans.
+  const stackedOperation = stackPageAccessory && accessoryWraps !== true && accessoryBelow !== true;
   const pageAccessory = pageSection !== null
-    ? <HappierPageRowFieldLayoutContext.Provider value={fieldLayout}>{accessory}</HappierPageRowFieldLayoutContext.Provider>
+    ? <HappierPageRowFieldLayoutContext.Provider value={fieldLayout}>{stackedOperation
+      ? <HappierTextActionEdgeContext.Provider value="start">{accessory}</HappierTextActionEdgeContext.Provider>
+      : accessory}</HappierPageRowFieldLayoutContext.Provider>
     : accessory;
   const hasSemanticContent = title !== undefined
     || subtitle !== undefined
@@ -1086,9 +1092,7 @@ export function HappierListItem({
               style={stackPageAccessory
                 ? {
                   alignSelf: 'stretch',
-                  // An operation (a button) moved beneath keeps its own width on the text edge; a wrapping control
-                  // or content placed beneath by design spans the row.
-                  alignItems: accessoryWraps === true || accessoryBelow === true ? 'stretch' : 'flex-start',
+                  alignItems: stackedOperation ? 'flex-start' : 'stretch',
                   // Beneath the text, on its edge: past the glyph column and the gap after it.
                   ...(icon ? { flexBasis: '100%', paddingLeft: HAPPIER_PAGE_METRICS.rowLeadingColumnPx + HAPPIER_PAGE_METRICS.rowLeadingGapPx } : {}),
                 }
@@ -1291,7 +1295,7 @@ export function HappierListItem({
           ? {
               alignSelf: 'stretch',
               // Like core's stacked page controls: a field spans the row; a bounded control keeps its own width.
-              alignItems: accessoryWraps === true || accessoryBelow === true ? 'stretch' : 'flex-start',
+              alignItems: stackedOperation ? 'flex-start' : 'stretch',
               paddingLeft: pageSection.rowInsetPx,
               paddingRight: pageSection.rowInsetPx,
               paddingBottom: HAPPIER_PAGE_METRICS.rowPaddingVerticalPx,

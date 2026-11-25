@@ -9,6 +9,7 @@ import {
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
@@ -63,7 +64,9 @@ function DatabaseAccessForm({ environment, lifetime, editing, change, outcome }:
     const source = useProjectSource(choosePeople ? lifetime : null, choosePeople ? environment.projectSourceId : null).source?.source ?? null;
     const editorLabel = deploymentDatabaseEditorsLabel;
     const modeOptions = DeploymentEnvironmentDataEditorModeV1Schema.options.map(id => ({ id, label: editorLabel(id) }));
-    const agentOptions = DatabaseAgentLevelV1Schema.options.map(id => ({ id, label: deploymentDatabaseAgentLevelLabel(id) }));
+    // Four long levels: the field select the workbench access sheet uses for the same choice (one concept, one control).
+    const agentItems = DatabaseAgentLevelV1Schema.options.map(id => ({ id, title: deploymentDatabaseAgentLevelLabel(id) }));
+    const [agentsOpen, setAgentsOpen] = React.useState(false);
     const disabled = change.running || change.banner.pending;
     const savedKeys = new Set(currentEditors.map(deploymentEnvironmentPrincipalKeyV1));
     const editorsChanged = editors.length !== savedKeys.size || editors.some(editor => !savedKeys.has(deploymentEnvironmentPrincipalKeyV1(editor)));
@@ -88,9 +91,14 @@ function DatabaseAccessForm({ environment, lifetime, editing, change, outcome }:
         {mode === 'chosen' && lifetime ? <DeploymentEnvironmentPeople scope={lifetime.scope} lifetime={lifetime}
             source={source} owner={environment.owner} principals={editors} editable={editable && !disabled} wholeTeams
             onChangePrincipals={next => setDraft(previous => ({ ...previous, dataEditors: [...next] }))} /> : null}
-        {editable ? <SegmentedChoiceItem testIDPrefix={`${testID}.agents`} title={t(`${copy}.agents`)}
-            options={agentOptions} value={level} disabled={disabled}
-            onChange={dataAgentAccess => setDraft(previous => ({ ...previous, dataAgentAccess }))} /> :
+        {editable ? <DropdownMenu testID={`${testID}.agents`} open={agentsOpen} onOpenChange={setAgentsOpen}
+            items={agentItems} selectedId={level} search={false}
+            itemTrigger={{ title: t(`${copy}.agents`), itemProps: { disabled } }}
+            onSelect={id => {
+                setAgentsOpen(false);
+                const dataAgentAccess = DatabaseAgentLevelV1Schema.options.find(option => option === id);
+                if (dataAgentAccess) setDraft(previous => ({ ...previous, dataAgentAccess }));
+            }} /> :
             <Item title={t(`${copy}.agents`)} detail={deploymentDatabaseAgentLevelLabel(level)} mode="info" />}
     </ItemGroup>;
 }

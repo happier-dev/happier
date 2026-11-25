@@ -548,6 +548,23 @@ describe('plugin page anatomy through the shared page owners', () => {
     mount.unmount();
   });
 
+  it('puts a plain operation moved beneath a row body on the text edge, its label where the body text starts', () => {
+    const mount = mountPage(
+      <ItemGroup title="invoices">
+        <Item testID="change-row" title="id 1" accessory={<Button testID="take-back" variant="plain" size="small" title="Take back" onPress={() => {}} />}>
+          <View testID="change-diff" />
+        </Item>
+      </ItemGroup>,
+    );
+    const row = mount.container.querySelector<HTMLElement>('[data-testid="change-row"]')!;
+    const handler = (node: Element) => (node as unknown as { __reactLayoutHandler?: (event: HappierLayoutChangeEvent) => void }).__reactLayoutHandler;
+    act(() => handler(row)!({ nativeEvent: { layout: { x: 0, y: 0, width: 358, height: 52 } } }));
+    const button = mount.container.querySelector<HTMLElement>('[data-testid="take-back"]')!;
+    // The box keeps its size (the hit area) and moves into the gutter by the padding it gave up.
+    expect(Number.parseFloat(button.style.left)).toBeLessThan(0);
+    mount.unmount();
+  });
+
   it.each([
     { rowWidth: 481, trailing: true },
     { rowWidth: 398, trailing: true },

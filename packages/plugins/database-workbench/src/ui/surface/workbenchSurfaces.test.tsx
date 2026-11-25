@@ -444,15 +444,18 @@ describe('Database workbench surfaces', () => {
       await act(async () => fixture.press(await fixture.getByRole('button', { name: 'Read only' })));
       await settle(20);
       expect(reads()).toMatchObject([{ input: { target: descriptor.target } }]);
-      expect(await fixture.getByText('Agents can read and ask before writing.')).toBeTruthy();
-      // The agent level is one titled field select, the shared choice control for four long options.
-      const agents = (await fixture.getAllByRole('button')).find(target => target.name?.startsWith('Agents'));
+      // The agent level is one titled field select, the shared choice control for four long options, showing the
+      // saved level; no second line repeats it.
+      const agentsField = async () => (await fixture.getAllByRole('button')).find(target => target.name?.startsWith('Agents'));
+      const agents = await agentsField();
       expect(agents, 'Expected the Agents field select').toBeDefined();
+      expect(agents!.name).toContain('Read and write (asks first)');
+      expect(await fixture.queryByText('Agents can read and ask before writing.')).toBeUndefined();
       await act(async () => fixture.press(agents!));
       await act(async () => fixture.press(await fixture.getByRole('menuitemradio', { name: 'None' })));
       expect(write).not.toHaveBeenCalled();
       await act(async () => fixture.press(await fixture.getByRole('button', { name: 'Save' })));
-      expect(await fixture.getByText('Agents can’t use this database.')).toBeTruthy();
+      expect((await agentsField())!.name).toContain('None');
       expect(write).toHaveBeenCalledTimes(1);
       expect(reads()).toHaveLength(1);
     } finally {
