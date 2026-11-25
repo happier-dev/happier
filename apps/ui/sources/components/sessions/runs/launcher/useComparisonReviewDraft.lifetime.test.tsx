@@ -21,6 +21,7 @@ import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/proto
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { SessionExecutionRunStartResult } from '@/sync/ops/sessionExecutionRuns';
 import { ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
 import { createSessionFilesViewFixture, fileViewSnapshot, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit, type FileViewRpcRequest } from '@/components/sessions/files/views/sessionFilesViewTestkit';
 
@@ -87,7 +88,7 @@ function readinessResponse(request: FileViewRpcRequest, signedIn = true,
 
 // HTTP is the external boundary: keep Account capture, binding and private requester sealing real.
 function reviewInventoryResponse(url: Parameters<RuntimeFetch>[0], init: Parameters<RuntimeFetch>[1], foreign = false,
-    reviewer?: ReturnType<typeof reviewerFixture>, readiness: 'ready' | 'needsSignIn' | 'unknown' = 'ready',
+    reviewer?: ReturnType<typeof reviewerFixture>, readiness: 'ready' | 'needsSignIn' | 'unknown' | 'notInstalled' = 'ready',
     refused = false): Response | null {
     const path = new URL(String(url)).pathname;
     if (!path.startsWith('/v1/actions/review.engines.list')) return null;
@@ -136,6 +137,7 @@ async function submit(controller: Controller, input?: Record<string, unknown>) {
 }
 async function setup(options: Readonly<{ signedIn?: boolean; reviewer?: 'configured' | 'external'; missingReadiness?: boolean;
     inventoryRead?: () => unknown | Promise<unknown>; comparisonId?: string | null;
+    inventoryReadiness?: () => 'ready' | 'needsSignIn' | 'unknown' | 'notInstalled';
     capture?: () => unknown; start?: (request: FileViewRpcRequest) => unknown }> = {}) {
     const reviewer = options.reviewer ? reviewerFixture(options.reviewer) : undefined;
     const machineId = `review-machine-${++machineSequence}`;
@@ -178,14 +180,15 @@ async function setup(options: Readonly<{ signedIn?: boolean; reviewer?: 'configu
             const path = new URL(String(url)).pathname;
             const observed = path === '/v1/actions/review.engines.list' ? await options.inventoryRead?.() : undefined;
             const refused = Boolean(observed && typeof observed === 'object' && 'ok' in observed && observed.ok === false);
-            const readiness = options.signedIn === false ? 'needsSignIn' : options.missingReadiness ? 'unknown' : 'ready';
+            const readiness = options.inventoryReadiness?.()
+                ?? (options.signedIn === false ? 'needsSignIn' : options.missingReadiness ? 'unknown' : 'ready');
             return reviewInventoryResponse(url, init, false, reviewer, readiness, refused) ?? (path === ACP_CATALOG_ROWS_ROUTE_V1
             ? Response.json(AcpCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 1, content: { t: 'plain', v: reviewer?.record ?? { v: 1, definitions: [] } } }))
             : sessionReads(url, init));
         },
     });
     const controller = await mountController(machineId, reviewer?.engineId, options.comparisonId);
-    return { controller, admission, engineId: reviewer?.engineId ?? 'claude' };
+    return { controller, admission, engineId: reviewer?.engineId ?? 'claude', machineId };
 }
 async function ready(controller: Controller) {
     await vi.waitFor(() => {
@@ -268,6 +271,39 @@ describe('comparison review controller — real readiness and admission lifetime
         await act(async () => controller.getCurrent().inventory.refresh());
         await ready(controller);
         expect(fixture.requests.filter(isStart)).toHaveLength(0);
+    });
+    it('renews a mounted reviewer after Machine setup without reads for another Machine, idle renders or a retired Account', async () => {
+        let installed = false;
+        let reads = 0;
+        const { controller, machineId } = await setup({
+            inventoryRead: () => { reads += 1; },
+            inventoryReadiness: () => installed ? 'ready' : 'notInstalled',
+        });
+        await vi.waitFor(() => expect(controller.getCurrent().inventory.status).toBe('ready'));
+        expect(controller.getCurrent().comparison.plan.canStart).toBe(false);
+        const initialReads = reads;
+        const scope = { serverId: fixture.home.id, machineId };
+        await act(async () => publishMachineContributionRegistryProjectionInvalidation({ ...scope, machineId: 'unrelated-machine' }, 'refresh'));
+        await controller.rerender();
+        await flushHookEffects();
+        expect(reads).toBe(initialReads);
+
+        // The existing Machine setup owner publishes this projection invalidation after installation.
+        installed = true;
+        await act(async () => publishMachineContributionRegistryProjectionInvalidation(scope, 'refresh'));
+        await ready(controller);
+        expect(reads).toBe(initialReads + 1);
+        expect(controller.getCurrent().comparison.plan.selected.map(engine => engine.engineId)).toEqual(['claude']);
+        expect(fixture.requests.filter(isStart)).toHaveLength(0);
+
+        await act(async () => {
+            expect(await TokenStorage.removeCredentialsForServerUrl(fixture.home.serverUrl, { serverId: fixture.home.id })).toBe(true);
+        });
+        const retiredReads = reads;
+        await act(async () => publishMachineContributionRegistryProjectionInvalidation(scope, 'refresh'));
+        await flushHookEffects();
+        expect(reads).toBe(retiredReads);
+        expect(controller.getCurrent().comparison.plan.canStart).toBe(false);
     });
     it.each(['configured', 'external'] as const)('admits a ready %s reviewer with its original target identity', async reviewer => {
         const { controller, engineId, admission } = await setup({ reviewer });

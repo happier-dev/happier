@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { ReviewEngineInventory, ReviewEngineScope } from '@happier-dev/protocol/reviews/reviewEngines';
 
 import { listReviewEngines } from '@/sync/ops/reviews/reviewWalkthrough';
+import { captureMachineContributionRegistryProjectionScope } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 import { t } from '@/text';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
@@ -24,6 +25,12 @@ export function useReviewEngineInventory(params: Readonly<{
         ? JSON.stringify([serverId, machineId, sessionId, scope, accountBinding.accountId, accountBinding.revision]) : null;
     const [state, setState] = React.useState<Readonly<{ targetKey: string; result: InventoryState }> | null>(null);
     const [revision, refresh] = React.useReducer(value => value + 1, 0);
+    const projection = React.useMemo(() => targetKey && machineId
+        ? captureMachineContributionRegistryProjectionScope({ serverId, machineId }) : null,
+    [targetKey, serverId, machineId]);
+    const subscribeProjection = React.useCallback((listener: () => void) => projection?.subscribe(listener) ?? (() => {}), [projection]);
+    const readProjectionRevision = React.useCallback(() => projection?.readRevision() ?? 0, [projection]);
+    const projectionRevision = React.useSyncExternalStore(subscribeProjection, readProjectionRevision, readProjectionRevision);
     React.useEffect(() => {
         if (!targetKey || !accountBinding) return;
         const controller = new AbortController();
@@ -43,7 +50,7 @@ export function useReviewEngineInventory(params: Readonly<{
             retirement?.dispose();
             controller.abort();
         };
-    }, [accountBinding, machineId, revision, scope, serverId, sessionId, targetKey]);
+    }, [accountBinding, machineId, projectionRevision, revision, scope, serverId, sessionId, targetKey]);
     const result: InventoryState = state && state.targetKey === targetKey ? state.result
         : { status: enabled ? 'loading' : 'idle' };
     return { ...result, refresh };
