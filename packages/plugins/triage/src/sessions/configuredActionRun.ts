@@ -24,6 +24,7 @@ import { buildTriageForgeEvidenceAttachmentDraftV1 } from '../composer/mutationP
 import { readTriageActionExecutionPlacementV1, readTriageActionLaunchDirectoryV1, resolveTriageActionCheckoutV1, resolveTriageActionPlacementV1 } from './actionLaunch.js';
 import { readTriageAgentExecutionTargetV1, readTriageInvestigationAgentV1 } from './agentTarget.js';
 import { triageActionDefaultSeedV1, requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
+import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import { projectTriageActionPlacementCandidatesV1, projectTriageNewSessionDestinationV1 } from '../ui/header/newSessionDestination.js';
 import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
 import { startEntrySession, resumeEntrySessionStart, type TriageEntrySessionStartResultV1, type TriageEntrySessionPendingPhaseV1 } from './entrySessionOrchestrator.js';
@@ -76,13 +77,23 @@ export async function runTriageConfiguredHandoffV1(
     options: Readonly<{ entries: HandoffEntries; signal: AbortSignal; session?: ActionSessionAddressV1;
         resumeStart?: TriageConfiguredStartRecoveryV1; mintCreationKey?: () => string }>,
 ): Promise<TriageHandoffRunConfiguredActionResultV1> {
-    const finish = (handoff: TriageSessionHandoffResultV1, recovery?: TriageConfiguredStartRecoveryV1): TriageHandoffRunConfiguredActionResultV1 => ({
-        v: 1, handoff, ...(recovery === undefined ? {} : { recovery }),
+    const finish = (
+        handoff: TriageSessionHandoffResultV1,
+        recovery?: TriageConfiguredStartRecoveryV1,
+        failure?: TriageHandoffRunConfiguredActionResultV1['failure'],
+    ): TriageHandoffRunConfiguredActionResultV1 => ({
+        v: 1, handoff, ...(recovery === undefined ? {} : { recovery }), ...(failure === undefined ? {} : { failure }),
     });
     const unavailable = (reason: Extract<TriageSessionHandoffResultV1, { kind: 'unavailable' }>['reason']) => finish({ kind: 'unavailable', reason }, options.resumeStart);
     const targetUnavailable = (reason: NonNullable<Extract<TriageSessionHandoffResultV1, { kind: 'unavailable' }>['detail']>['reason'],
-        cause?: string, recovery = options.resumeStart) =>
-        finish({ kind: 'unavailable', reason: 'targetUnavailable', detail: { reason, ...(cause === undefined ? {} : { cause }) } }, recovery);
+        cause?: string, recovery = options.resumeStart, failure?: TriageHandoffRunConfiguredActionResultV1['failure']) =>
+        finish({ kind: 'unavailable', reason: 'targetUnavailable', detail: { reason, ...(cause === undefined ? {} : { cause }) } }, recovery, failure);
+    const composerUnavailable = (failure: TriageHandoffRunConfiguredActionResultV1['failure']) => {
+        const cause = failure?.codes[0];
+        return finish({ kind: 'unavailable', reason: 'composerUnavailable',
+            ...(cause === undefined ? {} : { detail: { reason: 'new_session_draft_unsettled' as const, cause } }),
+        }, options.resumeStart, failure);
+    };
     const cancellation = { signal: options.signal };
     if (options.signal.aborted) return finish({ kind: 'cancelled' }, options.resumeStart);
     let configured: Awaited<ReturnType<typeof resolveTriageConfiguredActionForExecutionV1>>;
@@ -91,7 +102,7 @@ export async function runTriageConfiguredHandoffV1(
     } catch (error) {
         if (!isPluginError(error)) throw error;
         return finish({ kind: 'unavailable', reason: 'configuredActionUnavailable',
-            detail: { reason: 'action_references_unresolved', cause: error.code } }, options.resumeStart);
+            detail: { reason: 'action_references_unresolved', cause: error.code } }, options.resumeStart, projectTriageNewSessionFailureV1(error));
     }
     if (configured.status !== 'resolved' || configured.action.target.kind !== 'agent') return unavailable('configuredActionUnavailable');
     const healthRead = input.context.kind === 'healthAlert' || input.context.kind === 'failure'
@@ -238,11 +249,14 @@ export async function runTriageConfiguredHandoffV1(
                 if (options.signal.aborted) return finish({ kind: 'cancelled' }, recovery);
                 if (recovery === undefined && outcome.phase.kind === 'unavailable') {
                     if (delivery === 'compose' && (outcome.phase.reason === 'newSessionUnsupported' || outcome.phase.reason === 'newSessionUnavailable'))
-                        return unavailable('composerUnavailable');
+                        return composerUnavailable(outcome.phase.failure);
                     if (delivery === 'send' && outcome.phase.reason === 'newSessionUnsupported')
                         return finish({ kind: 'selectionRequired', fields: [preferredKey === undefined ? 'agentChoice' : 'sessionChoice'] });
                 }
-                return recovery === undefined ? targetUnavailable('entry_start_unavailable', outcome.phase.kind) : finish({ kind: 'uncertain', phase: 'create', session: null }, recovery);
+                const failure = outcome.phase.kind === 'unavailable' ? outcome.phase.failure : undefined;
+                return recovery === undefined
+                    ? targetUnavailable('entry_start_unavailable', failure?.codes[0] ?? outcome.phase.kind, recovery, failure)
+                    : finish({ kind: 'uncertain', phase: 'create', session: null }, recovery, failure);
             }
             const result = outcome.phase.result;
             if (result.type === 'creationPending') return finish({ kind: 'uncertain', phase: 'create', session: null }, recovery);
@@ -355,9 +369,7 @@ export async function runTriageConfiguredHandoffV1(
                 placement: execution ?? ((input.context.kind === 'healthAlert' || input.context.kind === 'failure') && input.context.machine
                     ? { executionTarget: input.context.machine } : null), candidates,
             });
-            const cause = composed.status === 'unavailable' ? composed.failure?.codes[0] : undefined;
-            if (cause !== undefined) return finish({ kind: 'unavailable', reason: 'composerUnavailable',
-                detail: { reason: 'new_session_draft_unsettled', cause } }, options.resumeStart);
+            if (composed.status === 'unavailable') return composerUnavailable(composed.failure);
             return composed.status === 'seeded' ? finish({ kind: 'composed', destination: { kind: 'newSessionDraft' } })
                 : composed.status === 'cancelled' ? finish({ kind: 'cancelled' })
                 // A caller with no composer (agent, MCP, CLI) keeps its typed choice request.
@@ -462,10 +474,11 @@ export async function runTriageConfiguredHandoffV1(
         if (!isPluginError(error)) throw error;
         if (!isActionOutcomeUnknownErrorCodeV1(error.code)) {
             // If creation settled before a later refusal, retry against the same Session start.
-            return targetUnavailable('session_start_refused', error.code, knownSession === null ? options.resumeStart : custody);
+            return targetUnavailable('session_start_refused', error.code, knownSession === null ? options.resumeStart : custody,
+                projectTriageNewSessionFailureV1(error));
         }
         return finish({ kind: 'uncertain', phase: effectPhase, session: knownSession }, { ...custody,
-            state: { ...custody.state, uncertainPhase: effectPhase } });
+            state: { ...custody.state, uncertainPhase: effectPhase } }, projectTriageNewSessionFailureV1(error));
     }
     if (result.type === 'creationPending') return finish({ kind: 'uncertain', phase: 'create', session: null }, {
         ...custody, state: { ...custody.state, pending: { phase: 'creationPending' }, uncertainPhase: 'create' } });

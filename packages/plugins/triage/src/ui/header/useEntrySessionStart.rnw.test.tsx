@@ -212,6 +212,12 @@ let draftRequests: unknown[] = [];
 let comparisonOpens: unknown[] = [];
 
 describe('terminal structured-input presentation', () => {
+    it('retains the host refusal and its request id when dispatch fails', () => {
+        const failure = { codes: ['target_unavailable', 'source_not_ready'], requestId: 'dispatch-request' };
+        expect(describeTriageEntrySessionPhaseV1({ kind: 'unavailable', reason: 'dispatch', failure }))
+            .toMatchObject({ failure });
+    });
+
     it('shows the source refusal for a created Session awaiting an entry link', () => {
         const failure = { codes: ['channels_pr_link_checkout_not_verified'], requestId: 'review-link-request' };
         expect(describeTriageEntrySessionPhaseV1({

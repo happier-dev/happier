@@ -360,7 +360,10 @@ export function describeTriageEntrySessionPhaseV1(
           return settled;
       }
     }
-    case 'unavailable': return unavailableNotice(phase.reason, phase.failure);
+    case 'unavailable': {
+      const described = unavailableNotice(phase.reason, phase.failure);
+      return phase.failure === undefined ? described : Object.freeze({ ...described, failure: phase.failure });
+    }
   }
 }
 
@@ -381,14 +384,12 @@ function unavailableNotice(reason: string, failure?: Extract<TriageEntrySessionS
           'warning',
           'plugins.triage.surface.session.workspaceMismatch',
           'This project cannot prepare the source’s checkout. Choose a project on the source’s Machine with a matching repository.',
-          failure,
         );
       }
       const fallback = notice(
         'warning',
         'plugins.triage.surface.session.newSessionUnavailable',
         'The New Session surface did not settle on something a session can be started from.',
-        failure,
       );
       const failureCode = failure?.codes[0];
       return failureCode === undefined ? fallback : Object.freeze({ ...fallback, failureCode });

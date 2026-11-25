@@ -94,6 +94,7 @@ import {
   useTriageEntrySessionStart,
   type TriageEntrySessionStartRequestV1,
 } from '../header/useEntrySessionStart.js';
+import { projectTriageNewSessionFailureV1, type TriageNewSessionFailureV1 } from '../header/newSessionSeedCommand.js';
 import { TriagePullRequestReviewChooser } from '../header/PullRequestReviewChooser.js';
 import type { TriageActionTargetV1 } from '../state/actionTarget.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
@@ -299,7 +300,7 @@ export type TriageDetailPinActionV1 = Readonly<{
 function renderEntrySessionNotice(
   notice: TriageEntrySessionNoticeV1 | null,
   text: ReturnType<typeof usePluginTranslation>,
-  failure?: Readonly<{ codes: readonly string[]; requestId?: string }>,
+  failure = notice?.failure,
 ) {
   if (notice === null) return null;
   const label = text(notice.labelKey, notice.label, notice.labelParams);
@@ -423,7 +424,7 @@ function TriageEntryScopedActionRegion(props: Readonly<{
       ...(props.repository === undefined ? {} : { repository: props.repository }),
     }, options);
   };
-  const [comparisonFailed, setComparisonFailed] = React.useState(false);
+  const [comparisonFailure, setComparisonFailure] = React.useState<TriageNewSessionFailureV1 | null>();
   const [readingComparison, setReadingComparison] = React.useState(false);
   const reading = React.useRef(false);
   const mounted = React.useRef(true);
@@ -524,12 +525,12 @@ function TriageEntryScopedActionRegion(props: Readonly<{
     const target = props.target;
     reading.current = true;
     setReadingComparison(true);
-    setComparisonFailed(false);
+    setComparisonFailure(undefined);
     void (async () => {
       try {
         const comparison = await readComparison();
         if (!mounted.current) return;
-        if (comparison?.kind !== 'pullRequest') { setComparisonFailed(true); return; }
+        if (comparison?.kind !== 'pullRequest') { setComparisonFailure(null); return; }
         const action: TriageActionV1 = {
           actionId: 'walk-comparison', label: 'Walk through', enabled: true,
           appliesTo: ['pullRequest'], profileId: null, workspaceMode: 'reference_only',
@@ -544,8 +545,8 @@ function TriageEntryScopedActionRegion(props: Readonly<{
           ...(props.lastKnownLocator === undefined ? {} : { lastKnownLocator: props.lastKnownLocator }),
           ...(props.repository === undefined ? {} : { repository: props.repository }),
         });
-      } catch {
-        if (mounted.current) setComparisonFailed(true);
+      } catch (error) {
+        if (mounted.current) setComparisonFailure(projectTriageNewSessionFailureV1(error) ?? null);
       } finally {
         reading.current = false;
         if (mounted.current) setReadingComparison(false);
@@ -659,9 +660,13 @@ function TriageEntryScopedActionRegion(props: Readonly<{
       {sessionFailure === undefined || (notice !== null && (notice.failureCode === undefined || notice.failureDetails !== undefined)) ? null : (
         <PullRequestFailureDetails codes={sessionFailure.codes} requestId={sessionFailure.requestId} />
       )}
-      {comparisonFailed ? <Status tone="warning"
+      {comparisonFailure === undefined ? null : comparisonFailure === null ? <Status tone="warning"
         labelKey="plugins.triage.surface.comparisonUnavailable"
-        label="This source cannot open a comparison for this pull request." /> : null}
+        label="This source cannot open a comparison for this pull request." /> : <ActionFailureDetails
+        requestId={comparisonFailure.requestId} inline={{
+          fallback: text('plugins.triage.surface.comparisonUnavailable', 'This source cannot open a comparison for this pull request.'),
+          diagnostics: comparisonFailure.codes,
+        }} />}
     </Stack>
   );
 }

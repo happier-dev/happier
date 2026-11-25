@@ -17,7 +17,7 @@ export async function readTriageComparisonSource(input: Readonly<{
     v: 1, instance: read.instance, localRef,
     ...(input.lastKnownLocator === undefined ? {} : { lastKnownLocator: input.lastKnownLocator }),
   }, input.signal ? { signal: input.signal } : undefined));
-  if (input.signal?.aborted || !result.success || result.data.kind !== 'present'
-    || !pluginJsonValuesEqual(result.data.localRef, localRef)) return undefined;
-  return result.data.comparisonSource;
+  if (input.signal?.aborted || !result.success || !pluginJsonValuesEqual(result.data.localRef, localRef)) return undefined;
+  if (result.data.kind === 'unresolved') throw result.data.failure;
+  return result.data.kind === 'present' ? result.data.comparisonSource : undefined;
 }

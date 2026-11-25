@@ -212,7 +212,9 @@ describe('configured action execution through the shared Session owner', () => {
     it('retains a typed catalog transport refusal in the configured handoff', async () => {
         const controller = new AbortController();
         const host = createTriageConfiguredActionHost({ signal: controller.signal,
-            services: { actions: { execute: async () => { throw new PluginError({ code: 'admission_unavailable' }); } } },
+            services: { actions: { execute: async () => { throw new PluginError({
+                code: 'admission_unavailable', details: { requestId: 'catalog-refusal' },
+            }); } } },
         } as PluginAccountActionContext);
         const subject = { kind: 'deploymentEnvironment', serverId: 'server-a', environmentId: 'environment-a' } as const;
         const input = parseHandoffInput({ v: 1, handoff: { task: 'investigate', configuredActionId: 'deployments.set-up',
@@ -220,7 +222,35 @@ describe('configured action execution through the shared Session owner', () => {
             sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery: 'compose' } });
         expect(await runTriageConfiguredHandoffV1(host, input.handoff, { entries: [], signal: controller.signal }))
             .toMatchObject({ handoff: { kind: 'unavailable', reason: 'configuredActionUnavailable',
-                detail: { reason: 'action_references_unresolved', cause: 'admission_unavailable' } } });
+                detail: { reason: 'action_references_unresolved', cause: 'admission_unavailable' } },
+                failure: { codes: ['admission_unavailable'], requestId: 'catalog-refusal' },
+            });
+    });
+
+    it('keeps the typed composer failure in the public configured handoff result', async () => {
+        const host = {
+            version: () => ({ methods: ['openNewSession'] }),
+            openNewSession: async () => { throw new PluginError({
+                code: 'target_unavailable', details: { requestId: 'handoff-composer-refusal' },
+            }); },
+            executeAction: async (id: unknown) => {
+                if (triageBoundaryActionId(id) === 'actions/read-v1') return catalog;
+                if (id === 'projects.list') return { items: [], truncated: false };
+                throw new Error('Unexpected host Action ' + String(id));
+            },
+        } as unknown as Parameters<typeof runTriageConfiguredHandoffV1>[0];
+        const selected = { entryRef: entry.entryRef, sourceInstanceId: entry.sourceInstance.sourceInstanceId };
+        const { handoff } = parseHandoffInput({ v: 1, handoff: {
+            task: 'fix', configuredActionId: action.actionId, context: { kind: 'entry', entry: selected },
+            evidence: [{ kind: 'entry', entry: selected }], sessionChoice: { kind: 'new' },
+            agentChoice: { kind: 'configured' }, delivery: 'compose',
+        } });
+        const result = await runTriageConfiguredHandoffV1(host, handoff, { entries: [entry], signal: new AbortController().signal });
+        expect(TriagePublicHandoffActionResultV1Schema.parse(result)).toMatchObject({
+            handoff: { kind: 'unavailable', reason: 'composerUnavailable',
+                detail: { reason: 'new_session_draft_unsettled', cause: 'target_unavailable' } },
+            failure: { codes: ['target_unavailable'], requestId: 'handoff-composer-refusal' },
+        });
     });
 
     it.each([
@@ -1416,7 +1446,8 @@ describe('configured action execution through the shared Session owner', () => {
         const context = { ui: host, serverId: 'outer-home', signal: new AbortController().signal } as unknown as TestAccountActionContext;
         const handler = createTriageRunConfiguredActionHandler();
         expect(await handler(input, context)).toEqual({ v: 1, handoff: { kind: 'unavailable', reason: 'targetUnavailable',
-            detail: { reason: 'session_start_refused', cause: 'target_home_account_mismatch' } } });
+            detail: { reason: 'session_start_refused', cause: 'target_home_account_mismatch' } },
+            failure: { codes: ['target_home_account_mismatch'] } });
         expect(invoker.callsFor('session.spawn_new')).toHaveLength(0);
         refuseStart = false;
         const first = await handler(input, context);

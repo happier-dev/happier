@@ -611,7 +611,7 @@ async function mountShell(
                     if (preparedReviewWorkspace !== undefined) {
                         harness.preparedNewSessionSelections.push(preparedReviewWorkspace);
                     }
-                    if (harness.newSessionSeedResult !== undefined) throw new Error('New Session unavailable');
+                    if (harness.newSessionSeedResult !== undefined) throw harness.newSessionSeedResult;
                 },
                 selectActionInput: async ({ request }) => {
                     if ('operation' in request) {
@@ -1457,6 +1457,24 @@ describe('selecting several PRs & Issues rows', () => {
             expect.objectContaining({ operation: PREPARE_REVIEW_WORKSPACE_OPERATION }),
         ]);
         expect(harness.lifecycle).toEqual([]);
+    });
+
+    it('shows a refused bulk seed with the host code and request id', async () => {
+        const harness = createHarness({
+            newSessionSeedResult: new PluginError({ code: 'target_unavailable', details: { requestId: 'bulk-seed-request' } }),
+        });
+        const { shell } = await mountShell(harness);
+        await chooseRow('Replace the duplicated normalizer');
+        await chooseRow('Extract the selection reducer');
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Attach to New Session' })); });
+        await settle();
+        expect(harness.newSessionSeeds).toHaveLength(1);
+        const details = await shell.queryByRole('button', { name: 'Details' });
+        expect(details).toBeDefined();
+        if (details === undefined) return;
+        await act(async () => { await shell.press(details); });
+        expect(document.body.textContent).toContain('target_unavailable');
+        expect(document.body.textContent).toContain('bulk-seed-request');
     });
 
     it('honours a direct bulk destination even when the action defaults to compose', async () => {

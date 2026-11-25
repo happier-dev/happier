@@ -18,6 +18,8 @@ import {
   readTriageActionTitleKeyV1,
   type TriageActionV1,
 } from '../../settings/actions.js';
+import { ActionFailureDetails } from '../ActionFailureDetails.js';
+import type { TriageNewSessionFailureV1 } from '../header/newSessionSeedCommand.js';
 import type { TriageBulkSessionDestinationV1 } from './bulkSessionPlan.js';
 import { summarizeTriageBulkSettlementV1 } from './bulkSessionOutcome.js';
 import type {
@@ -348,30 +350,31 @@ function TriageBulkPhaseStatus(props: Readonly<{
       unavailableCount: phase.unavailableKeys.length,
       refusalCount: phase.refusals.length,
     });
-    return (
-      <Status
-        tone={unknown > 0 || left > 0 || notStarted > 0 ? 'warning' : 'secondary'}
-        label={text(
-          'plugins.triage.surface.bulk.settled',
-          '{opened} started, {unknown} unconfirmed, {notStarted} not started, {left} could not be used',
-          {
-            opened: String(opened),
-            unknown: String(unknown),
-            notStarted: String(notStarted),
-            left: String(left),
-          },
-        )}
-      />
+    const label = text(
+      'plugins.triage.surface.bulk.settled',
+      '{opened} started, {unknown} unconfirmed, {notStarted} not started, {left} could not be used',
+      { opened: String(opened), unknown: String(unknown), notStarted: String(notStarted), left: String(left) },
     );
+    return phase.failure === undefined
+      ? <Status tone={unknown > 0 || left > 0 || notStarted > 0 ? 'warning' : 'secondary'} label={label} />
+      : <TriageBulkFailureLine label={label} failure={phase.failure} />;
   }
-  return <TriageBulkUnavailableStatus reason={phase.reason} />;
+  return <TriageBulkUnavailableStatus reason={phase.reason} failure={phase.failure} />;
 }
 
 function TriageBulkUnavailableStatus(props: Readonly<{
   reason: TriageBulkUnavailableReasonV1;
+  failure?: TriageNewSessionFailureV1;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const copy = UNAVAILABLE_COPY[props.reason];
-  return <Status tone="warning" labelKey={copy.key} label={copy.fallback} />;
+  return props.failure === undefined
+    ? <Status tone="warning" labelKey={copy.key} label={copy.fallback} />
+    : <TriageBulkFailureLine label={text(copy.key, copy.fallback)} failure={props.failure} />;
+}
+
+function TriageBulkFailureLine({ label, failure }: Readonly<{ label: string; failure: TriageNewSessionFailureV1 }>) {
+  return <ActionFailureDetails requestId={failure.requestId} inline={{ fallback: label, diagnostics: failure.codes }} />;
 }
 
 /**

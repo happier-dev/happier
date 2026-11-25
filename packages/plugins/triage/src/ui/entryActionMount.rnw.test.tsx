@@ -850,10 +850,16 @@ describe('the entry action controls on the mounted detail header', () => {
         await pressMenuItem(shell, 'Walk through');
         const { targetedContributions: _targeted, ...readingSurface } = shell.context.surface;
         await act(async () => { await shell.updateSurface({ ...readingSurface, machineConnectionPending: true }); });
-        await act(async () => { failRead(new Error('Source unavailable')); });
+        await act(async () => { failRead(new PluginError({ code: 'target_unavailable', details: { requestId: 'comparison-read-request' } })); });
         await act(async () => { await shell.updateSurface(shell.context.surface); });
         await settle();
         await expect(shell.getByText('This source cannot open a comparison for this pull request.')).resolves.toBeDefined();
+        const details = await shell.queryByRole('button', { name: 'Details' });
+        expect(details).toBeDefined();
+        if (details === undefined) return;
+        await act(async () => { await shell.press(details); });
+        expect(document.body.textContent).toContain('target_unavailable');
+        expect(document.body.textContent).toContain('comparison-read-request');
         expect(draftsOpened).toBe(0);
     }, 60_000);
 
