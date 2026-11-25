@@ -16,6 +16,8 @@ const CONNECTED_ACCOUNTS_EXPORTS = [
     'ConnectedAccountAuthDiagnostic',
     'ConnectedAccountAuthFailure',
     'ConnectedAccountPurposeDeclarations',
+    'classifyConnectedAccountTokenEndpointFailure',
+    'parseConnectedAccountTokenEndpointFailure',
 ] as const;
 
 function createSdkProgram(): ts.Program {
@@ -85,7 +87,7 @@ function ownerSymbol(program: ts.Program, exportName: string): ts.Symbol {
 }
 
 describe('Connected Accounts package-local Provider facet projection', () => {
-    it('contains exactly the public Connected Account auth facets and purpose-declarations alias', () => {
+    it('contains exactly the public Connected Account auth facets, failure helpers, and purpose-declarations alias', () => {
         const program = readSdkProgram();
         expect(moduleExports(program, 'src/connected-accounts/projections.ts')
             .map((symbol) => symbol.name)
