@@ -740,12 +740,11 @@ describe('editor workflow composer', () => {
         const composer = screen.root.findByType(WorkflowRunComposer);
         expect(composer.props.directory).toBe(directory);
         expect(composer.props.values.cwd).toBeUndefined();
-        expect(screen.findByTestId('new-session-composer-input')?.props.value).toBe(directory);
-        await act(async () => screen.changeTextByTestId('new-session-composer-input', ''));
-        expect(screen.findByTestId('new-session-composer-input')?.props.value).toBe('');
-        expect(composer.props.directory).toBe(directory);
+        // U8 R10 item 4: the folder chip owns Cwd; it is not a second composer text field.
+        expect(screen.findByTestId('new-session-composer-input')).toBeNull();
+        expect(screen.findByTestId('workflow-start-where-chip-folder')).not.toBeNull();
         const edited = '/edited/hunt-repository';
-        await act(async () => screen.changeTextByTestId('new-session-composer-input', edited));
+        await act(async () => composer.props.onChangeDirectory(edited));
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
         expect(runStart.mock.calls.map(([request, project]) => ({ inputs: request.inputs, project }))).toEqual([
             { inputs: expect.objectContaining({ cwd: edited }), project: { machineId: 'machine-1', directory: edited } },

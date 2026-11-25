@@ -66,9 +66,10 @@ describe('session isolation outcome line', () => {
         ]);
     });
 
-    it('says the work runs directly when the Machine has no policy, with nothing to override', async () => {
-        const { text, link } = await render({ outcome: proposeMachineIsolationOutcome(unset, 'sessions') ?? undefined });
-        expect(text).toContain('machineDetailPage.isolation.outcome.directly');
+    it.each([false, true])('says the work runs directly unless the placement already shows it (hidden=%s)', async hideDirectOutcome => {
+        const { text, link } = await render({ outcome: proposeMachineIsolationOutcome(unset, 'sessions') ?? undefined, hideDirectOutcome });
+        if (hideDirectOutcome) expect(text).toBe('');
+        else expect(text).toContain('machineDetailPage.isolation.outcome.directly');
         expect(link).toBeUndefined();
     });
 
@@ -80,14 +81,15 @@ describe('session isolation outcome line', () => {
         expect(manage.link?.label).toBe('machineDetailPage.isolation.outcome.runDirectlyOnce');
         manage.link?.onPress();
         expect(onOverrideChange).toHaveBeenCalledWith('directly');
-        const workflow = await render({ snapshot: stored, outcome: proposeMachineIsolationOutcome(stored, 'automationsWorkflows') ?? undefined });
+        const workflow = await render({ snapshot: stored, outcome: proposeMachineIsolationOutcome(stored, 'automationsWorkflows') ?? undefined,
+            hideDirectOutcome: true });
         expect(workflow.text).toContain('machineDetailPage.isolation.outcome.kept');
         expect(workflow.link).toBeUndefined();
     });
 
     it('says an offline Machine keeps the draft, with no override to offer until it is back', async () => {
         const { text, link } = await render({ snapshot: stored, outcome: proposeMachineIsolationOutcome(stored, 'sessions') ?? undefined,
-            offline: true, onOverrideChange: vi.fn() });
+            offline: true, onOverrideChange: vi.fn(), hideDirectOutcome: true });
         expect(text).toContain('machineDetailPage.isolation.outcome.offline');
         expect(text).not.toContain('machineDetailPage.isolation.outcome.fresh');
         expect(link).toBeUndefined();

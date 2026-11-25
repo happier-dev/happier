@@ -546,6 +546,7 @@ function WorkflowWhereChips(props: WorkflowWhereInput & Readonly<{
             {...(props.rowTestID === undefined ? {} : { rowTestID: props.rowTestID })}
             // A workflow's Sessions follow the Machine's row for workflows and automations (J6); no one-time override.
             isolationWorkKind="automationsWorkflows"
+            hideDirectOutcome
             {...(projectFiles ? { projectFiles } : {})}
             {...(props.renderRow === undefined ? {} : { renderFieldRow: props.renderRow })}
             {...(props.renderChip === undefined ? {} : { renderChip: props.renderChip })}

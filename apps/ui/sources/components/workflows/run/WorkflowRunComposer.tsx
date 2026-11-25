@@ -494,13 +494,14 @@ export function WorkflowRunComposer(
   );
   const mainName = findWorkflowMainInput(props.inputs)?.name;
   const main =
-    personFields.find((field) => field.definition.name === mainName) ?? null;
+    personFields.find((field) => field.definition.name === mainName && field.definition.name !== directoryInput) ?? null;
   // Each participant input is its own composer chip (dpRev 4); the other inputs share Inputs.
   const participantFields = React.useMemo(
     () => personFields.filter((field) => field !== main && isParticipantInput(field.definition)),
     [personFields, main],
   );
   const remaining = personFields.filter((field) => field !== main && !isParticipantInput(field.definition)
+    && field.definition.name !== directoryInput
     && field.definition.name !== reviewCompositionInputs?.reviewers && field.definition.name !== reviewCompositionInputs?.steps);
   const participantValues = React.useMemo(
     () => participantFields.map((field) => field.value),

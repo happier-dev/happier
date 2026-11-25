@@ -219,6 +219,8 @@ export function SessionPlacementChips(
      * chips (`SessionIsolationOutcomeLine`), the same line New Session shows. Hosts that start no Session omit it.
      */
     isolationWorkKind?: MachineIsolationWorkKind;
+    /** The host already names direct placement on its Machine/checkout controls. */
+    hideDirectOutcome?: boolean;
     /**
      * The per-run Project files choice on that line (the outcome line's `projectFiles`), for a host that saves it with
      * its placement: a sandbox or an explicit cloud preset then leads with what happens to the folder.
@@ -239,6 +241,7 @@ export function SessionPlacementChips(
     <SessionIsolationOutcomeLine serverId={props.serverId || null} machineName={props.machine ? getMachineDisplayName(props.machine) : null}
       snapshot={isolationSnapshot} outcome={isolationOutcome} offline={presence.reachability === 'unreachable'}
       managedPresence={managedPresence} placementPreset={placementPreset}
+      hideDirectOutcome={props.hideDirectOutcome}
       {...(props.projectFiles ? { projectFiles: props.projectFiles } : {})}
       testID="session-placement-isolation-outcome" />
   ) : null;

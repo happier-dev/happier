@@ -45,6 +45,8 @@ export function SessionIsolationOutcomeLine(
     machineName: string | null;
     snapshot: MachineIsolationGetResultV1;
     outcome: SessionIsolationOutcome | undefined;
+    /** The placement controls already name a direct run; still show sandbox and Machine status outcomes. */
+    hideDirectOutcome?: boolean;
     override?: 'directly';
     /** The chosen Machine is offline: the draft waits, and the line says what happens once it is back. */
     offline?: boolean;
@@ -141,8 +143,8 @@ export function SessionIsolationOutcomeLine(
       />
     );
   }
-  if (!outcome)
-    return (
+  if (!outcome || (outcome.status === 'proposed' && outcome.choice.kind === 'directly'))
+    return props.hideDirectOutcome ? null : (
       <OutcomeRow
         testID={testID}
         glyph="desktop"
@@ -158,15 +160,6 @@ export function SessionIsolationOutcomeLine(
         text={t('machineDetailPage.isolation.outcome.unavailable', { machine })}
         link={null}
         warning
-      />
-    );
-  if (outcome.choice.kind === 'directly')
-    return (
-      <OutcomeRow
-        testID={testID}
-        glyph="desktop"
-        text={t('machineDetailPage.isolation.outcome.directly', { machine })}
-        link={null}
       />
     );
   // A sandbox gets the folder's files, fresh or kept: the line says how first, and that phrase changes it for this

@@ -418,8 +418,8 @@ describe('workflow project target control', () => {
             expect(screen.findByTestId('workflow-editor-project-checkout')).not.toBeNull();
         });
         expect(new Set(rows)).toEqual(new Set(['machine', 'folder', 'workspace']));
-        // Under the Machine, the line saying where the workflow's work runs there (lab J6).
-        expect(screen.findByTestId('session-placement-isolation-outcome')).not.toBeNull();
+        // U8 R10 item 3: Machine and Workspace already say the direct placement.
+        expect(screen.getTextContent()).not.toContain(t('machineDetailPage.isolation.outcome.directly', { machine: 'Mac Studio' }));
 
         await screen.pressByTestIdAsync('workflow-editor-project-checkout');
         let popover = screen.findAllByType(AgentInputSelectionListPopover).find(node => node.props.open)!;
@@ -482,8 +482,7 @@ describe('workflow project target control', () => {
             renderRow: (row: string, label: string, control: React.ReactNode) => <React.Fragment key={row}><Text>{label}</Text>{control}</React.Fragment>,
             workspace: { value: undefined, onChange: vi.fn() },
         });
-        const outcome = () => screen.findByTestId('session-placement-isolation-outcome');
-        await vi.waitFor(() => expect(outcome()).not.toBeNull());
+        expect(screen.getTextContent()).not.toContain(t('machineDetailPage.isolation.outcome.directly', { machine: 'Mac Studio' }));
         expect(screen.getTextContent()).not.toContain(t('machineDetailPage.isolation.outcome.offline', { machine: 'Mac Studio' }));
         await act(async () => { recordMachineRequestFailed({ serverId: HOME_ID, accountId: 'account-a', machineId: 'machine-1' }); });
         await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('machineDetailPage.isolation.outcome.offline', { machine: 'Mac Studio' })));
