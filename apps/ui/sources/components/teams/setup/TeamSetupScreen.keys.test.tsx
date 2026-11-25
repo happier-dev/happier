@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
+import { ProjectSourceListItemV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import {
   renderScreen,
   standardCleanup,
@@ -30,11 +31,12 @@ vi.mock('react-native', async () =>
 vi.mock('react-native-unistyles', async () =>
   (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
 );
-vi.mock(
-  'expo-router',
-  async () =>
-    (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module,
-);
+const navigation = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock('expo-router', async () => {
+  const mock = (await import('@/dev/testkit/mocks/router')).createExpoRouterMock();
+  mock.spies.push.mockImplementation(navigation.push);
+  return mock.module;
+});
 // Only Home HTTP is scripted; the Team, Source, summary and credential catalog owners run as in production.
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -51,6 +53,7 @@ beforeEach(async () => {
   await homes.reset();
 });
 afterEach(async () => {
+  navigation.push.mockClear();
   standardCleanup();
   await homes.reset();
 });
@@ -98,7 +101,7 @@ it('offers exact Setup recovery and lets an agent open the same retained operati
   expect(onOpenOperation.mock.calls).toEqual([['setup-operation'], ['setup-operation']]);
 });
 
-it('lists the keys a Team shares on its setup page instead of calling the Team empty', async () => {
+it.each([false, true])('lists shared keys and mirrors any Source link to the agent (Source: %s)', async (includeSource) => {
   onTestFinished(await installRealActionExecutorModuleLoader());
   const serverId = await homes.addHome({
     name: 'Setup Home',
@@ -135,7 +138,8 @@ it('lists the keys a Team shares on its setup page instead of calling the Team e
   homes.answer(serverId, '/v1/projects/sources', {
     body: {
       ok: true,
-      sources: [],
+      sources: includeSource ? [ProjectSourceListItemV1Schema.parse({ id: 'team-notes', revision: 1, name: 'Team notes',
+        createdByAccountId: 'member', audience: [{ principal: { kind: 'team', teamId: team.id }, level: 'view' }] })] : [],
       coverage: { complete: true, nextCursor: null },
     },
   });
@@ -165,7 +169,8 @@ it('lists the keys a Team shares on its setup page instead of calling the Team e
       viewer: teamCredentialViewerFixture({}),
     },
   });
-  const screen = await renderScreen(
+  const render = includeSource ? (await import('@/dev/testkit/harness/mountedCurrentUiContext')).renderMountedCurrentUiContext : renderScreen;
+  const screen = await render(
     <TeamSetupPlanProvider execute={createFrontDoorActionExecute()} context={{ surface: 'ui', serverId, expectedAccountId: 'member' }}>
       <TeamSetupScreen serverId={serverId} teamId={team.id} />
     </TeamSetupPlanProvider>,
@@ -182,6 +187,19 @@ it('lists the keys a Team shares on its setup page instead of calling the Team e
       t('teams.join.setupPage.keyShared'),
     );
     expect(screen.findByTestId('team-setup-empty')).toBeNull();
+    if (!includeSource) return;
+    await screen.pressByTestIdAsync('team-setup-source:team-notes');
+    expect(navigation.push).toHaveBeenLastCalledWith('/projects/sources?source=team-notes');
+    navigation.push.mockClear();
+    const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+    const source = readCurrentUiContextActionReader({ surface: 'agent' })?.readCurrentUiContext()?.commands.find(item => item.title === 'Team notes');
+    expect(source).toBeDefined();
+    expect(await createDefaultActionExecutor().execute(
+      ACTION_ID_FAMILIES_V1.current_ui_context[1], { commandId: source!.id }, { surface: 'agent' },
+    )).toMatchObject({ ok: true });
+    expect(navigation.push).toHaveBeenCalledExactlyOnceWith('/projects/sources?source=team-notes');
   } finally {
     await screen.unmount();
   }

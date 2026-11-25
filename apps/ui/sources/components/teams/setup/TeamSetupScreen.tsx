@@ -647,11 +647,19 @@ export function TeamSetupPageView(
     onPress: () => props.onOpenOperation(visibleOperation),
   } : undefined;
   const seeWhatRan = stoppedOperation ? operationAction : undefined;
-  useCurrentUiContextLocalCommands(operationAction && props.navigationContextKey ? [{
-    key: `team-setup-operation:${visibleOperation}`,
-    title: operationAction.label,
-    invoke: operationAction.onPress,
-  }] : [], { contextKey: props.navigationContextKey });
+  const sourceLinks = arriving ? [] : props.repositoryFreeSources.map((source) => ({
+    key: `team-setup-source:${source.id}`,
+    title: source.name,
+    invoke: () => router.push(projectSourceRoute(source.id)),
+  }));
+  useCurrentUiContextLocalCommands(props.navigationContextKey ? [
+    ...(operationAction ? [{
+      key: `team-setup-operation:${visibleOperation}`,
+      title: operationAction.label,
+      invoke: operationAction.onPress,
+    }] : []),
+    ...sourceLinks,
+  ] : [], { contextKey: props.navigationContextKey });
   // The selector draws its own card, so the heading stands alone above it, as the plan review's do below.
   const aside = props.preview ? (
     <>
@@ -967,15 +975,15 @@ export function TeamSetupPageView(
           title={t('teams.join.setupPage.clonesNone', { folder: props.clones.folder })}
         />
       ) : null}
-      {!arriving && props.repositoryFreeSources.length > 0 ? (
+      {sourceLinks.length > 0 ? (
         <ItemGroup testID="team-setup-sources" title={t('projects.sources.title')}>
-          {props.repositoryFreeSources.map((source) => (
+          {sourceLinks.map((source) => (
             <Item
-              key={source.id}
-              testID={`team-setup-source:${source.id}`}
+              key={source.key}
+              testID={source.key}
               icon={<Icon name="git-branch" size={20} color={theme.colors.text.secondary} />}
-              title={source.name}
-              onPress={() => router.push(projectSourceRoute(source.id))}
+              title={source.title}
+              onPress={source.invoke}
             />
           ))}
         </ItemGroup>
