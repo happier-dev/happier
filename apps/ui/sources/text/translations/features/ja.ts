@@ -13564,6 +13564,8 @@ const ja: ReviewWalkthroughTranslations = {
         reviewersReadPullRequest: 'それぞれがプルリクエストを読みました。',
         fixedCount: ({ count }) => `${count}件修正済み`,
         reviewersDidntFinish: ({ names }) => `${names}は完了しませんでした`,
+        reviewersFinishedOf: ({ count, total }) => `${total} 人中 ${count} 人のレビュアーが完了`,
+        reviewerCoverageUnavailable: 'どのレビュアーが完了したか読み取れませんでした',
         eventDecided: ({ decision, title }) => `「${title}」に${decision}を選択`,
         eventFixed: ({ title }) => `「${title}」を修正済みにしました`,
         eventApproved: '変更を承認しました',

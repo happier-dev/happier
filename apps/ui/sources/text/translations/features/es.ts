@@ -13511,6 +13511,8 @@ const es: ReviewWalkthroughTranslations = {
         reviewersReadPullRequest: 'Cada uno leyó la pull request.',
         fixedCount: ({ count }) => `${count} corregidos`,
         reviewersDidntFinish: ({ names, count }) => count === 1 ? `${names} no terminó` : `${names} no terminaron`,
+        reviewersFinishedOf: ({ count, total }) => `${count} de ${total} revisores terminaron`,
+        reviewerCoverageUnavailable: 'No se pudo leer qué revisores terminaron',
         eventDecided: ({ decision, title }) => `eligió ${decision} para «${title}»`,
         eventFixed: ({ title }) => `marcó «${title}» como corregido`,
         eventApproved: 'aprobó los cambios',

@@ -42,6 +42,7 @@ import { ComputerActionApprovalCard, describeComputerActionApproval, type Comput
 import { ComputerApprovalCapture } from './ComputerApprovalCapture';
 import { DeploymentReviewApprovalFacts, describeDeploymentFolderReviewFiles, isDeploymentRemovalReview, readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
 import { ProjectCommandApprovalFacts, readProjectCommandApproval } from './ProjectCommandApprovalFacts';
+import { ReviewApplyCoverageFact } from './ReviewApplyCoverageFact';
 import { describeApprovalRequestFields, resolveApprovalVisualPreview } from './approvalFieldValues';
 import { FieldValue } from '@/components/ui/lists/FieldRow';
 import { readApprovalPreviewSummary } from './actionApprovalPresentation';
@@ -114,6 +115,8 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
         <ApprovalPreviewSummary preview={preview} request={request} serverId={serverId} />
       </SectionContentRow></ItemGroup>
     ) : null}
+    {/* A Fix approved away from the Review card (Inbox, phone) still says which reviewers its findings come from (R12 M13). */}
+    {actionId === 'review.apply' ? <ReviewApplyCoverageFact actionArgs={actionArgs} serverId={serverId} testID={`${testID}.review-coverage`} /> : null}
     {petImport ? <ItemGroup><SectionContentRow testID={`${testID}.pet-import`}>
       <PetImportConfirmationCard confirmation={petImport} serverId={serverId} testID={`${testID}.pet-import.card`} />
     </SectionContentRow></ItemGroup> : null}

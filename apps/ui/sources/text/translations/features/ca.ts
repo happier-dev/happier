@@ -13612,6 +13612,8 @@ const ca: ReviewWalkthroughTranslations = {
         reviewersReadPullRequest: 'Cadascun ha llegit la pull request.',
         fixedCount: ({ count }) => `${count} corregides`,
         reviewersDidntFinish: ({ names, count }) => count === 1 ? `${names} no ha acabat` : `${names} no han acabat`,
+        reviewersFinishedOf: ({ count, total }) => `${count} de ${total} revisors han acabat`,
+        reviewerCoverageUnavailable: 'No s’ha pogut llegir quins revisors han acabat',
         eventDecided: ({ decision, title }) => `ha triat ${decision} per a «${title}»`,
         eventFixed: ({ title }) => `ha marcat «${title}» com a corregit`,
         eventApproved: 'ha aprovat els canvis',

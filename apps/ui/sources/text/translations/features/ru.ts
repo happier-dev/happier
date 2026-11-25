@@ -13640,6 +13640,8 @@ const ru: ReviewWalkthroughTranslations = {
         reviewersReadPullRequest: 'Каждый прочитал pull request.',
         fixedCount: ({ count }) => `Исправлено: ${count}`,
         reviewersDidntFinish: ({ names }) => `${names}: не завершено`,
+        reviewersFinishedOf: ({ count, total }) => `${count} из ${total} рецензентов завершили`,
+        reviewerCoverageUnavailable: 'Не удалось прочитать, какие рецензенты завершили',
         eventDecided: ({ decision, title }) => `выбрал(а) «${decision}» для «${title}»`,
         eventFixed: ({ title }) => `отметил(а) «${title}» как исправленное`,
         eventApproved: 'одобрил(а) изменения',

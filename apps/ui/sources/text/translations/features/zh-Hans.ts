@@ -13504,6 +13504,8 @@ const zhHans: ReviewWalkthroughTranslations = {
         reviewersReadPullRequest: '每位都阅读了该拉取请求。',
         fixedCount: ({ count }) => `已修复 ${count} 个`,
         reviewersDidntFinish: ({ names }) => `${names} 未完成`,
+        reviewersFinishedOf: ({ count, total }) => `${total} 位评审者中有 ${count} 位已完成`,
+        reviewerCoverageUnavailable: '无法读取哪些评审者已完成',
         eventDecided: ({ decision, title }) => `为“${title}”选择了${decision}`,
         eventFixed: ({ title }) => `将“${title}”标记为已修复`,
         eventApproved: '批准了更改',

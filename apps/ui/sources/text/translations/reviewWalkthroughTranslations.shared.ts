@@ -257,6 +257,8 @@ export type ReviewWalkthroughTranslations = {
         reviewersReadPullRequest: string;
         fixedCount: (params: Count) => string;
         reviewersDidntFinish: (params: Readonly<{ names: string; count: number }>) => string;
+        reviewersFinishedOf: (params: Readonly<{ count: number; total: number }>) => string;
+        reviewerCoverageUnavailable: string;
         eventDecided: (params: Readonly<{ decision: string; title: string }>) => string;
         eventFixed: (params: Readonly<{ title: string }>) => string;
         eventApproved: string;
@@ -555,6 +557,8 @@ export const en: ReviewWalkthroughTranslations = {
         reviewersReadPullRequest: 'Each read the pull request.',
         fixedCount: ({ count }) => `${count} fixed`,
         reviewersDidntFinish: ({ names }) => `${names} didn’t finish`,
+        reviewersFinishedOf: ({ count, total }) => `${count} of ${total} reviewers finished`,
+        reviewerCoverageUnavailable: 'Couldn’t read which reviewers finished',
         eventDecided: ({ decision, title }) => `chose ${decision} for “${title}”`,
         eventFixed: ({ title }) => `marked “${title}” fixed`,
         eventApproved: 'approved the changes',

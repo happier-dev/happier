@@ -13640,6 +13640,8 @@ const pl: ReviewWalkthroughTranslations = {
         reviewersReadPullRequest: 'Każdy przeczytał pull request.',
         fixedCount: ({ count }) => `Naprawione: ${count}`,
         reviewersDidntFinish: ({ names, count }) => count === 1 ? `${names} nie ukończył(a)` : `${names} nie ukończyli`,
+        reviewersFinishedOf: ({ count, total }) => `${count} z ${total} recenzentów ukończyło`,
+        reviewerCoverageUnavailable: 'Nie udało się odczytać, którzy recenzenci ukończyli',
         eventDecided: ({ decision, title }) => `wybrał(a) ${decision} dla „${title}”`,
         eventFixed: ({ title }) => `oznaczył(a) „${title}” jako naprawione`,
         eventApproved: 'zatwierdził(a) zmiany',
