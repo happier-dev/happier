@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { ConnectedServiceBindingsV2Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2Schema, isConnectedServiceQuotaObservationFresh, QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createAgentSessionRuntimeHarness } from '@happier-dev/plugin-sdk/testing';
 import * as daemonControl from '@/daemon/controlClient';
@@ -114,12 +114,20 @@ it.each([false, true])('pushes native allowance into the real usage owner (selec
     expect(retained[2]).toBe(retained[1]);
     expect(retained[3]).not.toBe(retained[2]);
     expect(retained[0]).toMatchObject({ providerId: 'meta', observedAtMs: nativeSample.observedAtMs,
-      fetchedAtMs: nativeSample.observedAtMs, staleAfterMs: 1, source: 'runtimeSignal', confidence: 'confirmed', state: 'loaded_data',
+      fetchedAtMs: nativeSample.observedAtMs, source: 'runtimeSignal', confidence: 'confirmed', state: 'loaded_data',
       planLabel: 'Native subscription', meters: [
         { meterId: 'weekly', used: null, limit: null, utilizationPct: 1, remainingPct: 99, resetsAt: 1794787200000 },
         { meterId: 'window', used: null, limit: null, utilizationPct: 5, remainingPct: 95, resetsAt: 1794232717000, windowDurationMs: 18000000 },
       ],
     });
+    // Both the Session-open refresh and a turn's notification must leave the retained reading usable.
+    const runtimeHorizonMs = 5 * 60_000;
+    for (const snapshot of [retained[0]!, retained[3]!]) {
+      const { observedAtMs, staleAfterMs: maxAgeMs } = snapshot;
+      expect(isConnectedServiceQuotaObservationFresh({ observedAtMs, maxAgeMs, nowMs: observedAtMs + 1_000 })).toBe(true);
+      expect(isConnectedServiceQuotaObservationFresh({ observedAtMs, maxAgeMs, nowMs: observedAtMs + runtimeHorizonMs - 1 })).toBe(true);
+      expect(isConnectedServiceQuotaObservationFresh({ observedAtMs, maxAgeMs, nowMs: observedAtMs + runtimeHorizonMs + 1 })).toBe(false);
+    }
     expect(store.listSnapshots()).toHaveLength(1);
     expect(store.listSnapshots()[0]).toMatchObject({ observedAtMs: changed.observedAtMs,
       meters: [{ meterId: 'weekly', utilizationPct: 9 }, { meterId: 'window', utilizationPct: 5 }] });
