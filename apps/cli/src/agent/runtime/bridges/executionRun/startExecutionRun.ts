@@ -429,7 +429,8 @@ async function startAdmittedExecutionRunInWorkspace(
   args: StartExecutionRunArgs, runId: string, requestBoundRunId: string | null,
   admittedAuthorization?: ExternalActionExecutionAuthorizationV1,
 ): Promise<ExecutionRunStartResult> {
-  if (args.params.sessionId === null) {
+  // Bounded starts dispatch their first input directly, outside Session Pending admission.
+  if (args.params.sessionId === null || args.params.runClass === 'bounded') {
     const authority = resolveExecutionRunInputAuthority({ permissionMode: args.params.permissionMode,
       ...(Object.hasOwn(args.params, 'causalPermissionAuthority') ? { causalPermissionAuthority: args.params.causalPermissionAuthority } : {}),
     });

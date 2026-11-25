@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import {
   accountSettingsParse,
+  createActionExecutor,
   FeaturesResponseSchema,
   formatSavedSecretCatalogReferenceV1,
   sealSavedSecretResourceStoredContentV1,
@@ -22,6 +23,18 @@ import {
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { McpServerCatalogV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { createNativeAgentSessionInteractionHostRuntime } from '@/agent/runtime/bridges/executionRun/nativeAgentExecutionRun';
+import { startExecutionRun } from '@/agent/runtime/bridges/executionRun/startExecutionRun';
+import { executeBoundedBackendRun } from '@/agent/runtime/bridges/executionRun/bounded/loop';
+import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
+import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
+import { resolveSessionOwnedRunToolPolicy } from '@/agent/runtime/registry/engineRegistry/runtimeCore';
+import { createNativeSessionBoundary, createVoiceSessionContextLease } from '@/agent/runtime/bridges/executionRun/testkit/nativeSessionContext';
+import { createRunScopedExecutionPermissionHandler } from '@/agent/executionRuns/policy/runScopedExecutionPermissionHandler';
+import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/createHandler';
+import { projectRequesterAgentStartPolicyV1 } from '@/daemon/sessionEncryption/requesterAgentStartPolicy';
+import { createNativeAgentSessionServices } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionInteractions';
+import { createClaudeNativePermissionEngine } from '../../../../../packages/plugins/claude/src/agent/permissions/nativePermissionEngine';
 import { resolveRunnerMcpServers } from './resolveRunnerMcpServers';
 import { createDeferred } from '@/testkit/async/deferred';
 import { createMutableApiSessionClientFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -122,6 +135,145 @@ describe('Session-owned Run MCP binding', () => {
       await authority.close();
     }
   });
+  it('lets a CLI-started bounded read-only Run read its parent status while refusing an over-ceiling start', async () => {
+    vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '1');
+    const sessionId = 'bounded-status-parent';
+    const { credentials, home } = await admittedSource(sessionId);
+    const session = createMutableApiSessionClientFixture({ sessionId,
+      metadata: createTestMetadata({ machineId: 'machine', path: '/repo', flavor: 'claude' }),
+      overrides: { getServerBinding: () => home,
+        getBackendTarget: () => ({ kind: 'backend', backendId: 'claude' }) } });
+    const permissionHandler = createProviderEnforcedPermissionHandler({ session, logPrefix: '[Run status fixture]' });
+    permissionHandler.setPermissionMode('yolo');
+    const parentWitness: AgentInvocationTurnAdmissionWitness = { inputId: 'parent-input', turnId: 'parent-turn',
+      userMessageSeq: null, userMessageSeqs: [],
+      causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'yolo' } };
+    const parent = Object.assign(session, { getActiveTurnAdmissionWitness: () => parentWitness });
+    const settings = accountSettingsParse({});
+    const statusExecutor = createActionExecutor({
+      // The live daemon status service reads Home. Keep the Action and target resolver real.
+      async sessionStatusGet({ sessionId: resolvedSessionId }) {
+        return { session: { id: resolvedSessionId, machineId: 'machine', createdAt: 1, updatedAt: 1,
+          active: true, activeAt: 1, encryption: null } };
+      },
+    });
+    const authority = await createSessionDaemonAuthorityFixture({ sessionId,
+      agentStartPolicy: projectRequesterAgentStartPolicyV1(settings),
+      execute: async operation => statusExecutor.execute(operation.actionId, operation.input, { surface: 'mcp', defaultSessionId: sessionId,
+        serverId: home.serverId, callerPermissionMode: operation.witness.callerPermissionMode,
+        causalPermissionAuthority: operation.witness.causalPermissionAuthority }),
+    });
+    onTestFinished(() => authority.close());
+
+    const accountSettingsSnapshot = { source: 'network' as const, settings, settingsVersion: 1, loadedAtMs: 1,
+      settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token),
+      mcpServerCatalog: { status: 'ready' as const, authority: 'active' as const, revision: 1, diagnostics: [],
+        catalog: { v: 1 as const, servers: [], bindings: [] } } };
+    const mcpOptions = { session: parent, credentials, accountSettings: settings, accountSettingsSnapshot,
+      machineId: 'machine', directory: '/repo', env: {} };
+    const parentProfile = await resolveRunnerMcpServers(mcpOptions);
+    onTestFinished(() => parentProfile.happierMcpServer.stop());
+    if (!parentProfile.sessionMcpContext) throw new Error('Missing parent MCP context');
+    const parentConnection = await connectSessionMcpClient(parentProfile.sessionMcpContext);
+    onTestFinished(() => parentConnection.close());
+
+    const read = { actionId: 'session.status.get', input: { sessionId: 'self' } };
+    const write = { actionId: 'session.title.set', input: { sessionId: 'self', title: 'Denied edit' } };
+    const overCeiling = { actionId: 'execution.run.start', input: { intent: 'delegate', childSelection: 'agentDefault',
+      backendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      instructions: 'Fixture child work', permissionMode: 'workspace_write', retentionPolicy: 'ephemeral',
+      runClass: 'bounded', ioMode: 'request_response', waitForCompletion: true } };
+    const callAction = async (client: typeof parentConnection.client, args: typeof read | typeof overCeiling) =>
+      CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: args }));
+    const parentResult = await callAction(parentConnection.client, read);
+    expect(parentResult.isError).toBe(false);
+    const statusText = parentResult.content.find(row => row.type === 'text');
+    if (!statusText) throw new Error('Missing parent status');
+    expect(JSON.parse(statusText.text)).toMatchObject({ session: { id: sessionId, machineId: 'machine' } });
+
+    const agent = createNativeSessionBoundary();
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const registry = createExecutionRunOccurrenceWitnessRegistry(controllers);
+    const settled = createDeferred<ExecutionRunState['status']>();
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => { throw new Error('Expected text Run'); } });
+    onTestFinished(() => voiceAgentManager.dispose());
+    let checkNativePermission: ReturnType<typeof createClaudeNativePermissionEngine>['canCallTool'] | undefined;
+    let callRunMcp: Awaited<ReturnType<typeof connectSessionMcpClient>> | undefined;
+
+    await startExecutionRun({
+      params: { sessionId, intent: 'agent', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        instructions: 'Read Session status.', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
+        runClass: 'bounded', ioMode: 'request_response' },
+      parentProvider: 'claude', sendAcp: async () => {}, streamedTranscriptSession: null,
+      runs, controllers, budgetRegistry: null, getNowMs: Date.now, voiceAgentManager,
+      enqueueMarkerWrite: async (_id, writeMarker) => { await writeMarker(); }, writeActivityMarker: async () => {},
+      send: async () => { throw new Error('Expected bounded Run delivery'); },
+      finishRun: async (_id, next) => { settled.resolve(next.status); },
+      executeBoundedRun: input => executeBoundedBackendRun({ ...input, runs, controllers, parentProvider: 'claude',
+        sendAcp: async () => {}, getNowMs: Date.now, boundedTimeoutMs: null,
+        finishRun: async (_id, next) => { settled.resolve(next.status); } }),
+      registerRunOccurrence: ({ runId, sidechainId, controller }) => {
+        if (controller.kind !== 'backend') throw new Error('Expected text Run controller');
+        return registry.register({ runId, sidechainId, controller,
+          runtimeLifetimeSignal: controller.backend.getRuntimeLifetimeSignal!(),
+          readActiveTurnAdmissionWitness: controller.backend.readActiveTurnAdmissionWitness! }).dispose;
+      },
+      createRuntime(options) {
+        const runId = options.runId!;
+        const occurrenceId = options.controllerOccurrenceId!;
+        const runPermission = createRunScopedExecutionPermissionHandler({
+          runId, controllerOccurrenceId: occurrenceId, parentSessionId: sessionId, handler: permissionHandler,
+          toolPolicy: resolveSessionOwnedRunToolPolicy({ options, agentId: 'claude', parentMetadata: null }),
+        });
+        const host = createNativeAgentSessionInteractionHostRuntime({
+          runtime: { sessions: { async open(request, context) {
+            checkNativePermission = createClaudeNativePermissionEngine(context).canCallTool;
+            return agent.open(request);
+          } } },
+          lease: { pluginId: 'happier.agent.claude', pluginVersion: '1.0.0', agentId: 'claude', localAgentId: 'claude',
+            occurrenceId, isCurrent: () => true },
+          options: { ...options, cwd: '/repo', scope: 'session_owned' },
+          sessionCapabilities: { open: ['create'], delivery: ['newTurn'], cancel: true },
+          async createSessionContext({ signal, readActiveTurnAdmissionWitness }) {
+            const profile = await resolveRunnerMcpServers({ ...mcpOptions, executionRun: {
+              runId, workDepth: 1, cwd: '/repo', signal, isCurrent: () => !signal.aborted,
+              getPermissionMode: () => options.permissionMode,
+              readActiveTurnAdmissionWitness: () => readActiveTurnAdmissionWitness?.() ?? null,
+              readCurrentRunOccurrence: registry.reader.readCurrentRunOccurrence,
+            } });
+            if (!profile.sessionMcpContext) throw new Error('Missing Run MCP context');
+            callRunMcp = await connectSessionMcpClient(profile.sessionMcpContext);
+            const services = createNativeAgentSessionServices({ permissionHandler: runPermission.handler,
+              pluginId: 'happier.agent.claude', contributionId: 'claude', runtimeId: runId,
+              sessionId, occurrenceId, signal, isCurrent: () => !signal.aborted, readActiveTurnAdmissionWitness });
+            const lease = createVoiceSessionContextLease({ services, signal, async dispose() {
+              await callRunMcp?.close();
+              await profile.happierMcpServer.stop();
+            } });
+            // The generic Session fixture uses a fixed id. Supply this test's admitted Session.
+            return { ...lease, context: { ...lease.context, session: { ...lease.context.session, id: sessionId } } };
+          },
+        });
+        onTestFinished(async () => {
+          await host.dispose();
+          await runPermission.dispose('Test completed');
+        });
+        return host;
+      },
+    });
+    await Promise.race([agent.waitForInputs(1), settled.promise.then(status => { throw new Error(`Run settled before tool call: ${status}`); })]);
+    if (!checkNativePermission || !callRunMcp) throw new Error('Missing Run tool boundary');
+    expect(await checkNativePermission('mcp__happier__action_execute', read)).toMatchObject({ behavior: 'allow' });
+    expect(await callAction(callRunMcp.client, read)).toEqual(parentResult);
+    expect(await checkNativePermission('mcp__happier__action_execute', write)).toMatchObject({ behavior: 'deny' });
+    const denied = await callAction(callRunMcp.client, overCeiling);
+    expect(denied.isError).toBe(true);
+    expect(denied.content).toContainEqual({ type: 'text', text: expect.stringContaining('"errorCode":"permission_exceeds_ceiling"') });
+    agent.complete('Status verified.');
+    expect(await settled.promise).toBe('succeeded');
+  });
+
   it('lists only its bound Session through restricted child HTTP MCP Action execution', async () => {
     vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '1');
     vi.stubEnv('HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE', '');
