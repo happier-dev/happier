@@ -740,9 +740,10 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     const preparedContent = await readPlainDeploymentEnvironmentContentInTx(tx, actorAccountId, loaded.admission.owner, input);
     if (!preparedContent.ok) return preparedContent;
     // Readable content names its data-role links; opaque content leaves the server the current link relation only.
+    // A Link carries one binding per role (writer and limited reader), so the content names it once per role.
     const managedDataLinks = preparedContent.content ? await readCurrentManagedDataTargetLinksInTx(tx, { environmentId: loaded.row.id,
-        targetLinkIds: preparedContent.content.bindings.flatMap(binding => binding.purpose === 'dataRole'
-            && 'targetLinkId' in binding ? [binding.targetLinkId] : []) }) : null;
+        targetLinkIds: [...new Set(preparedContent.content.bindings.flatMap(binding => binding.purpose === 'dataRole'
+            && 'targetLinkId' in binding ? [binding.targetLinkId] : []))] }) : null;
     if (preparedContent.content && managedDataLinks === null) return deploymentFailure('deployment_conflict');
     const controllerManagesData = managedDataLinks ? managedDataLinks.length > 0
         : await hasCurrentManagedDataTargetLinkInTx(tx, loaded.row.id);

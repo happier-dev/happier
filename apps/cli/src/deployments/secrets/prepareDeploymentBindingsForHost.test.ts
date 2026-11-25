@@ -45,6 +45,7 @@ import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalA
 import { normalizeStoredComposeDefinitionInput } from '@/workspaces/projectSetup/nativeComposeSource';
 import { openMachineSecretGrant, sealMachineSecretGrant } from './machineSecretGrant';
 import { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol';
+import { projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 
 const sourceFixtures: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>>[] = [];
 const bindingGrantRef = (index: number) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
@@ -79,6 +80,10 @@ it.each([
         name: 'saves an authored managed writer role next to a Railway runtime without publishing provider Variables' },
     { placementChange: false, mode: 'plain' as const, external: false, managedDataRole: true, providerRuntime: true, readAccessChild: true,
         name: 'binds the generated read login inside its reviewed read setup next to a Railway runtime and its writer' },
+    { placementChange: false, mode: 'e2ee' as const, external: false, managedDataRole: true, providerRuntime: true, readAccessChild: true,
+        name: 'binds the generated E2EE read login inside its reviewed read setup next to a Railway runtime and its writer' },
+    { placementChange: false, mode: 'e2ee' as const, external: false, managedDataRole: true, providerRuntime: true, readAccessChild: true, replay: true,
+        name: 'binds the read login under the signed E2EE read-setup root it was reviewed in' },
     { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, managedDataRole: true,
         name: 'seals a managed read role to its admitted controller without a runtime target' },
     { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, managedDataRole: true, replaceManagedDataRole: true,
@@ -146,6 +151,13 @@ it.each([
             source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.railway', localId: 'railway' } } });
     }
     if (managedDataLink) detail.targetLinks.push({ targetLink: managedDataLink, content: detail.targetLinks[0]!.content });
+    // The reviewed read setup (one Apply) whose binding child consumes that admission.
+    const readSetupParent = managedDataLink ? { actionId: 'action.invoke' as const, input: {
+        action: { pluginId: 'happier.database', localId: 'read-access/create' }, input: { target: { kind: 'managed_deployment',
+            environment: { serverId: 'home', environmentId: detail.environment.id, projectSourceId: detail.environment.projectSourceId },
+            targetLinkId: managedDataLink.id, contribution: { pluginId: 'fixture.data', contributionId: 'database' },
+            platformProjectId: 'project', branchId: 'branch', database: 'app' },
+            mode: 'apply', role: 'happier_ro_fixture', statements: ['CREATE ROLE happier_ro_fixture'] } } } : undefined;
     let environment = { ...detail.environment, revision: configureChild ? 2 : detail.environment.revision, buildMachineId: preTarget && !preTargetWithBuilder ? undefined : placementChange ? builder.machineId : installation.machineId,
         runtimeTargetLinkId: preTarget ? undefined : detail.environment.runtimeTargetLinkId };
     vi.spyOn(identityStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
@@ -334,7 +346,9 @@ it.each([
                 authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'approved-copy-root', binding: {
                     accountId: missingCustody ? 'requester' : 'owner', custodianAccountId: 'owner', accountEncryptionMode: mode, serverIdentityId: 'home',
                     machineId: installation.machineId, installationId: installation.installationId,
-                    actionId: templateChild ? 'deployments.templates.instantiate' : configureChild ? 'deployments.environments.create' : 'deployments.bindings.set',
+                    actionId: readAccessChild ? 'action.invoke' : templateChild ? 'deployments.templates.instantiate' : configureChild ? 'deployments.environments.create' : 'deployments.bindings.set',
+                    ...(readAccessChild && readSetupParent ? {
+                        deploymentReadAdmission: projectDeploymentReadAdmissionV1('action.invoke', readSetupParent.input) } : {}),
                     requestId: 'copy-request', requestEnvelopeDigest: 'a'.repeat(43),
                     target: { kind: 'machine', machineId: installation.machineId }, authentication: { kind: 'account', tokenEpoch: 1 },
                     ...(templateChild ? { deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('deployments.templates.instantiate', {
@@ -353,7 +367,7 @@ it.each([
                 installationId: installation.installationId, privateKey: keys.secretKey, rootAdmitted: true });
             if (!authorization) throw new Error('The root requester HTTP custody must be projected');
             replayContext = { externalActionExecutionAuthorization: authorization,
-                ...(configureChild ? { runtimeAccountId: 'owner', externalActionTarget: authorization.binding.target,
+                ...(configureChild || readAccessChild ? { runtimeAccountId: 'owner', externalActionTarget: authorization.binding.target,
                     surface: 'api' as const, actionCaller: { kind: 'host' as const } } : {}) };
             if (missingCustody) {
                 // A valid signed requester projection can outlive its private
@@ -563,18 +577,13 @@ it.each([
         const authored = { serverId: input.serverId, environmentId: input.environmentId,
             expectedRevision: input.expectedRevision, set: bindings, remove: [] };
         if (readAccessChild && managedDataLink) {
-            // The reviewed read setup (one Apply) is the parent; its binding child consumes that admission.
-            const databaseTarget = { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: detail.environment.id,
-                projectSourceId: detail.environment.projectSourceId }, targetLinkId: managedDataLink.id,
-                contribution: { pluginId: 'fixture.data', contributionId: 'database' }, platformProjectId: 'project', branchId: 'branch',
-                database: 'app' };
-            const parent = { actionId: 'action.invoke' as const, input: { action: { pluginId: 'happier.database', localId: 'read-access/create' },
-                input: { target: databaseTarget, mode: 'apply', role: 'happier_ro_fixture', statements: ['CREATE ROLE happier_ro_fixture'] } } };
+            const parent = readSetupParent!;
             const child = { action: 'deployments.bindings.set' as const, role: 'database.readAccess.bindings', input: authored };
             const settled = await invokeHostReviewedChildV1({ parent, child, context: replayContext,
                 admittedReview: { action: child.action, role: child.role, surface: 'api' },
                 execute: async (_input, childContext) => daemon.deploymentAction!('deployments.bindings.set', authored, childContext) });
-            expect(settled, JSON.stringify(settled)).toMatchObject({ ok: true });
+            expect(settled, JSON.stringify({ settled, writes: writes.map(write => ({ ...write, grants: write.grants.map(grant => grant.kind) })) }))
+                .toMatchObject({ ok: true });
             const written = writes.at(-1)!;
             const opened = readDeploymentEnvironmentArtifactV1(written, await createCredentialedAccountArtifactStore(credentials)
                 .read(written.contentArtifactId, { prepareRecipients: false, includeSharedAudience: false }));

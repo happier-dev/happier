@@ -6914,8 +6914,8 @@ describe('deployment children retain their controller Action authority', () => {
         expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...dispatched, target: { kind: 'machine', machineId: f.builder.id } })).toBe(false);
     });
 
-    it('admits only an Environment manager’s reviewed managed database read binding', async () => {
-        const f = await fixture('team', 'account', { readableEnvironment: true, platformTarget: 'vercel' });
+    it.each(['plain', 'e2ee'] as const)('admits only an Environment manager’s reviewed managed database read binding (%s)', async contentMode => {
+        const f = await fixture('team', 'account', { readableEnvironment: true, platformTarget: 'vercel', contentMode });
         const contribution = { pluginId: 'happier.deploy.railway', contributionId: 'railway-postgres' };
         const managedLink = await db.deploymentTargetLink.create({ data: {
             environmentId: f.environment.id, createdByAccountId: f.account.id, ...await f.content('deployment-target-link.v1'),
@@ -6930,6 +6930,24 @@ describe('deployment children retain their controller Action authority', () => {
         const target = { kind: 'machine' as const, machineId: f.controller.id };
         const mint = async (actionId: string, actionInput: Record<string, unknown>, kind: 'account' | 'terminal' = 'account') => {
             const input = { action: parseQualifiedPluginActionId(actionId)!, input: StrictJsonValueSchema.parse(actionInput) };
+            if (contentMode === 'e2ee') {
+                // An E2EE Account's browser request seals its operands; Home admits it through the production mint route.
+                const requestId = crypto.randomUUID();
+                const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                    binding: { serverIdentityId: serverId, accountId: f.account.id, authentication: { kind, tokenEpoch: f.account.tokenEpoch },
+                        actionId: ACTION_INVOKE_ACTION_ID_V1, requestId, target },
+                    input, material: { type: 'dataKey', machineKey: f.controller.contentKey }, randomBytes: nacl.randomBytes });
+                const token = await auth.createToken(f.account.id, undefined, kind === 'terminal'
+                    ? { kind: 'terminal', authority: 'account_automation' } : { kind: 'account', authority: 'present_user' });
+                let minted: unknown;
+                await withAuthenticatedTestApp(registerExternalActionRoutes, async app => {
+                    const response = await app.inject({ method: 'POST', url: `/v1/actions/${ACTION_INVOKE_ACTION_ID_V1}/execution-authorization`,
+                        headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: f.controller.id, envelope } });
+                    if (response.statusCode !== 200) throw Object.assign(new Error(response.body), { code: response.json().error });
+                    minted = response.json();
+                }, { authentication: 'real' });
+                return ExternalActionExecutionAuthorizationV1Schema.parse(minted);
+            }
             const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
             return await auth.mintExternalActionExecutionAuthorization({ accountId: f.account.id,
                 serverIdentityId: serverId, authentication: { kind, tokenEpoch: f.account.tokenEpoch },
@@ -6974,24 +6992,51 @@ describe('deployment children retain their controller Action authority', () => {
         expect(await verify(attach, reviewedChild, { contentArtifactId: crypto.randomUUID() })).toBeNull();
         expect(await verify(preview, reviewedChild)).toBeNull();
         const secret = { v: 1 as const, kind: 'password' as const, name: 'Read login', value: 'fixture-read-login' };
-        expect(await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: f.account.id, resourceId,
-            displayName: secret.name, kind: secret.kind, encryptionMode: 'plain',
-            storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain', content: secret }) })))
-            .toMatchObject({ ok: true });
-        const grant = sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: f.environment.id,
-            machineId: f.controller.id, installationId: f.controller.installationId, resourceId, resourceRevision: 1 },
-            installationPublicKey: f.controller.keys.publicKey, content: { kind: 'secret', value: secret.value } });
-        // The provider runtime owns its Variables; read setup adds only the limited login beside them.
+        const saveSecret = async (id: string, value: string) => {
+            const resourceDataKey = nacl.randomBytes(32);
+            const stored = { ...secret, value };
+            expect(await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: f.account.id, resourceId: id,
+                displayName: secret.name, kind: secret.kind, encryptionMode: contentMode,
+                storedContent: sealSavedSecretResourceStoredContentV1(contentMode === 'plain'
+                    ? { resourceId: id, mode: contentMode, content: stored }
+                    : { resourceId: id, mode: contentMode, content: stored, resourceDataKey, randomBytes: nacl.randomBytes }),
+                ...(contentMode === 'e2ee' ? { keyEnvelopes: [{ recipientAccountId: f.account.id,
+                    recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(f.accountKeys.publicKey),
+                    encryptedDataKey: sealEncryptedDataKeyEnvelopeV1({ dataKey: resourceDataKey,
+                        recipientPublicKey: f.accountKeys.publicKey, randomBytes: nacl.randomBytes }) }] } : {}) })))
+                .toMatchObject({ ok: true });
+            return sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: f.environment.id,
+                machineId: f.controller.id, installationId: f.controller.installationId, resourceId: id, resourceRevision: 1 },
+                installationPublicKey: f.controller.keys.publicKey, content: { kind: 'secret', value } });
+        };
+        const grant = await saveSecret(resourceId, secret.value);
+        // The live shape: provider Variables on the Railway runtime and a reviewed writer login on
+        // each managed database Link, already sealed to the controller, before read setup adds its login.
         const providerVariable = { purpose: 'variable', phase: 'build', name: 'PROVIDER_PROFILE',
             source: { kind: 'value', value: 'provider-owned' } } as const;
+        const siblingLink = await db.deploymentTargetLink.create({ data: {
+            environmentId: f.environment.id, createdByAccountId: f.account.id, ...await f.content('deployment-target-link.v1'),
+            role: 'data', state: 'deployed', sourceKind: 'plugin', targetKind: 'platform',
+            pluginId: contribution.pluginId, contributionLocalId: contribution.contributionId,
+        } });
+        const writers = await Promise.all([managedLink.id, siblingLink.id].map(async targetLinkId => {
+            const writerResourceId = crypto.randomUUID();
+            return { grant: await saveSecret(writerResourceId, `fixture-writer-${targetLinkId}`), binding: { purpose: 'dataRole', targetLinkId,
+                role: 'write', source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(writerResourceId), resourceRevision: 1 } } as const };
+        }));
         const base = createDeploymentEnvironmentDetailV1().content;
-        await db.deploymentEnvironment.update({ where: { id: f.environment.id },
-            data: await f.content('deployment-environment.v1', { ...base, bindings: [providerVariable] }) });
-        const content = { ...base, bindings: [providerVariable, selectedBinding] };
+        const incumbent = [providerVariable, ...writers.map(writer => writer.binding)];
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: {
+            ...await f.content('deployment-environment.v1', { ...base, bindings: incumbent }),
+            referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(incumbent) } });
+        expect(await inTx(tx => syncEnvironmentSecretGrantsInTx(tx, { environmentId: f.environment.id,
+            grants: writers.map(writer => writer.grant) }))).not.toBeNull();
+        const content = { ...base, bindings: [...incumbent, selectedBinding] };
         // The runtime provider Link retains its identity while the Environment owns database custody.
         const body = DeploymentBindingsSetStorageInputV1Schema.parse({ serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
             ...await f.content('deployment-environment.v1', content, artifactId),
-            referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(content.bindings), grants: [grant] });
+            referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(content.bindings),
+            grants: [...writers.map(writer => writer.grant), grant] });
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             const reviewedHeaders = (active: typeof attach, payload: unknown, url: string) => ({
                 ...currentAccountStoredContentCompatibilityHeaders,
