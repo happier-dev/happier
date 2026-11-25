@@ -2116,6 +2116,9 @@ export function createStablePluginExecService(params: Readonly<{
         if (managedCustody?.sessionOwned) trackSessionManagedProcess(supervised.child);
         logger.infoFile('[PluginExec] Launch preparation phase', {
             phase: 'spawn_requested', executableKind: request.executable.kind, pid: supervised.child.pid,
+            ...(request.executable.kind === 'systemTool' ? {
+                toolId: typeof request.executable.id === 'string' ? request.executable.id : request.executable.id.localId,
+            } : {}),
             // Which holder role the launch asked for, or why it asked for none (never silent).
             holder: holderDecision.role ?? holderDecision.notHeld,
             authorizationDurationMs: Math.round(authorizedAt - launchStartedAt),
