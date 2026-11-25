@@ -3275,6 +3275,7 @@ describe('workflow Session step executor', () => {
     const originalGet = readiness.get.getMockImplementation()!;
     readiness.get.mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/access-keys/new-session/machine-1')) return { status: 200, data: { accessKey: 'existing' } };
+      if (new URL(url).pathname === '/v1/artifacts') return { status: 200, data: artifactListResponse(url, []) };
       if (url.endsWith('/v2/account/settings')) return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
       if (url.endsWith('/v2/account/settings/history')) return { status: 200, data: { snapshots: [] } };
       return url.includes('/features') ? { status: 200, data: {
