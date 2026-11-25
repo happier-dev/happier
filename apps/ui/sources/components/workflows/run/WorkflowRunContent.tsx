@@ -166,6 +166,7 @@ export type WorkflowRunOperationKind =
     | 'delete';
 
 export type WorkflowRunContentProps = Readonly<{
+    mapUnavailable?: boolean;
     /** Occurrence-owned delivery recovery and immutable cause/history, within this page's scroll owner. */
     occurrenceDetails?: React.ReactNode;
     active?: boolean;
@@ -2023,6 +2024,15 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             {props.onLoadMoreInvocations === undefined ? null : <WorkflowRunPagingAction
                 testIDPrefix={`${testIDPrefix}-steps`} onLoadMore={props.onLoadMoreInvocations}
                 loading={props.loadingMoreInvocations === true} failed={props.loadMoreInvocationsFailed === true} />}
+            {footer}
+        </ScrollView>
+    ) : props.view === 'flow' && props.mapUnavailable ? (
+        <ScrollView testID={testIDPrefix} style={styles.scroll} contentContainerStyle={[styles.root, props.contentContainerStyle]}>
+            {header}
+            <View style={pageSectionStyle}>
+                <SurfaceStateCard testID={`${testIDPrefix}-flow-unavailable`} kind="unavailable" size="line"
+                    title={t('workflows.contentUnavailable')} />
+            </View>
             {footer}
         </ScrollView>
     ) : props.view === 'activity' || flowProjection === null || !props.invocationsLoaded ? (

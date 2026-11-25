@@ -360,6 +360,7 @@ export function resolveWorkflowRunProblemPresentation(
         repair: 'none', accessibilitySemantics: 'status',
     });
     if (run.state !== 'failed' && run.state !== 'interrupted') return null;
+    if (code === 'workspace_unavailable') return describeWorkflowTargetUnavailableProblem({ reason: code });
     if (isWorkflowOperationErrorCode(code)) return describeWorkflowOperationProblem(code);
     const startupCause = presentSessionStartupFailureCause(code);
     return startupCause ? { ...present(null, { ...GENERIC_SHAPE, repair: 'none' }), message: startupCause } : null;

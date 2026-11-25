@@ -3811,6 +3811,12 @@ describe('WorkflowRunContent', () => {
    * than looking like the end of history, and a loaded Run with no rows says
    * nothing has started — not the collection's "runs appear here" copy.
    */
+  it('settles Map when the private definition cannot be read', async () => {
+    const screen = await renderContent({ view: 'flow', definition: null, mapUnavailable: true, invocationsLoaded: false });
+    expect(screen.findByTestId('workflow-run-flow-unavailable')).toBeTruthy();
+    expect(screen.findByTestId('workflow-run-invocations-loading')).toBeNull();
+  });
+
   it.each(['activity', 'flow', 'steps'] as const)('states a still-loading %s outline and an empty loaded outline distinctly', async view => {
     const loading = await renderContent({
       view,

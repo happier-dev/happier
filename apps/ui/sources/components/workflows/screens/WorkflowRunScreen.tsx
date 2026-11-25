@@ -2199,8 +2199,9 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
                 // sidecar without rewriting the frozen replay context.
                 title={formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(
                     cachedRow?.metadata, visibleAcceptedContext ?? undefined,
-                ))}
+                ), summary.state)}
                 definition={visibleDefinition}
+                mapUnavailable={visibleDefinition === null && loadState !== 'loading'}
                 frozenChildren={visibleAcceptedContext?.frozenChildren}
                 materializedLeaves={visibleAcceptedContext?.materializedLeaves}
                 rolesChangedForRun={(visibleAcceptedContext?.roleOverrides?.length ?? 0) > 0}

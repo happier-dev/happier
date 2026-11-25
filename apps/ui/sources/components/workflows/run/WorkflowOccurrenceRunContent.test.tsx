@@ -250,8 +250,17 @@ async function cache(rows: AutomationV3RunListItem[]) {
 async function open(row: AutomationV3RunListItem | null = run()) {
     await cache(row ? [row] : []);
     const { WorkflowRunScreen } = await import('../screens/WorkflowRunScreen');
+    const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
     const { ModalProvider } = await import('@/modal');
-    return renderScreen(<ModalProvider><WorkflowRunScreen /></ModalProvider>);
+    return renderScreen(<AppPaneProvider><ModalProvider><WorkflowRunScreen /></ModalProvider></AppPaneProvider>);
+}
+async function seedWorkflowSummary(row: AutomationV3RunListItem & Required<Pick<AutomationV3RunListItem, 'workflowRunState'>>) {
+    const run = createWorkflowRunSummaryFixture({ id: row.id, ownerAccountId: 'account-a', machineId: 'machine-a',
+        origin: { kind: 'automation', automationId: row.automationId }, state: row.workflowRunState, errorCode: row.errorCode,
+        workflowCustodyState: 'settled' });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { workflowRunRowFromSummary } = await import('@/sync/store/domains/workflowRuns');
+    await act(async () => storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(run)], storage.getState().profileScope));
 }
 async function respond(row: AutomationV3RunListItem, overrides: Partial<AutomationV3RunDetail> = {}) {
     harness.answer(serverId, DETAIL_PATH, { body: detail(row, overrides) });
@@ -322,6 +331,7 @@ describe('canonical Run page occurrence target', () => {
 
     it.each(['interrupted', 'waiting_for_review'] as const)('keeps cached and opened Workflow %s status truthful', async (workflowRunState) => {
         const row = { ...run({ state: 'running' }), workflowRunState };
+        await seedWorkflowSummary(row);
         const pending = createDeferred<void>();
         harness.answer(serverId, DETAIL_PATH, { respondAfter: pending.promise, body: detail(row) });
         const screen = await open(row);
@@ -821,6 +831,29 @@ describe('canonical Run page occurrence target', () => {
         harness.answer(serverId, 'POST ' + retryPath, { body: { run: { ...row, revision: 2, replyHandoffState: 'ready', updatedAt: 12 } } });
         await screen.pressByTestIdAsync('automation-run-retry-reply-handoff');
         expect(harness.requestsFor(retryPath)).toHaveLength(1);
+    });
+
+    it('opens a managed failure whose occurrence has no accepted snapshot correspondence', async () => {
+        const row = { ...run({ state: 'failed', errorCode: 'workspace_unavailable',
+            claimedAt: 10, claimedByMachineId: 'machine-a', leaseExpiresAt: 20 }), workflowRunState: 'failed' as const };
+        await seedWorkflowSummary(row);
+        harness.answer(serverId, DETAIL_PATH, { body: detail(row, { events: [
+            { at: 11, type: 'run_failed', machineId: 'machine-a', errorCode: 'source_unavailable',
+                executionAttempt: null, outcome: null, reason: null },
+        ] }) });
+        const { WorkflowRunScreen } = await import('../screens/WorkflowRunScreen');
+        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+        const { ModalProvider } = await import('@/modal');
+        const screen = await renderScreen(<AppPaneProvider><ModalProvider><WorkflowRunScreen embedded /></ModalProvider></AppPaneProvider>);
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('workflows.problem.sourceUnavailable'));
+        expect(screen.findAllByProps({ testID: 'workflow-run-screen' }).length).toBeGreaterThan(0);
+        const visible = screen.getTextContent();
+        expect(visible).toContain('workflows.run.untitled');
+        expect(visible).toContain('workflows.problem.workspaceUnavailable');
+        expect(visible).toContain('workflows.problem.sourceUnavailable');
+        expect(visible).not.toContain('source_unavailable');
+        expect(visible).not.toContain('workflows.run.occurrenceTechnical.lease');
+        expect(visible).not.toContain('Updated:');
     });
 
     it('acquires occurrence details only while the managed Run is presented', async () => {

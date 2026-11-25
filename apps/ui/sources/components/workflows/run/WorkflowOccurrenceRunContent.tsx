@@ -1,5 +1,5 @@
 import { AUTOMATION_REPLY_HANDOFF_BLOCKED_EVENT_TYPE } from '@happier-dev/protocol/automations/event';
-import { describeWorkflowReplyHandoffProblem } from '../presentation/workflowProblemPresentation';
+import { describeWorkflowReplyHandoffProblem, resolveWorkflowRunProblemPresentation } from '../presentation/workflowProblemPresentation';
 import * as React from 'react';
 import { formatWorkflowPreExecutionFailure } from './workflowRunDetailPresentation';
 import { View } from 'react-native';
@@ -20,6 +20,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useServerScopedMachine } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import {
@@ -55,6 +56,10 @@ function formatDate(ms: number, unknownLabel: string): string {
     }
 }
 
+function formatOccurrenceTime(ms: number, unknownLabel: string): string {
+    return Number.isFinite(ms) ? formatAsOfTime(ms) : unknownLabel;
+}
+
 /** When the cause happened, as a fact: its label and the time beside it. */
 function formatRunCauseTime(
     cause: AutomationRunCause,
@@ -64,13 +69,13 @@ function formatRunCauseTime(
         case 'trigger':
             if (cause.triggerKind === 'schedule') {
                 return { label: t('automations.detail.runMeta.scheduled'),
-                    time: formatDate(cause.evidence.scheduledFor, unknownLabel) };
+                    time: formatOccurrenceTime(cause.evidence.scheduledFor, unknownLabel) };
             }
-            return { label: t('automations.detail.runMeta.occurred'), time: formatDate(cause.occurredAt, unknownLabel) };
+            return { label: t('automations.detail.runMeta.occurred'), time: formatOccurrenceTime(cause.occurredAt, unknownLabel) };
         case 'manual':
-            return { label: t('automations.detail.runMeta.invoked'), time: formatDate(cause.invokedAt, unknownLabel) };
+            return { label: t('automations.detail.runMeta.invoked'), time: formatOccurrenceTime(cause.invokedAt, unknownLabel) };
         case 'conversation':
-            return { label: t('automations.detail.runMeta.occurred'), time: formatDate(cause.occurredAt, unknownLabel) };
+            return { label: t('automations.detail.runMeta.occurred'), time: formatOccurrenceTime(cause.occurredAt, unknownLabel) };
     }
 }
 
@@ -462,7 +467,7 @@ function AutomationRunDetailPrivateContent(props: Readonly<{
  * through the canonical Account crypto owner and keeps that projection route-
  * local, never in the bounded Run cache.
  */
-/** Resolves explicit managed correspondence before presenting a legacy occurrence; never probes another reader. */
+/** Uses the occurrence's declared Workflow identity, including runs that failed before accepting a snapshot. */
 export function WorkflowOccurrenceRunContent(props: Readonly<{
     target: Extract<WorkflowRunRouteTarget, { kind: 'occurrence' }>;
     serverId: string | null;
@@ -495,7 +500,8 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
 
     if (scopeUnavailable) return <SurfaceStateCard testID="workflow-run-unavailable" kind="unavailable"
         title={t('workflows.destination.history.loadFailedTitle')} reason={t('workflows.destination.history.loadFailedBody')} />;
-    const managedRunId = currentDetail?.detail.workflowRun?.workflowRunId;
+    const managedRunId = currentDetail?.detail.workflowRun?.workflowRunId
+        ?? (run?.workflowRunState === undefined ? undefined : run.id);
     if (managedRunId !== undefined) return props.renderManagedRun({
         runId: managedRunId, occurrenceDetails: <WorkflowOccurrenceRunFacts detail={detail} />,
     });
@@ -799,9 +805,10 @@ function WorkflowOccurrenceDeliveryItems({ detail }: Readonly<{ detail: Occurren
     </>;
 }
 
-function WorkflowOccurrenceCauseAndHistory({ run, events: runHistory }: Readonly<{
+function WorkflowOccurrenceCauseAndHistory({ run, events: runHistory, includeAdmissionFacts }: Readonly<{
     run: NonNullable<OccurrenceDetail['run']>;
     events: AutomationV3RunDetail['events'];
+    includeAdmissionFacts?: boolean;
 }>): React.ReactElement {
     const unknownDate = t('automations.detail.unknownDate');
     const occurrenceKey = run?.cause.kind === 'trigger' || run?.cause.kind === 'conversation'
@@ -817,6 +824,19 @@ function WorkflowOccurrenceCauseAndHistory({ run, events: runHistory }: Readonly
     const triggerRetired = run?.triggerRetired === true;
     const causeTime = formatRunCauseTime(run.cause, unknownDate);
     const technicalLines = [
+        ...(includeAdmissionFacts ? [
+            { key: 'admitted', label: t('workflows.run.occurrenceTechnical.admitted'), value: formatDate(run.createdAt, unknownDate) },
+            { key: 'updated', label: t('workflows.run.occurrenceTechnical.updated'), value: formatDate(run.updatedAt, unknownDate) },
+            ...(run.claimedByMachineId === null ? [] : [{
+                key: 'claimedBy', label: t('automations.detail.runMeta.claimedByTitle'), value: run.claimedByMachineId,
+            }]),
+            ...(run.claimedAt === null ? [] : [{
+                key: 'claimed', label: t('workflows.run.occurrenceTechnical.claimed'), value: formatDate(run.claimedAt, unknownDate),
+            }]),
+            ...(run.leaseExpiresAt === null ? [] : [{
+                key: 'lease', label: t('workflows.run.occurrenceTechnical.lease'), value: formatDate(run.leaseExpiresAt, unknownDate),
+            }]),
+        ] : []),
         ...(triggerCause ? [{ key: 'trigger', label: t('automations.detail.runMeta.triggerIdentityTitle'),
             value: t('automations.detail.runMeta.triggerIdentity', { id: triggerCause.triggerId, revision: triggerCause.triggerRevision }) }] : []),
         ...(occurrenceKey ? [{ key: 'occurrence', label: t('automations.detail.runMeta.occurrenceTitle'), value: occurrenceKey }] : []),
@@ -872,9 +892,10 @@ function WorkflowOccurrenceCauseAndHistory({ run, events: runHistory }: Readonly
                                             formatAutomationRunHistoryReasonLabel(event.reason),
                                             event.errorCode === null
                                                 ? null
-                                                : t('automations.detail.runMeta.error', {
-                                                    message: event.errorCode,
-                                                }),
+                                                : resolveWorkflowRunProblemPresentation({
+                                                    state: run.workflowRunState === 'missed' ? 'missed' : 'failed',
+                                                    errorCode: event.errorCode,
+                                                })?.message ?? t('errors.operationFailed'),
                                             event.executionAttempt === null
                                                 ? null
                                                 : t('automations.detail.runMeta.dispatchAttempt', {
@@ -904,7 +925,7 @@ function WorkflowOccurrenceRunFacts({ detail }: Readonly<{ detail: OccurrenceDet
             {run.replyHandoffState === 'none' ? null : <ItemGroup title={t('automations.detail.runMeta.replyHandoffTitle')}>
                 <WorkflowOccurrenceDeliveryItems detail={detail} />
             </ItemGroup>}
-            <WorkflowOccurrenceCauseAndHistory run={run} events={currentDetail?.detail.events ?? []} />
+            <WorkflowOccurrenceCauseAndHistory run={run} events={currentDetail?.detail.events ?? []} includeAdmissionFacts />
         </>}
     </>;
 }

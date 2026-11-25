@@ -31,6 +31,7 @@ function actionError(rawCode: string | null, message = 'server-internal reason')
  */
 describe('workflowProblemPresentation', () => {
     it.each([
+        ['workspace_unavailable', 'workflows.problem.workspaceUnavailable'],
         ['ACP_CATALOG_UNAVAILABLE', 'settings.acpCatalogUnavailable'],
         ['agent_isolation_unavailable', 'errors.agentIsolationUnavailable'],
     ])('shows %s on a failed Run before its invocation details arrive', (errorCode, message) => {
