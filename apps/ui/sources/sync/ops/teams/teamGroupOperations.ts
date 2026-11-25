@@ -163,11 +163,13 @@ export function updateTeamGroup(params: Readonly<{
     groupId: string;
     name?: string;
     description?: string | null;
+    onApprovalFailed?: Parameters<typeof runTeamAction>[0]['onApprovalFailed'];
 }>): Promise<TeamGroupOutcome<TeamGroupV1>> {
     return groupMutation({
         scope: params.scope,
         address: params.address,
         actionId: 'teams.groups.update',
+        ...(params.onApprovalFailed ? { onApprovalFailed: params.onApprovalFailed } : {}),
         input: {
             v: 1,
             teamId: params.address.teamId,

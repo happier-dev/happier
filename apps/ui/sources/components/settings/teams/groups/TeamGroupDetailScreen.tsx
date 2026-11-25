@@ -79,13 +79,26 @@ type GroupNotice =
     | Readonly<{ place: 'roster' | 'restore'; message: string | null }>
     | Readonly<{ place: 'archive'; failure: HomeDomainFailure<string> }>;
 
-function groupArchiveFailureLabel(failure: HomeDomainFailure<string>): string | null {
+function groupChangeFailureLabel(failure: HomeDomainFailure<string>, operation: 'save' | 'archive'): string | null {
     switch (failure.code) {
-        case 'invalid_team_input': return t('teams.groups.invalidLifecycleRequest');
+        case 'invalid_team_input': return t(operation === 'save' ? 'teams.groups.invalidDetails' : 'teams.groups.invalidLifecycleRequest');
         case 'group_not_found': return t('teams.groups.notFound');
         case 'managed_by_directory': return t('teams.groups.lifecycleManagedAtSource');
         default: return teamMutationFailureLabel(failure);
     }
+}
+
+function groupChangeFailureAction(
+    failure: HomeDomainFailure<string>,
+    operation: 'save' | 'archive',
+    address: TeamSectionContext['address'],
+    navigate: (href: string) => void,
+) {
+    const testID = `team-group-${operation}-refusal`;
+    if (failure.code === 'group_not_found' || (operation === 'archive' && failure.code === 'invalid_team_input')) {
+        return { label: t('teams.tabs.groups'), testID: `${testID}-groups`, onPress: () => navigate(teamGroupsPath(address)) };
+    }
+    return teamSignInFailureAction(failure, address, navigate, testID);
 }
 
 type GroupDetailVirtualizedRow = Readonly<{
@@ -131,8 +144,9 @@ const GroupMetadataSection = React.memo(function GroupMetadataSection(props: Rea
 }>) {
     const { context, group, current, name: publishedName, description: publishedDescription } = props;
     const navigation = useNavigation();
+    const router = useRouter();
     const [saving, setSaving] = React.useState(false);
-    const [error, setError] = React.useState<string | null>(null);
+    const [failure, setFailure] = React.useState<HomeDomainFailure<string> | null>(null);
     const saveInFlightRef = React.useRef(false);
 
     React.useEffect(() => () => {
@@ -173,13 +187,28 @@ const GroupMetadataSection = React.memo(function GroupMetadataSection(props: Rea
 
     if (!group.capabilities.updateMetadata) return null;
 
+    const error = failure ? groupChangeFailureLabel(failure, 'save') : null;
+    const recovery = failure ? groupChangeFailureAction(failure, 'save', context.address, (href) => router.push(href)) : undefined;
+    const invalidDraft = failure?.code === 'invalid_team_input';
+    const settled = failure && error && failure.code && !invalidDraft
+        && (!failure.retryable || failure.code === 'team_authentication_unavailable');
+
+    const changeName = (value: string) => {
+        if (invalidDraft) setFailure(null);
+        draft.setName(value);
+    };
+    const changeDescription = (value: string) => {
+        if (invalidDraft) setFailure(null);
+        draft.setDescription(value);
+    };
+
     const save = async () => {
         if (saveInFlightRef.current
             || (publishedName !== null && validatedName === null)
             || descriptionValidation.status !== 'ok') return;
         saveInFlightRef.current = true;
         setSaving(true);
-        setError(null);
+        setFailure(null);
         let outcome: Awaited<ReturnType<typeof updateTeamGroup>>;
         try {
             if (mustSaveName && validatedName === null) {
@@ -191,6 +220,9 @@ const GroupMetadataSection = React.memo(function GroupMetadataSection(props: Rea
                 scope: context.scope,
                 address: context.address,
                 groupId: group.id,
+                onApprovalFailed: (code, cause) => setFailure(cause
+                    ? homeDomainFailureFromActionFailure(cause, 'teams.groups.update')
+                    : { kind: 'unknown', code, retryable: false }),
                 ...(mustSaveName && validatedName !== null ? { name: validatedName } : {}),
                 ...(mustSaveDescription ? { description: descriptionValidation.description } : {}),
             });
@@ -198,16 +230,16 @@ const GroupMetadataSection = React.memo(function GroupMetadataSection(props: Rea
             saveInFlightRef.current = false;
             setSaving(false);
             if (isTeamActionApprovalPendingError(cause)) {
-                context.requestApproval(cause.artifactId);
+                context.requestApproval(cause.registration);
             } else {
-                setError(t('teams.errors.generic'));
+                setFailure({ kind: 'unknown', code: null, retryable: false });
             }
             return;
         }
         saveInFlightRef.current = false;
         setSaving(false);
         if (outcome.kind === 'failed') {
-            setError(teamMutationFailureLabel(outcome.failure));
+            setFailure(outcome.failure);
             return;
         }
         draft.commit({
@@ -241,7 +273,7 @@ const GroupMetadataSection = React.memo(function GroupMetadataSection(props: Rea
                         <FieldTextInput
                             testID="team-group-name"
                             value={name}
-                            onChangeText={draft.setName}
+                            onChangeText={changeName}
                             placeholder={publishedName === null ? t('common.unavailable') : t('teams.groups.namePlaceholder')}
                             accessibilityLabel={t('teams.groups.nameLabel')}
                             maxLength={TEAM_GROUP_NAME_MAX_LENGTH_V1}
@@ -257,7 +289,7 @@ const GroupMetadataSection = React.memo(function GroupMetadataSection(props: Rea
                         <FieldTextInput
                             testID="team-group-description"
                             value={description}
-                            onChangeText={draft.setDescription}
+                            onChangeText={changeDescription}
                             placeholder={descriptionAvailable ? t('teams.groups.descriptionPlaceholder') : t('common.unavailable')}
                             accessibilityLabel={t('teams.create.descriptionLabel')}
                             multiline
@@ -270,18 +302,23 @@ const GroupMetadataSection = React.memo(function GroupMetadataSection(props: Rea
             </ItemGroup>
             <ItemGroup surface="none">
                 <SectionButtonRow footnote={error} footnoteTone="danger" footnoteTestID="team-group-identity-error">
-                    <RoundButton
-                        testID="team-group-save"
-                        size="small"
-                        title={t('common.save')}
-                        loading={saving}
-                        disabled={!changed
-                            || conflict
-                            || descriptionValidation.status !== 'ok'
-                            || saving
-                            || !editable}
-                        onPress={() => void save()}
-                    />
+                    {recovery ? (
+                        <RoundButton testID={recovery.testID} size="small" title={recovery.label} onPress={recovery.onPress} />
+                    ) : settled ? null : (
+                        <RoundButton
+                            testID="team-group-save"
+                            size="small"
+                            title={t('common.save')}
+                            loading={saving}
+                            disabled={!changed
+                                || conflict
+                                || invalidDraft
+                                || descriptionValidation.status !== 'ok'
+                                || saving
+                                || !editable}
+                            onPress={() => void save()}
+                        />
+                    )}
                 </SectionButtonRow>
             </ItemGroup>
         </>
@@ -935,13 +972,8 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
 
         if (group.capabilities.archive && !archived) {
             const failure = notice?.place === 'archive' ? notice.failure : null;
-            const archiveFailure = failure ? groupArchiveFailureLabel(failure) : null;
-            const recovery = failure?.code === 'group_not_found' || failure?.code === 'invalid_team_input'
-                ? { label: t('teams.tabs.groups'), testID: 'team-group-archive-refusal-groups',
-                    onPress: () => router.push(teamGroupsPath(context.address)) }
-                : failure ? teamSignInFailureAction(
-                    failure, context.address, (href) => router.push(href), 'team-group-archive-refusal',
-                ) : undefined;
+            const archiveFailure = failure ? groupChangeFailureLabel(failure, 'archive') : null;
+            const recovery = failure ? groupChangeFailureAction(failure, 'archive', context.address, (href) => router.push(href)) : undefined;
             const settled = failure && archiveFailure && failure.code
                 && (!failure.retryable || failure.code === 'team_authentication_unavailable');
             add('archive', () => (

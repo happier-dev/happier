@@ -294,6 +294,57 @@ describe('TeamGroupDetailScreen', () => {
         });
     });
 
+    it.each([
+        { code: 'invalid_team_input', details: undefined, label: 'teams.groups.invalidDetails', href: undefined },
+        { code: 'teams_unavailable', details: undefined, label: 'teams.unavailable.disabled', href: undefined },
+        { code: 'team_not_found', details: undefined, label: 'teams.errors.notFound', href: undefined },
+        { code: 'group_not_found', details: undefined, label: 'teams.groups.notFound', href: '/groups' },
+        { code: 'team_archived', details: undefined, label: 'teams.errors.archived', href: undefined },
+        { code: 'group_archived', details: undefined, label: 'teams.groups.archivedReadOnly', href: undefined },
+        { code: 'team_forbidden', details: undefined, label: 'teams.errors.forbidden', href: undefined },
+        { code: 'team_forbidden', details: { reason: 'legacy_home_credential' }, label: 'teams.errors.signInOutdated', href: '/settings/account' },
+        { code: 'team_authentication_required', details: undefined, label: 'teams.errors.authenticationRequired', href: '/teams/team-1/sign-in' },
+        { code: 'team_authentication_unavailable', details: undefined, label: 'teams.credentials.externalApi.authenticationUnavailable', href: undefined },
+        { code: 'managed_by_directory', details: undefined, label: 'teams.groups.lifecycleManagedAtSource', href: undefined },
+    ] as const)('presents the Group metadata $code refusal once', async ({ code, details, label, href }) => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, '/v1/account/private-labels/recipient-census', {
+            body: { contentEncryptionMode: 'plain', recipients: [] },
+        });
+        harness.answer(serverId, GROUP_GET_PATH, {
+            body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES }),
+        });
+        harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, { body: { items: [], nextCursor: null } });
+        harness.answer(serverId, GROUP_UPDATE_PATH, {
+            status: teamErrorHttpStatusV1(code),
+            body: { error: code, ...(details ? { details } : {}) },
+        });
+        const screen = await renderGroupDetail(serverId);
+        await waitForTestId(screen, 'team-group-name');
+        await act(async () => screen.changeTextByTestId('team-group-name', 'Edited by me'));
+        await vi.waitFor(() => expect(screen.findByTestId('team-group-save')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('team-group-save');
+
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(label));
+        expect(screen.getTextContent().split(label)).toHaveLength(2);
+        expect(screen.findByTestId('team-group-name')?.props.value).toBe('Edited by me');
+        const save = screen.findByTestId('team-group-save');
+        if (code === 'invalid_team_input') {
+            expect(save?.props.disabled).toBe(true);
+            await act(async () => screen.changeTextByTestId('team-group-name', 'Updated draft'));
+            await vi.waitFor(() => expect(screen.findByTestId('team-group-save')?.props.disabled).toBe(false));
+        } else {
+            expect(save).toBeNull();
+        }
+        if (href) {
+            const groups = href === '/groups';
+            await screen.pressByTestIdAsync(groups ? 'team-group-save-refusal-groups' : 'team-group-save-refusal-sign-in');
+            const destination = new URL(groupRouterPush.mock.lastCall?.[0] ?? '', 'https://app.example').pathname;
+            expect(destination).toMatch(groups ? /\/settings\/teams\/[^/]+\/team-1\/groups$/u : href);
+        }
+        expect(harness.requestsFor(GROUP_UPDATE_PATH)).toHaveLength(1);
+    });
+
     it('starts only one metadata save when pressed twice before React renders busy state', async () => {
         let releaseUpdate = (): void => {};
         const respondAfter = new Promise<void>((resolve) => { releaseUpdate = resolve; });
