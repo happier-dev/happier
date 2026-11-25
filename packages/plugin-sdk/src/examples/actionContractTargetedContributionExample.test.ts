@@ -185,6 +185,7 @@ describe('cross-plugin contribution public authoring example', () => {
                     '@happier-dev/plugin-sdk/actions',
                     '@happier-dev/plugin-sdk/browser',
                     '@happier-dev/plugin-sdk/connected-accounts',
+                    '@happier-dev/plugin-sdk/contributions',
                     '@happier-dev/plugin-sdk/http',
                     '@happier-dev/plugin-sdk/notifications',
                     '@happier-dev/plugin-sdk/providers',
