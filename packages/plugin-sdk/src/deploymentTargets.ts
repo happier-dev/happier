@@ -54,7 +54,8 @@ export async function settleDeploymentTargetDomainRemovalV1(input: Readonly<{
 }>): Promise<void> {
     let failure: { error: unknown } | undefined;
     try { await input.remove(); } catch (error) { failure = { error }; }
-    if (await input.observeAbsent()) return;
+    try { if (await input.observeAbsent()) return; }
+    catch (error) { if (!failure) throw error; }
     if (failure) throw failure.error;
     throw new PluginError({ code: 'outcome_unknown', retryable: false });
 }

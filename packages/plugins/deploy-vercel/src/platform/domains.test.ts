@@ -183,3 +183,21 @@ it('keeps a token denied domain access as a typed refusal rather than pending ow
     expect(requests.map(request => request.method)).toEqual(['POST', 'GET']);
   } finally { await kit.dispose(); }
 });
+
+it('keeps the initial delete refusal when confirmation cannot read the Domain', async () => {
+  const methods: string[] = [];
+  const http = createPluginHttpFixture({ async request(request) {
+    methods.push(request.method);
+    const status = request.method === 'DELETE' ? 409 : methods.length === 1 ? 200 : 503;
+    const body = status === 200 ? { name: input.domain.hostname, projectId: 'prj_exact', gitBranch: 'main', verified: true }
+      : { error: { code: status === 409 ? 'domain_in_use' : 'unavailable' } };
+    return { status, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
+  try {
+    await expect(kit.invokeAction('domains-remove', input)).rejects.toMatchObject({
+      code: 'provider_request_failed', data: { failureCause: { errorCode: 'domain_in_use', httpStatus: 409 } },
+    });
+    expect(methods).toEqual(['GET', 'DELETE', 'GET']);
+  } finally { await kit.dispose(); }
+});
