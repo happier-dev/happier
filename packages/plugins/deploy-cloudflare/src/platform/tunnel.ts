@@ -1,3 +1,4 @@
+import { isDeploymentCredentialRefusalV1 } from '@happier-dev/deployment-protocol/v1';
 import { PluginError, type JsonValue,
   DeploymentDomainTunnelOwnershipV1ProtocolSchema as tunnelOwnership,
   DeploymentDomainTunnelDispositionV1ProtocolSchema as tunnelDisposition,
@@ -75,7 +76,10 @@ const configureTunnel: PluginAccountActionHandler<ReturnType<typeof tunnelConfig
     if (method === 'POST') createAttempted = true;
     const response = await admittedHttp.request({ method, url, redirect: 'error', credentialBinding: { ...binding, method },
       ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify(body)) }),
-    }, { signal: context.signal });
+    }, { signal: context.signal }).catch((error: unknown) => {
+      if (method === 'POST' && isDeploymentCredentialRefusalV1(error)) createAttempted = false;
+      throw error;
+    });
     try {
       if (response.status === 401 || response.status === 403) {
         if (method === 'POST') createAttempted = false;

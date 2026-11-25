@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { AccessProviderRefV1 } from '@happier-dev/plugin-sdk/access-providers';
@@ -364,10 +365,11 @@ describe('Cloudflare controller create/adopt through the activated Account Actio
 
   // Only vendor HTTP and the invocation-private host custody service are
   // replaced. Public activation, schema admission and owned route logic run.
-  async function controller(options: FixtureOptions & { noGrant?: boolean; grantError?: Error } = {}) {
+  async function controller(options: FixtureOptions & { noGrant?: boolean; grantError?: Error; createRefusal?: PluginError } = {}) {
     const state = fixture(options);
     const buffers: Uint8Array[] = [], material: number[][] = [];
     const http = createPluginHttpFixture({ request: (request, requestOptions) => {
+      if (request.method === 'POST' && request.url === collection && options.createRefusal) throw options.createRefusal;
       if (request.method === 'PUT') expect(buffers.every(bytes => bytes.every(byte => byte === 0))).toBe(true);
       return state.request.http.request(request, requestOptions);
     } });
@@ -456,6 +458,17 @@ describe('Cloudflare controller create/adopt through the activated Account Actio
         expect(state.mutations()).toEqual([]);
       } finally { await state.kit.dispose(); }
     });
+
+  it('keeps the host selection refusal when creation never reached Cloudflare', async () => {
+    const code = 'plugin_host_access_resource_not_selected';
+    const state = await controller({ createRefusal: new PluginError({ code }) });
+    try {
+      const result = await state.invoke({ ...state.input, tunnel: { kind: 'create', name: 'reviewed-tunnel' } });
+      expect(result).toMatchObject({ kind: 'refused', code, failureCause: { errorCode: code } });
+      expect(state.requests).toEqual([]);
+      expect(state.write).not.toHaveBeenCalled();
+    } finally { await state.kit.dispose(); }
+  });
 
   it('never retries a lost create or discloses its native error, and keeps known partial coordinates for deliberate adoption', async () => {
     const lost = await controller({ createLost: true });
