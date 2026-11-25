@@ -105,7 +105,9 @@ describe('public list extension authoring', () => {
         expect(match({ extensions: { [admitted.field.id]: 'ready' } })).toBe('match');
         expect(match({ extensions: { [admitted.field.id]: 'blocked' } })).toBe('miss');
         expect(match({})).toBe('unavailable');
-        expect(compileEntityListFilterV1(createPluginListFilterFieldRegistryV1([]), selected)({})).toBe('unavailable');
+        const retired = createPluginListFilterFieldRegistryV1<PluginListFilterSelectionV1, PluginListFilterFactsV1>([]);
+        expect(compileEntityListFilterV1(retired, selected)({})).toBe('match');
+        expect(compileEntityListFilterV1(retired, selected, 'daemonRule')({})).toBe('unavailable');
         expect(reads).toBe(0);
     });
 });
