@@ -49,6 +49,7 @@ let recoveryRequiredListener: ((event: Readonly<{
 function mockActiveSnapshot(snapshot: Record<string, unknown>): void {
     vi.doMock('@/sync/domains/server/serverRuntime', () => ({
         getActiveServerSnapshot: () => snapshot,
+        subscribeActiveServer: () => () => {},
         captureActiveServerRuntimeTarget: () => ({
             serverId: String(snapshot.serverId ?? ''),
             generation: Number(snapshot.generation ?? 0),
@@ -789,6 +790,7 @@ describe('switchConnectionToActiveServer Iroh lease acquisition', () => {
                 kind: 'custom',
                 generation,
             }),
+            subscribeActiveServer: () => () => {},
             captureActiveServerRuntimeTarget: () => ({
                 serverId: 'srv_home_a',
                 generation,
@@ -864,6 +866,7 @@ describe('switchConnectionToActiveServer Iroh lease acquisition', () => {
         };
         vi.doMock('@/sync/domains/server/serverRuntime', () => ({
             getActiveServerSnapshot: () => activeSnapshot,
+            subscribeActiveServer: () => () => {},
             captureActiveServerRuntimeTarget: () => ({
                 serverId: activeSnapshot.serverId,
                 generation: activeSnapshot.generation,

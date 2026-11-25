@@ -149,6 +149,8 @@ type EndpointRequestContext = Readonly<{
     isCurrent?: () => boolean;
     /** Lets the caller adopt a recovered target credential before the retry completes. */
     onRecoveredCredentials?: (credentials: AuthCredentials) => boolean;
+    /** Report the exact 401 before credential withdrawal can supersede its read. */
+    onAuthenticationRefusal?: (response: Response) => Promise<void>;
     /** Observes this write's successful conditional removal of its rejected stored token. */
     onRejectedStoredCredentials?: (rejectedToken: string) => void;
     credentials?: AuthCredentials | null;
@@ -805,6 +807,11 @@ async function requestAtEndpoint<T>(
                 break;
             }
 
+            if (context.onAuthenticationRefusal) {
+                await context.onAuthenticationRefusal(response);
+                assertRequestContextCurrent(context);
+            }
+
             // Classify the rejected active token before deleting it. Marked
             // first-key recovery custody must remain exact; otherwise removal
             // prevents a persistent 401 loop and permits a refreshed token.
@@ -1021,6 +1028,7 @@ export function createServerFetchAtEndpoint(
         isCurrent?: () => boolean;
         /** Allows a caller to adopt the replacement target credential before retrying. */
         onRecoveredCredentials?: (credentials: AuthCredentials) => boolean;
+        onAuthenticationRefusal?: (response: Response) => Promise<void>;
         /** Observes this write's successful conditional removal of its rejected stored token. */
         onRejectedStoredCredentials?: (rejectedToken: string) => void;
     }>,
@@ -1037,6 +1045,7 @@ export function createServerFetchAtEndpoint(
         ...(params.recoverStoredCredentials === true ? { recoverStoredCredentials: true } : {}),
         ...(params.isCurrent ? { isCurrent: params.isCurrent } : {}),
         ...(params.onRecoveredCredentials ? { onRecoveredCredentials: params.onRecoveredCredentials } : {}),
+        ...(params.onAuthenticationRefusal ? { onAuthenticationRefusal: params.onAuthenticationRefusal } : {}),
         ...(params.onRejectedStoredCredentials ? { onRejectedStoredCredentials: params.onRejectedStoredCredentials } : {}),
         useStoredCredentials: params.credentials === undefined,
         ...(params.homeCarrier ? { homeCarrier: params.homeCarrier } : {}),

@@ -1,16 +1,19 @@
-import { TokenStorage, type AuthCredentials, type HomeCredentialMutationEvent } from '@/auth/storage/tokenStorage';
+import { TokenStorage, subscribeHomeCredentialMutations, type AuthCredentials, type HomeCredentialMutationEvent } from '@/auth/storage/tokenStorage';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent, getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import {
     captureActiveServerRuntimeTarget,
     getActiveServerHomeCarrier,
+    subscribeActiveServer,
     publishActiveServerRuntimeOrigin,
     releaseActiveServerRuntimeOrigin,
 } from '@/sync/domains/server/serverRuntime';
 import { ServerScopedTransportUnavailableError } from './serverScopedRpc/resolveServerScopedTransport';
 import { sync, syncHydrateLocalState, syncRestore, syncSwitchServer } from '@/sync/sync';
 import { abortServerFetches } from '@/sync/http/client';
+import { isRetryOfKnownFailure } from '@happier-dev/connection-supervisor';
+import { clearHomeAdmission, hasPendingHomeAdmission, publishHomeAdmission, readHomeAdmission, homeAdmissionCarrierVerdict, type HomeAdmissionVerdict } from '@/sync/runtime/connectivity/homeAdmissionReadiness';
 import {
     invalidateAllServerReachabilitySupervisors,
     startServerReachabilitySupervisor,
@@ -105,10 +108,11 @@ let stopFailedApplyRecovery: (() => void) | null = null;
 function recoverFailedApplyWhenHomeAnswers(
     snapshot: Readonly<ReturnType<typeof getActiveServerSnapshot>>,
     credentials: AuthCredentials | null,
+    admissionVerdict = readHomeAdmission(snapshot)?.verdict,
 ): void {
     // Retry owns this failed attempt; do not arm another automatic admission.
     // A pre-existing offline subscription remains available to a manual Retry.
-    if (activeRecoveryPromise) return;
+    if (activeRecoveryPromise || (admissionVerdict && 'retryable' in admissionVerdict && !admissionVerdict.retryable)) return;
     stopFailedApplyRecovery?.();
     stopFailedApplyRecovery = null;
     const token = credentials?.token?.trim();
@@ -121,17 +125,22 @@ function recoverFailedApplyWhenHomeAnswers(
     const stop = (): void => {
         if (stopFailedApplyRecovery === stop) stopFailedApplyRecovery = null;
         unsubscribe();
+        unsubscribeFocus();
         fireAndForget(stopServerReachabilitySupervisor(snapshot.serverUrl, credentials?.token ?? null), {
             tag: 'connectionManager.failedApplyRecovery.stop',
         });
     };
     const unsubscribe = subscribeServerReachabilityState(snapshot.serverUrl, (state) => {
-        if (!subscribed || state.phase !== 'online') return;
+        if (!subscribed || !capturePublicationTargetForSnapshot(snapshot)) return;
+        if (state.phase !== 'online') return;
         stop();
         fireAndForget(retryActiveServerConnection(), {
             tag: 'connectionManager.failedApplyRecovery.retry',
         });
     }, credentials?.token ?? null);
+    const unsubscribeFocus = subscribeActiveServer(() => {
+        if (!capturePublicationTargetForSnapshot(snapshot)) stop();
+    });
     subscribed = true;
     stopFailedApplyRecovery = stop;
     fireAndForget(startServerReachabilitySupervisor({
@@ -294,6 +303,7 @@ async function ensureIrohHomeTunnelForActiveSwitch(
     snapshot: Readonly<ReturnType<typeof getActiveServerSnapshot>>,
     credentials: AuthCredentials | null,
     publicationTarget: ReturnType<typeof captureActiveServerRuntimeTarget>,
+    onCarrierVerdict?: (selection: AcquiredHomeCarrier) => void,
 ): Promise<void> {
     const token = credentials?.token?.trim() ?? '';
     const profile = getServerProfileById(snapshot.serverId);
@@ -328,6 +338,7 @@ async function ensureIrohHomeTunnelForActiveSwitch(
             return await irohRuntime.ensureHomeTunnel(input);
         },
     });
+    onCarrierVerdict?.(acquired);
     if (acquired.kind === 'fail_closed' || acquired.kind === 'unavailable') {
         if (acquired.kind === 'unavailable') throw new ServerScopedTransportUnavailableError();
         if (acquired.fallbackAllowed) throw new ServerScopedTransportUnavailableError();
@@ -431,16 +442,19 @@ async function applyPendingServerSwitches(): Promise<AuthCredentials | null> {
         abortServerFetches();
         const publicationTarget = capturePublicationTargetForSnapshot(snapshot);
         if (!publicationTarget) continue;
-        await ensureIrohHomeTunnelForActiveSwitch(snapshot, credentials, publicationTarget);
-        if (!isActiveSwitchTargetCurrent(snapshot, targetGeneration)) continue;
-        const syncTarget = capturePreparedSyncTarget(snapshot);
-        if (!syncTarget) continue;
-        // Publish this before Sync begins its reset. The applied snapshot still
-        // names the last successful Home, but that singleton runtime is no
-        // longer a valid transport once this call starts.
-        publishApplyingActiveServerId(snapshot.serverId, targetGeneration);
+        const admission = credentials && hasPendingHomeAdmission() && !isAppliedActiveServerRuntimeAvailable()
+            ? observeRestoreAdmission(snapshot, credentials) : null;
+        let syncTarget: NonNullable<ReturnType<typeof capturePreparedSyncTarget>>;
         try {
-            await syncSwitchServer(credentials, syncTarget);
+            await ensureIrohHomeTunnelForActiveSwitch(snapshot, credentials, publicationTarget, admission?.onCarrier);
+            if (!isActiveSwitchTargetCurrent(snapshot, targetGeneration) || admission?.retired()) continue;
+            const prepared = capturePreparedSyncTarget(snapshot);
+            if (!prepared) continue;
+            syncTarget = prepared;
+            // The applied snapshot still names the last successful Home, but it cannot
+            // serve as the transport once this switch has started resetting Sync.
+            publishApplyingActiveServerId(snapshot.serverId, targetGeneration);
+            await syncSwitchServer(credentials, { ...syncTarget, onHomeAdmission: admission?.read });
         } catch (error) {
             // A newer staged target superseded this bootstrap while Sync was
             // awaiting its own target-bound setup. Keep the singleton fenced
@@ -451,10 +465,13 @@ async function applyPendingServerSwitches(): Promise<AuthCredentials | null> {
             const currentCredentials = await resolveCredentialsForActiveServer(snapshot);
             if (readCredentialScopeKey(currentCredentials) !== readCredentialScopeKey(credentials)) continue;
             throw error;
+        } finally {
+            admission?.dispose();
         }
         lastAppliedGeneration = targetGeneration;
         appliedCredentialScopeKey = readCredentialScopeKey(credentials);
         publishAppliedActiveServerSnapshot(syncTarget);
+        if (credentials) clearHomeAdmission();
         stopFailedApplyRecovery?.();
     }
 }
@@ -470,7 +487,8 @@ export async function switchConnectionToActiveServer(): Promise<AuthCredentials 
         return await activeSwitchPromise;
     } catch (error) {
         const failed = getActiveServerSnapshot();
-        recoverFailedApplyWhenHomeAnswers(failed, await resolveCredentialsForActiveServer(failed).catch(() => null));
+        const credentials = await resolveCredentialsForActiveServer(failed).catch(() => null);
+        recoverFailedApplyWhenHomeAnswers(failed, credentials, readHomeAdmission(failed)?.verdict);
         throw error;
     } finally {
         activeSwitchPromise = null;
@@ -527,6 +545,39 @@ export async function disconnectActiveServerConnectionIfCurrent(target: Readonly
     return true;
 }
 
+/** Project only the result of work this restore already owns. */
+function observeRestoreAdmission(
+    target: ReturnType<typeof getActiveServerSnapshot>,
+    credentials: AuthCredentials,
+) {
+    let retired = false;
+    const scopeKey = readCredentialScopeKey(credentials);
+    const isCurrent = () => capturePublicationTargetForSnapshot(target) !== null;
+    const attemptIsCurrent = () => !retired && isCurrent();
+    const publish = (verdict: HomeAdmissionVerdict) => {
+        if (!attemptIsCurrent()) return;
+        const previous = readHomeAdmission(target)?.verdict;
+        // Sustaining the same restore or selecting a carrier is progress only;
+        // the next answer, not an in-flight notification, replaces a known outage.
+        if ((verdict.kind === 'connecting' || verdict.kind === 'selected')
+            && isRetryOfKnownFailure({ phase: 'connecting', attempt: 1 },
+                previous !== undefined && 'retryable' in previous && previous.retryable)) return;
+        publishHomeAdmission(target, verdict);
+    };
+    publish({ kind: 'connecting' });
+    const dispose = subscribeHomeCredentialMutations(event => {
+        if (!areServerProfileIdentifiersEquivalent(event.serverId, target.serverId)
+            || event.credentials && readCredentialScopeKey(event.credentials) === scopeKey) return;
+        retired = true;
+        if (isCurrent() && readHomeAdmission(target)?.verdict.kind !== 'auth_failed') {
+            publishHomeAdmission(target, { kind: 'auth_failed', code: 'credential_scope_retired', retryable: false });
+        }
+    });
+    return { dispose, retired: () => retired, read: { isCurrent: attemptIsCurrent, publish },
+        onCarrier: (selection: AcquiredHomeCarrier) => publish(homeAdmissionCarrierVerdict(selection)),
+    };
+}
+
 /**
  * Cold-restore entrypoint. The local phase runs synchronously, before this returns:
  * this Account/Home's warm cache reaches the store before the carrier is asked for,
@@ -540,6 +591,7 @@ export function restoreConnectionToActiveServer(credentials: AuthCredentials): P
         serverUrl: snapshot.serverUrl,
         generation: snapshot.generation,
     });
+    stopFailedApplyRecovery?.();
     const transport = restoreTransportToActiveServer(credentials, snapshot);
     const clearColdRestore = (): void => {
         if (coldRestorePromise !== transport) return;
@@ -551,8 +603,7 @@ export function restoreConnectionToActiveServer(credentials: AuthCredentials): P
     void transport.then(clearColdRestore, () => {
         clearColdRestore();
         const recoveryTarget = capturePreparedSyncTarget(snapshot);
-        if (!recoveryTarget) return;
-        recoverFailedApplyWhenHomeAnswers(recoveryTarget, credentials);
+        if (recoveryTarget) recoverFailedApplyWhenHomeAnswers(recoveryTarget, credentials);
     });
     return transport;
 }
@@ -564,13 +615,22 @@ async function restoreTransportToActiveServer(
     const publicationTarget = capturePublicationTargetForSnapshot(snapshot);
     if (!publicationTarget) throw new ServerScopedTransportUnavailableError();
     abortServerFetches();
-    await ensureIrohHomeTunnelForActiveSwitch(snapshot, credentials, publicationTarget);
-    const syncTarget = capturePreparedSyncTarget(snapshot);
-    if (!syncTarget) throw new ServerScopedTransportUnavailableError();
-    publishApplyingActiveServerId(syncTarget.serverId, syncTarget.generation);
-    await syncRestore(credentials, syncTarget);
+    const admission = observeRestoreAdmission(snapshot, credentials);
+    let syncTarget: NonNullable<ReturnType<typeof capturePreparedSyncTarget>>;
+    try {
+        await ensureIrohHomeTunnelForActiveSwitch(snapshot, credentials, publicationTarget, admission.onCarrier);
+        const prepared = capturePreparedSyncTarget(snapshot);
+        if (!prepared || admission.retired()) throw new ServerScopedTransportUnavailableError();
+        syncTarget = prepared;
+        publishApplyingActiveServerId(prepared.serverId, prepared.generation);
+        await syncRestore(credentials, { ...prepared, onHomeAdmission: admission.read });
+        if (!capturePreparedSyncTarget(snapshot) || admission.retired()) throw new ServerScopedTransportUnavailableError();
+    } finally {
+        admission.dispose();
+    }
     lastAppliedGeneration = Math.max(lastAppliedGeneration, snapshot.generation);
     appliedCredentialScopeKey = readCredentialScopeKey(credentials);
     publishAppliedActiveServerSnapshot(syncTarget);
+    clearHomeAdmission();
     stopFailedApplyRecovery?.();
 }

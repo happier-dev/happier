@@ -15,6 +15,7 @@ import {
     getServerProfileById,
     resolveServerProfileScopeIdForIdentifier,
 } from '@/sync/domains/server/serverProfiles';
+import { homeAdmissionCarrierVerdict, readHomeAdmissionExplicitRefusal, readHomeAdmissionRequestRejection, type HomeAdmissionReadObservation } from '@/sync/runtime/connectivity/homeAdmissionReadiness';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { parseToken } from '@/utils/auth/parseToken';
 import { createCapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
@@ -35,7 +36,7 @@ type AccountEncryptionOwner = {
     pending: Promise<Encryption | null>;
     identityInvalidated: boolean;
     checkingIdentity: Promise<Encryption | null> | null;
-    readIdentity: (() => Promise<AccountEncryptionIdentity>) | null;
+    readIdentity: ((onAdmission?: HomeAdmissionReadObservation) => Promise<AccountEncryptionIdentity>) | null;
     unsubscribeMode: () => void;
 };
 
@@ -105,6 +106,7 @@ export async function resolveScopedAccountEncryption(params: Readonly<{
     serverId: string;
     serverUrl: string;
     credentials: AuthCredentials;
+    onAdmission?: HomeAdmissionReadObservation;
 }>): Promise<Encryption | null> {
     const serverId = resolveServerProfileScopeIdForIdentifier(params.serverId);
     const serverUrl = canonicalizeServerUrl(params.serverUrl);
@@ -117,7 +119,7 @@ export async function resolveScopedAccountEncryption(params: Readonly<{
             previous.checkingIdentity = previous.pending.then(async encryption => {
                 previous.identityInvalidated = false;
                 if (!previous.readIdentity) throw new AccountEncryptionMaterialUnavailableError();
-                const identity = await previous.readIdentity();
+                const identity = await previous.readIdentity(params.onAdmission);
                 if (!isOwnerCurrent(previous)) {
                     throw new AccountEncryptionMaterialUnavailableError('Captured Account encryption material was retired');
                 }
@@ -153,8 +155,8 @@ export async function resolveScopedAccountEncryption(params: Readonly<{
     const pending = Promise.resolve().then(async () => {
         try {
             // Load after owner installation: the canonical identity reader also reaches Sync.
-            const { fetchAccountEncryptionIdentity, subscribeAccountEncryptionModeCacheInvalidation } =
-                await import('@/sync/api/account/apiAccountEncryptionMode');
+            const { AccountEncryptionCurrentnessReadinessError, fetchAccountEncryptionIdentity,
+                subscribeAccountEncryptionModeCacheInvalidation } = await import('@/sync/api/account/apiAccountEncryptionMode');
             if (!isOwnerCurrent(owner)) {
                 throw new AccountEncryptionMaterialUnavailableError('Captured Account encryption material was retired');
             }
@@ -177,19 +179,50 @@ export async function resolveScopedAccountEncryption(params: Readonly<{
                 // Re-admit on demand; invalidation alone cannot retire material.
                 owner.identityInvalidated = true;
             }, serverId);
-            owner.readIdentity = async () => {
+            owner.readIdentity = async (onAdmission) => {
                 // The material can outlive a socket holder. Each demanded identity
                 // read captures the current observation for this exact Home.
                 const observation = captureAccountEncryptionObservationForHome({ serverId, endpointUrl: serverUrl, credentials: material });
                 const transport = createCapturedServerReadTransport({ serverId, credentials: material,
-                    profile: getServerProfileById(serverId) ?? { serverUrl }, accountEncryptionObservation: observation });
-                const request = bindAccountEncryptionObservation((path: string, init?: RequestInit) =>
-                    transport.read(path, init, { includeAuth: false, retry: 'none' }, async response =>
-                        new Response(await response.arrayBuffer(), { status: response.status,
-                            statusText: response.statusText, headers: response.headers })), observation);
-                return await fetchAccountEncryptionIdentity(material, { request, usage: 'identity' });
+                    profile: getServerProfileById(serverId) ?? { serverUrl }, accountEncryptionObservation: observation,
+                    ...(onAdmission ? {
+                        isCurrent: onAdmission.isCurrent,
+                        onCarrier: result => onAdmission.publish(homeAdmissionCarrierVerdict(result)),
+                        onAuthenticationRefusal: async (response: Response) => {
+                            const refusal = await readHomeAdmissionExplicitRefusal(response);
+                            if (refusal) onAdmission.publish(refusal);
+                        },
+                    } : {}),
+                });
+                let rejectedResponse: Response | null = null;
+                const request = bindAccountEncryptionObservation(async (path: string, init?: RequestInit) =>
+                    transport.read(path, init, { includeAuth: false, retry: 'none' }, async response => {
+                        const copy = new Response(await response.arrayBuffer(), { status: response.status,
+                            statusText: response.statusText, headers: response.headers });
+                        if (onAdmission && !copy.ok) rejectedResponse = copy.clone();
+                        return copy;
+                    }), observation);
+                try {
+                    const identity = await fetchAccountEncryptionIdentity(material, { request, usage: 'identity' });
+                    onAdmission?.publish({ kind: 'ready' });
+                    return identity;
+                } catch (error) {
+                    if (onAdmission) {
+                        if (error instanceof AccountEncryptionCurrentnessReadinessError) {
+                            onAdmission.publish({ kind: 'refused', status: error.status,
+                                code: error.recipientEnvelopeReadiness.reason, retryable: false });
+                        } else {
+                            const failure = readHomeAdmissionRequestRejection(error);
+                            const refusal = rejectedResponse && (!failure || !failure.retryable)
+                                ? await readHomeAdmissionExplicitRefusal(rejectedResponse) : null;
+                            const verdict = refusal ?? failure;
+                            if (verdict) onAdmission.publish(verdict);
+                        }
+                    }
+                    throw error;
+                }
             };
-            const identity = await owner.readIdentity();
+            const identity = await owner.readIdentity(params.onAdmission);
             if (!isOwnerCurrent(owner)) {
                 throw new AccountEncryptionMaterialUnavailableError('Captured Account encryption material was retired');
             }

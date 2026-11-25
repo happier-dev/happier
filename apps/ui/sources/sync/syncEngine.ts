@@ -3871,6 +3871,7 @@ class Sync {
         this.resetServerScopedRuntimeState();
         const encryption = await resolveScopedAccountEncryption({
             serverId: encryptionTarget.serverId, serverUrl: encryptionTarget.serverUrl, credentials,
+            onAdmission: target?.onHomeAdmission,
         });
 
         assertSyncServerTargetCurrent(target);
@@ -15410,6 +15411,7 @@ export type SyncEmbedSessionOptions = Readonly<{
 export type SyncCreateOptions = SyncEmbedSessionOptions | Readonly<{ scope: Readonly<{ kind: 'account' }> }>;
 
 export type SyncServerTarget = Readonly<{
+    onHomeAdmission?: import('@/sync/runtime/connectivity/homeAdmissionReadiness').HomeAdmissionReadObservation;
     serverId: string;
     serverUrl: string;
     generation: number;
@@ -15521,6 +15523,7 @@ async function syncInit(credentials: AuthCredentials, restore: boolean, target?:
     const encryptionTarget = target ?? getActiveServerSnapshot();
     const encryption = await resolveScopedAccountEncryption({
         serverId: encryptionTarget.serverId, serverUrl: encryptionTarget.serverUrl, credentials,
+        onAdmission: target?.onHomeAdmission,
     }).catch((error: unknown) => {
         // A locked device starts no Sync, but its shell must still reach Account
         // encryption settings, where this device reclassifies its keys.

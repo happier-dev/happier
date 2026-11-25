@@ -11,9 +11,12 @@ import { revealHomeRetryAfterPaint } from '@/components/ui/motion/stepMotion/Ste
 import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { AppLaunchState } from './AppLaunchState';
 import type { AppWindowRecord } from '@/desktop/window/appWindowBoot';
-import { useCurrentRoutePathname } from './currentRouteLocation';
+import { useCurrentRoutePathname, useCurrentRouteSegments } from './currentRouteLocation';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
+import { isPublicRouteForUnauthenticated, isWelcomeRoute } from '@/auth/routing/authRouting';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { selectHomeAdmission } from '@/sync/runtime/connectivity/homeAdmissionReadiness';
 
 /** Above the palette and rail so every workspace launcher reaches the same owner. */
 export function WorkspaceAppShellProvider(props: Readonly<{ children: React.ReactNode; browserWindow?: AppWindowRecord | null }>) {
@@ -30,6 +33,13 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
     const admittedLifetime = React.useRef<typeof accountLifetime | undefined>(undefined);
     const warmHomeLifetime = React.useRef<typeof accountLifetime>(null);
     const pathname = useCurrentRoutePathname();
+    const routeSegments = useCurrentRouteSegments();
+    const requestedHome = useActiveServerSnapshot();
+    const retainColdRefusal = Platform.OS === 'web' && requestedPresentation === null
+        && admittedLifetime.current === undefined && resolveDesktopWindowContext().role === 'primary'
+        && (isWelcomeRoute(routeSegments) || !isPublicRouteForUnauthenticated([...routeSegments]));
+    const coldAuthRefusal = storage(state => retainColdRefusal
+        && selectHomeAdmission(state.homeAdmission, requestedHome)?.verdict.kind === 'auth_failed');
     // Only the ordinary main-window Home may start from a display projection.
     // An addressed arrival still needs the exact destination's normal admission.
     const mayRestoreWarmHome = Platform.OS === 'web' && !dataReady && presentation !== null
@@ -54,8 +64,8 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
     // A descriptive unscoped catalog is not the authenticated Account's initial
     // workspace. Registering its navigator before core restoration can lose the
     // parsed deep link when the supplied-Home refresh withdraws that first scope.
-    const pendingFirstAccount = presentation !== null && presentation !== 'entry'
-        && admittedLifetime.current === undefined && (!accountScope || (!dataReady && !restoreRetainedHome));
+    const pendingFirstAccount = coldAuthRefusal || (presentation !== null && presentation !== 'entry'
+        && admittedLifetime.current === undefined && (!accountScope || (!dataReady && !restoreRetainedHome)));
     React.useLayoutEffect(() => {
         if (!pendingFirstAccount && ready && (!accountLifetime || accountLifetime.isCurrent())) admittedLifetime.current = accountLifetime;
     }, [accountLifetime, pendingFirstAccount, ready]);
@@ -102,7 +112,7 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
         entry={presentation === 'entry'} deferred={deferred} restoreRetainedHome={restoreRetainedHome}
         waitForLaunchBody={Platform.OS === 'web' && !restoring && presentation !== 'entry'} catalog={catalog}>
         {restoring
-            ? <HomeReachabilityGate variant="pane" onUnavailable={revealHomeRetryAfterPaint}>
+            ? <HomeReachabilityGate variant="pane" accountRestoring={{ returnTo: pathname }} onUnavailable={revealHomeRetryAfterPaint}>
                 <AppLaunchState testID="workspace-account-restoring" />
             </HomeReachabilityGate>
             : <WorkspaceShellWillHostRoutesContext.Provider value={Platform.OS === 'web' && requestedPresentation === 'shell'}>

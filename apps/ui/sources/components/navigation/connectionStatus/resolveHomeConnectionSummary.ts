@@ -1,3 +1,5 @@
+import type { HomeAdmissionVerdict } from '@/sync/runtime/connectivity/homeAdmissionReadiness';
+
 import type { ConnectionHealthKind } from './connectionHealthTypes';
 
 /**
@@ -22,7 +24,7 @@ export type HomeConnectionSummary = Readonly<{
     statusLabelKey: HomeConnectionSummaryLabelKey;
     statusKey: HomeConnectionStatusKey;
     /** `restore` re-authenticates this Home; `retry` reconnects it. */
-    action: 'none' | 'retry' | 'restore';
+    action: 'none' | 'retry' | 'restore' | 'update';
 }>;
 
 const SUMMARY_PRESENTATION: Readonly<Record<HomeConnectionSummaryKind, Readonly<{
@@ -84,6 +86,27 @@ export function resolveHomeConnectionSummary(params: Readonly<{
                 : 'none';
 
     return buildSummary(kind, action);
+}
+
+/** Before an applied runtime, only the restore's own verdict supplies connection evidence. */
+export function resolveHomeAdmissionConnectionSummary(verdict: HomeAdmissionVerdict): HomeConnectionSummary | null {
+    switch (verdict.kind) {
+        case 'connecting':
+        case 'selected':
+        case 'ready':
+            return null;
+        case 'auth_failed':
+            return resolveHomeConnectionSummary({ healthKind: 'auth_required' });
+        case 'offline':
+        case 'unavailable':
+        case 'transient':
+            return resolveHomeConnectionSummary({ healthKind: 'server_unreachable' });
+        case 'update_required':
+            return buildSummary('unavailable', 'update');
+        case 'fail_closed':
+        case 'refused':
+            return resolveHomeConnectionSummary({ healthKind: 'server_error', syncErrorRetryable: verdict.retryable });
+    }
 }
 
 /**

@@ -210,6 +210,61 @@ describe('switchConnectionToActiveServer', () => {
             && request.token === homeA.credentials.token)).toEqual([]);
     });
 
+    it('retires the original restore even when the same Home and credential are selected again', async () => {
+        const homeA = await addHomeWithFailedAdmission('cold-generation-original');
+        const homeB = await addHomeWithFailedAdmission('cold-generation-intervening');
+        const readStarted = createDeferred<void>();
+        const finishRead = createDeferred<void>();
+        releases.add(() => finishRead.resolve());
+        homes.answer(homeA.serverId, '/v1/account/encryption/currentness', {
+            select: async () => {
+                readStarted.resolve();
+                await finishRead.promise;
+                return { dispatchThenFail: true };
+            },
+        });
+
+        const original = await selectHome(homeA);
+        const restore = connection.restoreConnectionToActiveServer(homeA.credentials);
+        await readStarted.promise;
+        await selectHome(homeB);
+        const fresh = await selectHome(homeA);
+        expect(fresh.generation).not.toBe(original.generation);
+        finishRead.resolve();
+        await expect(restore).rejects.toThrow();
+        await flushHookEffects();
+        const { invalidateAllServerReachabilitySupervisors, peekServerReachabilityState } = await import(
+            '@/sync/runtime/connectivity/serverReachabilitySupervisorPool'
+        );
+        await invalidateAllServerReachabilitySupervisors();
+
+        expect(homes.requestsFor('/v1/auth/ping')).toEqual([]);
+        expect(peekServerReachabilityState(homeA.serverUrl, homeA.credentials.token)).toBeNull();
+
+        const { readHomeAdmission } = await import('@/sync/runtime/connectivity/homeAdmissionReadiness');
+        expect(readHomeAdmission(fresh)).toBeNull();
+        const freshReadStarted = createDeferred<void>();
+        const releaseFreshRead = createDeferred<void>();
+        releases.add(() => releaseFreshRead.resolve());
+        homes.answer(homeA.serverId, '/v1/account/encryption/currentness', {
+            select: async () => {
+                freshReadStarted.resolve();
+                await releaseFreshRead.promise;
+                return { dispatchThenFail: true };
+            },
+        });
+        const freshRestore = connection.switchConnectionToActiveServer();
+        const freshRejected = expect(freshRestore).rejects.toThrow('Failed to fetch');
+        await freshReadStarted.promise;
+        expect(readHomeAdmission(fresh)?.verdict.kind).toBe('connecting');
+        expect(homes.requestsFor('/v1/auth/ping')).toEqual([]);
+        releaseFreshRead.resolve();
+        await freshRejected;
+        expect(readHomeAdmission(fresh)?.verdict).toEqual({
+            kind: 'offline', code: 'server_unreachable', retryable: true,
+        });
+    });
+
     it('starts recovery once for the same Home when cold restore fails without a switch', async () => {
         const home = await addHomeWithFailedAdmission('cold-restore-current');
 

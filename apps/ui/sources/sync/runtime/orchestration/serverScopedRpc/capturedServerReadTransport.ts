@@ -2,6 +2,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { createServerFetchAtEndpoint, type ServerFetchOptions, type ServerResponseRequest } from '@/sync/http/client';
+import type { AcquiredHomeCarrier } from '@/sync/runtime/homeCarrierPolicy';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
@@ -46,6 +47,9 @@ export function createCapturedServerReadTransport(params: Readonly<{
     credentials: AuthCredentials;
     accountEncryptionObservation?: AccountEncryptionObservationBinding;
     superviseReachability?: boolean;
+    isCurrent?: () => boolean;
+    onCarrier?: (verdict: AcquiredHomeCarrier) => void;
+    onAuthenticationRefusal?: (response: Response) => Promise<void>;
     /** An admitted finite invocation retains its own HTTP proof and read scope. */
     prepareRequest?: CapturedServerRequestPreparation;
 } & ({ profile: CapturedProfile; prepared?: never } | { prepared: PreparedReadTransport; profile?: CapturedProfile })>): CapturedServerReadTransport {
@@ -91,7 +95,8 @@ export function createCapturedServerReadTransport(params: Readonly<{
         async read(path, init, options, consumeResponse) {
             throwIfAborted(init?.signal ?? undefined);
             const requestInit = params.prepareRequest ? await params.prepareRequest(path, init) : init;
-            const transport = await resolveServerScopedTransport({ profile, credentials: params.credentials });
+            const transport = await resolveServerScopedTransport({ profile, credentials: params.credentials,
+                isCurrent: params.isCurrent, onCarrier: params.onCarrier });
             try {
                 throwIfAborted(init?.signal ?? undefined);
                 return await createServerFetchAtEndpoint({
@@ -101,6 +106,8 @@ export function createCapturedServerReadTransport(params: Readonly<{
                     credentials: params.credentials,
                     accountEncryptionObservation: params.accountEncryptionObservation,
                     recoverStoredCredentials: true,
+                    ...(params.isCurrent ? { isCurrent: params.isCurrent } : {}),
+                    ...(params.onAuthenticationRefusal ? { onAuthenticationRefusal: params.onAuthenticationRefusal } : {}),
                     superviseReachability: params.superviseReachability,
                     ...(transport.homeCarrier ? { homeCarrier: transport.homeCarrier } : {}),
                 })(path, requestInit, { recoveryRead: 'unbounded', ...options }, consumeResponse);

@@ -1,4 +1,6 @@
 import type { StoreSet } from './_shared';
+import type { AppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import type { HomeAdmissionVerdict } from '@/sync/runtime/connectivity/homeAdmissionReadiness';
 import type { ApiSocketStatus } from '@/sync/api/session/apiSocket';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import {
@@ -42,7 +44,14 @@ export type EndpointConnectivitySnapshot = Readonly<{
   lastErrorMessage: string | null;
 }>;
 
+export type HomeAdmissionSnapshot = Readonly<{
+  target: Pick<AppliedActiveServerSnapshot, 'serverId' | 'serverUrl' | 'generation'>;
+  verdict: HomeAdmissionVerdict;
+}>;
+
 export type RealtimeDomain = {
+  homeAdmission: HomeAdmissionSnapshot | null;
+  setHomeAdmission: (snapshot: HomeAdmissionSnapshot | null) => void;
   socketStatus: SocketStatus;
   socketLastConnectedAt: number | null;
   socketLastDisconnectedAt: number | null;
@@ -101,6 +110,9 @@ export function createRealtimeDomain<S extends RealtimeDomain>({
     };
   });
   return {
+    homeAdmission: null,
+    setHomeAdmission: (homeAdmission) => set((state) =>
+      state.homeAdmission === homeAdmission ? state : { ...state, homeAdmission }),
     socketStatus: 'disconnected',
     socketLastConnectedAt: null,
     socketLastDisconnectedAt: null,

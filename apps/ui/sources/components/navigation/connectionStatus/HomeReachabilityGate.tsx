@@ -1,4 +1,11 @@
 import * as React from 'react';
+import { resolveHref } from 'expo-router/build/link/href';
+
+import { buildHomeRecoveryHref } from '@/components/settings/server/navigation/serverSettingsRouteParams';
+import { useAppUpdateStatus } from '@/updates/useAppUpdateStatus';
+import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { selectHomeAdmission } from '@/sync/runtime/connectivity/homeAdmissionReadiness';
+import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
@@ -17,10 +24,11 @@ import {
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { storage } from '@/sync/domains/state/storage';
+import type { HomeAdmissionSnapshot } from '@/sync/store/domains/realtime';
 import { selectSyncErrorForServer } from '@/sync/runtime/connectivity/syncErrorScope';
 import { resolveServerScopedMachineInventoryKeys } from '@/sync/domains/machines/resolveServerScopedMachines';
 
-import { resolveHomeConnectionSummary } from './resolveHomeConnectionSummary';
+import { resolveHomeAdmissionConnectionSummary, resolveHomeConnectionSummary, type HomeConnectionSummary } from './resolveHomeConnectionSummary';
 import { resolveConnectionHealth } from './resolveConnectionHealth';
 
 function subscribeApplied(listener: () => void): () => void {
@@ -134,6 +142,7 @@ export function HomeReachabilityGate(props: Readonly<{
     /** For multi-Home lists, only report this Home when it is part of the visible query. */
     relevantServerIds?: readonly string[];
     onUnavailable?: () => void;
+    accountRestoring?: Readonly<{ returnTo: string }>;
     /** `line` only: drawn inline in a page header's notice slot, with the time the kept content was read. */
     presentation?: 'inline';
     asOf?: number | null;
@@ -144,10 +153,16 @@ export function HomeReachabilityGate(props: Readonly<{
     const serverId = useReportedHomeServerId();
     const relevant = props.relevantServerIds === undefined
         || (serverId !== null && props.relevantServerIds.some((id) => areServerProfileIdentifiersEquivalent(id, serverId)));
-    const { onUnavailable } = props;
+    const { accountRestoring, onUnavailable } = props;
+    const requested = useActiveServerSnapshot();
+    // A signed-out runtime can be applied after a 401; the first Account still
+    // has not admitted, and the exact refusal is the reason this shell is here.
+    const cold = storage(state => accountRestoring ? selectHomeAdmission(state.homeAdmission, requested) : null);
+    const summary = cold ? resolveHomeAdmissionConnectionSummary(cold.verdict) : null;
+    const showAdmission = summary !== null;
     React.useLayoutEffect(() => {
-        if (unavailable && relevant) onUnavailable?.();
-    }, [onUnavailable, relevant, unavailable]);
+        if ((unavailable || showAdmission) && relevant) onUnavailable?.();
+    }, [onUnavailable, relevant, unavailable, showAdmission]);
     const home = React.useMemo(
         () => resolveHomeDisplayLabel(serverId ? getServerProfileById(serverId) : null, serverId ?? '', serverId ?? undefined),
         [serverId],
@@ -160,6 +175,11 @@ export function HomeReachabilityGate(props: Readonly<{
         },
     }), []);
 
+    if (relevant && summary && accountRestoring && cold) {
+        const requestedHome = resolveHomeDisplayLabel(getServerProfileById(requested.serverId),
+            requested.serverId, requested.serverId);
+        return <HomeAdmissionRecoveryCard admission={cold} summary={summary} returnTo={accountRestoring.returnTo} home={requestedHome} retry={retry} />;
+    }
     if (!unavailable || !relevant) return <>{props.children}</>;
     if (props.variant === 'line' && props.presentation === 'inline') {
         return (
@@ -195,4 +215,75 @@ export function HomeReachabilityGate(props: Readonly<{
             primaryAction={retry}
         />
     );
+}
+
+
+function HomeAdmissionRecoveryCard(props: Readonly<{
+    admission: HomeAdmissionSnapshot;
+    summary: HomeConnectionSummary;
+    returnTo: string;
+    home: string;
+    retry: Readonly<{ label: string; testID: string; onPress: () => void }>;
+}>) {
+    const { target, verdict } = props.admission;
+    if (!('retryable' in verdict)) return null;
+    switch (verdict.kind) {
+        case 'auth_failed': {
+            return <SurfaceStateCard kind="unavailable" size="page" testID="home-unreachable"
+                title={t('server.homes.signInAgainTitle', { name: props.home })}
+                reason={t('server.homes.signInAgainDescription')} diagnosticCode={verdict.code}
+                action={props.summary.action === 'restore' ? {
+                    testID: 'home-admission-restore', label: t('connect.restoreAccount'),
+                    onPress: () => {
+                        // The cold shell has not mounted its navigator. Enter the
+                        // existing public Home recovery route in this document's tab.
+                        const href = resolveHref(buildHomeRecoveryHref({
+                            profileRef: target.serverId, returnTo: props.returnTo,
+                        }));
+                        const result = runGuardedNavigation(() => window.location.assign(href));
+                        if (result !== true) fireAndForget(result, { tag: 'HomeAdmissionRecovery.restore' });
+                    },
+                } : undefined} />;
+        }
+        case 'update_required': {
+            const requirement = verdict.requirement;
+            const component = 'component' in requirement ? requirement.component : 'client';
+            const code = 'error' in requirement ? requirement.error : requirement.kind;
+            if (component === 'client') return <HomeAdmissionClientUpdateCard diagnosticCode={code} />;
+            // The Account has not been admitted, so its private Updates screen
+            // cannot run a Home or Machine action. Open the app's fixed help link.
+            const guide = component === 'server' ? 'server--self-host-updates' : 'cli-updates-binary-vs-npm';
+            return <SurfaceStateCard kind="unavailable" size="page" testID="home-unreachable"
+                title={t('updates.summary.required')} diagnosticCode={code} diagnosticDetail={component}
+                action={props.summary.action === 'update' ? { testID: 'home-admission-update', label: t('updates.action.openUpdates'),
+                    onPress: () => openExternalUrl('https://docs.happier.dev/releases/updates#' + guide) } : undefined} />;
+        }
+        case 'offline':
+        case 'unavailable':
+        case 'transient':
+            return <SurfaceStateCard kind="unavailable" size="page" testID="home-unreachable"
+                title={t('sidebarFooter.homeUnreachableTitle', { home: props.home })}
+                reason={t('sidebarFooter.homeUnreachableBody')} diagnosticCode={verdict.code}
+                diagnosticDetail={verdict.kind === 'transient' && verdict.status ? `HTTP ${verdict.status}` : undefined}
+                detail={verdict.kind === 'unavailable' && verdict.carrier === 'iroh' ? t('systemStatus.transport.irohCurrent') : undefined}
+                action={props.summary.action === 'retry' ? props.retry : undefined} />;
+        case 'fail_closed':
+        case 'refused':
+            return <SurfaceStateCard kind="unavailable" size="page" testID="home-unreachable"
+                title={t('connectionStatus.summary.unavailable')} diagnosticCode={verdict.code} />;
+    }
+}
+
+function HomeAdmissionClientUpdateCard({ diagnosticCode }: Readonly<{ diagnosticCode: string }>) {
+    const update = useAppUpdateStatus();
+    const available = update.model.item.action.kind === 'run';
+    return <SurfaceStateCard kind="unavailable" size="page" testID="home-unreachable"
+        title={t('updates.summary.required')} diagnosticCode={diagnosticCode}
+        action={{
+            testID: 'home-admission-update',
+            label: available ? t('updates.action.update') : t('updates.action.checkNow'),
+            onPress: () => {
+                fireAndForget(available ? update.run() : update.checkNow(), { tag: 'HomeAdmissionRecovery.update' });
+            },
+        }} />;
 }

@@ -72,11 +72,13 @@ export function onceAsync(release: () => Promise<void>): () => Promise<void> {
 export async function resolveServerScopedTransport(params: Readonly<{
     profile: ServerTransportProfile;
     credentials: AuthCredentials;
+    isCurrent?: () => boolean;
+    onCarrier?: (verdict: import('@/sync/runtime/homeCarrierPolicy').AcquiredHomeCarrier) => void;
 }>): Promise<ResolvedServerScopedTransport> {
     const canonicalServerUrl = canonicalizeServerUrl(
         String(params.profile.canonicalServerUrl ?? params.profile.serverUrl),
     );
-    if (!canonicalServerUrl) throw new ServerScopedTransportUnavailableError();
+    if (!canonicalServerUrl || params.isCurrent?.() === false) throw new ServerScopedTransportUnavailableError();
 
     let runtimeOrigin = canonicalServerUrl;
     let carrier: 'https' | 'iroh' = 'https';
@@ -103,6 +105,7 @@ export async function resolveServerScopedTransport(params: Readonly<{
             verification: { kind: 'authenticated', token: params.credentials.token },
             credentials: params.credentials,
         });
+        params.onCarrier?.(acquired);
         if (acquired.kind === 'fail_closed' || acquired.kind === 'unavailable') {
             if (acquired.kind === 'unavailable') throw new ServerScopedTransportUnavailableError();
             if (acquired.fallbackAllowed) throw new ServerScopedTransportUnavailableError();

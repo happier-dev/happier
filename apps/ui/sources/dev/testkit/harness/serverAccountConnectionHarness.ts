@@ -217,6 +217,8 @@ export function installSocketIoClientFactoryBoundary(factory: SocketIoClientFact
 /** Apply a real Account lifetime before a test installs its domain data or fake clock. */
 export async function restoreServerAccountForTest(params: Readonly<{
     serverUrl: string;
+    /** Configure a saved Home before activation, including descriptor and carrier fixtures. */
+    prepareHome?: (home: Readonly<{ id: string; serverUrl: string }>) => Promise<void>;
     /** Advertised Home identity, established before its Account lifetime starts. */
     serverIdentityId?: string;
     accountId?: string;
@@ -272,6 +274,7 @@ export async function restoreServerAccountForTest(params: Readonly<{
         if (!identifiedHome) throw new Error('Test Home identity could not be established');
         home = identifiedHome;
     }
+    await params.prepareHome?.(home);
     const credentials = params.credentials ?? { token: `e30.${Buffer.from(JSON.stringify({ sub: params.accountId ?? 'account-a' })).toString('base64url')}.signature` };
     const { canonicalizeServerUrl } = await import('@/sync/domains/server/url/serverUrlCanonical');
     const restoredHomeUrl = canonicalizeServerUrl(home.serverUrl);
