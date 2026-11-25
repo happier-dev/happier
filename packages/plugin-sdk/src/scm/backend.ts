@@ -23,6 +23,7 @@ import type {
     ScmCommitResolveOutcomeResponse,
     ScmConflictAcceptSideRequest,
     ScmConflictMarkResolvedRequest,
+    ScmCredentialFreeRepositorySelectorV1,
     ScmDiffCommitRequest,
     ScmDiffCommitResponse,
     ScmDiffFileRequest,
@@ -101,8 +102,7 @@ import type {
 } from './projections.js';
 import type { PluginJsonValueV2 } from '../identity.js';
 import type { PluginLocalizedStringV2 } from '../manifest.js';
-import { SCM_OPERATION_ERROR_CODES, ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm/operationError';
-import type { ScmCredentialFreeRepositorySelectorV1 } from '@happier-dev/protocol/scm/repositoryClone';
+import { SCM_OPERATION_ERROR_CODES, ScmOperationErrorCodeSchema } from './operationError.js';
 
 /** Preserve a thrown backend's typed failure, including an execution refusal. */
 export function projectScmBackendFailure(error: unknown): Readonly<{

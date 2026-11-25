@@ -4,7 +4,8 @@ import { evaluateScmRemoteMutationPolicy as canonicalEvaluateScmRemoteMutationPo
 import { normalizeScmBranchSourceRef as canonicalNormalizeScmBranchSourceRef, normalizeScmRemoteName as canonicalNormalizeScmRemoteName, normalizeScmRemoteRequest as canonicalNormalizeScmRemoteRequest, normalizeScmRemoteUrl as canonicalNormalizeScmRemoteUrl } from '@happier-dev/protocol/scm/remoteNormalization';
 import { normalizeScmHostingRepositoryIdentity as canonicalNormalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity as canonicalSameScmHostingRepositoryIdentity, gitlabRepositoryEventSourceInstanceId as canonicalGitlabRepositoryEventSourceInstanceId } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import { resolveScmScopedChangedPaths as canonicalResolveScmScopedChangedPaths } from '@happier-dev/protocol/scm/pathScope';
-import { SCM_OPERATION_ERROR_CODES as canonicalScmOperationErrorCodes } from '@happier-dev/protocol/scm/operationError';
+import { SCM_OPERATION_ERROR_CODES as canonicalScmOperationErrorCodes } from './operationError.js';
+export type { ScmCredentialFreeRepositorySelectorV1 } from '@happier-dev/protocol/scm/repositoryClone';
 import { ScmRepositoryProvisioningFailureResponseSchema as canonicalProvisioningFailure } from '@happier-dev/protocol/scm';
 import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN as canonicalScmWorktreeRemoveAuthorizationToken } from '@happier-dev/protocol/scm/worktrees';
 import { ProviderRefreshPolicySchema as canonicalScmRefreshPolicySchema } from '@happier-dev/protocol/scm/freshness';
