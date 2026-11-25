@@ -172,7 +172,7 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
 }>) {
     const router = useRouter();
     const { context, resourceId } = props;
-    const view = useTeamCredentialResourceView({ context, resourceId });
+    const view = useTeamCredentialResourceView({ context, resourceId, failureTestIDPrefix: 'team-credential' });
     const externalApiAvailability = useTeamCredentialExternalApiAvailability(context.scope.serverId);
     const [mutating, setMutating] = React.useState(false);
     // An unresolved approval already carries this screen's last write, so every
@@ -234,6 +234,19 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
             />,
         );
     }
+
+    const refusalLine = view.refusal ? (
+        <ItemGroup>
+            <SurfaceStateCard
+                testID="team-credential-error"
+                kind="error"
+                size="line"
+                title={view.refusal.message}
+                action={view.refusal.action}
+                accessibilitySemantics="alert"
+            />
+        </ItemGroup>
+    ) : null;
 
     if (view.resource === null && view.catalogResource !== null) {
         const resource = view.catalogResource;
@@ -307,14 +320,13 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                         />
                     ) : null}
                 </ItemGroup>
+                {refusalLine}
             </>,
         );
     }
 
     if (view.resource === null) {
-        // Until the Home has answered, absence proves nothing; afterwards it is
-        // the answer, and the retry belongs to whichever of the two it is.
-        return frame(view.resolved ? (
+        return frame(refusalLine ?? (view.resolved ? (
             <SurfaceStateCard
                 testID="team-credential-not-found"
                 kind="unavailable"
@@ -323,17 +335,6 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                 reason={t('teams.credentials.detail.notFound')}
                 action={{ label: t('teams.credentials.title'), onPress: () => router.push(teamCredentialsPath(context.address)) }}
             />
-        ) : view.error ? (
-            <ItemGroup>
-                <SurfaceStateCard
-                    testID="team-credential-error"
-                    kind="error"
-                    size="line"
-                    title={t('teams.unavailable.offline')}
-                    action={{ label: t('common.retry'), testID: 'team-credential-retry', onPress: () => void view.reload() }}
-                    accessibilitySemantics="alert"
-                />
-            </ItemGroup>
         ) : (
             <ItemGroup>
                 <ItemLoadStateRows
@@ -343,7 +344,7 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                     accessibilityLabel={t('common.loading')}
                 />
             </ItemGroup>
-        ));
+        )));
     }
 
     const { resource } = view;
@@ -723,6 +724,7 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                     </SectionButtonRow>
                 </ItemGroup>
             ) : null}
+            {refusalLine}
         </>,
     );
 });

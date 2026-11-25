@@ -17912,6 +17912,7 @@ const catalan: TeamsTranslationRoot = {
             errors: {
                 featureDisabled: 'Aquest Home no ofereix credencials compartides.',
                 invalidResourceRead: "Aquest Home no ha acceptat la sol·licitud d’opcions de credencials.",
+                resourceUnreadable: "Aquest Home no ha pogut llegir la credencial desada.",
                 teamAuthenticationRequired: 'Inicia la sessi\u00f3 en aquest equip abans de continuar.',
                 teamAuthenticationPolicyUnavailable: 'No s\u2019ha pogut llegir la pol\u00edtica d\u2019acc\u00e9s d\u2019aquest equip, aix\u00ed que no s\u2019ha canviat res.',
                 memberNotEligible: 'Aquesta persona no pot fer servir aquesta credencial.',

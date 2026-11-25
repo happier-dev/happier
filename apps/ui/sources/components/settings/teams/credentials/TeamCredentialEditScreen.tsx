@@ -78,7 +78,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
     const router = useRouter();
     const navigation = useNavigation();
     const { context, resourceId } = props;
-    const view = useTeamCredentialResourceView({ context, resourceId });
+    const view = useTeamCredentialResourceView({ context, resourceId, failureTestIDPrefix: 'team-credential-edit-resource' });
     const resource = view.resource;
     const providerTarget = useProviderSettingsTarget();
     const providerMachines = providerTarget.selectedTargetServerMatchesActiveAccount
@@ -196,7 +196,20 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
         tag: 'TeamCredentialEditScreen.beforeRemove',
     });
 
-    if (!view.featureEnabled || (view.resolved && resource === null)) {
+    const refusalLine = view.refusal ? (
+        <ItemGroup description={view.refusal.message}>
+            {view.refusal.action ? (
+                <Item
+                    testID={view.refusal.action.testID}
+                    title={view.refusal.action.label}
+                    onPress={view.refusal.action.onPress}
+                    showChevron={false}
+                />
+            ) : null}
+        </ItemGroup>
+    ) : null;
+
+    if (!view.featureEnabled || (view.resolved && resource === null && !view.refusal)) {
         return (
             <ItemGroup description={view.featureEnabled
                 ? t('teams.credentials.detail.notFound')
@@ -223,18 +236,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                 </ItemGroup>
             );
         }
-        if (view.error) {
-            return (
-                <ItemGroup description={credentialFailureMessage(view.error)}>
-                    <Item
-                        testID="team-credential-edit-resource-retry"
-                        title={t('teams.unavailable.retry')}
-                        onPress={() => void view.reload()}
-                        showChevron={false}
-                    />
-                </ItemGroup>
-            );
-        }
+        if (refusalLine) return refusalLine;
         return (
             <ItemGroup>
                 <Item
@@ -615,16 +617,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                 ) : null}
             </ItemGroup>
 
-            {view.error ? (
-                <ItemGroup description={credentialFailureMessage(view.error)}>
-                    <Item
-                        testID="team-credential-edit-resource-retry"
-                        title={t('teams.unavailable.retry')}
-                        onPress={() => void view.reload()}
-                        showChevron={false}
-                    />
-                </ItemGroup>
-            ) : null}
+            {refusalLine}
         </>
     );
 });

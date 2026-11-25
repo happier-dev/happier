@@ -316,6 +316,34 @@ describe('TeamCredentialDetailScreen', () => {
         expect(routerPush).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/credentials/resource-1/external-api`);
     });
 
+    it.each([
+        { error: 'team_authentication_required', status: 403, message: 'teams.credentials.errors.teamAuthenticationRequired', action: 'sign-in' },
+        { error: 'team_authentication_policy_unavailable', status: 503, message: 'teams.credentials.externalApi.authenticationUnavailable' },
+        { error: 'feature_disabled', status: 503, message: 'teams.credentials.errors.featureDisabled' },
+        { error: 'invalid_resource_input', status: 400, message: 'teams.credentials.errors.invalidResourceRead' },
+        { error: 'resource_corrupt', status: 400, message: 'teams.credentials.errors.resourceUnreadable' },
+        { error: null, status: 503, message: 'teams.errors.loadFailed', action: 'retry' },
+    ])('keeps the exact-resource refusal $error and only its recovery', async ({ error, status, message, action }) => {
+        const serverId = await harness.addHome({
+            name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'account-maya',
+            teamsEnabled: true, credentialResourcesEnabled: true,
+        });
+        await harness.selectHomes([serverId]);
+        harness.answer(serverId, TEAM_GET_PATH, { body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({}) }) });
+        harness.answer(serverId, TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, { body: { resources: [], nextCursor: null, failures: [] } });
+        harness.answer(serverId, GET_PATH, { status, body: error === null ? {} : { error } });
+
+        const screen = await renderScreen(<TeamCredentialDetailScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(message));
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        expect(ids.includes('team-credential-retry')).toBe(action === 'retry');
+        expect(ids.includes('team-credential-sign-in')).toBe(action === 'sign-in');
+        if (action === 'sign-in') {
+            await screen.pressByTestIdAsync('team-credential-sign-in');
+            expect(routerPush).toHaveBeenCalledWith(expect.stringContaining(`/teams/team-1/sign-in?serverId=${serverId}`));
+        }
+    });
+
     it('treats an absent resource as revoked only after the recipient catalog is current', async () => {
         const serverId = await harness.addHome({
             name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'account-maya',

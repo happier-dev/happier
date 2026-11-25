@@ -426,6 +426,15 @@ export function presentCredentialListReadFailure(
         signIn: AttentionBannerAction;
     }>,
 ): Readonly<{ message: string; action?: AttentionBannerAction }> {
+    return presentCredentialReadFailure(failure, () => failure.code === 'team_authentication_required'
+        ? recovery.signIn
+        : teamReadFailureAction(failure, recovery.retry, recovery.openActionSettings));
+}
+
+export function presentCredentialReadFailure(
+    failure: HomeDomainFailure<string>,
+    recoveryAction: () => AttentionBannerAction | undefined,
+): Readonly<{ message: string; action?: AttentionBannerAction }> {
     switch (failure.code) {
         case 'invalid_resource_input':
             return { message: t('teams.credentials.errors.invalidResourceRead') };
@@ -435,13 +444,12 @@ export function presentCredentialListReadFailure(
             return { message: t('teams.credentials.errors.featureDisabled') };
         case 'team_authentication_policy_unavailable':
             return { message: t('teams.credentials.externalApi.authenticationUnavailable') };
+        case 'resource_corrupt':
+            return { message: t('teams.credentials.errors.resourceUnreadable') };
         case 'team_authentication_required':
-            return { message: t('teams.credentials.errors.teamAuthenticationRequired'), action: recovery.signIn };
+            return { message: t('teams.credentials.errors.teamAuthenticationRequired'), action: recoveryAction() };
         default:
-            return {
-                message: teamReadFailureLabel(failure),
-                action: teamReadFailureAction(failure, recovery.retry, recovery.openActionSettings),
-            };
+            return { message: teamReadFailureLabel(failure), action: recoveryAction() };
     }
 }
 

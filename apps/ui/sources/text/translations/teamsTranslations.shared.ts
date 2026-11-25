@@ -1150,6 +1150,7 @@ export const english = {
             errors: {
                 featureDisabled: 'This Home does not offer shared credentials.',
                 invalidResourceRead: "This Home did not accept the request for credential options.",
+                resourceUnreadable: "This Home couldn’t read the saved credential.",
                 teamAuthenticationRequired: 'Sign in to this Team before continuing.',
                 teamAuthenticationPolicyUnavailable: 'This Team’s sign-in policy could not be read, so nothing changed.',
                 memberNotEligible: 'This person cannot use this credential.',

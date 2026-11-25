@@ -17774,6 +17774,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
             errors: {
                 featureDisabled: '\u6b64 Home \u4e0d\u63d0\u4f9b\u5171\u4eab\u51ed\u636e\u3002',
                 invalidResourceRead: "此 Home 未接受获取凭据选项的请求。",
+                resourceUnreadable: "此 Home 无法读取保存的凭据。",
                 teamAuthenticationRequired: '\u8bf7\u5148\u767b\u5f55\u6b64\u56e2\u961f\uff0c\u7136\u540e\u7ee7\u7eed\u3002',
                 teamAuthenticationPolicyUnavailable: '\u65e0\u6cd5\u8bfb\u53d6\u6b64\u56e2\u961f\u7684\u767b\u5f55\u7b56\u7565\uff0c\u56e0\u6b64\u6ca1\u6709\u505a\u4efb\u4f55\u66f4\u6539\u3002',
                 memberNotEligible: '\u6b64\u4eba\u65e0\u6cd5\u4f7f\u7528\u8be5\u51ed\u636e\u3002',

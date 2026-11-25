@@ -269,10 +269,21 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
         refresh: refreshToNow,
     });
 
-    const resourceFailureMessage = view?.error ? credentialFailureMessage(view.error) : null;
+    const refusalLine = view?.refusal ? (
+        <ItemGroup>
+            <SurfaceStateCard
+                testID="team-credential-usage-resource-error"
+                kind="error"
+                size="line"
+                title={view.refusal.message}
+                action={view.refusal.action}
+                accessibilitySemantics="alert"
+            />
+        </ItemGroup>
+    ) : null;
     const usageFailureMessage = usage.error ? credentialFailureMessage(usage.error) : null;
 
-    if (!featureEnabled || (!aggregate && view?.resolved && resource === null && catalogResource === null)) {
+    if (!featureEnabled || (!aggregate && view?.resolved && resource === null && catalogResource === null && !view.refusal)) {
         return (
             <SurfaceStateCard
                 testID="team-credential-usage-unavailable"
@@ -286,20 +297,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
     }
 
     if (!aggregate && resource === null && catalogResource === null) {
-        if (view?.error) {
-            return resourceFailureMessage === null ? null : (
-                <ItemGroup>
-                    <SurfaceStateCard
-                        testID="team-credential-usage-resource-error"
-                        kind="error"
-                        size="line"
-                        title={resourceFailureMessage}
-                        action={{ label: t('common.retry'), onPress: () => void view.reload(), testID: 'team-credential-usage-resource-retry' }}
-                        accessibilitySemantics="alert"
-                    />
-                </ItemGroup>
-            );
-        }
+        if (refusalLine) return refusalLine;
         return (
             <ItemGroup>
                 <ItemLoadStateRows
@@ -585,18 +583,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                 </ItemGroup>
             ) : null}
 
-            {view?.error && resourceFailureMessage !== null ? (
-                <ItemGroup>
-                    <SurfaceStateCard
-                        testID="team-credential-usage-resource-error"
-                        kind="error"
-                        size="line"
-                        title={resourceFailureMessage}
-                        action={{ label: t('common.retry'), onPress: () => void view.reload(), testID: 'team-credential-usage-resource-retry' }}
-                        accessibilitySemantics="alert"
-                    />
-                </ItemGroup>
-            ) : null}
+            {refusalLine}
         </>
     );
 });
@@ -748,7 +735,7 @@ export function TeamCredentialUsageSummary(props: Readonly<{
 const ResourceUsage = React.memo(function ResourceUsage(props: Readonly<{
     context: TeamSectionContext; resourceId: string;
 }>) {
-    const view = useTeamCredentialResourceView(props);
+    const view = useTeamCredentialResourceView({ ...props, failureTestIDPrefix: 'team-credential-usage-resource' });
     return <CredentialUsage scope={props.context.scope} address={props.context.address}
         target={{ resourceId: props.resourceId }} view={view} featureEnabled={view.featureEnabled}
         displayName={view.displayName ?? t('teams.credentials.title')} />;

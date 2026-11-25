@@ -101,7 +101,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
     resourceId: string;
 }>) {
     const { context, resourceId } = props;
-    const view = useTeamCredentialResourceView({ context, resourceId });
+    const view = useTeamCredentialResourceView({ context, resourceId, failureTestIDPrefix: 'team-credential-external-resource' });
     const canReadKeys = view.canManage || view.catalogResource?.mayBroker === true;
     const availability = useTeamCredentialExternalApiAvailability(context.scope.serverId);
     const roster = useTeamMembersRoster({
@@ -348,7 +348,19 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
             </ItemGroup>
         );
     }
-    if (view.resolved && !canReadKeys) {
+    const refusalLine = view.refusal ? (
+        <ItemGroup description={view.refusal.message}>
+            {view.refusal.action ? (
+                <Item
+                    testID={view.refusal.action.testID}
+                    title={view.refusal.action.label}
+                    onPress={view.refusal.action.onPress}
+                    showChevron={false}
+                />
+            ) : null}
+        </ItemGroup>
+    ) : null;
+    if (view.resolved && !canReadKeys && !view.refusal) {
         return (
             <ItemGroup description={view.resource ? t('teams.credentials.forbidden') : t('teams.credentials.detail.notFound')}>
                 <Item testID="team-credential-external-forbidden" title={t('teams.denied.title')} showChevron={false} />
@@ -356,15 +368,12 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
         );
     }
     if (view.resource === null && view.catalogResource === null) {
-        return (
-            <ItemGroup description={view.error ? credentialFailureMessage(view.error) : undefined}>
+        return refusalLine ?? (
+            <ItemGroup>
                 <Item
-                    testID={view.error
-                        ? 'team-credential-external-resource-retry'
-                        : 'team-credential-external-loading'}
-                    title={view.error ? t('teams.unavailable.retry') : t('common.loading')}
-                    loading={!view.error}
-                    onPress={view.error ? () => void view.reload() : undefined}
+                    testID="team-credential-external-loading"
+                    title={t('common.loading')}
+                    loading
                     showChevron={false}
                 />
             </ItemGroup>
@@ -802,16 +811,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
                 /> : null}
             </ItemGroup>
 
-            {view.resource !== null && view.error ? (
-                <ItemGroup description={credentialFailureMessage(view.error)}>
-                    <Item
-                        testID="team-credential-external-resource-retry"
-                        title={t('teams.unavailable.retry')}
-                        onPress={() => void view.reload()}
-                        showChevron={false}
-                    />
-                </ItemGroup>
-            ) : null}
+            {refusalLine}
 
             {view.canManage && keys.length > 0 ? (
                 // Revoking every key turns external access off: the page's closing quiet button row.

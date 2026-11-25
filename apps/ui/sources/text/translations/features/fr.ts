@@ -17955,6 +17955,7 @@ const french: TeamsTranslationRoot = {
             errors: {
                 featureDisabled: 'Ce Home ne propose pas d\u2019identifiants partag\u00e9s.',
                 invalidResourceRead: "Ce Home a refusé la demande d’options d’identifiants.",
+                resourceUnreadable: "Ce Home n’a pas pu lire l’identifiant enregistré.",
                 teamAuthenticationRequired: 'Connecte-toi \u00e0 cette \u00e9quipe avant de continuer.',
                 teamAuthenticationPolicyUnavailable: 'La politique de connexion de cette \u00e9quipe n\u2019a pas pu \u00eatre lue : rien n\u2019a \u00e9t\u00e9 modifi\u00e9.',
                 memberNotEligible: 'Cette personne ne peut pas utiliser cet identifiant.',

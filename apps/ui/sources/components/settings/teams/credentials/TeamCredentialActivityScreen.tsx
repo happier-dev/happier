@@ -54,7 +54,7 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
     resourceId: string;
 }>) {
     const { context, resourceId } = props;
-    const view = useTeamCredentialResourceView({ context, resourceId });
+    const view = useTeamCredentialResourceView({ context, resourceId, failureTestIDPrefix: 'team-credential-activity-resource' });
     // The Home admits the administrative history only to a viewer who
     // administers resources, so a member's screen asks for nothing at all
     // rather than opening a request it knows will be refused.
@@ -87,7 +87,20 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
         ? openedActivityDisplayNames[`${activity.rows[newestCredentialEvent]!.createdAt}:${newestCredentialEvent}`] ?? null
         : null;
 
-    if (!view.featureEnabled || (view.resolved && view.resource === null)) {
+    const refusalLine = view.refusal ? (
+        <ItemGroup description={view.refusal.message}>
+            {view.refusal.action ? (
+                <Item
+                    testID={view.refusal.action.testID}
+                    title={view.refusal.action.label}
+                    onPress={view.refusal.action.onPress}
+                    showChevron={false}
+                />
+            ) : null}
+        </ItemGroup>
+    ) : null;
+
+    if (!view.featureEnabled || (view.resolved && view.resource === null && !view.refusal)) {
         return (
             <ItemGroup description={view.featureEnabled
                 ? t('teams.credentials.detail.notFound')
@@ -101,7 +114,7 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
         );
     }
 
-    if (view.resolved && !managesResources) {
+    if (view.resolved && !managesResources && !view.refusal) {
         return (
             <ItemGroup description={t('teams.credentials.forbidden')}>
                 <Item
@@ -114,18 +127,7 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
     }
 
     if (view.resource === null) {
-        if (view.error) {
-            return (
-                <ItemGroup description={t('teams.unavailable.offline')}>
-                    <Item
-                        testID="team-credential-activity-resource-retry"
-                        title={t('teams.unavailable.retry')}
-                        onPress={() => void view.reload()}
-                        showChevron={false}
-                    />
-                </ItemGroup>
-            );
-        }
+        if (refusalLine) return refusalLine;
         return (
             <ItemGroup>
                 <Item
@@ -218,16 +220,7 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
                 </ItemGroup>
             ) : null}
 
-            {view.error ? (
-                <ItemGroup description={t('teams.unavailable.offline')}>
-                    <Item
-                        testID="team-credential-activity-resource-retry"
-                        title={t('teams.unavailable.retry')}
-                        onPress={() => void view.reload()}
-                        showChevron={false}
-                    />
-                </ItemGroup>
-            ) : null}
+            {refusalLine}
         </>
     );
 });

@@ -17834,6 +17834,7 @@ const japanese: TeamsTranslationRoot = {
             errors: {
                 featureDisabled: '\u3053\u306e Home \u306f\u5171\u6709\u8a8d\u8a3c\u60c5\u5831\u306b\u5bfe\u5fdc\u3057\u3066\u3044\u307e\u305b\u3093\u3002',
                 invalidResourceRead: "この Home は、認証情報の選択肢を取得するリクエストを受け付けませんでした。",
+                resourceUnreadable: "この Home は保存された認証情報を読み取れませんでした。",
                 teamAuthenticationRequired: '\u7d9a\u3051\u308b\u524d\u306b\u3001\u3053\u306e\u30c1\u30fc\u30e0\u306b\u30b5\u30a4\u30f3\u30a4\u30f3\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
                 teamAuthenticationPolicyUnavailable: '\u3053\u306e\u30c1\u30fc\u30e0\u306e\u30b5\u30a4\u30f3\u30a4\u30f3\u30dd\u30ea\u30b7\u30fc\u3092\u8aad\u307f\u53d6\u308c\u306a\u304b\u3063\u305f\u305f\u3081\u3001\u4f55\u3082\u5909\u66f4\u3055\u308c\u3066\u3044\u307e\u305b\u3093\u3002',
                 memberNotEligible: '\u3053\u306e\u4eba\u306f\u3053\u306e\u8a8d\u8a3c\u60c5\u5831\u3092\u4f7f\u7528\u3067\u304d\u307e\u305b\u3093\u3002',

@@ -10,9 +10,9 @@ import {
     useTeamCredentialResource,
     useTeamCredentialResourceCatalog,
 } from '@/hooks/teams/useTeamCredentialResources';
-import type { HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
-
 import type { TeamSectionContext } from '../teamSectionContext';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
+import { presentCredentialReadFailure } from './teamCredentialPresentation';
 import { useOpenedTeamCredentialDisplayNames } from './teamCredentialPrivateLabels';
 
 /**
@@ -44,15 +44,17 @@ export type TeamCredentialResourceView = Readonly<{
      * the person who is waiting loses both their draft and any explanation.
      */
     writesSuspended: boolean;
-    error: HomeDomainFailure | null;
+    refusal: ReturnType<typeof presentCredentialReadFailure> | null;
     reload: () => Promise<void>;
 }>;
 
 export function useTeamCredentialResourceView(params: Readonly<{
     context: TeamSectionContext;
     resourceId: string;
+    failureTestIDPrefix: string;
 }>): TeamCredentialResourceView {
-    const { context, resourceId } = params;
+    const { context, resourceId, failureTestIDPrefix } = params;
+    const readFailureAction = useTeamReadFailureAction(context.address);
     const featureEnabled = useFeatureEnabled('teams.credentialResources', {
         scopeKind: 'spawn',
         serverId: context.scope.serverId,
@@ -92,15 +94,14 @@ export function useTeamCredentialResourceView(params: Readonly<{
     const reload = React.useCallback(async () => {
         await Promise.all([exact.reload(), catalog.reload()]);
     }, [catalog.reload, exact.reload]);
-    // A recipient row establishes read-only availability, not administration
-    // access. Its manager-only denial must not become a resource failure.
-    const error = catalogResource !== null && exact.error?.kind === 'forbidden'
-        ? catalog.error
-        : exact.error?.retryable === true
-            ? exact.error
-            : catalog.error?.retryable === true
-                ? catalog.error
-                : exact.error ?? catalog.error;
+    // An opaque administration denial leaves recipient availability for the
+    // catalog to answer. Other exact refusals, including Team sign-in, still
+    // matter when there is a retained recipient row.
+    const exactFailure = exact.error?.code === 'not_found_or_not_visible' ? null : exact.error;
+    const failure = exactFailure ?? (exact.resource === null ? catalog.error : null);
+    const refusal = React.useMemo(() => failure === null ? null : presentCredentialReadFailure(failure, () =>
+        readFailureAction(failure, { onPress: () => void reload(), testIDPrefix: failureTestIDPrefix })),
+    [failure, failureTestIDPrefix, readFailureAction, reload]);
 
     return React.useMemo(() => Object.freeze({
         featureEnabled,
@@ -116,7 +117,7 @@ export function useTeamCredentialResourceView(params: Readonly<{
             && !context.archived
             && managesResources,
         writesSuspended: context.approvalPending || !exact.isCurrent,
-        error,
+        refusal,
         reload,
-    }), [catalog.resolved, catalogResource, context.approvalPending, context.archived, context.mutationsAvailable, displayName, error, exact.isCurrent, exact.resolved, exact.resource, featureEnabled, managesResources, reload, viewer]);
+    }), [catalog.resolved, catalogResource, context.approvalPending, context.archived, context.mutationsAvailable, displayName, exact.isCurrent, exact.resolved, exact.resource, featureEnabled, managesResources, refusal, reload, viewer]);
 }
