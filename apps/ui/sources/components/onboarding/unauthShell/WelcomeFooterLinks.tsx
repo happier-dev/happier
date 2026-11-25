@@ -26,6 +26,7 @@ export type WelcomeFooterLinksProps = Readonly<{
     variant: 'desktop' | 'mobile';
     /** The pane's footer accessory (signed-out Updates): the help row's trailing control. */
     trailing?: React.ReactNode;
+    trailingSize?: number;
 }>;
 
 type FooterLink = Readonly<{ key: string; label: string; accessibilityLabel: string; icon: IconName; open: () => void }>;
@@ -50,7 +51,9 @@ export const WelcomeFooterLinks = React.memo(function WelcomeFooterLinks(props: 
     const line = (
         <View style={styles.lineMobile} testID="welcome-footer-docs">
             {links.map((link) => <FooterTextLink key={link.key} link={link} />)}
-            {props.trailing}
+            {props.trailing != null ? <View style={{ width: props.trailingSize, minHeight: props.trailingSize }}>
+                {props.trailing}
+            </View> : null}
         </View>
     );
     return (

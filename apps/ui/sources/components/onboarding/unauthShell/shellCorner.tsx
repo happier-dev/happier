@@ -44,17 +44,16 @@ export function useShellCornerDoor(door: ShellCornerDoor | null): boolean {
   return slot !== null && door !== null;
 }
 
-/** The Home's data-retention line, which a computer's shell stands in the page's bottom-right corner. */
+/** The Home's data-retention line at the shell's footer edge. */
 export type ShellCornerNote = Readonly<{ disclosure: RelayRetentionDisclosureModel; onRetry?: () => void }>;
 
 type ShellCornerNoteSlot = (note: ShellCornerNote | null) => void;
 
-/** The page's bottom-right corner on a computer, provided by `WorkflowPanel`; absent on a phone. */
+/** Provided by the Welcome workflow on both widths. */
 export const ShellCornerNoteContext = React.createContext<ShellCornerNoteSlot | null>(null);
 
 /**
- * The welcome hands its retention line to the shell's bottom-right corner on a computer (owner 2026-11-20: it crowded
- * the centre above the planet); returns whether the shell placed it, so the step keeps it in its column otherwise.
+ * Register the disclosure with the shell and report whether it owns the placement.
  */
 export function useShellCornerNote(note: ShellCornerNote | null): boolean {
   const slot = React.useContext(ShellCornerNoteContext);

@@ -1,17 +1,17 @@
 import { HAPPIER_BALANCED_TEXT_WRAP, HappierBodyEdgeContext } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { Animated, Platform, View, type LayoutChangeEvent } from 'react-native';
+import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useLaunchCurtainState } from '@/boot/launchCurtain';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { StepMotionLayer, useFirstRunWorkflowMotion, useStepNoticeLift } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { StepMotionLayer, useFirstRunWorkflowMotion } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
 import { STEP_DOOR_WIDTH_PX, StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
-import { RelayRetentionDisclosure, WELCOME_RETENTION_LINE_COUNT } from '@/components/onboarding/unauthShell/RelayRetentionDisclosure';
+import { RelayRetentionDisclosure } from '@/components/onboarding/unauthShell/RelayRetentionDisclosure';
 import { ShellHeaderClearanceContext, ShellWelcomeOverflowContext, useShellCornerDoor, useShellCornerNote } from '@/components/onboarding/unauthShell/shellCorner';
 import { OrganizationPolicyInvalidHelp, OrganizationPolicyManagedLine } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { HomeContextLine } from '@/components/onboarding/ui/ActiveRelaySummary';
@@ -68,7 +68,7 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
     const selfHostingInCorner = useShellCornerDoor(model.selfHosting ? {
         testID: model.selfHosting.display.testID, label: model.selfHosting.display.title, onPress: interaction?.onSelfHosting,
     } : null);
-    // A computer's shell stands the retention line in its bottom-right corner; a phone keeps it under the trust line.
+    // The shell places the disclosure outside the main column.
     const retentionInCorner = useShellCornerNote(model.retention
         ? { disclosure: model.retention, onRetry: interaction?.onRetryRetention }
         : null);
@@ -86,26 +86,26 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
         else commit();
     }, [animateNotices, model.notices, noticeKey, shown.key]);
     const visible = animateNotices ? shown.notices : model.notices;
-    // The notice always stands above the doors. Lift the heading when there is clearance, or
-    // give the notice room in the scrollable column when the header cannot move.
-    const anchoredNotices = model.heading != null || model.policy != null;
     const [measuredNoticeHeight, setNoticeHeight] = React.useState(0);
     const noticeHeight = visible.length > 0 ? measuredNoticeHeight : 0;
     const headerClearance = React.useContext(ShellHeaderClearanceContext);
     const setOverflow = React.useContext(ShellWelcomeOverflowContext);
-    const above = anchoredNotices && noticeHeight <= headerClearance;
-    const lift = useStepNoticeLift(above ? noticeHeight : 0, animateNotices);
+    // A top-aligned Home sign-in step uses the same tail without a centering spacer.
+    const separateNotices = model.heading != null || model.policy != null;
+    const above = setOverflow !== null && separateNotices && noticeHeight <= headerClearance;
     React.useLayoutEffect(() => {
-        setOverflow?.(anchoredNotices && !above ? noticeHeight : 0);
-    }, [above, anchoredNotices, noticeHeight, setOverflow]);
+        setOverflow?.(separateNotices && !above ? noticeHeight : 0);
+    }, [above, noticeHeight, separateNotices, setOverflow]);
     React.useLayoutEffect(() => () => setOverflow?.(0), [setOverflow]);
+    const notices = <WelcomeNotices notices={visible} onAction={noticeAction}
+        placement={above ? 'header' : separateNotices ? 'tail' : 'inline'} compact={compact}
+        motionKey={animateNotices ? shown.key : undefined} onMeasure={setNoticeHeight} />;
     return (
         <View testID="welcome-decision-panel" style={[styles.root, compact ? styles.rootCompact : null]}
             pointerEvents={interaction ? 'auto' : 'none'} accessibilityElementsHidden={!interaction}
             aria-hidden={!interaction}
             importantForAccessibility={interaction ? 'auto' : 'no-hide-descendants'}>
-            {model.heading || model.policy ? <Animated.View style={[styles.aboveDoors, compact ? styles.aboveDoorsCompact : null,
-                { transform: [{ translateY: lift }] }]}>
+            {model.heading || model.policy ? <View style={[styles.aboveDoors, compact ? styles.aboveDoorsCompact : null]}>
                 {model.heading ? <View style={styles.headingBlock}>
                     {model.context ? <View style={styles.context}>
                         <HomeContextLine testID="welcome-home-context" {...model.context} />
@@ -125,11 +125,10 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                 {model.policy?.kind === 'managed' ? <OrganizationPolicyManagedLine display={model.policy.display}
                     testID={`organization-policy-${model.policy.field}`} supportUrl={interaction?.policySupportUrl} /> :
                     model.policy?.kind === 'invalid' ? <OrganizationPolicyInvalidHelp interactive={Boolean(interaction)} /> : null}
-            </Animated.View> : null}
+            </View> : null}
             <WelcomeActionList admission={interaction?.admission ?? inertAdmission}>
                 <View style={styles.actionStack}>
-                    <WelcomeNotices notices={visible} onAction={noticeAction} above={above}
-                        motionKey={animateNotices ? shown.key : undefined} onMeasure={setNoticeHeight} />
+                    {!separateNotices ? notices : null}
                     <View style={styles.ways}>
                         <View testID="welcome-doors" style={styles.doors}>
                             {model.primaryDoorPending ? <PendingPrimaryDoor /> : null}
@@ -149,12 +148,12 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                     {model.trust ? (
                         <View style={styles.trust}>
                             <Text testID="welcome-trust" style={styles.trustText}>{model.trust}</Text>
-                            <View style={styles.retention}>
-                                {model.retention && !retentionInCorner ? (
+                            {model.retention && !retentionInCorner ? (
+                                <View style={styles.retention}>
                                     <RelayRetentionDisclosure testID="welcome-retention"
                                         disclosure={{ ...model.retention, retry: interaction?.onRetryRetention }} />
-                                ) : null}
-                            </View>
+                                </View>
+                            ) : null}
                         </View>
                     ) : null}
                     {model.selfHosting && !selfHostingInCorner ? (
@@ -165,6 +164,7 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                     ) : null}
                 </View>
             </WelcomeActionList>
+            {separateNotices ? notices : null}
         </View>
     );
 });
@@ -182,10 +182,11 @@ function PendingPrimaryDoor() {
 
 const WELCOME_NOTICE_LAYER = 'welcome-notices';
 
-function WelcomeNotices({ notices, onAction, above, motionKey, onMeasure }: Readonly<{
+function WelcomeNotices({ notices, onAction, placement, compact, motionKey, onMeasure }: Readonly<{
     notices: WelcomeEntryViewModel['notices'];
     onAction?: (testID: string) => void;
-    above: boolean;
+    placement: 'header' | 'tail' | 'inline';
+    compact: boolean;
     motionKey?: string;
     /** Reports the measured slot, including the gap above the doors. */
     onMeasure: (height: number) => void;
@@ -202,7 +203,10 @@ function WelcomeNotices({ notices, onAction, above, motionKey, onMeasure }: Read
     return (
         <View ref={box} testID={empty ? undefined : 'welcome-notice-slot'} onLayout={onLayout}
             pointerEvents={empty ? 'none' : undefined}
-            style={empty ? stylesheet.emptyNoticeSlot : above ? stylesheet.noticeAboveDoors : stylesheet.noticeInColumn}>
+            style={empty ? stylesheet.emptyNoticeSlot : placement === 'header' ? stylesheet.noticeAboveHeading
+                : placement === 'tail'
+                    ? [stylesheet.noticeTail, compact ? stylesheet.noticeTailCompact : null]
+                    : stylesheet.noticeInColumn}>
             <StepMotionLayer layerKey={WELCOME_NOTICE_LAYER} stepKey={motionKey} active={motionKey !== undefined}
                 warmOnMount={false} retainContent style={stylesheet.noticeLines}>
                 {notices.map(notice => <WelcomeNotice key={notice.slot} notice={notice} onAction={onAction} />)}
@@ -289,7 +293,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         maxWidth: STEP_DOOR_WIDTH_PX,
         alignSelf: 'center',
     },
-    // The heading block and any policy line, lifted together when a notice stands above the doors.
+    // The heading block shares the reserved top of the column with startup policy copy.
     aboveDoors: {
         alignSelf: 'stretch',
         alignItems: 'center',
@@ -301,12 +305,22 @@ const stylesheet = StyleSheet.create((theme) => ({
     emptyNoticeSlot: {
         position: 'absolute',
     },
-    noticeAboveDoors: {
+    noticeAboveHeading: {
         position: 'absolute',
         bottom: '100%',
-        left: 0,
-        right: 0,
+        width: '100%',
+        maxWidth: STEP_DOOR_WIDTH_PX,
+        alignSelf: 'center',
         paddingBottom: theme.space.s12,
+    },
+    noticeTail: {
+        width: '100%',
+        maxWidth: STEP_DOOR_WIDTH_PX,
+        marginTop: -theme.space.s24,
+        paddingTop: theme.space.s12,
+    },
+    noticeTailCompact: {
+        marginTop: -theme.space.s16,
     },
     noticeInColumn: {
         marginBottom: -theme.space.s12,
@@ -370,10 +384,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
         textAlign: 'center',
     },
-    // The disclosure keeps its place after the doors while the catalog loads.
     retention: {
         width: '100%',
-        minHeight: theme.space.s16 + WELCOME_RETENTION_LINE_COUNT * (Typography.variant('body').lineHeight ?? 0),
         paddingTop: theme.space.s16,
     },
 }));

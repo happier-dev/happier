@@ -25,7 +25,7 @@ vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
 // Collect the real owner graph before the behavior test deadline starts.
 await import('./HomeAddForm');
 
-function answerAsHome(url: string) {
+function answerAsHome(url: string, authEntry?: Promise<Response>) {
   const base = createRootLayoutFeaturesResponse();
   const features = createRootLayoutFeaturesResponse({
     capabilities: {
@@ -46,6 +46,7 @@ function answerAsHome(url: string) {
   network.fetch.mockImplementation(async (input: RequestInfo | URL) => {
     const path = String(input);
     if (path.endsWith('/health')) return new Response('{}', { status: 200 });
+    if (authEntry && path.endsWith('/v1/auth/entry')) return authEntry;
     if (path.endsWith('/v1/features'))
       return new Response(JSON.stringify(features), {
         status: 200,
@@ -106,7 +107,8 @@ describe('Add Home as a step of a host page (the Welcome wizard)', () => {
     vi.stubGlobal('location', { protocol: 'https:' });
     // The feature probe uses the platform fetch and the reachability probe runtimeFetch: one fake Home answers both.
     vi.stubGlobal('fetch', network.fetch);
-    answerAsHome('https://accounts.example.test');
+    const catalog = Promise.withResolvers<Response>();
+    answerAsHome('https://accounts.example.test', catalog.promise);
     const backChanges: Array<Readonly<{ onPress?: () => void }> | null> = [];
     const { HomeAddForm } = await import('./HomeAddForm');
     const screen = await renderScreen(
@@ -138,9 +140,19 @@ describe('Add Home as a step of a host page (the Welcome wizard)', () => {
     );
     // One way back: the host's control, not a pane link plus a Back card under the methods.
     expect(screen.findByTestId('already-use-happier.another-way')).toBeNull();
+    const welcome = screen.findByTestId('welcome-decision-panel');
+    expect(welcome).not.toBeNull();
+    const rows = welcome!.findAll(({ props }) =>
+      props.testID === 'welcome-doors' || props.testID === 'welcome-notice-slot',
+    );
+    expect([...new Set(rows.map(({ props }) => props.testID))]).toEqual([
+      'welcome-doors',
+      'welcome-notice-slot',
+    ]);
+    await act(async () => catalog.resolve(new Response('{}', { status: 404 })));
     await vi.waitFor(() =>
       expect(
-        screen.findByTestId('already-use-happier.home-methods-loading'),
+        screen.findByTestId('welcome-auth-loading'),
       ).toBeNull(),
     );
     expect(screen.findByTestId('home-auth-back')).toBeNull();

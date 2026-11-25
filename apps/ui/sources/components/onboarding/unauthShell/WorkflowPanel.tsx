@@ -15,10 +15,8 @@ import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBa
 import { BrandWordmark } from './BrandWordmark';
 import { WelcomeFooterLinks } from './WelcomeFooterLinks';
 import { STEP_ROW_BUTTON_PX, StepBackContext, StepRowBackButton, UNAUTH_BACK_TEST_ID, useStepBackSlot, WIDE_STEP_COLUMN_PX, WideStepColumnContext } from './stepBack';
-import { GlassSurface } from '@/components/ui/glass/GlassSurface';
-import { Typography } from '@/constants/Typography';
 
-import { RelayRetentionDisclosure, WELCOME_RETENTION_LINE_COUNT } from './RelayRetentionDisclosure';
+import { RelayRetentionDisclosure } from './RelayRetentionDisclosure';
 import { ShellCornerContext, ShellCornerNoteContext, ShellHeaderClearanceContext, ShellWelcomeOverflowContext, type ShellCornerDoor, type ShellCornerNote } from './shellCorner';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 
@@ -60,6 +58,7 @@ const DESKTOP_WORDMARK_TOP_PX = 52;
 const DESKTOP_WORDMARK_HEIGHT_PX = 26;
 const CORNER_PILL_HEIGHT_PX = 40;
 const DESKTOP_PANE_BOTTOM_PADDING_PX = 28;
+const FOOTER_CONTROL_SIZE_PX = 28;
 const STEP_TRANSITION_FILL_STYLE: ViewStyle = {
     flex: 1,
     minHeight: 0,
@@ -128,9 +127,19 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     // The welcome's "Run your own Home" door, in the page's top-right corner on a computer (lab direction A).
     const [cornerDoor, setCornerDoor] = React.useState<ShellCornerDoor | null>(null);
     const cornerSlot = isMobile ? null : setCornerDoor;
-    // The welcome's retention line, in the page's bottom-right corner on a computer (owner 2026-11-20).
+    // Welcome publishes its disclosure to the shell footer on both widths.
     const [cornerNote, setCornerNote] = React.useState<ShellCornerNote | null>(null);
-    const cornerNoteSlot = isMobile ? null : setCornerNote;
+    const [noteHeight, setNoteHeight] = React.useState(0);
+    const [trailHeight, setTrailHeight] = React.useState<number | null>(null);
+    const onCornerNoteLayout = React.useCallback((event: LayoutChangeEvent) => {
+        setNoteHeight(event.nativeEvent.layout.height);
+    }, []);
+    const onTrailLayout = React.useCallback((event: LayoutChangeEvent) => {
+        setTrailHeight(event.nativeEvent.layout.height);
+    }, []);
+    const noteGap = theme.space.s8;
+    const noteBelowFooter = trailHeight !== null && noteHeight + noteGap > trailHeight;
+    const noteOverflow = props.isWelcomeStep && cornerNote && noteBelowFooter ? noteHeight + noteGap : 0;
     const pane = React.useRef<View>(null);
     const readWebChrome = React.useCallback((scope?: 'shell') => {
         const root = pane.current;
@@ -192,9 +201,10 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     const onWelcomeScrollLayout = React.useCallback((event: LayoutChangeEvent) => {
         setWelcomeScrollHeight(event.nativeEvent.layout.height);
     }, []);
-    // Tail notices extend the scrollable page by their exact height, preserving the lead/trail balance.
-    const welcomeScrollMinimum = props.isWelcomeStep && welcomeOverflow > 0 && welcomeScrollHeight > 0
-        ? { minHeight: welcomeScrollHeight + welcomeOverflow }
+    // Grow the scroll extent by the same amount as the tail, leaving the original flex space for the column.
+    const scrollOverflow = welcomeOverflow + noteOverflow;
+    const welcomeScrollMinimum = props.isWelcomeStep && scrollOverflow > 0 && welcomeScrollHeight > 0
+        ? { minHeight: welcomeScrollHeight + scrollOverflow }
         : undefined;
     const { onColumnLayout } = props;
     const onOpeningLayout = useFirstOpenContentLayout('workflow');
@@ -267,7 +277,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                 </View>
             ) : null}
             <ShellCornerContext.Provider value={cornerSlot}>
-            <ShellCornerNoteContext.Provider value={cornerNoteSlot}>
+            <ShellCornerNoteContext.Provider value={props.isWelcomeStep ? setCornerNote : null}>
             <ShellHeaderClearanceContext.Provider value={props.isWelcomeStep ? headerClearance : 0}>
             <ShellWelcomeOverflowContext.Provider value={props.isWelcomeStep ? setWelcomeOverflow : null}>
             <StepBackContext.Provider value={backSlot}>
@@ -311,13 +321,6 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                                     {props.children}
                                 </StepMotionLayer>
                             </View>
-                            <View style={styles.welcomeTrail} />
-                            <View testID="unauth-shell-welcome-footer">
-                                <WelcomeFooterLinks
-                                    variant="mobile"
-                                    trailing={props.footerAccessory}
-                                />
-                            </View>
                         </>
                     ) : (
                         <>
@@ -338,29 +341,6 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             >
                                 {props.children}
                             </StepMotionLayer>
-                            <View style={styles.welcomeTrail} />
-                            {/* The links stand on the wordmark's corner grid (40 px from the window's edges), not the pane's
-                                gutter (lab direction A). */}
-                            <View testID="unauth-shell-welcome-footer" style={styles.desktopFooterCorner}>
-                                <WelcomeFooterLinks
-                                    variant="desktop"
-                                    trailing={(
-                                        <View style={styles.cornerNote}>
-                                            <View style={styles.cornerNoteSlot}>
-                                                {cornerNote ? (
-                                                    <View style={[styles.cornerNoteSurface, { borderColor: theme.colors.border.default }]}>
-                                                        <GlassSurface surfaceGroup="card" nested finishRole={null} children={null}
-                                                            solidColor={theme.colors.surface.base} style={styles.cornerNoteGround} />
-                                                        <RelayRetentionDisclosure testID="welcome-retention"
-                                                            disclosure={{ ...cornerNote.disclosure, retry: cornerNote.onRetry }} />
-                                                    </View>
-                                                ) : null}
-                                            </View>
-                                            {props.footerAccessory}
-                                        </View>
-                                    )}
-                                />
-                            </View>
                         </>
                     )
                 ) : (
@@ -403,6 +383,34 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                         ) : null}
                     </>
                 )}
+                {props.isWelcomeStep ? (
+                    <>
+                        <View style={styles.welcomeTrail} onLayout={onTrailLayout} />
+                        <View testID="unauth-shell-welcome-footer" style={isMobile ? undefined : styles.desktopFooterCorner}>
+                            <WelcomeFooterLinks variant={props.variant} trailing={props.footerAccessory}
+                                trailingSize={FOOTER_CONTROL_SIZE_PX} />
+                            {cornerNote ? (
+                                <View
+                                    onLayout={onCornerNoteLayout}
+                                    pointerEvents={noteHeight > 0 && trailHeight !== null ? 'auto' : 'none'}
+                                    style={[
+                                        styles.cornerNote,
+                                        noteBelowFooter
+                                            ? { top: '100%', marginTop: noteGap }
+                                            : { bottom: '100%', marginBottom: noteGap },
+                                        noteHeight > 0 && trailHeight !== null ? null : styles.measuringNote,
+                                    ]}
+                                >
+                                    <View style={styles.cornerNoteSurface}>
+                                        <RelayRetentionDisclosure testID="welcome-retention"
+                                            disclosure={{ ...cornerNote.disclosure, retry: cornerNote.onRetry }} />
+                                    </View>
+                                </View>
+                            ) : null}
+                        </View>
+                        {noteOverflow > 0 ? <View style={{ height: noteOverflow }} /> : null}
+                    </>
+                ) : null}
             </ScrollView>
             </WideStepColumnContext.Provider>
             </StepBackContext.Provider>
@@ -474,9 +482,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         justifyContent: 'flex-end',
         paddingTop: 20,
+        minHeight: 20 + FOOTER_CONTROL_SIZE_PX,
     },
     footerAccessoryRowDesktop: {
         paddingBottom: 28,
+        minHeight: 20 + FOOTER_CONTROL_SIZE_PX + 28,
     },
     backChevronContainer: {
         position: 'absolute',
@@ -493,32 +503,23 @@ const stylesheet = StyleSheet.create((theme) => ({
         top: DESKTOP_WORDMARK_TOP_PX + WORDMARK_HEIGHT_PX + 16,
         left: DESKTOP_WORDMARK_INSET_PX,
     },
-    // The retention line on the bottom-right corner grid, right-aligned beside the footer's own control.
+    // Anchor to the footer instead of participating in its row or the main column.
     cornerNote: {
+        position: 'absolute',
+        right: 0,
+        width: '100%',
         maxWidth: 400,
-        alignItems: 'flex-end',
-        gap: theme.space.s8,
     },
-    // Reserve the corner pill's footprint so reading the disclosure does not recenter the doors.
-    cornerNoteSlot: {
-        minHeight: WELCOME_RETENTION_LINE_COUNT * (Typography.variant('body').lineHeight ?? 0)
-            + 2 * (theme.space.s8 + StyleSheet.hairlineWidth),
-        justifyContent: 'flex-end',
+    measuringNote: {
+        opacity: 0,
     },
     cornerNoteSurface: {
+        backgroundColor: theme.colors.surface.base,
+        borderColor: theme.colors.border.default,
         borderWidth: StyleSheet.hairlineWidth,
         borderRadius: theme.borderRadius.lg,
         paddingVertical: theme.space.s8,
         paddingHorizontal: theme.space.s12,
-    },
-    cornerNoteGround: {
-        position: 'absolute',
-        top: 0,
-        right: 0,
-        bottom: 0,
-        left: 0,
-        borderRadius: theme.borderRadius.lg,
-        pointerEvents: 'none',
     },
     cornerDoor: {
         position: 'absolute',
