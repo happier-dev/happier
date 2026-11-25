@@ -72,10 +72,10 @@ function projectFact(fact: MachineServiceObservationV1) {
     }
 }
 export const machineOutcomeEventActions = Object.fromEntries(eventIds.map(event => [event + '/setup', {
-    title: usesRetainedSummary(event) ? 'Choose Home' : 'Choose Machine',
+    title: descriptors[event].scope === 'backup' ? 'Choose a Home' : usesRetainedSummary(event) ? 'Choose Home' : 'Choose Machine',
     execution: { target: 'daemon' as const }, scopes: ['global', 'machine'] as const,
     surfaces: ['plugin', 'ui', 'cli', 'agent', 'mcp'] as const, dangerLevel: 'safe' as const, readOnly: true,
-    ...(descriptors[event].scope === 'backup' ? { inputHints: { fields: [
+    ...(descriptors[event].scope === 'backup' ? { inputHints: { submitLabel: 'Use this source', fields: [
         { path: 'serverId', title: 'Home', widget: 'select' as const,
             inputType: { hostType: 'homeId' as const }, required: true },
     ] } } : {}),

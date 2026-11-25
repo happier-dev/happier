@@ -43,7 +43,7 @@ async function readReceiptEnvironment(
 }
 const outcomes = {
     [changedEvent]: { completesActionIds: undefined, state: null, operation: null, schema: changedSchema, key: 'deploymentReceiptChanged',
-        title: 'Deployment receipt changed', description: 'The current deployment receipt or its serving Domain changed.' },
+        title: 'Deployment or domain changed', description: 'The deployment or its serving domain changed.' },
     [DEPLOYMENT_FAILED_EVENT]: { completesActionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], state: 'failed', operation: null, schema: failedSchema, key: 'deploymentFailed',
         title: 'Deployment failed', description: 'A deployment receipt settled as failed, with its recorded failure phase.' },
     [ROLLBACK_COMPLETED_EVENT]: { completesActionIds: [DEPLOYMENT_ROLLBACK_ACTION_ID_V1], state: 'succeeded', operation: 'rollback', schema: rollbackSchema, key: 'rollbackCompleted',
