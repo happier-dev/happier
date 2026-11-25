@@ -55,6 +55,18 @@ const WINDOW_MS: Readonly<Record<WindowId, number>> = {
 };
 
 type CaptureStatus = Extract<DatabaseCaptureStatusResultV1, { ok: true }>;
+/** What the view's body shows: the one decision the time window and the status line follow. */
+type CaptureBodyKind = 'reading' | 'unavailable' | 'off' | 'waiting' | 'list';
+
+/** Tells the view whether the open request's detail is the page (pushed on a phone), from the Collection's own fact. */
+function DetailIsPageReporter(props: Readonly<{ isPage: boolean; onChange: (isPage: boolean) => void }>): null {
+  const { isPage, onChange } = props;
+  React.useLayoutEffect(() => {
+    onChange(isPage);
+    return () => onChange(false);
+  }, [isPage, onChange]);
+  return null;
+}
 type StatusRead =
   | Readonly<{
       reads: TelemetryCaptureReads;
@@ -136,9 +148,12 @@ export function LocalServiceCaptureView(
   const traceDetail = React.useMemo<CaptureListDetail<DatabaseCaptureSummaryV1>>(() => ({
     openId: openTraceId,
     onOpenChange: setOpenTraceId,
-    render: (request) => reads ? (
-      <TelemetryRequestDetail key={request.id} reads={reads} lifetime={lifetime} active={active} request={request}
-        locale={locale} />
+    render: (request, context) => reads ? (
+      <>
+        <DetailIsPageReporter isPage={context.pushed} onChange={setDetailIsPage} />
+        <TelemetryRequestDetail key={request.id} reads={reads} lifetime={lifetime} active={active} request={request}
+          locale={locale} />
+      </>
     ) : null,
   }), [openTraceId, reads, lifetime, active, locale]);
   const readLogBody = React.useCallback(
@@ -224,17 +239,35 @@ export function LocalServiceCaptureView(
       ? t('deploymentTelemetry.local.missed', { count: new Intl.NumberFormat(locale).format(ready.coverage.lostObservations) })
       : ''
     : null;
-  const statusText = failed && data === null
+  // One decision for what the view shows: the body draws it, and the time window and status follow it.
+  const bodyKind: CaptureBodyKind = status === null
+    ? 'reading'
+    : status.kind === 'failed'
+      ? 'unavailable'
+      : enabled === false
+        ? 'off'
+        : failed && data === null
+          ? 'unavailable'
+          : data && data.items.length === 0 && !state.reading
+            ? 'waiting'
+            : data
+              ? 'list'
+              : 'reading';
+  const stale = bodyKind === 'list' && failed;
+  // The bar says only "Preparing" or "Capture on", and only when no line already says the capture's state.
+  const statusText = stale || gaps !== null || restartRequired
     ? null
     : ready?.preparing
       ? t('deploymentTelemetry.local.preparing')
-      : gaps === null && !restartRequired && enabled
+      : enabled
         ? t('deploymentTelemetry.local.on')
         : null;
-  // The time window and "…" stand over the rows. Over Traces they are its list's header, so they give way while one
-  // request's detail is the page on a phone: a window does not apply to a single request (lab dbCapture-tracep).
-  const tracesShown = status?.kind === 'ready' && enabled === true && !(failed && data === null)
-    && !(data !== null && data.items.length === 0 && !state.reading) && data?.list === 'traces';
+  // The time window and "…" stand over the rows, in one place on every tab. They are there while a list is (or is about
+  // to be) shown, and give way while one request's detail is the page on a phone: a window does not apply to a single
+  // request (lab dbCapture-tracep), nor to a capture that did not answer.
+  const [detailIsPage, setDetailIsPage] = React.useState(false);
+  const windowShown = enabled === true && bodyKind !== 'unavailable' && bodyKind !== 'off'
+    && !(view === 'traces' && detailIsPage);
   const windowBar = (
     <View style={styles.bar}>
       <Text
@@ -274,27 +307,20 @@ export function LocalServiceCaptureView(
     </View>
   );
   const body =
-    status === null ? (
-      <SurfaceStateCard
-        testID={`${testID}-reading`}
-        kind="loading"
-        size="line"
-        title={t('common.loading')}
-      />
-    ) : status.kind === 'failed' ? (
+    bodyKind === 'unavailable' ? (
       <SurfaceStateCard
         testID={`${testID}-unavailable`}
         kind="unavailable"
         title={t('deploymentTelemetry.local.unavailableTitle')}
         reason={t('deploymentTelemetry.local.unavailableBody')}
-        diagnosticCode={status.code}
+        diagnosticCode={status?.kind === 'failed' ? status.code : state.failure}
         action={{
           label: t('common.retry'),
           onPress: retry,
           testID: `${testID}-retry`,
         }}
       />
-    ) : enabled === false ? (
+    ) : bodyKind === 'off' ? (
       <SurfaceStateCard
         testID={`${testID}-off`}
         kind="empty"
@@ -313,20 +339,7 @@ export function LocalServiceCaptureView(
               },
             })}
       />
-    ) : failed && data === null ? (
-      <SurfaceStateCard
-        testID={`${testID}-unavailable`}
-        kind="unavailable"
-        title={t('deploymentTelemetry.local.unavailableTitle')}
-        reason={t('deploymentTelemetry.local.unavailableBody')}
-        diagnosticCode={state.failure}
-        action={{
-          label: t('common.retry'),
-          onPress: retry,
-          testID: `${testID}-retry`,
-        }}
-      />
-    ) : data && data.items.length === 0 && !state.reading ? (
+    ) : bodyKind === 'waiting' ? (
       <SurfaceStateCard
         testID={`${testID}-waiting`}
         kind="empty"
@@ -334,7 +347,7 @@ export function LocalServiceCaptureView(
         title={t('deploymentTelemetry.local.waitingTitle')}
         reason={t('deploymentTelemetry.local.waitingBody')}
       />
-    ) : data?.list === 'endpoints' ? (
+    ) : bodyKind === 'list' && data?.list === 'endpoints' ? (
       <CaptureEndpoints
         items={data.items}
         loading={state.reading}
@@ -343,18 +356,17 @@ export function LocalServiceCaptureView(
           data.nextCursor ? { onPress: more, busy: state.loadingMore } : null
         }
       />
-    ) : data?.list === 'traces' ? (
+    ) : bodyKind === 'list' && data?.list === 'traces' ? (
       <CaptureTraces
         items={data.items}
         loading={state.reading}
         locale={locale}
         detail={traceDetail}
-        header={windowBar}
         more={
           data.nextCursor ? { onPress: more, busy: state.loadingMore } : null
         }
       />
-    ) : data?.list === 'logs' ? (
+    ) : bodyKind === 'list' && data?.list === 'logs' ? (
       <CaptureLogs
         items={data.items}
         loading={state.reading}
@@ -393,7 +405,7 @@ export function LocalServiceCaptureView(
             // The line's owner draws `emphasis` inside `reason`: what to do, then why.
             reason={`${t('deploymentTelemetry.local.restart')} ${t('deploymentTelemetry.local.restartReason')}`}
             action={{
-              label: t('deploymentTelemetry.local.servers'),
+              label: t('deploymentTelemetry.local.openServers'),
               onPress: props.onShowServers,
             }}
           />
@@ -408,7 +420,7 @@ export function LocalServiceCaptureView(
             action={{ label: t('common.retry'), onPress: () => { void retryCapture(); } }}
           />
         ) : null}
-        {failed && data !== null ? (
+        {stale ? (
           <SurfaceFreshnessLine
             testID={`${testID}-stale`}
             tone="warning"
@@ -417,7 +429,7 @@ export function LocalServiceCaptureView(
             action={{ label: t('common.retry'), onPress: retry }}
           />
         ) : null}
-        {enabled && !tracesShown ? windowBar : null}
+        {windowShown ? windowBar : null}
       </View>
       <CoreCollectionScope>{body}</CoreCollectionScope>
     </View>

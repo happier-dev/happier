@@ -151,8 +151,6 @@ function CaptureList<Item>(
      */
     tableMinWidth?: number;
     detail?: CaptureListDetail<Item>;
-    /** Controls over the rows (a time window): beside the list, and gone while one row's detail is the page. */
-    header?: React.ReactNode;
   }>,
 ) {
   const { items, keyOf, onOpen, detail } = props;
@@ -202,7 +200,6 @@ function CaptureList<Item>(
         {...(props.useRowActions ? { useRowActions: props.useRowActions } : {})}
         empty={<Text tone="secondary" value={props.empty} />}
         scroll="page"
-        {...(props.header === undefined ? {} : { header: props.header })}
         {...(detail
           ? {
               // The rows and the chosen one's detail share the page (lab dbCapture-traces: a short list, a wide detail).
@@ -238,18 +235,22 @@ function requestCount(count: number, locale: string, text: PluginTranslate): str
     : text('plugins.telemetry.capture.requestsCount', '{count} requests', { count: formatHappierDataValue(count, locale) });
 }
 
+/** "9 failed": the one part of a route's phone line that speaks, and only when the route failed. */
+function endpointFailedCount(view: CaptureEndpointView, locale: string, text: PluginTranslate): string | null {
+  return endpointFailing(view)
+    ? text('plugins.telemetry.capture.failed', '{count} failed', {
+        count: formatHappierDataValue(view.endpoint.errorCount, locale),
+      })
+    : null;
+}
+
 /**
- * The phone's second line, the figures the table's columns hold (lab dbCapture-endpointsp): "38 requests · 9 failed ·
- * 22 ms · 24% in database". A failed count is the only part that speaks, and only when there is one.
+ * The phone's second line, the figures the table's columns hold (lab dbCapture-endpointsp): "38 requests · 22 ms · 24% in
+ * database", quiet. A failed count leads it in the failure tone (`bylineLead`), so only that part speaks.
  */
 function endpointPhoneFacts(view: CaptureEndpointView, locale: string, text: PluginTranslate): string {
   return [
     requestCount(view.endpoint.requestCount, locale, text),
-    endpointFailing(view)
-      ? text('plugins.telemetry.capture.failed', '{count} failed', {
-          count: formatHappierDataValue(view.endpoint.errorCount, locale),
-        })
-      : null,
     view.meanMs === null ? null : formatHappierDuration(view.meanMs, locale),
     view.databaseShare === null
       ? null
@@ -340,21 +341,18 @@ export function CaptureEndpoints(
       // The table names the service under the route; the phone's row says the figures its columns would, in the
       // failure tone when the route failed.
       byline: (view, layout) =>
-        layout?.fieldColumns === false ? (
-          <Text
-            variant="meta"
-            tone={endpointFailing(view) ? 'danger' : 'secondary'}
-            numberOfLines={1}
-            value={endpointPhoneFacts(view, locale, text)}
-          />
-        ) : (
-          view.endpoint.serviceName || null
-        ),
+        layout?.fieldColumns === false ? endpointPhoneFacts(view, locale, text) : view.endpoint.serviceName || null,
+      // A phone row has no Error rate column: its failed count leads the line, the only part in the failure tone.
+      bylineLead: (view, layout) => {
+        const failedCount = layout?.fieldColumns === false ? endpointFailedCount(view, locale, text) : null;
+        return failedCount === null ? null : <Text variant="meta" tone="danger" value={failedCount} />;
+      },
       fields,
       // A route is a short code ("POST /checkout"): its columns keep their room on a page column, and a phone, where
       // no column fits beside it, recomposes the rows to the list.
       titleMinWidth: ENDPOINT_TITLE_MIN_WIDTH,
-      accessibilityLabel: (view) => `${captureEndpointTitle(view.endpoint)}, ${endpointPhoneFacts(view, locale, text)}`,
+      accessibilityLabel: (view) => [captureEndpointTitle(view.endpoint), endpointFailedCount(view, locale, text),
+        endpointPhoneFacts(view, locale, text)].filter((part): part is string => part !== null).join(', '),
       testID: (view) => `telemetry.capture.endpoint.${view.endpoint.method} ${view.endpoint.route}`,
       columnTitles: { title: text('plugins.telemetry.capture.route', 'Route') },
     };
@@ -403,8 +401,6 @@ export function CaptureTraces(
     loading: boolean;
     locale: string;
     more?: CapturePageMore | null;
-    /** Controls over the rows (the time window), which give way while a request's detail is the page. */
-    header?: React.ReactNode;
   }> &
     (
       | Readonly<{ onOpen: (request: DatabaseCaptureSummaryV1) => void; detail?: undefined }>
@@ -466,7 +462,6 @@ export function CaptureTraces(
         'No requests in this window',
       )}
       {...(props.detail ? { detail: props.detail } : { onOpen: props.onOpen })}
-      {...(props.header === undefined ? {} : { header: props.header })}
       more={props.more ?? null}
     />
   );

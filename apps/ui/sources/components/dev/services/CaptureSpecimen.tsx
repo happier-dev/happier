@@ -1,21 +1,20 @@
 import * as React from 'react';
-import { ScrollView } from 'react-native';
 
-import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
-import {
-  ListPresentationProvider,
-  PageColumnProvider,
-} from '@/components/ui/lists/listPresentation';
+import { DetectedLocalServicesPane } from '@/components/sessions/localServices/DetectedLocalServicesPane';
 import {
   LocalServiceCaptureView,
   type LocalServiceCaptureViewId,
 } from '@/components/sessions/localServices/LocalServiceCaptureView';
 import type { TelemetryCaptureInvoke } from '@/components/projects/deployments/telemetryCaptureReads';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import {
   TelemetryCaptureFixtureProvider,
   createTelemetryCaptureFixtureInvoke,
   createTelemetryCaptureFixtureTransport,
 } from '@/dev/testkit/fixtures/telemetryCaptureFixtures';
+import { createLocalServiceInventoryState } from '@/sync/domains/local/services/inventory/store';
+import { t } from '@/text';
 
 /** The capture states a live bed rarely reaches on demand. */
 export type CaptureSpecimenState =
@@ -34,6 +33,8 @@ const WORKTREE = {
   projectId: 'billing-api',
   workspaceId: 'checkout-main',
 };
+const INVENTORY = createLocalServiceInventoryState();
+const MACHINE = { name: 'MacBook Pro', homeDir: '/Users/me', reachability: 'reachable' as const };
 const unavailable = () =>
   Object.assign(new Error('telemetry_unavailable'), {
     code: 'telemetry_unavailable',
@@ -83,51 +84,59 @@ function specimenInvoke(state: CaptureSpecimenState): TelemetryCaptureInvoke {
 }
 
 /**
- * Dev-only: a worktree's capture view (Dev servers → Endpoints, Traces, Logs) in the states a live bed reaches only
- * by breaking it, drawn through the real `LocalServiceCaptureView` over the shared capture fixture.
+ * Dev-only: Dev servers with a capture view open, in the states a live bed reaches only by breaking it. The real page
+ * composition (`DetectedLocalServicesPane` as a page: its title, view tabs and column) hosts the real
+ * `LocalServiceCaptureView` over the shared capture fixture, so a state is judged where it stands on the page.
  */
-export function CaptureSpecimen(
-  props: Readonly<{
-    state: CaptureSpecimenState;
-    view: LocalServiceCaptureViewId;
-  }>,
-) {
-  const invoke = React.useMemo(
-    () => specimenInvoke(props.state),
-    [props.state],
-  );
-  const transport = React.useMemo(
-    () => createTelemetryCaptureFixtureTransport(invoke),
-    [invoke],
-  );
+export function CaptureSpecimen(props: Readonly<{ state: CaptureSpecimenState; view: LocalServiceCaptureViewId }>) {
+  const invoke = React.useMemo(() => specimenInvoke(props.state), [props.state]);
+  const transport = React.useMemo(() => createTelemetryCaptureFixtureTransport(invoke), [invoke]);
+  const [view, setView] = React.useState<LocalServiceCaptureViewId>(props.view);
   // A stale view is one that read once and then failed to refresh: ask it to refresh once it has its rows.
   React.useEffect(() => {
     if (props.state !== 'stale') return undefined;
     const timer = setTimeout(() => transport.invalidate(), 1_500);
     return () => clearTimeout(timer);
   }, [props.state, transport]);
+  const viewTabs = (
+    <SegmentedTabBar<'servers' | LocalServiceCaptureViewId>
+      accessibilityLabel={t('deploymentTelemetry.local.views')}
+      testIDPrefix="capture-specimen-view"
+      segmentSizing="content"
+      activeTabId={view}
+      tabs={[
+        { id: 'servers', label: t('deploymentTelemetry.local.servers') },
+        { id: 'endpoints', label: t('deploymentTelemetry.tabs.endpoints') },
+        { id: 'traces', label: t('deploymentTelemetry.tabs.traces') },
+        { id: 'logs', label: t('deploymentTelemetry.tabs.logs') },
+      ]}
+      onSelectTab={(id) => {
+        if (id !== 'servers') setView(id);
+      }}
+    />
+  );
   return (
     <ListPresentationProvider value="page">
-      <PageColumnProvider value="dashboard">
-        <ScrollView style={{ flex: 1 }}>
-          <ConstrainedScreenContent>
-            <TelemetryCaptureFixtureProvider
-              invoke={invoke}
-              transport={transport}
-            >
-              <LocalServiceCaptureView
-                lifetime={LIFETIME}
-                worktree={WORKTREE}
-                view={props.view}
-                active
-                machineName="MacBook Pro"
-                onShowServers={() => {}}
-                testID="capture-specimen"
-              />
-            </TelemetryCaptureFixtureProvider>
-          </ConstrainedScreenContent>
-        </ScrollView>
-      </PageColumnProvider>
+      <TelemetryCaptureFixtureProvider invoke={invoke} transport={transport}>
+        <DetectedLocalServicesPane
+          presentation="page"
+          inventoryState={INVENTORY}
+          machine={MACHINE}
+          viewTabs={viewTabs}
+          viewBody={
+            <LocalServiceCaptureView
+              lifetime={LIFETIME}
+              worktree={WORKTREE}
+              view={view}
+              active
+              machineName={MACHINE.name}
+              onShowServers={() => {}}
+              testID="capture-specimen"
+            />
+          }
+          testID="capture-specimen-page"
+        />
+      </TelemetryCaptureFixtureProvider>
     </ListPresentationProvider>
   );
 }

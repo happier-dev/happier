@@ -419,6 +419,47 @@ describe('LocalServiceCaptureView', () => {
     } finally { await screen.unmount(); }
   });
 
+  // DBW review R6 N1: the time window stands over a list; a capture that did not answer has none to apply it to.
+  it('offers no time window over a capture that did not answer', async () => {
+    const { invoke } = machine((call) => {
+      if (call.actionId.endsWith('/capture/status')) return { ok: true, source, coverage, enabled: true };
+      throw Object.assign(new Error('unavailable'), { code: 'telemetry_unavailable' });
+    });
+    const screen = await renderScreen(view(invoke, 'endpoints'));
+    try {
+      await settle();
+      expect(screen.findByTestId('capture-unavailable')).not.toBeNull();
+      expect(screen.findByTestId('capture-window:hour')).toBeNull();
+    } finally { await screen.unmount(); }
+  });
+
+  // DBW review R6 N2: a stale view says its state once, on its line, not "Capture on" beside "isn't answering".
+  it('says a stale capture once: the line, and no "Capture on" beside it', async () => {
+    let fail = false;
+    const finite = machine((call) => call.actionId.endsWith('/capture/status')
+      ? { ok: true, source, coverage, enabled: true } : { ok: true, source, items: [] });
+    const capture = machine(() => {
+      if (fail) throw Object.assign(new Error('unavailable'), { code: 'telemetry_unavailable' });
+      return { ok: true, source, items: [{
+        serviceName: 'web', method: 'GET', route: '/invoices/:id', requestCount: 3, errorCount: 0,
+        errorRate: 0, totalDurationMs: 600, databaseTimeMs: 400,
+      }] };
+    });
+    const transport = createTelemetryCaptureFixtureTransport(capture.invoke);
+    const screen = await renderScreen(view(finite.invoke, 'endpoints', transport));
+    try {
+      await settle();
+      expect(screen.findByTestId('telemetry.capture.endpoint.GET /invoices/:id')).not.toBeNull();
+      fail = true;
+      await act(async () => transport.invalidate());
+      await settle();
+      expect(screen.findByTestId('capture-stale')).not.toBeNull();
+      expect(screen.findByTestId('telemetry.capture.endpoint.GET /invoices/:id')).not.toBeNull();
+      expect(screen.getTextContent()).not.toMatch(/Capture on/);
+      expect(screen.getTextContent().match(/last read/g)?.length ?? 0).toBeLessThanOrEqual(1);
+    } finally { await screen.unmount(); }
+  });
+
   // DBW review R4 #7: gaps are said once, in the person's terms, with Retry beside them.
   it('says capture has gaps once, without the store code, and retries from that line', async () => {
     const { invoke, calls } = machine((call) => {
@@ -473,7 +514,8 @@ describe('LocalServiceCaptureView', () => {
       await reportCollectionLayout(screen, 'telemetry.capture.endpoints', { width: 358, height: 800 });
       await settle();
       const text = screen.getTextContent();
-      expect(text).toMatch(/38 requests · 9 failed · 22\s?ms · 23% in database/);
+      // DBW review R6 N3: the failed count leads the line on its own (the only part in the failure tone); the figures stay quiet.
+      expect(text).toMatch(/9 failed\s*·\s*38 requests · 22\s?ms · 23% in database/);
       // DBW review R5 M6: one request is "1 request".
       expect(text).toMatch(/(^|[^0-9])1 request · /);
       expect(text).not.toMatch(/(^|[^0-9])1 requests/);
