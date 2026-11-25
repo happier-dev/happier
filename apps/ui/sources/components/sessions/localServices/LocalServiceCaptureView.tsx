@@ -16,6 +16,7 @@ import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprov
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
+import { SectionLeadingColumnProvider } from '@/components/ui/lists/sectionLeadingColumn';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -384,6 +385,9 @@ export function LocalServiceCaptureView(
 
   return (
     <View style={styles.root} testID={testID}>
+      {/* The view is the section: it stands on the sheet edge and spaces its parts, so a banner or a sheet inside
+          (the approval notice, the Logs sheet) starts where the table and the lines start (DBW services M1). */}
+      <SectionLeadingColumnProvider>
       {approval.approvalPending ? (
         <ActionApprovalPendingNotice
           testID={`${testID}-approval`}
@@ -429,6 +433,7 @@ export function LocalServiceCaptureView(
         {windowShown ? windowBar : null}
       </View>
       <CoreCollectionScope>{body}</CoreCollectionScope>
+      </SectionLeadingColumnProvider>
     </View>
   );
 }

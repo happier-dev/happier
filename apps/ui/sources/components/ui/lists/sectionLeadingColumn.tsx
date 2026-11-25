@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { HappierSectionContentContext } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * The leading column of a page section, decided once per section.
@@ -50,7 +51,12 @@ function createSectionLeadingColumn(): SectionLeadingColumn {
 
 export function SectionLeadingColumnProvider(props: Readonly<{ children: React.ReactNode }>) {
     const [section] = React.useState(createSectionLeadingColumn);
-    return <SectionLeadingColumnContext.Provider value={section}>{props.children}</SectionLeadingColumnContext.Provider>;
+    // Plugin UI drawn in this section reads the same answer (`useIsInsideItemSection`): one decision, two renderers.
+    return (
+        <SectionLeadingColumnContext.Provider value={section}>
+            <HappierSectionContentContext.Provider value>{props.children}</HappierSectionContentContext.Provider>
+        </SectionLeadingColumnContext.Provider>
+    );
 }
 
 // Rows register before paint, so a section never draws its titles in one place and then moves them.

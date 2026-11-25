@@ -24,6 +24,7 @@ vi.mock('@/sync/store/hooks', async () => {
         useActiveServerAccountScope: () => null,
         // A row's mounted Action approvals name a known Account actor; none is known here.
         useUser: () => null,
+        useFriend: () => null,
     };
 });
 
@@ -79,6 +80,24 @@ function spaceAbovePx(screen: Screen, sectionTestID: string, contentTestID: stri
         return false;
     };
     walk(section);
+    return total;
+}
+
+/** The leading padding and margin of every host box from a section's root down to (not including) its content. */
+function leadingInsetPx(screen: Screen, sectionTestID: string, contentTestID: string): number {
+    const section = screen.findAllByTestId(sectionTestID).find((node) => typeof node.type === 'string');
+    const content = screen.findAllByTestId(contentTestID).find((node) => typeof node.type === 'string');
+    if (!section || !content) throw new Error(`Missing ${sectionTestID} or ${contentTestID}`);
+    const read = (value: unknown) => (typeof value === 'number' ? value : 0);
+    let total = 0;
+    for (let node: ReactTestInstance | null = content.parent; node; node = node.parent) {
+        if (typeof node.type === 'string') {
+            const style = flattenTestStyle(node.props.style);
+            total += read(style.paddingLeft ?? style.paddingStart ?? style.paddingHorizontal ?? style.padding)
+                + read(style.marginLeft ?? style.marginStart ?? style.marginHorizontal ?? style.margin);
+        }
+        if (node === section) break;
+    }
     return total;
 }
 
@@ -261,6 +280,42 @@ describe('ItemGroup page sections render through the shared page sheet', () => {
         );
         const dividers = rowDividers(screen, ['row-a', 'row-b']);
         expect(dividers.map((color) => color !== null)).toEqual([true, false]);
+    });
+
+    it('adds no second section gap or inset to a group nested in a section (a capture view\'s banner and sheet, DBW M1)', async () => {
+        const { ItemGroup, ListPresentationProvider } = await loadModules();
+        const { View } = await import('react-native');
+        const { SectionLeadingColumnProvider } = await import('./sectionLeadingColumn');
+        // The enclosing section already stands in the column and spaces its children; the groups inside start on its edge.
+        const page = await renderScreen(
+            <ListPresentationProvider value="page">
+                <View testID="section">
+                    <SectionLeadingColumnProvider>
+                        <ItemGroup testID="banner" surface="none"><View testID="banner-body" /></ItemGroup>
+                        <ItemGroup testID="sheet"><View testID="sheet-body" /></ItemGroup>
+                        <ItemGroup testID="disclosed" title="DATABASE_URL"><View testID="disclosed-body" /></ItemGroup>
+                    </SectionLeadingColumnProvider>
+                </View>
+            </ListPresentationProvider>,
+        );
+        expect({
+            bannerAbove: spaceAbovePx(page, 'banner', 'banner-body'),
+            sheetAbove: spaceAbovePx(page, 'sheet', 'sheet-body'),
+            bannerInset: leadingInsetPx(page, 'banner', 'banner-body'),
+            sheetInset: leadingInsetPx(page, 'sheet', 'sheet-body'),
+        }).toEqual({ bannerAbove: 0, sheetAbove: 0, bannerInset: 0, sheetInset: 0 });
+        // A titled one (Variables' disclosed value): its rows on the section's edge, its heading on theirs (optical
+        // inset only), and no second section gap above the heading.
+        const { presentation } = await loadModules();
+        const disclosed = page.findAllByTestId('disclosed').find((node) => typeof node.type === 'string')!;
+        const heading = disclosed.findAll((node) => typeof node.type === 'string'
+            && flattenTestStyle(node.props.style).paddingBottom === presentation.HAPPIER_PAGE_METRICS.sectionHeaderGapPx)[0]!;
+        const headingStyle = flattenTestStyle(heading.props.style);
+        expect({
+            rowsInset: leadingInsetPx(page, 'disclosed', 'disclosed-body'),
+            headingInset: headingStyle.paddingLeft ?? headingStyle.paddingHorizontal,
+            headingGap: headingStyle.paddingTop,
+        }).toEqual({ rowsInset: 0, headingInset: presentation.HAPPIER_PAGE_METRICS.headingOpticalInsetPx, headingGap: 0 });
     });
 
     it('bleeds only the rows of a bare section in a contained scope: tiles and notes stay inside the column', async () => {

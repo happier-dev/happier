@@ -6,6 +6,7 @@ import type { HappierUiPalette } from '../environment/types.js';
 import type { HappierLayoutChangeEvent } from '../presentation/portableTypes.js';
 import type { PluginUiPresentationHost } from '../presentationHost/context.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
+import { HappierSectionContentContext } from '../presentation/layout/sectionContent.js';
 import { HAPPIER_EMPTY_STATE_FRAME } from '../presentation/state/InfoState.js';
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
@@ -160,6 +161,27 @@ describe('plugin page anatomy through the shared page owners', () => {
       expect(measuredText.style.fontSize).toBe(drawn.style.fontSize);
       expect(measuredText.style.lineHeight).toBe(drawn.style.lineHeight);
     } finally { mount.unmount(); }
+  });
+
+  it('starts a section inside a host section on that section\'s edge: no second gap above, no second sheet inset (DBW M1)', () => {
+    const group = (inSection: boolean) => {
+      const mount = mountPage(
+        <HappierSectionContentContext.Provider value={inSection}>
+          <ItemGroup testID="logs" surface="sheet"><Item title="GET /invoices/:id 200" /></ItemGroup>
+        </HappierSectionContentContext.Provider>,
+      );
+      try {
+        const root = mount.container.querySelector<HTMLElement>('[data-testid="logs"]')!;
+        const sheet = root.querySelector<HTMLElement>('[role="group"]')!;
+        const spacers = [...root.children].filter((child) => child !== sheet && !child.contains(sheet));
+        return {
+          gapAbove: spacers.reduce((total, child) => total + (Number.parseFloat(getComputedStyle(child).height) || 0), 0),
+          inset: Number.parseFloat(getComputedStyle(sheet).marginLeft) || 0,
+        };
+      } finally { mount.unmount(); }
+    };
+    expect(group(false)).toEqual({ gapAbove: HAPPIER_PAGE_METRICS.sectionGapPx, inset: HAPPIER_PAGE_METRICS.sheetInsetPx });
+    expect(group(true)).toEqual({ gapAbove: 0, inset: 0 });
   });
 
   it('keeps a compact identity glyph on the same title edge as a standard page-row glyph', () => {

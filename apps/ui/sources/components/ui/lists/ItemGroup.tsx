@@ -42,7 +42,7 @@ import { SelectionListOptionPresentationContext } from '@/components/ui/selectio
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics';
 import { SectionItemDensityProvider, SectionRowRoleProvider, usePageRowDensityOverride, useResolvedItemDensity, type ResolvedItemDensity } from './useResolvedItemDensity';
 import { ITEM_ROW_PADDING_HORIZONTAL } from './itemDensityMetrics';
-import { SectionLeadingColumnProvider } from './sectionLeadingColumn';
+import { SectionLeadingColumnProvider, useIsInsideItemSection } from './sectionLeadingColumn';
 import { BareRowBleedContext, SectionRowBleedContext } from './bareRowBleed';
 import {
     HappierItemGroupBehavior,
@@ -187,6 +187,10 @@ const stylesheet = StyleSheet.create((theme) => {
         // block distance is the same whatever the first block is.
         pageHeaderNoTitle: {
             paddingTop: PAGE_LIST_METRICS.sectionGapPx,
+        },
+        // Inside a section the enclosing section already set the gap above this one.
+        pageHeaderNested: {
+            paddingTop: 0,
         },
         // U8.5 craft S2: grouped section titles (menus, pickers, sheets) are sentence case in the
         // secondary colour, medium weight — never an uppercase eyebrow.
@@ -640,6 +644,9 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
     const isPage = presentation === 'page';
     // A contained scope (a column or widget body that owns its padding) adds no second inset, page or grouped.
     const contained = usePageListInsets() === 'contained';
+    // A page section inside another section (a capture view's banner) stands where that section placed it: the
+    // enclosing section already gives the column edge and the gap, so this one adds neither a second time.
+    const nested = useIsInsideItemSection() && isPage;
     // A grouped contained scope is a widget body (WidgetFrame): its rows reach the card's edges at any card width,
     // never the reading column centred inside a wide card.
     const widgetBody = contained && !isPage;
@@ -700,7 +707,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
     // as a flat sheet's rows do. The margin is wider than the bleed, so nothing reaches a clipping edge.
     const rowBleedPx = bleedRows ? rowPaddingPx
         : isPage && surface === 'none' && !wantsColumns ? rowPaddingPx - PAGE_LIST_METRICS.headingOpticalInsetPx : 0;
-    const resolvedContainerStyle = contained ? [styles.containedContent, containerStyle] : containerStyle;
+    const resolvedContainerStyle = contained || nested ? [styles.containedContent, containerStyle] : containerStyle;
     // A section on a popover, menu or its phone sheet, carded or not: a floating surface draws no card, so
     // both take the menu anatomy and every row there shares the menu's text edge (a flat group kept the
     // grouped margin and sat 12 px in from the carded rows beside it). A column grid, a virtualized chunk
@@ -772,7 +779,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
 
     return (
         <View testID={testID} style={[styles.wrapper, style]}>
-            <View style={[styles.container, contained ? styles.containedContainer : null, constrainToContentWidth && !widgetBody ? { maxWidth } : undefined]}>
+            <View style={[styles.container, contained || nested ? styles.containedContainer : null, constrainToContentWidth && !widgetBody ? { maxWidth } : undefined]}>
                 {/* Header */}
                 {props.header === 'none' ? null : isPage && (title || description || action) ? (
                     <HappierPageSectionHeader
@@ -789,15 +796,16 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                         description={typeof description === 'string' ? description : description ? renderPageDescription(description) : undefined}
                         action={action ?? undefined}
                         actionLayout={actionLayout}
-                        insetPx={contained ? 0 : (Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 12) + (sidePaneFlat ? 0 : PAGE_LIST_METRICS.headingOpticalInsetPx)}
+                        insetPx={contained ? 0
+                            : (nested ? 0 : (Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 12)) + (sidePaneFlat ? 0 : PAGE_LIST_METRICS.headingOpticalInsetPx)}
                         renderText={(input) => input.role === 'sectionTitle'
                             ? <Text accessibilityRole="header" aria-level={2} style={[titleRole === 'label' ? styles.pageTitleLabel : styles.pageTitle, titleStyle]}>{input.text}</Text>
                             : renderPageDescription(input.text)}
                         // App callers pass React Native layout styles; the shared header keeps its own anatomy under them.
-                        style={[inspector ? styles.pageHeaderInspector : null, headerStyle] as HappierPageSectionHeaderProps['style']}
+                        style={[nested ? styles.pageHeaderNested : null, inspector ? styles.pageHeaderInspector : null, headerStyle] as HappierPageSectionHeaderProps['style']}
                     />
                 ) : isPage ? (
-                    virtualizedSegment?.first !== false ? <View style={[styles.pageHeaderNoTitle, inspector ? styles.pageHeaderNoTitleInspector : null, headerStyle]} /> : null
+                    virtualizedSegment?.first !== false && !nested ? <View style={[styles.pageHeaderNoTitle, inspector ? styles.pageHeaderNoTitleInspector : null, headerStyle]} /> : null
                 ) : title ? (
                     <View style={[styles.header, headerStyle]}>
                         {typeof title === 'string' ? (

@@ -517,6 +517,7 @@ export {
   type HappierPageOperationTextResolver,
 } from './layout/pageOperations.js';
 export { HappierBodyEdgeContext, HappierColumnEdgeContext } from './layout/columnEdge.js';
+export { HappierSectionContentContext, useHappierSectionContent } from './layout/sectionContent.js';
 export {
   HappierPageSectionContext,
   HappierPageSectionHeader,

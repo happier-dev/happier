@@ -41,6 +41,7 @@ import {
   withHappierPageSectionDividers,
 } from '../presentation/layout/PageSection.js';
 import { useHappierFloatingSurface } from '../presentation/layout/floatingSurface.js';
+import { useHappierSectionContent } from '../presentation/layout/sectionContent.js';
 import type {
   HappierFocusable,
   HappierGestureResponderEvent,
@@ -2831,6 +2832,8 @@ export function ItemGroup(props: ItemGroupProps): ReactElement {
   const translate = usePluginTranslation();
   // On a popover or menu a section is not a page's: no section gap above it, no page sheet inset beside it.
   const floating = useHappierFloatingSurface();
+  // Inside a host's section the section has already placed and spaced this one: no second gap above it.
+  const inSection = useHappierSectionContent();
   const {
     accessibilityLabel,
     accessibilityLabelKey,
@@ -2888,7 +2891,7 @@ export function ItemGroup(props: ItemGroupProps): ReactElement {
     <ItemGroupPageColumn testID={testID} style={style}>
       {hasHeader ? (
         <ItemGroupPageHeading title={title} description={description} action={action} />
-      ) : floating ? null : (
+      ) : floating || inSection ? null : (
         // An untitled page section starts one section gap below what precedes it, like a titled one.
         <View style={{ height: HAPPIER_PAGE_METRICS.sectionGapPx }} />
       )}
@@ -2927,8 +2930,12 @@ function ItemGroupPageColumn({ children, testID, style }: Readonly<{
 }
 
 function ItemGroupPageHeading(props: Readonly<{ title?: string; description?: ReactNode; action?: ReactNode }>): ReactElement {
-  const insetPx = useHappierColumnEdgeRemainder(HAPPIER_PAGE_METRICS.sheetInsetPx + HAPPIER_PAGE_METRICS.headingOpticalInsetPx);
-  return <HappierPageSectionHeader {...props} insetPx={insetPx} />;
+  const inSection = useHappierSectionContent();
+  const pageInsetPx = useHappierColumnEdgeRemainder(HAPPIER_PAGE_METRICS.sheetInsetPx + HAPPIER_PAGE_METRICS.headingOpticalInsetPx);
+  // Inside a host's section the heading stands on that section's edge (its optical inset only), with no second gap.
+  return inSection
+    ? <HappierPageSectionHeader {...props} insetPx={HAPPIER_PAGE_METRICS.headingOpticalInsetPx} style={{ paddingTop: 0 }} />
+    : <HappierPageSectionHeader {...props} insetPx={pageInsetPx} />;
 }
 
 function ItemGroupPageSheet({ children, surface, accessibilityRole, accessibilityLabel, rowDividers }: Readonly<{
@@ -2941,10 +2948,11 @@ function ItemGroupPageSheet({ children, surface, accessibilityRole, accessibilit
   const theme = usePluginTheme();
   const colors = useOptionalHappierUiPalette(theme) ?? resolveHappierUiPalette(theme);
   const floating = useHappierFloatingSurface();
+  const inSection = useHappierSectionContent();
   const sheetInsetPx = useHappierColumnEdgeRemainder(HAPPIER_PAGE_METRICS.sheetInsetPx);
   return (
     <View role={accessibilityRole ?? 'group'} accessibilityRole={accessibilityRole}
-      accessibilityLabel={accessibilityLabel} aria-label={accessibilityLabel} style={{ marginHorizontal: floating ? 0 : sheetInsetPx }}>
+      accessibilityLabel={accessibilityLabel} aria-label={accessibilityLabel} style={{ marginHorizontal: floating || inSection ? 0 : sheetInsetPx }}>
       <HappierPageSheet surface={surface} colors={colors} rowDividers={rowDividers}>{children}</HappierPageSheet>
     </View>
   );
