@@ -127,11 +127,7 @@ export async function readScmWorkEvidence(input: Readonly<{
             if (shared) return shared;
 
             // A failed walk belongs to that checkout. Each waiting consumer gets its own attempt.
-            const own = await read();
-            if (own.success && reads.get(key) === incumbent) {
-                reads.set(key, { kind: 'graph', promise: Promise.resolve(own) });
-            }
-            return own;
+            return read();
         }
         const own = read();
         reads.set(key, { kind: 'graph', promise: own.then(graph => graph.success ? graph : undefined, () => undefined) });
