@@ -17795,6 +17795,8 @@ const traditionalChinese: TeamsTranslationRoot = {
             },
             limits: {
                 groupShared: '\u6b64\u984d\u5ea6\u7531\u7fa4\u7d44\u4e2d\u7684\u6240\u6709\u4eba\u5171\u7528\u3002',
+                tokenReadUnavailable: "此 Home 無法衡量其中一項已儲存限額的權杖用量。",
+                costReadUnavailable: "此 Home 無法衡量其中一項已儲存限額的費用。",
                 title: '用量上限',
                 empty: '尚未設定上限',
                 emptyBody: '在你新增之前，所有請求都會被允許。',

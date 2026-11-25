@@ -26,10 +26,11 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerBack = vi.hoisted(() => vi.fn());
+const routerPush = vi.hoisted(() => vi.fn());
 const modalConfirm = vi.hoisted(() => vi.fn<typeof import('@/modal')['Modal']['confirm']>(async () => true));
 installSettingsViewCommonModuleMocks({
     router: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
-        router: { back: routerBack },
+        router: { back: routerBack, push: routerPush },
     }).module,
     storage: 'real',
     text: async () => vi.importActual<typeof import('@/text')>('@/text'),
@@ -169,6 +170,7 @@ async function renderEditor(params?: Readonly<{
     /** The focused administration routes render exactly one section. */
     section?: 'access' | 'request_policy' | 'limits';
     sourceReadFails?: boolean;
+    limitsRefusal?: Readonly<{ status: number; error: string }>;
     resourceOverrides?: Parameters<typeof teamCredentialResourceFixture>[0];
 }>) {
     const serverId = await harness.addHome({
@@ -243,7 +245,9 @@ async function renderEditor(params?: Readonly<{
     harness.answer(serverId, CREDENTIAL_GET_PATH, { body: resource });
     harness.answer(serverId, CREDENTIAL_UPDATE_PATH, { body: { resourceId: resource.id, revision: resource.revision + 1 } });
     harness.answer(serverId, TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, { body: TeamCredentialResourceDiscoveryPageV1Schema.parse({ resources: [], nextCursor: null, failures: [] }) });
-    harness.answer(serverId, LIMITS_LIST_PATH, { body: { limits: [], nextCursor: null } });
+    harness.answer(serverId, LIMITS_LIST_PATH, params?.limitsRefusal
+        ? { status: params.limitsRefusal.status, body: { error: params.limitsRefusal.error } }
+        : { body: { limits: [], nextCursor: null } });
     if (params?.sourceReadFails) {
         harness.answer(serverId, '/v1/teams/credential-resources/sources/list', { status: 503 });
     }
@@ -276,6 +280,7 @@ async function renderEditor(params?: Readonly<{
             {...(params?.section ? { section: params.section } : {})}
         />,
     );
+    if (params?.limitsRefusal) return { screen, firstPoolId, secondPoolId, resource, serverId };
     await waitForHomeGovernance(() => expect(collectRenderedTestIds(screen.tree.toJSON()), JSON.stringify({
         text: screen.getTextContent(), requests: harness.requests.map(request => request.path),
     }))
@@ -364,6 +369,33 @@ describe('TeamCredentialEditScreen broker placement', () => {
         await vi.waitFor(() => expect(screen.findByTestId('team-credential-edit-name')?.props.value).toBe('Claude Enterprise'));
         expect(screen.findByTestId('team-credential-edit-unavailable')).toBeNull();
         expect(screen.root.findAllByType('MachineAdministrationTargetSelector')).toHaveLength(0);
+    });
+
+    it.each([
+        { status: 400, error: 'invalid_limit', message: 'teams.credentials.errors.invalidResourceRead' },
+        { status: 400, error: 'token_limit_unavailable', message: 'teams.credentials.limits.tokenReadUnavailable' },
+        { status: 400, error: 'cost_limit_unavailable', message: 'teams.credentials.limits.costReadUnavailable' },
+        { status: 404, error: 'not_found_or_not_visible', message: 'teams.credentials.detail.notFound' },
+        { status: 403, error: 'team_authentication_required', message: 'teams.credentials.errors.teamAuthenticationRequired', recovery: 'sign-in' },
+        { status: 503, error: 'team_authentication_policy_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable' },
+        { status: 503, error: 'feature_disabled', message: 'teams.credentials.errors.featureDisabled' },
+        { status: 503, error: 'temporarily_unavailable', message: 'teams.errors.loadFailed', recovery: 'retry' },
+    ] as const)('shows the saved limits refusal $error and only its recovery', async (scenario) => {
+        routerPush.mockClear();
+        const { screen, serverId } = await renderEditor({ section: 'limits', limitsRefusal: scenario });
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t(scenario.message)));
+        const recovery = 'recovery' in scenario ? scenario.recovery : null;
+        expect(screen.findByTestId('team-credential-edit-limits-retry') !== null).toBe(recovery === 'retry');
+        expect(screen.findByTestId('team-credential-edit-limits-sign-in') !== null).toBe(recovery === 'sign-in');
+        if (recovery === 'sign-in') {
+            await screen.pressByTestIdAsync('team-credential-edit-limits-sign-in');
+            expect(routerPush).toHaveBeenCalledWith(expect.stringContaining(`/teams/team-1/sign-in?serverId=${serverId}`));
+        }
+        if (recovery === 'retry') {
+            harness.answer(serverId, LIMITS_LIST_PATH, { body: { limits: [], nextCursor: null } });
+            await screen.pressByTestIdAsync('team-credential-edit-limits-retry');
+            await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-edit-save')).not.toBeNull());
+        }
     });
 
     it.each([

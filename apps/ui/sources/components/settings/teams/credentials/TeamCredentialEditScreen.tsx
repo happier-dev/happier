@@ -21,10 +21,12 @@ import { t } from '@/text';
 
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 import {
     credentialApprovalFailureMessage,
     credentialFailureMessage,
     credentialDirectExportFailureMessage,
+    presentCredentialReadFailure,
     sessionUsePolicyLabel,
     teamCredentialBrokerPlacementsEqual,
 } from './teamCredentialPresentation';
@@ -80,6 +82,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
     const { context, resourceId } = props;
     const view = useTeamCredentialResourceView({ context, resourceId, failureTestIDPrefix: 'team-credential-edit-resource' });
     const resource = view.resource;
+    const readFailureAction = useTeamReadFailureAction(context.address);
     const providerTarget = useProviderSettingsTarget();
     const providerMachines = providerTarget.selectedTargetServerMatchesActiveAccount
         && areServerProfileIdentifiersEquivalent(providerTarget.serverId, context.scope.serverId)
@@ -196,18 +199,30 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
         tag: 'TeamCredentialEditScreen.beforeRemove',
     });
 
-    const refusalLine = view.refusal ? (
-        <ItemGroup description={view.refusal.message}>
-            {view.refusal.action ? (
-                <Item
-                    testID={view.refusal.action.testID}
-                    title={view.refusal.action.label}
-                    onPress={view.refusal.action.onPress}
-                    showChevron={false}
-                />
-            ) : null}
-        </ItemGroup>
-    ) : null;
+    const limitsFailure = limits.error;
+    const limitsRefusal = limitsFailure && resource?.capabilities.manageLimits
+        ? presentCredentialReadFailure(limitsFailure, () => readFailureAction(limitsFailure, {
+            testIDPrefix: 'team-credential-edit-limits',
+            onPress: () => void limits.reload(),
+        }))
+        : null;
+    const showLimitsRefusal = limitsRefusal && limitsRefusal.message !== view.refusal?.message;
+    const refusalLine = (
+        <>
+            {[view.refusal, showLimitsRefusal ? limitsRefusal : null].filter((refusal) => refusal !== null).map((refusal) => (
+                <ItemGroup key={refusal.message} description={refusal.message}>
+                    {refusal.action ? (
+                        <Item
+                            testID={refusal.action.testID}
+                            title={refusal.action.label}
+                            onPress={refusal.action.onPress}
+                            showChevron={false}
+                        />
+                    ) : null}
+                </ItemGroup>
+            ))}
+        </>
+    );
 
     if (!view.featureEnabled || (view.resolved && resource === null && !view.refusal)) {
         return (
@@ -224,19 +239,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
     }
 
     if (resource === null || basis === null) {
-        if (resource !== null && resource.capabilities.manageLimits && limits.status === 'error') {
-            return (
-                <ItemGroup description={limits.error ? credentialFailureMessage(limits.error) : undefined}>
-                    <Item
-                        testID="team-credential-edit-limits-retry"
-                        title={t('teams.unavailable.retry')}
-                        onPress={() => void limits.reload()}
-                        showChevron={false}
-                    />
-                </ItemGroup>
-            );
-        }
-        if (refusalLine) return refusalLine;
+        if (view.refusal || limitsRefusal) return refusalLine;
         return (
             <ItemGroup>
                 <Item

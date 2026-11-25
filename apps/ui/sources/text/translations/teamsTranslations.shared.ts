@@ -1168,6 +1168,8 @@ export const english = {
             },
             limits: {
                 groupShared: 'This amount is shared by everyone in the Group.',
+                tokenReadUnavailable: "This Home can’t measure token use for one of the saved limits.",
+                costReadUnavailable: "This Home can’t measure cost for one of the saved limits.",
                 title: 'Limits',
                 empty: 'No limits yet',
                 emptyBody: 'Every request is allowed until you add one.',

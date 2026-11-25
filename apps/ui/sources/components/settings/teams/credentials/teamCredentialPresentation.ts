@@ -437,7 +437,12 @@ export function presentCredentialReadFailure(
 ): Readonly<{ message: string; action?: AttentionBannerAction }> {
     switch (failure.code) {
         case 'invalid_resource_input':
+        case 'invalid_limit':
             return { message: t('teams.credentials.errors.invalidResourceRead') };
+        case 'token_limit_unavailable':
+            return { message: t('teams.credentials.limits.tokenReadUnavailable') };
+        case 'cost_limit_unavailable':
+            return { message: t('teams.credentials.limits.costReadUnavailable') };
         case 'not_found_or_not_visible':
         case 'resource_not_found':
             return { message: t('teams.credentials.detail.notFound') };

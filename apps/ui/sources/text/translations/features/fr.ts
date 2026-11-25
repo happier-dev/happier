@@ -17976,6 +17976,8 @@ const french: TeamsTranslationRoot = {
             },
             limits: {
                 groupShared: 'Ce montant est partag\u00e9 par tous les membres du Groupe.',
+                tokenReadUnavailable: "Ce Home ne peut pas mesurer la consommation de jetons pour l’une des limites enregistrées.",
+                costReadUnavailable: "Ce Home ne peut pas mesurer le coût pour l’une des limites enregistrées.",
                 title: 'Plafonds',
                 empty: 'Aucun plafond',
                 emptyBody: 'Toutes les requêtes sont autorisées tant que tu n’en ajoutes pas.',

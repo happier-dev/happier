@@ -17795,6 +17795,8 @@ const simplifiedChinese: TeamsTranslationRoot = {
             },
             limits: {
                 groupShared: '\u8be5\u989d\u5ea6\u7531\u7fa4\u7ec4\u4e2d\u7684\u6240\u6709\u4eba\u5171\u4eab\u3002',
+                tokenReadUnavailable: "此 Home 无法衡量其中一项已保存限额的令牌用量。",
+                costReadUnavailable: "此 Home 无法衡量其中一项已保存限额的费用。",
                 title: '用量上限',
                 empty: '尚未设置上限',
                 emptyBody: '在你添加之前，所有请求都会被允许。',

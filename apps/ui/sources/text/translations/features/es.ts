@@ -17855,6 +17855,8 @@ const spanish: TeamsTranslationRoot = {
             },
             limits: {
                 groupShared: 'Esta cantidad la comparten todas las personas del Grupo.',
+                tokenReadUnavailable: "Este Home no puede medir el consumo de tokens de uno de los límites guardados.",
+                costReadUnavailable: "Este Home no puede medir el coste de uno de los límites guardados.",
                 title: 'Límites',
                 empty: 'Aún no hay límites',
                 emptyBody: 'Se permiten todas las solicitudes hasta que añadas uno.',

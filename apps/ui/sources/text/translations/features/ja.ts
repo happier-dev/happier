@@ -17855,6 +17855,8 @@ const japanese: TeamsTranslationRoot = {
             },
             limits: {
                 groupShared: '\u3053\u306e\u4e0a\u9650\u306f\u30b0\u30eb\u30fc\u30d7\u5168\u54e1\u3067\u5171\u6709\u3055\u308c\u307e\u3059\u3002',
+                tokenReadUnavailable: "この Home では、保存済みの上限の一つでトークン使用量を測定できません。",
+                costReadUnavailable: "この Home では、保存済みの上限の一つで費用を測定できません。",
                 title: '上限',
                 empty: '上限はまだありません',
                 emptyBody: '追加するまで、すべてのリクエストが許可されます。',

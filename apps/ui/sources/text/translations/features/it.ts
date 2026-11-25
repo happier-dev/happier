@@ -17919,6 +17919,8 @@ const italian: TeamsTranslationRoot = {
             },
             limits: {
                 groupShared: 'Questa quantit\u00e0 \u00e8 condivisa da tutti nel Gruppo.',
+                tokenReadUnavailable: "Questo Home non può misurare l’uso dei token per uno dei limiti salvati.",
+                costReadUnavailable: "Questo Home non può misurare il costo per uno dei limiti salvati.",
                 title: 'Massimali',
                 empty: 'Nessun massimale',
                 emptyBody: 'Ogni richiesta è consentita finché non ne aggiungi uno.',

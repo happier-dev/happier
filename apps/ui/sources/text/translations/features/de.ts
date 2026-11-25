@@ -17733,6 +17733,8 @@ const german: TeamsTranslationRoot = {
             },
             limits: {
                 groupShared: 'Dieses Kontingent teilen sich alle Mitglieder der Gruppe.',
+                tokenReadUnavailable: "Dieses Home kann den Tokenverbrauch für eines der gespeicherten Limits nicht messen.",
+                costReadUnavailable: "Dieses Home kann die Kosten für eines der gespeicherten Limits nicht messen.",
                 title: 'Obergrenzen',
                 empty: 'Noch keine Obergrenzen',
                 emptyBody: 'Bis du eine anlegst, ist jede Anfrage erlaubt.',

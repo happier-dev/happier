@@ -17933,6 +17933,8 @@ const catalan: TeamsTranslationRoot = {
             },
             limits: {
                 groupShared: 'Aquesta quantitat la comparteixen tots els membres del Grup.',
+                tokenReadUnavailable: "Aquest Home no pot mesurar el consum de tokens d’un dels límits desats.",
+                costReadUnavailable: "Aquest Home no pot mesurar el cost d’un dels límits desats.",
                 title: 'Límits d’ús',
                 empty: 'Encara no hi ha límits',
                 emptyBody: 'Totes les sol·licituds es permeten fins que n’afegeixis un.',

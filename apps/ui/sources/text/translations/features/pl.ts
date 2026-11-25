@@ -17947,6 +17947,8 @@ const polish: TeamsTranslationRoot = {
             },
             limits: {
                 groupShared: 'Ta pula jest wsp\u00f3\u0142dzielona przez wszystkich w Grupie.',
+                tokenReadUnavailable: "Ten Home nie może zmierzyć zużycia tokenów dla jednego z zapisanych limitów.",
+                costReadUnavailable: "Ten Home nie może zmierzyć kosztu dla jednego z zapisanych limitów.",
                 title: 'Limity',
                 empty: 'Nie ma jeszcze limitów',
                 emptyBody: 'Do czasu dodania limitu każde żądanie jest dozwolone.',
