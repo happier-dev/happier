@@ -104,7 +104,7 @@ describe('openProject with a subfolder the repository lacks', () => {
   });
 
 
-  it.each(['copied', 'wrong Machine at preflight', 'wrong Machine at prepare'] as const)(
+  it.each(['copied', 'wrong Machine at preflight', 'wrong Machine at prepare', 'refused with failing cleanup'] as const)(
     'settles an admitted plain-folder Copy to a fresh path (%s)', async outcome => {
       const fixture = await realpath(await mkdtemp(join(tmpdir(), 'happier-remote-open-copy-')));
       temporaryRoots.push(fixture);
@@ -118,7 +118,13 @@ describe('openProject with a subfolder the repository lacks', () => {
       const rows: ProjectAccountRowV1[] = [];
       const http = createProjectAccountRowsHttpBoundary(rows);
       vi.spyOn(axios, 'get').mockImplementation(plainAccountRead);
-      vi.spyOn(axios, 'post').mockImplementation(http);
+      // Home refuses every request once the Source has refused, so the new
+      // Copy row's cleanup cannot settle.
+      let homeRefuses = false;
+      vi.spyOn(axios, 'post').mockImplementation(async (...args: Parameters<typeof http>) => {
+        if (homeRefuses) throw Object.assign(new Error('Home refused the fixture request'), { response: { status: 403, data: {} } });
+        return await http(...args);
+      });
       const registry = createScmBackendRegistry([]);
       const accountRows = { credentials, serverId };
       const rootOwnershipManager = createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'locks') });
@@ -182,7 +188,8 @@ describe('openProject with a subfolder the repository lacks', () => {
       const wrongMachine = { id: 'other-checkout', serverId, machineId: 'other', rootPath: targetRoot, createdAtMs: 1 };
       const misplacedRefs = initial.workspaceRefs.filter(ref => ref.id !== existingTarget.id).concat(wrongMachine);
       let installed = initial;
-      let wrongPlacement = outcome === 'wrong Machine at preflight';
+      const failingCleanup = outcome === 'refused with failing cleanup';
+      let wrongPlacement = outcome === 'wrong Machine at preflight' || failingCleanup;
       const target = createWorkspaceSyncTargetAuthority({
         localServerId: serverId, localMachineId: 'target', localAccountId: 'account',
         getProjectSnapshot: () => installed,
@@ -247,10 +254,12 @@ describe('openProject with a subfolder the repository lacks', () => {
             // This is a finite Source RPC boundary. Carry the actual receiver
             // cause the same way the Source's wire settlement does.
             if (!(error instanceof Error) || !('code' in error)) throw error;
+            homeRefuses = failingCleanup;
             return { kind: 'refused', code: error.code, ...('failureCause' in error ? { failureCause: error.failureCause } : {}) };
           }
         },
       }, targetContext);
+      homeRefuses = false;
       const final = await readRows();
       if (outcome === 'copied') {
         expect(opened).toMatchObject({ kind: 'opened', workspace: { workspaceId: qualifiedId, machineId: 'target', rootPath: targetRoot } });
@@ -258,11 +267,12 @@ describe('openProject with a subfolder the repository lacks', () => {
         await expect(access(join(targetRoot, 'secrets', 'ignored.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
         expect(final.workspaceRefs).toMatchObject([{ id: checkout.workspaceId }, { id: qualifiedId, machineId: 'target' }]);
       } else {
+        // The Source's typed refusal survives a cleanup that cannot settle.
         expect(opened).toMatchObject({ kind: 'refused', code: 'workspace_sync_child_unavailable', failureCause: {
-          phase: outcome === 'wrong Machine at preflight' ? 'workspace_sync.target.preflight.qualification' : 'workspace_sync.target.prepare.qualification',
+          phase: outcome === 'wrong Machine at prepare' ? 'workspace_sync.target.prepare.qualification' : 'workspace_sync.target.preflight.qualification',
           errorCode: 'workspace_sync_child_unavailable',
         } });
-        expect(final.workspaceRefs).toMatchObject(initial.workspaceRefs);
+        if (!failingCleanup) expect(final.workspaceRefs).toMatchObject(initial.workspaceRefs);
         await expect(access(targetRoot)).rejects.toMatchObject({ code: 'ENOENT' });
       }
       expect(publishedBeforeDispatch).toBe(true);

@@ -558,19 +558,26 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
           if (copy && published.created) createdCopyTarget = published.ref;
           if (copy && !privateCheckout) publishedOrdinaryCopy = published.ref;
         }
+        // Best effort: the Source's refusal is the outcome, so a cleanup
+        // failure is logged and never replaces that typed cause.
         const discardRefusedCopyTarget = async () => {
           const row = createdCopyTarget;
           if (!row) return;
-          const removed = await mutateProjectRows(async current => {
-            const selected = resolveWorkspaceRefV1(current.workspaceRefs, { serverId: row.serverId, id: row.id });
-            if (selected.kind === 'missing') return current;
-            if (selected.kind !== 'resolved' || !isDeepStrictEqual(selected.ref, row))
-              throw new Error('Copy target Workspace changed before cleanup');
-            return { ...current, workspaceRefs: resolveProjectAccountWorkspaceRefRemovalV1(current,
-              { serverId: row.serverId, workspaceRefId: row.id }) };
-          }, context.signal);
-          if (removed.status !== 'applied' && removed.status !== 'unchanged')
-            throw new Error(`Copy target cleanup returned ${removed.status}`);
+          try {
+            const removed = await mutateProjectRows(async current => {
+              const selected = resolveWorkspaceRefV1(current.workspaceRefs, { serverId: row.serverId, id: row.id });
+              if (selected.kind === 'missing') return current;
+              if (selected.kind !== 'resolved' || !isDeepStrictEqual(selected.ref, row))
+                throw new Error('Copy target Workspace changed before cleanup');
+              return { ...current, workspaceRefs: resolveProjectAccountWorkspaceRefRemovalV1(current,
+                { serverId: row.serverId, workspaceRefId: row.id }) };
+            }, context.signal);
+            if (removed.status !== 'applied' && removed.status !== 'unchanged')
+              throw new Error(`Copy target cleanup returned ${removed.status}`);
+          } catch (error) {
+            logger.warnLocalFile('[Project Open] Copy target cleanup failed', { code: codeOf(error),
+              workspaceRefId: row.id, message: error instanceof Error ? error.message : String(error) });
+          }
         };
         const effectsBeforeSource = effectsIssued;
         effectsIssued = true;
