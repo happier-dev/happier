@@ -28,7 +28,7 @@ import {
   ManagedConfigurationFactsV1Schema,
   type ManagedConfigurationFactsV1,
 } from './managedConfigurationV1.js';
-import { AcquireResultV1Schema, ProviderObservationV1Schema, MachineProvisionerSizeV1Schema,
+import { ManagedPowerIntentV1Schema, AcquireResultV1Schema, ProviderObservationV1Schema, MachineProvisionerSizeV1Schema,
   type AcquireResultV1, type MachineProvisionerSizeV1, type ProviderObservationV1 } from './providerFactsV1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema, type ManagedMachineEnrollmentIdentityV1 } from './enrollmentIdentityV1.js';
 import { MachineSetupV1Schema, type MachineSetupV1 } from './machineSetupV1.js';

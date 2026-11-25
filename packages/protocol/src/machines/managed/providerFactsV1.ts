@@ -17,6 +17,7 @@ import { providerAmountFieldsV1 } from '../../common/providerAmountV1.js';
 const id = () => z.string().check(z.trim(), z.minLength(1));
 const instant = () => z.number().check(z.gte(0));
 export const SupportedNativeIntentSchema = lazyDefinition(() => z.enum(['start', 'stop', 'suspend', 'resume', 'delete', 'rebuild']));
+export const ManagedPowerIntentV1Schema = lazyDefinition(() => z.enum(['start', 'stop', 'suspend', 'resume']));
 export type SupportedNativeIntent = z.infer<typeof SupportedNativeIntentSchema>;
 /** Native prerequisite facts, shared by discovery and reviewed configuration. */
 export const ManagedPrerequisiteV1Schema = lazyDefinition(() => z.strictObject({
