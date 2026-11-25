@@ -5,7 +5,10 @@ import { join, relative, resolve, sep } from 'node:path';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 import type { HandoffExportSessionMetadata } from '@happier-dev/plugin-sdk/agents/runtime';
-import type { ClaudeHandoffExportDiagnosticV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
+import type {
+    ClaudeHandoffExportDiagnosticV1,
+    ClaudeHandoffTargetImportDiagnosticV1,
+} from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
 
 import { resolveClaudeConfigDir, resolveClaudeConfigDirEnvOverlay } from '../../../environment.js';
 import { hasClaudeProviderIdentityValue } from '../../../../protocol/providerIdentity.js';
@@ -242,22 +245,22 @@ function readErrorCode(error: unknown): string | null {
 }
 
 export class ClaudeTranscriptImportConflict extends PluginError {
-    readonly diagnostic;
+    readonly diagnostic: ClaudeHandoffTargetImportDiagnosticV1;
 
     constructor(
-        code: ClaudeTranscriptLookupFailure['code'] | 'transcript_content_mismatch' | 'transcript_identity_changed',
-        pathKind: ClaudeTranscriptLookupFailure['pathKind'],
+        code: ClaudeHandoffTargetImportDiagnosticV1['code'],
+        pathKind: ClaudeHandoffTargetImportDiagnosticV1['details']['pathKind'],
     ) {
         super({
             code: 'target_identity_conflict',
             message: 'Claude handoff target conflicts with the existing native session',
             retryable: false,
         });
-        this.diagnostic = { code, details: { pathKind } } as const;
+        this.diagnostic = { code, details: { pathKind } };
     }
 }
 
-function targetLookupConflict(error: unknown, pathKind: ClaudeTranscriptLookupFailure['pathKind']): PluginError {
+function targetLookupConflict(error: unknown, pathKind: ClaudeHandoffTargetImportDiagnosticV1['details']['pathKind']): PluginError {
     const failure = classifyClaudeTranscriptLookupError(error, pathKind);
     return new ClaudeTranscriptImportConflict(failure.code, failure.pathKind);
 }

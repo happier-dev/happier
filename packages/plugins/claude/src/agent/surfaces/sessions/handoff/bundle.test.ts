@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRuntimeHandoffSurface } from '@happier-dev/plugin-sdk/agents/runtime';
+import { ClaudeHandoffTargetImportDiagnosticV1Schema } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
 
 import { exportClaudeSessionBundle, importClaudeSessionBundle } from './bundle.js';
 import { getClaudeProjectPath, resolveClaudeProjectId } from './path.js';
@@ -640,6 +641,10 @@ describe('Claude handoff bundle leaf', () => {
             retryable: false,
             diagnostics: [{ code: 'transcript_content_mismatch', details: { pathKind: 'transcript_file' } }],
         });
+        if (result.ok) throw new Error('Expected a native target conflict');
+        for (const diagnostic of result.diagnostics ?? []) {
+            expect(ClaudeHandoffTargetImportDiagnosticV1Schema.parse(diagnostic)).toEqual(diagnostic);
+        }
         await expect(readFile(transcriptPath, 'utf8')).resolves.toBe(existingTranscript);
     });
 

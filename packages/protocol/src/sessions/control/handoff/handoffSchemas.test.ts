@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { computeWorkspaceSyncPolicyDigest } from './workspaceSyncSchemas.js';
 import { SessionHandoffPrepareTargetRequestSchema, SessionHandoffStartRequestSchema } from './handoffSchemas.js';
+import { ClaudeHandoffTargetImportDiagnosticV1Schema } from './handoffStatus.js';
 
 const gitWorktreePolicyDigest = computeWorkspaceSyncPolicyDigest({
   v: 1, selection: 'git_worktree', extraIgnorePatterns: [], extraIncludePatterns: [],
@@ -11,6 +12,20 @@ async function loadHandoffModule() {
 }
 
 describe('session handoff schemas', () => {
+  it('admits the Claude native import diagnostic and rejects values outside its closed vocabulary', () => {
+    const diagnostic = { code: 'transcript_identity_changed', details: { pathKind: 'transcript_file' } };
+    expect(ClaudeHandoffTargetImportDiagnosticV1Schema.parse(diagnostic)).toEqual(diagnostic);
+    for (const invalid of [
+      { ...diagnostic, code: 'unknown_import_conflict' },
+      { ...diagnostic, details: { pathKind: 'unknown_path_kind' } },
+      { ...diagnostic, details: { pathKind: 'linked_source_root' } },
+      { ...diagnostic, nativePath: '/private/target' },
+      { ...diagnostic, details: { ...diagnostic.details, nativePath: '/private/target' } },
+    ]) {
+      expect(ClaudeHandoffTargetImportDiagnosticV1Schema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
   it('negotiates existing state only through the V3 epoch and explicit true flags', async () => {
     const mod = await loadHandoffModule();
     expect(mod).toHaveProperty('SessionHandoffCapabilityV3Schema');
