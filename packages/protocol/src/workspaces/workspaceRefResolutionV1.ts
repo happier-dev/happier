@@ -49,7 +49,7 @@ function compareProjectTitleKeys(left: string, right: string): number {
 
 /**
  * Qualify only colliding Project titles using the baseline Machine and checkout.
- * Compact lists prefer a short parent when it distinguishes the Projects, and
+ * Compact lists prefer a short checkout place when it distinguishes the Projects, and
  * also resolve collisions between generated titles and other final readings.
  */
 export function qualifyCollidingProjectTitlesV1(
@@ -72,7 +72,7 @@ export function qualifyCollidingProjectTitlesV1(
     if (keys.length < 2) continue;
     qualified = true;
     const counts = new Map<string, number>();
-    const parentCounts = new Map<string, number>();
+    const shortPlaceCounts = new Map<string, number>();
     const candidates = keys.map(key => {
       const { machineName: machine, rootPath } = facts.get(key)!;
       const path = compact ? rootPath?.replace(/[\\/]+$/, '') ?? '' : rootPath;
@@ -81,16 +81,18 @@ export function qualifyCollidingProjectTitlesV1(
       const root = compact ? path ?? '' : '';
       const parentEnd = Math.max(root.lastIndexOf('/'), root.lastIndexOf('\\'));
       const parent = parentEnd > 0 ? resolveWorkspacePathBasenameV1(root.slice(0, parentEnd)) : null;
-      if (parent) parentCounts.set(parent, (parentCounts.get(parent) ?? 0) + 1);
-      return { key, details, parent };
+      // A numeric parent alone looks like an ordinal. Keep its checkout segment so it reads as a place.
+      const shortPlace = parent && /^\d+$/.test(parent.trim()) ? `${parent}/${root.slice(parentEnd + 1)}` : parent;
+      if (shortPlace) shortPlaceCounts.set(shortPlace, (shortPlaceCounts.get(shortPlace) ?? 0) + 1);
+      return { key, details, shortPlace };
     });
     // If human facts coincide, assign a stable ordinal without printing the Project identities.
     candidates.sort((left, right) => compareKeys(left.key, right.key));
-    for (const [index, { key, details, parent }] of candidates.entries()) {
+    for (const [index, { key, details, shortPlace }] of candidates.entries()) {
       const [machine, ...paths] = details;
-      const uniqueParent = parent && parentCounts.get(parent) === 1 && !counts.has(parent);
+      const uniqueShortPlace = shortPlace && shortPlaceCounts.get(shortPlace) === 1 && !counts.has(shortPlace);
       const qualifier = machine && counts.get(machine) === 1 ? machine
-        : uniqueParent ? parent : paths.find(candidate => candidate && counts.get(candidate) === 1) ?? String(index + 1);
+        : uniqueShortPlace ? shortPlace : paths.find(candidate => candidate && counts.get(candidate) === 1) ?? String(index + 1);
       titles.set(key, `${title} · ${qualifier}`);
     }
   }

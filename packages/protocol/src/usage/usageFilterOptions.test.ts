@@ -42,6 +42,28 @@ describe('readUsageScopeOptions Projects (owner 11-08)', () => {
     ]);
   });
 
+  it('uses a checkout tail for numeric place names and never borrows an accounting Machine as a qualifier', () => {
+    const projects = [entry('a', 'workspace'), entry('b', 'workspace')];
+    const machines = { box: 'Dev box', owner: 'Owner machine' };
+    const projectFacts = new Map([
+      ['a', { baselineMachineId: 'box', rootPath: '/private/19/workspace/' }],
+      ['b', { baselineMachineId: 'box', rootPath: 'C:\\private\\21\\workspace\\' }],
+    ]);
+    const read = (rows: typeof projects, facts?: typeof projectFacts) => readUsageScopeOptions(
+      [{ accounting: {
+        scopeKeys: [{ dimension: 'project', keys: ['a', 'b'],
+          projectMachines: [{ key: 'a', machineIds: ['owner'] }, { key: 'b', machineIds: ['box'] }] }],
+        breakdowns: { project: rows },
+      } }] as unknown as UsageQueryResultSlice[],
+      'projects', [], undefined, { projectFacts: facts, machineNames: machines },
+    );
+
+    const admitted = read(projects, projectFacts);
+    expect(admitted).toEqual(new Map([['a', 'workspace · 19/workspace'], ['b', 'workspace · 21/workspace']]));
+    expect(read([...projects].reverse(), new Map([...projectFacts].reverse()))).toEqual(admitted);
+    expect(read(projects)).toEqual(new Map([['a', 'workspace · 1'], ['b', 'workspace · 2']]));
+  });
+
   it('offers every scope key even when its ranked breakdown omits members', () => {
     // Accounting transport boundary: complete identities accompany a ranked chart.
     const slices = [{ accounting: {
