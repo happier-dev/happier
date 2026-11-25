@@ -1,5 +1,6 @@
 import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import * as deploymentDiagnosticLog from '@/utils/logging/log';
 import { createHash } from 'node:crypto';
 import { db } from '@/storage/db';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
@@ -709,7 +710,8 @@ describe('deployment storage real SQLite boundary', () => {
             deployerMode: 'managers', controllerMachineId: machine.id }));
         if (!created.ok) throw new Error(created.error);
         const template = { templateRef: { sourceId: 'data', itemId: 'postgres', version: '1', ref: { kind: 'content', digest: `sha256:${'c'.repeat(64)}` } },
-            definition: { kind: 'stored', contentRevision: 1, composeDigest: definition.composeDigest }, services: ['db'] };
+            definition: { kind: 'stored', contentRevision: 1, composeDigest: definition.composeDigest }, services: ['app'],
+            data: [{ service: 'app', engine: 'postgres' }] };
         const candidate = await artifactFor({ ...initial, template });
         const input = { ...candidate, serverId, environmentId: created.environmentId, expectedRevision: 1 };
         expect(await inTx(tx => environmentService.updateDeploymentEnvironmentInTx(tx, owner.id, input)))
@@ -740,6 +742,29 @@ describe('deployment storage real SQLite boundary', () => {
             definition: { ...template.definition, contentRevision: 2 } } });
         expect(await inTx(tx => environmentService.setDeploymentEnvironmentTemplateInTx(tx, owner.id,
             { ...input, ...invalidProvenance, expectedRevision: 2 }))).toEqual({ ok: false, error: 'deployment_conflict' });
+        const brokenArtifact = await artifactFor({ name: 'invalid-private-artifact' });
+        const badDocument = 'services: [invalid-private-compose';
+        const brokenCompose = await artifactFor({ ...initial, template, definition: { ...definition, contentRevision: 2,
+            document: badDocument, composeDigest: `sha256:${createHash('sha256').update(badDocument).digest('hex')}` } });
+        const diagnostics = vi.spyOn(deploymentDiagnosticLog, 'log');
+        try {
+            await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+                const edit = (reference: typeof input) => app.inject({
+                    method: 'PATCH', url: `/v1/deployments/environments/${created.environmentId}`,
+                    headers: { 'x-test-user-id': owner.id }, payload: reference,
+                });
+                expect((await edit({ ...input, ...brokenArtifact, expectedRevision: 2 })).json())
+                    .toEqual({ ok: false, error: 'deployment_content_unavailable' });
+                expect((await edit({ ...input, ...brokenCompose, expectedRevision: 2 })).json())
+                    .toEqual({ ok: false, error: 'deployment_invalid' });
+            });
+            const causes = diagnostics.mock.calls.map(([entry]) => entry.diagnostic).filter(Boolean);
+            expect(causes).toEqual(expect.arrayContaining([
+                expect.objectContaining({ failureCause: expect.objectContaining({ phase: 'deployment.artifact.content' }) }),
+                expect.objectContaining({ failureCause: expect.objectContaining({ phase: 'deployment.compose.parse' }) }),
+            ]));
+            expect(JSON.stringify(causes)).not.toContain('invalid-private');
+        } finally { diagnostics.mockRestore(); }
         // A later ordinary Compose edit preserves the applied template baseline rather than acquiring its writer.
         expect(await inTx(tx => environmentService.updateDeploymentEnvironmentInTx(tx, owner.id,
             { ...input, ...composeEdit, expectedRevision: 2 }))).toEqual({ ok: true, environmentId: created.environmentId, revision: 3 });

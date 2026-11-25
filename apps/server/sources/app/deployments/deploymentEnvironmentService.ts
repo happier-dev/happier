@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { isDeepStrictEqual } from 'node:util';
 import { createDeploymentEnvironmentContentArtifactIdV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1,
     type ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -511,7 +512,9 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
             try { reconciled = await reconcileDeploymentRemovedDataServicesV1(previous.content, candidate); }
             catch (error) {
                 if (error instanceof Error && 'code' in error && error.code === 'invalid_request') {
-                    return deploymentFailure('deployment_invalid');
+                    const phase = 'deployment.compose.parse';
+                    return deploymentFailure('deployment_invalid', { phase, causeKind: 'native_failure',
+                        error: withActionFailureCauseDiagnostic({}, error, phase) });
                 }
                 throw error;
             }

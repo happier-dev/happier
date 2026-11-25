@@ -1,6 +1,8 @@
 import { DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1,
     type ArtifactJsonUpdateHttpInputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentPendingDeployV1 } from '@happier-dev/protocol';
 import * as privacyKit from 'privacy-kit';
+import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { deploymentArtifactReadFailureV1, type DeploymentArtifactReadFailureV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
 import { readArtifactForCallerInTx, readArtifactHeadersForCallerInTx, resolveArtifactAudienceInTx,
     resolveArtifactPublicationAdmissionIntent, type ArtifactForCaller } from '@/app/artifacts/artifactAccessService';
 import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
@@ -135,6 +137,12 @@ async function readPlainDeploymentContentInTx<T>(tx: Tx, actorAccountId: string,
     return projectPlainDeploymentStoredContent(read.artifact, reference, open);
 }
 
+function recordStoredContentFailure(failure: DeploymentArtifactReadFailureV1): DeploymentFailure {
+    const phase = failure.failureCause.phase;
+    return deploymentFailure(failure.error, { phase, causeKind: 'native_failure',
+        error: withActionFailureCauseDiagnostic({}, failure, phase) });
+}
+
 /** Exact current-head projection shared by transaction reads and composed SQL captures after custody admission. */
 export function projectPlainDeploymentStoredContent<T>(artifact: ArtifactForCaller & Readonly<{ publicAudience: 'retained' | 'none' }>, reference: DeploymentContentReference,
     open: (reference: DeploymentContentReference, artifact: DeploymentArtifactDocumentV1) => DeploymentArtifactReadResultV1<T>,
@@ -144,11 +152,11 @@ export function projectPlainDeploymentStoredContent<T>(artifact: ArtifactForCall
     if (artifact.encryptionMode === 'e2ee') return { ok: true, content: null };
     const header = ArtifactHeaderMetadataV1Schema.safeParse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(artifact.header)));
     const body = ArtifactBodyEnvelopeV1StoredSchema.safeParse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(artifact.body)));
-    if (!header.success || !body.success) return deploymentFailure('deployment_content_unavailable');
+    if (!header.success || !body.success) return recordStoredContentFailure(deploymentArtifactReadFailureV1(header.success ? 'body' : 'header'));
     const opened = open(reference, { artifactId: artifact.id,
         revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion },
         header: header.data, body: body.data.body });
-    return opened.ok ? { ok: true, content: opened.content } : deploymentFailure(opened.error);
+    return opened.ok ? { ok: true, content: opened.content } : recordStoredContentFailure(opened);
 }
 
 export function readPlainDeploymentEnvironmentContentInTx(tx: Tx, actorAccountId: string, owner: ProjectSourceOwnerV1, reference: DeploymentContentReference) {
