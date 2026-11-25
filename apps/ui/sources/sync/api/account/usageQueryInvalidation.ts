@@ -12,7 +12,7 @@ import type { ProviderAccountUsageRecordId } from '@happier-dev/protocol/connect
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 import { isRuntimeActive, subscribeToRuntimeActiveChange } from '@/utils/runtime/isRuntimeActive';
-import { isMachineReachable, resolveMachineReachability, readMachineRequestReachabilityRevision, subscribeMachineRequestReachability } from '@/sync/domains/machines/reachability/machineReachability';
+import { resolveMachineReachability, readMachineRequestReachabilityRevision, subscribeMachineRequestReachability } from '@/sync/domains/machines/reachability/machineReachability';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isConnectedServiceUsageCapable, subscribeConnectedServiceRegistry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
@@ -181,7 +181,7 @@ function readUsageMachineFacts(machines: Readonly<Record<string, Machine>>, nowM
     return Object.values(machines).map(machine => {
         const reachability = resolveMachineReachability(scope, machine, nowMs);
         return { id: machine.id, name: readMachineName(machine), replaced: isMachineReplaced(machine),
-            reachable: reachability === 'reachable',
+            reachability,
             // A withdrawn observation or failed route is not a confirmed offline daemon.
             unavailable: reachability === 'unknown' || reachability === 'unreachable' && isMachineOnline(machine, nowMs) !== false };
     })
@@ -189,7 +189,7 @@ function readUsageMachineFacts(machines: Readonly<Record<string, Machine>>, nowM
 }
 
 function readUsagePoolSelectorMachines(facts: ReturnType<typeof readUsageMachineFacts>, machineIds: readonly string[]) {
-    return facts.filter(machine => !machine.replaced && machine.reachable
+    return facts.filter(machine => !machine.replaced && machine.reachability === 'reachable'
         && (machineIds.length === 0 || machineIds.includes(machine.id)));
 }
 
@@ -210,18 +210,23 @@ export function getUsageQueryPoolMachineSelection(machines: Readonly<Record<stri
     return selectUsagePoolMachine(readUsageMachineFacts(machines, nowMs, scope), machineIds);
 }
 
-function consumedMachineKey(facts: ReturnType<typeof readUsageMachineFacts>, consumers: UsageQueryMachineConsumers): string {
+function consumedMachineKey(facts: ReturnType<typeof readUsageMachineFacts>, consumers: UsageQueryMachineConsumers,
+    readMissingReachability?: (machineId: string) => ReturnType<typeof resolveMachineReachability>): string {
     const byId = new Map(facts.map(machine => [machine.id, machine]));
     return JSON.stringify([
         consumers.includeMachineNames === false ? [] : facts.map(machine => [machine.id, machine.name]),
         consumers.poolMachineFilters.map(ids => selectUsagePoolMachine(facts, ids)),
-        [...new Set(consumers.sessionMachineIds)].sort().map(id => [id, byId.get(id)?.replaced, byId.get(id)?.reachable]),
+        [...new Set(consumers.sessionMachineIds)].sort().map(id => {
+            const machine = byId.get(id);
+            return [id, machine?.replaced, machine?.reachability ?? readMissingReachability?.(id)];
+        }),
     ]);
 }
 
 export function getUsageQueryMachineInvalidationKey(machines: Readonly<Record<string, Machine>>, nowMs = Date.now(),
     scope?: ServerAccountScope | null, consumers: UsageQueryMachineConsumers = NO_MACHINE_CONSUMERS): string {
-    return consumedMachineKey(readUsageMachineFacts(machines, nowMs, scope), consumers);
+    return consumedMachineKey(readUsageMachineFacts(machines, nowMs, scope), consumers,
+        id => resolveMachineReachability(scope, { id, active: false }, nowMs));
 }
 
 type QuotaAccount = Profile['connectedAccountsV4'][number];
@@ -344,7 +349,7 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQu
             if (machineIds.some(id => {
                 const machine = state.machines[id];
                 const previous = observedMachineFacts.byId.get(id);
-                return machine && previous && previous.reachable !== isMachineReachable(scope, machine);
+                return machine && previous && previous.reachability !== resolveMachineReachability(scope, machine);
             })) reconcile(true);
         });
         const unwatchRegistry = subscribeConnectedServiceRegistry(() => {

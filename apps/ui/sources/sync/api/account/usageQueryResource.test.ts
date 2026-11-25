@@ -10038,6 +10038,25 @@ describe('usage query Work composition', () => {
         await waitForPage();
       }
       expect.soft(attemptedSessions(), 'three accounting-only pages, zero Work RPCs').toHaveLength(0);
+      const admittedWork = read()?.sources.find(source => source.source === 'work');
+      expect(admittedWork?.asOfMs).toEqual(expect.any(Number));
+      // The consumed Basis S Home pages carried these exact routing shapes.
+      const wakes = [
+        { changeKinds: ['account', 'discussion'], sessionReadinessChanges: 'all' },
+        { changeKinds: ['account', 'automation', 'pluginDomain'], sessionReadinessChanges: { sessionIds: [], machineIds: [] } },
+        { changeKinds: ['machine'], sessionReadinessChanges: { sessionIds: [], machineIds: ['outside-the-visit'] } },
+      ] as const;
+      for (const wake of wakes) {
+        scmTransport.mockClear();
+        publishHomeAccountChange(scope.serverId, [], { ...wake, feedPageConsumed: true, usageAccountingAffects: false });
+        await flushHookEffects({ cycles: 30 });
+        await waitForPage();
+        const why = wake.changeKinds.join(', ');
+        expect.soft(attemptedSessions(), `${why}: equal admitted targets and selectors send no Work RPC`).toEqual([]);
+        expect.soft(read()?.sources.find(source => source.source === 'work')?.asOfMs, `${why}: retain the Work read time`)
+          .toBe(admittedWork?.asOfMs);
+        expect(read()?.work?.outcomes).toHaveLength(1);
+      }
       scmTransport.mockClear();
       membership = all;
       hold = true;

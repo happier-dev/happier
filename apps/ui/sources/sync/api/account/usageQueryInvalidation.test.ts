@@ -286,6 +286,19 @@ it('keys pool selection by its resolved machine and Session evidence by only its
     expect(getUsageQueryMachineInvalidationKey({ ...machines, a: { ...machines.a!, replacedByMachineId: 'b' } }, nowMs, scope, sessionConsumers)).not.toBe(sessionKey);
 });
 
+it('keys Session Work on the typed reachability observation even before inventory arrives', () => {
+    const scope = { serverId: 'usage-work-missing-inventory.test', accountId: 'account-a' };
+    const consumers = { includeMachineNames: false, poolMachineFilters: [], sessionMachineIds: ['work-machine'] };
+    const key = () => getUsageQueryMachineInvalidationKey({}, Date.now(), scope, consumers);
+    const unanswered = key();
+    try {
+        recordMachineRequestFailed({ ...scope, machineId: 'other-machine' });
+        expect(key()).toBe(unanswered);
+        recordMachineRequestFailed({ ...scope, machineId: 'work-machine' });
+        expect(key()).not.toBe(unanswered);
+    } finally { clearMachineRequestReachabilityForScope(scope); }
+});
+
 it('ignores equivalent Profile and Settings refreshes but invalidates changed quota inputs', async () => {
     const previous = storage.getState();
     const scope = { serverId: 'usage-invalidation.test', accountId: 'account-a' };
