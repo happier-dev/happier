@@ -1,4 +1,10 @@
 {
+  "plugins.channels.prBinding.approval.title": "Zmienić powiązanie zgłoszenia pull request z tą sesją?",
+  "plugins.channels.prBinding.approval.body": "Może to zmienić zgłoszenia pull request powiązane z tą sesją lub zdarzenia tych zgłoszeń, które uruchamiają przepływ pracy.",
+  "plugins.channels.prBinding.approval.repository": "Repozytorium",
+  "plugins.channels.prBinding.approval.number": "Numer zgłoszenia pull request",
+  "plugins.channels.prBinding.approval.url": "Adres URL zgłoszenia pull request",
+  "plugins.channels.prBinding.approval.trigger": "Wyzwalacz przepływu pracy",
   "plugins.channels.surface.providerSelectionInvalidDescription": "Happier nie mógł użyć konfiguracji tego dostawcy. Spróbuj ponownie lub otwórz Szczegóły, aby zobaczyć dlaczego.",
   "plugins.channels.surface.resolverUnsupportedTitle": "Wyszukaj inaczej",
   "plugins.channels.surface.resolverUnsupportedDescription": "Dostawca nie potrafi wyszukać takiego adresu. Wpisz go tak, jak nazywa go dostawca.",

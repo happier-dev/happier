@@ -1,4 +1,10 @@
 {
+  "plugins.channels.prBinding.approval.title": "Alterar o vínculo de pull request desta sessão?",
+  "plugins.channels.prBinding.approval.body": "Isso pode mudar quais pull requests estão vinculados a esta sessão ou quais eventos de pull request iniciam um fluxo de trabalho.",
+  "plugins.channels.prBinding.approval.repository": "Repositório",
+  "plugins.channels.prBinding.approval.number": "Número do pull request",
+  "plugins.channels.prBinding.approval.url": "URL do pull request",
+  "plugins.channels.prBinding.approval.trigger": "Gatilho do fluxo de trabalho",
   "plugins.channels.surface.providerSelectionInvalidDescription": "O Happier não conseguiu usar a configuração deste provedor. Tente novamente ou abra Detalhes para ver o motivo.",
   "plugins.channels.surface.resolverUnsupportedTitle": "Pesquise de outra forma",
   "plugins.channels.surface.resolverUnsupportedDescription": "O provedor não consegue pesquisar este tipo de endereço. Digite-o como o provedor o nomeia.",

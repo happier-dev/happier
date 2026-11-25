@@ -1,4 +1,10 @@
 {
+  "plugins.channels.prBinding.approval.title": "Modificare il collegamento alla pull request di questa sessione?",
+  "plugins.channels.prBinding.approval.body": "Questo può cambiare le pull request collegate a questa sessione o gli eventi delle pull request che avviano un flusso di lavoro.",
+  "plugins.channels.prBinding.approval.repository": "Repository",
+  "plugins.channels.prBinding.approval.number": "Numero della pull request",
+  "plugins.channels.prBinding.approval.url": "URL della pull request",
+  "plugins.channels.prBinding.approval.trigger": "Trigger del flusso di lavoro",
   "plugins.channels.surface.providerSelectionInvalidDescription": "Happier non è riuscito a usare la configurazione di questo provider. Riprova oppure apri Dettagli per vedere perché.",
   "plugins.channels.surface.resolverUnsupportedTitle": "Cercalo in un altro modo",
   "plugins.channels.surface.resolverUnsupportedDescription": "Il provider non può cercare questo tipo di indirizzo. Inseriscilo come lo chiama il provider.",

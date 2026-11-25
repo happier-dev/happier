@@ -1,4 +1,10 @@
 {
+  "plugins.channels.prBinding.approval.title": "Vols canviar la vinculació de la sol·licitud de canvis d’aquesta sessió?",
+  "plugins.channels.prBinding.approval.body": "Això pot canviar quines sol·licituds de canvis estan vinculades a aquesta sessió o quins esdeveniments d’aquestes sol·licituds inicien un flux de treball.",
+  "plugins.channels.prBinding.approval.repository": "Repositori",
+  "plugins.channels.prBinding.approval.number": "Número de la sol·licitud de canvis",
+  "plugins.channels.prBinding.approval.url": "URL de la sol·licitud de canvis",
+  "plugins.channels.prBinding.approval.trigger": "Activador del flux de treball",
   "plugins.channels.surface.providerSelectionInvalidDescription": "Happier no ha pogut fer servir la configuració d’aquest proveïdor. Torna-ho a provar o obre Detalls per veure per què.",
   "plugins.channels.surface.resolverUnsupportedTitle": "Cerca-ho d’una altra manera",
   "plugins.channels.surface.resolverUnsupportedDescription": "El proveïdor no pot cercar aquest tipus d’adreça. Escriu-la com l’anomena el proveïdor.",

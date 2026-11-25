@@ -336,9 +336,9 @@ describe('Channels core manifest', () => {
     )).toMatchObject({
       dangerLevel: 'writesLocal',
       confirmation: {
-        title: expect.any(String),
-        body: expect.any(String),
-        confirmLabel: expect.any(String),
+        title: { fallback: expect.any(String) },
+        body: { fallback: expect.any(String) },
+        confirmLabel: { fallback: expect.any(String) },
       },
     });
   });
@@ -367,7 +367,7 @@ describe('Channels core manifest', () => {
         ] },
         presentUserUi: false,
       },
-      confirmation: { title: expect.any(String) },
+      confirmation: { title: { fallback: expect.any(String) } },
     });
     expect(parsePluginManifest({ ...manifest, contributes: { actions: [{ ...binding,
       confirmationWhen: { default: { op: 'and', predicates: [] }, presentUserUi: false },

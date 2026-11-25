@@ -3,6 +3,9 @@ import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/acti
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
 import { expect, it, vi } from 'vitest';
+import { SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, SessionPullRequestBindingInputV1Schema } from '@happier-dev/channels-protocol/v1';
+import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { PLUGIN_MANIFEST as CHANNELS_MANIFEST } from '../../../../../../packages/plugins/channels/src/manifest';
 import { GITHUB_TRIAGE_ACTION_IDS_V1, PLUGIN_MANIFEST } from '../../../../../../packages/plugins/scm-github/src/manifest';
 import { createTargetActionCurrentIntentAdapter } from './targetActionCurrentIntent';
 
@@ -21,6 +24,54 @@ function visibleFacts(presentation: ReturnType<typeof describeApprovalRequestFie
   return presentation.rows.flatMap(row => row.kind === 'value' && !row.technical && row.valueFormat !== 'confidential'
     ? [[row.title, row.value]] : []);
 }
+
+it('shows the repository, pull request number and trigger as separate facts in a Channels attach approval', async () => {
+  const binding = CHANNELS_MANIFEST.contributes?.actions?.find(({ id }) => id === SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1);
+  if (!binding) throw new Error('Expected the Channels PR binding Action');
+  const parsed = parsePluginManifest({
+    ...CHANNELS_MANIFEST,
+    contributes: { ...CHANNELS_MANIFEST.contributes, actions: [binding] },
+  });
+  if (!parsed.ok) throw new Error(parsed.diagnostics.map(({ message }) => message).join('\n'));
+  const action = parsed.manifest.contributes.actions?.[0];
+  if (!action) throw new Error('Expected the normalized PR binding Action');
+
+  const artifactId = 'channels-pr-attach-approval';
+  const create = vi.fn(async (request: TargetActionApprovalRequestV1) => {
+    setImmediate(() => { void getSharedBlockingApprovalCoordinator().resolveBlockingDecision({
+      artifactId, request: { ...request, status: 'rejected', decision: { kind: 'reject', decidedAtMs: 2 } },
+      decision: 'reject', decisionAuthority: 'present_user',
+    }); });
+    return { artifactId };
+  });
+  const adapter = createTargetActionCurrentIntentAdapter({ create, read: async () => null, update: async () => ({ ok: true }) });
+  await expect(adapter({
+    action: {
+      qualifiedId: `${parsed.manifest.id}/actions/${action.id}`,
+      pluginId: parsed.manifest.id, localId: action.id, occurrenceId: '7',
+      sourceCustody: { kind: 'development', registeredRootId: 'root-7' },
+      dangerLevel: action.dangerLevel, scopes: action.scopes, surfaces: action.surfaces, hostAccess: [],
+      input: SessionPullRequestBindingInputV1Schema.parse({
+        kind: 'attach', sessionId: 'session-1',
+        pullRequest: { repository: 'example/project', number: 4 },
+        target: { automationId: 'automation-1', triggerId: 'trigger-1', triggerRevision: 0, triggerKind: 'prComment' },
+      }),
+      policyFingerprint: 'b'.repeat(64), confirmation: action.confirmation,
+    },
+    fingerprint: 'a'.repeat(64), surface: 'agent', approvalInputCustody: 'live_only',
+  })).resolves.toMatchObject({ status: 'rejected' });
+
+  const request = create.mock.calls[0]![0];
+  const facts = visibleFacts(describeApprovalRequestFields(request));
+  expect(facts).toEqual(expect.arrayContaining([
+    ['Repository', 'example/project'],
+    ['Pull request number', '4'],
+    ['Workflow trigger', 'prComment'],
+  ]));
+  expect(facts.flat()).not.toContain('Target');
+  expect(facts.flat()).not.toContain('Pull request');
+  expect(request.summary).toBe('Change this session’s pull request binding?');
+});
 
 it('action.invoke exposes declared issue-create facts without the configuration token', () => {
   const projected = projectTargetActionApprovalInput(input, ['instance.configuration.token'])!;

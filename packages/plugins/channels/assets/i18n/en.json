@@ -1,4 +1,10 @@
 {
+  "plugins.channels.prBinding.approval.title": "Change this session’s pull request binding?",
+  "plugins.channels.prBinding.approval.body": "This can change which pull requests are linked to this session or which pull request events start a Workflow.",
+  "plugins.channels.prBinding.approval.repository": "Repository",
+  "plugins.channels.prBinding.approval.number": "Pull request number",
+  "plugins.channels.prBinding.approval.url": "Pull request URL",
+  "plugins.channels.prBinding.approval.trigger": "Workflow trigger",
   "plugins.channels.surface.providerSelectionInvalidDescription": "Happier couldn’t use this provider’s setup. Try again, or open Details to see why.",
   "plugins.channels.surface.resolverUnsupportedTitle": "Search for it another way",
   "plugins.channels.surface.resolverUnsupportedDescription": "The provider can’t look up this kind of address. Enter it the way the provider names it.",

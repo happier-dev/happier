@@ -792,9 +792,18 @@ function createChannelsPlugin(): ChannelsPlugin {
         },
         sessionTarget: { field: 'sessionId', cardinality: 'one' },
         confirmation: {
-          title: 'Manage session pull request binding?',
-          body: 'This can attach a pull request to the selected session or change its scoped conversation trigger bindings.',
-          confirmLabel: 'Continue',
+          title: { key: 'plugins.channels.prBinding.approval.title', fallback: 'Change this session’s pull request binding?' },
+          body: {
+            key: 'plugins.channels.prBinding.approval.body',
+            fallback: 'This can change which pull requests are linked to this session or which pull request events start a Workflow.',
+          },
+          confirmLabel: { key: 'plugins.channels.surface.bindingCreateContinue', fallback: 'Continue' },
+          inputFields: [
+            { path: 'pullRequest.repository', title: { key: 'plugins.channels.prBinding.approval.repository', fallback: 'Repository' } },
+            { path: 'pullRequest.number', title: { key: 'plugins.channels.prBinding.approval.number', fallback: 'Pull request number' } },
+            { path: 'pullRequestUrl', title: { key: 'plugins.channels.prBinding.approval.url', fallback: 'Pull request URL' } },
+            { path: 'target.triggerKind', title: { key: 'plugins.channels.prBinding.approval.trigger', fallback: 'Workflow trigger' } },
+          ],
         },
         hostAccess: ['account-storage'],
         run: manageSessionPullRequestBindingForInvocation,

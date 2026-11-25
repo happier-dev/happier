@@ -1,4 +1,10 @@
 {
+  "plugins.channels.prBinding.approval.title": "このセッションのプルリクエストの関連付けを変更しますか？",
+  "plugins.channels.prBinding.approval.body": "このセッションに関連付けるプルリクエストや、ワークフローを開始するプルリクエストのイベントが変わることがあります。",
+  "plugins.channels.prBinding.approval.repository": "リポジトリ",
+  "plugins.channels.prBinding.approval.number": "プルリクエスト番号",
+  "plugins.channels.prBinding.approval.url": "プルリクエストのURL",
+  "plugins.channels.prBinding.approval.trigger": "ワークフローのトリガー",
   "plugins.channels.surface.providerSelectionInvalidDescription": "このプロバイダーの設定を Happier で使用できませんでした。もう一度試すか、「詳細」で理由を確認してください。",
   "plugins.channels.surface.resolverUnsupportedTitle": "別の方法で検索",
   "plugins.channels.surface.resolverUnsupportedDescription": "プロバイダーはこの種類のアドレスを検索できません。プロバイダーでの名前どおりに入力してください。",
