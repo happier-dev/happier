@@ -28,6 +28,7 @@ export async function stopExecutionRun(args: Readonly<{
   voiceAgentManager: VoiceAgentManager;
   getNowMs: () => number;
   finishRun: FinishExecutionRun;
+  closeQuestions?: (run: ExecutionRunState, controller: ExecutionRunController | undefined) => Promise<void>;
   onPublicStateUpdated?: (runId: string) => void;
   onStopped?: (run: ExecutionRunState) => Promise<void>;
 }>): Promise<ExecutionRunStopResult> {
@@ -106,6 +107,9 @@ export async function stopExecutionRun(args: Readonly<{
   };
 
   try {
+    // The durable question may outlive its native waiter. Settle it while
+    // the exact input still owns its request store.
+    await args.closeQuestions?.(run, ctrl);
     if (ctrl?.kind === 'backend') {
       const pendingWorkflowFacts = readExecutionRunControllerHostBarrier(ctrl);
       if (pendingWorkflowFacts) await pendingWorkflowFacts;

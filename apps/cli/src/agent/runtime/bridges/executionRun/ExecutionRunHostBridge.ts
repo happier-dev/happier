@@ -3659,10 +3659,14 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   }
 
   async stop(runId: string): ReturnType<typeof stopExecutionRun> {
-    return await runInExecutionRunTranscriptSecretScope(this.readRunTranscriptSecrets(runId), () => this.stopInRunSecretScope(runId));
+    return await this.stopWithIntent(runId, 'explicit_stop');
   }
 
-  private async stopInRunSecretScope(runId: string): ReturnType<typeof stopExecutionRun> {
+  private async stopWithIntent(runId: string, intent: 'explicit_stop' | 'dispose'): ReturnType<typeof stopExecutionRun> {
+    return await runInExecutionRunTranscriptSecretScope(this.readRunTranscriptSecrets(runId), () => this.stopInRunSecretScope(runId, intent));
+  }
+
+  private async stopInRunSecretScope(runId: string, intent: 'explicit_stop' | 'dispose'): ReturnType<typeof stopExecutionRun> {
     await this.recoverRetainedRuns();
     const recoveryInput = this.boundedRecoveryInputs.get(runId);
     this.boundedRecoveryInputs.delete(runId);
@@ -3672,7 +3676,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       const custody = controller.delegatedTurn;
       controller.cancelled = true;
       const childId = await custody.admission;
-      if (childId && this.runs.get(childId)?.status === 'running') await this.stop(childId);
+      if (childId && this.runs.get(childId)?.status === 'running') await this.stopWithIntent(childId, intent);
       await custody.settled;
     }
     return await stopExecutionRun({
@@ -3682,6 +3686,17 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       voiceAgentManager: this.voiceAgentManager,
       getNowMs: this.getNowMs,
       finishRun: this.finishRun.bind(this),
+      ...(intent === 'explicit_stop' ? {
+        closeQuestions: async (run: ExecutionRunState, controller: ExecutionRunController | undefined) => {
+          try {
+            const inputStore = controller?.kind === 'backend' ? controller.currentInputPermissionRequestStore?.store : null;
+            const store = inputStore ?? (run.sessionId === null ? null : this.resolvePermissionRequestStore());
+            await store?.cancelRunQuestions?.(run.runId);
+          } catch {
+            logger.warnLocalFile('[EXECUTION RUN] Question settlement failed during Stop', { runId });
+          }
+        },
+      } : {}),
       onPublicStateUpdated: (updatedRunId) => this.emitPublicStateUpdated(updatedRunId),
       onStopped: async run => await this.emitLifecycleHookEvent({
         eventId: 'executionRun.stopped',
@@ -3730,7 +3745,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
             { output: run.latestToolResult }, run.structuredMeta);
           return;
         }
-        await this.stop(runId);
+        await this.stopWithIntent(runId, 'dispose');
       }));
 
       const remainingControllers = [...this.controllers.entries()];

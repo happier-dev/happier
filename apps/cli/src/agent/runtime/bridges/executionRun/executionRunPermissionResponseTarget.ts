@@ -17,7 +17,7 @@ export type ExecutionRunPermissionRequestStore = Readonly<
   Pick<AgentStateRequestStore, 'publishRequest' | 'registerResponseTargetHandler'>
   & Partial<Pick<AgentStateRequestStore,
     'rebindPersistenceTargetFrom' | 'listOutstandingRequests' | 'readOutstandingRequest'
-    | 'publishRequestAndWait' | 'completeRequest' | 'retireCompletedRequestsForTurn'
+    | 'publishRequestAndWait' | 'completeRequest' | 'retireCompletedRequestsForTurn' | 'cancelRunQuestions'
     | 'captureRequestApplication' | 'readAppliedCompletion' | 'recoverAppliedCompletions'>>
 >;
 
@@ -44,6 +44,9 @@ export function observeExecutionRunPermissionStore(
     } } : {}),
     ...(store.completeRequest ? { completeRequest: async (params: Parameters<NonNullable<ExecutionRunPermissionRequestStore['completeRequest']>>[0]) => {
       const completed = await store.completeRequest!(params); changed(); return completed;
+    } } : {}),
+    ...(store.cancelRunQuestions ? { cancelRunQuestions: async (runId: string) => {
+      await store.cancelRunQuestions!(runId); changed();
     } } : {}),
     ...(store.retireCompletedRequestsForTurn ? { retireCompletedRequestsForTurn: async (id: string) => {
       await store.retireCompletedRequestsForTurn!(id); changed();

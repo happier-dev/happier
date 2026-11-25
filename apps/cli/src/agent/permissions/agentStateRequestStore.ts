@@ -1464,8 +1464,17 @@ export class AgentStateRequestStore {
         await this.cancelRequests(params);
     }
 
+    async cancelRunQuestions(runId: string): Promise<void> {
+        await this.cancelRequests({
+            scope: { runId },
+            reason: 'Execution run stopped',
+            decision: 'abort',
+            requestIds: [],
+        });
+    }
+
     private async cancelRequests(params: Readonly<{
-        scope?: 'foreground';
+        scope?: 'foreground' | Readonly<{ runId: string }>;
         preserveQuestions?: boolean;
         reason: string;
         decision?: string;
@@ -1478,6 +1487,9 @@ export class AgentStateRequestStore {
         const completedRequestsById = new Map<string, AgentStateRequestCancellation>();
         const isSelected = (id: string, entry: Readonly<Record<string, unknown>>) => {
             if (params.scope === 'foreground' && readRunScopedExecutionPermissionRequestIdentity(id)) return false;
+            if (typeof params.scope === 'object') {
+                return readRunScopedExecutionPermissionRequestIdentity(id)?.runId === params.scope.runId && isStoredQuestion(entry);
+            }
             if (params.preserveQuestions && isDurableAgentStructuredQuestionRequest(readStoredQuestionClassification(entry))) return false;
             if (params.turnId && !isPermissionRequestOwnedByPluginTurn({
                 owner: normalizePermissionRequestOwner(entry.owner, 'stored'),
