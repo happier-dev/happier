@@ -61,6 +61,8 @@ export const VOICE_MACHINE_ERROR_REASON_TRANSLATION_KEYS = {
     execution_machine_missing: 'voice.readiness.execution_machine_missing',
     execution_machine_unknown: 'voice.readiness.execution_machine_unknown',
     usage_limit: 'session.usageLimitRecovery.banner.title',
+    scoped_session_encryption_unavailable: 'session.sharing.failedToDecrypt',
+    session_encryption_not_found: 'session.sharing.failedToDecrypt',
     daemon_streaming_stt_runtime_unavailable: 'settingsVoice.local.daemonInference.states.runtimeUnavailable',
     voice_previous_session_stop_failed: 'settingsVoice.local.machineErrors.previous_session_stop_failed',
     voice_agent_selection_unavailable: 'settingsVoice.local.machineErrors.agent_selection_unavailable',

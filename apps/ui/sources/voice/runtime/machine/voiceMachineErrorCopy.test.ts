@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { hasTranslation, tLoose } from '@/text/i18n';
+import { createSessionEncryptionUnavailableError } from '@/sync/encryption/sessionEncryptionUnavailableError';
 
 import type { VoiceMachineErrorKind } from './voiceConversationRuntimeTypes';
+import { classifyVoiceMachineError } from './voiceMachineError';
 import { readSafeVoiceProviderFailureMessage, resolveVoiceMachineErrorTranslationKey } from './voiceMachineErrorCopy';
 
 const expectedTranslationKeys = {
@@ -29,6 +31,15 @@ const expectedTranslationKeys = {
 } as const satisfies Readonly<Record<VoiceMachineErrorKind, string>>;
 
 describe('voiceMachineErrorCopy', () => {
+    it.each(['scoped_session_encryption_unavailable', 'session_encryption_not_found'] as const)(
+        'presents the Session encryption refusal with its own reason and recovery (%s)', code => {
+        const failure = classifyVoiceMachineError(createSessionEncryptionUnavailableError('PRIVATE_SESSION_ID', code));
+        expect(failure).toMatchObject({ kind: 'session_unavailable', reason: code, recoveryAction: 'none' });
+        const key = resolveVoiceMachineErrorTranslationKey(failure.kind, failure.reason);
+        expect(key).toBe('session.sharing.failedToDecrypt');
+        expect(hasTranslation(key)).toBe(true);
+        expect(JSON.stringify(failure)).not.toContain('PRIVATE_SESSION_ID');
+    });
     it.each([
         ['provider_response_invalid', 'settingsVoice.local.machineErrors.provider_response_invalid'],
         ['SOURCE_RUNTIME_RELOAD_REQUIRED', 'session.startFailure.cause.SOURCE_RUNTIME_RELOAD_REQUIRED'],

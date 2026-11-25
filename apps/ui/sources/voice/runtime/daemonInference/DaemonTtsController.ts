@@ -46,21 +46,6 @@ function toExactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
     return Uint8Array.from(bytes).buffer;
 }
 
-function toDaemonTtsControllerErrorCode(code: string): Parameters<typeof createDaemonVoiceInferenceClientError>[0] {
-    switch (code) {
-        case 'runtime_unavailable':
-        case 'model_not_installed':
-        case 'machine_unreachable':
-        case 'request_timeout':
-        case 'invalid_audio_input':
-        case 'unsupported_codec':
-        case 'cancelled':
-            return code;
-        default:
-            return 'internal_error';
-    }
-}
-
 export type DaemonTtsControllerDeps = Readonly<{
     client: Pick<DaemonVoiceInferenceClient, 'startSegmentedTts'>;
     playAudioBytesWithStopper: typeof playAudioBytesWithStopper;
@@ -345,7 +330,7 @@ export class DaemonTtsController {
                 }
                 if (event.type === 'error') {
                     throw createDaemonVoiceInferenceClientError(
-                        toDaemonTtsControllerErrorCode(event.errorCode),
+                        event.errorCode,
                         event.error,
                         event.failureCause,
                     );

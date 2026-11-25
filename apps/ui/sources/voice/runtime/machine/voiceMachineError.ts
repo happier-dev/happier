@@ -84,7 +84,9 @@ export function resolveVoiceMachineErrorKind(reason: string, preferredKind?: Voi
     if (reason === 'audio_user_gesture_required') return 'service_temporarily_unavailable';
     if (reason === 'agent_signed_out') return 'authentication_required';
     if (reason === 'held_by_person' || reason === 'VOICE_AGENT_TARGET_SESSION_INACTIVE'
-        || reason === 'VOICE_AGENT_TARGET_SESSION_OFFLINE') return 'session_unavailable';
+        || reason === 'VOICE_AGENT_TARGET_SESSION_OFFLINE'
+        || reason === 'scoped_session_encryption_unavailable'
+        || reason === 'session_encryption_not_found') return 'session_unavailable';
     if (reason === CONNECTED_SERVICE_BINDING_UNSUPPORTED
         || reason === 'provider_setup_required' || reason === 'realtime_byo_not_configured' || reason === 'realtime_agent_update_required'
         || reason === 'voice_provider_agent_unavailable'

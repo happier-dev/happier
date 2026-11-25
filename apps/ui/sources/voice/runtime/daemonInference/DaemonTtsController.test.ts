@@ -138,20 +138,23 @@ afterEach(async () => {
 });
 
 describe('DaemonTtsController', () => {
-    it.each([429, 503])('retains the daemon synthesis event cause with status %i', async (status) => {
+    it.each([
+        { status: 429, code: 'runtime_unavailable' },
+        { status: 503, code: 'unsupported_runtime_family' },
+    ] as const)('retains the daemon synthesis event cause with code $code', async ({ status, code }) => {
         const failureCause = projectActionFailureCauseV1(Object.assign(new TypeError('private synthesis failure'), { status }), 'voice.inference.tts');
         const controller = new DaemonTtsController({
             client: createDaemonClientAtRpcBoundary({ startSegmentedTts: async () => ({
                 streamId: 'tts-stream-error', generation: 0, segmentCount: 1,
                 next: async () => ({ type: 'error', streamId: 'tts-stream-error', generation: 0,
-                    errorCode: 'runtime_unavailable', error: 'runtime unavailable', failureCause }),
+                    errorCode: code, error: code, failureCause }),
                 ackSegment: async () => {}, cancel: async () => {},
             }) }),
             playAudioBytesWithStopper: async () => { throw new Error('failed synthesis must not play audio'); },
         });
         await expect(controller.speak({ text: 'Hello.', packId: 'pack', voiceId: null, speed: 1,
             registerPlaybackStopper: () => () => {}, onSpeaking: () => {} }))
-            .rejects.toMatchObject({ code: 'runtime_unavailable', failureCause });
+            .rejects.toMatchObject({ code, failureCause });
     });
     it('stops audio whose platform target registers after an interruption', async () => {
         const preparing = createDeferred<void>();
