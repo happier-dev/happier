@@ -178,7 +178,12 @@ export async function ensureAcpLaunchForSession(params: AcpLaunchParams & Readon
         managedAcpDefinition: { definitionId: params.definition.id, title: params.definition.title },
       })
       : await installAcpLaunch(params, deps);
-    if (!result.ok) throw new Error(result.errorMessage);
+    if (!result.ok) {
+      throw Object.assign(new Error(result.errorMessage), {
+        ...(result.errorCode ? { code: result.errorCode } : {}),
+        ...('failureCause' in result && result.failureCause ? { failureCause: result.failureCause } : {}),
+      });
+    }
     resolution = await resolveAcpLaunch(params);
   }
   if (resolution.kind !== 'ready') throw new Error('Configured ACP launch cannot run on this machine');

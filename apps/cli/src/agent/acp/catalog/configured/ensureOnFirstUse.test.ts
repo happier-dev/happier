@@ -34,6 +34,32 @@ afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { rec
 const capabilities = { supportsLoadSession: false, supportsModes: 'unknown', supportsModels: 'unknown', supportsConfigOptions: 'unknown', promptImageSupport: 'unknown' };
 
 describe('admitted configured ACP launch on first use', () => {
+  it('preserves the archive installer’s verification refusal', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-acp-invalid-archive-'));
+    roots.push(root);
+    const server = createServer((_request, response) => response.end('unexpected download contents'));
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing fixture port');
+      transport.origin = `http://127.0.0.1:${address.port}`;
+      const record = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: [{
+        id: 'invalid-archive', name: 'invalid-archive', title: 'Invalid archive', createdAt: 1, updatedAt: 1,
+        launch: { kind: 'archive', version: '1.0', assetsByPlatform: {
+          [`${process.platform}-${process.arch}`]: {
+            archiveUrl: 'https://fixture-agent.invalid/agent', executableSubpath: 'agent', kind: 'executable', sha256: '0'.repeat(64),
+          },
+        } },
+      }] });
+      await expect(ensureAcpLaunchForSession({
+        accountId: 'alice', definition: record.definitions[0]!, platform: process.platform, arch: process.arch,
+        env: { ...process.env, HAPPIER_HOME_DIR: root }, settings: accountSettingsParse({}), machineId: 'fixture-machine',
+      })).rejects.toMatchObject({ code: 'verification-failed' });
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
   it.skipIf(process.platform === 'win32')('keeps the running old version on pin change and isolates the same definition across Accounts', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-acp-account-version-')); roots.push(root);
     const server = createServer((_request, response) => response.end('#!/bin/sh\nif [ "$1" = hold ]; then read value; fi\nprintf "ready"\n'));

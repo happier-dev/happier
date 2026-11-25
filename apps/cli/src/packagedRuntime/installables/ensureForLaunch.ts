@@ -7,6 +7,7 @@ import {
   getRuntimeInstallableAdapter,
   getRuntimeInstallableAdapterForDescriptor,
   type RuntimeInstallableAdapter,
+  type RuntimeInstallableInstallResult,
   type RuntimeInstallableInstallOptions,
 } from './registry';
 import { startBackgroundRuntimeInstallableUpdate } from './startBackgroundUpdate';
@@ -26,7 +27,7 @@ type DescriptorDeps = Readonly<{
 
 export type EnsureRuntimeInstallablesForLaunchResult =
   | Readonly<{ ok: true; installedKeys: InstallableKey[] }>
-  | Readonly<{ ok: false; installableKey: InstallableKey; errorMessage: string; logPath: string | null }>;
+  | (Extract<RuntimeInstallableInstallResult, { ok: false }> & Readonly<{ installableKey: InstallableKey }>);
 
 export async function ensureRuntimeInstallableDescriptorForLaunch(
   params: Readonly<{
@@ -60,7 +61,7 @@ export async function ensureRuntimeInstallableDescriptorForLaunch(
   ) {
     const installResult = await adapter.installOrUpgrade({ env: params.env, managedAcpDefinition: params.managedAcpDefinition });
     if (!installResult.ok) {
-      return { ok: false, installableKey, errorMessage: installResult.errorMessage, logPath: installResult.logPath };
+      return { ...installResult, installableKey };
     }
     resolution = await adapter.detectLaunchResolution({ env: params.env });
     installedThisLaunch = true;
