@@ -71,6 +71,20 @@ describe('Account-scoped Session draft selection', () => {
         });
     });
 
+    it('offers all 19 Review candidates through the Session draft selector', async () => {
+        const mounted = mount();
+        const reviewCandidates = Array.from({ length: 19 }, (_, index) => ({
+            ...candidates[index === 1 ? 1 : 0]!,
+            rootPath: `/workspaces/${'review-change-'.repeat(24)}${index}`,
+        }));
+        const draft = { candidates: reviewCandidates, checkoutIntent: 'preparedReviewWorkspace' };
+        expect(new TextEncoder().encode(JSON.stringify(draft)).byteLength).toBeGreaterThan(8_192);
+
+        await expect(mounted.select({ hostAction, draft }))
+            .resolves.toEqual({ kind: 'serverStartDraft', draft: selectedDraft });
+        expect(mounted.selectPlacement).toHaveBeenCalledExactlyOnceWith(reviewCandidates);
+    });
+
     it('asks the person for a Machine when the actual bulk seed only carries checkout intent', async () => {
         const selectTarget = vi.fn(() => ({ result: Promise.resolve(selectedDraft.executionTarget), close() {} }));
         const mounted = mount('server-a', selectTarget);

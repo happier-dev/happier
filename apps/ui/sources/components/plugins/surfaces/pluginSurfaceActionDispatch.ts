@@ -62,6 +62,7 @@ import {
     reconstructPluginUiSelectedActionInput,
     PluginUiSelectActionInputResultV1Schema,
     PluginUiSelectActionInputRequestV1Schema,
+    describePluginUiSelectActionInputRefusalV1,
     PLUGIN_UI_HOST_API_VERSION_V1,
     PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
     PluginUiSessionStateV1Schema,
@@ -934,7 +935,10 @@ function createClientActionUi(
         selectActionInput: async (request, options) => {
             assertCurrent();
             const parsed = PluginUiSelectActionInputRequestV1Schema.safeParse(request);
-            if (!parsed.success) throw new PluginError({ code: 'plugin_action_input_selection_invalid' });
+            if (!parsed.success) {
+                const refusal = describePluginUiSelectActionInputRefusalV1(parsed.error.issues, randomUUID());
+                throw new PluginError(createPluginSurfaceHostApiPluginErrorData(refusal.code, [], undefined, refusal));
+            }
             const cancellation = mergeAbortSignals([signal, options?.signal]);
             try {
                 const targeted = 'operation' in parsed.data ? await context({ signal: cancellation.signal }) : null;

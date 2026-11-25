@@ -46,6 +46,7 @@ import {
     PluginUiReplacePageLocationResultV1Schema,
     PluginUiSetComposerDecorationsRequestV1Schema,
     PluginUiSelectActionInputRequestV1Schema,
+    describePluginUiSelectActionInputRefusalV1,
     PluginUiSelectActionInputResultV1Schema,
     PluginUiWatchComposerRequestV1Schema,
     PluginUiReadSessionRequestV1Schema,
@@ -173,7 +174,7 @@ function createHostApiError(
     code: string,
     diagnostics: readonly string[] = [],
     message?: string,
-    metadata?: Pick<import('@happier-dev/protocol/plugins/ui').PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable'> & Readonly<{ requestId?: string }>,
+    metadata?: Pick<import('@happier-dev/protocol/plugins/ui').PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable' | 'details' | 'requestId'>,
 ): PluginError {
     return new PluginError(createPluginSurfaceHostApiPluginErrorData(code, diagnostics, message, metadata));
 }
@@ -1130,7 +1131,10 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             assertActive(options?.signal);
             assertInstalled('selectActionInput');
             const parsedRequest = PluginUiSelectActionInputRequestV1Schema.safeParse(selectionRequest);
-            if (!parsedRequest.success) throwHostApiError('invalid_payload');
+            if (!parsedRequest.success) {
+                const refusal = describePluginUiSelectActionInputRefusalV1(parsedRequest.error.issues, randomUUID());
+                throw createHostApiError(refusal.code, [], undefined, refusal);
+            }
             const result = await transport.request(
                 'selectActionInput',
                 parsedRequest.data,

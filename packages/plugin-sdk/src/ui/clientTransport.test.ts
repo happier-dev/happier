@@ -23,6 +23,28 @@ const surface: SurfaceContext = createSurfaceContextFixture();
 
 const identity = { instanceId: 'mount-1', mountNonce: 'nonce-1' } as const;
 
+it('correlates a malformed selector draft before sending a hosted request', async () => {
+    let receive: ((message: unknown) => void) | undefined;
+    const send = vi.fn((message: PluginUiHostApiWireEnvelopeV1) => {
+        if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['selectActionInput'] });
+    });
+    const api = await createPluginUiHostApiClientFromTransport({
+        identity,
+        createRequestId: () => 'selection-refusal',
+        transport: {
+            send,
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+        },
+    });
+    send.mockClear();
+
+    // @ts-expect-error A plugin running unchecked JavaScript can supply an array.
+    await expect(api.selectActionInput({ hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' }, draft: [] }))
+        .rejects.toMatchObject({ code: 'invalid_payload', details: { field: 'draft', requestId: 'selection-refusal' } });
+    expect(send).not.toHaveBeenCalled();
+});
+
 describe('Host API negotiation admission', () => {
     it('retains an explicitly requested base generation and refuses a silent default downgrade', async () => {
         const create = (apiRange?: string) => {

@@ -1,4 +1,5 @@
 /** @moduleRealm daemon */
+import { describePluginUiSelectActionInputRefusalV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiPresentActionFailureRequestV1Schema, PluginUiActionFailurePresentationV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { z } from 'zod/mini';
 import { resolvePluginUiHostApiVersionV1, isPluginUiHostMethodSupportedInVersionV1, PluginUiOpenResourceIntentV1Schema } from '@happier-dev/protocol/plugins/ui';
@@ -1373,7 +1374,8 @@ async function createPluginUiTestkitInternal<TSurface>(
                 }
                 const payload = PluginUiSelectActionInputRequestV1Schema.safeParse(message.payload);
                 if (!payload.success) {
-                    throw fixtureError('invalid_payload', 'selectActionInput payload is invalid.');
+                    const refusal = describePluginUiSelectActionInputRefusalV1(payload.error.issues, message.requestId);
+                    throw new PluginUiHostApiClientError(refusal.code, 'selectActionInput payload is invalid.', refusal.retryable, refusal);
                 }
                 const result = PluginUiSelectActionInputResultV1Schema.safeParse(
                     await handlers.selectActionInput({ request: payload.data, signal }),

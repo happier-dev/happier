@@ -13,6 +13,7 @@ import {
     PluginUiHostApiRequestEnvelopeV1Schema,
     PluginUiHostApiWireEnvelopeV1Schema,
     PluginUiSelectActionInputRequestV1Schema,
+    describePluginUiSelectActionInputRefusalV1,
     PluginUiSelectActionInputResultV1Schema,
     pluginUiHostApiWireIdentitiesEqual,
     pluginUiSelectedActionInputMatchesOperation,
@@ -586,7 +587,7 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
         code: string,
         diagnostics: readonly string[] = [],
         messageText?: string,
-        metadata?: Pick<import('@happier-dev/protocol/plugins/ui').PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable'> & Readonly<{ requestId?: string }>,
+        metadata?: Pick<import('@happier-dev/protocol/plugins/ui').PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable' | 'details' | 'requestId'>,
     ): PluginHostedWebBridgeResponseEnvelopeV1 {
         return canonicalBridgeResponse(envelope, PluginUiHostApiWireEnvelopeV1Schema.parse({
             wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
@@ -791,7 +792,8 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
             ? PluginUiSelectActionInputRequestV1Schema.safeParse(message.payload)
             : null;
         if (selectionRequest && !selectionRequest.success) {
-            return canonicalRequestError(envelope, message, 'invalid_payload');
+            const refusal = describePluginUiSelectActionInputRefusalV1(selectionRequest.error.issues, message.requestId);
+            return canonicalRequestError(envelope, message, refusal.code, [], undefined, refusal);
         }
         // This one bridge owns request correlation. A raw guest cannot reuse a
         // completed select request id as an execution id and make its later

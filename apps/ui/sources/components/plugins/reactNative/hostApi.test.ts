@@ -1544,6 +1544,20 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         expect('action' in selected).toBe(false);
     });
 
+    it('identifies a malformed draft and correlates the refusal before RN dispatch', async () => {
+        const selectActionInput = vi.fn(() => ({ kind: 'cancelled' as const }));
+        const adapter = createAdapterOverHost({ selectActionInput });
+        const hostAction = { action: 'session.spawn_new', projection: 'serverStartDraft' } as const;
+        await expect(adapter.api.selectActionInput({ hostAction, draft: {} })).resolves.toEqual({ kind: 'cancelled' });
+        selectActionInput.mockClear();
+
+        // Unchecked JavaScript author input can reach the typed host API at runtime.
+        // @ts-expect-error Array drafts are malformed.
+        await expect(adapter.api.selectActionInput({ hostAction, draft: [] }))
+            .rejects.toMatchObject({ code: 'invalid_payload', details: { field: 'draft', requestId: expect.any(String) } });
+        expect(selectActionInput).not.toHaveBeenCalled();
+    });
+
     it('terminally carries one active prepared-workspace selection into openNewSession', async () => {
         const operation = {
             point: { pointId: 'review-sources', protocol: { id: 'review-sources', version: 1 } },

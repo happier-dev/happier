@@ -12370,6 +12370,13 @@ it does not author an Agent recipe or start a Session. Matching Protocol,
 SDK, Triage UI and host readers refresh together. Older strict readers reject
 the projection; no fallback parser, wire epoch or 0.2 adapter is added.
 
+In unreleased 0.3, transient `selectActionInput` drafts use the Host API's
+strict JSON object contract without the surface launch-input byte ceiling.
+The Session composer still validates candidate and recipe fields. A request
+rejected for a malformed draft returns `invalid_payload` with `details.field`
+set to `draft` and a `details.requestId` the plugin can show. Load matching
+host and SDK sources so all selector entry points admit the same draft sizes.
+
 Unreleased 0.3 contributed Actions may declare `approvalScope: 'environment'`.
 This optional field is a closed executable-authority declaration, retained in
 the daemon and Account Action projections. Matching development Protocol, SDK

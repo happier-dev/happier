@@ -219,6 +219,7 @@ export {
   PluginUiSelectActionInputHostActionV1Schema,
   PluginUiSelectActionInputHostRequestV1Schema,
   PluginUiSelectActionInputRequestV1Schema,
+  describePluginUiSelectActionInputRefusalV1,
   PluginUiSelectActionInputResultV1Schema,
   PluginUiEphemeralInputSettlementV1Schema,
   PluginUiSelectActionInputServerStartDraftV1Schema,

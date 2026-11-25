@@ -168,9 +168,6 @@ export async function composeSessionServerStartDraft(params: Readonly<{
         target: SessionServerStartDraftTarget;
     }>) => SessionServerStartDraftPresentation;
 }>): Promise<SessionServerStartDraftComposerOutcome> {
-    if (!isWithinDraftByteLimit(params.draft ?? {})) {
-        return { kind: 'invalid', reason: 'draft_invalid' };
-    }
     const read = readSeed(params.draft);
     if (!read) return { kind: 'invalid', reason: 'draft_invalid' };
     if (params.signal?.aborted) return { kind: 'unavailable', reason: 'aborted' };

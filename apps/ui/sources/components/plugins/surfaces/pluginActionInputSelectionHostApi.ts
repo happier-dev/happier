@@ -1,15 +1,15 @@
 import {
     PluginUiLaunchInputV1Schema,
     PluginUiSelectActionInputRequestV1Schema,
+    describePluginUiSelectActionInputRefusalV1,
     PluginUiSelectActionInputResultV1Schema,
     PluginUiJsonValueV1Schema,
-    PluginUiJsonObjectV1Schema,
     type PluginUiHostApiErrorCodeV1,
     type PluginUiJsonObjectV1,
     type PluginUiJsonValueV1,
     type PluginUiTargetedContributionsV1,
 } from '@happier-dev/protocol/plugins/ui';
-import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { randomUUID } from '@/platform/randomUUID';
 
 import { registerHostSelectedActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
@@ -179,9 +179,12 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
         targetedContributions: input.targetedContributions,
         targetPluginId: input.host.targetPluginId,
     });
-    return async (payload: unknown, options?: PluginSurfaceHostApiRequestOptions) => {
+    return async (payload: unknown, options?: PluginSurfaceHostApiRequestOptions, requestId?: string) => {
         const parsed = PluginUiSelectActionInputRequestV1Schema.safeParse(payload);
-        if (!parsed.success) return errorPayload('invalid_payload', 'select_action_input_request_invalid');
+        if (!parsed.success) {
+            const refusal = describePluginUiSelectActionInputRefusalV1(parsed.error.issues, requestId ?? randomUUID());
+            return createPluginSurfaceHostApiError(refusal.code, ['select_action_input_request_invalid'], undefined, refusal);
+        }
         const mergedSignal = mergeAbortSignals([input.host.signal, options?.signal]);
         const signal = mergedSignal.signal;
         let selectedSessionAddress: ActionSessionAddressV1 | undefined;
@@ -273,9 +276,7 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
                     }
                     const machineId = typeof input.host.machineId === 'string' ? input.host.machineId.trim() : '';
                     const composer = input.composeSessionServerStartDraft ?? composeDefaultSessionServerStartDraft;
-                    const draft = 'draft' in parsed.data && parsed.data.draft !== undefined
-                        ? PluginUiJsonObjectV1Schema.parse(projectNativeJsonValueForTransport(parsed.data.draft))
-                        : undefined;
+                    const draft = 'draft' in parsed.data ? parsed.data.draft : undefined;
                     const outcome = await composer({
                         serverId,
                         ...(draft === undefined ? {} : { draft }),
@@ -291,10 +292,6 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
                     return sessionComposerFailure(outcome);
                 }
 
-                if (
-                    parsed.data.draft !== undefined
-                    && !PluginUiLaunchInputV1Schema.safeParse(parsed.data.draft).success
-                ) return errorPayload('invalid_payload', 'select_action_input_request_invalid');
                 const pluginProjectionById = selectionFacts.pluginProjectionById;
                 const targetedContributions = selectionFacts.targetedContributions;
                 if (!selectionFacts.hasPluginProjection || !targetedContributions) {
@@ -381,6 +378,6 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
 export function createPluginActionInputSelectionHostApiHandler(input: PluginActionInputSelectionBinding): PluginSurfaceHostApiMethodHandler {
     const select = createPluginActionInputSelector(input);
     return (request, options) => request.method === 'selectActionInput'
-        ? select(request.payload, options)
+        ? select(request.payload, options, request.requestId)
         : errorPayload('unsupported_method', 'select_action_input_method_mismatch');
 }

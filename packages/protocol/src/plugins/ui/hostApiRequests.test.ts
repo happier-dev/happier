@@ -621,7 +621,7 @@ describe('plugin UI open and Action components', () => {
                 action: 'session.spawn_new',
                 projection: 'serverStartDraft',
             },
-            draft: { blob: `${exactDraft.blob}a` },
+            draft: [],
         }).success).toBe(false);
 
         const serverStartDraft = {
@@ -855,7 +855,7 @@ describe('plugin UI open and Action components', () => {
         }).success).toBe(false);
     });
 
-    it('applies the canonical host-input byte bound to selection drafts and submissions', () => {
+  it('admits selection drafts above the launch-input bound and retains the submitted input bound', () => {
     const oversized = { blob: 'a'.repeat(PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1) };
 
     expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
@@ -871,12 +871,19 @@ describe('plugin UI open and Action components', () => {
         action: { pluginId: 'acme.provider', localId: 'connection/prepare-v1' },
       },
       draft: oversized,
-    }).success).toBe(false);
-    expect(PluginUiSelectActionInputResultV1Schema.safeParse({
+    }).success).toBe(true);
+    const submission = {
       kind: 'submitted',
-      action: { pluginId: 'acme.provider', localId: 'connection/prepare-v1' },
-      input: oversized,
+      action: admittedOperation.action,
+      selection: admittedSelection,
       connectedAccount: { kind: 'none' },
+      presentation: { connectedAccountLabel: null, machineDisplayName: null },
+    };
+    expect(PluginUiSelectActionInputResultV1Schema.safeParse({
+      ...submission, input: {},
+    }).success).toBe(true);
+    expect(PluginUiSelectActionInputResultV1Schema.safeParse({
+      ...submission, input: oversized,
     }).success).toBe(false);
   });
 

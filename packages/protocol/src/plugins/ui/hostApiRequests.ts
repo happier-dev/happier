@@ -2,6 +2,7 @@ import {
   PluginUiJsonObjectV1Schema,
   PluginUiQualifiedActionReferenceV1Schema,
   PluginUiSelectActionInputTargetedSubmittedV1Schema,
+  type PluginUiJsonObjectV1,
   type PluginUiQualifiedActionReferenceV1,
 } from './selectedActionInput.js';
 export { PluginUiJsonObjectV1Schema, PluginUiQualifiedActionReferenceV1Schema, PluginUiSelectActionInputTargetedSubmittedV1Schema } from './selectedActionInput.js';
@@ -45,6 +46,7 @@ import {
   QualifiedConnectedAccountRefSchema,
 } from '../../connect/qualifiedConnectedAccountPersistence.js';
 import { PluginUiJsonValueV1Schema, type PluginUiJsonValueV1 } from '../contributions/ui/json.js';
+import { isJsonObject } from '../../json/strictJsonValue.js';
 import { measureSerializedStrictPluginJsonUtf8Bytes } from '../contributions/strictJsonValue.js';
 import { PluginUiHostApiRequestMethodV1Schema } from './hostApiDefinition.js';
 import {
@@ -673,9 +675,16 @@ export type PluginUiDownloadFileRequestV1 = z.infer<typeof PluginUiDownloadFileR
  * to that snapshot; it does not treat the request as caller provenance or an
  * arbitrary Action lookup.
  */
+// Selector drafts are transient form seeds carried by the Host API envelope.
+// Surface launch input uses a separate contract.
+const PluginUiSelectionDraftV1Schema = lazyZodSchema(() => z.custom<PluginUiJsonObjectV1>((value) => {
+  const parsed = PluginUiJsonValueV1Schema.safeParse(value);
+  return parsed.success && isJsonObject(parsed.data);
+}, { message: 'Selection draft must be a strict JSON object.' }));
+
 export const PluginUiSelectActionInputTargetedRequestV1Schema = lazyZodSchema(() => z.strictObject({
     operation: PluginUiTargetedContributionOperationV1Schema,
-    draft: zMini.optional(PluginUiJsonObjectV1Schema),
+    draft: zMini.optional(PluginUiSelectionDraftV1Schema),
 }));
 export type PluginUiSelectActionInputTargetedRequestV1 =
   z.infer<typeof PluginUiSelectActionInputTargetedRequestV1Schema>;
@@ -974,7 +983,7 @@ export const PluginUiSelectActionInputHostRequestV1Schema = lazyZodSchema(() => 
   }).check(z.refine(value => value.sessionCandidates === undefined || value.sessionCandidateQuery === undefined)),
   z.strictObject({
     hostAction: z.strictObject({ action: z.literal('session.spawn_new'), projection: z.literal('serverStartDraft') }),
-    draft: zMini.optional(PluginUiJsonObjectV1Schema),
+    draft: zMini.optional(PluginUiSelectionDraftV1Schema),
   }),
   z.strictObject({
     hostAction: z.strictObject({ action: z.literal('session.spawn_new'), projection: z.literal('sessionPlacement') }),
@@ -994,7 +1003,7 @@ export const PluginUiSelectActionInputHostRequestV1Schema = lazyZodSchema(() => 
     sessionId: z.string().check(z.minLength(1)),
     serverId: z.optional(z.string().check(z.minLength(1))),
     /** An incomplete authoring seed; the completed result uses the canonical start schema. */
-    draft: PluginUiJsonObjectV1Schema,
+    draft: PluginUiSelectionDraftV1Schema,
   }),
 ]));
 export type PluginUiSelectActionInputHostRequestV1 =
@@ -1011,6 +1020,28 @@ export const PluginUiSelectActionInputRequestV1Schema = lazyZodSchema(() => z.un
 ]));
 export type PluginUiSelectActionInputRequestV1 =
   z.infer<typeof PluginUiSelectActionInputRequestV1Schema>;
+
+function isSelectionDraftFailure(issues: readonly z.core.$ZodIssue[]): boolean {
+  // A union lists rejected alternate requests too. Attribute the error to
+  // the draft only when a request variant would otherwise have matched.
+  return issues.length > 0 && issues.every(issue =>
+    issue.path[0] === 'draft'
+    || (issue.code === 'invalid_union' && issue.path.length === 0 && issue.errors.some(isSelectionDraftFailure)),
+  );
+}
+
+export function describePluginUiSelectActionInputRefusalV1(
+  issues: readonly z.core.$ZodIssue[],
+  requestId: string,
+) {
+  const details = {
+    requestId,
+    layer: 'input',
+    phase: 'admission',
+    ...(isSelectionDraftFailure(issues) ? { field: 'draft' as const } : {}),
+  } as const;
+  return { code: 'invalid_payload' as const, layer: details.layer, phase: details.phase, requestId, retryable: false, details };
+}
 
 /** Session alone projects this no-invoke settlement. */
 export const PluginUiSelectActionInputServerStartDraftV1Schema = lazyZodSchema(() => z.strictObject({

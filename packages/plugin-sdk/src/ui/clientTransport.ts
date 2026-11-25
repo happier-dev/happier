@@ -1,4 +1,5 @@
 import { PluginUiDeviceStateRequestV1Schema, PluginUiDeviceStateResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { describePluginUiSelectActionInputRefusalV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { readPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 import { PluginUiPresentActionFailureRequestV1Schema, PluginUiActionFailurePresentationV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiWidgetAreaRequestV1Schema, PluginUiWidgetAreaResultV1Schema, PluginUiWatchEntityDragDropRequestV1Schema, PluginUiEntityDragDropStateV1Schema, PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1, PLUGIN_UI_HOST_API_WIRE_VERSION_V1, PLUGIN_UI_HOST_METHODS_V1, PluginUiReadEntityDragItemRequestV1Schema, PluginUiReadEntityDragItemResultV1Schema, PluginUiUpdateEntityDragDropRequestV1Schema, PluginUiUpdateEntityDragDropResultV1Schema, PluginUiAcquireComposerInputLockRequestV1Schema, PluginUiActiveComposerResultV1Schema, PluginUiApplyComposerRequestV1Schema, PluginUiFocusComposerRequestV1Schema, PluginUiInspectComposerContentRequestV1Schema, PluginUiJsonObjectV1Schema, PluginUiOpenNewSessionRequestV1Schema, PluginUiOpenConnectedAccountsRequestV1Schema, PluginUiReadComposerRequestV1Schema, PluginUiPickComposerMediaRequestV1Schema, PluginUiPublishCurrentUiContextRequestV1Schema, PluginUiReleaseComposerContentRequestV1Schema, PluginUiReplacePageLocationRequestV1Schema, PluginUiReplacePageLocationResultV1Schema, PluginUiSetComposerDecorationsRequestV1Schema, PluginUiWatchComposerRequestV1Schema, PluginUiReadSessionRequestV1Schema, PluginUiReadStoredImageRequestV1Schema, PluginUiReadStoredImageResultV1Schema, PluginUiReadSessionResultV1Schema, PluginUiRespondToSessionPermissionRequestV1Schema, PluginUiRespondToSessionPermissionResultV1Schema, PluginUiWatchSessionRequestV1Schema, PluginLiveStreamReferenceV1Schema, PluginUiLiveStreamViewingV1Schema, PluginUiExecuteActionRequestV1Schema, PluginUiHostApiRenderContextSnapshotV1Schema, PluginUiSelectActionInputRequestV1Schema, PluginUiSelectActionInputResultV1Schema, PluginUiEphemeralInputSettlementV1Schema, PluginUiSelectedActionInputCarrierV1Schema, PluginUiHostApiWireEnvelopeV1Schema, pluginUiHostApiWireIdentitiesEqual, PluginUiResourceSubscriptionEventV1Schema } from '@happier-dev/protocol/plugins/ui/client';
@@ -929,9 +930,12 @@ export async function createPluginUiHostApiClientFromTransport(
         selectActionInput: async (selectionRequest, requestOptions) => {
             const payload = PluginUiSelectActionInputRequestV1Schema.safeParse(selectionRequest);
             if (!payload.success) {
+                const refusal = describePluginUiSelectActionInputRefusalV1(payload.error.issues, createRequestId());
                 throw new PluginUiHostApiClientError(
-                    'invalid_payload',
+                    refusal.code,
                     'selectActionInput request is invalid.',
+                    refusal.retryable,
+                    refusal,
                 );
             }
             let selectionRequestId: string | undefined;
