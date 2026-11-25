@@ -32,6 +32,8 @@ import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useTeamGroup, useTeamGroupMembers } from '@/hooks/teams/useTeamGroups';
 import { useOpenedPrivateLabels } from '@/sync/ops/privateLabels/useOpenedPrivateLabels';
+import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
+import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelClient';
@@ -54,12 +56,13 @@ import { TeamSection, type TeamPageStaleRead, type TeamSectionRenderHeader } fro
 import { useEditedMetadataDraft } from '../useEditedMetadataDraft';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamMutationFailureLabel, teamReadFailureLabel } from '../teamMutationPresentation';
-import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
+import { teamSignInFailureAction, useTeamReadFailureAction } from '../useTeamReadFailureAction';
 import { groupManagementLabel } from '../teamLabels';
 import { sessionHistoryChoiceOptions } from '../teamPolicyPresentation';
 import {
     teamDirectorySourcePath,
     teamGroupMemberDetailPath,
+    teamGroupsPath,
     teamIdentityConnectionPath,
 } from '../teamsRoutes';
 import { TeamMemberDefaultsSection } from '../defaults/TeamMemberDefaultsSection';
@@ -72,7 +75,18 @@ const GROUP_DETAIL_CHUNK_SIZE = 12;
  * change, in the archived notice for Restore, beneath Archive for Archive. Each attempt clears it,
  * so an earlier refusal never outlives a later success. A declined approval has no message.
  */
-type GroupNotice = Readonly<{ place: 'roster' | 'restore' | 'archive'; message: string | null }>;
+type GroupNotice =
+    | Readonly<{ place: 'roster' | 'restore'; message: string | null }>
+    | Readonly<{ place: 'archive'; failure: HomeDomainFailure<string> }>;
+
+function groupArchiveFailureLabel(failure: HomeDomainFailure<string>): string | null {
+    switch (failure.code) {
+        case 'invalid_team_input': return t('teams.groups.invalidLifecycleRequest');
+        case 'group_not_found': return t('teams.groups.notFound');
+        case 'managed_by_directory': return t('teams.groups.lifecycleManagedAtSource');
+        default: return teamMutationFailureLabel(failure);
+    }
+}
 
 type GroupDetailVirtualizedRow = Readonly<{
     key: string;
@@ -920,7 +934,16 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         }
 
         if (group.capabilities.archive && !archived) {
-            const archiveFailure = notice?.place === 'archive' ? notice.message : null;
+            const failure = notice?.place === 'archive' ? notice.failure : null;
+            const archiveFailure = failure ? groupArchiveFailureLabel(failure) : null;
+            const recovery = failure?.code === 'group_not_found' || failure?.code === 'invalid_team_input'
+                ? { label: t('teams.tabs.groups'), testID: 'team-group-archive-refusal-groups',
+                    onPress: () => router.push(teamGroupsPath(context.address)) }
+                : failure ? teamSignInFailureAction(
+                    failure, context.address, (href) => router.push(href), 'team-group-archive-refusal',
+                ) : undefined;
+            const settled = failure && archiveFailure && failure.code
+                && (!failure.retryable || failure.code === 'team_authentication_unavailable');
             add('archive', () => (
                 // Archive closes the page the way a Team's does: the destructive button at the far edge
                 // with its consequence beneath it (one placement for both).
@@ -930,7 +953,14 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                         footnote={archiveFailure ?? t('teams.groups.archiveBody')}
                         footnoteTone={archiveFailure ? 'danger' : undefined}
                         footnoteTestID={archiveFailure ? 'team-group-archive-error' : undefined}
-                        trailing={(
+                        trailing={recovery ? (
+                            <RoundButton
+                                testID={recovery.testID}
+                                size="small"
+                                title={recovery.label}
+                                onPress={recovery.onPress}
+                            />
+                        ) : settled ? null : (
                             <RoundButton
                                 testID="team-group-archive"
                                 size="small"
@@ -948,15 +978,21 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                                             scope: context.scope,
                                             address: context.address,
                                             groupId,
+                                            onApprovalFailed: (code, typedFailure) => setNotice({
+                                                place: 'archive',
+                                                failure: typedFailure
+                                                    ? homeDomainFailureFromActionFailure(typedFailure, 'teams.groups.archive')
+                                                    : { kind: 'unknown', code, retryable: false },
+                                            }),
                                         });
                                         if (outcome.kind === 'succeeded') router.back();
                                         else {
-                                            setNotice({ place: 'archive', message: teamMutationFailureLabel(outcome.failure) });
+                                            setNotice({ place: 'archive', failure: outcome.failure });
                                             if (outcome.failure.kind === 'outcome_unknown') void detail.reload();
                                         }
                                     } catch (cause) {
-                                        if (isTeamActionApprovalPendingError(cause)) context.requestApproval(cause.artifactId);
-                                        else setNotice({ place: 'archive', message: t('teams.errors.generic') });
+                                        if (isTeamActionApprovalPendingError(cause)) context.requestApproval(cause.registration);
+                                        else setNotice({ place: 'archive', failure: { kind: 'unknown', code: null, retryable: false } });
                                     } finally {
                                         mutationInFlightRef.current = false;
                                         setBusy(false);

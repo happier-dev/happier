@@ -1,4 +1,5 @@
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { teamErrorHttpStatusV1 } from '@happier-dev/protocol/teams';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { projectPrivateLabelForRecipientV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
@@ -97,6 +98,7 @@ const GROUP_MEMBERS_LIST_PATH = '/v1/teams/groups/members/list';
 const GROUP_MEMBER_ADD_PATH = '/v1/teams/groups/members/add';
 const GROUP_MEMBER_REMOVE_PATH = '/v1/teams/groups/members/remove';
 const TEAM_MEMBERS_LIST_PATH = '/v1/teams/members/list';
+const GROUP_ARCHIVE_PATH = '/v1/teams/groups/archive';
 const GROUP_RESTORE_PATH = '/v1/teams/groups/restore';
 const ARTIFACT_CREATE_PATH = '/v1/artifacts';
 
@@ -1190,6 +1192,45 @@ describe('TeamGroupDetailScreen', () => {
         // Its header says the kept members come back, not that it has none.
         expect(screen.getTextContent()).toContain('teams.groups.archivedMemberCount');
         expect(screen.getTextContent()).not.toContain('teams.groups.memberCount(count=0)');
+    });
+
+    it.each([
+        { code: 'invalid_team_input', details: undefined, label: 'teams.groups.invalidLifecycleRequest', href: '/groups' },
+        { code: 'teams_unavailable', details: undefined, label: 'teams.unavailable.disabled', href: undefined },
+        { code: 'team_not_found', details: undefined, label: 'teams.errors.notFound', href: undefined },
+        { code: 'group_not_found', details: undefined, label: 'teams.groups.notFound', href: '/groups' },
+        { code: 'team_archived', details: undefined, label: 'teams.errors.archived', href: undefined },
+        { code: 'team_forbidden', details: undefined, label: 'teams.errors.forbidden', href: undefined },
+        { code: 'team_forbidden', details: { reason: 'legacy_home_credential' }, label: 'teams.errors.signInOutdated', href: '/settings/account' },
+        { code: 'team_authentication_required', details: undefined, label: 'teams.errors.authenticationRequired', href: '/teams/team-1/sign-in' },
+        { code: 'team_authentication_unavailable', details: undefined, label: 'teams.credentials.externalApi.authenticationUnavailable', href: undefined },
+        { code: 'managed_by_directory', details: undefined, label: 'teams.groups.lifecycleManagedAtSource', href: undefined },
+    ] as const)('presents the Group archive $code refusal once', async ({ code, details, label, href }) => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, GROUP_GET_PATH, {
+            body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES }),
+        });
+        harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, { body: { items: [], nextCursor: null } });
+        harness.answer(serverId, GROUP_ARCHIVE_PATH, {
+            status: teamErrorHttpStatusV1(code),
+            body: { error: code, ...(details ? { details } : {}) },
+        });
+
+        const screen = await renderGroupDetail(serverId);
+        await waitForTestId(screen, 'team-group-archive');
+        await screen.pressByTestIdAsync('team-group-archive');
+
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(label));
+        expect(screen.getTextContent().split(label)).toHaveLength(2);
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        expect(ids).not.toContain('team-group-archive');
+        if (href) {
+            const groups = href === '/groups';
+            await screen.pressByTestIdAsync(groups ? 'team-group-archive-refusal-groups' : 'team-group-archive-refusal-sign-in');
+            const destination = new URL(groupRouterPush.mock.lastCall?.[0] ?? '', 'https://app.example').pathname;
+            expect(destination).toMatch(groups ? /\/settings\/teams\/[^/]+\/team-1\/groups$/u : href);
+        }
+        expect(harness.requestsFor(GROUP_ARCHIVE_PATH)).toHaveLength(1);
     });
 
     it('says a refused Restore in the archived notice, and clears it when Restore succeeds', async () => {

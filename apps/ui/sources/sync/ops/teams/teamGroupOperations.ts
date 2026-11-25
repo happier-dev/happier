@@ -182,11 +182,13 @@ export function archiveTeamGroup(params: Readonly<{
     scope: ServerAccountScope;
     address: TeamAddress;
     groupId: string;
+    onApprovalFailed?: Parameters<typeof runTeamAction>[0]['onApprovalFailed'];
 }>): Promise<TeamGroupOutcome<TeamGroupV1>> {
     return groupMutation({
         scope: params.scope,
         address: params.address,
         actionId: 'teams.groups.archive',
+        ...(params.onApprovalFailed ? { onApprovalFailed: params.onApprovalFailed } : {}),
         input: { v: 1, teamId: params.address.teamId, groupId: params.groupId },
     });
 }
