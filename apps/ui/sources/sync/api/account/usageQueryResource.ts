@@ -75,7 +75,8 @@ import { isTransientConnectivityError, RetryableServerResponseError } from '@/sy
 import { UsageModelPriceCatalogSchema, type UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { HappyError } from '@/utils/errors/errors';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
-import { getUsageQueryMachineInvalidationKey, getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, readUsageQuotaAccounts, readUsageQuotaChangedRecordIds, usageQuotaRecordChangeAffects, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries, type UsageQueryStateInvalidation } from './usageQueryInvalidation';
+import { getUsageQueryMachineInvalidationKey, getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, readUsageQuotaAccounts, readUsageQuotaBindingServiceKeys, readUsageQuotaChangedRecordIds, usageQuotaRecordChangeAffects, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries, type UsageQueryStateInvalidation } from './usageQueryInvalidation';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ProviderAccountUsageProjectionDocuments, ProviderAccountUsageQuotaViewDemand } from './apiProviderAccountUsage';
 import type { ProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import type { ProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
@@ -525,12 +526,13 @@ function retainUsageAllowance(batch: UsageQueryBatchResult, previous: RetainedUs
     return slices.size ? { slices, heads } : previous;
 }
 
-type UsageAllowanceReadTargets = Readonly<{ recordIds: readonly string[]; sourceKeys: readonly string[] }>;
+type UsageAllowanceReadTargets = Readonly<{ recordIds: readonly string[]; sourceKeys: readonly string[]; bindingServiceKeys?: readonly string[] }>;
 
 function joinAllowanceReadTargets(left: UsageAllowanceReadTargets | undefined, right: UsageAllowanceReadTargets | undefined) {
     if (!left || !right) return undefined;
     return { recordIds: [...new Set([...left.recordIds, ...right.recordIds])],
-        sourceKeys: [...new Set([...left.sourceKeys, ...right.sourceKeys])] };
+        sourceKeys: [...new Set([...left.sourceKeys, ...right.sourceKeys])],
+        bindingServiceKeys: [...new Set([...(left.bindingServiceKeys ?? []), ...(right.bindingServiceKeys ?? [])])] };
 }
 
 async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
@@ -585,15 +587,30 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
         return { ...view, sources };
     });
     const addressedReads = new Map<string, ProviderAccountUsageRecordId>();
+    const retainedBindings = new Map<string, ConnectedServiceQuotaGetResultV1>();
     const recordIds = admissions.map(({ admitted }, index) => admitted.usageRecordId
         ?? progress.find(view => view.sources[index]?.value?.current)?.sources[index]?.value?.current?.recordId);
     // A publication for an as-yet unknown record can be the first reading
     // for an unresolved source. A known record only wakes its own sources.
     const findUnknownRecord = targets?.recordIds.some(id => !recordIds.includes(id));
-    const requestedIndices = admissions.flatMap(({ admitted, sourceKey }, index) => {
+    const requestedIndices = admissions.flatMap(({ admitted, source, sourceKey }, index) => {
         if (recoverySources && !recoverySources.has(`quota:${sourceKey}`)) return [];
         if (!targets || targets.sourceKeys.includes(sourceKey)) return [index];
         const recordId = recordIds[index];
+        if (targets.bindingServiceKeys?.includes(buildQualifiedPluginContributionKey(source.ref.service))) {
+            // A named record still requires a body read. Resolve the source first
+            // since its old record can remain accessible through another source.
+            if (recordId && !targets.recordIds.includes(recordId)) {
+                const rows = progress.map(view => view.sources[index]!);
+                const head = rows[0]?.previous;
+                const current = head?.current;
+                // A binding wake cannot reopen an unrelated history failure.
+                if (head && current?.recordId === recordId && rows.every(({ previous }) =>
+                    previous?.current?.recordId === recordId
+                    && previous.current.recordKey.accountSubjectId === current.recordKey.accountSubjectId)) retainedBindings.set(sourceKey, head);
+            }
+            return [index];
+        }
         if (!recordId) return findUnknownRecord ? [index] : [];
         if (!targets.recordIds.includes(recordId)) return [];
         if (admitted.supported !== false) addressedReads.set(sourceKey, recordId);
@@ -666,10 +683,12 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
             const { source } = scope.sources[index]!;
             try {
                 await read({ source, ...(range ? { projection: { range, resolution: 'accepted_observations' as const } } : {}) });
-                publishProgress(index, undefined, true);
+                if (!retainedBindings.has(admissions[index]!.sourceKey) || progress.some(view => view.sources[index]?.accepted)) {
+                    publishProgress(index, undefined, true);
+                }
             } catch (error) { failSource(index, error); }
         })), { includePendingWork: !!range, changesCursor, dayChange, addressedReads, ...(daily ? { historyView: 'daily', exactHistoryRange } : {}), readAllHistory: {
-            views,
+            views, retainedBindings,
             onProgress: (value, projectedViews) => publishProgress(indexForSource(value.source), projectedViews),
             onViewFailure: (source, queryKeys, error) => failSource(indexForSource(source), error, queryKeys),
         } });
@@ -2955,11 +2974,12 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     if (allowanceChanged) {
                         const changedIds = accountModeChanged ? undefined : quotaRecordIds
                             ?? (typeof change === 'object' ? readUsageQuotaChangedRecordIds(change) : undefined);
+                        const bindingServiceKeys = typeof change === 'object' ? readUsageQuotaBindingServiceKeys(change) : undefined;
                         const dayChange = typeof change === 'object' ? change.providerAccountUsageDayChange : undefined;
                         const scopedDay = dayChange && changedIds?.includes(dayChange.recordId) ? dayChange : undefined;
                         allowanceDayChange = allowanceReadDemand === true ? joinAllowanceDayChanges(allowanceDayChange, scopedDay) : scopedDay;
-                        const targets = !accountModeChanged && (changedIds !== undefined || quotaSourceKeys !== undefined)
-                            ? { recordIds: changedIds ?? [], sourceKeys: quotaSourceKeys ?? [] } : undefined;
+                        const targets = !accountModeChanged && (changedIds !== undefined || quotaSourceKeys !== undefined || bindingServiceKeys !== undefined)
+                            ? { recordIds: changedIds ?? [], sourceKeys: quotaSourceKeys ?? [], bindingServiceKeys } : undefined;
                         allowanceTargets = allowanceReadDemand === true ? joinAllowanceReadTargets(allowanceTargets, targets) : targets;
                     }
                     allowanceReadDemand = allowanceReadDemand === true || allowanceChanged;

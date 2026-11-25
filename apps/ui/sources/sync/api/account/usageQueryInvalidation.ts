@@ -18,6 +18,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { isConnectedServiceUsageCapable, subscribeConnectedServiceRegistry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { resolveUsageQueryPeriod, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 /** The catalog owner publishes consumed price changes; labels have their own subscribers. */
 export function isUsagePresentationHomeAccountChange(event: HomeAccountChangeEvent): boolean {
@@ -39,6 +40,18 @@ export function isUsageQuotaHomeAccountChange(event: HomeAccountChangeEvent): bo
 export function readUsageQuotaChangedRecordIds(event: HomeAccountChangeEvent): readonly string[] | undefined {
     return event.source !== 'snapshot' && event.source !== 'connected'
         && event.providerAccountUsageRecordIds?.length ? event.providerAccountUsageRecordIds : undefined;
+}
+
+/** A service publication identifies the bindings to verify, without asserting that they changed. */
+export function readUsageQuotaBindingServiceKeys(event: HomeAccountChangeEvent): readonly string[] | undefined {
+    if (event.source === 'connected' || !isUsageQuotaHomeAccountChange(event)) return undefined;
+    const keys: string[] = [];
+    for (const entityId of event.entityIds ?? []) {
+        const change = readConnectedServicesAccountChangeV1({ kind: 'account', entityId });
+        if (change?.scope !== 'service') return undefined;
+        keys.push(buildQualifiedPluginContributionKey(change.ref));
+    }
+    return keys;
 }
 
 /** An unresolved source still needs acquisition; admitted sources consume only their record changes. */

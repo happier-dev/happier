@@ -5,6 +5,8 @@ import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol
 import { installConnectedAccountDescriptorProjection } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { buildProviderAccountUsageMaterialChangesV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { buildConnectedServicesAccountChangeV1, CHANGES_AFTER_CURSOR_HTTP_HEADER } from '@happier-dev/protocol/changes';
+import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
@@ -16,6 +18,7 @@ import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext } from '@/compon
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -48,8 +51,9 @@ it.each(['Profile', 'descriptor catalog'])(
     const usesDescriptors = producer === 'descriptor catalog';
     const records = Array.from({ length: 18 }, (_, index) => {
       const accountId = `fixture-${index}`;
-      const service = index >= 16 && usesDescriptors
-        ? { pluginId: 'test.quota.provider', localId: 'delayed-provider' }
+      const service = index >= 16
+        ? usesDescriptors ? { pluginId: 'test.quota.provider', localId: 'delayed-provider' }
+          : { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }
         : { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
       const ref = { service, accountId };
       const source = { bindingKind: 'account' as const, ref };
@@ -70,8 +74,14 @@ it.each(['Profile', 'descriptor catalog'])(
       connectedAccountsV4: records.slice(0, all ? 18 : 16).map(row => row.row) });
     let servedProfile = profile(usesDescriptors);
     const held = createDeferred<void>();
+    let accountingHold = held;
+    let changes: ApiChangeEntry[] = [];
+    let cursor = 0;
+    const machineId = 'fixture-machine';
+    let machine = createMachineFixture({ id: machineId, active: false, activeAt: nowMs, presenceProtocolVersion: 1 });
+    const machineRow = () => createPlainMachineRowFixture({ id: machineId, accountId: 'account-a', machine });
     let accountingStarts = 0;
-    const traffic: Array<{ route: string; recordId?: string; range?: unknown }> = [];
+    const traffic: Array<{ route: string; recordId?: string; range?: unknown; ref?: unknown }> = [];
     const costs = () => ['resolve', 'record', 'day-summaries', 'history'].map(route => traffic.filter(row => row.route === route).length);
     const accounting: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: 1,
       tokens: { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 15 },
@@ -79,10 +89,21 @@ it.each(['Profile', 'descriptor catalog'])(
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://plans-replay.test', accountId: 'account-a',
       get profile() { return servedProfile; },
     }], route: async request => {
+      if (request.path === '/v2/cursor') return Response.json({ cursor, changesFloor: 0 });
+      if (request.path === '/v2/changes') {
+        const header = request.headers.get(CHANGES_AFTER_CURSOR_HTTP_HEADER);
+        const after = Number(header ?? request.url.searchParams.get('after'));
+        return Response.json({ changes: changes.filter(row => row.cursor > after), nextCursor: cursor }, {
+          headers: header === null ? {} : { [CHANGES_AFTER_CURSOR_HTTP_HEADER]: header },
+        });
+      }
+      if (request.path === '/v1/machines') return Response.json([machineRow()]);
+      if (request.path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(request.body,
+        id => id === machineId ? machineRow() : null);
       if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
       if (request.path.startsWith('/v2/usage/query')) {
         accountingStarts++;
-        await held.promise;
+        await accountingHold.promise;
         if (request.path.endsWith('/query-batch')) {
           const batch = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
           return Response.json({ v: 1, results: batch.queries.map(query => ({ query, value: accounting })) });
@@ -93,14 +114,15 @@ it.each(['Profile', 'descriptor catalog'])(
         const route = request.path.split('/').at(-1)!;
         const query = JSON.parse(request.url.searchParams.get('query') ?? 'null');
         const recordId = query?.recordId ?? request.url.searchParams.get('recordId') ?? undefined;
-        traffic.push({ route, recordId, range: query?.history?.range });
         if (route === 'resolve') {
           const source = JSON.parse(request.url.searchParams.get('source')!);
+          traffic.push({ route, recordId, range: query?.history?.range, ref: source.ref });
           const row = records.find(record => record.source.ref.accountId === source.ref.accountId);
           if (!row?.snapshot) return Response.json(null);
           return Response.json({ source, recordId: row.snapshot.recordId,
-            providerAccountId: row.source.ref.accountId, fetchedAt: nowMs - 100, staleAfterMs: 60_000 });
+            providerAccountId: row.snapshot.recordKey.accountSubjectId, fetchedAt: nowMs - 100, staleAfterMs: 60_000 });
         }
+        traffic.push({ route, recordId, range: query?.history?.range });
         const row = records.find(row => row.snapshot?.recordId === recordId);
         if (route === 'record') return Response.json(row!.record);
         if (route === 'day-summaries') return Response.json({ summaries: [], missingDays: [] });
@@ -205,8 +227,70 @@ it.each(['Profile', 'descriptor catalog'])(
       expect(wake.filter(row => row.route === 'resolve')).toEqual([]);
       expect(wake.filter(row => row.route === 'record')).toEqual([{ route: 'record', recordId, range: undefined }]);
       expect(wake.every(row => row.recordId === recordId)).toBe(true);
+
+      const named = [0, 1, 2, 4].map(index => records[index]!.snapshot!.recordId);
+      const [global, exact] = buildProviderAccountUsageMaterialChangesV1(named[3]!, {
+        dayStartAtMs: openedAtMs - 12 * 3600_000, afterCursor: 1, publication: { kind: 'summary', afterCursor: 1 },
+      });
+      const mixedPage = [
+        { kind: 'session', entityId: 'fixture-session' },
+        ...named.slice(0, 3).map(id => buildProviderAccountUsageMaterialChangesV1(id)[1]),
+        { kind: 'machine', entityId: machineId },
+        global, exact,
+      ];
+      const consume = async (rows: readonly Pick<ApiChangeEntry, 'kind' | 'entityId' | 'hint'>[]) => {
+        changes = rows.map(row => ({ ...row, cursor: ++cursor, changedAt: nowMs }));
+        await act(async () => { await sync.resumeSync('socket-reconnect'); });
+      };
+      const bindingTargets = records.slice(16);
+      const beforeProfile = structuredClone(servedProfile.connectedAccountsV4);
+      const originalBindings = bindingTargets.map(row => row.snapshot!.recordId);
+      const rebound = bindingTargets[0]!;
+      for (const cause of ['equal profile', 'equal binding', 'changed binding'] as const) {
+        nowMs++;
+        accountingHold = createDeferred<void>();
+        const before = traffic.length;
+        const beforeAccounting = accountingStarts;
+        await consume([{ kind: 'session', entityId: 'fixture-session' }]);
+        await expect.poll(() => accountingStarts).toBeGreaterThan(beforeAccounting);
+        if (cause === 'equal profile') {
+          // An unchanged Profile may be materialized while an accounting read is still outstanding.
+          await act(async () => refreshProfile());
+        } else {
+          if (cause === 'changed binding') {
+            const previous = rebound.snapshot!;
+            const recordKey = { ...previous.recordKey, accountSubjectId: 'fixture-rebound' };
+            rebound.snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ ...previous, recordKey,
+              recordId: buildProviderAccountUsageRecordId(recordKey), accountSubject: { kind: 'providerSubject', id: 'fixture-rebound' } });
+            rebound.record = { ...rebound.record!, content: { t: 'plain', v: rebound.snapshot } };
+          }
+          await consume([buildConnectedServicesAccountChangeV1(rebound.source.ref.service)]);
+        }
+        machine = { ...machine, active: !machine.active, activeAt: nowMs, updatedAt: nowMs };
+        await consume(mixedPage);
+        await act(async () => accountingHold.resolve());
+        await expect.poll(() => traffic.slice(before).filter(row => row.route === 'record').length).toBeGreaterThanOrEqual(named.length);
+        await expect.poll(() => slices.every(slice => !slice.pending)).toBe(true);
+        await flushHookEffects({ cycles: 30 });
+        const mixed = traffic.slice(before);
+        console.info('M68 fixture costs', { producer, cause, costs: ['resolve', 'record', 'day-summaries', 'history']
+          .map(route => mixed.filter(row => row.route === route).length) });
+        expect(servedProfile.connectedAccountsV4).toEqual(beforeProfile);
+        expect(storage.getState().profile.connectedAccountsV4).toEqual(beforeProfile);
+        const bindings = bindingTargets.map(row => row.snapshot!.recordId);
+        expect(bindings).toEqual(cause === 'changed binding' ? [rebound.snapshot!.recordId, originalBindings[1]] : originalBindings);
+        const expected = cause === 'changed binding' ? [...named, rebound.snapshot!.recordId] : named;
+        expect.soft(mixed.filter(row => row.route === 'resolve').map(row => JSON.stringify(row.ref)).sort()).toEqual(
+          cause === 'equal profile' ? [] : bindingTargets.map(row => JSON.stringify(row.source.ref)).sort());
+        for (const route of ['record', 'day-summaries', 'history']) {
+          expect.soft(mixed.filter(row => row.route === route).map(row => row.recordId).sort(), `${cause}: ${route}`)
+            .toEqual([...expected].sort());
+        }
+        expect(slices.some(slice => slice.quota?.some(quota => quota.current?.recordId === rebound.snapshot!.recordId))).toBe(true);
+      }
     } finally {
       held.resolve();
+      accountingHold.resolve();
       await screen.unmount();
     }
   },

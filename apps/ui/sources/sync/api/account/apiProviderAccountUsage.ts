@@ -153,6 +153,8 @@ export type ProviderAccountUsageQuotaReadOptions = Readonly<{
     readAllHistory?: Readonly<{
         /** Host-only projections of the shared operands, including current-only demand. */
         views?: readonly ProviderAccountUsageQuotaViewDemand[];
+        /** Settled readings to keep only if Home confirms the same binding. */
+        retainedBindings?: ReadonlyMap<string, ConnectedServiceQuotaGetResultV1>;
         onProgress(value: ConnectedServiceQuotaGetResultV1, views?: ReadonlyMap<string, ConnectedServiceQuotaGetResultV1>): void;
         onViewFailure?(source: ConnectedServiceQuotaGetInputV1['source'], queryKeys: readonly string[], error: unknown): void;
     }>;
@@ -175,7 +177,7 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
     const addressed = inputOptions.addressedReads?.get(createCanonicalJsonSigningInput(request.source));
     // Address resolution and encrypted-byte acquisition need the captured
     // Account, not its mode. Opening still waits for the authoritative mode.
-    const [{ resolution, recordRead, retainedCurrent, publication }, accountMode] = await Promise.all([(async () => {
+    const [{ resolution, recordRead, retainedCurrent, publication, unchangedBinding }, accountMode] = await Promise.all([(async () => {
         const day = inputOptions.dayChange;
         const prior = day && inputOptions.projectionDocuments?.get(day.recordId)?.daily;
         let publication: AdmittedDayPublication | undefined;
@@ -205,6 +207,12 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
         }
         const sourceJson = (await requestProviderAccountUsageRead(credentials, `/v4/connect/qualified/provider-account-usage/sources/resolve?${new URLSearchParams({ source: encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedServiceUsageSourceResolveV4Schema, request.source) }).toString()}`, transportOptions))?.json ?? null;
         const resolution = sourceJson === null ? null : QualifiedConnectedServiceUsageSourceResolutionV4Schema.parse(sourceJson);
+        const retained = inputOptions.readAllHistory?.retainedBindings?.get(createCanonicalJsonSigningInput(request.source));
+        if (resolution && retained?.current?.recordId === resolution.recordId
+            && retained.current.recordKey.accountSubjectId === resolution.providerAccountId
+            && sameStrictJsonValue(resolution.source, request.source)) {
+            return { resolution, recordRead: null, retainedCurrent: null, publication: undefined, unchangedBinding: retained };
+        }
         const recordRead = resolution ? await requestProviderAccountUsageRead(credentials, providerAccountUsageRecordPath(resolution.recordId), transportOptions) : null;
         return { resolution, recordRead, retainedCurrent: null, publication: resolution?.recordId === day?.recordId ? publication : undefined };
     })(), inputOptions.accountMode]);
@@ -213,6 +221,7 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
     let options: ProviderAccountUsageQuotaReadOptions = { ...transportOptions, accountMode,
         ...(addressed ? { readEnteredMonthlyPrice: undefined } : {}) };
     throwIfAborted(options.signal); options.assertCurrent?.();
+    if (unchangedBinding) return unchangedBinding;
     const material = options.accountMode === 'e2ee' ? options.material ?? resolveAccountScopedCryptoMaterialFromCredentials(credentials) : undefined;
     const progressive = options.readAllHistory && (request.history || request.projection) && resolution;
     if (!request.projection && !progressive && options.readPacingTargets) options = { ...options, targets: await options.readPacingTargets() };
