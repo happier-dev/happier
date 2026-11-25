@@ -72,6 +72,7 @@ import { renderSessionInputContextBlockV1, renderSessionInputContextPromptV1 } f
 import { TaskProfile } from '@/agent/executionRuns/profiles/task/TaskProfile';
 import { buildExecutionRunSessionPromptContext } from './ExecutionRunHostBridge';
 import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
+import { registerSessionTranscriptSecret, TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 type TestRuntimeFactoryInput = Parameters<typeof import('./runtime/create').createExecutionRunRuntime>[0];
 type NativePromptRuntimeFactory = (opts: TestRuntimeFactoryInput) => ExecutionRunHostRuntime;
@@ -1529,6 +1530,41 @@ describe('ExecutionRunManager (review intent)', () => {
     expect(prompts.at(-1)).toContain('Please clarify why this matters.');
     expect(manager.getStructuredMeta(followUpRunId)?.kind).toBe('review_follow_up.v1');
     expect((manager.getStructuredMeta(followUpRunId) as any)?.payload?.requestMarkdown).toBe('Please clarify why this matters.');
+  });
+
+  it('keeps a reviewer launch secret masked in its Run scope for every follow-up round that borrows its runtime', async () => {
+    // Each launch (start and resume) materializes this value, as the exec owner registers Project secrets.
+    const secret = 'review-launch-secret-value';
+    const prompts: string[] = [];
+    const runtime = createPromptRuntime((promptRuntime, _sessionId, prompt) => {
+      prompts.push(prompt);
+      promptRuntime.emitMessage(prompts.length === 1
+        ? { type: 'event', name: 'provider_session_id', payload: { sessionId: 'vendor_review_secret' } } as AgentMessage
+        : { type: 'model-output', fullText: JSON.stringify({ answerMarkdown: `Round ${prompts.length} used ${secret}.`,
+          updatedFindings: [], questions: [], assumptions: [] }) });
+      if (prompts.length === 1) promptRuntime.emitMessage({ type: 'model-output', fullText: JSON.stringify({ summary: 'Initial.',
+        overviewMarkdown: 'Overview.', findings: [{ id: 'f1', title: 'Example', severity: 'low', category: 'style', summary: 'One.' }],
+        questions: [], assumptions: [] }) });
+    }, { resumeSupported: true, onProvisionRuntime: async () => { registerSessionTranscriptSecret(secret); } });
+    const manager = createExecutionRunManager({ parentProvider: TEST_PRIMARY_BACKEND_ID, cwd: process.cwd(),
+      createRuntime: () => runtime, sendAcp: async () => {}, getNowMs: () => 1_700_000_000_000 });
+    // No hosted Session scope exists in this process, as in the daemon: the Run's own store is the only scope.
+    // (A detached Review also persists findings through Review records, which this fixture serves only for a Session.)
+    const started = await manager.start({ sessionId: 'parent_session_1', intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID }, instructions: 'Review this repo.',
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'streaming' });
+    await manager.waitForTerminal(started.runId);
+    expect(manager.get(started.runId)?.status, JSON.stringify(manager.get(started.runId)?.error)).toBe('succeeded');
+    for (const round of [1, 2]) {
+      const followUp = await manager.applyAction(started.runId, { actionId: 'review.follow_up',
+        input: { findingIds: ['f1'], messageMarkdown: `Round ${round}?` } });
+      expect(followUp.ok, JSON.stringify(followUp)).toBe(true);
+      const childId = String((followUp as { result?: { runId?: string } }).result?.runId ?? '');
+      await manager.waitForTerminal(childId);
+      const stored = JSON.stringify([manager.get(childId), manager.getStructuredMeta(childId)]);
+      expect(stored, `round ${round}`).not.toContain(secret);
+      expect(stored, `round ${round}`).toContain(TRANSCRIPT_SECRET_REDACTED);
+    }
   });
 
   it('refuses review follow-up while running and after cancellation', async () => {

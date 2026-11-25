@@ -2338,8 +2338,9 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
             ...(completedRun.error ? { error: completedRun.error } : {}),
           },
         });
-        // Everything this Run stores is written; a later resume's launch registers again.
-        this.runTranscriptSecrets.get(runId)?.clear();
+        // Everything this Run stores is written; a later resume's launch registers again. Drop only this
+        // Run's reference: a follow-up child shares its running parent's store, which must outlive the child.
+        this.runTranscriptSecrets.delete(runId);
       }
     }
   }
