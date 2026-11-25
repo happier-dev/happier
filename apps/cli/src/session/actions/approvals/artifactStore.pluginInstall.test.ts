@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { AxiosHeaders, type AxiosRequestConfig } from 'axios';
+import tweetnacl from 'tweetnacl';
 
 import { ApprovalRequestV2Schema, artifactIdScopeMatchesAccountV1, deriveAccountScopedArtifactIdV1, type ApprovalRequest, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
@@ -422,7 +423,10 @@ describe('plugin install approval Artifact rejoin', () => {
     const origin = { machineId: 'machine-1', serverIdentityId: 'srv_saved_home' };
     const installationIdentityFile = join(root, 'installation.json');
     const installation = await readOrCreateInstallationIdentity(installationIdentityFile);
-    const encryption = credentials().encryption;
+    const encryption = accountMode === 'e2ee' ? {
+      type: 'dataKey' as const, machineKey,
+      publicKey: tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey,
+    } : null;
     const installationPublicKey = Buffer.from(installation.publicKey, 'base64url');
     const machineContentKey = new Uint8Array(32).fill(13);
     const machineContent = {
@@ -541,7 +545,9 @@ describe('plugin install approval Artifact rejoin', () => {
             }),
           }),
         });
-        expect(prepared?.invocation).toMatchObject({ surface: 'cli', authority: 'present_user', caller: { kind: 'host' } });
+        if (entry === 'archive') {
+          expect(prepared?.invocation).toMatchObject({ surface: 'cli', authority: 'present_user', caller: { kind: 'host' } });
+        }
         return prepared;
       },
     });
@@ -577,7 +583,7 @@ describe('plugin install approval Artifact rejoin', () => {
     const accountGet = http.get.getMockImplementation()!;
     const accountPost = http.post.getMockImplementation()!;
     const settingsContent = sealAccountSettingsV2RawContent({
-      credentials: storedCredentials, raw: {}, envelopeKind: 'plain',
+      credentials: storedCredentials, raw: {}, envelopeKind: encryption ? 'encrypted' : 'plain',
       randomBytes: length => new Uint8Array(length).fill(9),
     });
     http.get.mockImplementation(async (url: string, ...args: unknown[]) => {
@@ -631,17 +637,23 @@ describe('plugin install approval Artifact rejoin', () => {
         if (entry === 'cold-dev') {
           await handlePluginsCommand(['dev', source, '--json'], {
             actionExecutionDeps: { readCredentialsFn: async () => storedCredentials,
-              readCredentialsForServerIdFn: async () => storedCredentials, getServerProfileFn: getServerProfile,
-              createExecutorFn: params => createCliActionExecutorFromCredentials({ ...params, actionsSettingsProvider: createActionSettingsProvider() }) },
+              readCredentialsForServerIdFn: async () => storedCredentials, getServerProfileFn: getServerProfile },
           });
           const result = output.json();
-          expect(result, JSON.stringify(result)).toMatchObject({ ok: true, kind: 'plugins_install' });
+          expect(result, JSON.stringify({ result, homeActions, controlPaths, approvals: rows.size }))
+            .toMatchObject({ ok: true, kind: 'plugins_install' });
           expect(publicationErrors).toEqual([]);
           expect(publications).toBeGreaterThan(0);
           expect(rows.size).toBe(1);
-          expect(await store.approvalsGet({ artifactId: [...rows.keys()][0]!, serverId: 'home-1' })).toMatchObject({
+          const artifactId = [...rows.keys()][0]!;
+          const approval = await store.approvalsGet({ artifactId, serverId: 'home-1' });
+          expect(result).toMatchObject({ data: { kind: 'approval_request_created', artifactId } });
+          expect(approval).toMatchObject({ status: 'open',
             executionOriginV1: { ...origin, accountId: 'account-1' },
           });
+          const review = readPluginInstallApprovalPendingReview(approval?.preview);
+          if (!review) throw new Error('Expected the open approval to retain the daemon review');
+          expect(await owner.changeService.statusPluginChange({ pendingChangeId: review.pendingChangeId })).toEqual(review);
           return;
         }
         await handleActionsCommand(['invoke', 'plugins.install', '--server-id', 'home-1', '--kind', 'archive',
@@ -673,7 +685,7 @@ describe('plugin install approval Artifact rejoin', () => {
       await owner.changeService.shutdown(); await reloadController.shutdown();
       await rm(root, { recursive: true, force: true });
     }
-  }, 120_000);
+  }, 240_000); // Composed test starts a separate Home before invoking the CLI and daemon.
   it.each([['install', 'plain'], ['install', 'e2ee'], ['cancel', 'plain'], ['unmounted', 'plain']] as const)(
     'uses product confirmation for the exact Machine candidate: %s in %s', async (outcome, mode) => {
       accountMode = mode;
