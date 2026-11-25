@@ -1125,8 +1125,13 @@ export class RpcHandlerManager {
                     return await deny('project_envelope');
                 }
                 const envelope = parsedEnvelope.data;
+                // Home admits the joint routing only at the Open's child D's physical parent P2. P2 binds
+                // the Open to D and compares a plain Open; only D can open an encrypted one.
+                const physicalParentChildId = workspaceSyncTargetRouting?.success
+                    && workspaceSyncTargetRouting.data.targetMachineId !== this.scopePrefix
+                    ? workspaceSyncTargetRouting.data.targetMachineId : undefined;
                 let originalInput: unknown = envelope.v === 1 ? envelope.input : undefined;
-                if (envelope.v === 2) {
+                if (envelope.v === 2 && physicalParentChildId === undefined) {
                     const encryption = await this.resolveExternalActionEncryption?.(controller.signal, authorization).catch(() => null);
                     if (encryption?.serverIdentityId === binding.serverIdentityId) {
                         originalInput = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, material: encryption.material, binding: {
@@ -1143,7 +1148,7 @@ export class RpcHandlerManager {
                     ? WorkspaceSyncTargetBootstrapPrepareV1Schema.safeParse(decryptedParams) : undefined;
                 const body = source ? undefined : OpenProjectInputV1Schema.safeParse(decryptedParams);
                 const matches = isExternalActionAuthorizationBoundToEnvelope(binding,
-                    { actionId: 'projects.open', machineId: this.scopePrefix, envelope }) && opened.success
+                    { actionId: 'projects.open', machineId: physicalParentChildId ?? this.scopePrefix, envelope }) && opened.success
                     && (source && workspaceSyncSourceWriterTargetRouting?.success
                         ? doesWorkspaceSyncProjectSourceRequestMatchRouting(opened.data, authorization, source)
                             && opened.data.materialization.kind === 'sync'
