@@ -22,7 +22,7 @@ const scope = { serverId: 'home', accountId: 'account-owner', projectSourceId: '
 const shown = { mounted: true, visible: true, focused: true } as const;
 
 /** The network boundary only: the shared read controller, receipt projection and live-address owner run for real. */
-function previewController(input: Readonly<{ attachedDomain: boolean; health: 'up' | 'down' | null; purpose?: 'preview' | 'standard' }>) {
+function previewController(input: Readonly<{ attachedDomain: boolean; health: 'up' | 'down' | null; purpose?: 'preview' | 'standard'; providerUrl?: string }>) {
   const base = createDeploymentEnvironmentDetailV1();
   const linkId = base.environment.runtimeTargetLinkId!;
   const servingId = base.targetLinks.find((row) => row.targetLink.id === linkId)!.targetLink.activeDeploymentId!;
@@ -34,8 +34,20 @@ function previewController(input: Readonly<{ attachedDomain: boolean; health: 'u
     ...(input.health === null ? {} : { healthAggregate: { v: 1 as const, environmentId: base.environment.id, targetLinkId: linkId, protection: base.environment.protection,
       status: input.health, n: 1, down: input.health === 'down' ? 1 : 0, degraded: 0, unknown: 0, members: [],
       affectedMachineIds: [], edgeUnreachable: false, authoritativeRecovery: false } }) };
-  const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: servingId,
-    ...(input.health === null ? { state: 'running_unverified' as const } : {}) }) });
+  const baseReceipt = createDeploymentReceiptDetailV1();
+  const deployment = createDeploymentReceiptHeaderV1({ id: servingId,
+    ...(input.health === null ? { state: 'running_unverified' as const } : {}) });
+  const serving = input.providerUrl ? createDeploymentReceiptDetailV1({ deployment, content: {
+    sourceIntent: baseReceipt.content.sourceIntent, sourceMethod: 'upload',
+    machines: [], images: [], machineResults: [], steps: [],
+    platform: { targetLinkRevision: 1,
+      credentialPrincipal: { kind: 'account', accountId: scope.accountId,
+        purpose: { consumer: { pluginId: 'test.provider', localId: 'deploy' }, purpose: 'deployment' },
+        target: { kind: 'account', account: { service: { pluginId: 'test.provider', localId: 'account' }, accountId: 'provider-account' } } },
+      providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'preview' },
+      providerEnvironment: { kind: 'native', selection: { kind: 'preview' } },
+      observation: { v: 1, state: 'succeeded', observedAtMs: 1, urls: [input.providerUrl] } },
+  } }) : createDeploymentReceiptDetailV1({ deployment });
   const domain = { domain: { v: 1 as const, id: 'preview-domain', environmentId: detail.environment.id, targetLinkId: linkId, revision: 1,
     state: 'active' as const, contentArtifactId: 'content-preview-domain', contentHeaderVersion: 1, contentBodyVersion: 1,
     createdByAccountId: scope.accountId, createdAtMs: 1, updatedAtMs: 1 },
@@ -64,6 +76,21 @@ describe('Review preview (deploy auto-mode U9)', () => {
       await screen.pressByTestIdAsync('project-deployments.review.preview.address');
       expect(open).toHaveBeenCalledWith('https://pr-12.preview.example.test/');
       expect(reads).toEqual({ environment: 1, receipt: 1, history: 0, domains: 1 });
+    } finally { await screen.unmount(); controller.retire(); await standardCleanup(); }
+  });
+
+  it('opens a provider receipt URL without reading its Environment Domains', async () => {
+    const providerUrl = 'https://build.example.test/';
+    const { controller, environmentId, reads } = previewController({ attachedDomain: true, health: 'up', providerUrl });
+    const open = vi.fn();
+    const screen = await renderScreen(<DeploymentReviewPreview controller={controller} environmentId={environmentId}
+      demand={shown} onOpenAddress={open} />);
+    try {
+      await waitForTestEvent(screen.subscribe, () => row(screen, 'project-deployments.review.preview.address'),
+        (node) => node?.props.title === 'build.example.test');
+      await screen.pressByTestIdAsync('project-deployments.review.preview.address');
+      expect(open).toHaveBeenCalledWith(providerUrl);
+      expect(reads).toEqual({ environment: 1, receipt: 1, history: 0, domains: 0 });
     } finally { await screen.unmount(); controller.retire(); await standardCleanup(); }
   });
 

@@ -28,15 +28,18 @@ export const DeploymentReviewPreview = React.memo(function DeploymentReviewPrevi
   const preview = detail?.environment.purpose === 'preview';
   const activeId = preview ? detail.runtimeTargetLink?.activeDeploymentId ?? null : null;
   const serving = useReceiptRead(props.controller, preview ? props.environmentId : null, activeId, props.demand);
-  const domains = useDeploymentEnvironmentDomains(props.controller, preview ? props.environmentId : null, props.demand);
+  const value = serving.snapshot.value;
+  const active = value?.content ? value : null;
+  const needsDomains = deploymentLiveAddressDemand(active, preview);
+  const domains = useDeploymentEnvironmentDomains(needsDomains ? props.controller : null,
+    needsDomains ? props.environmentId : null, props.demand);
   if (!preview) return null;
-  const active = serving.snapshot.value;
-  const address = active?.content ? resolveDeploymentLiveAddress(active, domains.result.items, true) : null;
+  const address = active ? resolveDeploymentLiveAddress(active, domains.result.items, true) : null;
   const health = deploymentHealthFact(detail.healthAggregate);
   const toneColor = health.tone === 'danger' ? theme.colors.state.danger.textForeground
     : health.tone === 'attention' ? theme.colors.state.warning.textForeground : undefined;
   const url = address?.url ?? null;
-  const noAddress = !url && active?.content && deploymentLiveAddressDemand(active, true)
+  const noAddress = !url && active && needsDomains
     && (domains.result.status === 'empty' || domains.result.status === 'ready')
     && !deploymentAddressExpected(active, domains.result.items, true);
   const addressTitle = url ? formatDeploymentLiveAddress(url)
