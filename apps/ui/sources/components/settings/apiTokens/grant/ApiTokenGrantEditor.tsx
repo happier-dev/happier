@@ -608,10 +608,13 @@ export const ApiTokenGrantActionsPicker = React.memo(function ApiTokenGrantActio
  * listed so it can still be removed.
  */
 /** The same identity the Automations list shows: what starts it, then Off when it is turned off. */
-function describeGrantAutomation(automation: ReturnType<typeof useAutomations>[number]): string | null {
+function describeGrantAutomation(automation: ReturnType<typeof useAutomations>[number], sessionNames: ReadonlyMap<string, string>): string | null {
+    const triggerLabels = automation.triggers.map(trigger => formatAutomationTriggerLabel(
+        trigger, trigger.kind === 'sessionLifecycle' ? sessionNames.get(trigger.sourceSessionId) : undefined,
+    ));
     const parts = [
         automation.description,
-        automation.triggers.length > 0 ? automation.triggers.map((trigger) => formatAutomationTriggerLabel(trigger)).join(', ') : null,
+        triggerLabels.join(', '),
         automation.enabled ? null : t('settingsApiTokens.grant.automations.off'),
     ].filter((part): part is string => typeof part === 'string' && part.length > 0);
     return parts.length > 0 ? parts.join(' · ') : null;
@@ -620,6 +623,17 @@ function describeGrantAutomation(automation: ReturnType<typeof useAutomations>[n
 export const ApiTokenGrantAutomationsPicker = React.memo(function ApiTokenGrantAutomationsPicker(props: GrantPartProps) {
     const automationIds = props.value.automationIds ?? null;
     const automations = useAutomations({ read: automationIds !== null });
+    const scope = useActiveServerAccountScope();
+    const sourceIds = React.useMemo(() => new Set(automations.flatMap(automation => automation.triggers.flatMap(
+        trigger => trigger.kind === 'sessionLifecycle' ? [trigger.sourceSessionId] : [],
+    ))), [automations]);
+    const projectSourceName = React.useCallback((session: Session) => sourceIds.has(session.id)
+        ? [session.id, getSessionName(session)] as const : null, [sourceIds]);
+    const readsSources = automationIds !== null && sourceIds.size > 0;
+    const sourceNames = useSessionRowFacts(projectSourceName, readsSources);
+    const isSessionVisible = useSessionRecordingVisibility(readsSources);
+    const sessionNames = React.useMemo(() => new Map(sourceNames.filter(([sessionId]) =>
+        isSessionVisible({ sessionId, serverId: scope?.serverId }))), [sourceNames, isSessionVisible, scope?.serverId]);
     const pagination = useAutomationDefinitionPagination();
     const listed = React.useMemo(() => new Set(automations.map((automation) => automation.id)), [automations]);
     const unlisted = automationIds ? automationIds.filter((id) => !listed.has(id)) : [];
@@ -648,7 +662,7 @@ export const ApiTokenGrantAutomationsPicker = React.memo(function ApiTokenGrantA
                             key={automation.id}
                             testID={`api-token-grant-automation:${automation.id}`}
                             title={automation.name || t('settingsApiTokens.grant.automations.unnamed')}
-                            subtitle={describeGrantAutomation(automation)}
+                            subtitle={describeGrantAutomation(automation, sessionNames)}
                             checked={automationIds.includes(automation.id)}
                             disabled={props.disabled}
                             onToggle={() => props.onChange(toggleApiTokenGrantAutomation(props.value, automation.id))}

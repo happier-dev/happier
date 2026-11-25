@@ -3,10 +3,6 @@ import type {
 import type {
     AutomationRunStateV3} from '@happier-dev/protocol/automations/automationRunStateV3';
 import type {
-    AutomationSessionLifecycleEvent,
-    AutomationSessionLifecyclePolicy,
-    AutomationSessionLifecyclePolicySnapshot} from '@happier-dev/protocol/automations/automationSessionLifecycle';
-import type {
     AutomationSessionLifecycleTriggerStatus,
     AutomationTriggerListItem,
 } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
@@ -15,27 +11,6 @@ import { formatActionTriggerClause, formatTriggerSummary, type TriggerSummaryCon
 import { formatOnceScheduleStateLabel, readOnceScheduleState } from '@/components/workflows/triggers/triggerSchedule';
 import type { AutomationV3RunListItem } from '@happier-dev/protocol/automations/automationApiV3';
 import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
-
-export function formatAutomationSessionLifecycleEventLabel(
-    event: AutomationSessionLifecycleEvent,
-): string {
-    return t(`automations.pluralEditor.lifecycleEvent.${event}`);
-}
-
-function formatAutomationSessionLifecycleEventSetLabel(
-    events: ReadonlyArray<AutomationSessionLifecycleEvent>,
-): string {
-    return events.map(formatAutomationSessionLifecycleEventLabel).join(' · ');
-}
-
-function formatAutomationSessionLifecyclePolicyLabel(
-    policy: AutomationSessionLifecyclePolicy | AutomationSessionLifecyclePolicySnapshot,
-): string {
-    const label = t(`automations.pluralEditor.lifecyclePolicy.${policy.kind}`);
-    return policy.kind === 'nextMatches'
-        ? `${label} · ${policy.count}`
-        : label;
-}
 
 export function formatAutomationScheduleLabel(automation: {
     schedule: { kind: 'once'; scheduledAt: number }
@@ -47,7 +22,7 @@ export function formatAutomationScheduleLabel(automation: {
 }
 
 /** Public definition summaries expose trigger identity, never source configuration. */
-export function formatAutomationTriggerLabel(trigger: AutomationTriggerListItem): string {
+export function formatAutomationTriggerLabel(trigger: AutomationTriggerListItem, sourceSessionName?: string | null): string {
     switch (trigger.kind) {
         case 'prComment':
         case 'ciFailed':
@@ -58,11 +33,7 @@ export function formatAutomationTriggerLabel(trigger: AutomationTriggerListItem)
         case 'pluginEvent':
             return formatTriggerSummary(trigger);
         case 'sessionLifecycle':
-            return [
-                formatAutomationSessionLifecycleEventSetLabel(trigger.events),
-                formatAutomationSessionLifecyclePolicyLabel(trigger.policy),
-                trigger.sourceSessionId,
-            ].join(' · ');
+            return formatTriggerSummary(trigger, { sessionLifecycle: { sourceName: sourceSessionName ?? null } });
     }
 }
 
@@ -141,10 +112,8 @@ export function formatAutomationRunCauseLabel(cause: AutomationRunCause, context
                 case 'pluginEvent':
                     return formatTriggerSummary({ kind: 'pluginEvent', eventRef: cause.evidence.eventRef }, context);
                 case 'sessionLifecycle':
-                    return [
-                        formatAutomationSessionLifecycleEventLabel(cause.evidence.event),
-                        formatAutomationSessionLifecyclePolicyLabel(cause.evidence.policy),
-                    ].join(' · ');
+                    return formatTriggerSummary({ kind: 'sessionLifecycle', events: [cause.evidence.event], policy: cause.evidence.policy },
+                        { ...context, sessionLifecycle: {} });
                 case 'runLifecycle':
                     return formatTriggerSummary({ kind: 'runLifecycle', condition: cause.evidence.condition });
                 case 'action':

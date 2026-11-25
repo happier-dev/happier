@@ -1,4 +1,4 @@
-import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1, type AutomationSessionLifecycleEvent, type AutomationSessionLifecycleSubjectV1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
+import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1, type AutomationSessionLifecycleEvent, type AutomationSessionLifecyclePolicy, type AutomationSessionLifecyclePolicySnapshot, type AutomationSessionLifecycleSubjectV1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import type { AutomationRunLifecycleTrigger } from '@happier-dev/protocol/automations/automationRunLifecycle';
 import { AutomationActionOutcomeV1Schema } from '@happier-dev/protocol/automations/automationActionIdentityV1';
 import { readServiceCheckDefinitions, serviceCheckTitle } from '@/components/projects/deployments/serviceCheckPresentation';
@@ -116,7 +116,11 @@ export type TriggerSummarySource =
         & Partial<Pick<AutomationPluginEventTrigger, 'observation'>>
         & Partial<Pick<AutomationPluginEventDefinitionTrigger, 'observationTransport'>>)
     | Readonly<{ kind: 'prComment' | 'ciFailed'; pullRequest?: Readonly<{ repository: string; number: number }> }>
-    | Readonly<{ kind: 'sessionLifecycle'; events: readonly AutomationSessionLifecycleEvent[] }>
+    | Readonly<{
+        kind: 'sessionLifecycle';
+        events: readonly AutomationSessionLifecycleEvent[];
+        policy?: AutomationSessionLifecyclePolicy | AutomationSessionLifecyclePolicySnapshot;
+    }>
     | Pick<AutomationRunLifecycleTrigger, 'kind' | 'condition'>;
 
 const MINUTE_MS = 60_000;
@@ -193,6 +197,8 @@ export type TriggerSummaryContext = Readonly<{
     /** A mounted Action catalog may supply its already-localized contributed titles. */
     actionTitle?: (actionId: string) => string | undefined;
     eventEnvironmentName?: string | null;
+    /** Exact saved selection or firing evidence, with a readable source when the mount shows it. */
+    sessionLifecycle?: Readonly<{ sourceName?: string | null }>;
     subjectTitle?: (subject: NonNullable<AutomationActionTrigger['subject']>) => string | undefined;
 }>;
 
@@ -376,8 +382,21 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
             if (context?.form === 'detail') return subject ?? t('workflows.page.inspector.options');
             return subject ? [event, subject].join(' · ') : event;
         }
-        case 'sessionLifecycle':
-            return t(`workflows.triggers.kind.${readSessionLifecycleKind(trigger.events)}`);
+        case 'sessionLifecycle': {
+            const { policy } = trigger;
+            if (!context?.sessionLifecycle || !policy) {
+                return t(`workflows.triggers.kind.${readSessionLifecycleKind(trigger.events)}`);
+            }
+            const events = trigger.events.map(event => t(`automations.pluralEditor.lifecycleEvent.${event}`));
+            const label = t(`automations.pluralEditor.lifecyclePolicy.${policy.kind}`);
+            const { sourceName } = context.sessionLifecycle;
+            return [
+                ...events,
+                label,
+                ...(policy.kind === 'nextMatches' ? [policy.count] : []),
+                ...(sourceName !== undefined ? [sourceName?.trim() || t('automations.detail.trigger.sourceSession')] : []),
+            ].join(' · ');
+        }
         case 'runLifecycle':
             return t(trigger.condition === 'terminal'
                 ? 'workflows.triggers.kind.runEnds' : 'workflows.triggers.kind.runNeedsYou');

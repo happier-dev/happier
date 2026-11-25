@@ -124,8 +124,10 @@ describe('formatAutomationTriggerLabel', () => {
             status: { state: 'sourceCancelled', runId: null },
         });
         if (lifecycleTrigger.kind !== 'sessionLifecycle') throw new Error('expected lifecycle trigger fixture');
+        expect(formatAutomationTriggerLabel(lifecycleTrigger, 'Release review'))
+            .toBe('Turn failed · Needs your attention · Next matching events · 3 · Release review');
         expect(formatAutomationTriggerLabel(lifecycleTrigger))
-            .toBe('Turn failed · Needs your attention · Next matching events · 3 · session-1');
+            .toBe('Turn failed · Needs your attention · Next matching events · 3 · Source session');
         expect(formatAutomationTriggerStatusLabel(lifecycleTrigger)).toBe('Source turn cancelled');
         expect(formatAutomationTriggerStatusLabel(lifecycleTrigger, false)).toBe('Source turn cancelled');
 
