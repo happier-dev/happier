@@ -178,6 +178,7 @@ it('keeps attached content out of Account conversion and commits the complete re
         header: Buffer.from([2, 1]).toString('base64'), body: Buffer.from([2, 2]).toString('base64'),
         dataEncryptionKey: replacementKey.toString('base64'), recipientKeyEnvelopes: [], blobs: [], revisions: [],
         reviewGraph: { expected: graph, target } }] })));
+    if (directive.action !== 'migrate') throw new Error('Expected migrate directive');
     const stale = structuredClone(directive);
     stale.items[0]!.reviewGraph!.expected.comments[0]!.stored.structural.bodyVersion += 1;
     expect(await inTx(tx => migrateArtifactAccountEncryptionInTx({ tx, accountId: ownerId,
