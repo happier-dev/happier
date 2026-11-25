@@ -20,6 +20,28 @@ export type WorkflowSessionReviewInput = Readonly<{
   rawText: string;
 }>;
 
+/** A terminal reviewer failure is a Review receipt, so collect_outcomes retains its cause. */
+export function projectWorkflowSessionReviewResult(
+  params: Parameters<WorkflowStepExecutor>[0],
+  result: WorkflowStepExecutionResult,
+): WorkflowStepExecutionResult {
+  if (result.kind !== 'failed') return result;
+  const selection = params.input.values.map(value => ReviewSessionInputV1Schema.safeParse(value))
+    .find(value => value.success);
+  const prepared = params.input.values.map(value => ReviewPreparedRoundV1Schema.safeParse(value))
+    .find(value => value.success);
+  if (!selection?.success || !prepared?.success) return result;
+  return { kind: 'completed', resultEncoding: 'typed',
+    ...(result.usage ? { usage: result.usage } : {}),
+    ...(result.replyOutcome ? { replyOutcome: result.replyOutcome } : {}),
+    result: projectNativeJsonValueForTransport({ reviewRound: prepared.data.reviewRound,
+      reviewedFingerprint: null, commentIds: [], perEngineOutcome: [{ key: selection.data.reviewerId,
+        outcome: 'failed', errorCode: result.code,
+        ...(result.runtimeIssueV1 ? { runtimeIssueV1: result.runtimeIssueV1 } : {}), finishedAt: Date.now() }],
+    } satisfies z.infer<typeof ReviewStartTerminalValueV1Schema>),
+  };
+}
+
 /** Publish Session-authored content through the same signed ReviewComment owner as native reviews. */
 export async function materializeWorkflowSessionReview(input: WorkflowSessionReviewInput & Readonly<{
   context: ActionExecutorContext;

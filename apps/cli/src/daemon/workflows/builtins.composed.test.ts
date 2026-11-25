@@ -1220,15 +1220,18 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     expect(h.events).not.toContain('check');
     expect(h.events).not.toContain('verify');
   });
-  it('fails the direct Review Run with its launch refusal when its sole reviewer never started', async () => {
+  it.each([false, true])('retains a direct Review reviewer launch refusal (another reviewer succeeds: %s)', async anotherReviewer => {
     const h = harness({ reviewLaunchFailure: true, reviewCounts: { total: 0, needsDecision: 0 } });
-    const reviewInput = ReviewStartInputSchema.parse({ reviewers: [{ kind: 'engine', engineId: engine }], instructions: 'Review once' });
+    const reviewInput = ReviewStartInputSchema.parse({ reviewers: [{ kind: 'engine', engineId: engine },
+      ...(anotherReviewer ? [{ kind: 'engine', engineId: otherEngine }] : [])], instructions: 'Review once' });
     const binding = await h.admitReview(reviewInput);
     const composed = reviewComposition.buildReviewStepsWorkflowV1(reviewInput, binding);
     const snapshot = await accepted(composed.definition, composed.inputs);
-    expect(await h.runAccepted(snapshot)).toMatchObject({ state: 'failed', reason: 'execution_run_target_unavailable' });
-    expect((await h.readReview(binding.reviewId))?.rounds[0]).toMatchObject({ state: 'failed', reviewerOutcomes: [
+    expect(await h.runAccepted(snapshot)).toMatchObject(anotherReviewer ? { state: 'succeeded', finalOutput: { review: { state: 'partial' } } }
+      : { state: 'failed', reason: 'execution_run_target_unavailable' });
+    expect((await h.readReview(binding.reviewId))?.rounds[0]).toMatchObject({ state: anotherReviewer ? 'partial' : 'failed', reviewerOutcomes: [
       { reason: { run: 'launch_failed', errorCode: 'execution_run_target_unavailable' } },
+      ...(anotherReviewer ? [{ outcome: 'completed' }] : []),
     ] });
   });
   it('keeps authored Review and verification engines read-only despite a broader launch preference', async () => {
@@ -1360,6 +1363,25 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     expect(h.launches).toEqual([]);
     expect(h.aggregateReads).toEqual(['review']);
     expect(h.events).not.toContain('check');
+  });
+  it('retains a failed Session reviewer cause beside a successful engine reviewer', async () => {
+    const h = harness({ reviewCounts: { total: 0, needsDecision: 0 },
+      reply: () => ({ kind: 'failed', runtimeIssueV1: { v: 1, scope: 'primary_session', status: 'failed',
+        source: 'agent_session_error', occurredAt: 1, code: 'agent_cli_not_ready',
+        failureCause: { phase: 'client_start', failureReason: 'unknown', code: 'agent_cli_not_ready', retryable: false } } }) });
+    const reviewInput = ReviewStartInputSchema.parse({ reviewers: [
+      { kind: 'session', session: { serverId: 'home', sessionId: 'selected-reviewer' } },
+      { kind: 'engine', engineId: engine },
+    ], instructions: 'Review independently' });
+    const binding = await h.admitReview(reviewInput);
+    const composed = reviewComposition.buildReviewStepsWorkflowV1(reviewInput, binding);
+    expect(await h.run(composed.definition, composed.inputs)).toMatchObject({ state: 'succeeded',
+      finalOutput: { review: { state: 'partial' } } });
+    expect((await h.readReview(binding.reviewId))?.rounds[0]?.reviewerOutcomes).toMatchObject([
+      { reviewerId: 'step-1-reviewer-1', outcome: 'failed', reason: { errorCode: 'session_input_failed',
+        runtimeIssue: { source: 'agent_session_error', code: 'agent_cli_not_ready' } } },
+      { reviewerId: 'step-1-reviewer-2', outcome: 'completed' },
+    ]);
   });
   it.each([false, true])('sends one explicit Fix request from persisted acceptance (one reviewer refused: %s)', async (reviewerRefused) => {
     const comment = ReviewCommentV1Schema.parse({ v: 1, id: 'accepted', accountId: 'account', reviewId: 'review',

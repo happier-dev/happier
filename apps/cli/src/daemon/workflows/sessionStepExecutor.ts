@@ -72,7 +72,7 @@ import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/
 import type { SessionSpawnNewSelectionV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewSelectionV2';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
-import type { WorkflowSessionReviewInput } from './reviewSessionStep';
+import { projectWorkflowSessionReviewResult, type WorkflowSessionReviewInput } from './reviewSessionStep';
 import { DiscussionInviteResultV1Schema } from '@happier-dev/protocol/discussions/actions';
 import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
 import type { WorkflowAcceptedOriginV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
@@ -784,15 +784,15 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       switch (observed.kind) {
         case 'completed': {
           if (!params.input.values.some(value => ReviewSessionInputV1Schema.safeParse(value).success)) return observed;
-          if (!deps.materializeReview) return { kind: 'failed', code: 'review_comment_persistence_unavailable',
-            ...(observed.usage ? { usage: observed.usage } : {}), ...(observed.replyOutcome ? { replyOutcome: observed.replyOutcome } : {}) };
+          if (!deps.materializeReview) return projectWorkflowSessionReviewResult(params, { kind: 'failed', code: 'review_comment_persistence_unavailable',
+            ...(observed.usage ? { usage: observed.usage } : {}), ...(observed.replyOutcome ? { replyOutcome: observed.replyOutcome } : {}) });
           const materialized = await deps.materializeReview({ params, sessionId, localInputId,
             rawText: typeof observed.result === 'string' ? observed.result : '' });
-          return { ...materialized, ...(observed.usage ? { usage: observed.usage } : {}),
-            ...(observed.replyOutcome ? { replyOutcome: observed.replyOutcome } : {}) };
+          return projectWorkflowSessionReviewResult(params, { ...materialized, ...(observed.usage ? { usage: observed.usage } : {}),
+            ...(observed.replyOutcome ? { replyOutcome: observed.replyOutcome } : {}) });
         }
-        case 'needs_attention':
-        case 'failed': return observed;
+        case 'needs_attention': return observed;
+        case 'failed': return projectWorkflowSessionReviewResult(params, observed);
         case 'pending': return { kind: 'needs_attention', code: 'workflow_step_timeout' };
         case 'cancelled': return { ...observed, code: 'session_input_cancelled' };
       }

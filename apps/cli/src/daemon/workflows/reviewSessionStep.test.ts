@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { ReviewStartTerminalValueV1Schema } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import type { SessionMessageReplyOutcomeV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 
 import { createWorkflowSessionStepExecutor } from './sessionStepExecutor';
 import { materializeWorkflowSessionReview } from './reviewSessionStep';
@@ -9,7 +10,7 @@ import { TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/trans
 
 const reviewRound = { reviewId: 'actual-review', roundOrdinal: 2 };
 
-async function executeSessionReview(rawText: string) {
+async function executeSessionReview(reply: string | SessionMessageReplyOutcomeV1) {
   const execute = createWorkflowSessionStepExecutor({
     credentials: { token: 'token', encryption: null },
     prepareConversation: async () => { throw new Error('An admitted input is observed in place'); },
@@ -17,7 +18,7 @@ async function executeSessionReview(rawText: string) {
     sessionInput: {
       enqueue: async () => { throw new Error('An admitted input is observed in place'); },
       observe: async () => ({ ok: true, sessionId: 'actual-session', localId: 'actual-input',
-        result: { kind: 'final_text', text: rawText } }),
+        result: typeof reply === 'string' ? { kind: 'final_text', text: reply } : { kind: 'fulfilled', outcome: reply } }),
     },
     materializeReview: input => materializeWorkflowSessionReview({ ...input, context: { surface: 'agent' },
       agentId: 'actual-agent', serverId: 'actual-home', workspace: { machineId: 'machine', path: '/repo' },
@@ -54,6 +55,22 @@ it.each(['complete', 'partial'] as const)('publishes a restored Session review a
 it('names secret masking when the stored Session review reply no longer parses', async () => {
   // The reply as the transcript writer stored it: a registered secret replaced part of the JSON.
   expect(await executeSessionReview(`{"reviewOutcome":"complete","findings":[{"line":${TRANSCRIPT_SECRET_REDACTED}2}]}`))
-    .toEqual({ kind: 'failed', code: WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE });
-  expect(await executeSessionReview('not a review')).toEqual({ kind: 'failed', code: 'invalid_output' });
+    .toMatchObject({ kind: 'completed', result: { reviewRound, perEngineOutcome: [
+      { key: 'step-1-reviewer-1', outcome: 'failed', errorCode: WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE },
+    ] } });
+  expect(await executeSessionReview('not a review')).toMatchObject({ kind: 'completed', result: { reviewRound,
+    perEngineOutcome: [{ key: 'step-1-reviewer-1', outcome: 'failed', errorCode: 'invalid_output' }] } });
+});
+
+it('retains failed Session review receipts while leaving attention and cancellation with the Session owner', async () => {
+  const issue = { v: 1 as const, scope: 'primary_session' as const, status: 'failed' as const,
+    code: 'agent_cli_not_ready', source: 'agent_session_error' as const, occurredAt: 1 };
+  const failed = await executeSessionReview({ kind: 'failed', runtimeIssueV1: issue });
+  expect(failed).toMatchObject({ kind: 'completed', resultEncoding: 'typed', result: { reviewRound,
+    perEngineOutcome: [{ key: 'step-1-reviewer-1', outcome: 'failed', errorCode: 'session_input_failed', runtimeIssueV1: issue }] } });
+  if (failed.kind !== 'completed') throw new Error('Expected a retained Review receipt');
+  expect(ReviewStartTerminalValueV1Schema.safeParse(failed.result).success).toBe(true);
+  expect(await executeSessionReview({ kind: 'failed', runtimeIssueV1: { ...issue, source: 'usage_limit' } }))
+    .toMatchObject({ kind: 'needs_attention', code: 'session_input_failed' });
+  expect(await executeSessionReview({ kind: 'cancelled' })).toMatchObject({ kind: 'cancelled', code: 'session_input_cancelled' });
 });
