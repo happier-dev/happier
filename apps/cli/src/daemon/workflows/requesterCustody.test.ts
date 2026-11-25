@@ -410,6 +410,59 @@ it.each([401, 403])('retires only the exact private Workflow custody on canonica
 });
 
 
+it.each(['revoked', 'server error', 'network error', 'timeout', 'valid'] as const)('settles retired Workflow custody for %s', async outcome => {
+  const app = fastify();
+  const origin = 'http://settle-workflow-requester.test';
+  const directory = await mkdtemp(join(tmpdir(), 'workflow-settle-requester-'));
+  const attribution = { serverId: 'home', accountId: 'guest', machineId: 'machine', installationId: 'installation' };
+  const binding = { ...attribution, happyHomeDir: directory, scopeId: 'trigger', serverHttpBaseUrl: origin };
+  const credentials: StoredCredentials = { token: 'guest-token', encryption: null };
+  const automationId = 'saved-automation';
+  const run = createWorkflowRunStorageTestkit({ runId: 'queued', machineId: attribution.machineId, state: 'queued',
+    origin: { kind: 'automation', automationId, cause: { kind: 'manual', invokedAt: 1 } } }).run();
+  let profileStatus = 200;
+  let transportError: string | undefined;
+  let queued = true;
+  app.get('/v1/account/profile', async (request, reply) => {
+    expect(request.headers.authorization).toBe('Bearer guest-token');
+    return profileStatus === 200 ? { id: attribution.accountId }
+      : reply.code(profileStatus).send({ error: profileStatus === 401 ? 'invalid_token' : 'unavailable' });
+  });
+  app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1, updatedAt: 1,
+    signingKeyFingerprint: null, contentKeyFingerprint: null }));
+  app.post('/v3/automations/runs/workflow-storage', async () => ({ runs: queued ? [run] : [] }));
+  await app.ready();
+  const restore = installAxiosFastifyAdapter({ app, origin });
+  const get = axios.get;
+  const profile = vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
+    if (transportError && url === `${origin}/v1/account/profile`) throw new axios.AxiosError('Profile unavailable', transportError);
+    return await get(url, options);
+  });
+  try {
+    const retained = await retainWorkflowRequesterCredentials({ ...binding, automationId, attribution, credentials });
+    await retireWorkflowRequesterCredentials(binding);
+    await expect(access(retained.path)).resolves.toBeUndefined();
+    profileStatus = outcome === 'revoked' ? 401 : outcome === 'server error' ? 503 : 200;
+    transportError = outcome === 'network error' ? 'ECONNREFUSED' : outcome === 'timeout' ? 'ETIMEDOUT' : undefined;
+    if (profileStatus === 503 || transportError) {
+      await expect(requesterCustody.settleWorkflowRequesterCredentialRetirement(binding))
+        .rejects.toMatchObject({ code: 'project_requester_home_unavailable', retryable: true });
+    } else {
+      await requesterCustody.settleWorkflowRequesterCredentialRetirement(binding);
+    }
+    if (outcome === 'revoked') {
+      await expect(access(retained.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    } else {
+      await expect(access(retained.path)).resolves.toBeUndefined();
+      profileStatus = 200;
+      transportError = undefined;
+      queued = false;
+      await requesterCustody.settleWorkflowRequesterCredentialRetirement(binding);
+      await expect(access(retained.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+  } finally { profile.mockRestore(); restore(); await app.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
 it.each(['retirement', 'observer'] as const)('cancels a pending custody storage read when its %s lifetime ends', async mode => {
   const app = fastify();
   const origin = 'http://cancel-workflow-requester.test';

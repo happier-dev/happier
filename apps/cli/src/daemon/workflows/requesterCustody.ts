@@ -211,7 +211,7 @@ export async function reconcileWorkflowRequesterCredentialScope(input: ScopeBind
   } while (cursor);
 }
 
-/** A disable retires future use; already admitted queued/active work keeps custody. */
+/** Disabled or deleted triggers retire when idle. A Run admitted before retirement settles may still use that custody. */
 export async function settleWorkflowRequesterCredentialRetirement(input: ScopeBinding, automationId?: string): Promise<void> {
   const stored = await readBinding(input, automationId);
   if (!stored?.stored.retireWhenIdle) return;
@@ -221,6 +221,7 @@ export async function settleWorkflowRequesterCredentialRetirement(input: ScopeBi
   const serverHttpBaseUrl = input.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
   const credentials = await resolveRequesterSessionCredentials({ ...stored.value, serverHttpBaseUrl,
     verifyMachineAdmissionCurrent: async () => true, signal: input.signal });
+  // The shared resolver already removes the file on a definitive Home authentication refusal.
   if (!credentials) { activeScopes.delete(stored.path); return; }
   const storage = createWorkflowRunStorageClient({ token: credentials.token, serverHttpBaseUrl });
   const savedAutomationId = stored.stored.automationId;
