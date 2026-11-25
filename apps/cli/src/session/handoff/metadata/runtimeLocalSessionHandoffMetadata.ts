@@ -4,6 +4,7 @@ import {
     type SessionRuntimeLocalMetadata,
 } from '@/agent/runtime/identity';
 import { normalizeLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 
 type MetadataRecord = Record<string, unknown>;
 
@@ -68,13 +69,15 @@ export function resolveSessionHandoffExportMetadata(input: Readonly<{
     const preferredLocalExportMachineId = typeof input.preferredLocalExportMachineId === 'string'
         ? input.preferredLocalExportMachineId.trim()
         : '';
+    const remoteIsOnSource = Boolean(preferredLocalExportMachineId
+        && normalizeMetadataMachineId(input.remoteMetadata) === preferredLocalExportMachineId);
     const shouldPreferLocalExportMetadata =
         Boolean(
             localSplit
             && input.remoteMetadata
             && preferredLocalExportMachineId
             && normalizeMetadataMachineId(localSplit.exportMetadata) === preferredLocalExportMachineId
-            && normalizeMetadataMachineId(input.remoteMetadata) !== preferredLocalExportMachineId,
+            && !remoteIsOnSource,
         );
     const shouldSupplementRemoteExportMetadata =
         Boolean(
@@ -82,7 +85,7 @@ export function resolveSessionHandoffExportMetadata(input: Readonly<{
             && input.remoteMetadata
             && preferredLocalExportMachineId
             && normalizeMetadataMachineId(localSplit.exportMetadata) === preferredLocalExportMachineId
-            && normalizeMetadataMachineId(input.remoteMetadata) === preferredLocalExportMachineId,
+            && remoteIsOnSource,
         );
     const baseMetadata = input.remoteMetadata
         ? shouldPreferLocalExportMetadata
@@ -112,9 +115,15 @@ export function resolveSessionHandoffExportMetadata(input: Readonly<{
         return normalizeLinkedExternalSessionMetadataV1(exportMetadata, 'stored') ?? exportMetadata;
     }
 
+    // The runner publishes its launch descriptor after the daemon's spawn snapshot.
+    // Prefer it for this source Machine. A handoff-back still uses this daemon's local snapshot.
+    const publishedRuntimeDescriptor = remoteIsOnSource
+        ? readRuntimeDescriptorV1FromMetadata(input.remoteMetadata)
+        : null;
     const mergedMetadata = {
         ...exportMetadata,
         ...cloneSessionRuntimeLocalMetadata(runtimeLocalMetadata),
+        ...(publishedRuntimeDescriptor ? { runtimeDescriptorV1: publishedRuntimeDescriptor } : {}),
     };
     return normalizeLinkedExternalSessionMetadataV1(mergedMetadata, 'stored') ?? mergedMetadata;
 }
