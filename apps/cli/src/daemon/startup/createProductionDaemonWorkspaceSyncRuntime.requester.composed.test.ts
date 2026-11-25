@@ -952,11 +952,17 @@ it.skipIf(process.platform !== 'linux').each(['missing admission', 'withdrawn gr
 });
 
 
-it.skipIf(process.platform !== 'linux').each(['its own', 'another relationship\'s'] as const)(
-  'a recovered requester relationship reaches its TARGET after the SOURCE daemon restarts only with %s standing admission', async admission => {
+it.skipIf(process.platform !== 'linux').each([
+  { role: 'manage', admission: 'its own' },
+  { role: 'manage', admission: 'another relationship’s' },
+  { role: 'use', admission: 'its own' },
+] as const)(
+  'a recovered $role requester relationship reaches its TARGET after the SOURCE daemon restarts only with $admission standing admission', async ({ role, admission }) => {
   executionBoundary.member = false;
-  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,
-    targetCustodianAccountId: 'requester', workerCleanCopy: true, originalActionHomeHttp: true });
+  const setup = await createRequesterWorkspaceSyncFixture({ role, socketIo, remoteTarget: true, originalActionHomeHttp: true,
+    ...(role === 'use' ? { isolationOff: true, gitReplica: 'existing', remoteSeed: true, allowRelationshipAction: true }
+      : { targetCustodianAccountId: 'requester', workerCleanCopy: true }) });
+  if (role === 'use') runScmExecutable(setup.sourcePath, 'git', ['clone', '-q', '.', setup.targetPath]);
   const first = await setup.executeNativeRelationshipAction();
   expect(first).toMatchObject({ ok: true, result: { created: true } });
   if (!first.ok) throw new Error('Initial Worker copy failed');
