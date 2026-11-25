@@ -1403,9 +1403,7 @@ describe('authenticated finite Project Action owner', () => {
                 if (change !== 'current' && change !== 'revoked') {
                     expect(ProjectDefinitionInspectOutputSchema.parse(await read())).toMatchObject({ setupReadiness: { kind: 'notRequired' } });
                     retireOnProjectRowRead = true;
-                    const refused = ActionExecuteFailureSchema.parse(await read());
-                    expect(refused).toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable' });
-                    expect(refused).not.toHaveProperty('effectiveDefinition');
+                    await expect(read()).rejects.toMatchObject({ code: 'project_requester_authority_unavailable' });
                     expect(h.spawned).toEqual([]);
                     return;
                 }
@@ -1416,7 +1414,13 @@ describe('authenticated finite Project Action owner', () => {
                     expect(refused).toMatchObject({ ok: false, errorCode: 'project_requester_credentials_unavailable' });
                     expect(refused).not.toHaveProperty('effectiveDefinition');
                     expect(h.post.mock.calls.filter(([url]) => String(url).endsWith('/verify'))).toHaveLength(1);
-                    expect(h.post.mock.calls.some(([url]) => String(url).includes('/project-rows/'))).toBe(false);
+                    // This direct-handler fixture bypasses the receiver's admission refusal.
+                    // Even here, only the revoked requester's own rows may be read, never written.
+                    for (const [url, , options] of h.post.mock.calls.filter(([url]) => String(url).includes('/project-rows/'))) {
+                        expect(String(url)).toMatch(/\/project-rows\/(?:read|list)$/u);
+                        expect(options?.headers).toMatchObject({ Authorization: 'Bearer bob' });
+                    }
+                    expect(h.spawned).toEqual([]);
                     return;
                 }
                 await read(); // Warm module/plugin loading before comparing the same passive composition.
@@ -1633,9 +1637,7 @@ describe('authenticated finite Project Action owner', () => {
         }
         await admitted.dispose();
         h.post.mockClear();
-        const refused = ActionExecuteFailureSchema.parse(await inspect());
-        expect(refused).toMatchObject({ ok: false, errorCode: 'project_requester_credentials_unavailable' });
-        expect(refused).not.toHaveProperty('effectiveDefinition');
+        await expect(inspect()).rejects.toMatchObject({ code: 'project_requester_authority_unavailable' });
         expect(h.post).not.toHaveBeenCalled();
         expect(h.spawned).toEqual([]);
     });
