@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { Socket } from 'socket.io';
 import { eventRouter } from '@/app/events/eventRouter';
@@ -582,8 +583,45 @@ describe('original Session input reply custody', () => {
                 .toMatchObject({ autonomousExchangeRootSessionId: target.id, autonomousExchangeRootLocalId: localId, autonomousExchangeCause: 'returned_answer' });
             await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: target.id, createdByAccountId: alice.id,
                 accountId: bob.id, accessLevel: 'edit', canApprovePermissions: false } });
-            expect(await acknowledge()).toMatchObject({ ok: true, progress: { disposition: 'returned', humanOrigin, returnedInputLocalId } });
-            expect(await acknowledge()).toMatchObject({ ok: true });
+            const returnCommitted = new Error('Return acknowledgement lost after commit');
+            await expect((async () => {
+                expect(await acknowledge()).toMatchObject({ ok: true, progress: { disposition: 'returned', humanOrigin, returnedInputLocalId } });
+                throw returnCommitted;
+            })()).rejects.toBe(returnCommitted);
+            expect((await inventory()).json()).toMatchObject({ entries: [] });
+            expect((await read()).json()).toMatchObject({ status: 'available', progress: {
+                disposition: 'returned', returnedInputLocalId, outcome: { kind: 'terminal_no_result' },
+            } });
+            const { recoverSessionMessageRepliesForMachine } = await vi.importActual<{
+                recoverSessionMessageRepliesForMachine(input: Readonly<{ machineId: string; serverId: string;
+                    credentials: { token: string; encryption: null }; signal: AbortSignal; isCurrent: () => Promise<boolean>;
+                    machineAdmissionTransport: () => Promise<never>; markReturned: () => Promise<never>;
+                }>): Promise<void>;
+            }>('../../../../../../cli/src/session/services/sessionMessageReply');
+            const { runWithServerHttpBaseUrl } = await vi.importActual<{
+                runWithServerHttpBaseUrl<T>(origin: string, run: () => Promise<T>): Promise<T>;
+            }>('../../../../../../cli/src/api/client/serverHttpBaseUrl');
+            const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+                const response = await app.inject({ method: 'GET', url: new URL(url).pathname, headers });
+                expect(response.statusCode).toBe(200);
+                return { status: response.statusCode, data: response.json() };
+            });
+            try {
+                await runWithServerHttpBaseUrl('http://return-recovery.test', () => recoverSessionMessageRepliesForMachine({
+                    machineId: returnMachine.id, serverId: 'return-recovery',
+                    credentials: { token: 'fixture', encryption: null }, signal: new AbortController().signal, isCurrent: async () => true,
+                    machineAdmissionTransport: async () => { throw new Error('Recovered a second native Return'); },
+                    markReturned: async () => { throw new Error('Recovered a completed Return'); },
+                }));
+            } finally {
+                get.mockRestore();
+            }
+            expect((await read()).json()).toMatchObject({ status: 'available', progress: {
+                disposition: 'returned', returnedInputLocalId, outcome: { kind: 'terminal_no_result' },
+            } });
+            expect(await db.sessionMessage.findMany({ where: { sessionId: source.id }, select: { localId: true } }))
+                .toEqual([{ localId: returnedInputLocalId }]);
+            expect(await acknowledge()).toMatchObject({ ok: true, progress: { disposition: 'returned', returnedInputLocalId } });
             await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: target.id, accountId: bob.id } });
             expect((await read()).json()).toMatchObject({ status: 'unavailable' });
             expect(await acknowledge()).toMatchObject({ ok: false });
