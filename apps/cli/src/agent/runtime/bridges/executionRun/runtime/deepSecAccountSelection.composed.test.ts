@@ -11,7 +11,8 @@ import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/
 import { QualifiedConnectedAccountListResponseV4Schema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
-import { ExecutionRunStartRequestBaseSchema } from '@happier-dev/protocol/execution/runs/startRequest';
+import { ExecutionRunStartRequestBaseSchema, ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
+import { buildExecutionRunCallOptions } from '@happier-dev/protocol/actions/executor/executionRuns';
 import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 import { bindRequesterSessionCredentialScope } from '@/persistence';
 import { reloadConfiguration } from '@/configuration';
@@ -41,6 +42,8 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 
 const home = await vi.hoisted(async () => {
     const [{ mkdtemp }, { tmpdir }, { join }] = await Promise.all([
@@ -237,6 +240,61 @@ describe('DeepSec consumes the canonical host Account selection', () => {
         });
         expect(transport.materialize).toHaveBeenCalledTimes(1);
         expect(nativeRequests).toEqual([]);
+        expect(homeReads).toEqual([]);
+    });
+    it('refuses a Use guest before borrowing available custodian credentials and admits the custodian native choice', async () => {
+        const machineId = 'deepsec-fixture-machine';
+        const custodianAccountId = 'deepsec-account-selection';
+        let receiverCalls = 0;
+        let completed: Awaited<ReturnType<typeof launch>> | undefined;
+        const deps = createCliActionDeps({ token: transport.credentials.token, credentials: transport.credentials,
+            sessionId: '', mode: 'plain', ctx: null, serverId: 'deepsec-fixture-home',
+            machineActionDirectTargetTransport: { machineId, invoke: async (_method, input) => {
+                receiverCalls++;
+                const request = ExecutionRunStartRequestSchema.parse(input);
+                // The transport terminates at the existing real registered DeepSec
+                // adapter fixture; no synthetic Run or credential admission is supplied.
+                completed = await launch(request.connectedServices, request.modelSelection);
+                return completed;
+            } } });
+        const options = (actorAccountId: string, role: 'use' | 'manage') => {
+            const context = buildActionExecutorContextForRpc({ serverId: 'deepsec-fixture-home',
+                callerAuthority: 'present_user', runtimeAccountId: actorAccountId,
+                machineAdmission: { actorAccountId, custodianAccountId, machineId,
+                    installationId: 'deepsec-fixture-installation', role, encryptionMode: 'plain' },
+                verifyMachineAdmissionCurrent: async () => true,
+            });
+            return buildExecutionRunCallOptions(context.authority, context.serverId ?? null,
+                undefined, null, machineId, undefined, undefined, context);
+        };
+        const request = ExecutionRunStartRequestSchema.parse({ intent: 'review',
+            backendTarget: { kind: 'agent', identity: { pluginId: PLUGIN_MANIFEST.id, localId: 'deepsec' } },
+            runnerAgentTarget: { kind: 'agent', identity: consumer },
+            instructions: 'Review authentication', permissionMode: 'read_only',
+            retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+            connectedServices: connected('custodian-account'),
+        });
+        await expect(deps.executionRunStart!(null, request, options('shared-use-guest', 'use')))
+            .resolves.toMatchObject({ ok: false, code: 'execution_run_target_unavailable',
+                details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } });
+        expect(receiverCalls).toBe(0);
+        expect(transport.materialize).not.toHaveBeenCalled();
+        expect(homeReads).toEqual([]);
+        expect(nativeRequests).toEqual([]);
+
+        const nativeModel = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-5' };
+        const nativeChoice = ReviewStartInputSchema.parse(applyExecutionRunChildSelection({
+            instructions: 'Review authentication',
+            reviewers: [{ kind: 'engine', engineId: 'deepsec', runnerAgentTarget: { kind: 'agent', identity: consumer } }],
+        }, nativeModel)).reviewers[0];
+        if (nativeChoice?.kind !== 'engine') throw new Error('Selected DeepSec reviewer missing');
+        expect(nativeChoice.connectedServices).toBeNull();
+        await deps.executionRunStart!(null, { ...request, connectedServices: nativeChoice.connectedServices,
+            modelSelection: nativeChoice.modelSelection }, options(custodianAccountId, 'manage'));
+        expect(receiverCalls).toBe(1);
+        expect(completed?.events.at(-1)).toMatchObject({ kind: 'run-complete' });
+        expect(completed?.process?.env).toMatchObject({ CODEX_HOME: '/machine/native-login', OPENAI_API_KEY: '', AI_GATEWAY_API_KEY: '' });
+        expect(transport.materialize).not.toHaveBeenCalled();
         expect(homeReads).toEqual([]);
     });
     it.each(['unavailable', 'unreadable'] as const)('refuses a genuinely %s bound Account through daemon acquisition before DeepSec effects', async status => {
