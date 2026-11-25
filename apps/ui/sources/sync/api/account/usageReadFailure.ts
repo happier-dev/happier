@@ -37,6 +37,10 @@ export function usageScopeRefusalCode(state: CoverageStatus) {
 }
 
 export function canRetryUsageCoverageFailure(state: UsageQuerySourceState): boolean {
-    return isUsageCoverageFailure(state) && !needsNewerServer(state)
-        && !isUsageQuotaOwnershipUnproven(state) && !usageScopeRefusalCode(state);
+    if (needsNewerServer(state) || isUsageQuotaOwnershipUnproven(state) || usageScopeRefusalCode(state)) return false;
+    if (state.source === 'work' && (state.status === 'partial' || state.unreadSessions !== undefined)) {
+        const settled = state.status === 'partial' || state.status === 'error' || state.status === 'stale';
+        return settled && ((state.unreadSessions?.failed ?? 0) > 0 || (state.unreadSessions?.timed_out ?? 0) > 0);
+    }
+    return isUsageCoverageFailure(state);
 }

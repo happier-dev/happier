@@ -794,10 +794,7 @@ function isUsageWorkOffline(source: UsageQuerySourceState): boolean {
   return source.source === 'work' && source.errorCode === 'machine_offline';
 }
 
-/**
- * A Work read that settled with evidence (`partial`: some Sessions on unreachable Machines or failed) is listed by the
- * page and stated once at the ledger's total; the page header says nothing about it (acceptance r226 #61).
- */
+/** A Work read that settled with evidence for part of the selection. */
 function isUsageWorkSettledWithEvidence(source: UsageQuerySourceState): boolean {
   return source.source === 'work' && source.status === 'partial';
 }
@@ -996,7 +993,7 @@ export function readUsagePageFailure(slices: readonly Pick<UsageQueryResultSlice
   if (!scopeRefusal && !retryable.length && !ownershipUnproven && !workPartlyRead) return null;
   const quiet = !ownershipUnproven && retryable.every(source => source.source === 'work');
   const names = [...new Set(retryable.map(source => usageSourceTitle(usagePageReadFamily(source.source))))].join(', ');
-  const witnessed = [...readUsagePageWitnessedNames(slices), ...(workPartlyRead ? [usageSourceTitle('work')] : [])];
+  const witnessed = readUsagePageWitnessedNames(slices);
   // "Not available" only while nothing of Work is shown; a failed reread over retained links says what arrived.
   const nothingShown = retryable.every(source => source.status === 'error');
   const reason = [
@@ -1017,13 +1014,14 @@ export function readUsagePageFailure(slices: readonly Pick<UsageQueryResultSlice
  * refused or unreadable) shows what it witnessed, said here once. Partial usage history is a different
  * cause, carried by the Sources chooser's coverage detail.
  */
-const USAGE_PAGE_WITNESSED_SOURCES: ReadonlySet<string> = new Set(['how_you_work']);
-
 function readUsagePageWitnessedNames(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[]): string[] {
   return [...new Set(slices.flatMap(slice => slice.sources
-    // A quiet reread of a settled read keeps showing its witnessed subset, so its partial fact stays too.
-    .filter(source => USAGE_PAGE_WITNESSED_SOURCES.has(source.source) && (source.status === 'partial'
-      || source.status === 'pending' && source.asOfMs !== undefined && slice.howYouWork?.detailStatus === 'partial'))
+    .filter(source => {
+      if (isUsageWorkSettledWithEvidence(source)) return source.unreadSessions !== undefined;
+      // A quiet activity reread keeps its witnessed subset visible.
+      return source.source === 'how_you_work' && (source.status === 'partial'
+        || source.status === 'pending' && source.asOfMs !== undefined && slice.howYouWork?.detailStatus === 'partial');
+    })
     .map(source => usageSourceTitle(source.source))))];
 }
 

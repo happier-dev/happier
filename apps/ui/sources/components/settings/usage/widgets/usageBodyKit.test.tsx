@@ -504,7 +504,7 @@ describe('shared Usage identity and dependent coverage', () => {
         expect(readUsagePageFailure([slice([{ source: 'comparison', status: 'error' }])])).toBeNull();
         expect(readUsagePageFailure([slice([{ source: 'work', status: 'pending' }])])).toBeNull();
     });
-    it('keeps the header silent about a Work read that settled with evidence; the ledger total owns the partial statement (r226 #61)', () => {
+    it('describes Work that settled with evidence even when Retry cannot help (G1)', () => {
         const slice = (work: Readonly<Record<string, unknown>>) =>
             ({ sources: [{ source: 'work', ...work }] }) as unknown as Parameters<typeof readUsagePageFailure>[0][number];
         const header = (work: Readonly<Record<string, unknown>>) => {
@@ -513,9 +513,10 @@ describe('shared Usage identity and dependent coverage', () => {
                 refused: failure?.scopeRefusal != null };
         };
         const failedWork = t('usage.board.page.coverageFailed', { sources: usageSourceTitle('work') });
-        // Settled with evidence and only unreachable Machines behind the gap: nothing in the header.
-        expect.soft(header({ status: 'partial', errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 1229 } }))
-            .toEqual({ reason: null, retry: false, offline: false, refused: false });
+        const offline = { status: 'partial', errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 1229 } };
+        expect.soft(header(offline)).toEqual({ reason: null, retry: false, offline: false, refused: false });
+        expect.soft(describeUsagePagePartialSources([slice(offline)]))
+            .toBe(t('usage.board.page.coverageWitnessed', { sources: usageSourceTitle('work') }));
         // Some Sessions failed retryably inside the settled answer: a quiet true line in the page's partial-coverage
         // pattern, with the page's one Retry; never the outage line (ruling 11-25 00:15Z).
         expect.soft(header({ status: 'partial', errorCode: 'work_evidence_failed', unreadSessions: { machine_unavailable: 1229, failed: 2 } }))

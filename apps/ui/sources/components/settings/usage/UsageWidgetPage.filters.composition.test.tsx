@@ -1105,7 +1105,15 @@ describe('mounted Usage page scope commands', () => {
         expect(screen.findByType(UsageFilterBar).props.costBasisPending).toBe(true);
     });
 
-    it.each(['costs', 'work'] as const)('says a settled Work gap on the %s view in one quiet header line with the one Retry, never the outage line and no ledger button (J-B46)', async (layoutId) => {
+    it.each([
+        { layoutId: 'costs', failures: ['scm_read_failed'], retryable: true },
+        { layoutId: 'work', failures: ['scm_read_failed'], retryable: true },
+        { layoutId: 'work', failures: [RPC_ERROR_CODES.FORBIDDEN], retryable: false, phone: true },
+        { layoutId: 'work', failures: [RPC_ERROR_CODES.FORBIDDEN, 'scm_read_failed'], retryable: true },
+    ] as const)('says a settled Work gap on $layoutId with Retry eligibility $retryable for $failures (J-B46, G1)', async test => {
+        const { layoutId, failures, retryable } = test;
+        const phone = 'phone' in test && test.phone;
+        if (phone) vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
         const [{ installSessionActionRpcBoundary }, { createHydratedPlainMachineFixture, createPlainMachineReadHttpResponseFixture },
             { publishMachineInventoryForTest }, { ScmWorkEvidenceReadRequestSchema, ScmWorkEvidenceReadResponseSchema },
             { createSessionFixture }] = await Promise.all([
@@ -1113,26 +1121,30 @@ describe('mounted Usage page scope commands', () => {
             import('@/dev/testkit/harness/machinePresence'), import('@happier-dev/protocol/scm'), import('@/dev/testkit/fixtures/sessionFixtures'),
         ]);
         const machineId = `gap-machine-${layoutId}`;
-        const [read, failing] = [`gap-read-${layoutId}`, `gap-failing-${layoutId}`];
-        // The daemon's answer is the boundary: one Session answers with a link, the other fails retryably.
+        const read = `gap-read-${layoutId}`;
+        const unread = new Map(failures.map((code, index) => [`gap-unread-${index}`, code]));
+        const sessions = [read, ...unread.keys()];
+        // The daemon replies with one admitted link and the typed cause for each unread Session.
         installSessionActionRpcBoundary(request => ScmWorkEvidenceReadResponseSchema.parse({ sessions: ScmWorkEvidenceReadRequestSchema.parse(request.params)
-            .sessions.map(session => session.sessionId === failing ? { sessionId: session.sessionId, status: 'error', errorCode: 'scm_read_failed' }
+            .sessions.map(session => unread.has(session.sessionId) ? { sessionId: session.sessionId, status: 'error', errorCode: unread.get(session.sessionId) }
                 : { sessionId: session.sessionId, status: 'partial', pullRequestsRead: true, branchEvidence: [], evidence: [{ sessionId: session.sessionId,
                     turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint', checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40),
                     attributionScope: 'no_happier_checkpoint_overlap_observed', pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge',
                         baseUrl: 'https://github.com', nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } }, number: 1, title: 'Linked',
                         url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'merged' } }] }) }));
         const nowMs = Date.now();
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: `https://usage-work-gap-${layoutId}.test`, accountId: 'account-a' }],
             route: request => {
                 if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
                 if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
-                if (request.path === '/v2/usage/query') return Response.json({ ...accounting, contributions: [read, failing].map(sessionId => ({
+                if (request.path === '/v2/usage/query') return Response.json({ ...accounting, contributions: sessions.map(sessionId => ({
                     id: `cost-${sessionId}`, observedAtMs: nowMs - 60_000, sessionId, turnId: 'turn', agentId: null, modelId: null, machineId: null,
                     projectKey: null, workspaceId: null, source: null, tokens: accounting.totals.tokens, cost: accounting.totals.cost })) });
                 if (request.path === '/v2/usage/query-batch') return undefined;
                 return createPlainMachineReadHttpResponseFixture(request.path, { method: request.method,
                     ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }, 'account-a', { activeAt: nowMs, presenceProtocolVersion: 1 })
+                    ?? artifacts.handle(request.url.toString(), { method: request.method })
                     ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
             } });
         const server = home.homes.a!;
@@ -1140,7 +1152,7 @@ describe('mounted Usage page scope commands', () => {
         publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
-        getStorage().getState().applySessions([read, failing].map(id => createSessionFixture({ id, encryptionMode: 'plain', serverId: server.id,
+        getStorage().getState().applySessions(sessions.map(id => createSessionFixture({ id, encryptionMode: 'plain', serverId: server.id,
             active: true, metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' } })));
         await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({ id: machineId, accountId: 'account-a',
             machine: { activeAt: nowMs, presenceProtocolVersion: 1 } })]);
@@ -1152,10 +1164,20 @@ describe('mounted Usage page scope commands', () => {
         // Every visible Work Retry, by test ID: the header's, or one at a ledger total.
         const retries = () => [...new Set(screen.findAll(node => typeof node.props?.testID === 'string'
             && (node.props.testID === 'usage-page.header.retry' || node.props.testID.endsWith('.workRetry'))).map(node => node.props.testID as string))];
-        await waitForHomeGovernance(() => expect(retries().length).toBeGreaterThan(0));
-        const unique = retries();
-        expect(unique).toEqual(['usage-page.header.retry']);
-        expect(screen.getTextContent()).toContain(t('usage.board.page.coverageWitnessed', { sources: usageSourceTitle('work') }));
+        const witnessed = t('usage.board.page.coverageWitnessed', { sources: usageSourceTitle('work') });
+        await waitForHomeGovernance(() => {
+            if (phone) {
+                expect(screen.findByTestId('usage-page.header.failed.detail') ?? screen.findByTestId('usage-page.header.partial.detail'))
+                    .not.toBeNull();
+            } else {
+                expect(screen.getTextContent()).toContain(witnessed);
+            }
+        });
+        expect(retries()).toEqual(retryable ? ['usage-page.header.retry'] : []);
+        if (phone) {
+            await act(async () => screen.findByTestId('usage-page.header.partial.detail')!.props.onPress());
+            expect(screen.getTextContent()).toContain(witnessed);
+        }
         expect(screen.getTextContent()).not.toContain(t('usage.board.page.workNotRead'));
     });
 
