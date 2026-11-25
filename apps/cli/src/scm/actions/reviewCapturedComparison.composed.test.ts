@@ -1,5 +1,6 @@
-import { rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
 import { ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
@@ -12,10 +13,81 @@ import { createLocalScmRepositoryFixture, runScmExecutable } from '@/testkit/scm
 import { executeScmActionOperation } from './executeScmActionOperation';
 import { projectCapturedComparison } from '../comparisons/projectCapturedComparison';
 import { deleteCapturedScmComparison } from '../comparisons/captureScmComparison';
+import { resolveReviewScmScope } from '@/agent/reviews/scope/resolve';
 
 const reviewer = { kind: 'engine' as const, engineId: 'codex' };
 
 describe('Review captured comparison transport', () => {
+  it('retains admitted endpoints after ambient HEAD changes and admits the neighboring detached worktree', async () => runWithScmAccountScope('review-capture-worktree-test', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-capture-worktree-' });
+    const worktreeParent = await mkdtemp(join(tmpdir(), 'review-capture-neighbor-'));
+    const neighbor = join(worktreeParent, 'reviewer');
+    const records = createInMemoryReviewRecordPortV1();
+    const captures = new Map<string, { cwd: string; comparisonId: string }>();
+    const bindings: { reviewId: string; roundOrdinal: number }[] = [];
+    try {
+      await writeFile(join(fixture.rootPath, 'selected.txt'), 'selected change\n');
+      runScmExecutable(fixture.rootPath, 'git', ['add', '--', 'selected.txt']);
+      runScmExecutable(fixture.rootPath, 'git', ['commit', '-m', 'selected review head']);
+      const selectedHead = runScmExecutable(fixture.rootPath, 'git', ['rev-parse', 'HEAD']);
+      runScmExecutable(fixture.rootPath, 'git', ['worktree', 'add', '--detach', neighbor, selectedHead]);
+      const source = { kind: 'branch' as const, base: fixture.headCommit, head: selectedHead };
+      const executor = createActionExecutor({ reviewRecords: () => records,
+        resolveApiTokenGrantSessionMachineId: async () => 'capture-machine',
+        // Only the Machine transport and native Run are substituted; Git capture,
+        // admitted Record, round preparation and scope resolution stay real.
+        scmActionExecute: async request => {
+          const input = ScmComparisonCaptureInputSchema.parse(request.input);
+          const result = ScmComparisonCaptureOutputSchema.parse(await executeScmActionOperation({
+            actionId: request.actionId, workingDirectory: fixture.rootPath, input,
+            authorizeSession: async sessionId => sessionId === 'capture-session',
+          }));
+          if (result.success) captures.set(result.comparison.id, { cwd: input.cwd!, comparisonId: result.comparison.id });
+          return result;
+        },
+        reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+        executionRunStart: async (_sessionId, input) => {
+          const round = ReviewPreparedRoundV1Schema.shape.reviewRound.parse(input.intentInput?.reviewRound);
+          bindings.push(round);
+          return { runId: `review-run-${bindings.length}`, callId: 'call', sidechainId: 'sidechain' };
+        },
+      });
+      const inputFor = (cwd: string) => ({ sessionId: 'capture-session', cwd, source,
+        instructions: 'Review the selected head only.', reviewers: [reviewer] });
+      expect(await executor.execute('review.start', inputFor(fixture.rootPath), { surface: 'ui' })).toMatchObject({ ok: true });
+      await writeFile(join(fixture.rootPath, 'unrelated.txt'), 'later ambient change\n');
+      runScmExecutable(fixture.rootPath, 'git', ['add', '--', 'unrelated.txt']);
+      runScmExecutable(fixture.rootPath, 'git', ['commit', '-m', 'later ambient head']);
+      expect(runScmExecutable(fixture.rootPath, 'git', ['rev-parse', 'HEAD'])).not.toBe(selectedHead);
+      expect(runScmExecutable(neighbor, 'git', ['rev-parse', 'HEAD'])).toBe(selectedHead);
+      expect(await executor.execute('review.start', inputFor(neighbor), { surface: 'ui' })).toMatchObject({ ok: true });
+      expect(bindings).toHaveLength(2);
+      for (const [index, cwd] of [fixture.rootPath, neighbor].entries()) {
+        const binding = bindings[index]!;
+        const saved = await records.read(binding.reviewId);
+        const capture = saved?.rounds[0]?.comparisonCapture?.input;
+        expect(capture).toMatchObject({ source });
+        const prepared = await executor.execute('review.prepare_round', { reviewRound: binding,
+          reviewInput: { ...inputFor(cwd), comparisonId: capture?.comparisonId }, comparisonCapture: capture,
+          previousRoundContext: null }, { surface: 'ui' });
+        expect(prepared, JSON.stringify(prepared)).toMatchObject({ ok: true });
+        if (!prepared.ok) throw new Error(prepared.error);
+        const comparison = ReviewPreparedRoundV1Schema.parse(prepared.result).comparison;
+        expect(comparison).toMatchObject({ endpoints: { before: fixture.headCommit, after: selectedHead },
+          inventory: { files: [{ path: 'selected.txt' }] } });
+        const intentInput = { comparisonId: comparison!.id, comparison, selectedPaths: ['selected.txt'] };
+        expect(await resolveReviewScmScope({ cwd, intentInput })).toMatchObject({ status: 'supported',
+          selectedPaths: ['selected.txt'], comparison: { endpoints: { before: fixture.headCommit, after: selectedHead } } });
+        expect(await resolveReviewScmScope({ cwd, intentInput: { ...intentInput, selectedPaths: ['unrelated.txt'] } }))
+          .toMatchObject({ status: 'unsupported', diagnostics: [{ code: 'invalid_path' }] });
+      }
+    } finally {
+      for (const capture of captures.values()) await deleteCapturedScmComparison({ ...capture, sessionId: 'capture-session' });
+      await rm(worktreeParent, { recursive: true, force: true });
+      await rm(fixture.rootPath, { recursive: true, force: true });
+    }
+  }));
+
   it('admits a branch comparison larger than one socket response and prepares its retained round', async () => runWithScmAccountScope('review-capture-test', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-large-capture-' });
     const records = createInMemoryReviewRecordPortV1();
