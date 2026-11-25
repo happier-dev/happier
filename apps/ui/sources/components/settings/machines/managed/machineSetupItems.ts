@@ -3,6 +3,7 @@ import { mergeMachineSetupsV1, readMachineSetupAppIdentityV1, readMachineSetupRe
 import type { MachineRecipeReferenceV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { InputOptionValue } from '@happier-dev/protocol/inputs/inputFields';
 import { listMachineSetupAdaptersV1, type BuiltinNativeToolchainAdapterV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
+import type { AgentId } from '@happier-dev/agents';
 
 type Items = readonly MachinePresetItemV1[];
 export type MachineSetupItemKind = MachinePresetItemV1['kind'];
@@ -103,7 +104,9 @@ export function machineSetupAdapters(): readonly BuiltinNativeToolchainAdapterV1
 }
 
 /** Catalog Agent identity and presentation for inert preset authoring. */
-export type MachineSetupAgentOffer = Readonly<{ agentId: string; title: string; description?: string; icon?: string }>;
+export type MachineSetupAgentOffer = Readonly<{ agentId: string; title: string; description?: string; icon?: string;
+  /** The bundled Agent whose mark this Agent draws (`resolveAgentMarkAgentId`), when it has one. */
+  markAgentId?: AgentId }>;
 
 /** Declared Setup recipes an item is named from: native value, title, purpose and mark. */
 export type MachineSetupRecipeOffer = Readonly<{ value: InputOptionValue; label: string; description?: string | null; icon?: string }>;
@@ -122,12 +125,12 @@ export function machineSetupItemPresentation(
   item: MachinePresetItemV1,
   offers: readonly MachineSetupRecipeOffer[] | null,
   agents: readonly MachineSetupAgentOffer[] | null = null,
-): Readonly<{ title: string; description?: string; icon?: string; offered: boolean | null }> {
+): Readonly<{ title: string; description?: string; icon?: string; markAgentId?: AgentId; offered: boolean | null }> {
   if (item.kind === 'app') return { title: item.definition.name, offered: null };
   if (item.kind === 'agent') {
     const offer = agents?.find(agent => agent.agentId === item.agentId);
     return offer ? { title: offer.title, ...(offer.description ? { description: offer.description } : {}),
-      ...(offer.icon ? { icon: offer.icon } : {}), offered: true }
+      ...(offer.icon ? { icon: offer.icon } : {}), ...(offer.markAgentId ? { markAgentId: offer.markAgentId } : {}), offered: true }
       : { title: item.agentId, offered: agents === null ? null : false };
   }
   const ref = item.selection.ref;

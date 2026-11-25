@@ -4,6 +4,7 @@ import { MachineRecipeReferenceV1Schema } from '@happier-dev/protocol/machines/s
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { getResolvedAgentCatalogEntries } from '@/agents/backendCatalog/agentCatalogProjection';
+import { resolveAgentMarkAgentId } from '@/agents/backendCatalog/resolveAgentMarkAgentId';
 import type { MachineSetupAgentOffer } from '@/components/settings/machines/managed/machineSetupItems';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import type { ActionFieldOption } from '@/components/sessions/actions/ActionInputFields';
@@ -54,11 +55,14 @@ export function useMachineSetupAgentOptions(target: StoreSoftwareTarget | null |
         if (!reader || reader.readInstalledPlugins().kind !== 'available') return null;
         const entries = new Map<string, MachineSetupAgentOffer>(getResolvedAgentCatalogEntries({ enabledAgentIds: [] }).map(entry => [entry.qualifiedId, {
             agentId: entry.qualifiedId, title: entry.title, ...(entry.subtitle ? { description: entry.subtitle } : {}), icon: entry.iconName,
+            ...(entry.iconAgentId ? { markAgentId: entry.iconAgentId } : {}),
         } satisfies MachineSetupAgentOffer]));
         for (const selection of reader.readCurrentAccountExecutionDeclarations()) {
             for (const agent of selection.manifest.contributes?.agents ?? []) {
                 const agentId = buildQualifiedPluginContributionKey({ pluginId: selection.manifest.id, localId: agent.id });
+                const markAgentId = resolveAgentMarkAgentId({ agentId: agent.id });
                 if (!entries.has(agentId)) entries.set(agentId, { agentId, title: resolvePluginLocalizedStringV2Text(agent.title),
+                    ...(markAgentId ? { markAgentId } : {}),
                     ...(agent.description ? { description: resolvePluginLocalizedStringV2Text(agent.description) } : {}) });
             }
         }

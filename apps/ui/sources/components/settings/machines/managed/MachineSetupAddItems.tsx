@@ -48,7 +48,8 @@ const title = (offer: Offer) => offer.kind === 'app' ? offer.summary.title
 const description = (offer: Offer) => offer.kind === 'app' ? offer.summary.description : offer.option.description;
 const mark = (offer: Offer, size: number) => <StoreItemMark size={size} facts={offer.kind === 'app'
   ? { kind: 'app', title: offer.summary.title, brand: offer.summary.brandMark }
-  : offer.kind === 'agent' ? { kind: 'agent', title: offer.option.title, iconToken: offer.option.icon ?? null }
+  : offer.kind === 'agent' ? { kind: 'agent', title: offer.option.title, agentId: offer.option.markAgentId ?? null,
+    iconToken: offer.option.icon ?? null }
   : { kind: 'software', title: offer.option.label,
     bundledPluginId: offer.ref.pluginId, iconToken: offer.option.icon ?? null }} />;
 

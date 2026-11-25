@@ -76,6 +76,13 @@ it('adds a captured Account Agent declaration once without effects while another
         await act(async () => config().onModeChange('agents'));
         const pick = () => config().catalog.items.find((entry: unknown) => config().catalog.itemKey(entry) === 'agent:example.preset-agent/qwen');
         await waitForHomeGovernance(() => expect(pick()).toBeDefined());
+        // Each Agent draws its own mark (identity marks always stay), never the kind glyph: the bundled catalog's
+        // Agents and a plugin-declared Agent named after a bundled one alike.
+        const markOf = (entry: unknown) => config().renderDetail(entry).props.children[0].props.mark.props.facts;
+        const claude = config().catalog.items.find((entry: unknown) => config().catalog.itemKey(entry) === 'agent:claude');
+        expect(claude).toBeDefined();
+        expect(markOf(claude)).toMatchObject({ kind: 'agent', agentId: 'claude' });
+        expect(markOf(pick())).toMatchObject({ kind: 'agent', agentId: 'qwen' });
         expect(changes).toHaveLength(0);
         await act(async () => { await config().detailFooter(pick()).primary.onPress(); });
         expect(changes).toEqual([{ scripts: [{ body: 'echo retained' }], items: [{ kind: 'agent', agentId: 'example.preset-agent/qwen' }] }]);
