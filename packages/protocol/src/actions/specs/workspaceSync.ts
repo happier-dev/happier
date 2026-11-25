@@ -108,7 +108,7 @@ function createWorkspaceSyncActionSpecs() {
       voice: false,
       agent: true,
       mcp: true,
-      cli: false,
+      cli: true,
       rpc: false,
     },
     inputHints: {
