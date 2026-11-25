@@ -43,6 +43,8 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { readClaudeMcpConfigServers } from '../../../../../packages/plugins/claude/src/agent/mcp/configServers';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { requireSessionHolderExecutablePath } from '@/subprocess/supervision/sessionHolder';
+import { resolveAgentSessionMcpLaunchConfigs } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
+import { buildCodexAppServerConfigOverrides, codexConfigOverridesToThreadConfig } from '@happier-dev/plugins-codex/agent/runtime/appServer/config/overrides';
 
 const packageDownloadNetwork = vi.hoisted(() => ({ origin: '', requests: [] as string[] }));
 
@@ -245,11 +247,28 @@ describe('resolveRunnerMcpServers catalog admission', () => {
       localWorkflow: kind === 'server-only-scope', machineId: 'machine-1', directory: '/tmp/repo',
       includeHappierMcpServer: false })).rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
   });
-  it.each(['member', 'owner'])('admits the requester stdio profile on an isolation-off Machine despite an unrelated Account publication (%s)', async accountId => {
+  it.each(['member', 'owner'])('carries an isolation-off requester profile into Codex thread config after unrelated Account publication (%s)', async accountId => {
     vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '1');
     const homeId = 'srv_test-home';
     const profileId = 'test-home';
-    const requesterSession = { ...session(), getServerBinding: () => ({ serverId: profileId, serverUrl: 'https://test-home.example.test' }) };
+    const notices: unknown[] = [];
+    const requesterSession: HappyMcpSessionClient = {
+      ...session(),
+      getServerBinding: () => ({ serverId: profileId, serverUrl: 'https://test-home.example.test' }),
+      enqueueSessionEventCommitted: async event => { notices.push(event); return { persisted: true, delivered: true }; },
+      ...(accountId === 'member' ? { getPluginMcpPort: () => ({
+        prepare: async () => ({
+          preparationId: '8888511a-7215-4f28-a706-ce09732d4194',
+          items: [],
+          discoverNativeServers: async () => {
+            const { PluginError } = await import('@happier-dev/plugin-sdk');
+            throw new PluginError({ code: 'requester_native_discovery_unavailable', message: 'Native discovery unavailable' });
+          },
+          materialize: async servers => servers,
+          dispose: async () => {},
+        }),
+      }) } : {}),
+    };
     const requesterCredentials = persistence.bindRequesterSessionCredentialScope({ token: 'member-account', encryption: null }, {
       serverId: profileId, serverHttpBaseUrl: 'https://test-home.example.test',
       requesterSession: { sessionId: 'session-1', homeServerIdentityId: homeId, attribution: {
@@ -279,7 +298,8 @@ describe('resolveRunnerMcpServers catalog admission', () => {
     });
     const resolve = (isolationEnabled: boolean) => resolveRunnerMcpServers({ session: requesterSession, credentials: requesterCredentials,
       accountCredentials: requesterCredentials, accountSettings: null, accountSettingsSnapshot: selected,
-      machineId: 'machine-1', directory: process.cwd(), env: processEnv, isolationEnabled, includeHappierMcpServer: false });
+      machineId: 'machine-1', directory: process.cwd(), agentId: 'codex', agentAcceptsUserMcp: true,
+      env: processEnv, isolationEnabled, includeHappierMcpServer: false });
     const refusal = accountId === 'member' ? await resolve(true).catch((error: unknown) => error) : undefined;
     if (accountId === 'member') {
       expect(refusal).toMatchObject({ code: 'agent_isolation_unavailable', retryable: false,
@@ -289,8 +309,25 @@ describe('resolveRunnerMcpServers catalog admission', () => {
     // Isolation off runs the requester's own stdio where its Agent runs, a Use
     // guest included (owner ruling 2026-11-23).
     const admitted = await resolve(false);
-    try { expect(Object.keys(admitted.mcpServers)).toEqual(['requester_tools']); expect(materialReads).toBeGreaterThan(0); }
-    finally { await admitted.happierMcpServer.stop(); }
+    try {
+      expect(admitted.reach?.selectedServerIds).toEqual(['requester-tools']);
+      expect(Object.keys(admitted.mcpServers)).toEqual(['requester_tools']);
+      expect(materialReads).toBeGreaterThan(0);
+      if (accountId === 'member') {
+        expect(notices.map(readSessionCapabilityNoticeV1)).toContainEqual(expect.objectContaining({
+          items: [expect.objectContaining({ code: 'requester_native_discovery_unavailable' })],
+        }));
+      }
+      const sdkServers = await resolveAgentSessionMcpLaunchConfigs(admitted.mcpServers, {});
+      expect(Object.keys(sdkServers ?? {})).toEqual(['requester_tools']);
+      const { mcpOverrides } = buildCodexAppServerConfigOverrides(sdkServers ?? {}, { mcpToolPolicy: admitted.mcpToolPolicy });
+      const threadConfig = codexConfigOverridesToThreadConfig(mcpOverrides);
+      expect(threadConfig['mcp_servers.happier__requester_tools.enabled']).toBe(true);
+      const configFileKey = 'HAPPIER_MCP_STDIO_LAUNCHER_CONFIG_FILE';
+      const launchEnv = threadConfig['mcp_servers.happier__requester_tools.env'];
+      const configFile = launchEnv && typeof launchEnv === 'object' && configFileKey in launchEnv ? launchEnv[configFileKey] : undefined;
+      expect(typeof configFile === 'string' && configFile === admitted.mcpServers.requester_tools?.env?.[configFileKey]).toBe(true);
+    } finally { await admitted.happierMcpServer.stop(); }
     expect(machineReads).toBe(1);
     if (accountId === 'member') {
       const issue = SessionRuntimeIssueV1Schema.parse(classifyPrimarySessionRuntimeIssue({

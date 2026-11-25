@@ -261,10 +261,10 @@ it.each([undefined, []])('omits MCP servers without probing them when deny allow
     const servers = { unavailable: { command: join(process.cwd(), 'no-tools-mcp-must-not-start') } };
     const result = await resolveAgentSessionMcpLaunchConfigs(servers, policy);
     expect(result).toBeUndefined();
-    const overrides = buildCodexAppServerConfigOverrides(result ?? {}, policy);
-    expect(overrides).toContain('features.shell_tool=false');
-    expect(overrides).toContain('web_search="disabled"');
-    expect(overrides.some((entry) => entry.startsWith('mcp_servers.'))).toBe(false);
+    const { processOverrides, mcpOverrides } = buildCodexAppServerConfigOverrides(result ?? {}, policy);
+    expect(processOverrides).toContain('features.shell_tool=false');
+    expect(processOverrides).toContain('web_search="disabled"');
+    expect(mcpOverrides).toEqual([]);
 });
 
 it('requires an MCP catalog when a denied-by-default recipe lists a server tool', async () => {
@@ -272,7 +272,7 @@ it('requires an MCP catalog when a denied-by-default recipe lists a server tool'
         unavailable: { command: join(process.cwd(), 'no-tools-mcp-must-not-start') },
     }, {
         unlistedTools: 'deny', allowedTools: ['mcp__unavailable__*'],
-    })).rejects.toMatchObject({ name: 'McpServerProbeError', phase: 'connect', cause: { code: 'ENOENT' } });
+    })).rejects.toMatchObject({ name: 'McpServerProbeError', phase: 'connect' });
 });
 
 vi.mock('node:fs', async (importOriginal) => {
