@@ -339,7 +339,7 @@ it('seals for a Use member with a current grant and refuses the next request aft
   expect(await read('request-1')).toMatchObject({ ok: true });
   expect(events.filter(event => event === 'dispatch')).toHaveLength(1);
   withdrawn = true;
-  expect(await read('request-2')).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+  expect(await read('request-2')).toMatchObject({ ok: false, errorCode: 'access_denied' });
   expect(events.filter(event => event === 'dispatch')).toHaveLength(1);
 });
 it('seals requester credentials for shared service watch effects with no consent step', async () => {
@@ -2727,4 +2727,32 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     expect(result.ok).toBe(false);
     expect(target.readReceived()).toBeUndefined();
   });
+});
+
+
+it.each(['alice', 'bob'] as const)('carries CLI Session Delete through the original signed Action (custodian %s)', async custodianAccountId => {
+  const events: string[] = [];
+  const target = await home('plain', events, { custodianAccountId, originalOwnAction: 'session.delete',
+    authenticationKind: 'terminal', ownExecution: { ok: true, result: { success: true } } });
+  const { createCliMachineActionTransport } = await import('@/session/actions/cliActionDeps/machineTransport');
+  const raw = vi.spyOn(machineRpc, 'callExactMachineRpc').mockRejectedValue(
+    Object.assign(new Error('Legacy Delete has no requester custody'), { code: 'project_setup_operation_unavailable' }));
+  const transport = createCliMachineActionTransport({ credentials: { token: token('terminal'), encryption: null,
+    credentialProvenance: 'stored_session' }, serverId: 'home', serverIdentityId: homeIdentityId, serverHttpBaseUrl: target.url });
+  const input = { sessionId: 'guest-own-session' };
+  await expect(transport.callMachineAction({ machineId: 'alice-machine', method: 'session.delete', request: input,
+    effectActionId: 'session.delete', exactMachine: true,
+    authorization: { kind: 'session.write', sessionId: input.sessionId },
+    context: { surface: 'cli', authority: 'account_automation', serverId: 'home', serverIdentityId: homeIdentityId,
+      actionRequestId: 'request-1', actionCaller: { kind: 'host' } } })).resolves.toEqual({ success: true });
+  expect(raw).not.toHaveBeenCalled();
+  if (custodianAccountId === 'alice') {
+    expect(events).toEqual(['home-authorized', 'dispatch']);
+    const delivered = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+    expect(delivered.executionAuthorization?.binding).toMatchObject({ actionId: 'session.delete', accountId: 'bob', custodianAccountId });
+    expect(delivered.envelope).toMatchObject({ input });
+  } else {
+    expect(events).toEqual(['dispatch']);
+    expect(ExternalActionRequestEnvelopeSchema.parse(target.readReceived())).toMatchObject({ input });
+  }
 });

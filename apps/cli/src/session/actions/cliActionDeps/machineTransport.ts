@@ -4,7 +4,7 @@ import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/a
 import type { CliActionDepsParams } from './types';
 import { ACTION_ID_FAMILIES_V1, ActionIdSchema, isWorkspaceSyncRelationshipWriteActionId, isLocalServiceStopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1, ACTION_OPERATION_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
-import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
+import { isProjectWorkspaceSyncOpenActionV1, SESSION_CHECKOUT_REMOVAL_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { HandoffTargetReplacementPreflightV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isMachineSetupCombinedActionIdV1, isOrdinaryMachineSetupNativeActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { isManagedControllerCodecActionV1, projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -212,6 +212,7 @@ export function createCliMachineActionTransport(
     }
     const originalContext = input.context;
     const originalAccountAction = isLocalServiceStopActionIdV1(input.effectActionId)
+      || input.effectActionId === SESSION_CHECKOUT_REMOVAL_ACTION_IDS_V1[0]
       || isProjectWorkspaceSyncOpenActionV1(input.effectActionId)
       || input.effectActionId === 'execution.run.action'
         && doesExternalActionConsumeRequesterAccountContentV1({ actionId: input.effectActionId, input: input.request });
