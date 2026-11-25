@@ -434,6 +434,38 @@ describe('WorkspaceSyncRelationshipOwner', () => {
     expect(harness.read().relationships).toEqual([]);
   });
 
+  it('withdraws the staged link when a retained Copy holds its source root', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'workspace-sync-stage-'));
+    try {
+      const sourceRootPath = await realpath(directory);
+      const ownership = createWorkspaceRootOwnershipManager({ lockDirectory: join(directory, 'locks') });
+      const retainedCopy = await ownership.tryAcquire({ ownerId: 'retained_copy', canonicalRoot: sourceRootPath, operation: 'handoff' });
+      if ('kind' in retainedCopy) throw new Error('Expected the retained Copy to own the source');
+      const source = { id: 'existing_source', serverId: 'server_a', machineId: 'machine_source', rootPath: sourceRootPath, createdAtMs: 1 };
+      const harness = createHarness({}, { workspaceRefs: [source], relationships: [] });
+      const refusal = Object.assign(new Error('Workspace root is already in use'), { code: 'workspace_root_in_use' });
+      harness.waitForProjectReconciliation.mockImplementation(async () => {
+        if (!parseProjectAccountSnapshotV1(harness.read()).relationships.length) return;
+        const result = await ownership.tryAcquire({ ownerId: source.id, canonicalRoot: sourceRootPath, operation: 'sync' });
+        if ('kind' in result) throw refusal;
+        await result.release();
+      });
+
+      try {
+        const prepared = harness.owner.prepareCreate({
+          ...createInput, sourceRootPath, sourceWorkspaceRefId: source.id, targetBootstrap: 'materialize_from_source_workspace',
+        });
+        await expect(prepared).rejects.toMatchObject({ code: 'workspace_root_in_use' });
+        expect(parseProjectAccountSnapshotV1(harness.read())).toMatchObject({ workspaceRefs: [source], relationships: [] });
+        await expect(prepared).rejects.toBeInstanceOf(WorkspaceSyncPreparationRefusal);
+      } finally {
+        await retainedCopy.release();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('reuses only the exact Action-derived relationship and requires replacement for an occupied endpoint pair', async () => {
     const harness = createHarness();
     const first = await harness.owner.prepareCreate(createInput);

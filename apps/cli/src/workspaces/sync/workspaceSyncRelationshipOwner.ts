@@ -658,10 +658,20 @@ export function createWorkspaceSyncRelationshipOwner(
       try {
         await stageDurableIntent();
       } catch (error) {
-        // A Replace whose swap landed but did not settle puts the original back.
-        if (replacedRelationship && durableIntentStaged && !isIndeterminate(error)) {
+        if (!durableIntentStaged || isIndeterminate(error)) throw error;
+        if (replacedRelationship) {
           const cleanupErrors = await cleanupFailedCreation(relationship);
           if (cleanupErrors.length) throw withCleanupErrors(error, cleanupErrors);
+        } else if (!existing) {
+          // Disabled reconciliation can refuse a root before target preparation starts.
+          // Withdraw this attempt's row so it cannot block the next reconciliation.
+          try {
+            await restoreStagedIntent();
+          } catch (cleanupError) {
+            throw withCleanupErrors(error, [cleanupError]);
+          }
+          const code = readFailureCode(error);
+          if (!input.signal?.aborted && code && code !== 'cancelled') throw new WorkspaceSyncPreparationRefusal(code, error);
         }
         throw error;
       }
