@@ -652,6 +652,11 @@ Current JSON envelopes:
 - `session actions describe <action-id> --json` returns `data.actionSpec`
 - `session actions execute ... --json` returns `data.result`
 
+In 0.3 development builds, a refused execution also preserves `error.failureCause`
+(including `phase` and `errorCode`) and `error.requestId` when supplied by the
+Action. These are additive error fields. Text output adds a line with the phase
+and request id, when available, for tracing the refusal.
+
 ## Execution runs
 
 Execution runs are the structured “run” layer for multi-step flows (review / plan / delegate / voice agent):

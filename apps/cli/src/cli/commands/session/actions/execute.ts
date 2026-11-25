@@ -16,6 +16,7 @@ import type { ActionId, ActionExecutorContext } from '@happier-dev/protocol';
 import { getActionContextualDefaults } from '@happier-dev/protocol/actions/actionSpecs';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
 import { configuration } from '@/configuration';
+import { projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import {
   resolveServerHttpBaseUrl,
   runWithServerHttpBaseUrl,
@@ -218,15 +219,14 @@ export async function cmdSessionActionsExecute(
   if (!actionRes.ok) {
     const candidates = readFailureCandidates(actionRes.details);
     const isAmbiguousSpawn = hasSpawnNonce(actionRes.details);
+    const failure = projectCliActionFailure({ ...actionRes, errorMessage: actionRes.error,
+      ...(candidates ? { candidates } : {}) });
     if (json) {
       await printJsonEnvelope({
         ok: false,
         kind: 'session_actions_execute',
         error: {
-          code: actionRes.errorCode,
-          message: actionRes.error,
-          ...(candidates ? { candidates } : {}),
-          ...(actionRes.details !== undefined ? { details: actionRes.details } : {}),
+          ...failure,
           ...(isAmbiguousSpawn && effectiveActionRequestId
             ? { actionRequestId: effectiveActionRequestId }
             : {}),
@@ -237,9 +237,12 @@ export async function cmdSessionActionsExecute(
     const retryHint = isAmbiguousSpawn && effectiveActionRequestId
       ? ` Retry with --action-request-id ${effectiveActionRequestId} --resume-action-request.`
       : '';
-    throw Object.assign(new Error(`${actionRes.error}${retryHint}`), {
-      ...(actionRes.details !== undefined ? { details: actionRes.details } : {}),
-    });
+    const diagnosticLine = [
+      ...(failure.failureCause ? [`Phase: ${failure.failureCause.phase}`] : []),
+      ...(failure.requestId ? [`requestId: ${failure.requestId}`] : []),
+    ].join('; ');
+    const { message, ...failureFields } = failure;
+    throw Object.assign(new Error(`${message ?? failure.code}${retryHint}${diagnosticLine ? `\n${diagnosticLine}` : ''}`), failureFields);
   }
 
   const successPayload = actionRes.result;

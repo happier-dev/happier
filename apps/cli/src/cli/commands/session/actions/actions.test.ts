@@ -369,7 +369,7 @@ describe('happier session actions (unit)', () => {
   });
 
   it('uses only the outer Action transport failure to produce the CLI error envelope', async () => {
-    resolveSessionTransportContext.mockResolvedValueOnce({
+    resolveSessionTransportContext.mockResolvedValue({
       ok: true,
       sessionId: 'sess-1',
       rawSession: {
@@ -380,7 +380,7 @@ describe('happier session actions (unit)', () => {
       accountEncryptionCurrentness: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 },
       mode: 'plain' as const,
     });
-    execute.mockResolvedValueOnce({
+    execute.mockResolvedValue({
       ok: false,
       errorCode: 'session_not_found',
       error: 'Session not found',
@@ -406,6 +406,10 @@ describe('happier session actions (unit)', () => {
           details: { candidates: ['sess-2'] },
         },
       });
+      await expect(handleSessionCommand(['actions', 'execute', 'sess-1', 'session.status.get'], {
+        readCredentialsFn: async () => ({ token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } }),
+      })).rejects.toMatchObject({ message: 'Session not found' });
     } finally {
       output.restore();
     }
