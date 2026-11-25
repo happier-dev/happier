@@ -4,7 +4,7 @@ export { deliverExternalActionRequest } from './deliverExternalActionRequest';
 import { isProjectCheckoutRemovalActionIdV1, isProjectSessionDefaultsPreparationReadActionIdV1, isReviewAgentRunActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { SCM_WORKTREE_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/scmActionIdsV1';
 import { PROJECT_DEFINITION_ACTION_IDS, isRequesterProjectDefinitionActionIdV1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
-import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseExternalActionResponseEnvelopeV1, readExternalActionResponseExecutionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { type ExternalActionHeaderRefusal, refuseExternalActionHeaders } from './externalActionHeaderRefusal';
 import type { ExternalActionIssuerRefusal } from './externalActionIssuerRefusal';
@@ -2805,7 +2805,12 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
   } catch (error) {
     if (error instanceof SignedHomeAuthorizationHttpError) return error.failure;
     refuseExternalActionPhase('managed_child_http', params.targetMachineId, error);
-    return fail(params.signal?.aborted ? 'cancelled' : 'target_unavailable');
+    if (params.signal?.aborted) return fail('cancelled');
+    return {
+      ...fail('target_unavailable'),
+      requestId,
+      failureCause: projectActionFailureCauseV1(error, 'managed_child.http'),
+    };
   }
 }
 

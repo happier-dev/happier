@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { AccountSettingsSchema } from '@happier-dev/protocol';
@@ -11,6 +11,7 @@ import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HE
   type ExternalActionRequestEnvelope, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecuteFailureError, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readHostReviewedParentV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -77,6 +78,8 @@ describe('guest Workflow Run through public external Action ingress', () => {
     ...(['plain', 'e2ee'] as const).flatMap(mode => (['managed-project-files', 'managed-project-files-override'] as const)
       .map(transport => [mode, transport] as const)),
     ['e2ee', 'managed-without-project-files'] as const,
+    ['plain', 'managed-typed-refusal'] as const,
+    ['plain', 'managed-relay-disconnected'] as const,
   ])('returns the actual guest admission or workspace failure (%s/%s)', async (mode, selectedTransport) => {
     const projectFilesCase = selectedTransport === 'managed-project-files' || selectedTransport === 'managed-project-files-override';
     const withoutProjectFiles = selectedTransport === 'managed-without-project-files';
@@ -102,6 +105,10 @@ describe('guest Workflow Run through public external Action ingress', () => {
     const workspaceEntered = new Promise<void>(resolve => { enterWorkspace = resolve; });
     const workspaceReleased = new Promise<void>(resolve => { releaseWorkspace = resolve; });
     let workspaceEntries = 0;
+    const workspaceRefusal = {
+      ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', effectAttempted: false,
+      failureCause: { phase: 'workflow.workspace', errorClass: 'Error', errorCode: 'workspace_conflict', httpStatus: null },
+    } satisfies ActionExecuteFailure;
     const keyCensus = { runId, ownerAccountId: 'account', ownerAccountCurrentness: encryption.witness, encryptionMode: mode,
       access: 'owner' as const, visibleTeamId: null, dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [] };
     const storage = createWorkflowRunStorageTestkit({ runId, machineId: 'guest', accountId: 'account', origin: { kind: 'direct' }, keyCensus });
@@ -142,6 +149,7 @@ describe('guest Workflow Run through public external Action ingress', () => {
           await workspaceReleased;
         }
         if (transport === 'managed-workspace-failure') return { ok: false, code: 'workspace_conflict' };
+        if (transport === 'managed-typed-refusal') throw createActionExecuteFailureError(workspaceRefusal);
         const { sessionPlacement, ...project } = projectTarget;
         return { ok: true, workspaceTarget: { project: { ...project, checkoutRootPath: '/guest/repo' },
           ...(sessionPlacement ? { sessionPlacement } : {}),
@@ -300,6 +308,9 @@ describe('guest Workflow Run through public external Action ingress', () => {
             installationPublicKey: Buffer.from(keys.publicKey).toString('base64url') } } };
       }
       if (url === 'https://home.example/v1/actions/workflow.run.start' && managedReceiver) {
+        if (transport === 'managed-relay-disconnected') {
+          throw new AxiosError('The connection closed before the relay replied', 'ECONNRESET');
+        }
         return await managedReceiver(body);
       }
       expect(url).toBe('https://home.example/v1/actions/workflow.run.start/execution-authorization/verify');
@@ -429,6 +440,30 @@ describe('guest Workflow Run through public external Action ingress', () => {
       releaseWorkspace?.();
     }
     const created = await pending;
+    if (transport === 'managed-typed-refusal') {
+      expect(created).toMatchObject({ ...workspaceRefusal, requestId: 'workflow-guest-request' });
+      const acquire = operations.store.list({ accountId: 'account', machineId: 'controller' }).items
+        .find(operation => operation.actionId === MANAGED_ACQUIRE_ACTION_ID_V1);
+      expect(acquire).toMatchObject({ state: 'failed', error: {
+        errorCode: workspaceRefusal.errorCode,
+        effectAttempted: workspaceRefusal.effectAttempted, failureCause: workspaceRefusal.failureCause,
+      } });
+      expect(await execute()).toEqual(created);
+      expect(workspaceEntries).toBe(1);
+      expect(guestRequests).toBe(1);
+      expect(storage.calls.some(operation => operation.operation === 'admit')).toBe(false);
+      return;
+    }
+    if (transport === 'managed-relay-disconnected') {
+      expect(created).toMatchObject({
+        ok: false, errorCode: 'target_unavailable', requestId: 'workflow-guest-request',
+        failureCause: { phase: 'managed_child.http', errorClass: 'AxiosError', errorCode: 'ECONNRESET', httpStatus: null },
+      });
+      expect(created).not.toHaveProperty('effectAttempted');
+      expect(workspaceEntries).toBe(0);
+      expect(storage.calls.some(operation => operation.operation === 'admit')).toBe(false);
+      return;
+    }
     if (transport === 'managed-missing-parent') {
       // Standalone preparation supplies no inherited consent or accepted Run.
       expect(created, JSON.stringify(created)).toMatchObject({ ok: false });
