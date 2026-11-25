@@ -413,7 +413,7 @@ describe('portable targeted contribution admission', () => {
             });
             expect(providerInput.parse(await reconstruct(carrierFor(binding))).account).toEqual(account);
             await expect(reconstruct(retained)).rejects.toMatchObject({
-                code: 'plugin_selected_action_input_invalid', actionHandlerInvocation: 'notStarted',
+                code: 'plugin_action_generation_retired', actionHandlerInvocation: 'notStarted',
             });
             expect(input).toEqual({ id: 'selected-row' });
         } finally { observation.dispose(); }
