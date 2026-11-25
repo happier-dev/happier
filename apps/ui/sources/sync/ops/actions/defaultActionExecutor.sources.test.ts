@@ -957,7 +957,7 @@ it.each(['same-home', 'other-home', 'other-account'] as const)(
 );
 
 
-it.each(['unchanged', 'changed-child'] as const)('reviews actual CLI Source move children before browser approval (%s)', async scenarioKind => {
+it.each(['explicit-client', 'changed-child'] as const)('reviews actual CLI Source move children before browser approval (%s)', async scenarioKind => {
     const scenario = await openMoveScenario();
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     const account = await captureLazyActionAccountContext(scenario.serverId);
@@ -992,7 +992,14 @@ it.each(['unchanged', 'changed-child'] as const)('reviews actual CLI Source move
     await homes.requireActionApproval(scenario.serverId, 'projects.sources.moveToTeam', 'cli');
     const creator = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
         serverId: scenario.serverId, serverIdentityId, serverApiUrl: serverUrl });
-    const produced = await creator.execute('projects.sources.moveToTeam', scenario.input, {
+    const clientId = 'hvviK5W-fIGQJqRwAAB4';
+    if (scenarioKind === 'explicit-client') {
+        const { apiSocket } = await import('@/sync/api/session/apiSocket');
+        const socketId = vi.spyOn(apiSocket, 'getSocketId').mockReturnValue(clientId);
+        onTestFinished(() => { socketId.mockRestore(); });
+    }
+    const routedInput = scenarioKind === 'explicit-client' ? { ...scenario.input, clientId } : scenario.input;
+    const produced = await creator.execute('projects.sources.moveToTeam', routedInput, {
         surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
         serverId: scenario.serverId, serverIdentityId, runtimeAccountId: 'account-owner',
         actionRequestId: 'cli-source-move-review',
@@ -1006,6 +1013,7 @@ it.each(['unchanged', 'changed-child'] as const)('reviews actual CLI Source move
     const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
     const pending = ApprovalRequestV2Schema.parse(JSON.parse(homes.artifacts(scenario.serverId)
         .readPlainBody(produced.result.artifactId) ?? 'null'));
+    if (scenarioKind === 'explicit-client') expect(pending.actionArgs).toMatchObject({ clientId });
     expect(pending).toMatchObject({ status: 'open', preview: { hostReviewedChildren: { children: expect.arrayContaining([
         expect.objectContaining({ action: 'machines.access.grant.set', role: expect.any(String) }),
         expect.objectContaining({ action: 'artifact.access.grants.set', role: expect.any(String) }),
