@@ -1,5 +1,5 @@
 import React from 'react';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -10,6 +10,9 @@ import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { TeamInvitationCreateResultV1Schema } from '@happier-dev/protocol/teams/invitation';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { TEAM_SETUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { MACHINE_SETUP_PLAN_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 
 import { TeamJoinScreen } from '../../../../apps/ui/sources/components/teams/join/TeamJoinScreen';
 import { teamSetupPath } from '../../../../apps/ui/sources/components/settings/teams/teamsRoutes';
@@ -28,6 +31,10 @@ import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testki
 import { repoRootDir } from '../../src/testkit/paths';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { waitFor } from '../../src/testkit/timing';
+import { readLoggedCommandProcessOutcome, runLoggedCommandWithOutcome } from '../../src/testkit/process/spawnProcess';
+import { sanitizeCliTestEnv } from '../../src/testkit/process/cliTestEnv';
+import { createServerLightDatabaseClient } from '../../src/testkit/process/serverLightDatabase';
+import { encryptDataKeyBase64 } from '../../src/testkit/rpcCrypto';
 
 const testDir = createRunDirs({ runLabel: 'core' }).testDir(`team-join-${randomUUID()}`);
 let fixture: TeamSetupFFixture | undefined;
@@ -40,6 +47,7 @@ let teamRepositorySourceId: string;
 let member: Awaited<ReturnType<TeamSetupFFixture['createAccount']>>;
 let existingMember: Awaited<ReturnType<TeamSetupFFixture['createAccount']>>;
 let existingMemberInvitationToken: string;
+let existingMachine: Awaited<ReturnType<TeamSetupFFixture['enrollDaemon']>>;
 const cliLaunchSpec = { command: process.execPath, args: ['--import',
   resolve(repoRootDir(), 'packages/cli-common/registerSourceRuntime.mjs'),
   resolve(repoRootDir(), 'apps/cli/src/index.ts')], cwd: repoRootDir() };
@@ -96,8 +104,8 @@ beforeAll(async () => {
     existingMemberInvitationToken = new URL(existingUrl).pathname.split('/').at(-1)!;
   } finally { await ownerUi.close(); }
   existingMember = await fixture.createAccount('existing-member');
-  const enrolled = await fixture.enrollDaemon(existingMember, { cliLaunchSpec });
-  machineId = enrolled.target.machineId;
+  existingMachine = await fixture.enrollDaemon(existingMember, { cliLaunchSpec });
+  machineId = existingMachine.target.machineId;
   member = await fixture.createAccount('fresh-member');
   ui = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials: member.uiCredentials });
   await waitFor(() => ui!.isAccountReady(), { timeoutMs: 60_000 });
@@ -251,13 +259,44 @@ it('TS.D.selectedEffects applies only selected Machine setup and opens an editab
   });
   const lifetime = captureActiveServerAccountScopeLifetime();
   if (!lifetime) throw new Error('Member Account lifetime unavailable');
-  const prepared = await setupHook.getCurrent().prepare({ target: { serverId: ui!.serverId, homeId, machineId },
+  const prepare = () => setupHook.getCurrent().prepare({ target: { serverId: ui!.serverId, homeId, machineId },
     preset: saved.value.preset, isCurrent: lifetime.isCurrent,
     repositories: [{ id: 'unavailable-checkout', input: missingFolder }, { id: source.id, input: {
       source: { kind: 'source', id: source.id, revision: source.revision, selector, checkout: checkout.workspace },
       materialization: { kind: 'attach' },
     } }],
   });
+  const planPath = `/v1/actions/${MACHINE_SETUP_PLAN_ACTION_ID_V1}`;
+  const reads: string[] = [];
+  let planCalls = 0;
+  setRuntimeFetch((input, init) => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path === planPath) planCalls++;
+    if (path.startsWith('/v1/artifacts/') || path.includes('/projects/sources')) reads.push(path);
+    return fetch(input, init);
+  });
+  const measure = async () => {
+    planCalls = 0;
+    reads.length = 0;
+    const plan = await prepare();
+    return { plan, requests: reads.slice().sort(), planCalls };
+  };
+  const preparing = async () => {
+    const before = await measure();
+    if (process.env.HAPPIER_E2E_DB_PROVIDER === 'sqlite') return before.plan;
+    await seedUnrelatedInventory(scope.accountId);
+    const grown = await measure();
+    expect(before.plan?.ok).toBe(true);
+    expect(grown.planCalls).toBe(before.planCalls);
+    expect(grown.requests).toEqual(before.requests);
+    expect(grown.planCalls).toBeGreaterThan(0);
+    console.info('TS.D.selectedEffects growth measurements', { inventory: [100, 1000, 2000],
+      before: { nativePlanRequests: before.planCalls, bodyRequests: before.requests.length },
+      grown: { nativePlanRequests: grown.planCalls, bodyRequests: grown.requests.length } });
+    return grown.plan;
+  };
+  let prepared: Awaited<ReturnType<typeof prepare>>;
+  try { prepared = await preparing(); } finally { resetRuntimeFetch(); }
   expect(prepared?.ok).toBe(true);
   if (!prepared?.ok) throw new Error('Machine effects review unavailable');
   // Review alone must not run executable preset bytes.
@@ -319,4 +358,76 @@ it('TS.D.selectedEffects applies only selected Machine setup and opens an editab
     composer.apply(current.revision, { text: 'My edited first task', references: [], attachments: [] });
     expect(readNewSessionDraftProjectionFromRepository({ scope, draftId })?.draft.input).toBe('My edited first task');
   } finally { await setupHook.unmount(); }
+});
+
+async function seedUnrelatedInventory(accountId: string) {
+  const databaseUrl = fixture?.server.databaseUrl;
+  if (!databaseUrl) throw new Error('Selected effects growth requires the isolated PostgreSQL fixture');
+  const dataKey = randomBytes(32);
+  const wrapped = sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: existingMember.credentials.encryption.publicKey,
+    randomBytes: length => randomBytes(length) });
+  const machines = Array.from({ length: 100 }, () => ({ id: randomUUID(), accountId, dataEncryptionKey: wrapped,
+    metadata: encryptDataKeyBase64({ host: 'unrelated', platform: 'linux', homeDir: '/home/unrelated',
+      happyHomeDir: '/home/unrelated/.happier', happyCliVersion: 'test' }, dataKey) }));
+  const sessions = Array.from({ length: 1_000 }, (_, index) => ({ id: randomUUID(), accountId, tag: randomUUID(),
+    metadata: encryptDataKeyBase64({ path: '/home/unrelated', machineId: machines[index % machines.length]!.id,
+      host: 'unrelated', flavor: 'claude' }, dataKey), agentState: encryptDataKeyBase64({ requests: {} }, dataKey) }));
+  const db = await createServerLightDatabaseClient('postgres', databaseUrl);
+  try {
+    await db.$transaction(async tx => {
+      expect(await tx.machine.createMany({ data: machines })).toEqual({ count: 100 });
+      expect(await tx.session.createMany({ data: sessions })).toEqual({ count: 1_000 });
+      expect(await tx.sessionDataKeyEnvelope.createMany({ data: sessions.map(({ id }) => ({
+        sessionId: id, recipientAccountId: accountId, encryptedDataKey: wrapped,
+      })) })).toEqual({ count: 1_000 });
+      expect(await tx.$executeRawUnsafe(`INSERT INTO "ProjectSource" ("id", "createdByAccountId", "name", "audience", "attachments", "updatedAt")
+        SELECT $1 || '-' || n::text, $2, 'Unrelated Source', '[]'::jsonb, '[]'::jsonb, now()
+        FROM generate_series(1, 2000) AS series(n)`, randomUUID(), accountId)).toBe(2_000);
+    });
+  } finally { await db.$disconnect(); }
+}
+
+it('TS.D.cliReview sends the reviewed batch to the signed-in requester App', async () => {
+  if (!fixture) throw new Error('Team Setup fixture unavailable');
+  await ui?.close();
+  ui = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials: existingMember.uiCredentials });
+  await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machineId), { timeoutMs: 60_000 });
+  const directory = join(testDir, 'cli-reviewed-project');
+  await mkdir(directory, { recursive: true });
+  const input = { serverId: ui.serverId, homeId, machineId,
+    repositories: [{ id: 'cli-checkout', input: { serverId: ui.serverId, machineId,
+      source: { kind: 'folder', path: directory }, materialization: { kind: 'attach' } } }] };
+  const { Modal } = await import('../../../../apps/ui/sources/modal');
+  const { ClientActionReverseRuntime } = await import('../../../../apps/ui/sources/components/appShell/runtime/ClientActionReverseRuntime');
+  const receiver = await renderScreen(React.createElement(ClientActionReverseRuntime));
+  const review = vi.spyOn(Modal, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+  async function invoke(attempt: string, exitCode: number) {
+    const stdoutPath = join(testDir, `cli-review-${attempt}.stdout.log`);
+    const stderrPath = join(testDir, `cli-review-${attempt}.stderr.log`);
+    const outcome = await runLoggedCommandWithOutcome({ ...cliLaunchSpec,
+      args: ['--conditions=happier-source', ...cliLaunchSpec.args, 'actions', 'invoke', TEAM_SETUP_RUN_ACTION_ID_V1,
+        '--input-json', JSON.stringify(input), '--server-id', existingMachine.cliServerId, '--json', '--yes'],
+      env: { ...sanitizeCliTestEnv(process.env), HAPPIER_HOME_DIR: existingMachine.homeDir,
+        HAPPIER_SERVER_URL: fixture!.server.baseUrl, HAPPIER_WEBAPP_URL: fixture!.server.baseUrl,
+        HAPPIER_VARIANT: 'dev', CI: '1' },
+      stdoutPath, stderrPath, timeoutMs: null,
+    }).catch((error: unknown) => {
+      const outcome = readLoggedCommandProcessOutcome(error);
+      if (!outcome) throw error;
+      return outcome;
+    });
+    const envelope = JSON.parse((await readFile(stdoutPath, 'utf8')).trim().split(/\r?\n/).at(-1) ?? '');
+    expect(outcome).toEqual({ exitCode, signal: null });
+    return envelope;
+  }
+  try {
+    expect(await invoke('decline', 1)).toMatchObject({ v: 1, ok: false, error: { code: 'approval_canceled' } });
+    expect(review).toHaveBeenCalledTimes(1);
+    expect(await invoke('accept', 0)).toMatchObject({ v: 1, ok: true, data: { completed: true,
+      repositories: [{ id: 'cli-checkout', result: { ok: true, result: { kind: 'opened', directory } } }] } });
+    expect(review).toHaveBeenCalledTimes(2);
+  } finally {
+    review.mockRestore();
+    await receiver.unmount();
+  }
 });
