@@ -354,6 +354,8 @@ const ca: Shared_deploymentTelemetryTranslations.Copy = {
     gaps: 'Captura activa amb dades que falten',
     unavailableTitle: 'La captura no respon ara mateix',
     unavailableBody: 'La captura desa en aquesta màquina la ruta, la durada, les consultes a la base de dades i els registres de cada sol·licitud. Torna-ho a provar d’aquí a un moment.',
+    stale: 'La captura no respon',
+    openServers: 'Obre els servidors',
     restart: 'Reinicia els servidors de desenvolupament per capturar-ne les sol·licituds.',
     restartReason: 'La captura ha canviat mentre estaven en funcionament.',
     waitingTitle: 'Esperant la primera sol·licitud',

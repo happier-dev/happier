@@ -354,6 +354,8 @@ const zhHans: Shared_deploymentTelemetryTranslations.Copy = {
     gaps: '采集已开启，部分数据缺失',
     unavailableTitle: '采集暂时未响应',
     unavailableBody: '采集会将每个请求的路由、耗时、数据库查询和日志保存在此机器上。请稍后重试。',
+    stale: '采集未响应',
+    openServers: '打开服务器',
     restart: '重启开发服务器以采集其请求。',
     restartReason: '服务器运行期间，采集设置发生了变化。',
     waitingTitle: '等待首个请求',

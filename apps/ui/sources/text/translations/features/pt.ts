@@ -354,6 +354,8 @@ const pt: Shared_deploymentTelemetryTranslations.Copy = {
     gaps: 'Captura ativada com lacunas',
     unavailableTitle: 'A captura não está respondendo no momento',
     unavailableBody: 'A captura armazena nesta máquina a rota, a duração, as consultas ao banco de dados e os registros de cada requisição. Tente novamente em instantes.',
+    stale: 'A captura não está respondendo',
+    openServers: 'Abrir servidores',
     restart: 'Reinicie os servidores de desenvolvimento para capturar suas requisições.',
     restartReason: 'A captura mudou enquanto os servidores estavam em execução.',
     waitingTitle: 'Aguardando a primeira requisição',

@@ -354,6 +354,8 @@ const es: Shared_deploymentTelemetryTranslations.Copy = {
     gaps: 'Captura activa con datos faltantes',
     unavailableTitle: 'La captura no responde en este momento',
     unavailableBody: 'La captura guarda en esta máquina la ruta, la duración, las consultas a la base de datos y los registros de cada solicitud. Vuelve a intentarlo en un momento.',
+    stale: 'La captura no responde',
+    openServers: 'Abrir servidores',
     restart: 'Reinicia los servidores de desarrollo para capturar sus solicitudes.',
     restartReason: 'La captura cambió mientras estaban en ejecución.',
     waitingTitle: 'Esperando la primera solicitud',

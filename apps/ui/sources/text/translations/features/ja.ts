@@ -354,6 +354,8 @@ const ja: Shared_deploymentTelemetryTranslations.Copy = {
     gaps: 'キャプチャ有効（一部欠落）',
     unavailableTitle: 'キャプチャが現在応答していません',
     unavailableBody: '各リクエストの経路、処理時間、データベースクエリ、ログをこのマシンに保存します。しばらくしてから再試行してください。',
+    stale: 'キャプチャが応答していません',
+    openServers: 'サーバーを開く',
     restart: 'リクエストをキャプチャするには、開発サーバーを再起動してください。',
     restartReason: '実行中にキャプチャ設定が変更されました。',
     waitingTitle: '最初のリクエストを待機中',

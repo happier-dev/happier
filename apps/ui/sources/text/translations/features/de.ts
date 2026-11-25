@@ -348,6 +348,8 @@ const de: Shared_deploymentTelemetryTranslations.Copy = {
     gaps: 'Aufzeichnung läuft mit Lücken',
     unavailableTitle: 'Die Aufzeichnung antwortet gerade nicht',
     unavailableBody: 'Die Aufzeichnung speichert Route, Dauer, Datenbankabfragen und Logs jeder Anfrage auf dieser Maschine. Versuche es gleich noch einmal.',
+    stale: 'Die Aufzeichnung antwortet nicht',
+    openServers: 'Server öffnen',
     restart: 'Starte die Entwicklungsserver neu, um ihre Anfragen aufzuzeichnen.',
     restartReason: 'Die Aufzeichnung wurde geändert, während sie liefen.',
     waitingTitle: 'Warte auf die erste Anfrage',

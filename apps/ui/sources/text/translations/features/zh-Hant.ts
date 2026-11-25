@@ -354,6 +354,8 @@ const zhHant: Shared_deploymentTelemetryTranslations.Copy = {
     gaps: '擷取已開啟，部分資料遺漏',
     unavailableTitle: '擷取暫時沒有回應',
     unavailableBody: '擷取會將每筆要求的路由、耗時、資料庫查詢和日誌儲存在這部機器上。請稍後再試。',
+    stale: '擷取沒有回應',
+    openServers: '開啟伺服器',
     restart: '重新啟動開發伺服器以擷取其要求。',
     restartReason: '伺服器運作期間，擷取設定已變更。',
     waitingTitle: '等待第一筆要求',

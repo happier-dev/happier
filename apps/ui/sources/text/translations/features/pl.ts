@@ -354,6 +354,8 @@ const pl: Shared_deploymentTelemetryTranslations.Copy = {
     gaps: 'Rejestrowanie włączone, część danych pominięta',
     unavailableTitle: 'Rejestrowanie teraz nie odpowiada',
     unavailableBody: 'Ścieżka, czas trwania, zapytania do bazy danych i dzienniki każdego żądania są zapisywane na tej maszynie. Spróbuj ponownie za chwilę.',
+    stale: 'Rejestrowanie nie odpowiada',
+    openServers: 'Otwórz serwery',
     restart: 'Uruchom ponownie serwery deweloperskie, aby rejestrować ich żądania.',
     restartReason: 'Ustawienia rejestrowania zmieniły się w trakcie działania serwerów.',
     waitingTitle: 'Oczekiwanie na pierwsze żądanie',

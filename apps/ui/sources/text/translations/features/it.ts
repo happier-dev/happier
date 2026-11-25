@@ -354,6 +354,8 @@ const it: Shared_deploymentTelemetryTranslations.Copy = {
     gaps: 'Acquisizione attiva con dati mancanti',
     unavailableTitle: 'L’acquisizione non risponde al momento',
     unavailableBody: 'L’acquisizione conserva su questa macchina il percorso, la durata, le interrogazioni al database e i registri di ogni richiesta. Riprova tra poco.',
+    stale: 'L’acquisizione non risponde',
+    openServers: 'Apri i server',
     restart: 'Riavvia i server di sviluppo per acquisirne le richieste.',
     restartReason: 'L’acquisizione è cambiata mentre erano in esecuzione.',
     waitingTitle: 'In attesa della prima richiesta',
