@@ -421,7 +421,7 @@ it('synchronizes only acknowledged Worker destinations and keeps the collector b
     const path = new URL(request.url).pathname.split('/accounts/' + common.providerIdentity.providerAccountId)[1];
     if (path !== root && !path.startsWith(root + '/')) {
       expect(request.method).toBe('GET');
-      return response(workerSettingsExample);
+      return response(null, 404);
     }
     const url = new URL(request.url);
     const page = Number(url.searchParams.get('page'));
@@ -446,7 +446,8 @@ it('synchronizes only acknowledged Worker destinations and keeps the collector b
       expect(body).toMatchObject({ enabled: false, configuration: { headers: {} } });
       expect(body.name).toMatch(new RegExp(`^happier-${sync.targetLinkId}-(logs|traces)-[0-9a-f-]{36}$`));
       expect(Object.keys(body.configuration.headers)).toEqual([]);
-      expect(body.skipPreflightCheck).toBeUndefined();
+      // Disabled allocations have no bearer yet. The public collector rejects preflight.
+      if (body.skipPreflightCheck !== true) return response(null, 400);
     } else {
       expect(body).toMatchObject({ enabled: true, configuration: { headers: { Authorization: 'Bearer ' + token }, replaceHeaders: true } });
     }
@@ -471,7 +472,8 @@ it('synchronizes only acknowledged Worker destinations and keeps the collector b
       reads++;
       return token;
     }, saveShared: unsupported, status: unsupported, get: unsupported, set: unsupported, delete: unsupported } } });
-  const input = { ...sync, providerIdentity: { ...common.providerIdentity, providerResourceId: 'worker-exact' },
+  const input = { ...sync, owned: [], set: [], remove: [], useOurs: [], keepTheirs: [],
+    providerIdentity: { ...common.providerIdentity, providerResourceId: 'worker-exact' },
     providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker-exact' } },
     preparedNative: { projectName: 'worker-exact' } };
   const target = (collectorUrl: string, owned: { type: string; slug: string }[]) => ({

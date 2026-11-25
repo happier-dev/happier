@@ -98,7 +98,7 @@ async function sync(product: Product, input: Sync, context: PluginAccountActionC
   if (product === 'workers' && input.providerEnvironment.selection.kind !== 'script') refuse('unsupported_action');
   const destination = input.telemetryDestination;
   if (destination && product !== 'workers') refuse('unsupported_action');
-  if (destination?.decision === 'activate') {
+  if (destination && (destination.decision === 'activate' || (input.set.length === 0 && input.remove.length === 0))) {
     return { v: 1, owned: input.owned, variables: [], failures: [],
       telemetryDestination: await syncWorkerTelemetryDestination(input, destination, context) };
   }
@@ -266,7 +266,9 @@ async function syncWorkerTelemetryDestination(input: Sync, intent: DestinationIn
         if (handle) continue;
         const name = destinationNamePrefix(input.targetLinkId, type) + globalThis.crypto.randomUUID();
         const reply = await request(io, providerAccountId, destinationPath, 'send', ['write', 'POST'], {
-          name, enabled: false, configuration: { ...configuration, logpushDataset: dataset, headers: {} },
+          // Allocation is disabled and has no collector credential before the Link records the slug.
+          name, enabled: false, skipPreflightCheck: true,
+          configuration: { ...configuration, logpushDataset: dataset, headers: {} },
         });
         if ('code' in reply) throw new PluginError({ code: reply.code });
         const value = reply.value;
