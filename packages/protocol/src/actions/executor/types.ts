@@ -1344,6 +1344,8 @@ type ExecutionRunActionOptions = Readonly<{
   externalActionExecutionAuthorization?: ActionExecutorContext['externalActionExecutionAuthorization'];
   /** Exact issuer context retained only across an in-process execution-run handoff. */
   reviewedChildActionContext?: ActionExecutorContext;
+  /** Existing host Workflow admission, retained for native requester placement. */
+  admittedHostWorkflowRequester?: ActionExecutorContext['admittedHostWorkflowRequester'];
   signExternalActionApprovalInput?: ActionExecutorContext['signExternalActionApprovalInput'];
   externalActionTarget?: ActionExecutorContext['externalActionTarget'];
   defaultSessionMachineId?: string;

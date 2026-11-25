@@ -144,6 +144,7 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
 
   const admittedExecutionRunContext = (opts?: ExecutionRunActionTransportOptions): LocalSessionRpcActionContext => ({
     ...(opts?.reviewedChildActionContext ? { reviewedChildActionContext: opts.reviewedChildActionContext } : {}),
+    ...(opts?.admittedHostWorkflowRequester ? { admittedHostWorkflowRequester: opts.admittedHostWorkflowRequester } : {}),
     ...(opts?.surface ? { surface: opts.surface } : {}),
     ...(opts?.authority ? { authority: opts.authority } : {}),
     ...(opts?.actionCaller ? { actionCaller: opts.actionCaller } : {}),

@@ -138,7 +138,7 @@ export function buildExecutionRunCallOptions(
   workflowObservationSink?: unknown,
   actionContext?: Pick<ActionExecutorContext, 'actionCaller' | 'actionRequestId' | 'requesterWorkAttributionV1' | 'onTransportIssued'
     | 'surface' | 'runtimeAccountId' | 'callerInputConstraints' | 'callerPermissionMode' | 'workspaceWrites'
-    | 'externalActionCredential' | 'externalActionExecutionAuthorization' | 'externalActionTarget' | 'admittedMachineTarget' | 'approvalProfileId' | 'approvalProfileTeamOrGroupDerived'>,
+    | 'admittedHostWorkflowRequester' | 'externalActionCredential' | 'externalActionExecutionAuthorization' | 'externalActionTarget' | 'admittedMachineTarget' | 'approvalProfileId' | 'approvalProfileTeamOrGroupDerived'>,
 ): ExecutionRunCallOptions | undefined {
   const origin = normalizeId(originSessionId);
   const target = normalizeId(actionContext?.admittedMachineTarget?.machineId ?? targetMachineId);
@@ -149,7 +149,7 @@ export function buildExecutionRunCallOptions(
   const reviewedChildActionContext = readHostAdmittedReviewedChildV1(actionContext) ? actionContext : undefined;
   if (!targetServerId && !signal && !origin && !target
     && permissionRequestStore === undefined && workflowObservationSink === undefined
-    && !actionRequestId && !actionCaller && !authority && !requesterWorkAttributionV1 && !reviewedChildActionContext && !actionContext?.onTransportIssued
+    && !actionContext?.admittedHostWorkflowRequester && !actionRequestId && !actionCaller && !authority && !requesterWorkAttributionV1 && !reviewedChildActionContext && !actionContext?.onTransportIssued
     && actionContext?.approvalProfileId === undefined && actionContext?.approvalProfileTeamOrGroupDerived === undefined) return undefined;
   return {
     ...(targetServerId ? { serverId: targetServerId } : {}),
@@ -163,6 +163,8 @@ export function buildExecutionRunCallOptions(
     ...(actionCaller ? { actionCaller } : {}),
     ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
     ...(reviewedChildActionContext ? { reviewedChildActionContext } : {}),
+    ...(actionContext?.admittedHostWorkflowRequester
+      ? { admittedHostWorkflowRequester: actionContext.admittedHostWorkflowRequester } : {}),
     ...(authority ? { authority } : {}),
     ...(actionContext?.surface ? { surface: actionContext.surface } : {}),
     ...(actionContext?.runtimeAccountId ? { runtimeAccountId: actionContext.runtimeAccountId } : {}),

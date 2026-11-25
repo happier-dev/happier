@@ -10,6 +10,9 @@ import { beforeEach, describe, expect, it, onTestFailed, onTestFinished, vi } fr
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { invokeHostReviewedChildV1, readHostReviewedChildRootV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
+import { createInMemoryReviewRecordPortV1 } from '../../../../../packages/protocol/src/reviews/reviewArtifactV1.testkit';
 import { ExecutionRunListResponseSchema, ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -19,6 +22,7 @@ import { createInstalledProjectAgentLaunchFixture } from '@/daemon/testkit/insta
 import { prepareProjectAgentLaunch } from '@/workspaces/projectSetup/projectAgentLaunch';
 import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
 import type { ActionOperationDomainOwner } from '@/daemon/actionOperations/actionOperationTypes';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
@@ -243,6 +247,8 @@ describe('detached execution-run Machine composition', () => {
     { requesterKind: 'account', rootActionId: 'execution.run.start' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', transport: 'retained_root' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', transport: 'reviewed_child' },
+    { requesterKind: 'account', rootActionId: 'execution.run.start', transport: 'reviewed_review_child' },
+    { requesterKind: 'account', rootActionId: 'execution.run.start', transport: 'host_workflow_review' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', roleId: 'scout' },
     { requesterKind: 'account', rootActionId: 'review.start', roleId: 'custom-review' },
     { requesterKind: 'account', rootActionId: 'review.start', roleId: 'builder' },
@@ -255,8 +261,10 @@ describe('detached execution-run Machine composition', () => {
     const selectedMcp = 'selectedMcp' in row ? row.selectedMcp : undefined;
     const roleId = 'roleId' in row ? row.roleId : undefined;
     const retainedRoot = 'transport' in row && row.transport === 'retained_root';
-    const reviewedChild = 'transport' in row && row.transport === 'reviewed_child';
-    const retainedRequester = retainedRoot || reviewedChild;
+    const hostWorkflowReview = 'transport' in row && row.transport === 'host_workflow_review';
+    const publicReviewChild = 'transport' in row && (row.transport === 'reviewed_review_child' || hostWorkflowReview);
+    const reviewedChild = 'transport' in row && (row.transport === 'reviewed_child' || row.transport === 'reviewed_review_child');
+    const retainedRequester = retainedRoot || reviewedChild || hostWorkflowReview;
     const reviewRole = { name: 'Writable review', instructions: 'Inspect the selected comparison.',
       runsAs: { kind: 'background_run', intent: 'review' }, workspaceWrites: 'allow', secondOpinion: 'off', enabled: true } satisfies RoleArtifactV1;
     const custodianAccountId = selectedMcp === 'member' ? 'other-custodian' : 'requester';
@@ -299,7 +307,7 @@ describe('detached execution-run Machine composition', () => {
     });
     const { f, cwd, finite } = h;
     isolationSnapshot = await prepareNativeIsolationBoundary(f.directory, cwd);
-    if (roleId) {
+    if (roleId || publicReviewChild) {
       // The Home rows are the storage boundary. Seed the current empty library
       // so Role admission does not require unrelated legacy history migration.
       for (const key of PromptLibraryCatalogKeyV1Schema.options) f.mutatePromptLibraryRow(key, {
@@ -327,6 +335,7 @@ describe('detached execution-run Machine composition', () => {
     const backendTarget = roleId ? { kind: 'agent' as const, identity: { pluginId, localId: 'agent' } }
       : { kind: 'backend' as const, backendId: `${pluginId}/agent` };
     const plugin = await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: f.directory, controller: pluginReloadController,
+      ...(publicReviewChild ? { runtimeOptions: { pluginIds: [pluginId, 'happier.scm.backend.git'] } } : {}),
       plugins: [{ manifest: createPluginManifestV2Fixture({ id: pluginId,
         hostAccess: { required: [{ id: 'process', capability: 'process', reason: 'Launch the fixture Agent',
           scope: { executables: [{ kind: 'systemTool', id: 'fixture-cli' }], envKeys: ['ORIGINAL'] } },
@@ -489,7 +498,7 @@ describe('detached execution-run Machine composition', () => {
       credentials: callerCredentials, serverId: 'session-home', serverHttpBaseUrl,
       externalActionMachineInstallationId: f.installation.installationId,
       externalActionMachineRequestPrivateKey: decodeBase64(f.installation.privateKey, 'base64url'),
-      ...(requesterKind === 'session' || reviewedChild ? { requesterSessionBootstrap: f.bootstrap } : {}),
+      ...(requesterKind === 'session' || reviewedChild || hostWorkflowReview ? { requesterSessionBootstrap: f.bootstrap } : {}),
       machineActionDirectTargetTransport: { machineId: 'machine', async invoke(method, request, options) {
         return await rpc.invokeLocal(method, request, { ...options, signal: options?.signal ?? currentIngress.signal,
           // The receiving Home transport stamps every call, including reads,
@@ -498,17 +507,28 @@ describe('detached execution-run Machine composition', () => {
             // Workflow/replay transports retain the verified root rather than a new raw-RPC receipt.
             ...(!retainedRequester || method !== SESSION_RPC_METHODS.EXECUTION_RUN_START ? { machineAdmission } : {}),
             verifyMachineAdmissionCurrent: f.bootstrap.isCurrent,
-            ...(!reviewedChild && accountAuthorization && method === SESSION_RPC_METHODS.EXECUTION_RUN_START
+            ...(!reviewedChild && !hostWorkflowReview && accountAuthorization && method === SESSION_RPC_METHODS.EXECUTION_RUN_START
               ? { callerInputAuthorization: accountAuthorization, verifyMachineAdmissionCurrent: accountRequester!.isCurrent }
               : {}) } });
       } } });
     const options = { exactMachineId: 'machine', surface: 'cli' as const, authority: 'present_user' as const };
     phase = 'initial native Run admission';
+    const workflowRunId = randomUUID();
     const actionContext = { surface: 'cli' as const, authority: 'present_user' as const,
       executionRunTargetMachineId: 'machine', serverId: 'session-home', runtimeAccountId: actorAccountId, actionRequestId: randomUUID(),
-      ...(accountRootAuthorization ? { externalActionExecutionAuthorization: accountRootAuthorization,
+      ...(hostWorkflowReview ? { ...buildWorkflowActionContext({ runId: workflowRunId,
+        authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+        workspace: { machineId: 'machine' },
+      }, f.bootstrap.attribution),
+        agentStartContext: { caller: { kind: 'originless' as const, runId: workflowRunId, runDepth: 0 },
+          baseline: { machineId: 'machine', directory: cwd }, ledSubtreeSessionIds: [], roles: {},
+          callerPermissionCeiling: 'default' as const, workDepthLimit: 4 },
+        machineAdmission, admittedHostWorkflowRequester: machineAdmission, verifyMachineAdmissionCurrent: f.bootstrap.isCurrent,
+        requesterWorkAttributionV1: f.bootstrap.attribution,
+        externalActionTarget: { kind: 'machine' as const, machineId: 'machine', project: { machineId: 'machine', directory: cwd } },
+      } : accountRootAuthorization ? { externalActionExecutionAuthorization: accountRootAuthorization,
         externalActionTarget: { kind: 'machine' as const, machineId: 'machine' } } : {}) };
-    if (rootActionId === 'review.start') execFileSync('git', ['init', cwd], { stdio: 'ignore' });
+    if (rootActionId === 'review.start' || publicReviewChild) execFileSync('git', ['init', cwd], { stdio: 'ignore' });
     const comparison = rootActionId === 'review.start' ? await runWithScmAccountScope(actorAccountId,
       () => captureScmComparison({ cwd, source: { kind: 'workingTree' } })) : undefined;
     const executionRunInput = { sessionId: null,
@@ -518,22 +538,35 @@ describe('detached execution-run Machine composition', () => {
       ...(selectedMcp ? { capabilitySelection: { mcp: { managedServersEnabled: true } } } : {}),
       ...(requesterKind === 'account' ? { connectedServices: { v: 2, bindingsByServiceId: {} } } : {}),
     };
-    const executor = createActionExecutor(deps);
+    // Substitute only Artifact persistence; real Review records, inventory,
+    // public Action dispatch and Machine native preparation remain live.
+    const reviewRecords = createInMemoryReviewRecordPortV1();
+    const executor = createActionExecutor({ ...deps, ...(publicReviewChild ? {
+      reviewRecords: () => reviewRecords, runActionOperation: actionOperations.runActionOperation,
+    } : {}) });
+    const reviewInput = ReviewStartInputSchema.parse({ target: { kind: 'detached' }, cwd, scope: 'repository',
+      instructions: 'Review the native Project repository.', permissionMode: 'read_only',
+      reviewers: [{ kind: 'engine', engineId: `${pluginId}/agent`, connectedServices: { v: 2, bindingsByServiceId: {} } }],
+    });
+    const issuedActionId = publicReviewChild ? 'review.start' : 'execution.run.start';
+    const issuedInput = publicReviewChild ? reviewInput : executionRunInput;
     const action = reviewedChild
       ? await invokeHostReviewedChildV1({
         parent: { actionId: 'workflow.run.start', input: { runId: randomUUID(), source: { kind: 'inline', definition: {
           version: 1, defaults: {}, inputs: [], blocks: [{ kind: 'action', id: 'start-native-run',
-            actionId: 'execution.run.start', input: Object.fromEntries(Object.entries(executionRunInput)
+            actionId: issuedActionId, input: Object.fromEntries(Object.entries(issuedInput)
               .map(([key, value]) => [key, { kind: 'literal', value }])) }],
         } }, inputs: {} } },
         context: actionContext,
-        child: { action: 'execution.run.start', role: 'start-native-run', input: executionRunInput },
-        admittedReview: { action: 'execution.run.start', role: 'start-native-run', surface: 'cli' },
+        child: { action: issuedActionId, role: 'start-native-run', input: issuedInput },
+        admittedReview: { action: issuedActionId, role: 'start-native-run', surface: 'cli' },
         execute: async (input, childContext, actionId) => {
           expect(readHostReviewedChildRootV1(childContext, actionId, input)?.actionId).toBe('workflow.run.start');
           return executor.execute(actionId, input, childContext);
         },
       })
+      : hostWorkflowReview
+      ? await executor.execute('review.start', reviewInput, actionContext)
       : rootActionId === 'review.start'
       ? await deps.executionRunStart(null, { intent: 'review', cwd, backendTarget, roleId,
           intentInput: { comparisonId: comparison!.comparison.id }, childSelection: 'agentDefault',
@@ -585,7 +618,16 @@ describe('detached execution-run Machine composition', () => {
     }
     expect(action, JSON.stringify(action)).toMatchObject({ ok: true });
     if (!action.ok) throw new Error(`Action start refused: ${action.errorCode}`);
-    const started = action.result;
+    let started = action.result;
+    if (publicReviewChild) {
+      expect(started, JSON.stringify(started)).toMatchObject({ results: [{ ok: true, result: { runId: expect.any(String) } }] });
+      const results = readRecord(started).results;
+      if (!Array.isArray(results)) throw new Error('Missing public Review Run results');
+      const binding = readRecord(started).reviewRound;
+      expect(binding).toMatchObject({ reviewId: expect.any(String), roundOrdinal: 1 });
+      expect(await reviewRecords.read(String(readRecord(binding).reviewId))).toMatchObject({ rounds: [expect.any(Object)] });
+      started = readRecord(results[0]).result;
+    }
     expect(started, JSON.stringify(started)).toMatchObject({ runId: expect.any(String) });
     const runId = ExecutionRunStartResponseSchema.parse(started).runId;
     onTestFinished(async () => {
@@ -594,7 +636,7 @@ describe('detached execution-run Machine composition', () => {
     });
     if (retainedRequester) {
       phase = 'retained Action requester native admission';
-      expect(nativePreparations.at(-1)).toMatchObject({ kind: 'isolated', requester: reviewedChild ? f.bootstrap.attribution : {
+      expect(nativePreparations.at(-1)).toMatchObject({ kind: 'isolated', requester: reviewedChild || hostWorkflowReview ? f.bootstrap.attribution : {
         serverId: 'srv_session_home', accountId: actorAccountId, machineId: 'machine', installationId: f.installation.installationId,
       } });
       await vi.waitFor(async () => {
