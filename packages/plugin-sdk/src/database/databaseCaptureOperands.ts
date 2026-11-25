@@ -6,6 +6,8 @@ import {
 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { DatabaseCaptureSourceV1Schema } from './databaseCaptureSource.js';
 import { DatabaseCaptureCostsReadInputV1Schema } from './databaseCaptureCosts.js';
+import { DatabaseWorktreeTargetV1Schema } from './schemas/databaseTargets.js';
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 
 const id = z.string().check(z.minLength(1));
 const time = z.number().check(z.int(), z.nonnegative());
@@ -15,6 +17,9 @@ export const DatabaseCapturePageV1Schema = z.strictObject({
     before: z.optional(DatabaseCaptureCursorV1Schema),
 });
 export const databaseCaptureSourceInput = { source: DatabaseCaptureSourceV1Schema };
+export const databaseCaptureQueryScope = {
+    databaseTarget: z.optional(lazyZodSchema(() => DatabaseWorktreeTargetV1Schema)),
+};
 export const databaseCaptureSelectedPage = {
     ...databaseCaptureSourceInput, page: DatabaseCapturePageV1Schema, since: z.optional(time), until: z.optional(time),
 };
@@ -24,7 +29,8 @@ export const DatabaseCaptureTracesListInputV1Schema = z.strictObject({
     appLlmCalls: z.optional(z.strictObject({ serviceName, serviceVersion })),
 });
 export const DatabaseCaptureTraceGetInputV1Schema = z.strictObject({
-    ...databaseCaptureSourceInput, traceId: id, page: z.strictObject({ limit: DatabaseCapturePageV1Schema.shape.limit }),
+    ...databaseCaptureSourceInput, ...databaseCaptureQueryScope,
+    traceId: id, page: z.strictObject({ limit: DatabaseCapturePageV1Schema.shape.limit }),
 });
 export const DatabaseCaptureEndpointCursorV1Schema = z.strictObject({ serviceName: z.string(), method: id, route: id });
 export const DatabaseCaptureEndpointsListInputV1Schema = z.strictObject({

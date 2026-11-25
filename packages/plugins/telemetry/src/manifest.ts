@@ -1,8 +1,9 @@
 import { createLocalCaptureContribution, LOCAL_CAPTURE_DATABASE_ENVIRONMENT_NAMES, LOCAL_CAPTURE_ENVIRONMENT_NAMES } from './contribution.js';
 import { definePlugin, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from '@happier-dev/plugin-sdk/protocol';
+import { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import { DATABASE_PLUGIN_ID_V1 } from '@happier-dev/plugin-sdk/database';
 import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
-import { databaseActionLocalIdV1, type DatabaseActionIdV1, type DatabaseCaptureSourceV1 } from '@happier-dev/database-protocol';
+import { databaseActionLocalIdV1, DATABASE_ACCESS_READ_ACTION_ID_V1, DatabaseAccessReadResultV1Schema, type DatabaseActionIdV1, type DatabaseCaptureSourceV1 } from '@happier-dev/database-protocol';
 import { TELEMETRY_REQUESTS_FIELD_ID_V1, TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1 } from '@happier-dev/database-protocol';
 import { localCaptureBackground } from './background.js';
 import { telemetryCollectorRunner } from './telemetry/runner.js';
@@ -49,7 +50,22 @@ async function admitCaptureSource(source: DatabaseCaptureSourceV1, context: Capt
 const capture = createCapturePublicActionProducers({
  acquireRuntime: localCaptureBackground.acquireRuntime,
  readWorktreeLaunchStatus: localCaptureBackground.readWorktreeLaunchStatus,
- admitSource: ({ source }, context, actionId) => admitCaptureSource(source, context, context.services.deploymentDatabases, actionId),
+ async admitSource({ source, databaseTarget }, context, actionId) {
+  if (databaseTarget === undefined) return admitCaptureSource(source, context, context.services.deploymentDatabases, actionId);
+  const { workspace, projectKey } = databaseTarget;
+  const machineId = workspace.kind === 'managed' ? workspace.controller.machineId : workspace.machineId;
+  if (source.kind !== 'worktree' || source.serverId !== workspace.serverId || source.machineId !== machineId
+   || source.workspaceId !== workspace.workspaceId || source.projectId !== projectKey) {
+   throw new PluginError({ code: 'capture_source_unavailable' });
+  }
+  const accountId = localCaptureOwner(source.machineId, context);
+  // Reuse Workbench's selected-target admission, including the initiating Agent and stored policy.
+  const access = DatabaseAccessReadResultV1Schema.parse(await context.services.actions.execute({
+   pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1),
+  }, projectNativeJsonValueForTransport({ target: databaseTarget }), { signal: context.signal }));
+  if (!access.access.canRead) throw new PluginError({ code: access.access.reason ?? 'capture_source_unavailable' });
+  return { source, partition: captureSourcePartition(source, accountId), databaseMember: databaseTarget };
+ },
  async configureCapture({ project, enabled, retry }, context) {
   const ownerAccountId = localCaptureOwner(project.machineId, context);
   const lease = await localCaptureBackground.acquireRuntime(context);

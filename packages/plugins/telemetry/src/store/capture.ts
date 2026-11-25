@@ -1,5 +1,6 @@
 import type { DaemonDatabase, DaemonDatabaseMigration, DaemonDatabaseRow, DaemonDatabaseValue } from '@happier-dev/plugin-sdk/storage';
-import { createCanonicalJsonSigningInput, type PluginWorktreeDatabaseMemberV1 } from '@happier-dev/plugin-sdk';
+import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
+import type { DatabaseWorktreeTargetV1 } from '@happier-dev/plugin-sdk/database';
 import type { DatabaseCaptureQueryGetResultV1, DatabaseCaptureTracesListInputV1 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 as limits } from '@happier-dev/plugin-sdk/storage';
 import { createProductionFindingStore, productionFindingMigration, productionFindingRetention } from './productionFindingStore.js';
@@ -9,7 +10,7 @@ import { worktreeMigration, createCaptureWorktrees, writeCaptureWorktree } from 
 import type { DatabaseCaptureCostMetadataV1 } from '@happier-dev/database-protocol';
 import type { NormalizedMetricPoint } from '../otlp/types.js';
 import type { ExceptionApplicationOrigin } from '../exceptions/contracts.js';
-import { REQUEST_DATABASE_TIME_SQL_CTES, REQUEST_SPANS_SQL_CTES, REQUEST_ANCESTRY_SQL_CTE } from '../analysis/requests.js';
+import { REQUEST_DATABASE_TIME_SQL_CTES, REQUEST_SPANS_SQL_CTES, REQUEST_ANCESTRY_SQL_CTE, type RequestSpanEvidence } from '../analysis/requests.js';
 
 export const captureMigrations: readonly DaemonDatabaseMigration[] = [{ version: 1, id: 'capture', async up(tx) {
  await tx.execute('CREATE TABLE captureSummaries (id TEXT NOT NULL, worktree TEXT NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL, at INTEGER NOT NULL, shape TEXT, traceId TEXT, spanId TEXT, durationMs REAL, outcome TEXT, parentSpanId TEXT, spanKind INTEGER, serviceName TEXT, endpointMethod TEXT, endpointRoute TEXT, httpStatusCode INTEGER, statementKind TEXT, parameterIdentity TEXT, executionIdentity TEXT, callsite TEXT, transactionId TEXT, retryOf TEXT, connectionId TEXT, PRIMARY KEY(worktree,id))');
@@ -352,8 +353,30 @@ ORDER BY selected.at DESC,selected.id DESC`, [input.worktree, ...params], Math.m
     return { ...rest, ...(escaped === null ? {} : { escaped: escaped === 1 }) } as CaptureExceptionOccurrence;
    });
   },
-  async detail(worktree: string, id: string): Promise<Extract<DatabaseCaptureQueryGetResultV1, { ok: true }>['detail']> {
-   const rows = await db.query('SELECT body FROM captureDetails WHERE worktree = ? AND id = ?', [worktree, id]);
+  async requestSpans(worktree: string, traceId: string, limit: number): Promise<RequestSpanEvidence[]> {
+   const spans: RequestSpanEvidence[] = [];
+   let after = '';
+   for (;;) {
+    const { rows, pageSize } = await queryPage<{ spanId: string; parentSpanId: string | null; spanKind: number }>(
+     `WITH captureEvidence AS (
+       SELECT id,at,traceId,spanId,parentSpanId,spanKind FROM captureSummaries
+       WHERE worktree = ? AND traceId = ? AND spanId > ?
+      ), ${REQUEST_SPANS_SQL_CTES} selected AS (SELECT * FROM requestSpans ORDER BY spanId LIMIT ?)
+      SELECT spanId,parentSpanId,spanKind FROM selected ORDER BY spanId`,
+     [worktree, traceId, after], Math.min(limit, limits.maximumResultRows));
+    for (const row of rows) spans.push({ traceId, spanId: row.spanId, kind: row.spanKind,
+     ...(row.parentSpanId ? { parentSpanId: row.parentSpanId } : {}) });
+    if (rows.length < pageSize) return spans;
+    after = rows[rows.length - 1]!.spanId;
+   }
+  },
+  async detail(worktree: string, id: string, databaseMember?: DatabaseWorktreeTargetV1): Promise<Extract<DatabaseCaptureQueryGetResultV1, { ok: true }>['detail']> {
+   const selectedQuery = databaseMember === undefined ? '' : ` AND EXISTS (
+    SELECT 1 FROM captureSummaries WHERE worktree = captureDetails.worktree AND id = captureDetails.id
+    AND kind = 'query' AND databaseMemberKey = ?
+   )`;
+   const rows = await db.query(`SELECT body FROM captureDetails WHERE worktree = ? AND id = ?${selectedQuery}`,
+    databaseMember === undefined ? [worktree, id] : [worktree, id, createCanonicalJsonSigningInput(databaseMember)]);
    return typeof rows[0]?.body === 'string' ? JSON.parse(rows[0].body) : null;
   },
   async clear(worktree: string) {
@@ -399,7 +422,7 @@ export type CaptureExceptionGroup = Readonly<{
 export type CaptureExceptionGroupsInput = Readonly<{ worktree: string; limit: number; fingerprints?: readonly string[];
  after?: Readonly<{ lastAt: number; fingerprint: string }> }>;
 export type CaptureExceptionOccurrencesInput = Readonly<{ worktree: string; fingerprint: string; limit: number; before?: Readonly<{ at: number; id: string }> }>;
-export type CaptureListInput = Readonly<{worktree: string; databaseMember?: PluginWorktreeDatabaseMemberV1; appLlmCalls?: DatabaseCaptureTracesListInputV1['appLlmCalls']; kind?: CaptureSummary['kind']; traceId?: string; spanKind?: number; serviceName?: string; severityNumber?: number; since?: number; until?: number; limit: number; before?: Readonly<{at:number; id:string}>}>;
+export type CaptureListInput = Readonly<{worktree: string; databaseMember?: DatabaseWorktreeTargetV1; appLlmCalls?: DatabaseCaptureTracesListInputV1['appLlmCalls']; kind?: CaptureSummary['kind']; traceId?: string; spanKind?: number; serviceName?: string; severityNumber?: number; since?: number; until?: number; limit: number; before?: Readonly<{at:number; id:string}>}>;
 export type CaptureEndpointCursor = Readonly<{ serviceName: string; method: string; route: string }>;
 export type CaptureEndpointSummary = CaptureEndpointCursor & Readonly<{ requestCount: number; errorCount: number; totalDurationMs: number; databaseTimeMs: number }>;
 export type CaptureEndpointListInput = Readonly<{ worktree: string; limit: number; before?: CaptureEndpointCursor; since?: number; until?: number; endpoint?: CaptureEndpointCursor }>;

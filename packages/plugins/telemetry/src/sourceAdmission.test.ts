@@ -1,14 +1,16 @@
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { describe, expect, it } from 'vitest';
-import { PluginError, type PluginServices } from '@happier-dev/plugin-sdk';
-import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
+import { createCanonicalJsonSigningInput, PluginError, type JsonValue, type PluginServices } from '@happier-dev/plugin-sdk';
+import { createPluginTestkit, type PluginTestkitInvokeActionOptions } from '@happier-dev/plugin-sdk/testing';
+import type { PluginAccountStorageScope, StorageScopeService } from '@happier-dev/plugin-sdk/storage';
+import { DATABASE_PLUGIN_ID_V1 } from '@happier-dev/plugin-sdk/database';
 import * as database from '@happier-dev/database-protocol';
 import { localCaptureBackground } from './background.js';
 import { captureSourcePartition } from './partition.js';
 import { createCaptureSqliteFixture } from './testing/sqlite.js';
 import { captureMigrations } from './store/capture.js';
 import { DATABASE_CAPTURE_PLUGIN } from './manifest.js';
+import { PLUGIN_MANIFEST as workbenchManifest, plugin as workbenchPlugin } from '../../database-workbench/src/manifest.js';
 import { TELEMETRY_PRODUCTION_FINDING_SETUP_ACTION_LOCAL_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 
 const source = {
@@ -31,6 +33,12 @@ const other = { ...owner, requesterAccount: { accountId: 'bob' } };
 const local = (actionId: database.DatabaseActionIdV1) =>
   databaseActionLocalIdV1(actionId);
 const page = { limit: 10 };
+
+const databaseTarget = {
+  kind: 'worktree', accountId: 'alice', installationId: 'install', projectKey: 'project',
+  workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/workspace' },
+  source: { kind: 'service', serviceId: 'web', variable: 'DATABASE_URL' },
+} as const;
 
 function memoryAccountStorage(): Readonly<{
   storage: PluginAccountStorageScope;
@@ -123,6 +131,104 @@ async function setup(canClear = false) {
 }
 
 describe('R2-A3 local capture Source/project admission through the real manifest', () => {
+  it('keeps selected database query and N+1 evidence within the exact Worktree target', async () => {
+    const entries = new Map<string, JsonValue>();
+    const storage: StorageScopeService = {
+      async get<T extends JsonValue = JsonValue>(key: string) { return (entries.get(key) ?? null) as T | null; },
+      async set(key, value) { entries.set(key, value); },
+      async delete(key) { entries.delete(key); },
+      async list() { return { items: [...entries.keys()].map(key => ({ key })) }; },
+      consistency() { return { kind: 'authoritativeSerializable' }; },
+      async transaction(run) { return run(storage); },
+    };
+    const workbench = await createPluginTestkit({ manifest: workbenchManifest, module: workbenchPlugin,
+      services: { storage: {
+        daemon: { ...storage, async database() { throw new Error('No Workbench database requested'); } },
+        daemonSession: storage, ephemeral: storage,
+      } } });
+    const launch = workbench.registration('serviceLaunchEnvironments', 'database-discovery');
+    if (!launch) throw new Error('Missing database discovery contribution');
+    const retained = await launch.prepare({
+      workspace: { ...databaseTarget.workspace, id: source.workspaceId, projectKey: source.projectId },
+      project: { serverId: source.serverId, projectId: source.projectId },
+      requester: { accountId: databaseTarget.accountId, installationId: databaseTarget.installationId },
+      serviceId: databaseTarget.source.serviceId, physicalRootIdentity: databaseTarget.workspace.rootPath,
+      executionPlacement: { mode: 'spawn', machineId: source.machineId }, assignedPorts: {},
+      async readEnvironment() {
+        return { projectedEnvironment: {
+          DATABASE_URL: 'postgresql://localhost/selected', OTHER_DATABASE_URL: 'postgresql://localhost/neighbor',
+        }, provenance: {} };
+      },
+    });
+    const f = await setup();
+    try {
+      const worktree = captureSourcePartition(source, 'alice');
+      const traceId = 'trace';
+      const selected = retained.worktreeDatabaseMembers?.find(member => member.source.variable === 'DATABASE_URL');
+      const neighbor = retained.worktreeDatabaseMembers?.find(member => member.source.variable === 'OTHER_DATABASE_URL');
+      expect(selected).toEqual(databaseTarget);
+      if (!selected || !neighbor) throw new Error('Expected attributed database members');
+      const selectedKey = createCanonicalJsonSigningInput(selected);
+      const neighborKey = createCanonicalJsonSigningInput(neighbor);
+      await f.lease.runtime.store.write([
+        { id: 'request', worktree, traceId, kind: 'span', source: 'otlp', at: 1, spanId: 'request', spanKind: 2 },
+        ...[1, 2, 3].flatMap(n => [
+          { id: `selected-${n}`, worktree, traceId, kind: 'query' as const, source: 'wire' as const, at: 2,
+            spanId: `db-${n}`, executionIdentity: `exec-${n}`, databaseMemberKey: selectedKey,
+            shape: 'SELECT name FROM items WHERE id = ?', statementKind: 'select' as const, parameterIdentity: String(n),
+            detail: { sql: 'selected' } },
+          { id: `otlp-${n}`, worktree, traceId, kind: 'query' as const, source: 'otlp' as const, at: 2,
+            spanId: `db-${n}`, spanKind: 3, parentSpanId: 'request', executionIdentity: `exec-${n}` },
+        ]),
+        { id: 'unassigned', worktree, traceId, kind: 'query', source: 'wire', at: 3, parentSpanId: 'request',
+          shape: 'SELECT unassigned', detail: { sql: 'unassigned' } },
+        { id: 'neighbor', worktree, traceId, kind: 'query', source: 'wire', at: 3, parentSpanId: 'request',
+          databaseMemberKey: neighborKey, shape: 'SELECT neighbor', detail: { sql: 'neighbor' } },
+      ]);
+      const scoped = { source, databaseTarget };
+      const selectedIds = ['selected-3', 'selected-2', 'selected-1'];
+      const list = local(database.DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1);
+      const detail = local(database.DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1);
+      const trace = local(database.DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1);
+      const person = { ...owner, agentCaller: false, authority: 'present_user' as const };
+      const agent = { ...person, agentCaller: true };
+      function invoke(localId: string, input: JsonValue, caller: PluginTestkitInvokeActionOptions) {
+        // The testkit does not stamp a Machine admission on cross-plugin calls. Supply the
+        // original caller at that transport boundary and run the real Workbench Action.
+        const actions = { async execute(ref: unknown, operands: JsonValue) {
+          const admission = local(database.DATABASE_ACCESS_READ_ACTION_ID_V1);
+          expect(ref).toEqual({ pluginId: DATABASE_PLUGIN_ID_V1, localId: admission });
+          return workbench.invokeAction(admission, operands, { ...caller, surface: 'plugin' });
+        } } as PluginServices['actions'];
+        return f.host.invokeAction(localId, input, { ...caller, services: { actions } });
+      }
+      const listResult = database.DatabaseCaptureQueriesListResultV1Schema.parse(
+        await invoke(list, { ...scoped, page }, person));
+      expect(listResult.ok && listResult.items.map(row => row.id)).toEqual(selectedIds);
+      expect(await invoke(detail, { ...scoped, id: 'selected-1' }, person))
+        .toMatchObject({ ok: true, detail: { sql: 'selected' } });
+      for (const id of ['neighbor', 'unassigned']) {
+        expect(await invoke(detail, { ...scoped, id }, person)).toMatchObject({ ok: true, detail: null });
+      }
+      const traceResult = database.DatabaseCaptureTraceGetResultV1Schema.parse(
+        await invoke(trace, { ...scoped, traceId, page: { limit: 2 } }, agent));
+      expect(traceResult.ok && traceResult.summaries.map(row => row.id)).toEqual(selectedIds);
+      expect(traceResult).toMatchObject({ ok: true, repeatedQueries: [
+        { kind: 'suspected_n_plus_one', repetitionCount: 3, observationIds: expect.arrayContaining(selectedIds) },
+      ] });
+      await expect(invoke(list, { ...scoped, page }, { ...person, ...other }))
+        .rejects.toMatchObject({ code: 'database_target_unavailable' });
+      await expect(invoke(list, { ...scoped, source: { ...source, workspaceId: 'different' }, page }, person))
+        .rejects.toMatchObject({ code: 'capture_source_unavailable' });
+      await workbench.invokeAction(local(database.DATABASE_ACCESS_SET_ACTION_ID_V1), { target: databaseTarget, agentAccess: 'none' }, person);
+      await expect(invoke(list, { ...scoped, page }, agent)).rejects.toMatchObject({ code: 'database_agent_access_none' });
+    } finally {
+      await f.close();
+      if (retained.kind === 'unchanged') await retained.release?.();
+      await workbench.dispose();
+    }
+  });
+
   it('configures production findings with the admitted collector and no requester Machine', async () => {
     const f = await setup();
     try {

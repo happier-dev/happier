@@ -1,4 +1,5 @@
 import { databaseActionLocalIdV1, databaseActionMetadata } from '@happier-dev/plugin-sdk/actions';
+import type { DatabaseWorktreeTargetV1 } from '@happier-dev/plugin-sdk/database';
 import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
@@ -204,11 +205,13 @@ export type AdmittedCaptureSource = Readonly<{
     source: database.DatabaseCaptureSourceV1;
     partition: string;
     runtime: CaptureRuntime;
+    databaseMember?: DatabaseWorktreeTargetV1;
     collectorMachineId?: string;
     assignmentStamped?: boolean;
 }>;
 export type AdmittedCaptureScope = Omit<AdmittedCaptureSource, 'runtime'>;
-export type CaptureSourceAdmission = (input: database.DatabaseCaptureStatusInputV1, context: PluginInvocationContext,
+type CaptureSourceInput = Pick<database.DatabaseCaptureQueriesListInputV1, 'source' | 'databaseTarget'>;
+export type CaptureSourceAdmission = (input: CaptureSourceInput, context: PluginInvocationContext,
     actionId: database.DatabaseActionIdV1) => Promise<AdmittedCaptureScope>;
 
 /** Actions and a demanded Resource share the exact same selected-source DTO projection. */
@@ -236,10 +239,10 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
         },
         async listCapturedQueries(input: database.DatabaseCaptureQueriesListInputV1) {
             return page(await selected.runtime.store.list({ ...input.page, since: input.since, until: input.until,
-                traceId: input.traceId, worktree: selected.partition, kind: 'query' }), input.page.limit);
+                traceId: input.traceId, worktree: selected.partition, databaseMember: selected.databaseMember, kind: 'query' }), input.page.limit);
         },
         async getCapturedQuery(input: database.DatabaseCaptureQueryGetInputV1) {
-            const detail = await selected.runtime.store.detail(selected.partition, input.id);
+            const detail = await selected.runtime.store.detail(selected.partition, input.id, selected.databaseMember);
             // App log text has known patterns masked, but the producer cannot identify arbitrary app secrets.
             return { ok: true as const, source: selected.source,
                 detail: detail?.log === undefined ? detail : { ...detail, secretMasking: 'incomplete' } };
@@ -254,8 +257,8 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
         async getCapturedTrace(input: database.DatabaseCaptureTraceGetInputV1) {
             const { source, runtime, partition } = selected;
             const trace = await createCaptureReader(runtime.store).trace({ worktree: partition,
-                traceId: input.traceId, pageSize: input.page.limit });
-            const findings = machineId === undefined ? undefined : [...projectCaptureFindings({
+                databaseMember: selected.databaseMember, traceId: input.traceId, pageSize: input.page.limit });
+            const findings = machineId === undefined || selected.databaseMember !== undefined ? undefined : [...projectCaptureFindings({
                 source, sourceScope: { serverId: source.serverId, machineId }, pageSize: input.page.limit,
                 coverage: runtime.ingest.coverage(partition),
             }, trace.summaries, trace.repeatedQueries)];
@@ -297,7 +300,7 @@ export function createCapturePublicActionProducers(options: Readonly<{
     readWorktreeLaunchStatus: ReturnType<typeof createCaptureBackgroundOwner>['readWorktreeLaunchStatus'];
     configureCapture?: CapturePublicActionProducers['configureCapture'];
 }>): CapturePublicActionProducers {
-    async function withSource<T>(input: database.DatabaseCaptureStatusInputV1, context: PluginInvocationContext,
+    async function withSource<T>(input: CaptureSourceInput, context: PluginInvocationContext,
         actionId: database.DatabaseActionIdV1,
         read: (readers: ReturnType<typeof createCaptureSelectedSourceReaders>, partition: string) => Promise<T>): Promise<T> {
         const scope = await options.admitSource(input, context, actionId);

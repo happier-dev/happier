@@ -30,6 +30,13 @@ identity without reading the deleted filesystem. The association survives
 service release and background-runtime recreation; sibling roots remain intact.
 Partitions without a captured association remain available for scoped Clear.
 
+For Workbench Insights, pass the selected Worktree `databaseTarget` to
+`capture/queries/list`, `capture/query/get`, or `capture/trace/get`. The existing
+Workbench access Action admits the target under the initiating Account and
+agent policy. These reads return queries attributed to that exact launch
+member. Unattributed trace ancestry can group repeated executions without
+appearing in the result. This operand is available for finite reads.
+
 `otlp/receiver.ts` accepts HTTP JSON or protobuf traces and logs, with optional
 gzip, on `/v1/traces` and `/v1/logs`. Generated OpenTelemetry protobuf definitions
 own the wire schema. The receiver bounds both compressed and decompressed request

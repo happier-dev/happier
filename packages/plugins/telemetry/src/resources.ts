@@ -113,6 +113,7 @@ export function createCaptureResourceRuntime(options: Readonly<{
                 : { kind: 'capture' as const, input: database.DatabaseCaptureResourceInputV1Schema.parse(context.context.launchInput) };
             if (demand.kind === 'capture' && isRollingCaptureDemand(demand.input) && demand.input.windowMs !== undefined) {
                 const selected = demand.input;
+                if (selected.view === 'queries' && selected.input.databaseTarget !== undefined) return unavailable();
                 const windowMs = demand.input.windowMs;
                 const acquire = options.acquireSelection;
                 if (!acquire) return unavailable();

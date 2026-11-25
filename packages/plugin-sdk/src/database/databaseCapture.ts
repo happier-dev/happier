@@ -5,6 +5,7 @@ import { DatabaseFailureV1Schema } from './schemas/databaseOperations.js';
 import { DatabaseCaptureCostMetadataV1Schema, DatabaseCaptureCostsReadInputV1Schema, DatabaseCaptureCostsReadResultV1Schema } from './databaseCaptureCosts.js';
 import { DatabaseCaptureProjectV1Schema, DatabaseCaptureSourceV1Schema, DatabaseCaptureCoverageV1Schema } from './databaseCaptureSource.js';
 import {
+    databaseCaptureQueryScope,
     databaseCaptureSelectedPage as selectedPage,
     databaseCaptureSourceInput as sourceInput,
     DatabaseCaptureCursorV1Schema,
@@ -84,9 +85,9 @@ export const DatabaseCaptureStatusResultV1Schema = z.union([DatabaseFailureV1Sch
         metrics: z.nullable(time), appLlmCost: z.nullable(time), exceptions: z.nullable(time),
     })),
 })]);
-export const DatabaseCaptureQueriesListInputV1Schema = z.strictObject({ ...selectedPage, traceId: z.optional(id) });
+export const DatabaseCaptureQueriesListInputV1Schema = z.strictObject({ ...selectedPage, ...databaseCaptureQueryScope, traceId: z.optional(id) });
 export const DatabaseCaptureQueriesListResultV1Schema = z.union([DatabaseFailureV1Schema, summaryPage]);
-export const DatabaseCaptureQueryGetInputV1Schema = z.strictObject({ ...sourceInput, id });
+export const DatabaseCaptureQueryGetInputV1Schema = z.strictObject({ ...sourceInput, ...databaseCaptureQueryScope, id });
 const queryDetailValue: z.ZodMiniType<PluginJsonValueV2, PluginJsonValueV2> = z.json();
 export const DatabaseCaptureQueryGetResultV1Schema = z.union([DatabaseFailureV1Schema,
     z.strictObject({ ok: z.literal(true), source: DatabaseCaptureSourceV1Schema, detail: z.nullable(z.record(z.string(), queryDetailValue)) }),
