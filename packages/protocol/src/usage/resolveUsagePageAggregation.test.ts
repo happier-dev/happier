@@ -1652,10 +1652,12 @@ describe('resolveUsagePageAggregation', () => {
       work: [{ query, status: 'partial', asOfMs: 200, errorCode: 'work_evidence_failed', evidence: [witness] }] }, bundledUsageModelPriceCatalog);
     const retrying = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
       work: [{ query, status: 'pending' }], previous: partialFailure }, bundledUsageModelPriceCatalog);
-    expect(retrying.results[0], 'retrying unchanged Work keeps its observed partial facts').toBe(partialFailure.results[0]);
+    expect(retrying.results[0]?.work, 'retrying Work keeps its observed partial facts').toEqual(partialFailure.results[0]?.work);
+    expect(retrying.results[0]?.sources).toContainEqual({ source: 'work', status: 'pending', asOfMs: 200 });
+    expect(retrying.results[0]?.pending).toBe(true);
     const repeatedFailure = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
       work: [{ query, status: 'partial', asOfMs: 200, errorCode: 'work_evidence_failed', evidence: [witness] }], previous: retrying }, bundledUsageModelPriceCatalog);
-    expect(repeatedFailure.results[0], 'the same failed evidence does not republish a slice').toBe(partialFailure.results[0]);
+    expect(repeatedFailure.results[0], 'the same failed evidence settles to the same answer').toEqual(partialFailure.results[0]);
     const recovered = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
       work: [{ query, status: 'partial', asOfMs: 200, evidence: [] }], previous: repeatedFailure }, bundledUsageModelPriceCatalog);
     expect(recovered.results[0]?.work?.outcomes).toEqual([]);

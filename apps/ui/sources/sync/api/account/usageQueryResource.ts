@@ -2376,16 +2376,25 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         const inputsCurrent = !!admission && admission.inputs.length === readInputs.length
             && admission.inputs.every((identity, index) => identity === readInputs[index]);
         let workMachinesCurrent = true;
-        let changedWorkTargets: Set<string> | undefined;
+        let changedWorkTargets: Map<string, boolean> | undefined;
         let workTargets: Map<string, UsageWorkSessionTarget> | undefined;
         const reconcileWorkInput = (input: UsageWorkMachineInput) => {
             const targets = resolveUsageWorkSessionTargets(lifetime.scope, input.sessionIds, workTargets ??= new Map());
             const current = readWorkMachineInput(input.queryKey, targets);
-            return { targetChanged: current.targetKey !== input.targetKey, machineChanged: current.machineKey !== input.machineKey };
+            const targetChanged = current.targetKey !== input.targetKey;
+            // Late target resolution did not move any checkout that supplied
+            // evidence. It can seed a pending read, but cannot reuse a settled one.
+            const canSeed = !targetChanged || (JSON.parse(input.targetKey) as [string, UsageWorkSessionTarget][])
+                .every(([sessionId, previous]) => {
+                    if (!('machineId' in previous)) return true;
+                    const target = targets.get(sessionId);
+                    return target && 'machineId' in target && target.machineId === previous.machineId && target.cwd === previous.cwd;
+                });
+            return { targetChanged, canSeed, machineChanged: current.machineKey !== input.machineKey };
         };
         for (const input of admission?.workMachineInputs ?? []) {
-            const { targetChanged, machineChanged } = reconcileWorkInput(input);
-            if (targetChanged) (changedWorkTargets ??= new Set()).add(input.queryKey);
+            const { targetChanged, canSeed, machineChanged } = reconcileWorkInput(input);
+            if (targetChanged) (changedWorkTargets ??= new Map()).set(input.queryKey, canSeed);
             if (machineChanged) workMachinesCurrent = false;
         }
         workMachinesCurrent &&= !changedWorkTargets;
@@ -2624,11 +2633,10 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     let slice = own ?? siblingSlice?.slice;
                     if (slice && query.includeWorkEvidence) {
                         const witness = own ? ownWorkInputs.get(key) : siblingSlice?.workInput;
-                        const targetCurrent = witness && (own ? !retained.changedWorkTargets?.has(key)
-                            : !retained.reconcileWorkInput(witness).targetChanged);
-                        if (targetCurrent) seedWorkInputs.set(key, witness);
+                        if (witness && (own ? retained.changedWorkTargets?.get(key) !== false
+                            : retained.reconcileWorkInput(witness).canSeed)) seedWorkInputs.set(key, witness);
                         else {
-                            // Work without a matching target cannot seed a progressive or failed replacement.
+                            // Work from an obsolete checkout cannot seed a replacement.
                             const { work: _work, workSummary: _summary, mergedOutcomes: _outcomes, publicProfileEvidence: _profile, ...inputs } = slice;
                             slice = { ...inputs, sources: inputs.sources.filter(source => source.source !== 'work') };
                         }

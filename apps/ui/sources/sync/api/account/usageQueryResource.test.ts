@@ -10095,6 +10095,114 @@ describe('usage query Work composition', () => {
     }
   });
 
+  it.each(['answers', 'drops a Session', 'refuses'] as const)(
+  'keeps the readable Week Work answer while late targets resolve and the replacement %s', async replacement => {
+    const firstReadAt = Date.UTC(2026, 10, 25, 13);
+    let now = firstReadAt;
+    const machineId = 'week-work-machine';
+    const rows = Array.from({ length: 17 }, (_, index) => ({
+      ...workContribution, id: `week-event-${index}`, sessionId: `week-session-${index}`,
+      turnId: `week-turn-${index}`, machineId, observedAtMs: firstReadAt - 1_000,
+    }));
+    let contributions = rows;
+    const captured = await context(request => request.path === '/v2/usage/query' ? Response.json({
+      ...value, totals: { ...value.totals, eventCount: contributions.length }, contributions,
+    }) : undefined);
+    const scope = captured.accountLifetime.scope;
+    const publishSessions = (selected: typeof rows) => storage.getState().applySessions(selected.map(row =>
+      createSessionFixture({ id: row.sessionId, active: true, serverId: scope.serverId,
+        metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' } })));
+    publishSessions(rows.slice(0, 14));
+    await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({
+      id: machineId, accountId: 'account-a', machine: { active: true, activeAt: firstReadAt, presenceProtocolVersion: 1 },
+    })]);
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const held = createDeferred<void>();
+    let replacing = false;
+    const witness = (row: typeof rows[number], number: number) => ({
+      sessionId: row.sessionId, turnId: row.turnId, repositoryKey: 'week-repo', checkpointRef: 'checkpoint/turn',
+      checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed',
+      pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
+        nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+        number, title: 'Linked', url: `https://github.com/owner/repo/pull/${number}`,
+        baseBranch: 'main', headBranch: `work-${number}`, state: 'open' },
+    }) satisfies UsageWorkEvidence;
+    scmTransport.mockImplementation(async (request: { payload: ScmWorkEvidenceReadRequest }) => {
+      const pending = replacing;
+      if (pending) await held.promise;
+      if (pending && replacement === 'refuses') {
+        return workBatch(request, { status: 'error', evidence: [], branchEvidence: [], errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      }
+      return ScmWorkEvidenceReadResponseSchema.parse({ sessions: request.payload.sessions.map(({ sessionId }) => {
+        const index = rows.findIndex(row => row.sessionId === sessionId);
+        if (!pending && index === 13) return { sessionId, status: 'error', errorCode: 'BACKEND_UNAVAILABLE' };
+        const number = pending ? (index === 16 ? 17 : undefined) : (index < 9 ? index + 1 : undefined);
+        const linked = number === undefined ? undefined : witness(rows[index]!, number);
+        if (!linked) return { sessionId, status: 'partial', pullRequestsRead: true, evidence: [], branchEvidence: [] };
+        const { pullRequest, ...checkpoint } = linked;
+        return { sessionId, status: 'partial', pullRequestsRead: true, evidence: [{ ...checkpoint, pullRequest }],
+          branchEvidence: [{ ...checkpoint, branch: { ref: `refs/heads/work-${number}`, headSha: checkpoint.commitSha } }] };
+      }) });
+    });
+    const query = normalizeUsageQuery({ period: { startMs: firstReadAt - 7 * 86_400_000, endMs: firstReadAt + 1 },
+      includeQuota: false, includeQuotaHistory: false, includeComparison: false, includeSessionEvidence: false,
+      includeTranscriptEvidence: false, includeWorkEvidence: true, includeCoach: false, workProjection: 'detail' });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const readPage = () => {
+      const content = entry.getSnapshot().value;
+      return content && decodeUsageQueryResource(content).results[0];
+    };
+    const workSource = (slice: ReturnType<typeof readPage>) => slice?.sources.find(source => source.source === 'work');
+    const links = (slice: ReturnType<typeof readPage>) => (slice?.work?.outcomes ?? []).map(row => row.pullRequest.number).sort((a, b) => a - b);
+    const branches = (slice: ReturnType<typeof readPage>) => (slice?.work?.branches ?? []).map(row => row.branch.ref).sort();
+    const nineLinks = Array.from({ length: 9 }, (_, index) => index + 1);
+    const stop = entry.subscribe(() => {}, true);
+    try {
+      await expect.poll(() => [entry.getSnapshot().pending, links(readPage()).length]).toEqual(['idle', 9]);
+      expect(workSource(readPage())).toMatchObject({ status: 'partial', asOfMs: firstReadAt, unreadSessions: { failed: 1 } });
+      expect(scmTransport.mock.lastCall?.[0].payload.sessions).toHaveLength(14);
+      scmTransport.mockClear();
+      now += 1_000;
+      replacing = true;
+      if (replacement === 'drops a Session') contributions = rows.slice(1);
+      publishSessions(rows.slice(14));
+      publishHomeAccountChange(scope.serverId, [], { changeKinds: ['account', 'automation', 'machine', 'pluginDomain', 'session'],
+        usageAccountingChange: { sessionId: null }, sessionReadinessChanges: 'all' });
+      await expect.poll(() => scmTransport.mock.calls.length).toBe(1);
+      const selectors = scmTransport.mock.lastCall?.[0].payload.sessions ?? [];
+      expect(selectors.map(({ sessionId, turnIds }: ScmWorkEvidenceReadRequest['sessions'][number]) => ({ sessionId, turnIds })))
+        .toEqual(expect.arrayContaining(contributions.map(({ sessionId, turnId }) => ({ sessionId, turnIds: [turnId] }))));
+      expect(selectors).toHaveLength(contributions.length);
+      await expect.poll(() => workSource(readPage())?.status).toBe('pending');
+      const retained = replacement === 'drops a Session' ? nineLinks.slice(1) : nineLinks;
+      const pending = readPage();
+      expect.soft(UsageQueryBatchResultSchema.safeParse({ v: 1, results: [pending] }).success).toBe(true);
+      expect.soft(workSource(pending)).toMatchObject({ status: 'pending', asOfMs: firstReadAt, unreadSessions: { failed: 1 } });
+      expect.soft(pending?.pending).toBe(true);
+      expect.soft(links(pending)).toEqual(retained);
+      expect.soft(branches(pending)).toEqual(retained.map(number => `refs/heads/work-${number}`));
+      expect.soft(pending?.workSummary?.pullRequestsRead).toBeUndefined();
+      expect.soft(pending?.workSummary?.mergedPrCount).toBeUndefined();
+      expect.soft(pending?.workSummary?.mergedSessionCount).toBeUndefined();
+      expect.soft(pending?.mergedOutcomes).toBeUndefined();
+      now += 500;
+      held.resolve();
+      const expected = replacement === 'refuses' ? [] : [17];
+      await expect.poll(() => [entry.getSnapshot().pending, links(readPage())]).toEqual(['idle', expected]);
+      const settled = readPage();
+      expect(branches(settled)).toEqual(expected.map(number => `refs/heads/work-${number}`));
+      if (replacement === 'refuses') {
+        expect(workSource(settled)).toMatchObject({ status: 'error', unreadSessions: { not_entitled: 17 } });
+        expect(workSource(settled)?.asOfMs).toBeUndefined();
+        expect(settled?.workSummary?.mergedPrCount).toBeUndefined();
+      } else {
+        expect(workSource(settled)).toMatchObject({ status: 'partial', asOfMs: now });
+        expect(settled?.workSummary).toMatchObject({ pullRequestsRead: true, mergedPrCount: 0 });
+      }
+    } finally { held.resolve(); stop(); clock.mockRestore(); }
+  });
+
   it.each(['growth', 'replacement', 'growth with an event on the retained turn', 'explicit Refresh', 'Refresh after unsupported'] as const)(
   'keeps the mounted page and Usage Action Work answer dated and valid during %s', async change => {
     const wasUnsupported = change === 'Refresh after unsupported';
@@ -10767,7 +10875,10 @@ describe('usage query Work composition', () => {
     const retried = await readUiUsageQueryBatch(captured, { queries: [query] }, undefined, partialFailure,
       { onProgress: project => { workProgress.push(project().results[0]!.sources.find(source => source.source === 'work')!); } });
     expect(workProgress.length).toBeGreaterThan(0);
-    expect(workProgress.every(source => source === observedWork), 'equal Work rereads never clear and republish the failure').toBe(true);
+    expect(workProgress).toContainEqual({ source: 'work', status: 'pending', asOfMs: observedWork.asOfMs,
+      unreadSessions: observedWork.unreadSessions });
+    expect(workProgress.every(source => source.asOfMs === observedWork.asOfMs),
+      'a replacement pending after failure keeps the readable answer dated').toBe(true);
     expect(retried.results[0]!.sources.find(source => source.source === 'work')).toBe(observedWork);
     scmTransport.mockImplementation(async request => workBatch(request, { status: 'unsupported' }));
     const unsupported = await readUiUsageQueryBatch(captured, { queries: [query] });

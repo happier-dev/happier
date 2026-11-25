@@ -919,13 +919,13 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     const awaitingWorkMembership = pendingWork && priorWorkSource?.status === 'unknown'
       && priorWorkSource.errorCode === undefined && priorWorkSource.unreadSessions === undefined
       && snapshot?.value !== undefined && !readUsageWorkSessionTurns(snapshot.value)?.length;
-    // A reread has not replaced observed Work facts. Keep their currentness
-    // until its answer changes them, including a completed retained failure.
+    // A pending reread carries readable witnesses and their date, while its
+    // status describes the replacement. An identical settled failure can reuse its state.
     const workSource: UsageQuerySourceState = awaitingWorkMembership || priorWorkSource?.errorCode === 'work_evidence_failed'
-      && (pendingWork && priorWorkReadable || failedWork && priorWorkSource.status === 'stale'
-        && workSnapshot.errorCode === priorWorkSource.errorCode
-        && workSnapshot.updateRequired === priorWorkSource.updateRequired
-        && sameStrictJsonValue(unreadWorkSessions ?? null, priorWorkSource.unreadSessions ?? null)) ? priorWorkSource
+      && failedWork && priorWorkSource.status === 'stale'
+      && workSnapshot.errorCode === priorWorkSource.errorCode
+      && workSnapshot.updateRequired === priorWorkSource.updateRequired
+      && sameStrictJsonValue(unreadWorkSessions ?? null, priorWorkSource.unreadSessions ?? null) ? priorWorkSource
       : { source: 'work', status: failedWork ? 'stale' : workSnapshot?.status ?? 'not_loaded',
         ...(workAsOfMs === undefined ? {} : { asOfMs: workAsOfMs }),
         ...(workSnapshot?.errorCode === undefined ? {} : { errorCode: workSnapshot.errorCode }),
