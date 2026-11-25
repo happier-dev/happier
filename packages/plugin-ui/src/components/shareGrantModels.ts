@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
-import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
+import type { PluginCollectionSharing } from '@happier-dev/plugin-sdk/collections';
+
+type PrincipalRefV1 = Parameters<PluginCollectionSharing<never>['setGrant']>[1]['principal'];
 
 /**
  * The one share sheet's vocabulary. Every shareable thing (a session, a workflow, a role, a
