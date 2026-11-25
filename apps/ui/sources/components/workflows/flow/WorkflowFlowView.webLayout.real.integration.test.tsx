@@ -158,6 +158,20 @@ describe('Flow readability in the actual browser layout (FF-N3DEEP)', () => {
             expect(texts.length, label).toBeGreaterThan(0);
             for (const text of texts) expect(text.clipped, label).toBe(false);
         }
+        // Nested condition rails remain distinct after the ordinary indent budget runs out (FF-CLOSE1).
+        const branches = projection.nodes.filter(node => node.kind === 'thenBranch' || node.kind === 'otherwiseBranch');
+        const railsWithAncestors = branches.flatMap(branch => {
+            let ancestor = branch.parentNodeId === null ? undefined : projection.nodesById.get(branch.parentNodeId);
+            while (ancestor && ancestor.kind !== 'thenBranch' && ancestor.kind !== 'otherwiseBranch') {
+                ancestor = ancestor.parentNodeId === null ? undefined : projection.nodesById.get(ancestor.parentNodeId);
+            }
+            return ancestor ? [{ branch, ancestor }] : [];
+        });
+        expect(railsWithAncestors.length).toBeGreaterThan(1);
+        for (const { branch, ancestor } of railsWithAncestors) {
+            expect(layout.rect(`flow-rail-${branch.nodeId}`).left, `${ancestor.nodeId} → ${branch.nodeId}`)
+                .toBeGreaterThan(layout.rect(`flow-rail-${ancestor.nodeId}`).left);
+        }
     });
     it.each([1440, 390])('keeps Review & converge readable at the default Flow width at %spx', async width => {
         const builtin = getBuiltinWorkflowCatalogV1().find(entry => entry.id === 'builtin:review-and-converge');
@@ -173,20 +187,6 @@ describe('Flow readability in the actual browser layout (FF-N3DEEP)', () => {
             const texts = layout.textRects(label);
             expect(texts.length, label).toBeGreaterThan(0);
             for (const text of texts) expect(text.clipped, label).toBe(false);
-        }
-        // Each Then/Otherwise rail still identifies its owning condition once the
-        // side pane runs out of the ordinary indent budget (FF-CLOSE1).
-        const branches = projection.nodes.filter(node => (node.kind === 'thenBranch'
-            || node.kind === 'otherwiseBranch') && node.depth >= 3 && node.depth <= 6);
-        expect(branches.length).toBeGreaterThan(1);
-        for (const branch of branches) {
-            const rail = layout.rect(`flow-rail-${branch.nodeId}`);
-            let ancestor = branch.parentNodeId === null ? undefined : projection.nodesById.get(branch.parentNodeId);
-            while (ancestor && ancestor.kind !== 'thenBranch' && ancestor.kind !== 'otherwiseBranch') {
-                ancestor = ancestor.parentNodeId === null ? undefined : projection.nodesById.get(ancestor.parentNodeId);
-            }
-            if (ancestor) expect(rail.left, `${ancestor.nodeId} → ${branch.nodeId}`)
-                .toBeGreaterThan(layout.rect(`flow-rail-${ancestor.nodeId}`).left);
         }
     });
 

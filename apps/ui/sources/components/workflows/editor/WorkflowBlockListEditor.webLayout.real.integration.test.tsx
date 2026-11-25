@@ -457,17 +457,25 @@ describe('a typed card on a phone, as a browser lays it out', () => {
     it('keeps each label with its value and the pairs apart (DESIGN-7 N5)', async () => {
         const container = await renderDocument([
             { kind: 'workflow', id: 'review', name: 'Review the release', workflowRef: 'builtin:review-and-converge', input: {
-                apply: { kind: 'literal', value: 'report' } } },
+                then: { kind: 'literal', value: 'report' },
+                focus: { kind: 'literal', value: 'Check the release notes' },
+            } },
         ], 360, null, 'compact');
         const layout = await measureWebLayout(container, { viewport: { width: 360, height: 1200 }, settle,
-            texts: ['Rounds before stopping', '3', 'Apply', 'Report only'] });
-        const [roundsLabel] = layout.textRects('Rounds before stopping');
-        const [roundsValue] = layout.textRects('3');
-        const [applyLabel] = layout.textRects('Apply');
-        const withinPair = roundsValue!.top - roundsLabel!.bottom;
-        const betweenPairs = applyLabel!.top - roundsValue!.bottom;
+            texts: ['After the review', 'Report findings', 'What to focus on', 'Check the release notes'] });
+        const [thenLabel] = layout.textRects('After the review');
+        const [thenValue] = layout.textRects('Report findings');
+        const [focusLabel] = layout.textRects('What to focus on');
+        const [focusValue] = layout.textRects('Check the release notes');
+        expect(thenLabel).toBeDefined();
+        expect(thenValue).toBeDefined();
+        expect(focusLabel).toBeDefined();
+        expect(focusValue).toBeDefined();
+        const withinPair = thenValue!.top - thenLabel!.bottom;
+        const betweenPairs = focusLabel!.top - thenValue!.bottom;
         // The narrow card puts each value under its label (07 "Phones recompose")...
-        expect(roundsValue!.top).toBeGreaterThan(roundsLabel!.top);
+        expect(thenValue!.top).toBeGreaterThan(thenLabel!.top);
+        expect(focusValue!.top).toBeGreaterThan(focusLabel!.top);
         // ...and a pair reads as one thing: the value right under its label, the next pair clearly
         // further away (lab P1), never an alternating list (DESIGN-7: 30 px within, 45 between).
         expect(withinPair).toBeLessThanOrEqual(6);
