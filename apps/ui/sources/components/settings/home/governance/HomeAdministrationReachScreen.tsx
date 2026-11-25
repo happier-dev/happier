@@ -440,16 +440,21 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
         );
     }
     const reach = reads.companion;
+    const failedReads = [reads.failure, reads.companionFailure].filter((failure) => failure !== null);
+    const readFailureReason = [...new Set(failedReads.map((failure) => homeGovernanceFailureNotice(failure, { effect: 'read' }).body))].join('\n');
+    // Both observations use the same reload, regardless of which failure needs it.
+    const retryRead = failedReads.some((failure) => failure.retryable)
+        ? { testID: 'home-reach-retry', label: t('homeGovernance.retry'), onPress: () => { void reads.reload(); } }
+        : undefined;
     if (!reach || !reads.settings) {
-        const loadFailure = reads.failure ?? reads.companionFailure;
-        if (loadFailure) {
+        if (readFailureReason) {
             return (
                 <SurfaceStateCard
                     testID="home-reach-error"
                     kind="error"
                     title={t('homeGovernance.reach.loadFailed')}
-                    reason={homeGovernanceFailureNotice(loadFailure, { effect: 'read' }).body}
-                    action={loadFailure.retryable ? { testID: 'home-reach-retry', label: t('homeGovernance.retry'), onPress: () => { void reads.reload(); } } : undefined}
+                    reason={readFailureReason}
+                    action={retryRead}
                 />
             );
         }
@@ -476,7 +481,6 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
     const relayCustomCount = Array.isArray(relayUrlsEntry?.value) ? relayUrlsEntry.value.length : 0;
     const relayPolicy = relayEntry?.value === 'disabled' ? 'disabled' : 'automatic';
     const relayPending = relayEntry?.applied?.pending === true;
-    const readFailure = reads.failure ?? reads.companionFailure;
     const relayRow = {
         testID: 'home-reach-relay',
         title: t('homeGovernance.reach.relay'),
@@ -489,13 +493,13 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
 
     return (
         <>
-            {readFailure ? (
+            {readFailureReason ? (
                 <SurfaceFreshnessLine
                     testID="home-reach-refresh-error"
                     tone="warning"
-                    reason={homeGovernanceFailureNotice(readFailure, { effect: 'read' }).body}
+                    reason={readFailureReason}
                     busy={reads.loading || reads.companionLoading}
-                    action={readFailure.retryable ? { label: t('homeGovernance.retry'), onPress: () => { void reads.reload(); } } : undefined}
+                    action={retryRead}
                 />
             ) : null}
             <ExposureBanner exposure={exposure} onOpenPolicies={() => router.push(homeAdministrationPoliciesPath(context.scope.serverId))} />

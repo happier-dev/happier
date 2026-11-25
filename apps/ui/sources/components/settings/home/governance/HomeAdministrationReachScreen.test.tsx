@@ -211,6 +211,30 @@ describe('HomeAdministrationReachScreen', () => {
         expect(screen.findByTestId('home-reach-retry')).toBeNull();
     });
 
+    it.each([
+        { code: 'home_governance_forbidden', status: 403, companionMessage: 'homeGovernance.forbiddenBody' },
+        { code: 'temporarily_unavailable', status: 503, companionMessage: null },
+    ])('presents the settings and reachability read refusals with one recovery ($code)', async ({ code, status, companionMessage }) => {
+        const home = await addHome();
+        harness.answer(home, SETTINGS_GET, { status: 503, body: { error: 'temporarily_unavailable' } });
+        harness.answer(home, REACH_GET, { status, body: { error: code } });
+        const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/governance/homeGovernanceEngine');
+        resetHomeGovernanceEngineForTests();
+        const screen = await renderScreen(<HomeAdministrationReachScreen serverId={home} />);
+        await waitForHomeGovernance(() => {
+            expect(harness.requestsFor(SETTINGS_GET)).toHaveLength(1);
+            expect(harness.requestsFor(REACH_GET)).toHaveLength(1);
+            expect(screen.getTextContent()).toContain('homeGovernance.unavailableBody');
+            if (companionMessage) expect(screen.getTextContent()).toContain(companionMessage);
+        });
+        expect(screen.getTextContent().split('homeGovernance.unavailableBody')).toHaveLength(2);
+        expect(collectRenderedTestIds(screen.tree.toJSON()).filter(id => id.endsWith('-retry'))).toEqual(['home-reach-retry']);
+        harness.answer(home, SETTINGS_GET, { body: reachSettings() });
+        harness.answer(home, REACH_GET, { body: homeReachabilityFixture() });
+        await screen.pressByTestIdAsync('home-reach-retry');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-reach-iroh')).not.toBeNull());
+    });
+
     it('confirms an explicit Ask policy locally before retiring direct connections', async () => {
         const home = await addHome();
         await harness.requireUiApproval(home, 'home.reachability.iroh.set');
