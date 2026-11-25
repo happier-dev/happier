@@ -1,3 +1,8 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createSessionHandoffPrepareTargetJobStore } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
+import { readPersistedPrepareJob, isTerminalHandoffStatus } from './prepareTargetState';
 import { describe, expect, it, vi } from 'vitest';
 
 import { SessionHandoffPrepareTargetResultGetResponseSchema } from '@happier-dev/protocol';
@@ -5,6 +10,23 @@ import { SessionHandoffPrepareTargetResultGetResponseSchema } from '@happier-dev
 import { createSessionHandoffPrepareTargetResultGetActionHandler } from './prepareTargetResultGet';
 
 describe('prepareTargetResultGet typed native-import failures', () => {
+  it.each([false, true])('returns closed diagnostics from the durable target job (lastErrorCode=%s)', async (lastErrorCode) => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'handoff-result-diagnostics-'));
+    const prepareJobStore = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+    const diagnostics = [{ code: 'not_directory' as const, details: { pathKind: 'session_dir' as const } }];
+    try {
+      await prepareJobStore.write({ jobId: 'prepare_handoff', handoffId: 'handoff', createdAtMs: 1, updatedAtMs: 2,
+        ...(lastErrorCode ? { lastErrorCode: 'target_identity_conflict' } : {}), diagnostics,
+        status: { jobId: 'prepare_handoff', handoffId: 'handoff', status: 'reconciliation_required',
+          phase: 'staging_target', recoveryActions: [], failure: { code: 'target_identity_conflict' } } });
+      const handler = createSessionHandoffPrepareTargetResultGetActionHandler({ prepareJobStore, readPersistedPrepareJob,
+        isTerminalHandoffStatus, invalidRequest: () => ({ ok: false, errorCode: 'invalid_request' }) });
+      const result = await handler({ handoffId: 'handoff' });
+      expect(result).toMatchObject({ ok: false, errorCode: 'target_identity_conflict', details: { diagnostics } });
+      expect(SessionHandoffPrepareTargetResultGetResponseSchema.parse(result)).toHaveProperty('details', { diagnostics });
+    } finally { await rm(activeServerDir, { recursive: true, force: true }); }
+  });
+
   it.each([
     ['target_identity_conflict', 'reconciliation_required'],
     ['agent_version_unsupported', 'failed'],

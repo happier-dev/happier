@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeWorkspaceSyncPolicyDigest } from './workspaceSyncSchemas.js';
-import { SessionHandoffPrepareTargetRequestSchema, SessionHandoffStartRequestSchema } from './handoffSchemas.js';
+import { SessionHandoffPrepareTargetResultGetResponseSchema, SessionHandoffPrepareTargetRequestSchema, SessionHandoffStartRequestSchema } from './handoffSchemas.js';
 import { ClaudeHandoffTargetImportDiagnosticV1Schema } from './handoffStatus.js';
 
 const gitWorktreePolicyDigest = computeWorkspaceSyncPolicyDigest({
@@ -12,6 +12,14 @@ async function loadHandoffModule() {
 }
 
 describe('session handoff schemas', () => {
+  it.each(['target_identity_conflict', 'reconciliation_required'])('admits only closed result-get diagnostics for %s', errorCode => {
+    const diagnostic = ClaudeHandoffTargetImportDiagnosticV1Schema.parse({ code: 'not_directory', details: { pathKind: 'session_dir' } });
+    const result = { ok: false, errorCode, error: 'Import refused', details: { diagnostics: [diagnostic] } };
+    expect(SessionHandoffPrepareTargetResultGetResponseSchema.parse(result)).toEqual(result);
+    expect(SessionHandoffPrepareTargetResultGetResponseSchema.safeParse({ ...result,
+      details: { diagnostics: [{ ...diagnostic, path: '/private/target' }] } }).success).toBe(false);
+  });
+
   it('admits the Claude native import diagnostic and rejects values outside its closed vocabulary', () => {
     const diagnostic = { code: 'transcript_identity_changed', details: { pathKind: 'transcript_file' } };
     expect(ClaudeHandoffTargetImportDiagnosticV1Schema.parse(diagnostic)).toEqual(diagnostic);

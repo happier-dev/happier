@@ -24,6 +24,7 @@ import {
   SessionHandoffPrepareTargetFailureCodeSchema,
   SessionHandoffPrepareTargetFailureSchema,
   SessionHandoffProgressWarningCodeSchema,
+  SessionHandoffTargetImportFailureDetailsV1Schema,
   SessionHandoffStatusSchema,
   SessionHandoffWorkspacePreflightSummarySchema,
 } from './handoffStatus.js';
@@ -418,6 +419,7 @@ const SessionHandoffPrepareTargetResultGetFailureResponseSchema = lazyZodSchema(
     error: z
       .string().check(z.minLength(1), z.maxLength(SESSION_HANDOFF_PREPARE_TARGET_FAILURE_MESSAGE_MAX_LENGTH)),
     failureCause: z.optional(ActionFailureCauseV1Schema),
+    details: z.optional(z.pick(SessionHandoffTargetImportFailureDetailsV1Schema, { diagnostics: true })),
   }),
   z.strictObject({
     ok: z.literal(false),
@@ -425,6 +427,7 @@ const SessionHandoffPrepareTargetResultGetFailureResponseSchema = lazyZodSchema(
     error: z
       .string().check(z.minLength(1), z.maxLength(SESSION_HANDOFF_PREPARE_TARGET_FAILURE_MESSAGE_MAX_LENGTH)),
     failureCause: z.optional(ActionFailureCauseV1Schema),
+    details: z.optional(z.pick(SessionHandoffTargetImportFailureDetailsV1Schema, { diagnostics: true })),
   }),
 ]));
 

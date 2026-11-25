@@ -51,6 +51,8 @@ it('retains the native import cause through durable settlement and result-get af
     expect(result).toMatchObject({ ok: false, errorCode: 'target_identity_conflict',
       failureCause: { phase: 'session_handoff.target_import', errorCode: 'target_identity_conflict', nativeErrorCode: 'transcript_content_mismatch' } });
     expect(SessionHandoffPrepareTargetResultGetResponseSchema.parse(result)).toMatchObject({ failureCause: { nativeErrorCode: 'transcript_content_mismatch' } });
+    expect(result).toHaveProperty('details', { diagnostics });
+    expect(SessionHandoffPrepareTargetResultGetResponseSchema.parse(result)).toHaveProperty('details', { diagnostics });
     expect(JSON.stringify(result)).not.toContain(root);
     expect(JSON.stringify(result)).not.toContain(bundle.remoteSessionId);
   } finally { log.mockRestore(); await runtime.dispose(); vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); }

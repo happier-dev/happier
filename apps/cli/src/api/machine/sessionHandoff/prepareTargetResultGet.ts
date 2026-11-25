@@ -53,6 +53,7 @@ export function createSessionHandoffPrepareTargetResultGetActionHandler(
             ok: false,
             errorCode: persistedJob.lastErrorCode,
             ...(persistedJob.failureCause ? { failureCause: persistedJob.failureCause } : {}),
+            ...(persistedJob.diagnostics?.length ? { details: { diagnostics: persistedJob.diagnostics } } : {}),
             error: persistedJob.lastErrorMessage ?? 'Session handoff preparation failed',
           } as const;
         }
@@ -61,6 +62,7 @@ export function createSessionHandoffPrepareTargetResultGetActionHandler(
             ok: false,
             errorCode: persistedJob.status.failure.code,
             ...(persistedJob.failureCause ? { failureCause: persistedJob.failureCause } : {}),
+            ...(persistedJob.diagnostics?.length ? { details: { diagnostics: persistedJob.diagnostics } } : {}),
             error: persistedJob.lastErrorMessage ?? 'Prepare-target native import failed',
           } as const;
         }
