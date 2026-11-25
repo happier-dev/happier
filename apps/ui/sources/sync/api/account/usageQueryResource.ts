@@ -76,7 +76,7 @@ import { UsageModelPriceCatalogSchema, type UsageModelPriceCatalog } from '@happ
 import { HappyError } from '@/utils/errors/errors';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
 import { getUsageQueryMachineInvalidationKey, getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, readUsageQuotaAccounts, readUsageQuotaChangedRecordIds, usageQuotaRecordChangeAffects, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries, type UsageQueryStateInvalidation } from './usageQueryInvalidation';
-import type { ProviderAccountUsageProjectionDocuments, ProviderAccountUsageQuotaViewDemand } from './apiProviderAccountUsage';
+import type { ProviderAccountUsageProjectionDocuments, ProviderAccountUsageQuotaViewDemand, RetainedProviderAccountUsageQuotaRead } from './apiProviderAccountUsage';
 import type { ProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import type { ProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { createUsageQueryResourceContent } from './usageQueryResourceEncoding';
@@ -488,9 +488,11 @@ export function getRetainedQuotaPeriodKey(query: UsageQuery): string {
 type RetainedUsageAllowance = Readonly<{
     slices: ReadonlyMap<string, UsageQueryResultSlice>;
     heads: ReadonlyMap<string, Readonly<{ read: ConnectedServiceQuotaGetResultV1; state: UsageQuerySourceState }>>;
+    admission: Readonly<{ input: object; nowMs: number }> | undefined;
 }>;
 
-function retainUsageAllowance(batch: UsageQueryBatchResult, previous: RetainedUsageAllowance | undefined): RetainedUsageAllowance | undefined {
+function retainUsageAllowance(batch: UsageQueryBatchResult, previous: RetainedUsageAllowance | undefined,
+    admission: RetainedUsageAllowance['admission']): RetainedUsageAllowance | undefined {
     const slices = new Map<string, UsageQueryResultSlice>();
     const heads = new Map<string, { read: ConnectedServiceQuotaGetResultV1; state: UsageQuerySourceState }>();
     const nowMs = Date.now();
@@ -522,7 +524,7 @@ function retainUsageAllowance(batch: UsageQueryBatchResult, previous: RetainedUs
             heads.set(key, { read: head, state });
         }
     }
-    return slices.size ? { slices, heads } : previous;
+    return slices.size ? { slices, heads, admission } : previous;
 }
 
 type UsageAllowanceReadTargets = Readonly<{ recordIds: readonly string[]; sourceKeys: readonly string[] }>;
@@ -537,23 +539,35 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
     demands: readonly Readonly<{ query: UsageQuery; period: NonNullable<UsageAccountingSourceSnapshot['period']> }>[], nowMs: number, signal?: AbortSignal,
     onProgress?: (quota: OpenedQuotaRead) => void, previous?: UsageQueryBatchResult,
     opened: OpenedQuotaRead = readOpenedQuota(context, demands.map(({ query }) => query), previous), targets?: UsageAllowanceReadTargets, dayChange?: ProviderAccountUsageDayChangeV1,
-    recoverySources?: ReadonlySet<string>): Promise<OpenedQuotaRead> {
+    recoverySources?: ReadonlySet<string>, settledAllowance?: RetainedUsageAllowance): Promise<OpenedQuotaRead> {
     const scope = readOpenedQuotaHistoryScope(context);
     if (!scope) return opened;
     // Start at the existing transport batch size; the admitted B reader grows
     // subsequent pages and publishes their accepted change points progressively.
     const quotaByQuery = new Map<string, UsageQuotaSourceSnapshot>(opened.quotaByQuery);
-    const views: ProviderAccountUsageQuotaViewDemand[] = [];
+    const views: (ProviderAccountUsageQuotaViewDemand & { query: UsageQuery })[] = [];
     for (const { query, period } of demands) {
         const key = getUsageQueryKey(query);
         const mode = getQuotaHistoryMode(query);
         const range = mode === 'head' ? undefined : { startAtMs: period.startMs ?? 0, endAtMs: period.endMs ?? nowMs };
         if (range && range.endAtMs <= range.startAtMs) quotaByQuery.set(key, { status: 'unknown', errorCode: 'quota_query_range_empty' });
-        else views.push({ key, range, exact: mode === 'exact' });
+        else views.push({ key, query, range, exact: mode === 'exact' });
     }
     if (!views.length) return { ...opened, quotaByQuery };
     const union = (ranges: readonly NonNullable<ProviderAccountUsageQuotaViewDemand['range']>[]) => ranges.length
         ? { startAtMs: Math.min(...ranges.map(range => range.startAtMs)), endAtMs: Math.max(...ranges.map(range => range.endAtMs)) } : undefined;
+    // Widgets using the same relative period can have different Accounting
+    // clocks. Acquire its union once and project each widget's own boundaries.
+    const historyRanges = new Map<string, NonNullable<ProviderAccountUsageQuotaViewDemand['range']>>();
+    for (const view of views) {
+        if (!view.exact || !view.range) continue;
+        const periodKey = getRetainedQuotaPeriodKey(view.query);
+        const previous = historyRanges.get(periodKey);
+        historyRanges.set(periodKey, previous ? union([previous, view.range])! : view.range);
+    }
+    const historyViews = views.map(view => ({
+        ...view, historyRange: historyRanges.get(getRetainedQuotaPeriodKey(view.query)),
+    }));
     const range = union(views.flatMap(view => view.range ? [view.range] : []));
     const daily = views.some(view => view.range && !view.exact);
     const exactHistoryRange = union(views.flatMap(view => view.exact && view.range ? [view.range] : []));
@@ -590,9 +604,46 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
     // A publication for an as-yet unknown record can be the first reading
     // for an unresolved source. A known record only wakes its own sources.
     const findUnknownRecord = targets?.recordIds.some(id => !recordIds.includes(id));
+    const progressByKey = new Map(progress.map(view => [view.key, view]));
+    const retainedReads = new Map<string, RetainedProviderAccountUsageQuotaRead>();
+    const retainedAtMs = settledAllowance?.admission?.nowMs;
+    const settledMissing = new Set<string>();
+    for (const slice of settledAllowance?.slices.values() ?? []) {
+        const emptySources = new Set(slice.sources.filter(row => row.status === 'partial' && !row.errorCode).map(row => row.source));
+        for (const read of slice.quota ?? []) {
+            const key = createCanonicalJsonSigningInput(read.source);
+            if (!read.current && emptySources.has(`quota:${key}`)) settledMissing.add(key);
+        }
+    }
     const requestedIndices = admissions.flatMap(({ admitted, sourceKey }, index) => {
         if (recoverySources && !recoverySources.has(`quota:${sourceKey}`)) return [];
-        if (!targets || targets.sourceKeys.includes(sourceKey)) return [index];
+        if (!targets) {
+            const held = settledAllowance?.heads.get(sourceKey);
+            const current = held?.read.current;
+            if (!held && settledMissing.has(sourceKey) && !admitted.usageRecordId && !admitted.error && admitted.supported !== false) {
+                for (const view of progress) {
+                    const row = view.sources[index]!;
+                    if (!row.value?.current) row.state = { source: `quota:${sourceKey}`, status: 'partial' };
+                }
+                return [];
+            }
+            if (!held || !current || held.state.status !== 'available' || admitted.error || !canRetainQuotaRead(admitted, held.read)
+                || !isConnectedServiceQuotaObservationFresh({ observedAtMs: current.observedAtMs, nowMs: Date.now(), maxAgeMs: current.staleAfterMs })) return [index];
+            const remaining = historyViews.filter(view => {
+                if (!view.range) return false;
+                const row = progressByKey.get(view.key)!.sources[index]!;
+                // A relative query key stays the same at midnight. Its
+                // previous history cannot answer the new day's range.
+                const sameRange = retainedAtMs !== undefined
+                    && (resolveUsageQueryPeriod(view.query, retainedAtMs).startMs ?? 0) === view.range.startAtMs
+                    && settledAllowance?.slices.has(getRetainedQuotaPeriodKey(view.query));
+                return !sameRange || !sameStrictJsonValue(row.value?.current, current) || row.value?.pageFacts?.historyStatus !== 'complete';
+            });
+            if (!remaining.length) return [];
+            retainedReads.set(sourceKey, { read: held.read, views: remaining });
+            return [index];
+        }
+        if (targets.sourceKeys.includes(sourceKey)) return [index];
         const recordId = recordIds[index];
         if (!recordId) return findUnknownRecord ? [index] : [];
         if (!targets.recordIds.includes(recordId)) return [];
@@ -622,9 +673,11 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
     const publishProgress = (index: number, values?: ReadonlyMap<string, ConnectedServiceQuotaGetResultV1>, settled = false,
         failure?: Readonly<{ code: string; queryKeys?: readonly string[] }>): void => {
         requireCurrent(context, signal);
-        const { source, admitted } = admissions[index]!;
+        const { source, sourceKey, admitted } = admissions[index]!;
+        const retained = retainedReads.get(sourceKey);
         let changed = false;
-        for (const view of progress) {
+        for (const { key } of retained?.views ?? views) {
+            const view = progressByKey.get(key)!;
             if (failure?.queryKeys && !failure.queryKeys.includes(view.key)) continue;
             const row = view.sources[index]!;
             const value = values?.get(view.key) ?? row.accepted;
@@ -663,13 +716,19 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
         const { serverId, accountId } = context.accountLifetime.scope;
         const changesCursor = sync?.readAppliedAccountChangesCursor?.(serverId, accountId);
         await withUiConnectedServiceReader(context, signal, async read => Promise.all(requestedIndices.map(async index => {
-            const { source } = scope.sources[index]!;
+            const { source, sourceKey } = admissions[index]!;
+            const retained = retainedReads.get(sourceKey);
+            const demand = retained ? union(retained.views.flatMap(view => {
+                const range = view.historyRange ?? view.range;
+                return range ? [range] : [];
+            })) : range;
             try {
-                await read({ source, ...(range ? { projection: { range, resolution: 'accepted_observations' as const } } : {}) });
+                await read({ source, ...(demand ? { projection: { range: demand, resolution: 'accepted_observations' as const } } : {}) });
                 publishProgress(index, undefined, true);
             } catch (error) { failSource(index, error); }
         })), { includePendingWork: !!range, changesCursor, dayChange, addressedReads, ...(daily ? { historyView: 'daily', exactHistoryRange } : {}), readAllHistory: {
-            views,
+            views: historyViews,
+            retainedReads,
             onProgress: (value, projectedViews) => publishProgress(indexForSource(value.source), projectedViews),
             onViewFailure: (source, queryKeys, error) => failSource(indexForSource(source), error, queryKeys),
         } });
@@ -1492,6 +1551,7 @@ export async function readUiUsageQueryBatch(
         retainAllowance?: boolean;
         /** Undefined retains full acquisition for legacy and recovery demand. */
         allowanceTargets?: UsageAllowanceReadTargets;
+        settledAllowance?: RetainedUsageAllowance;
         allowanceDayChange?: ProviderAccountUsageDayChangeV1;
         /** An allowance-only wake keeps this entry's admitted independent sources. */
         retainedProjection?: UsageQueryReprojection;
@@ -1522,6 +1582,9 @@ export async function readUiUsageQueryBatch(
         ...reads.map(read => [getUsageQueryKey(read.query), read.period] as const)]);
     const quotaQueries = queries.filter(query => query.includeQuota !== false);
     const quotaDemands = quotaQueries.map(query => ({ query, period: periods.get(getUsageQueryKey(query))! }));
+    // Borrow only during this admission, never from the retained projection closure.
+    let settledAllowance = readOptions?.settledAllowance;
+    if (readOptions) readOptions.settledAllowance = undefined;
     if (readOptions?.retainedProjection) {
         const retainedProjection = readOptions.retainedProjection;
         let quota = readOpenedQuota(context, quotaQueries, previous);
@@ -1855,7 +1918,7 @@ export async function readUiUsageQueryBatch(
             // its retained observation is complete, stale, unavailable or failed.
             if (quotaQueries.length && !readOptions?.retainAllowance) {
                 const settled = await readOpenedQuotaHistory(context, quotaDemands, accountingNowMs, signal,
-                    value => { quota = value; publish(); }, previous, quota, readOptions?.allowanceTargets, readOptions?.allowanceDayChange, recoveryQuotaSources);
+                    value => { quota = value; publish(); }, previous, quota, readOptions?.allowanceTargets, readOptions?.allowanceDayChange, recoveryQuotaSources, settledAllowance);
                 if (settled !== quota) { quota = settled; publish(); }
             }
         })(),
@@ -1884,6 +1947,7 @@ export async function readUiUsageQueryBatch(
             readOptions.onProgress = undefined;
             readOptions.admitWork = undefined;
         }
+        settledAllowance = undefined;
         sessionCurrentnessClosed = true;
         unwatchNightHours?.();
         // Construction is only a module import and local observation capture;
@@ -2740,8 +2804,11 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     const value = retainUsageQueryResultReferences(batch, currentBatch, ownPrevious);
                     // Reuse the entry's content as well as its decoded value. A
                     // terminal read commonly repeats its last progress revision.
+                    if (settledRead || value !== currentBatch) {
+                        allowance = retainUsageAllowance(value, allowance,
+                            settledRead ? { input: readInputs[0]!, nowMs } : undefined);
+                    }
                     if (current && value === currentBatch) return keepContent(current, currentBatch);
-                    allowance = retainUsageAllowance(value, allowance);
                     return keepContent(createUsageQueryResourceContent(value), value, true);
                 };
                 let queuedProgress: UsageQueryReprojection | null = null;
@@ -2793,6 +2860,16 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // Keep the progressive typed producer. A direct command
                     // enters Action admission once and consumes these same facts.
                     const allowanceDemands = readDemand.filter(demand => demand.allowance !== false);
+                    // A newly mounted batch can ask for more history without
+                    // revoking the Account's settled source admission. Record
+                    // wakes, Refresh, replacement authority and recovery keep
+                    // their own demand instead.
+                    const settledAllowance = !caller && sharedAllowance && sharedAllowance.admission?.input === readInputs[0]
+                        && readDemand.every(demand => demand.allowance !== true && !demand.authorityChanged)
+                        && queries.some(query => query.includeQuota !== false && getQuotaHistoryMode(query) !== 'head'
+                            && sharedAllowance.slices.has(getRetainedQuotaPeriodKey(query)))
+                        ? sharedAllowance : undefined;
+                    if (settledAllowance) projectionIsCurrent = retainedCurrentness.isCurrent;
                     const read = async () => {
                         if (!retainedProjection) acquiredWorkInputs.clear();
                         return await readUiUsageQueryBatch(readContext, { queries }, options?.signal, previous,
@@ -2810,6 +2887,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                             retainedProjection,
                             retryFailuresOnly,
                             retainAllowance: readDemand.length > 0 && readDemand.every(demand => demand.allowance === false),
+                            settledAllowance,
                             allowanceTargets: allowanceDemands.map(demand => demand.allowanceTargets)
                                 .reduce(joinAllowanceReadTargets, allowanceDemands[0]?.allowanceTargets),
                             allowanceDayChange: allowanceDemands.map(demand => demand.allowanceDayChange).reduce(joinAllowanceDayChanges, allowanceDemands[0]?.allowanceDayChange),
