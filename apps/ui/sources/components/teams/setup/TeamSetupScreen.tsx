@@ -16,6 +16,7 @@ import { presentProjectSourceIssue } from '@/components/projects/sources/project
 import { projectSourceRoute } from '@/components/projects/sources/projectSourceNavigation';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
@@ -53,6 +54,7 @@ import {
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import {
   areServerAccountScopesEqual,
+  serverAccountScopedResourceKey,
   type ServerAccountScopeLifetime,
 } from '@/sync/domains/scope/serverAccountScope';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -501,6 +503,7 @@ function TeamSetupPlanPage(
       } : undefined}
       conditions={props.conditions}
       teamName={teamName}
+      navigationContextKey={serverAccountScopedResourceKey(context.scope, context.team.id)}
       selection={selection}
       machineId={machineId}
       machineLabel={machineName ?? null}
@@ -557,6 +560,7 @@ export function TeamSetupPageView(
     header: React.ReactNode;
     conditions?: React.ReactNode;
     teamName: string;
+    navigationContextKey?: string;
     selection: MachineAdministrationTargetSelectionV1;
     machineId: string | null;
     machineLabel: string | null;
@@ -635,10 +639,19 @@ export function TeamSetupPageView(
     }
     return null;
   }, [props.heldReviews, repositories]);
-  const seeWhatRan = stoppedOperation ? {
-    label: t('teams.join.setupPage.seeWhatRan'),
-    onPress: () => props.onOpenOperation(stoppedOperation),
+  const visibleOperation = stoppedOperation ?? (!arriving && props.hasPreset ? toolsOperation : null);
+  const operationAction = visibleOperation ? {
+    label: run.kind === 'running'
+      ? t('teams.join.setupPage.machineRunning', { machine: machineLabel ?? '' })
+      : t('teams.join.setupPage.seeWhatRan'),
+    onPress: () => props.onOpenOperation(visibleOperation),
   } : undefined;
+  const seeWhatRan = stoppedOperation ? operationAction : undefined;
+  useCurrentUiContextLocalCommands(operationAction && props.navigationContextKey ? [{
+    key: `team-setup-operation:${visibleOperation}`,
+    title: operationAction.label,
+    invoke: operationAction.onPress,
+  }] : [], { contextKey: props.navigationContextKey });
   // The selector draws its own card, so the heading stands alone above it, as the plan review's do below.
   const aside = props.preview ? (
     <>
@@ -838,17 +851,11 @@ export function TeamSetupPageView(
                 }
               />
             ) : null}
-            {toolsOperation ? (
+            {operationAction ? (
               <Item
                 testID="team-setup-tools-operation"
-                title={
-                  run.kind === 'running'
-                    ? t('teams.join.setupPage.machineRunning', {
-                        machine: machineLabel ?? '',
-                      })
-                    : t('teams.join.setupPage.seeWhatRan')
-                }
-                onPress={() => props.onOpenOperation(toolsOperation)}
+                title={operationAction.label}
+                onPress={operationAction.onPress}
               />
             ) : !machineId && props.preview ? null : !machineId ? (
               <Item

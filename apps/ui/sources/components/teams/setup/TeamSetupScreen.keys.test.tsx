@@ -55,13 +55,23 @@ afterEach(async () => {
   await homes.reset();
 });
 
-it('offers exact Setup recovery while keeping operation details reachable', async () => {
+it('offers exact Setup recovery and lets an agent open the same retained operation', async () => {
+  const serverId = await homes.addHome({ name: 'Setup Home', serverUrl: 'https://setup-actions.example.test',
+    serverIdentityId: 'srv_setup_actions', accountId: 'member', currentAccount: true, teamsEnabled: true });
+  const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'member' };
+  storage.getState().activateProfileScope(scope);
+  publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+  const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+  const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+  const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+  const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
   const onRun = vi.fn();
   const onOpenOperation = vi.fn();
   const onRetryFailedSetup = vi.fn();
   const recovery = { onRetryFailedSetup };
-  const screen = await renderScreen(<TeamSetupPageView
+  const screen = await renderMountedCurrentUiContext(<TeamSetupPageView
     {...recovery}
+    navigationContextKey="setup-actions"
     header={null} teamName="Acme" selection={createMachineAdministrationTargetSelectionFixture()}
     machineId="machine-a" machineLabel="Mac" homeDir={null}
     run={{ kind: 'stopped', operationId: 'setup-operation', failure: {
@@ -77,8 +87,15 @@ it('offers exact Setup recovery while keeping operation details reachable', asyn
   await screen.pressByTestIdAsync('team-setup-retry-failed');
   await screen.pressByTestIdAsync('team-setup-stopped-secondary-action');
   expect(onRetryFailedSetup).toHaveBeenCalledOnce();
-  expect(onOpenOperation).toHaveBeenCalledWith('setup-operation');
+  expect(onOpenOperation).toHaveBeenCalledExactlyOnceWith('setup-operation');
   expect(onRun).not.toHaveBeenCalled();
+  const reader = readCurrentUiContextActionReader({ surface: 'agent' });
+  const command = reader?.readCurrentUiContext()?.commands.find(item => item.title === t('teams.join.setupPage.seeWhatRan'));
+  expect(command).toBeDefined();
+  expect(await createDefaultActionExecutor().execute(
+    ACTION_ID_FAMILIES_V1.current_ui_context[1], { commandId: command!.id }, { surface: 'agent' },
+  )).toMatchObject({ ok: true });
+  expect(onOpenOperation.mock.calls).toEqual([['setup-operation'], ['setup-operation']]);
 });
 
 it('lists the keys a Team shares on its setup page instead of calling the Team empty', async () => {
