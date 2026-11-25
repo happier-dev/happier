@@ -238,21 +238,48 @@ function buildSystemdUserScopedLaunchSpecForSlice(
   };
 }
 
+const HAPPIER_JOBS_SLICE_POLICY: SystemdUserSlicePolicy = {
+  sliceName: HAPPIER_JOBS_SLICE_NAME,
+  expectedProperties: HAPPIER_JOBS_SLICE_EXPECTED_PROPERTIES,
+  requiredFiniteProperties: ['MemoryHigh'],
+};
+
+const hostJobsSliceReads = new Map<string, Promise<boolean>>();
+
 /**
- * Checking the expected jobs policy keeps an arbitrary Linux host on its
- * existing launch path instead of turning a missing user manager into a
- * session-start failure.
+ * Readiness is shared only while the same manager and slice are being queried.
+ * Each launch still owns cancellation and scope admission.
  */
 export async function isSystemdUserResourceGovernorReady(params: Readonly<{
   platform?: NodeJS.Platform;
   environment?: NodeJS.ProcessEnv;
   execFile?: SystemdUserResourceGovernorExecFile;
 }> = {}): Promise<boolean> {
-  return await isSystemdUserSliceReady(params, {
-    sliceName: HAPPIER_JOBS_SLICE_NAME,
-    expectedProperties: HAPPIER_JOBS_SLICE_EXPECTED_PROPERTIES,
-    requiredFiniteProperties: ['MemoryHigh'],
-  });
+  const environment = params.environment ?? process.env;
+  if ((params.platform ?? process.platform) !== 'linux') return false;
+  if (environment !== process.env || params.execFile) {
+    return isSystemdUserSliceReady(params, HAPPIER_JOBS_SLICE_POLICY);
+  }
+
+  const key = JSON.stringify([
+    HAPPIER_JOBS_SLICE_POLICY.sliceName,
+    environment.PATH,
+    environment.DBUS_SESSION_BUS_ADDRESS,
+    environment.XDG_RUNTIME_DIR,
+  ]);
+  const pending = hostJobsSliceReads.get(key);
+  if (pending) return pending;
+
+  const read = isSystemdUserSliceReady({
+    ...params,
+    execFile: (command, args, options) => execFileWithDeadline(command, args, {
+      ...options,
+      // A stuck shared reader must exit at the existing deadline even if it ignores SIGTERM.
+      terminateOnAbort: async child => { child.kill('SIGKILL'); },
+    }),
+  }, HAPPIER_JOBS_SLICE_POLICY).finally(() => { hostJobsSliceReads.delete(key); });
+  hostJobsSliceReads.set(key, read);
+  return read;
 }
 
 export function buildSystemdUserScopedLaunchSpec(params: Readonly<{

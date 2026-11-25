@@ -58,6 +58,45 @@ describe('systemd user resource governor', () => {
     }
   });
 
+  it.runIf(process.platform === 'linux')('shares only active jobs reads for the same user manager and reads again after the deadline', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-jobs-readiness-'));
+    try {
+      const systemctl = join(directory, 'systemctl');
+      const script = `#!/bin/sh
+manager="\${DBUS_SESSION_BUS_ADDRESS##*/}"
+counter="$0.$manager.calls"
+if [ "$manager" = a ] && [ ! -e "$counter" ]; then
+  printf x >> "$counter"
+  trap '' TERM
+  exec "$HAPPIER_SYSTEMD_TEST_NODE" -e 'process.on("SIGTERM", () => {}); setTimeout(() => require("node:fs").writeFileSync(process.argv[1], "finished"), 3000)' "$0.completed"
+fi
+printf x >> "$counter"
+printf '%s\\n' LoadState=loaded CPUWeight=50 IOWeight=50 MemoryHigh=1
+`;
+      await writeFile(systemctl, script, { mode: 0o700 });
+      vi.stubEnv('PATH', directory);
+      vi.stubEnv('HAPPIER_SYSTEMD_TEST_NODE', process.execPath);
+      vi.stubEnv('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/fixture/a');
+      const stalled = Promise.all(Array.from({ length: 3 }, () => isSystemdUserResourceGovernorReady()));
+
+      vi.stubEnv('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/fixture/b');
+      await expect(isSystemdUserResourceGovernorReady()).resolves.toBe(true);
+      expect(await readFile(systemctl + '.b.calls', 'utf8')).toBe('x');
+
+      vi.stubEnv('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/fixture/a');
+      const outcomes = await stalled;
+      await expect(readFile(systemctl + '.completed', 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(outcomes).toEqual([false, false, false]);
+      expect(await readFile(systemctl + '.a.calls', 'utf8')).toBe('x');
+      await expect(isSystemdUserResourceGovernorReady()).resolves.toBe(true);
+      await expect(isSystemdUserResourceGovernorReady()).resolves.toBe(true);
+      expect(await readFile(systemctl + '.a.calls', 'utf8')).toBe('xxx');
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 10_000);
+
   it('reports a ceiling only after the user manager and its actual memory controller are observed', async () => {
     const execFile = vi.fn(async () => ({ stdout: 'ControlGroup=/user.slice/user-1000.slice/user@1000.service\n', stderr: '' }));
     const readFile = vi.fn(async () => 'cpu io memory pids\n');
