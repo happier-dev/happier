@@ -13,6 +13,9 @@ it('publishes the saved health check operand for the setup Action catalog', () =
             expect.objectContaining({ path: 'serverId', widget: 'select', inputType: { hostType: 'homeId' } }),
         ]));
         if (id.startsWith('health-check')) {
+            const setup = plugin.manifest.contributes.actions?.find(row => row.id === id);
+            expect(setup?.title).toBe('Choose a health check');
+            expect(setup?.inputHints?.submitLabel).toBe('Use this source');
             expect(fields).toEqual(expect.arrayContaining([
                 expect.objectContaining({ path: 'nativeSourceInstanceId', widget: 'select', inputType: { hostType: 'savedHealthSourceId' } }),
             ]));

@@ -26,9 +26,9 @@ const setup = defineProtocolObject({ v: defineProtocolLiteral(1), serverId: defi
 export const savedHealthTransitionSourceSchema = SavedHealthTransitionSourceV1ProtocolSchema;
 export type SavedHealthTransitionSource = SavedHealthTransitionSourceV1;
 export const savedHealthTransitionActions = Object.fromEntries([HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT].map(event => [`${event}/setup`, {
-    title: 'Choose saved health transitions', execution: { target: 'daemon' as const }, scopes: ['global', 'machine'] as const,
+    title: 'Choose a health check', execution: { target: 'daemon' as const }, scopes: ['global', 'machine'] as const,
     surfaces: ['plugin', 'ui', 'cli', 'agent', 'mcp'] as const, dangerLevel: 'safe' as const, readOnly: true,
-    inputHints: { fields: [
+    inputHints: { submitLabel: 'Use this source', fields: [
         { path: 'serverId', title: 'Home', widget: 'select' as const,
             inputType: { hostType: 'homeId' as const }, required: true },
         { path: 'nativeSourceInstanceId', title: 'Saved health check', widget: 'select' as const,
