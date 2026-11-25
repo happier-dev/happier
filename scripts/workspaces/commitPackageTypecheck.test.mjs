@@ -299,15 +299,19 @@ test('an unavailable rolling app comparison preserves its last checked checkpoin
   t.after(() => rm(state, { recursive: true, force: true }));
   const checkpoint = join(state, 'rolling-head-apps__cli');
   const base = await commit('apps/cli/src/index.ts', 'export const value = 2;');
-  await writeFile(checkpoint, base + '\n');
-  const head = await commit('apps/cli/src/index.ts', 'export const value = 3;');
-  let available = false;
+  let available = true;
   const sides = [];
   const options = { repo, env: { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state },
     scope: 'apps/cli', remote: async (_tree, _dirs, side) => {
       sides.push(side);
       return new Map([['apps/cli', available ? [] : null]]);
     }, log: () => {} };
+  await rollingHeadTypecheckPass(options);
+  await commit('docs/notes.md', 'unrelated');
+  await rollingHeadTypecheckPass(options);
+  const head = await commit('apps/cli/src/index.ts', 'export const value = 3;');
+  sides.length = 0;
+  available = false;
   const failed = await rollingHeadTypecheckPass(options);
   assert.deepEqual(failed.unavailable, ['apps/cli']);
   assert.deepEqual(sides, ['head'], 'an unjudged HEAD needs no historical compile');
@@ -350,19 +354,49 @@ test('a legacy false green is replaced only by an exact compiler baseline', asyn
   assert.match(readFileSync(log, 'utf8'), new RegExp(`ROLLING-BASELINE .*invalidatedBaseline=${base} headTree=[0-9a-f]+ diagnostics=1`, 'u'));
 });
 
-test('a missing package baseline cannot produce a green verdict for a judged HEAD', async t => {
+test('a missing package baseline produces a typed failure and rebaselines without a historical compile', async t => {
   const { repo, commit } = await workspace(t);
   const state = await mkdtemp(join(tmpdir(), 'happier-rolling-typecheck-'));
   t.after(() => rm(state, { recursive: true, force: true }));
+  const checkpoint = join(state, 'rolling-head');
   const base = await commit('packages/leaf/src/index.ts', 'export const value = 2;');
-  await writeFile(join(state, 'rolling-head'), base);
-  await commit('packages/leaf/src/index.ts', 'export const value = 3;');
-  const result = await rollingHeadTypecheckPass({
+  await writeFile(checkpoint, base);
+  const head = await commit('packages/leaf/src/index.ts', 'export const value = 3;');
+  const sides = [];
+  const options = {
     repo, env: { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state }, log: () => {},
-    remote: async (_tree, _dirs, side) => new Map([['packages/leaf', side === 'head' ? [] : undefined]]),
-  });
+    remote: async (_tree, _dirs, side) => {
+      sides.push(side);
+      return new Map([['packages/leaf', []]]);
+    },
+  };
+  const result = await rollingHeadTypecheckPass(options);
+  assert.deepEqual(sides, ['head']);
   assert.deepEqual(result.unavailable, ['packages/leaf']);
-  assert.match(readFileSync(join(state, 'verdicts.log'), 'utf8'), /ROLLING-INCOMPLETE .*failure=base:packages\/leaf:worker-unavailable/u);
+  assert.match(readFileSync(join(state, 'verdicts.log'), 'utf8'), /ROLLING-INCOMPLETE .*failure=base:packages\/leaf:baseline-unavailable/u);
+  assert.equal(readFileSync(checkpoint, 'utf8').trim(), head);
+  await commit('packages/leaf/src/index.ts', 'export const value = 4;');
+  assert.deepEqual((await rollingHeadTypecheckPass(options)).unavailable, []);
+  assert.deepEqual(sides, ['head', 'head']);
+});
+
+test('a current app result remains usable after its historical comparison was incomplete', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-rolling-typecheck-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  const scope = 'apps/cli';
+  const base = await commit('apps/cli/src/index.ts', 'export const value = 2;');
+  await writeFile(join(state, 'rolling-head-apps__cli'), base);
+  await commit('apps/cli/src/index.ts', 'export const value = 3;');
+  const options = {
+    repo, env: { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state }, scope, log: () => {},
+    remote: async () => new Map([[scope, []]]),
+  };
+  assert.deepEqual((await rollingHeadTypecheckPass(options)).unavailable, [scope]);
+  await commit('apps/cli/src/index.ts', 'export const value = 4;');
+  assert.deepEqual((await rollingHeadTypecheckPass(options)).unavailable, []);
+  const verdict = readFileSync(join(state, 'verdicts.log'), 'utf8').trimEnd().split('\n').at(-1);
+  assert.match(verdict, /ROLLING-ok scope=apps\/cli /u);
 });
 
 test('apps/server, apps/cli and apps/ui are selected when the range touches the app or a package it depends on', async t => {
@@ -831,13 +865,11 @@ test('two report consumers split one queue: every commit is checked exactly once
   void git;
 });
 
-// A worker whose SSH session closes before returning rows hands the request to the next worker.
-test('a worker dispatch that returns no rows falls back to the next worker', async t => {
+test('a rolling attempt publishes a typed failure after one worker dispatch without rows', async t => {
   const { repo, commit } = await workspace(t);
   const state = await mkdtemp(join(tmpdir(), 'happier-commit-gate-fallback-'));
   t.after(() => rm(state, { recursive: true, force: true }));
-  const sha = await commit('packages/plugins/codex/src/index.ts', 'export const value = 41;\n');
-  const treeId = execFileSync('git', ['rev-parse', `${sha}^{tree}`], { cwd: repo, encoding: 'utf8' }).trim();
+  await commit('apps/cli/src/index.ts', 'export const value = 41;\n');
   const dispatched = [];
   // The SSH/process boundary: tree push and the routed worker command.
   const transport = {
@@ -848,12 +880,16 @@ test('a worker dispatch that returns no rows falls back to the next worker', asy
       dispatched.push(worker);
       if (worker === 'nl3') return { status: 255, signal: null, stdout: '' };
       const tree = args.find(arg => arg.startsWith('--tree=')).slice(7);
-      return { status: 0, signal: null, stdout: `HAPPIER_ROLLING_ROWS ${JSON.stringify({ [tree]: { 'packages/plugins/codex': [] } })}\n` };
+      return { status: 0, signal: null, stdout: `HAPPIER_ROLLING_ROWS ${JSON.stringify({ [tree]: { 'apps/cli': [] } })}\n` };
     },
   };
-  const rows = await workerTreeRows({ repo, state, log: () => {}, workers: ['nl3', 'nl1'], lane: 'gate', transport })(treeId, ['packages/plugins/codex'], 'head');
-  assert.deepEqual(dispatched, ['nl3', 'nl1']);
-  assert.deepEqual(rows.get('packages/plugins/codex'), []);
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const scope = 'apps/cli';
+  const remote = workerTreeRows({ repo, state, env, scope, workers: ['nl3', 'nl1'], transport, log: () => {} });
+  await rollingHeadTypecheckPass({ repo, env, scope, remote, log: () => {} });
+  assert.deepEqual(dispatched, ['nl3']);
+  assert.match(readFileSync(join(state, 'verdicts.log'), 'utf8'),
+    /ROLLING-INCOMPLETE .*failure=head:apps\/cli:worker-no-rows/u);
 });
 
 test('a rolling worker declaration failure retains its typed stage in the verdict', async t => {
@@ -944,10 +980,6 @@ if [ "$1" = --heavyweight-admission ]; then
   while [ "$1" != -- ]; do shift; done
   shift
   [ "$2" = scripts/workspaces/commitGateTypecheck.mjs ] || { printf 'unstable admission entry: %s\\n' "$2" >&2; exit 95; }
-  if [ -n "$HAPPIER_P03_FIXTURE_STALL" ]; then
-    printf 'HAPPIER_DECLARATION_COMPARISON_INCOMPLETE %s\\n' "$HAPPIER_P03_FIXTURE_STALL"
-    exit 75
-  fi
   exec "$@"
 fi
 printf 'attempted mirror dispatch\\n' >> ${JSON.stringify(mirrorLog)}
@@ -998,32 +1030,6 @@ if (project !== 'tsconfig.json') {
 
 test('an exact-tree worker reads the Git payload even when the source mirror cannot flush', { skip: process.platform === 'win32' }, async t => {
   const { repo, state, workerHome, bin, sha, treeId, write, git, source, admissionLog } = await exactTreeWorkerFixture(t);
-  const runGate = stall => spawnSync(process.execPath, [
-    fileURLToPath(new URL('./commitGate.mjs', import.meta.url)),
-    '--label=commit-partial', `--base=${sha}^`, `--tree=${sha}`,
-  ], {
-    cwd: repo, encoding: 'utf8', timeout: 10_000,
-    env: { ...process.env, GIT_SSH_VARIANT: 'ssh', PATH: `${bin}:${process.env.PATH}`,
-      HAPPIER_COMMIT_TREE_GATE: 'off', HAPPIER_COMMIT_TYPECHECK_GATE: 'report', HAPPIER_COMMIT_TYPECHECK_DIR: state,
-      ...(stall && { HAPPIER_P03_FIXTURE_STALL: JSON.stringify(stall) }) },
-  });
-  const lockPath = join(workerHome, '.happier-stack/cache/commit-typecheck-worker/typecheck-state/lane-gate/worktree.lock');
-  await withWorkspaceBundleLock(async () => {
-    const busy = runGate();
-    assert.equal(busy.status, 11, busy.error?.message ?? busy.stderr + busy.stdout);
-    assert.match(busy.stderr, /exact-tree worker worktree busy/u);
-    assert.match(busy.stdout, /"code":"declaration-comparison-incomplete"/u);
-  }, { lockPath });
-
-  const stall = { cause: 'no-cpu-progress', elapsedMs: 301_000, cpuIdleMs: 300_000, cpuUsageUsec: 1200,
-    historicalMaxMs: null, elapsedLimitMs: null, recordedPeakKiB: null };
-  const stalled = runGate(stall);
-  assert.equal(stalled.status, 11, stalled.error?.message ?? stalled.stderr + stalled.stdout);
-  const detail = stalled.stdout.match(/commit gate incomplete \(package declarations\): (.+)/u);
-  assert.ok(detail, stalled.stdout);
-  assert.deepEqual(JSON.parse(detail[1]), { code: 'declaration-comparison-incomplete', packages: ['packages/protocol'],
-    stall: { ...stall, worker: 'test-worker' } });
-
   // Keep the authored sources fixed and change their dependency generation between two jobs.
   await write('scripts/workspaces/commitGateTypecheck.mjs', readFileSync(join(source, 'scripts/workspaces/commitGateTypecheck.mjs')));
   await write('packages/protocol/src/index.ts', 'export const value = 41;\n');

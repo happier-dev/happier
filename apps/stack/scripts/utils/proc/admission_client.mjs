@@ -13,7 +13,6 @@ import { readLinuxHostAvailableMemoryKiB, readProcessJobScopeCpuUsageUsec, readP
 import { brokerAddress } from './admission_socket.mjs';
 import { ADMISSION_CPU_WORKER_FLAGS, SOURCE_WEB_EXPORT_ADMISSION_CLASS, resolveAdmissionCpuCost, resolveAdmissionDiskClass } from '../dev_targets/command_resources.mjs';
 
-export const DECLARATION_COMPARISON_STALL_MARKER = 'HAPPIER_DECLARATION_COMPARISON_INCOMPLETE ';
 const execFileAsync = promisify(execFile);
 const brokerPath = fileURLToPath(new URL('./admission_broker.mjs', import.meta.url));
 const brokerDisconnected = error => ['ECONNRESET', 'EPIPE', 'ECONNREFUSED', 'ENOENT'].includes(error.code);
@@ -161,7 +160,6 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
   let resources, slotServer, control, priorityScope;
   const slotConnections = new Set();
   let payload;
-  let declarationStall;
   const interrupt = name => {
     // A `timeout` around a queued command lands here; its output must not read as a run.
     if (!payload && !cancellation.signal.aborted) {
@@ -249,7 +247,7 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
       cpuCost,
       ...(autoHostMemoryFloorKiB > 0 ? { autoHostMemoryFloorKiB } : {}),
       pid: process.pid, arrivedAt,
-      repoDir, cacheBaseDir, noWait, locks, projects, judgment, acceptsDeclarationStall: true, acceptsInheritedGrant: true,
+      repoDir, cacheBaseDir, noWait, locks, projects, judgment, acceptsInheritedGrant: true,
       ...(typeof entry === 'string' && typeof component === 'string' ? { component, entry } : {}),
       // The routed run this preparation step belongs to; the broker ranks a preparation class by it.
       ...(env.HAPPIER_ADMISSION_PREPARES_CLASS ? { preparesClass: env.HAPPIER_ADMISSION_PREPARES_CLASS } : {}) };
@@ -313,22 +311,11 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
               slotConnections.add(socket);
               socket.once('close', () => slotConnections.delete(socket));
               socket.on('error', () => socket.destroy());
-              const messages = createInterface({ input: socket });
-              messages.on('error', () => socket.destroy());
-              messages.on('line', line => {
-                let message;
-                try { message = JSON.parse(line); } catch { return; }
-                if (message.kind !== 'declaration-comparison-stalled' || !message.stall || cancellation.signal.aborted) return;
-                declarationStall = Object.assign(new Error('Admitted declaration comparison stalled'), {
-                  code: 'declaration-comparison-incomplete', stall: message.stall,
-                });
-                cancellation.abort(declarationStall);
-              });
               if (admittedDuration) socket.write(JSON.stringify(admittedDuration) + '\n');
               // A successor can use this identity's local duration and peak history.
               if (request.entry !== undefined) socket.write(JSON.stringify({ kind: 'slot-identity', className: request.className,
                 resourceClass: request.resourceClass, projects: request.projects, component: request.component, entry: request.entry,
-                judgment: request.judgment, repoDir: request.repoDir, acceptsDeclarationStall: request.acceptsDeclarationStall }) + '\n');
+                judgment: request.judgment, repoDir: request.repoDir }) + '\n');
             });
             await new Promise((ready, reject) => {
               slotServer.once('error', reject);
@@ -373,7 +360,6 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
             const initialCpuUsec = ownsScope && request.entry !== undefined ? readProcessJobScopeCpuUsageUsec() : null;
             const startedAt = performance.now();
             payload = run(acquiredEnv).then(async result => {
-              if (declarationStall) throw declarationStall;
               if (result === 0) {
                 // Time only the payload so queue waits and prior scope activity
                 // do not understate or inflate the successful run's usage.
@@ -424,8 +410,6 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
       unansweredEndpoint = answered ? undefined : socketIdentity;
     }
     cancellation.signal.throwIfAborted();
-  } catch (error) {
-    throw declarationStall ?? error;
   } finally {
     signal?.removeEventListener('abort', onExternalAbort);
     control?.destroy();
@@ -599,12 +583,6 @@ export async function runAdmissionCommand({ command, args = [], authoredArgs, va
     if (options.failureId) console.error(`HSTACK_ADMISSION_RUN_MS:${options.failureId}:${Date.now() - payloadStartedAt}`);
     return status;
   } catch (error) {
-    if (error.code === 'declaration-comparison-incomplete') {
-      const reason = JSON.stringify(error.stall);
-      console.error(`[preferred-execution] declaration comparison stalled: ${reason}`);
-      console.log(`${DECLARATION_COMPARISON_STALL_MARKER}${reason}`);
-      return 75;
-    }
     if (error.name === 'AbortError') return 130;
     if (error instanceof AdmissionRefusal && error.code === 'HSTACK_ADMISSION_INHERITANCE_REQUIRED') {
       console.error(`[preferred-execution] ${error.code}: nested command must inherit its parent’s admission grant`);

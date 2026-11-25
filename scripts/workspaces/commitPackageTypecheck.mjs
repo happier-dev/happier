@@ -693,22 +693,16 @@ export async function commitGateTypecheck({ repo, base, tree, env = process.env,
     ? controllerDeclarationRows({ repo, env, log, requireInherited }) : null;
   const compare = remote ?? (controller ? async (trees, dirs, sides) => {
     const rows = await controller(trees, dirs, sides);
-    if (requireInherited || rows.stall || rows.cancelled || trees.every(tree => dirs.every(dir => Array.isArray(rows.get(tree)?.get(dir))))) return rows;
+    if (requireInherited || rows.cancelled || trees.every(tree => dirs.every(dir => Array.isArray(rows.get(tree)?.get(dir))))) return rows;
     log('[commit-package-typecheck] controller comparison incomplete; trying exact-tree workers');
     return await worker(trees, dirs, sides);
   } : requireInherited ? async () => new Map() : worker);
-  let stall;
-  const result = await commitPackageTypecheck({ repo, base, tree, env, log, packages: plan.blocking, cachedOnly,
-    remote: async (...args) => {
-      const rows = await compare(...args);
-      stall = rows?.stall;
-      return rows;
-    } });
+  const result = await commitPackageTypecheck({ repo, base, tree, env, log, packages: plan.blocking, cachedOnly, remote: compare });
   if (!result.skipped && record && !cachedOnly) {
     mkdirSync(state, { recursive: true });
     appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} GATE-${commitPackageTypecheckRefuses(result) ? 'REFUSED' : 'ok'} base=${result.trees.base} tree=${result.trees.head} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} ${(result.ms / 1000).toFixed(1)}s\n`);
   }
-  return { ...result, detached: plan.detached, ...(stall ? { stall } : {}) };
+  return { ...result, detached: plan.detached };
 }
 
 /** A green range can still list packages that the worker could not compare. */
@@ -834,8 +828,7 @@ async function takeQueuedCommit(state) {
 }
 
 /**
- * One report-mode consumer: takes queued commits one at a time, oldest first, and checks each on `worker` (falling back
- * to the other report workers when it returns no rows), then returns the SHAs it checked. One consumer per worker and
+ * One report-mode consumer: takes queued commits one at a time, oldest first, and checks each on `worker`. One consumer per worker and
  * host (its lock, without waiting; a second one returns []), so two consumers split one queue: a serial lane handles
  * ~30 commits/h and ~50 package commits/h arrived at 21:00Z on 2026-11-18. The holder re-reads the queue before it
  * lets go (2026-11-18 21:00-21:12Z: one detached process per commit, 10 in 12 min, piled up behind the gate lane).
@@ -847,7 +840,7 @@ export async function drainCommitGateReports({ repo, env = process.env, worker, 
   const state = commitPackageTypecheckStateDir(repo, env);
   mkdirSync(state, { recursive: true });
   const queue = gateReportQueuePath(state);
-  const workers = [worker, ...eligible.filter(other => other !== worker)];
+  const workers = [worker];
   const drained = [];
   for (;;) try {
     await withWorkspaceBundleLock(async () => {
@@ -923,7 +916,7 @@ function isUnjudgedAppCheckpoint(state, scope, commit) {
   catch (error) { if (error.code === 'ENOENT') return false; throw error; }
   const match = verdicts.split('\n').findLast(line =>
     line.includes(` scope=${scope} `) && line.includes(` head=${commit} `) && !line.includes(' ROLLING-ATTRIBUTED '));
-  return / (?:incomplete|unavailable)=apps\/(?:server|cli|ui)(?:[, ]|$)/u.test(match ?? '');
+  return !match?.includes(' headTree=') && / (?:incomplete|unavailable)=apps\/(?:server|cli|ui)(?:[, ]|$)/u.test(match ?? '');
 }
 
 /**
@@ -951,8 +944,7 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
   const base = pending ? pending.base : rollingBase(repo, recorded, head);
   result.base = base;
   const record = verdict => {
-    const missingAppVerdict = isAppScope(scope) && (result.incomplete.length || result.unavailable.length);
-    if (!pending && !missingAppVerdict) {
+    if (!pending && verdict !== 'skipped' && !result.failures.some(failure => failure.side === 'head')) {
       writeFileSync(`${recordedPath}.tmp`, head);
       renameSync(`${recordedPath}.tmp`, recordedPath);
     }
@@ -968,12 +960,17 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
   const treeOf = commit => git(['rev-parse', `${commit}^{tree}`]).trim();
   // Rows come from a worker (P03-INFRA-SWEEP 2026-11-17: ~16 GiB rolling compiles on the agent host); `remote: null`
   // compiles in this process.
-  const { rowsAt } = treeTypechecker({ repo, state, env, log, compile, bootstrap,
+  const { rowsAt, rowsAtMany } = treeTypechecker({ repo, state, env, log, compile, bootstrap,
     remote: remote === undefined ? workerTreeRows({ repo, state, env, log, scope }) : remote });
   const readSide = async (tree, side) => {
+    const cachedBaseline = side === 'base' && !pending;
     let rows;
     try {
-      rows = await rowsAt(tree, packages, side);
+      if (cachedBaseline) {
+        [rows] = await rowsAtMany([{ treeId: tree, packages, side }], { cachedOnly: true });
+      } else {
+        rows = await rowsAt(tree, packages, side);
+      }
     } catch (error) {
       log(`[rolling-head-typecheck] ${scope} ${side} comparison-execution-failed: ${error.stack ?? error}`);
       rows = new Map();
@@ -984,15 +981,19 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
         rows.set(dir, null);
         setTypecheckFailure(rows, dir, 'compiler-global-diagnostic');
       }
-      if (!rows.get(dir)) result.failures.push({ side, dir, code: rows.failures?.get(dir) ?? 'compiler-incomplete' });
+      if (!rows.get(dir)) {
+        result.failures.push({ side, dir, code: rows.failures?.get(dir)
+          ?? (cachedBaseline ? 'baseline-unavailable' : 'compiler-incomplete') });
+      }
     }
     return rows;
   };
   const headTree = treeOf(head);
   const headRows = await readSide(headTree, 'head');
-  if (isAppScope(scope) && headRows.get(scope)) {
+  const judged = [...headRows.values()].filter(Array.isArray);
+  if (judged.length) {
     result.headTree = headTree;
-    result.diagnostics = headRows.get(scope).length;
+    result.diagnostics = judged.reduce((total, rows) => total + rows.length, 0);
   }
   if (isAppScope(scope) && recorded && !headRows.get(scope)) {
     // A historical compiler cannot recover missing HEAD rows. Keep the last checked checkpoint.
@@ -1068,14 +1069,6 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
 
 const WORKER_STATE = '.happier-stack/cache/commit-typecheck-worker';
 const WORKER_ROWS = 'HAPPIER_ROLLING_ROWS ';
-
-async function readDeclarationComparisonStall(output) {
-  if (!output) return null;
-  const { DECLARATION_COMPARISON_STALL_MARKER: marker } = await import('../../apps/stack/scripts/utils/proc/admission_client.mjs');
-  const line = output.split('\n').find(entry => entry.startsWith(marker));
-  if (!line) return null;
-  try { return JSON.parse(line.slice(marker.length)); } catch { return null; }
-}
 
 const completeTypecheckRows = (byTree, trees, packages) => trees.every(
   tree => packages.every(dir => Array.isArray(byTree[tree]?.[dir])),
@@ -1191,68 +1184,72 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
     const label = sides.join('+');
     const unjudged = () => new Map(dirs.map(dir => [dir, undefined]));
     const none = many ? new Map(treeIds.map(id => [id, unjudged()])) : unjudged();
+    const unavailable = code => {
+      const sides = many ? none.values() : [none];
+      for (const rows of sides) for (const dir of dirs) setTypecheckFailure(rows, dir, code);
+      return none;
+    };
     const resourceClass = lane === GATE_LANE ? GATE_PACKAGE_CHECK_CLASS : 'compilation';
     const connections = transport ? undefined : typecheckWorkerConnections(repo, env, resourceClass);
-    const candidates = transport ? filterExecutionWorkers(workers ?? [], env)
-      : workers ? workers.filter(worker => connections.has(worker)) : [...connections.keys()];
-    if (!candidates.length) return none;
+    const [worker] = transport ? filterExecutionWorkers(workers ?? [], env)
+      : workers ? workers.filter(worker => connections.has(worker)) : connections.keys();
+    if (!worker) return unavailable('worker-unavailable');
+    const ssh = transport ? io.ssh(worker) : connections.get(worker);
+    if (!ssh) return unavailable('worker-unavailable');
     const controllerTree = transport ? undefined : git(['rev-parse', 'HEAD^{tree}']).trim();
     // Each candidate tree, and the Git-only runner, must be reachable from the
     // one published tip. Append the runner first so the tip remains a judged tree.
     const publishedTrees = controllerTree && !treeIds.includes(controllerTree) ? [controllerTree, ...treeIds] : treeIds;
-    for (const worker of candidates) {
-      const ssh = transport ? io.ssh(worker) : connections.get(worker);
-      if (!ssh) continue;
-      // Each tree is pushed as a child of the last commit this worker accepted on the ref. A parentless commit made
-      // the push enumerate and send the whole tree (71,501 objects, 155-300 s per tree on 2026-11-18); a child of a
-      // commit the worker has sends only the changed objects (14 objects, 3.5 KB, under a second, for 5f6edbb072d).
-      const tipPath = join(state, `worker-${worker}-${ref}.tip`);
-      let parent = '';
-      try { parent = readFileSync(tipPath, 'utf8').trim(); } catch {}
-      const known = rev => spawnSync('git', ['cat-file', '-e', `${rev}^{commit}`], { cwd: repo, env: gitEnv() }).status === 0;
-      if (parent && !known(parent)) parent = '';
-      if (!parent) {
-        // No recorded tip (a new state or lane): any commit the worker's refs already name and this repository holds.
-        parent = io.listRefs(ssh, [`refs/heads/${ref}`, 'refs/heads/rolling']).split('\n').map(line => line.split('\t')[0]).find(rev => rev && known(rev)) ?? '';
-      }
-      // The trees chain in request order, so one push of the last carries them all.
-      let commit = parent;
-      for (const id of publishedTrees) {
-        commit = commit && git(['rev-parse', `${commit}^{tree}`]).trim() === id ? commit
-          : typecheckTreeCommit(git, id, commit);
-      }
-      // A push may replace the ref with an unrelated chain (another controller state).
-      const push = io.push(ssh, commit, `refs/heads/${ref}`);
-      if (push.status !== 0) {
-        log(`[rolling-head-typecheck] worker ${worker} unreachable for ${label}: ${(push.stderr || '').trim().split('\n').at(-1) ?? ''}`);
-        continue;
-      }
-      writeFileSync(`${tipPath}.${process.pid}`, commit);
-      renameSync(`${tipPath}.${process.pid}`, tipPath);
-      const run = await io.dispatch(worker, ['--worker-rows', `--slug=${slug}`, ...(lane ? [`--lane=${lane}`] : []), `--ref=${ref}`, `--scope=${scope}`,
-        `--tree=${treeIds.join(',')}`, `--packages=${dirs.join(',')}`, `--side=${sides.join(',')}`], ssh, controllerTree);
-      if (run.status !== 0) {
-        const stall = await readDeclarationComparisonStall(run.stdout);
-        if (stall) return Object.assign(none, { stall: { ...stall, worker } });
-      }
-      const line = run.status === 0 && run.stdout?.split('\n').find(entry => entry.startsWith(WORKER_ROWS));
-      if (!line) { log(`[rolling-head-typecheck] worker ${worker} returned no rows for ${label} (${run.failure?.code ?? run.status ?? run.signal}); trying the next worker`); continue; }
-      let fetched;
-      try { fetched = JSON.parse(line.slice(WORKER_ROWS.length)); }
-      catch (error) { log(`[rolling-head-typecheck] worker ${worker} returned invalid rows for ${label}: ${error.message}`); continue; }
-      const byTree = new Map();
-      for (const id of treeIds) {
-        const rows = new Map();
-        for (const dir of dirs) {
-          const value = fetched[id]?.[dir];
-          rows.set(dir, Array.isArray(value) ? value : null);
-          if (typeof value?.failure === 'string') setTypecheckFailure(rows, dir, value.failure);
-        }
-        byTree.set(id, rows);
-      }
-      return many ? byTree : byTree.get(treeId);
+    // Each tree is pushed as a child of the last commit this worker accepted on the ref. A parentless commit made
+    // the push enumerate and send the whole tree (71,501 objects, 155-300 s per tree on 2026-11-18); a child of a
+    // commit the worker has sends only the changed objects (14 objects, 3.5 KB, under a second, for 5f6edbb072d).
+    const tipPath = join(state, `worker-${worker}-${ref}.tip`);
+    let parent = '';
+    try { parent = readFileSync(tipPath, 'utf8').trim(); } catch {}
+    const known = rev => spawnSync('git', ['cat-file', '-e', `${rev}^{commit}`], { cwd: repo, env: gitEnv() }).status === 0;
+    if (parent && !known(parent)) parent = '';
+    if (!parent) {
+      // No recorded tip (a new state or lane): any commit the worker's refs already name and this repository holds.
+      parent = io.listRefs(ssh, [`refs/heads/${ref}`, 'refs/heads/rolling']).split('\n').map(line => line.split('\t')[0]).find(rev => rev && known(rev)) ?? '';
     }
-    return none;
+    // The trees chain in request order, so one push of the last carries them all.
+    let commit = parent;
+    for (const id of publishedTrees) {
+      commit = commit && git(['rev-parse', `${commit}^{tree}`]).trim() === id ? commit
+        : typecheckTreeCommit(git, id, commit);
+    }
+    // A push may replace the ref with an unrelated chain (another controller state).
+    const push = io.push(ssh, commit, `refs/heads/${ref}`);
+    if (push.status !== 0) {
+      log(`[rolling-head-typecheck] worker ${worker} unreachable for ${label}: ${(push.stderr || '').trim().split('\n').at(-1) ?? ''}`);
+      return unavailable('worker-git-push-failed');
+    }
+    writeFileSync(`${tipPath}.${process.pid}`, commit);
+    renameSync(`${tipPath}.${process.pid}`, tipPath);
+    const run = await io.dispatch(worker, ['--worker-rows', `--slug=${slug}`, ...(lane ? [`--lane=${lane}`] : []), `--ref=${ref}`, `--scope=${scope}`,
+      `--tree=${treeIds.join(',')}`, `--packages=${dirs.join(',')}`, `--side=${sides.join(',')}`], ssh, controllerTree);
+    const line = run.status === 0 && run.stdout?.split('\n').find(entry => entry.startsWith(WORKER_ROWS));
+    if (!line) {
+      log(`[rolling-head-typecheck] worker ${worker} returned no rows for ${label} (${run.failure?.code ?? run.status ?? run.signal})`);
+      return unavailable('worker-no-rows');
+    }
+    let fetched;
+    try { fetched = JSON.parse(line.slice(WORKER_ROWS.length)); }
+    catch (error) {
+      log(`[rolling-head-typecheck] worker ${worker} returned invalid rows for ${label}: ${error.message}`);
+      return unavailable('worker-invalid-rows');
+    }
+    const byTree = new Map();
+    for (const id of treeIds) {
+      const rows = new Map();
+      for (const dir of dirs) {
+        const value = fetched[id]?.[dir];
+        rows.set(dir, Array.isArray(value) ? value : null);
+        if (typeof value?.failure === 'string') setTypecheckFailure(rows, dir, value.failure);
+      }
+      byTree.set(id, rows);
+    }
+    return many ? byTree : byTree.get(treeId);
   };
 }
 
@@ -1303,10 +1300,7 @@ function controllerDeclarationRows({ repo, env, log, requireInherited }) {
       });
     });
     if (cancelled) return Object.assign(new Map(), { cancelled: true });
-    if (!run.ok) {
-      const stall = await readDeclarationComparisonStall(run.stdout);
-      return Object.assign(new Map(), stall ? { stall: { ...stall, worker: 'controller' } } : {});
-    }
+    if (!run.ok) return new Map();
     const line = run.stdout.split('\n').find(entry => entry.startsWith(WORKER_ROWS));
     if (!line) return new Map();
     let rows;
@@ -1476,8 +1470,7 @@ async function workerRows(argv, entry) {
         let output = '';
         child.stdout.setEncoding('utf8').on('data', chunk => { output += chunk; });
         const [status] = await once(child, 'close');
-        // Preserve the worker dispatch's one result envelope. Pass through
-        // broker diagnostics, including a declaration stall, on any exit.
+        // Preserve the worker dispatch's result envelope and diagnostics.
         for (const line of output.trimEnd().split('\n')) {
           if (line.startsWith(WORKER_ROWS)) Object.assign(rows, JSON.parse(line.slice(WORKER_ROWS.length)));
           else if (line) process.stdout.write(line + '\n');

@@ -959,6 +959,7 @@ test('control input survives the native admitted process tree', { skip: process.
   child.stdin.write('{"requestPath":"/tmp/request"}\n');
   assert.deepEqual(await closed, [0, null], error);
   assert.match(output, /BODY:/);
+  assert.deepEqual(signalEvents(error), [], 'normal completion leaves no process-custody alarm');
 });
 
 test('remote custody cleans up stubborn descendants after the command leader exits and preserves its result', { skip: process.platform === 'win32' }, async t => {

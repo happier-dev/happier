@@ -405,7 +405,14 @@ control_pipe=
 cleanup() {
   [ -z "$control_pipe" ] || { exec 4>&-; rm -f -- "$control_pipe"; }
   if [ -n "$lifetime_pid" ] && heavyweight_process_is_current "$lifetime_pid" "$lifetime_token"; then
-    signal_member "$termination_reason" TERM pid "$lifetime_pid" "$lifetime_pid:$lifetime_token"
+    if [ "$termination_reason" = completed ]; then
+      # Reap the helper we started and already verified. Record actual
+      # cancellation and descendant cleanup through signal_member below.
+      kill -TERM "$lifetime_pid" 2>/dev/null ||
+        (printf '[preferred-execution] could not stop completed lifeline %s\n' "$lifetime_pid" >&2) || true
+    else
+      signal_member "$termination_reason" TERM pid "$lifetime_pid" "$lifetime_pid:$lifetime_token"
+    fi
   fi
   [ -z "$lifetime_pid" ] || wait "$lifetime_pid" 2>/dev/null || true
   rm -f -- "$pid_file"
