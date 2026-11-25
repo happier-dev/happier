@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createInterface } from 'node:readline';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -96,14 +96,18 @@ test('the gate refuses before materializing when its scratch volume is below the
 
 for (const changesSource of [false, true]) test(changesSource
   ? 'the entry check replaces a projection capture that changed another source file'
-  : 'projection regeneration and its exact entry check share one disposable tree', async t => {
+  : 'projection and entry checks reuse one tree when a linked directory changes outside the capture', async t => {
   const root = mkdtempSync(join(tmpdir(), 'p03-tree-reuse-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const repo = join(root, 'repo');
   const output = join(root, 'projections');
   const projection = 'packages/plugin-sdk/src/actions/dtos/approvalsActionDtos.generated.ts';
   const marker = join(root, 'trees');
+  const linked = join(root, 'borrowed-dependency');
+  mkdirSync(linked);
+  writeFileSync(join(linked, 'outside'), 'original');
   mkdirSync(repo);
+  symlinkSync(linked, join(repo, 'borrowed'), process.platform === 'win32' ? 'junction' : 'dir');
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
   const write = (path, contents) => {
     const file = join(repo, path);
@@ -154,6 +158,7 @@ for (const changesSource of [false, true]) test(changesSource
   try {
     assert.equal((await lines.next()).value, 'HAPPIER_COMMIT_ENTRY_LOAD_READY');
     assert.deepEqual(await receive({ repo, tree: base, projectionOutput: output, projections: { approvals: true } }), {});
+    writeFileSync(join(linked, 'outside'), 'independent dependency change');
     write(projection, readFileSync(join(output, projection)));
     rmSync(output, { recursive: true });
     git('add', '--', projection);

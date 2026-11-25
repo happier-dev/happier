@@ -479,12 +479,25 @@ async function compareSelectedEntryLoads({ repo, base, tree, installDir, root, s
 }
 
 function captureFiles(dir) {
-  return readdirSync(dir, { recursive: true, withFileTypes: true }).flatMap(entry => {
-    const path = join(entry.parentPath, entry.name);
-    if (entry.isDirectory()) return [`${relative(dir, path)}/`];
-    const stat = lstatSync(path, { bigint: true });
-    return [`${relative(dir, path)}\0${stat.ino}:${stat.ctimeNs}:${stat.mtimeNs}:${stat.size}:${stat.mode}`];
-  }).sort();
+  const files = [];
+  const pending = [dir];
+  // Recursive readdir follows directory links on Node 24. Mounted dependency
+  // trees can link back into the capture, so descend only into real directories.
+  while (pending.length) {
+    const parent = pending.pop();
+    for (const entry of readdirSync(parent, { withFileTypes: true })) {
+      const path = join(parent, entry.name);
+      const name = relative(dir, path);
+      if (entry.isDirectory()) {
+        files.push(`${name}/`);
+        pending.push(path);
+      } else {
+        const stat = lstatSync(path, { bigint: true });
+        files.push(`${name}\0${stat.ino}:${stat.ctimeNs}:${stat.mtimeNs}:${stat.size}:${stat.mode}`);
+      }
+    }
+  }
+  return files.sort();
 }
 
 async function releaseCapture(capture) {
