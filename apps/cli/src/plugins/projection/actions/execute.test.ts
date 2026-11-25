@@ -817,7 +817,7 @@ describe('executeContributedAction', () => {
       v: 1, action: { pluginId: 'acme.action.plugin', localId: 'open-client' },
       input: { destination: 'preview' }, surface,
       expectedContributorOccurrenceId: fixture.registry.readPluginOccurrenceId('acme.action.plugin'),
-      defaultSessionId: 'session-current', requiredDangerLevel: 'safe',
+      defaultSessionId: 'session-current', requiredDangerLevel: 'safe', actionRequestId: 'client-action-request',
     }]);
     // A UI registered only for the built-in client method must not stand in for the
     // contributed-Action receiver. No handler is entered on a mis-bound route.

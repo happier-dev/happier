@@ -192,6 +192,14 @@ cause. The daemon writes the exception message and first available stack frame t
 its local file log after invocation-scoped secret redaction.
 
 
+The contributed Client Action reverse RPC carries the invoking host's optional
+`actionRequestId` as correlation. The answering App uses the same identity when
+it admits the Action locally. The daemon reports invalid reverse requests to
+the invoking Action as `plugin_action_input_invalid` with schema issue codes
+and paths in `details.issues`. Rejected values are omitted. Use matching 0.3
+development daemon and App builds when the daemon sends the correlation field.
+Older strict App builds reject that field.
+
 ## Channel message observation demand (unreleased 0.3)
 
 Channels combines enabled binding policies, pairing and armed message Event

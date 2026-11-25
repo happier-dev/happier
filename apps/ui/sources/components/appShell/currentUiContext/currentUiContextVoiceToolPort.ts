@@ -698,6 +698,7 @@ export function createCurrentUiContributedActionRpcHandler(input: Readonly<{
                 ...(request.messageActionReference ? { messageActionReference: request.messageActionReference } : {}) }, {
                 surface: request.surface,
                 serverId: input.serverId,
+                ...(request.actionRequestId ? { actionRequestId: request.actionRequestId } : {}),
                 expectedContributedActionOccurrenceId: request.expectedContributorOccurrenceId,
                 ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
                 ...(request.requiredDangerLevel ? { requiredContributedActionDangerLevel: request.requiredDangerLevel } : {}),

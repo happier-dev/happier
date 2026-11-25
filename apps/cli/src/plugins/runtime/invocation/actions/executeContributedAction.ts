@@ -7,7 +7,7 @@ import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { ACCOUNT_PLUGIN_CENSUS_UNAVAILABLE_MESSAGE } from '@/plugins/projection/registry/builtIn/enablement';
 import type { ActionExecutorContext, ActionId, QualifiedPluginActionId } from '@happier-dev/protocol/actions';
 import { buildApprovalExecutionOriginV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1, type HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { actionInputIssueFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
+import { actionInputIssueFailure, projectActionInputIssues } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import { randomUUID } from 'node:crypto';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
@@ -665,7 +665,10 @@ export async function executeContributedAction(params: Readonly<{
       ...(params.requiredDangerLevel === undefined ? {} : { requiredDangerLevel: params.requiredDangerLevel }),
     });
     if (!request.success) {
-      return { matched: true, result: actionHandlerNotStartedFailure('plugin_action_input_invalid', 'Client Action request is invalid') };
+      return { matched: true, result: {
+        ...actionHandlerNotStartedFailure('plugin_action_input_invalid', 'Client Action request is invalid'),
+        details: { issues: projectActionInputIssues(request.error) },
+      } };
     }
     // The host-stamped admission names the acting Account; the daemon's client transport
     // reaches only its own Account's Apps, whichever host route invoked this Action.

@@ -12,6 +12,8 @@ export const UiContributedActionExecuteRequestV1Schema = lazyZodSchema(() => z.s
   v: z.literal(1),
   action: asProtocolZod(PluginContributionIdentityV1Schema),
   input: AgentRuntimeJsonValueV1Schema,
+  /** Existing invoking host identity; never an admission or authority token. */
+  actionRequestId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   messageActionReference: z.optional(MessageActionReferenceV1Schema),
   surface: z.enum(['agent', 'mcp', 'cli']),
   expectedContributorOccurrenceId: asProtocolZod(PluginUiRuntimeOccurrenceIdV1Schema),
