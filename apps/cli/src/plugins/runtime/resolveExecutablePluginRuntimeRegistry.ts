@@ -568,6 +568,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
         executeClientAction?: ClientContributedActionExecutor;
         /** Existing authenticated Machine admission authority for protected Session input. */
         machineAdmissionTransport?: PluginRuntimeMachineAdmissionTransport;
+        /** The receiving daemon's existing private carrier for admitted native Actions. */
+        machineActionDirectTargetTransport?: Parameters<typeof createCliActionExecutorFromCredentials>[0]['machineActionDirectTargetTransport'];
         externalActionHomeBinding?: ExternalActionHomeBinding;
         /** Captured daemon custody for deployment admission; does not select an execution realm. */
         deploymentAccountExecution?: Parameters<typeof createDeploymentTargetRoleAdmissionHost>[1]['accountExecution'];
@@ -3600,6 +3602,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
             ...(resolveServerFeaturesSnapshot ? { resolveServerFeaturesSnapshot } : {}),
             ...(params?.machineAdmissionTransport
                 ? { machineAdmissionTransport: params.machineAdmissionTransport }
+                : {}),
+            ...(params?.machineActionDirectTargetTransport
+                ? { machineActionDirectTargetTransport: params.machineActionDirectTargetTransport }
                 : {}),
             resolvePluginNotifications: () => invocationServiceOwners.notifications,
             readPluginVoiceProviders: () => resolvedRuntimeRegistryOwner?.contributes.voiceProviders ?? [],

@@ -161,6 +161,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   executeClientAction?: ClientContributedActionExecutor;
   /** Existing authenticated Machine admission authority for protected Session input. */
   machineAdmissionTransport?: PluginRuntimeMachineAdmissionTransport;
+  machineActionDirectTargetTransport?: NonNullable<Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]>['machineActionDirectTargetTransport'];
   /** Host-private custody used to sign nested requests to this Home. */
   externalActionHomeBinding?: ExternalActionHomeBinding;
   deploymentAccountExecution?: NonNullable<Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]>['deploymentAccountExecution'];
@@ -305,6 +306,9 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
     ...(params.acquireServiceExportForward ? { acquireServiceExportForward: params.acquireServiceExportForward } : {}),
     ...(params.machineAdmissionTransport
       ? { machineAdmissionTransport: params.machineAdmissionTransport }
+      : {}),
+    ...(params.machineActionDirectTargetTransport
+      ? { machineActionDirectTargetTransport: params.machineActionDirectTargetTransport }
       : {}),
     ...(params.deploymentAccountExecution
       ? { deploymentAccountExecution: params.deploymentAccountExecution }
@@ -1000,6 +1004,9 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
             ...(params.ensureEnvironmentServices ? { ensureEnvironmentServices: params.ensureEnvironmentServices } : {}),
             ...(params.machineAdmissionTransport
               ? { machineAdmissionTransport: params.machineAdmissionTransport }
+              : {}),
+            ...(params.machineActionDirectTargetTransport
+              ? { machineActionDirectTargetTransport: params.machineActionDirectTargetTransport }
               : {}),
             ...(params.deploymentAccountExecution
               ? { deploymentAccountExecution: params.deploymentAccountExecution }

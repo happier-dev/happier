@@ -2024,6 +2024,14 @@ export async function startDaemon(
         machineResourceTarget(), resolveBoundHomeServerIdentityId()),
       machineAdmissionTransport,
       executeClientAction: createClientActionMachineRpcExecutor(() => apiMachineForSessions),
+      machineActionDirectTargetTransport: {
+        machineId,
+        invoke: async (method, request, options) => {
+          const machine = apiMachineForSessions;
+          if (!machine) throw Object.assign(new Error('Machine transport is unavailable'), { code: 'machine_transport_unavailable' });
+          return await machine.invokeLocalMachineAction(method, request, options);
+        },
+      },
       resolveComposerMediaStageTransferRpcHandler: createDaemonPluginTransferRpcResolver(() => apiMachineForSessions),
       externalActionHomeBinding: {
         serverId: configuration.activeServerId,
