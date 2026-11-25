@@ -8647,7 +8647,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
       },
     },
         pendingActivation: {
-    held: { title: "Interrompida", body: "Alguém interrompeu esta sessão. Sua mensagem fica na fila até alguém retomá-la." },
+    held: { title: "Interrompida", body: "Alguém interrompeu esta sessão. Sua mensagem fica na fila até alguém retomá-la.", machineBackTitle: ({ machine }: { machine: string }) => `${machine} está online novamente ·` },
     held_offline: { title: ({ machine }: { machine: string }) => `Interrompida · retome quando ${machine} voltar`, body: ({ machine }: { machine: string }) => `${machine} está offline. Sua mensagem não será enviada sozinha.` },
             waiting_offline: { title: ({ machine }: { machine: string }) => `Será enviada quando ${machine} voltar`, body: ({ machine }: { machine: string }) => `${machine} está offline.` },
             waiting: { title: 'Aguardando retomada', body: 'Sua mensagem está segura na fila enquanto o daemon retoma esta sessão.' },

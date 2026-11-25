@@ -7063,7 +7063,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             },
           },
         pendingActivation: {
-    held: { title: "已停止", body: "有人停止了此工作階段。在有人恢復之前，訊息會一直保留在佇列中。" },
+    held: { title: "已停止", body: "有人停止了此工作階段。在有人恢復之前，訊息會一直保留在佇列中。", machineBackTitle: ({ machine }: { machine: string }) => `${machine} 已重新上線 ·` },
     held_offline: { title: ({ machine }: { machine: string }) => `已停止 · ${machine} 恢復後請恢復工作階段`, body: ({ machine }: { machine: string }) => `${machine} 已離線。訊息不會自動傳送。` },
             waiting_offline: { title: ({ machine }: { machine: string }) => `${machine} 恢復後將傳送`, body: ({ machine }: { machine: string }) => `${machine} 已離線。` },
             waiting: { title: '等待恢復', body: '背景服務恢復此工作階段時，你的訊息會安全地保留在佇列中。' },

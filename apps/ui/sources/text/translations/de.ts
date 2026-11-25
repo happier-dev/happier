@@ -8560,7 +8560,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             },
         },
         pendingActivation: {
-    held: { title: "Gestoppt", body: "Jemand hat diese Sitzung gestoppt. Deine Nachricht bleibt in der Warteschlange, bis jemand sie fortsetzt." },
+    held: { title: "Gestoppt", body: "Jemand hat diese Sitzung gestoppt. Deine Nachricht bleibt in der Warteschlange, bis jemand sie fortsetzt.", machineBackTitle: ({ machine }: { machine: string }) => `${machine} ist wieder online ·` },
     held_offline: { title: ({ machine }: { machine: string }) => `Gestoppt · fortsetzen, sobald ${machine} wieder da ist`, body: ({ machine }: { machine: string }) => `${machine} ist offline. Deine Nachricht wird nicht von selbst gesendet.` },
             waiting_offline: { title: ({ machine }: { machine: string }) => `Wird gesendet, sobald ${machine} wieder da ist`, body: ({ machine }: { machine: string }) => `${machine} ist offline.` },
             waiting: { title: 'Warten auf Fortsetzung', body: 'Deine Nachricht ist sicher eingereiht, während der Daemon diese Session fortsetzt.' },

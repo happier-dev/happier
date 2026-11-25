@@ -8847,7 +8847,7 @@ localTailscale: {
       },
     },
         pendingActivation: {
-    held: { title: "停止済み", body: "このセッションは停止されました。誰かが再開するまで、メッセージはキューに保持されます。" },
+    held: { title: "停止済み", body: "このセッションは停止されました。誰かが再開するまで、メッセージはキューに保持されます。", machineBackTitle: ({ machine }: { machine: string }) => `${machine} がオンラインに戻りました ·` },
     held_offline: { title: ({ machine }: { machine: string }) => `停止済み · ${machine} が戻ったら再開してください`, body: ({ machine }: { machine: string }) => `${machine} はオフラインです。メッセージは自動では送信されません。` },
             waiting_offline: { title: ({ machine }: { machine: string }) => `${machine} が戻ると送信されます`, body: ({ machine }: { machine: string }) => `${machine} はオフラインです。` },
             waiting: { title: '再開を待っています', body: 'デーモンがこのセッションを再開する間、メッセージは安全にキューへ保存されています。' },

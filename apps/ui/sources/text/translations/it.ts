@@ -8766,7 +8766,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
       },
     },
         pendingActivation: {
-    held: { title: "Interrotta", body: "Qualcuno ha interrotto questa sessione. Il messaggio resta in coda finché qualcuno non la riprende." },
+    held: { title: "Interrotta", body: "Qualcuno ha interrotto questa sessione. Il messaggio resta in coda finché qualcuno non la riprende.", machineBackTitle: ({ machine }: { machine: string }) => `${machine} è di nuovo online ·` },
     held_offline: { title: ({ machine }: { machine: string }) => `Interrotta · riprendila quando ${machine} torna disponibile`, body: ({ machine }: { machine: string }) => `${machine} è offline. Il messaggio non verrà inviato da solo.` },
             waiting_offline: { title: ({ machine }: { machine: string }) => `Verrà inviato quando ${machine} torna disponibile`, body: ({ machine }: { machine: string }) => `${machine} è offline.` },
             waiting: { title: 'In attesa di ripresa', body: 'Il messaggio è al sicuro nella coda mentre il daemon riprende questa sessione.' },

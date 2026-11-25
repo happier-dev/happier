@@ -4,12 +4,13 @@ import type { PendingActivationBannerPresentation } from './resolvePendingActiva
 
 /**
  * The words the composer's status line says for queued input waiting on this Session to start
- * (`resolvePendingActivationBanner` decides the kind). Offline kinds name the Machine, so the person
- * reads which computer the message waits for rather than "this machine".
+ * (`resolvePendingActivationBanner` decides the kind and action). The line names the Machine
+ * while offline and when a held message can resume.
  */
 export function pendingActivationLineCopy(
   kind: PendingActivationBannerPresentation['kind'],
   machine: string,
+  primaryAction: PendingActivationBannerPresentation['primaryAction'] = null,
 ): Readonly<{ text: string; detail: string }> {
   switch (kind) {
     case 'queued_offline':
@@ -34,7 +35,9 @@ export function pendingActivationLineCopy(
       };
     case 'held':
       return {
-        text: t('session.pendingActivation.held.title'),
+        text: primaryAction === 'resume'
+          ? t('session.pendingActivation.held.machineBackTitle', { machine })
+          : t('session.pendingActivation.held.title'),
         detail: t('session.pendingActivation.held.body'),
       };
     case 'waiting':

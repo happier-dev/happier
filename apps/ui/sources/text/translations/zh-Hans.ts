@@ -8229,7 +8229,7 @@ export const zhHans: TranslationStructure = {
       },
     },
         pendingActivation: {
-    held: { title: "已停止", body: "有人停止了此会话。在有人恢复之前，消息会一直保留在队列中。" },
+    held: { title: "已停止", body: "有人停止了此会话。在有人恢复之前，消息会一直保留在队列中。", machineBackTitle: ({ machine }: { machine: string }) => `${machine} 已重新上线 ·` },
     held_offline: { title: ({ machine }: { machine: string }) => `已停止 · ${machine} 恢复后请恢复会话`, body: ({ machine }: { machine: string }) => `${machine} 已离线。消息不会自动发送。` },
             waiting_offline: { title: ({ machine }: { machine: string }) => `${machine} 恢复后将发送`, body: ({ machine }: { machine: string }) => `${machine} 已离线。` },
             waiting: { title: '等待恢复', body: '守护进程恢复此会话时，你的消息会安全地保留在队列中。' },

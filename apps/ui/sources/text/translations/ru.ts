@@ -8998,7 +8998,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       },
     },
         pendingActivation: {
-    held: { title: "Остановлено", body: "Кто-то остановил этот сеанс. Сообщение останется в очереди, пока кто-нибудь его не возобновит." },
+    held: { title: "Остановлено", body: "Кто-то остановил этот сеанс. Сообщение останется в очереди, пока кто-нибудь его не возобновит.", machineBackTitle: ({ machine }: { machine: string }) => `${machine} снова в сети ·` },
     held_offline: { title: ({ machine }: { machine: string }) => `Остановлено · возобновите, когда ${machine} вернётся`, body: ({ machine }: { machine: string }) => `${machine} не в сети. Сообщение не отправится само.` },
             waiting_offline: { title: ({ machine }: { machine: string }) => `Отправится, когда ${machine} вернётся`, body: ({ machine }: { machine: string }) => `${machine} не в сети.` },
             waiting: { title: 'Ожидание возобновления', body: 'Ваше сообщение сохранено в очереди, пока daemon возобновляет эту сессию.' },

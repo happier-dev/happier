@@ -8541,7 +8541,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
       },
     },
         pendingActivation: {
-    held: { title: "Detenida", body: "Alguien detuvo esta sesión. Tu mensaje queda en cola hasta que alguien la reanude." },
+    held: { title: "Detenida", body: "Alguien detuvo esta sesión. Tu mensaje queda en cola hasta que alguien la reanude.", machineBackTitle: ({ machine }: { machine: string }) => `${machine} vuelve a estar en línea ·` },
     held_offline: { title: ({ machine }: { machine: string }) => `Detenida · reanúdala cuando ${machine} vuelva`, body: ({ machine }: { machine: string }) => `${machine} está sin conexión. Tu mensaje no se enviará solo.` },
             waiting_offline: { title: ({ machine }: { machine: string }) => `Se enviará cuando ${machine} vuelva`, body: ({ machine }: { machine: string }) => `${machine} está sin conexión.` },
             waiting: { title: 'Esperando para reanudar', body: 'Tu mensaje está guardado en cola mientras el daemon reanuda esta sesión.' },

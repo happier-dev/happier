@@ -9932,7 +9932,7 @@ const enSession = {
     },
   },
   pendingActivation: {
-    held: { title: "Stopped", body: "A person stopped this session. Your message stays queued until someone resumes it." },
+    held: { title: "Stopped", body: "A person stopped this session. Your message stays queued until someone resumes it.", machineBackTitle: ({ machine }: { machine: string }) => `${machine} is back ·` },
     held_offline: {
       title: ({ machine }: { machine: string }) => `Stopped · resume once ${machine} is back`,
       body: ({ machine }: { machine: string }) => `${machine} is offline. Your message won’t send by itself.`,

@@ -5527,7 +5527,7 @@ export function useSessionComposerController({
                 ? presentation.primaryAction
                 : presentation.secondaryAction && presentation.row?.localId ? 'keep_queued' : null;
             // Offline kinds name the Machine the message waits for.
-            const copy = pendingActivationLineCopy(presentation.kind, pendingQueueMachineName);
+            const copy = pendingActivationLineCopy(presentation.kind, pendingQueueMachineName, presentation.primaryAction);
             return {
                 text: presentation.titleKey ? t(presentation.titleKey) : copy.text,
                 detail: presentation.holdReason === 'managed_power_required'

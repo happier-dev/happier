@@ -7846,7 +7846,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
             },
         },
         pendingActivation: {
-    held: { title: "Aturada", body: "Algú ha aturat aquesta sessió. El missatge queda a la cua fins que algú la reprengui." },
+    held: { title: "Aturada", body: "Algú ha aturat aquesta sessió. El missatge queda a la cua fins que algú la reprengui.", machineBackTitle: ({ machine }: { machine: string }) => `${machine} ha tornat ·` },
     held_offline: { title: ({ machine }: { machine: string }) => `Aturada · reprèn-la quan ${machine} torni`, body: ({ machine }: { machine: string }) => `${machine} està fora de línia. El missatge no s’enviarà sol.` },
             waiting_offline: { title: ({ machine }: { machine: string }) => `S’enviarà quan ${machine} torni`, body: ({ machine }: { machine: string }) => `${machine} està fora de línia.` },
             waiting: { title: 'Esperant per reprendre', body: 'El missatge és segur a la cua mentre el dimoni reprèn aquesta sessió.' },

@@ -8381,7 +8381,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
       },
     },
         pendingActivation: {
-    held: { title: "Arrêtée", body: "Quelqu’un a arrêté cette session. Votre message reste en attente jusqu’à ce qu’elle soit reprise." },
+    held: { title: "Arrêtée", body: "Quelqu’un a arrêté cette session. Votre message reste en attente jusqu’à ce qu’elle soit reprise.", machineBackTitle: ({ machine }: { machine: string }) => `${machine} est de nouveau en ligne ·` },
     held_offline: { title: ({ machine }: { machine: string }) => `Arrêtée · reprends-la au retour de ${machine}`, body: ({ machine }: { machine: string }) => `${machine} est hors ligne. Ton message ne partira pas tout seul.` },
             waiting_offline: { title: ({ machine }: { machine: string }) => `Partira au retour de ${machine}`, body: ({ machine }: { machine: string }) => `${machine} est hors ligne.` },
             waiting: { title: 'Reprise en attente', body: 'Ton message est bien en attente pendant que le démon reprend cette session.' },

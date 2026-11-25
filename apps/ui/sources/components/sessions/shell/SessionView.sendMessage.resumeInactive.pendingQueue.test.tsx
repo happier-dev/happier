@@ -1325,7 +1325,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             await publishDurablePendingState(durablePendingRow(localId, 'enqueue'));
             expect(resumeCalls()).toEqual([]);
             expect(pendingWrites()).toEqual([]);
-            expect(queueLine(screen)).toMatchObject({ text: 'session.pendingActivation.held.title',
+            expect(queueLine(screen)).toMatchObject({ text: 'session.pendingActivation.held.machineBackTitle',
                 detail: 'session.pendingActivation.held.body', action: { label: 'session.pendingActivation.actions.resume' } });
             expect(readComposerText(findAgentInput(screen))).toBe('');
             expect(storage.getState().sessionPending.s1.messages).toMatchObject([{ localId, pendingDeliveryStatus: 'server_queued' }]);

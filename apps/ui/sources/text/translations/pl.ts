@@ -8377,7 +8377,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       },
     },
         pendingActivation: {
-    held: { title: "Zatrzymana", body: "Ktoś zatrzymał tę sesję. Wiadomość pozostanie w kolejce, dopóki ktoś jej nie wznowi." },
+    held: { title: "Zatrzymana", body: "Ktoś zatrzymał tę sesję. Wiadomość pozostanie w kolejce, dopóki ktoś jej nie wznowi.", machineBackTitle: ({ machine }: { machine: string }) => `${machine} znów jest online ·` },
     held_offline: { title: ({ machine }: { machine: string }) => `Zatrzymana · wznów, gdy ${machine} wróci`, body: ({ machine }: { machine: string }) => `${machine} jest offline. Wiadomość nie wyśle się sama.` },
             waiting_offline: { title: ({ machine }: { machine: string }) => `Zostanie wysłana, gdy ${machine} wróci`, body: ({ machine }: { machine: string }) => `${machine} jest offline.` },
             waiting: { title: 'Oczekiwanie na wznowienie', body: 'Wiadomość jest bezpiecznie w kolejce, gdy daemon wznawia tę sesję.' },
