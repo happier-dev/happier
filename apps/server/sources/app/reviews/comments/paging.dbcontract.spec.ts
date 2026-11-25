@@ -4,6 +4,7 @@ import { sealReviewCommentSensitiveEnvelopeV1, splitReviewCommentV1, type Review
 import { db, initDbMysql, initDbPostgres } from '@/storage/db';
 import { buildReviewCommentCanonicalStorageValues } from './accountEncryptionMigrationPersistence';
 import { createSqlReviewCommentStore } from './store';
+import { createReviewCommentOperations } from './operations';
 
 describe('Review comment structural SQL paging', () => {
     const accountId = `review-paging-${randomUUID()}`;
@@ -18,6 +19,7 @@ describe('Review comment structural SQL paging', () => {
     });
     afterAll(async () => {
         if (!connected) return;
+        await db.artifact.deleteMany({ where: { accountId } });
         await db.account.deleteMany({ where: { id: accountId } });
         await db.$disconnect();
     });
@@ -84,5 +86,52 @@ describe('Review comment structural SQL paging', () => {
         } finally {
             db.$queryRaw = raw;
         }
+    });
+
+    it('loads a selected bulk decision as one set and preserves each selected result', async () => {
+        const reviewId = randomUUID();
+        await db.artifact.create({ data: { id: reviewId, accountId,
+            header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() } });
+        const comments = Array.from({ length: 200 }, (_, index): ReviewCommentV1 => ({
+            v: 1, id: `${reviewId}-${index}`, accountId, reviewId, roundOrdinal: 1,
+            anchor: { kind: 'file', filePath: `src/${index}.ts` }, snapshot: { kind: 'none', capturedAt: 1 },
+            body: `Finding ${index}`, bodyVersion: 1, edits: [], author: { kind: 'user', userId: accountId },
+            state: 'open', flags: {}, dispositions: {}, threadId: `${reviewId}-${index}`,
+            transitions: [], createdAt: 1, updatedAt: 1, serverRevision: 1,
+        }));
+        await db.reviewComment.createMany({ data: comments.map(comment => {
+            const split = splitReviewCommentV1(comment);
+            return { ...buildReviewCommentCanonicalStorageValues({ structural: split.structural,
+                targetSensitiveEnvelope: sealReviewCommentSensitiveEnvelopeV1({ ...split, mode: 'plain' }) }),
+                id: comment.id, accountId, reviewId, roundOrdinal: 1, threadId: comment.threadId, state: comment.state,
+                flagsJson: '{}', authorJson: JSON.stringify(comment.author), dispositionsJson: '{}',
+                bodyVersion: 1, serverRevision: 1, createdAt: BigInt(1), updatedAt: BigInt(1) };
+        }) });
+        const reads: number[] = [];
+        const raw = db.$queryRaw;
+        // Observe the selected source reads while preserving the real SQL and mutations.
+        db.$queryRaw = new Proxy(raw, { apply: async (target, thisArg, args) => {
+            const rows: unknown = await Reflect.apply(target, thisArg, args);
+            if (Array.isArray(rows) && rows.some(row => row && typeof row === 'object' && 'body_envelope_json' in row)) reads.push(rows.length);
+            return rows;
+        } });
+        try {
+            const operations = createReviewCommentOperations(createSqlReviewCommentStore(), {
+                now: () => 2, createId: prefix => `${prefix}-${randomUUID()}`,
+            });
+            const result = await operations.bulkTransition({ accountId, storageMode: 'plain',
+                actor: { kind: 'user', userId: accountId },
+                reviewAccess: { reviewId, ownerAccountId: accountId, level: 'owner', encryptionMode: 'plain' },
+                input: { reviewId, commentIds: comments.map(comment => comment.id), expectedState: 'open',
+                    toState: 'dismissed', reason: 'Reviewed selected findings', evidence: [],
+                    expectedServerRevisions: Object.fromEntries(comments.map(comment => [comment.id, 1])),
+                    clientMutationId: 'bulk-selected' } });
+            expect(result.failed).toEqual([]);
+            expect(result.updated.map(comment => [comment.id, comment.state, comment.serverRevision]))
+                .toEqual(comments.map(comment => [comment.id, 'dismissed', 2]));
+            expect(await db.reviewComment.count({ where: { reviewId, state: 'dismissed', serverRevision: 2 } })).toBe(comments.length);
+            console.info(`[review-bulk-read] selected=${comments.length} sourceQueries=${reads.length} sourceRows=${reads.reduce((sum, count) => sum + count, 0)}`);
+            expect(reads).toEqual([comments.length]);
+        } finally { db.$queryRaw = raw; }
     });
 });

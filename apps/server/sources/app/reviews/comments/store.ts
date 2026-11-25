@@ -22,6 +22,7 @@ import {
 } from "@/app/encryption/accountEncryptionTransition";
 import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import {
     getDbProviderFromEnv,
     isPrismaErrorCode,
@@ -57,6 +58,10 @@ export type ReviewCommentStoreCommentParams = Readonly<{
     reviewAccess?: ReviewAccessCapability;
     accountId: string;
     commentId: string;
+}>;
+
+export type ReviewCommentStoreCommentsParams = Omit<ReviewCommentStoreCommentParams, 'commentId'> & Readonly<{
+    commentIds: readonly string[];
 }>;
 
 export type ReviewCommentStoreCommitParams = Readonly<{
@@ -126,6 +131,7 @@ export interface ReviewCommentStore {
     recordAppearance(appearance: ReviewCommentAppearanceV1): Promise<void>;
     listAppearances(params: Readonly<{ reviewId: string; roundOrdinal?: number }>): Promise<readonly ReviewCommentAppearanceV1[]>;
     getSource(params: ReviewCommentStoreCommentParams): Promise<ReviewCommentStoredSourceV1 | null>;
+    getSources(params: ReviewCommentStoreCommentsParams): Promise<readonly ReviewCommentStoredSourceV1[]>;
     listSources(params: ReviewCommentStoreListParams): Promise<ReviewCommentListResult<ReviewCommentStoredSourceV1>>;
     findCreate(params: Readonly<{ reviewAccess?: ReviewAccessCapability; accountId: string; createClientMutationId: string; createRequestFingerprint: string; structural?: ReviewCommentStructuralV1 }>): Promise<ReviewCommentStoredSourceV1 | null>;
     createCanonical(params: ReviewCommentCanonicalCreateParams): Promise<ReviewCommentCanonicalCreateResult>;
@@ -811,12 +817,17 @@ export function createInMemoryReviewCommentStore(): ReviewCommentStore {
         }
         return items.map(item => item.structural.reviewId ? { ...item, structural: { ...item.structural, appearances: grouped.get(item.structural.id) ?? [] } } : item);
     };
-    const readSource = (params: ReviewCommentStoreCommentParams) => params.reviewAccess
-        ? [...sources.values()].find((item) => item.structural.id === params.commentId && item.structural.reviewId === params.reviewAccess!.reviewId) ?? null
-        : sources.get(`${params.accountId}:${params.commentId}`)?.structural.reviewId ? null : sources.get(`${params.accountId}:${params.commentId}`) ?? null;
+    const readSource = (params: ReviewCommentStoreCommentParams) => {
+        const item = sources.get(`${params.reviewAccess?.ownerAccountId ?? params.accountId}:${params.commentId}`);
+        return item && (params.reviewAccess ? item.structural.reviewId === params.reviewAccess.reviewId : !item.structural.reviewId) ? item : null;
+    };
+    const getSources = async (params: ReviewCommentStoreCommentsParams) => projectAppearances(
+        [...new Set(params.commentIds)].flatMap(commentId => {
+            const source = readSource({ ...params, commentId });
+            return source ? [source] : [];
+        }));
     const getSource = async (params: ReviewCommentStoreCommentParams) => {
-        const item = readSource(params);
-        return item ? projectAppearances([item])[0]! : null;
+        return (await getSources({ ...params, commentIds: [params.commentId] }))[0] ?? null;
     };
     function findCreate(params: Readonly<{ reviewAccess?: ReviewAccessCapability; accountId: string; createClientMutationId: string; createRequestFingerprint: string; structural?: ReviewCommentStructuralV1 }>) {
         const existing = creates.get(`${params.reviewAccess?.ownerAccountId ?? params.accountId}:${params.createClientMutationId}`);
@@ -853,6 +864,7 @@ export function createInMemoryReviewCommentStore(): ReviewCommentStore {
         recordAppearance,
         async listAppearances(params) { return [...appearances.values()].filter((item) => item.reviewId === params.reviewId && (params.roundOrdinal === undefined || item.roundOrdinal === params.roundOrdinal)); },
         getSource,
+        getSources,
         findCreate: async (params) => findCreate(params),
         createCanonical: persistCreate,
         commitCanonical: async (params) => persistCommit(params),
@@ -1055,21 +1067,31 @@ async function sourcesWithAppearances(rows: readonly ReviewCommentRow[]): Promis
     const sources = rows.map(rowToSource);
     const ids = sources.filter(source => source.structural.reviewId).map(source => source.structural.id);
     if (ids.length === 0) return sources;
-    const appearances = await db.reviewCommentAppearance.findMany({ where: { commentId: { in: ids } },
-        select: { commentId: true, roundOrdinal: true, runId: true, reviewerId: true, machineId: true, sessionId: true },
-        orderBy: [{ roundOrdinal: 'asc' }, { sourceKey: 'asc' }] });
     const byComment = new Map<string, ReviewCommentAppearanceInputV1[]>();
-    for (const appearance of appearances) {
-        const entries = byComment.get(appearance.commentId) ?? [];
-        entries.push({ roundOrdinal: appearance.roundOrdinal, runId: appearance.runId, reviewerId: appearance.reviewerId,
-            ...(appearance.machineId ? { machineId: appearance.machineId } : {}), ...(appearance.sessionId ? { sessionId: appearance.sessionId } : {}) });
-        byComment.set(appearance.commentId, entries);
+    // Ordered SQLite findMany binds its implicit LIMIT and OFFSET as well as the ids.
+    for (const chunk of portableQueryChunks({ values: ids, bindingsPerValue: 1, fixedBindings: 2 })) {
+        const appearances = await db.reviewCommentAppearance.findMany({ where: { commentId: { in: [...chunk] } },
+            select: { commentId: true, roundOrdinal: true, runId: true, reviewerId: true, machineId: true, sessionId: true },
+            orderBy: [{ roundOrdinal: 'asc' }, { sourceKey: 'asc' }] });
+        for (const appearance of appearances) {
+            const entries = byComment.get(appearance.commentId) ?? [];
+            entries.push({ roundOrdinal: appearance.roundOrdinal, runId: appearance.runId, reviewerId: appearance.reviewerId,
+                ...(appearance.machineId ? { machineId: appearance.machineId } : {}), ...(appearance.sessionId ? { sessionId: appearance.sessionId } : {}) });
+            byComment.set(appearance.commentId, entries);
+        }
     }
     return sources.map(source => source.structural.reviewId
         ? { ...source, structural: { ...source.structural, appearances: byComment.get(source.structural.id) ?? [] } } : source);
 }
 
 export function createSqlReviewCommentStore(): ReviewCommentStore {
+    async function getSources(params: ReviewCommentStoreCommentsParams): Promise<readonly ReviewCommentStoredSourceV1[]> {
+        const rows: ReviewCommentRow[] = [];
+        for (const ids of portableQueryChunks({ values: [...new Set(params.commentIds)], bindingsPerValue: 1, fixedBindings: 1 })) {
+            rows.push(...await db.$queryRaw<ReviewCommentRow[]>(Prisma.sql`SELECT ${Prisma.raw(COMMENT_SELECT_COLUMNS)} FROM review_comments WHERE ${commentAccessPredicate(params)} AND id IN (${Prisma.join(ids)})`));
+        }
+        return sourcesWithAppearances(rows);
+    }
     async function persistAppearance(appearance: ReviewCommentAppearanceV1): Promise<void> {
         await inTx(async (tx) => {
             await acquireArtifactPublicationLocksInTx(tx, appearance.reviewId);
@@ -1338,9 +1360,9 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                 runId: row.run_id, reviewerId: row.reviewer_id, ...(row.machine_id ? { machineId: row.machine_id } : {}), ...(row.session_id ? { sessionId: row.session_id } : {}) }));
         },
         async getSource(params) {
-            const rows = await db.$queryRaw<ReviewCommentRow[]>(Prisma.sql`SELECT ${Prisma.raw(COMMENT_SELECT_COLUMNS)} FROM review_comments WHERE ${commentAccessPredicate(params)} AND id = ${params.commentId} LIMIT 1`);
-            return (await sourcesWithAppearances(rows))[0] ?? null;
+            return (await getSources({ ...params, commentIds: [params.commentId] }))[0] ?? null;
         },
+        getSources,
         async listSources(params) {
             if (params.filters.filePath || params.filters.folderPath || params.filters.severity || params.filters.taxonomyIds?.length) throw new ReviewCommentOperationError("review_comment_invalid_filter", "Sensitive filters require client-side opening");
             const sources = await sourcesWithAppearances(await readCommentRows(params));

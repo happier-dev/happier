@@ -53,8 +53,10 @@ export function createReviewCommentCanonicalMutations(store: ReviewCommentStore,
             : mutation.actionId === "reviews.comments.bulkTransition" ? mutation.input.commentIds : [mutation.input.commentId];
         const sources: ReviewCommentStoredSourceV1[] = [];
         const failed: ReviewCommentPrepareMutationResponseV1['failed'] = [];
+        const selected = new Map((await store.getSources({ ...principal, commentIds: ids }))
+            .map(source => [source.structural.id, source]));
         for (const id of ids) {
-            const source = await store.getSource({ ...principal, commentId: id });
+            const source = selected.get(id);
             if (source) {
                 assertReviewCommentOrdinarySourceAdmission(source, principal.storageMode ?? "plain");
                 sources.push(source);
@@ -106,10 +108,12 @@ export function createReviewCommentCanonicalMutations(store: ReviewCommentStore,
             accountId: principal.reviewAccess?.ownerAccountId ?? principal.accountId,
             mutation: request.mutation, current: sources.map((item) => item.structural), runtime: derivationRuntime }); }
         catch (error) { translateError(error); }
-        const records = derived.records.map((record) => ({ ...record,
-            ...(sources.find((item) => item.structural.id === (request.mutation.actionId === "reviews.comments.reply" ? request.mutation.input.parentCommentId : record.structural.id))
-                ? { previous: sources.find((item) => item.structural.id === (request.mutation.actionId === "reviews.comments.reply" ? request.mutation.input.parentCommentId : record.structural.id)) } : {}),
-        }));
+        const previousById = new Map(sources.map(source => [source.structural.id, source]));
+        const records = derived.records.map(record => {
+            const previous = previousById.get(request.mutation.actionId === "reviews.comments.reply"
+                ? request.mutation.input.parentCommentId : record.structural.id);
+            return { ...record, ...(previous ? { previous } : {}) };
+        });
         if (request.mutation.actionId === "reviews.comments.create") {
             if (!request.createRequestFingerprint) throw new ReviewCommentOperationError("review_comment_invalid_request", "Create equivalence commitment is required");
             const existing = await store.findCreate({ ...principal,
