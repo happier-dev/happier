@@ -28,6 +28,10 @@ import { projectDeploymentException } from './deploymentFailure';
 
 /** A definition Move reads Environment content only, never runtime target-link content. */
 type MoveEnvironment = Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'>;
+type MoveContinuation = DeploymentMoveToRepositoryContinuationV1;
+type AttachRepository = (continuation: MoveContinuation) => Promise<
+  MoveContinuation | Extract<DeploymentMoveToRepositoryResultV1, { kind: 'partial' }>
+>;
 type Host = Readonly<{
   serverId: string; machineId: string;
   assertCurrent(context: ActionExecutorContext): Promise<void>;
@@ -115,7 +119,8 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
       }
       if (!input.repository || !input.workspace || !input.baseCommit || !input.baseBranch)
         return { kind: 'refused', reason: 'repository_provisioning_unavailable' };
-      let source = !loaded.source.repository && input.sourceRepository
+      const repository = input.repository;
+      const source = !loaded.source.repository && input.sourceRepository
         ? { ...loaded.source, repository: input.sourceRepository } : loaded.source;
       if (!source.repository || !sameScmHostingRepositoryIdentity(readScmHostingRepositoryIdentity({ ...source.repository.provider,
         nameWithOwner: source.repository.repository.nameWithOwner }), input.repository)) return { kind: 'conflict', reason: 'source_changed' };
@@ -133,8 +138,24 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
       if (!('kind' in validated) || validated.kind !== 'validated') return validated;
       const selectors = input.selectors ?? input.continuation?.selectors ?? { profiles: definition.profiles, services: definition.services,
         ...(definition.primaryService ? { primaryService: definition.primaryService } : {}) };
+      const attachRepository: AttachRepository | undefined = loaded.source.repository ? undefined : async continuation => {
+        try {
+          if (!host.updateSource || !host.acceptWorkspace) return { kind: 'partial', phase: 'source',
+            errorCode: 'project_requester_authority_unavailable', continuation };
+          const attached = await host.updateSource({ serverId: input.serverId, sourceId: source.id,
+            expectedRevision: loaded.source.revision, patch: { repository: source.repository } }, context);
+          if (!attached.ok) return { kind: 'partial',
+            phase: ('failureCause' in attached ? attached.failureCause?.phase : undefined) ?? 'source',
+            errorCode: 'errorCode' in attached ? attached.errorCode : attached.error, continuation };
+          continuation = { ...continuation, source: { id: attached.source.id, revision: attached.source.revision } };
+          await host.acceptWorkspace(workspace, attached.source, repository, context);
+          return continuation;
+        } catch (error) {
+          return { kind: 'partial', phase: 'source', errorCode: projectDeploymentException(error).errorCode, continuation };
+        }
+      };
       if (input.continuation || coldContinuation) return await continueMove(input, input.continuation, current, filesHost, source,
-        selectors, context, executeCanonicalAction);
+        selectors, context, executeCanonicalAction, attachRepository);
       const branchName = `happier/move-${createHash('sha256').update(JSON.stringify({ environmentId: input.environmentId,
         definition: input.definition, repository: input.repository, path: input.path, baseCommit: input.baseCommit })).digest('hex')}`;
       const review = await prepareRepositoryFilesPullRequest({ cwd: workspace.rootPath, baseCommit: input.baseCommit,
@@ -145,23 +166,12 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
         selectors, files: review.files.map(({ path, before, content }) => ({ path, before, content })) } };
       const opened = await openRepositoryFilesPullRequest(review, filesHost, input.repositoryWork);
       if (opened.kind === 'partial') return { kind: 'partial', errorCode: opened.errorCode, phase: opened.stage, repositoryWork: opened };
-      const continuation = () => ({ pullRequest: opened.pullRequest, headCommit: opened.headCommit,
+      const continuation = { pullRequest: opened.pullRequest, headCommit: opened.headCommit,
         document: definition.document, definition: input.definition, source: { id: source.id, revision: source.revision },
-        path: input.path, selectors, ...(definition.publicFiles ? { publicFiles: definition.publicFiles } : {}) });
-      if (!loaded.source.repository) {
-        try {
-          if (!host.updateSource || !host.acceptWorkspace) return { kind: 'partial', phase: 'source',
-            errorCode: 'project_requester_authority_unavailable', continuation: continuation() };
-          const attached = await host.updateSource({ serverId: input.serverId, sourceId: source.id,
-            expectedRevision: loaded.source.revision, patch: { repository: source.repository } }, context);
-          if (!attached.ok) return { kind: 'partial',
-            phase: ('failureCause' in attached ? attached.failureCause?.phase : undefined) ?? 'source',
-            errorCode: 'errorCode' in attached ? attached.errorCode : attached.error, continuation: continuation() };
-          source = attached.source;
-          await host.acceptWorkspace(workspace, source, input.repository, context);
-        } catch (error) { return { kind: 'partial', phase: 'source', errorCode: projectDeploymentException(error).errorCode, continuation: continuation() }; }
-      }
-      return { kind: 'pullRequest', continuation: continuation(), ...(created ? { repository: {
+        path: input.path, selectors, ...(definition.publicFiles ? { publicFiles: definition.publicFiles } : {}) };
+      const attached = attachRepository ? await attachRepository(continuation) : continuation;
+      if ('kind' in attached) return attached;
+      return { kind: 'pullRequest', continuation: attached, ...(created ? { repository: {
         repository: created.repository, baseCommit: created.baseCommit, baseBranch: created.baseBranch, workspace: input.workspace,
       } } : {}) };
     } catch (error) {
@@ -172,11 +182,12 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
     }
   };
 
-  async function continueMove(input: DeploymentMoveToRepositoryInputV1, continuation: DeploymentMoveToRepositoryContinuationV1 | undefined,
+  async function continueMove(input: DeploymentMoveToRepositoryInputV1, continuation: MoveContinuation | undefined,
     capturedCurrent: MoveEnvironment, scm: RepositoryFilesPullRequestHost,
     source: Readonly<{ id: string; revision: number }>, selectors: NonNullable<DeploymentMoveToRepositoryInputV1['selectors']>,
     context: ActionExecutorContext,
     executeCanonicalAction: Parameters<NonNullable<ActionExecutorDeps['deploymentMoveToRepository']>>[2],
+    attachRepository: AttachRepository | undefined,
   ): Promise<DeploymentMoveToRepositoryResultV1 | ReturnType<typeof fail>> {
     if (continuation && (!isDeepStrictEqual(continuation.definition, input.definition) || continuation.path !== input.path
       || continuation.source.id !== source.id || continuation.source.revision !== source.revision
@@ -206,6 +217,12 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
       || pr.baseBranch !== continuation.pullRequest.baseBranch))
       || !sameScmHostingRepositoryIdentity(readScmHostingRepositoryIdentity(pr.provider), input.repository))
       return { kind: 'conflict', reason: 'pull_request_changed', continuation };
+    // The PR can already exist when Source attachment failed.
+    if (input.mode === 'apply' && continuation && attachRepository) {
+      const attached = await attachRepository({ ...continuation, pullRequest: pr });
+      if ('kind' in attached) return attached;
+      continuation = attached;
+    }
     if (pr.state !== 'merged') return continuation
       ? { kind: 'pullRequest', continuation: { ...continuation, pullRequest: pr } }
       : { kind: 'pullRequestStatus', pullRequest: pr };

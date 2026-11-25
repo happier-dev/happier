@@ -51,13 +51,24 @@ describe('Move definition post-effect continuation', () => {
       const refusal = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden',
         requestId: 'move-source-refusal', failureCause: { phase: 'projects.sources.update', errorClass: 'Error',
           errorCode: 'action_forbidden', httpStatus: 403 } });
+      let sourceRefusal = true;
       const unexpected = async (): Promise<never> => { throw new Error('Unexpected subsequent effect'); };
       // Home storage and Forge HTTP are boundaries; repository admission, native Git and PR composition remain real.
       const move = createDeploymentMoveToRepositoryForHost({ serverId: 'home', machineId: 'machine',
         assertCurrent: async () => {}, requireDefinitionManage: async () => {},
         readEnvironment: async () => ({ environment: base.environment, content: { ...base.content, definition } }),
-        readSource: async () => ({ ok: true, source, canManage: true }), updateSource: async () => refusal,
-        acceptWorkspace: unexpected, readWorkspaceRows: async () => ({ source: 'network', workspaceRefs: [workspace],
+        readSource: async () => ({ ok: true, source, canManage: true }),
+        updateSource: async input => {
+          if (sourceRefusal) return refusal;
+          expect(input).toMatchObject({ sourceId: source.id, expectedRevision: source.revision, patch: { repository: sourceRepository } });
+          source = { ...source, revision: source.revision + 1, repository: sourceRepository };
+          return { ok: true, source, canManage: true };
+        },
+        acceptWorkspace: async (_workspace, attached, identity) => {
+          workspace.source = { sourceId: attached.id, revision: attached.revision };
+          workspace.repositoryIdentity = identity;
+        },
+        readWorkspaceRows: async () => ({ source: 'network', workspaceRefs: [workspace],
           relationships: [], organizations: [], rows: [], graphRevision: 'absent', loadedAtMs: 0, scopeKey: 'home:owner' }),
         repositoryFiles: (_cwd, context) => createAdmittedCheckoutRepositoryFiles({ root: git.rootPath, context, registry,
           resolveRemovalRuntime: removal.resolveRemovalRuntime }),
@@ -89,6 +100,17 @@ describe('Move definition post-effect continuation', () => {
       if (result.kind !== 'partial' || !result.continuation) throw new Error('Move must retain its opened PR');
       expect(runScmExecutable(remote.remotePath, 'git', ['show', `${result.continuation.headCommit}:deploy/compose.yaml`]))
         .toBe(definition.document.trimEnd());
+      sourceRefusal = false;
+      const retry = { ...input, continuation: result.continuation };
+      const retried = DeploymentMoveToRepositoryResultV1Schema.parse(await removal.run(
+        'deployments.environments.moveToRepository', retry, {}, context => move(retry, context, unexpected)));
+      expect(retried).toMatchObject({ kind: 'pullRequest', continuation: {
+        pullRequest: { number: result.continuation.pullRequest.number }, headCommit: result.continuation.headCommit,
+        source: { id: source.id, revision: 2 },
+      } });
+      expect(source.repository).toEqual(sourceRepository);
+      expect(workspace.source).toEqual({ sourceId: source.id, revision: source.revision });
+      expect(forge.httpRequests.filter(({ method, path }) => method === 'POST' && path.endsWith('/pulls'))).toHaveLength(1);
     } finally {
       vi.unstubAllEnvs();
       await hostConfig.cleanup();

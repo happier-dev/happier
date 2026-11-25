@@ -4,6 +4,7 @@ import { DeploymentTargetPreparationBaseV1ProtocolSchema } from '@happier-dev/pl
 import * as neon from '../../../../../packages/plugins/deployment-neon/src/index';
 import { mutationResult } from '../../../../../packages/plugins/deployment-neon/src/data/schemas';
 import * as supabase from '../../../../../packages/plugins/deployment-supabase/src/index';
+import { projectDeploymentException } from '../deploymentFailure';
 import { createWorkflowDataPluginRuntimeFixture } from './workflowDataPluginRuntime.testkit';
 import { prepareWorkflowDataCreationResultCapture, WorkflowDataCreationResultSchema, readWorkflowDataCreationResult } from './workflowDataCreationResult';
 
@@ -148,10 +149,16 @@ describe('Workflow data creation result projection', () => {
         const reference = { runId: 'run-A', invocationId: 'invocation-A' };
         expect(readWorkflowDataCreationResult(opened, reference)).toMatchObject({
             input: { credentialRef, credentialPrincipal: input.credentialPrincipal }, result: { providerEnvironment: { kind: 'native', selection: { branchId: 'child-A' } } } });
-        expect(() => readWorkflowDataCreationResult(opened, { ...reference, invocationId: 'invocation-B' })).toThrow();
-        expect(() => readWorkflowDataCreationResult({ ...opened, invocation: { ...opened.invocation,
+        const readAsDeployment = (...args: Parameters<typeof readWorkflowDataCreationResult>) => {
+            try { return readWorkflowDataCreationResult(...args); }
+            catch (error) { return projectDeploymentException(error); }
+        };
+        expect(readAsDeployment(opened, { ...reference, invocationId: 'invocation-B' }))
+            .toMatchObject({ ok: false, errorCode: 'target_mismatch' });
+        expect(readAsDeployment({ ...opened, invocation: { ...opened.invocation,
             progress: { ...opened.invocation.progress, execution: { ...opened.invocation.progress.execution,
-                input: { ...opened.invocation.progress.execution.input, action: { pluginId: 'other-person.plugin', localId: 'branches-create' } } } } } }, reference)).toThrow();
+                input: { ...opened.invocation.progress.execution.input, action: { pluginId: 'other-person.plugin', localId: 'branches-create' } } } } } }, reference))
+            .toMatchObject({ ok: false, errorCode: 'target_mismatch' });
     });
 
     it('does not invent ownership from an unknown outcome or retain unrelated Action results', () => {

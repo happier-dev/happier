@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { DeploymentDataCreationReferenceV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTargetRoleInputSchemasV1, DeploymentTargetPreparationBaseV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
@@ -61,21 +62,25 @@ export function prepareWorkflowDataCreationResultCapture(actionId: string,
     };
 }
 
+function refuseTargetMismatch(): never {
+    throw createActionExecuteFailureError({ ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' });
+}
+
 /** Consumes the incumbent authenticated Workflow getter; storage and envelope custody stay there. */
 export function readWorkflowDataCreationResult(opened: unknown, reference: DeploymentDataCreationReferenceV1) {
     const record = WorkflowActionOutputSchemasV1['workflow.run.invocations.get'].parse(opened).invocation;
     const execution = record.progress.execution;
     if (record.index.runId !== reference.runId || record.index.id !== reference.invocationId
-        || record.progress.blockKind !== 'action' || execution?.kind !== 'action') throw new Error('target_mismatch');
+        || record.progress.blockKind !== 'action' || execution?.kind !== 'action') return refuseTargetMismatch();
     const envelope = execution.actionId === 'action.invoke' ? execution.input : undefined;
     const action = envelope ? PluginContributionIdentityV1Schema.parse(envelope.action)
         : parseQualifiedPluginActionId(execution.actionId);
     const raw = envelope ? envelope.input : execution.input;
-    if (!action || !raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('target_mismatch');
+    if (!action || !raw || typeof raw !== 'object' || Array.isArray(raw)) return refuseTargetMismatch();
     const shape = DeploymentTargetRoleInputSchemasV1['branches.create'].shape;
     const input = DeploymentTargetRoleInputSchemasV1['branches.create'].parse(Object.fromEntries(
         Object.keys(shape).filter(key => Object.hasOwn(raw, key)).map(key => [key, Reflect.get(raw, key)])));
     const result = WorkflowDataCreationResultSchema.parse(execution.output);
-    if (action.pluginId !== result.source.pluginId || action.pluginId !== result.deleteAction.pluginId) throw new Error('target_mismatch');
+    if (action.pluginId !== result.source.pluginId || action.pluginId !== result.deleteAction.pluginId) return refuseTargetMismatch();
     return { input, result, action };
 }
