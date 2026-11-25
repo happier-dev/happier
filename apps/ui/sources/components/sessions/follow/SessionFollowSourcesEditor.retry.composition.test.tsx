@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeEach, expect, it, onTestFinished, vi } from 
 import { createMachineFixture, createRootLayoutFeaturesResponse, createSessionFixture,
     createSessionListRenderableSessionFixture, flushHookEffects, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import type { FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
@@ -68,6 +69,7 @@ async function mountRetryEditor(requestFailed = false, initialPolicy: FollowPoli
     });
     const machine = createMachineFixture({ id: 'runner', kind: 'ephemeral_session_runner', activeAt: Date.now(),
         operationProtocolCapabilities: { sessionFollow: { contextV1: true } } });
+    publishMachineActivityForTest([machine]);
     const source = createSessionListRenderableSessionFixture({ id: 'source', encryptionMode: 'e2ee' });
     storage.setState(state => ({ profileScope: { serverId: home.id, accountId: home.accountId },
         profile: { ...state.profile, id: home.accountId }, machines: { [machine.id]: machine },
