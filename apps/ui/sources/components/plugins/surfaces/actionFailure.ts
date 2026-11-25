@@ -149,8 +149,11 @@ export function clientActionPreparationFailure(error: unknown): Failure {
     const actionHandlerInvocation = authored ? readPluginActionFailureHandlerInvocation({
         code: authored.code, message: authored.message, data: authored.data,
     }) : undefined;
-    if (authored && author.failureCause) return projectPluginActionFailure({ code, data: authored.data,
-        message: authored.data.message, retryable: authored.retryable, actionHandlerInvocation });
+    if (authored && (author.failureCause || (
+        code !== PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE && code !== 'plugin_action_generation_retired'
+    ))) return projectPluginActionFailure({ code, data: authored.data,
+        message: authored.data.message ?? (metadata.layer ? resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: code }).body : undefined),
+        retryable: authored.retryable, actionHandlerInvocation });
     return clientActionFailure(code, {
         ...(actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation }),
         ...metadata,
@@ -174,7 +177,7 @@ export function projectClientActionInvocationFailure(
     declaration: ActionEffectDeclaration | boolean,
     input: unknown,
 ): Failure {
-    if (result.status === 'invalid') return clientActionFailure(result.code);
+    if (result.status === 'invalid') return projectPluginActionFailure({ code: result.code });
     const metadata = projectPluginActionFailure(result.status === 'unavailable' && result.message === result.code
         ? { ...result, message: undefined }
         : result);

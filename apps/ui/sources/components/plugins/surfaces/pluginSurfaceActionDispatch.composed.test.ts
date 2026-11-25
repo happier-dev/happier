@@ -2352,7 +2352,7 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
             expect(await hook.getCurrent().dispatchAction({ pluginId, localId }, {
                 v: 2, sessionId: 'linked-session', entryRef: testkitEntryRef({ entryId: '57' }),
                 display: { locator: testkitLocator(), scopeLabel: 'example/repository' },
-            })).toMatchObject({ code: 'unavailable', diagnostics: ['plugin_action_input_schema_invalid'] });
+            })).toMatchObject({ code: 'plugin_action_input_schema_invalid', diagnostics: ['plugin_action_input_schema_invalid'] });
             const invalidInputCoverage = await inspector.post('Profiler.takePreciseCoverage');
             expect(invalidInputCoverage.result.flatMap(script => script.functions).filter(fn => fn.functionName === 'createAjv')
                 .reduce((total, fn) => total + (fn.ranges[0]?.count ?? 0), 0)).toBe(0);
@@ -5771,7 +5771,9 @@ describe('Account Action placement through the executable dispatcher', () => {
                 invocationSurface: 'ui', clientAction: {}, pluginUiProjection: activation.projection,
                 resolveContributedAction: resolveExactClientAction(activation.action),
             });
-            expect(await dispatch({ key: 42 })).toMatchObject({ ok: false, reason: 'plugin_action_input_schema_invalid' });
+            expect(await dispatch({ key: 42 })).toMatchObject({
+                ok: false, code: 'plugin_action_input_schema_invalid', reason: 'plugin_action_input_schema_invalid',
+            });
             expect(await dispatchPluginResolvedSemanticCommand({
                 projection: activation.projection, callerPluginId: authoredAccountManifest.id,
                 command: { kind: 'executeAction', action: { pluginId: authoredAccountManifest.id, localId: 'echo' }, input: { key: 'public path' } },

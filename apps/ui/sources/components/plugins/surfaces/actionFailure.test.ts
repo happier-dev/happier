@@ -29,7 +29,11 @@ it.each([
 
 it('retains a host-proven preparation refusal before source invocation', () => {
     const code = 'plugin_action_current_intent_unavailable';
-    const outcome = clientActionPreparationFailure(createPluginActionHandlerNotStartedError({ code }));
+    const requestId = 'preparation-refusal-request';
+    const outcome = clientActionPreparationFailure(createPluginActionHandlerNotStartedError({ code,
+        details: { requestId } }));
+    const payload = readPluginSurfaceHostApiErrorPayload(createPluginSurfaceActionFailurePayload(outcome));
+    expect(payload).toMatchObject({ code, requestId });
     expect(triageTaskWriteInvocationFailureV1(createPluginSurfaceActionFailureError(outcome)))
         .toMatchObject({ kind: 'refused', reason: code });
 });

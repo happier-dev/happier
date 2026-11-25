@@ -1227,9 +1227,7 @@ async function settleDaemonActionPresentUserIntent(
             isCurrent: () => input.isCurrent?.() !== false,
         });
         const prepared = invocation.prepare(settledInput ?? null);
-        if (prepared.kind === 'settled') return clientActionFailure(
-            'code' in prepared.result ? prepared.result.code : 'plugin_action_input_schema_invalid',
-        );
+        if (prepared.kind === 'settled') return projectClientActionInvocationFailure(prepared.result, projectedAction, settledInput);
         normalizedInput = prepared.input;
     }
     const hostContext = input.hostAction?.context;
@@ -1400,7 +1398,7 @@ async function prepareClientContributedAction(
     const preparedInput = invocation.prepare(settledInput ?? null, { signal: input.signal,
         ...(retained ? { inputAlreadyNormalized: true as const } : {}),
     });
-    if (preparedInput.kind === 'settled') return clientActionFailure(preparedInput.result.code);
+    if (preparedInput.kind === 'settled') return projectClientActionInvocationFailure(preparedInput.result, initial.action, settledInput);
     const normalizedInput: unknown = preparedInput.input;
     if (input.readObservation && !readPluginActionReadObserver(initial.registration.registration.value)) {
         return clientActionFailure('plugin_action_read_observation_unavailable');
@@ -2752,7 +2750,7 @@ async function executeContributedAction(
                 declaration: projectedAction, inputSchema: schemas.result.inputSchema, occurrenceSignal: input.signal ?? new AbortController().signal,
                 isCurrent: () => input.isCurrent?.() !== false });
             const prepared = invocation.prepare(normalizedInput);
-            if (prepared.kind === 'settled') return clientActionFailure(prepared.result.code);
+            if (prepared.kind === 'settled') return projectClientActionInvocationFailure(prepared.result, projectedAction, normalizedInput);
             normalizedInput = prepared.input;
             daemonPreparedInput = { input: normalizedInput };
         }
