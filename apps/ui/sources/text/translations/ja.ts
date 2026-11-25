@@ -20057,6 +20057,13 @@ settingsSession: {
           approveRollback: ({ version }: { version: string }) => `${version} にロールバック`,
           decisionCreate: ({ name, platform }: { name: string; platform: string }) => `${platform} に ${name} を作成`,
           approveCreate: ({ name }: { name: string }) => `${name} を作成`,
+          // A removal reads as its decision: what is deleted and from where (UI refinements 2026-11-25 03:57Z).
+          decisionDeletePlatform: ({ name, platform }: { name: string; platform: string }) => `${platform} から ${name} を削除`,
+          decisionRemoveDomain: ({ hostname }: { hostname: string }) => `${hostname} を削除`,
+          removalWhatTitle: `削除されるもの`,
+          removalVolumesDeleted: ({ names }: { names: string }) => `${names} は削除`,
+          removalVolumesKept: ({ names }: { names: string }) => `${names} は保持`,
+          removalEnvironmentToo: `環境も削除されます`,
           createWhatTitle: `作成されるもの`,
           createName: `名前`,
           createSource: `ビルド元`,

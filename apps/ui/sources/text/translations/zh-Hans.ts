@@ -19763,6 +19763,13 @@ settingsSession: {
           approveRollback: ({ version }: { version: string }) => `回滚到 ${version}`,
           decisionCreate: ({ name, platform }: { name: string; platform: string }) => `在 ${platform} 上创建 ${name}`,
           approveCreate: ({ name }: { name: string }) => `创建 ${name}`,
+          // A removal reads as its decision: what is deleted and from where (UI refinements 2026-11-25 03:57Z).
+          decisionDeletePlatform: ({ name, platform }: { name: string; platform: string }) => `从 ${platform} 删除 ${name}`,
+          decisionRemoveDomain: ({ hostname }: { hostname: string }) => `移除 ${hostname}`,
+          removalWhatTitle: `将删除的内容`,
+          removalVolumesDeleted: ({ names }: { names: string }) => `${names} 将删除`,
+          removalVolumesKept: ({ names }: { names: string }) => `${names} 将保留`,
+          removalEnvironmentToo: `环境也会被移除`,
           createWhatTitle: `将创建的内容`,
           createName: `名称`,
           createSource: `构建来源`,

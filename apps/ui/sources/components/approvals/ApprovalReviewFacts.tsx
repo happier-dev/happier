@@ -40,7 +40,7 @@ import { PetImportConfirmationCard } from './PetImportConfirmationCard';
 import { readPetImportConfirmationV1 } from '@happier-dev/protocol/pets/importActionV1';
 import { ComputerActionApprovalCard, describeComputerActionApproval, type ComputerActionApproval } from './ComputerActionApprovalCard';
 import { ComputerApprovalCapture } from './ComputerApprovalCapture';
-import { DeploymentReviewApprovalFacts, describeDeploymentFolderReviewFiles, readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
+import { DeploymentReviewApprovalFacts, describeDeploymentFolderReviewFiles, isDeploymentRemovalReview, readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
 import { ProjectCommandApprovalFacts, readProjectCommandApproval } from './ProjectCommandApprovalFacts';
 import { describeApprovalRequestFields, resolveApprovalVisualPreview } from './approvalFieldValues';
 import { FieldValue } from '@/components/ui/lists/FieldRow';
@@ -102,6 +102,10 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
   const handoff = React.useMemo(() => HandoffTargetReplacementApprovalV1Schema.safeParse(readRecord(preview).handoffTargetReplacementApproval), [preview]);
   const generic = !deployment && !template && !command && !computer && !edit && !resource && !props.resourceProposal && !petImport;
   const fields = React.useMemo(() => generic && props.fields === undefined ? describeApprovalRequestFields(request) : null, [generic, props.fields, request]);
+  // A teardown reads by its typed facts; the request's own ids stay one press away under Technical details.
+  const removalTechnicalRows = React.useMemo(() => isDeploymentRemovalReview(deployment)
+    ? describeApprovalRequestFields(request).rows.flatMap(row => row.kind === 'value' ? [{ ...row, technical: true as const }] : [])
+    : undefined, [deployment, request]);
   const reboot = readRecord(readRecord(preview).machineRebootReview);
   return <>
     <ApprovalPreviewFacts request={request} preview={preview} serverId={serverId} />
@@ -114,7 +118,7 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
       <PetImportConfirmationCard confirmation={petImport} serverId={serverId} testID={`${testID}.pet-import.card`} />
     </SectionContentRow></ItemGroup> : null}
     {visual ? <ApprovalVisualPreview preview={visual} artifactId={props.artifactId ?? testID} serverId={serverId} testID={`${testID}.visual`} /> : null}
-    {deployment ? <DeploymentReviewApprovalFacts approval={deployment} serverId={serverId}
+    {deployment ? <DeploymentReviewApprovalFacts approval={deployment} serverId={serverId} technicalRows={removalTechnicalRows}
       testID={`${testID}.deployment-review`} decided={props.decided} /> : null}
     {domainSetup?.length ? <ItemGroup title={t('projects.deployments.review.domainSetupTitle')}>
       {domainSetup.map(machine => <DomainSetupMachineRow key={machine.machineId} machine={machine}

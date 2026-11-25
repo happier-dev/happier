@@ -21,7 +21,7 @@ import { useArtifact } from '@/sync/domains/state/storage';
  * child steps the host folded into the approval), `steps-plain` (those steps with no review), `plain` (an unstructured deploy)
  * `railway-create` (the branch-following service review) or `vercel-create` (an uploaded project's create review), both
  * carried the way the host's create preparation carries them (`hostReviewedContent.deploymentReview`). `?machine=` names
- * a Machine this Home knows. It proves composition only; the loaded
+ * a Machine this Home knows. `railway-delete` is a provider teardown carrying the Deployments program's typed removal facts. It proves composition only; the loaded
  * page is judged on a real deploy approval.
  */
 const ARTIFACT_ID = 'deploy-review-specimen';
@@ -47,6 +47,12 @@ const VERCEL_CREATE_ARGS = {
   providerCreate: { resourceName: 'acme-web', sourceMethod: 'upload', providerAccountId: 'team-acme',
     providerEnvironment: { kind: 'native', selection: { kind: 'production' } } },
 };
+
+/** A provider teardown as its preparation carries it: the summary, then the typed removal facts. */
+const RAILWAY_DELETE_ARGS = { serverId: 'specimen', environmentId: 'env-production-api', targetLinkId: 'link-checkout-api', mode: 'manual' };
+const RAILWAY_DELETE_REVIEW = { summary: 'Tear down deployment resources.', removal: {
+  subject: { kind: 'platformResource' as const, name: 'checkout-api', platform: 'Railway' }, environment: 'Production API',
+  domains: ['shop.example.com'], volumes: [{ name: 'orders-data', removed: true }, { name: 'uploads', removed: false }] } };
 
 /** What the host's create preparation attaches (`runtimeTargetCreateForHost`): the summary, then the typed review. */
 function buildCreateReview(variant: 'railway-create' | 'vercel-create') {
@@ -118,17 +124,19 @@ function buildIncludedSteps(serverId: string, machineId: string) {
 export function DeployReviewSpecimen(props: Readonly<{ variant: string; machineId: string }>) {
   const scope = useActiveServerAccountScope();
   const create = props.variant === 'railway-create' || props.variant === 'vercel-create' ? props.variant : null;
-  const artifactId = create ? `${ARTIFACT_ID}-${create}` : ARTIFACT_ID;
+  const teardown = props.variant === 'railway-delete';
+  const artifactId = create ? `${ARTIFACT_ID}-${create}` : teardown ? `${ARTIFACT_ID}-railway-delete` : ARTIFACT_ID;
   const present = useArtifact(artifactId) !== null;
   // The Home's artifact sync can replace the store's rows, so the stored approval is seeded again whenever it is missing.
   React.useEffect(() => {
     if (!scope || present) return;
     const hostReviewedContent = create ? buildCreateReview(create) : null;
     const summary = create ? hostReviewedContent && 'summary' in hostReviewedContent ? hostReviewedContent.summary : 'Link deployment target'
-      : props.variant === 'promotion' ? 'Promote Staging to Production API' : 'Deploy 7f3e2b1 to Production API';
-    const actionId = create ? 'deployments.targets.link' : props.variant === 'promotion' ? 'deployments.promote' : 'deployments.deploy';
-    const args = create === 'railway-create' ? RAILWAY_CREATE_ARGS : create === 'vercel-create' ? VERCEL_CREATE_ARGS : ACTION_ARGS;
-    const review = create ? null : buildReview(props.variant, props.machineId);
+      : teardown ? RAILWAY_DELETE_REVIEW.summary : props.variant === 'promotion' ? 'Promote Staging to Production API' : 'Deploy 7f3e2b1 to Production API';
+    const actionId = create ? 'deployments.targets.link' : teardown ? 'deployments.teardown' : props.variant === 'promotion' ? 'deployments.promote' : 'deployments.deploy';
+    const args = create === 'railway-create' ? RAILWAY_CREATE_ARGS : create === 'vercel-create' ? VERCEL_CREATE_ARGS
+      : teardown ? RAILWAY_DELETE_ARGS : ACTION_ARGS;
+    const review = create ? null : teardown ? RAILWAY_DELETE_REVIEW : buildReview(props.variant, props.machineId);
     const executionOriginV1 = buildApprovalExecutionOriginV1({ actionId, input: args, targetSessionId: null,
       context: { surface: 'agent', authority: 'account_automation', serverId: scope.serverId, runtimeAccountId: scope.accountId,
         actionRequestId: artifactId, actionCaller: { kind: 'host' } } });
@@ -140,6 +148,6 @@ export function DeployReviewSpecimen(props: Readonly<{ variant: string; machineI
     storage.getState().updateArtifact({ id: artifactId, header: buildApprovalRequestArtifactHeaderV1(request),
       title: summary, body: JSON.stringify(request), headerVersion: 1, bodyVersion: 1,
       seq: 1, createdAt: 1, updatedAt: Date.now(), isDecrypted: true } satisfies DecryptedArtifact);
-  }, [scope, present, props.variant, props.machineId, create, artifactId]);
+  }, [scope, present, props.variant, props.machineId, create, teardown, artifactId]);
   return present ? <ApprovalDetailScreen key={`${props.variant}:${props.machineId}`} artifactId={artifactId} /> : null;
 }

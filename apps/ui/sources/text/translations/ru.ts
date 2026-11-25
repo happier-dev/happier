@@ -20097,6 +20097,13 @@ settingsSession: {
           approveRollback: ({ version }: { version: string }) => `Откатить к ${version}`,
           decisionCreate: ({ name, platform }: { name: string; platform: string }) => `Создать ${name} в ${platform}`,
           approveCreate: ({ name }: { name: string }) => `Создать ${name}`,
+          // A removal reads as its decision: what is deleted and from where (UI refinements 2026-11-25 03:57Z).
+          decisionDeletePlatform: ({ name, platform }: { name: string; platform: string }) => `Удалить ${name} из ${platform}`,
+          decisionRemoveDomain: ({ hostname }: { hostname: string }) => `Удалить ${hostname}`,
+          removalWhatTitle: `Что будет удалено`,
+          removalVolumesDeleted: ({ names }: { names: string }) => `${names}: удаляется`,
+          removalVolumesKept: ({ names }: { names: string }) => `${names}: сохраняется`,
+          removalEnvironmentToo: `Окружение тоже удаляется`,
           createWhatTitle: `Что будет создано`,
           createName: `Имя`,
           createSource: `Собирается из`,

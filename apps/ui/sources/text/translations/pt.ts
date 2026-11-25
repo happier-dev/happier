@@ -20249,6 +20249,13 @@ settingsSession: {
           approveRollback: ({ version }: { version: string }) => `Reverter para ${version}`,
           decisionCreate: ({ name, platform }: { name: string; platform: string }) => `Criar ${name} no ${platform}`,
           approveCreate: ({ name }: { name: string }) => `Criar ${name}`,
+          // A removal reads as its decision: what is deleted and from where (UI refinements 2026-11-25 03:57Z).
+          decisionDeletePlatform: ({ name, platform }: { name: string; platform: string }) => `Excluir ${name} de ${platform}`,
+          decisionRemoveDomain: ({ hostname }: { hostname: string }) => `Remover ${hostname}`,
+          removalWhatTitle: `O que é excluído`,
+          removalVolumesDeleted: ({ names }: { names: string }) => `${names}: excluído`,
+          removalVolumesKept: ({ names }: { names: string }) => `${names}: mantido`,
+          removalEnvironmentToo: `O ambiente também é removido`,
           createWhatTitle: `O que é criado`,
           createName: `Nome`,
           createSource: `Compila a partir de`,

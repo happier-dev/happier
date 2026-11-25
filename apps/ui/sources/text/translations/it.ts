@@ -20145,6 +20145,13 @@ settingsSession: {
           approveRollback: ({ version }: { version: string }) => `Torna a ${version}`,
           decisionCreate: ({ name, platform }: { name: string; platform: string }) => `Crea ${name} su ${platform}`,
           approveCreate: ({ name }: { name: string }) => `Crea ${name}`,
+          // A removal reads as its decision: what is deleted and from where (UI refinements 2026-11-25 03:57Z).
+          decisionDeletePlatform: ({ name, platform }: { name: string; platform: string }) => `Elimina ${name} da ${platform}`,
+          decisionRemoveDomain: ({ hostname }: { hostname: string }) => `Rimuovi ${hostname}`,
+          removalWhatTitle: `Cosa viene eliminato`,
+          removalVolumesDeleted: ({ names }: { names: string }) => `${names}: eliminato`,
+          removalVolumesKept: ({ names }: { names: string }) => `${names}: mantenuto`,
+          removalEnvironmentToo: `Anche l’ambiente viene rimosso`,
           createWhatTitle: `Cosa viene creato`,
           createName: `Nome`,
           createSource: `Compila da`,

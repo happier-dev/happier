@@ -23520,6 +23520,13 @@ const enProjects = {
         approveRollback: ({ version }: { version: string }) => `Roll back to ${version}`,
         decisionCreate: ({ name, platform }: { name: string; platform: string }) => `Create ${name} on ${platform}`,
         approveCreate: ({ name }: { name: string }) => `Create ${name}`,
+        // A removal reads as its decision: what is deleted and from where (UI refinements 2026-11-25 03:57Z).
+        decisionDeletePlatform: ({ name, platform }: { name: string; platform: string }) => `Delete ${name} from ${platform}`,
+        decisionRemoveDomain: ({ hostname }: { hostname: string }) => `Remove ${hostname}`,
+        removalWhatTitle: `What gets deleted`,
+        removalVolumesDeleted: ({ names }: { names: string }) => `${names} deleted`,
+        removalVolumesKept: ({ names }: { names: string }) => `${names} kept`,
+        removalEnvironmentToo: `The Environment is removed too`,
         createWhatTitle: `What gets created`,
         createName: `Name`,
         createSource: `Builds from`,

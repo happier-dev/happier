@@ -56,6 +56,29 @@ describe('DeploymentReviewApprovalFacts', () => {
     expect(describeDeploymentBackupConfigureDecision(id, { intent: 'save' })?.approve).toBe(t('projects.deployments.review.approveBackupSave'));
     expect(describeDeploymentBackupConfigureDecision('deployments.deploy', { intent: 'test' })).toBeNull();
   });
+  it('reads a provider teardown as the decision it is: what it deletes, from where, and what goes with it (UI refinements 03:57Z)', async () => {
+    const preview = { actionId: 'deployments.teardown', deploymentReview: { summary: 'Tear down deployment resources.', removal: {
+      subject: { kind: 'platformResource', name: 'checkout-api', platform: 'Railway' }, environment: 'Production API',
+      removeEnvironment: true, domains: ['shop.example.com'], volumes: [{ name: 'orders-data', removed: true }, { name: 'cache', removed: false }] } } };
+    const approval = readDeploymentReviewApproval({ preview });
+    if (!approval) throw new Error('Expected a typed removal review');
+    expect(describeDeploymentReviewDecision(approval, 'deployments.teardown', null)).toEqual({
+      title: 'projects.deployments.review.decisionDeletePlatform', description: 'projects.deployments.review.consequence',
+      approve: 'projects.deployments.platformLink.confirmDelete',
+    });
+    const own = readDeploymentReviewApproval({ preview: { deploymentReview: { removal: { subject: { kind: 'ownServer' }, environment: 'Staging' } } } });
+    expect(own && describeDeploymentReviewDecision(own, 'deployments.teardown', null)?.title).toBe('projects.deployments.deleteConfirmRemove');
+    const screen = await renderScreen(<DeploymentReviewApprovalFacts approval={approval} serverId={null} testID="removal-facts"
+      technicalRows={[{ kind: 'value', path: 'environmentId', title: 'Environment ID', value: 'env-7f3a', technical: true }]} />);
+    const text = screen.getTextContent();
+    expect(text).toContain('projects.deployments.review.removalWhatTitle');
+    for (const value of ['Production API', 'Railway', 'checkout-api', 'projects.deployments.factStopsDomains',
+      'projects.deployments.review.removalVolumesDeleted', 'projects.deployments.review.removalVolumesKept',
+      'projects.deployments.review.removalEnvironmentToo']) expect(text).toContain(value);
+    expect(text).not.toContain('env-7f3a');
+    expect(text).not.toContain('manual');
+  });
+
   it('reads a host-reviewed provider create as the decision: what it creates, where, and from what (RAILWAY-VISUAL-ACCEPT D1)', async () => {
     const preview = { actionId: 'deployments.targets.link', hostReviewedContent: { summary: 'Create service checkout-api.',
       deploymentReview: { summary: 'Create service checkout-api.', platformCreate: { platformName: 'Railway', resourceName: 'checkout-api',

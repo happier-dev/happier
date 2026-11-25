@@ -2,7 +2,7 @@ import * as React from 'react';
 import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { deploymentRevisionLabelV1 as deploymentRevisionLabel } from '@happier-dev/deployments';
 import { formatHappierDataBytes, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
-import { areDeploymentSourceLabelsEqualV1, DeploymentApprovalReviewV1Schema, type DeploymentApprovalReviewV1, type DeploymentFolderReviewRevisionV1, type DeploymentPlatformCreateReviewV1, type DeploymentMachineReviewV1, type DeploymentReviewRevisionV1, type DeploymentReviewRiskKindV1, type DeploymentReviewServiceV1, type DeploymentReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
+import { areDeploymentSourceLabelsEqualV1, DeploymentApprovalReviewV1Schema, DeploymentRemovalApprovalReviewV1Schema, type DeploymentRemovalReviewV1, type DeploymentApprovalReviewV1, type DeploymentFolderReviewRevisionV1, type DeploymentPlatformCreateReviewV1, type DeploymentMachineReviewV1, type DeploymentReviewRevisionV1, type DeploymentReviewRiskKindV1, type DeploymentReviewServiceV1, type DeploymentReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { isLiteralLoopbackHostname} from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
@@ -19,7 +19,7 @@ type PlatformReview =
   | Extract<DeploymentApprovalReviewV1, { platformPromotion: unknown }>['platformPromotion'];
 
 export type DeploymentReviewApproval = Readonly<{
-  review: DeploymentReviewV1 | PlatformReview | DeploymentPlatformCreateReviewV1;
+  review: DeploymentReviewV1 | PlatformReview | DeploymentPlatformCreateReviewV1 | DeploymentRemovalReviewV1;
   /** A promotion wraps the destination's deploy review with the Compose document change it applies. */
   promotion: Readonly<{ composeChanges?: boolean; sourceRevision?: DeploymentReviewRevisionV1 }> | null;
 }>;
@@ -36,6 +36,9 @@ export function readDeploymentReviewApproval(
   const preview = readRecord(approval.preview);
   const carried = preview.deploymentReview ?? readRecord(preview.hostReviewedContent).deploymentReview;
   if (carried === undefined) return null;
+  // A teardown carries what it removes (the Deployments program's typed removal facts, 8e4e19f0122).
+  const removal = DeploymentRemovalApprovalReviewV1Schema.safeParse(carried);
+  if (removal.success) return { review: removal.data.removal, promotion: null };
   const parsed = DeploymentApprovalReviewV1Schema.safeParse(carried);
   if (!parsed.success) return null;
   if ('platformCreate' in parsed.data) return { review: parsed.data.platformCreate, promotion: null };
@@ -109,7 +112,7 @@ export function readDeploymentReviewMachineIds(review: DeploymentReviewApproval[
 }
 
 function readMachines(review: DeploymentReviewApproval['review']): readonly ReviewMachine[] {
-  if ('platformName' in review) return [];
+  if ('platformName' in review || isRemoval(review)) return [];
   return review.runtimeMachines?.length
     ? review.runtimeMachines.map((machine) => ({
         id: machine.machineId,
@@ -119,12 +122,42 @@ function readMachines(review: DeploymentReviewApproval['review']): readonly Revi
 }
 
 function readRollbackData(review: DeploymentReviewApproval['review']): 'keep' | 'restoreBackup' | undefined {
+  if (isRemoval(review)) return undefined;
   return 'platformName' in review ? ('data' in review ? review.data : undefined) : review.rollbackData;
 }
 
 /** A provider create has no version or Environment of its own yet: it reads as the resource it makes. */
 function isPlatformCreate(review: DeploymentReviewApproval['review']): review is DeploymentPlatformCreateReviewV1 {
   return 'resourceName' in review;
+}
+
+/** A teardown: what it removes, never a version or a Machine of its own. */
+export function isDeploymentRemovalReview(approval: DeploymentReviewApproval | null): boolean {
+  return approval !== null && isRemoval(approval.review);
+}
+
+function isRemoval(review: DeploymentReviewApproval['review']): review is DeploymentRemovalReviewV1 {
+  return 'subject' in review;
+}
+
+/** What a teardown deletes, where, and what goes with it, as the delete sheet said it before the request. */
+function describeRemovalFields(removal: DeploymentRemovalReviewV1): ApprovalFieldsPresentation {
+  const { subject } = removal;
+  const deleted = removal.volumes?.filter(volume => volume.removed).map(volume => volume.name) ?? [];
+  const kept = removal.volumes?.filter(volume => !volume.removed).map(volume => volume.name) ?? [];
+  return { rows: [
+    ...field('removal.environment', t('projects.deployments.review.environment'), removal.environment, {
+      note: removal.removeEnvironment ? t('projects.deployments.review.removalEnvironmentToo') : undefined,
+    }),
+    ...field('removal.where', t('projects.deployments.review.whereTitle'), subject.kind === 'platformResource' ? subject.platform : null),
+    ...field('removal.name', t('projects.deployments.review.createName'),
+      subject.kind === 'platformResource' ? subject.name : subject.kind === 'domain' ? subject.hostname : null),
+    ...field('removal.domains', t('projects.deployments.factStops'), removal.domains?.length
+      ? t('projects.deployments.factStopsDomains', { domains: removal.domains.join(', ') }) : null),
+    ...field('removal.data', t('projects.deployments.factData'), joinHappierFacts(
+      deleted.length ? t('projects.deployments.review.removalVolumesDeleted', { names: deleted.join(', ') }) : null,
+      kept.length ? t('projects.deployments.review.removalVolumesKept', { names: kept.join(', ') }) : null) || null),
+  ], unrepresentable: null };
 }
 
 /** What a provider create makes, where, and what it builds from. */
@@ -251,6 +284,7 @@ function describeReviewFields(
 ): ApprovalFieldsPresentation {
   const { review, promotion } = approval;
   if (isPlatformCreate(review)) return describeCreateFields(review);
+  if (isRemoval(review)) return describeRemovalFields(review);
   const { environment, revision } = review;
   const reviewedVersion = promotion?.sourceRevision ?? revision;
   const replaces = 'replaces' in review ? review.replaces : undefined;
@@ -365,6 +399,23 @@ export function describeDeploymentReviewDecision(
     description: t('projects.deployments.review.consequence'),
     approve: t('projects.deployments.review.approveCreate', { name: review.resourceName }),
   };
+  if (isRemoval(review)) {
+    const { subject } = review;
+    if (subject.kind === 'platformResource') return {
+      title: t('projects.deployments.review.decisionDeletePlatform', { name: subject.name, platform: subject.platform }),
+      // "This can't be undone" is the decision bar's own footnote for an irreversible Action: said once, there.
+      description: t('projects.deployments.review.consequence'),
+      approve: t('projects.deployments.platformLink.confirmDelete', { resource: subject.name }),
+    };
+    if (subject.kind === 'domain') return {
+      title: t('projects.deployments.review.decisionRemoveDomain', { hostname: subject.hostname }),
+      description: t('projects.deployments.review.consequence'),
+      approve: t('projects.deployments.review.decisionRemoveDomain', { hostname: subject.hostname }),
+    };
+    if (!review.environment) return null;
+    const removeOwn = t('projects.deployments.deleteConfirmRemove', { name: review.environment });
+    return { title: removeOwn, description: t('projects.deployments.review.consequence'), approve: removeOwn };
+  }
   const { revision, environment } = review;
   if (!revision || !environment) return null;
   const vars = { version: revisionText(approval.promotion?.sourceRevision ?? revision), environment: environment.name };
@@ -476,12 +527,15 @@ export const DeploymentReviewApprovalFacts = React.memo(
       testID: string;
       /** The request is decided: the facts stay as a record and stop asking for a check. */
       decided?: boolean;
+      /** The request's exact ids, kept one press away under Technical details. */
+      technicalRows?: ApprovalFieldsPresentation['rows'];
     }>,
   ) {
     const machines = React.useMemo(() => readMachines(props.approval.review), [props.approval.review]);
     const collectorMachineId = machines.find(({ review }) => review.deferredTelemetryCollectorMachineId)
       ?.review.deferredTelemetryCollectorMachineId ?? null;
-    const environment = 'environment' in props.approval.review ? props.approval.review.environment : undefined;
+    const environment = !isRemoval(props.approval.review) && 'environment' in props.approval.review
+      ? props.approval.review.environment : undefined;
     const ids = React.useMemo(() => {
       const ingress = environment?.ingress;
       return [...new Set([
@@ -494,7 +548,7 @@ export const DeploymentReviewApprovalFacts = React.memo(
       <NamedMachines serverId={props.serverId} ids={ids}>
         {(names) => (
           <ReviewFields approval={props.approval} machines={machines} names={names} collectorMachineId={collectorMachineId}
-            serverId={props.serverId} testID={props.testID} decided={props.decided === true} />
+            serverId={props.serverId} testID={props.testID} decided={props.decided === true} technicalRows={props.technicalRows} />
         )}
       </NamedMachines>
     );
@@ -509,16 +563,18 @@ const ReviewFields = React.memo(function ReviewFields(props: Readonly<{
   serverId: string | null;
   testID: string;
   decided: boolean;
+  technicalRows?: ApprovalFieldsPresentation['rows'];
 }>) {
-  const presentation = React.useMemo(
-    () => describeReviewFields(props.approval, props.machines, props.names, props.collectorMachineId),
-    [props.approval, props.machines, props.names, props.collectorMachineId],
-  );
+  const presentation = React.useMemo(() => {
+    const facts = describeReviewFields(props.approval, props.machines, props.names, props.collectorMachineId);
+    return props.technicalRows?.length ? { ...facts, rows: [...facts.rows, ...props.technicalRows] } : facts;
+  }, [props.approval, props.machines, props.names, props.collectorMachineId, props.technicalRows]);
   const multiple = props.machines.length > 1;
   return (
     <>
       <ActionApprovalFieldsCard presentation={presentation} anatomy="page" serverId={props.serverId}
         title={t(isPlatformCreate(props.approval.review) ? 'projects.deployments.review.createWhatTitle'
+          : isRemoval(props.approval.review) ? 'projects.deployments.review.removalWhatTitle'
           : readRollbackData(props.approval.review) ? 'projects.deployments.review.rollbackWhatChanges'
             : 'projects.deployments.review.whatTitle')} testID={`${props.testID}.fields`} />
       {props.machines.map((machine, index) => (
