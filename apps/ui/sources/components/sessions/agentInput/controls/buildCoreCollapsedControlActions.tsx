@@ -76,7 +76,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
             label: opts.engineLabel ?? t(getAgentCore(opts.agentType).displayNameKey),
             icon: (
                 // `agentId`, not `agentType`: this row IS the engine chip, collapsed, so it
-                // draws the mark the chip draws — which follows an armed Agent switch.
+                // draws the same provider mark as the visible chip.
                 <AgentIcon
                     agentId={opts.agentId}
                     size={16}

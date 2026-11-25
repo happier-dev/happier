@@ -159,12 +159,11 @@ describe('resolveAgentContinuationSubmitPresentation', () => {
 });
 
 
-describe('the armed target the chip and the submit control share', () => {
+describe('the armed target available to the submit control', () => {
     const target = { agentId: 'codex', label: 'Codex' } as const;
 
     it('names the arm the moment it exists, with nothing typed', () => {
-        // Selection IS the arming. Waiting for a keystroke is a confirm step made
-        // of typing, and it is what left the chip naming the running Agent.
+        // Selecting a target arms the switch before any draft input.
         expect(resolveArmedComposerContinuation({ armedContinuationTarget: target })).toBe(target);
     });
 
@@ -192,17 +191,16 @@ describe('the armed target the chip and the submit control share', () => {
         })).toBeNull();
     });
 
-    it('never lets the two surfaces name different Agents', () => {
-        // The narrowing may only subtract. A second decision here is how a chip and
-        // a button end up disagreeing about one choice.
+    it('either passes through the armed target or withholds it from submit', () => {
+        // The submit control applies its own visibility condition to the same pending target.
         for (const otherActionHoldsSubmit of [false, true]) {
             for (const armedContinuationTarget of [target, null]) {
-                const chip = resolveArmedComposerContinuation({ armedContinuationTarget });
+                const armed = resolveArmedComposerContinuation({ armedContinuationTarget });
                 const button = resolveArmedSubmitContinuation({
                     armedContinuationTarget,
                     otherActionHoldsSubmit,
                 });
-                expect(button === null || button === chip).toBe(true);
+                expect(button === null || button === armed).toBe(true);
             }
         }
     });

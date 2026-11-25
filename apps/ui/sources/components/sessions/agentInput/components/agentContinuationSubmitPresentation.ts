@@ -98,20 +98,8 @@ function splitSentenceAtAgentName(sentence: string): Readonly<{ before: string; 
 }
 
 /**
- * The Agent the composer is armed with — one decision, read by every surface
- * that shows it.
- *
- * Selection IS the selection, and it is also the arming: the moment a target Agent
- * is chosen the composer's engine chip names it, because there is no confirm step
- * left for the reader to perform. The chip disagreeing with the rail is the
- * reported defect — a picker showing a checkmark on Sonnet 4.6 while the chip
- * still read GPT 5.6 Sol — and so is the chip waiting for a keystroke, which is a
- * confirm step made of typing: the reader picks another Agent, the rail ticks it,
- * and the composer goes on naming the Agent that is running.
- *
- * This is the ONLY place the armed target is decided. `resolveArmedSubmitContinuation`
- * narrows this value rather than deriving a second one, so no two surfaces can
- * name different Agents.
+ * The Agent selected for continuation. Selecting a target arms it immediately,
+ * so the submit control can offer the switch before the reader types.
  */
 export function resolveArmedComposerContinuation<TTarget>(params: Readonly<{
     armedContinuationTarget: TTarget | null | undefined;
@@ -130,10 +118,8 @@ export function resolveArmedComposerContinuation<TTarget>(params: Readonly<{
  * An armed continuation itself supplies a send intent on an empty composer.
  * The send owner supplies the default prompt; presentation never edits the draft.
  *
- * Narrowing instead of re-deciding is what keeps the pair honest. The button may
- * be silent while the chip names the target — those are answers to two different
- * questions, "what runs next" and "what does this press do" — but it can never
- * name a DIFFERENT Agent than the chip.
+ * The pending target belongs to the submit control. The existing session's
+ * engine badge continues to describe the applied runtime.
  */
 export function resolveArmedSubmitContinuation<TTarget>(params: Readonly<{
     armedContinuationTarget: TTarget | null | undefined;

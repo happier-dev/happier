@@ -588,7 +588,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         expect(readPersistedArm()).toBeUndefined();
     });
 
-    it('restores the model the armed row was chosen with, so the engine chip still names it', async () => {
+    it('restores the model and label chosen for the armed row', async () => {
         existingSessionDraftSemanticValues.write(SCOPE, 'session-1', 'routing.agentContinuation', {
             backendTargetKey: 'agent:codex',
             intent: { ...armedIntentFor('codex'), selection: { v: 1, agentId: 'codex', modelId: 'gpt-5' } },

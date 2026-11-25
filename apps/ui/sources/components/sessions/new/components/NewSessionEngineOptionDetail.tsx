@@ -70,10 +70,8 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
          * What this pane CALLS the selected model, or null while the selection is the
          * Agent's own settings rather than a named model.
          *
-         * Published because a surface that has to name the choice elsewhere — the
-         * composer's engine chip, once an Agent switch is armed — must use the words
-         * the reader just read here. Resolving the label again from a second model
-         * list is how the same model ends up with two names in one screen.
+         * Publish this label with the selection so reopening the picker can use the
+         * same name without looking it up in a different model list.
          */
         modelLabel: string | null;
     }>) => void;

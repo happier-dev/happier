@@ -52,13 +52,14 @@ describe('AgentInput agent identity', () => {
         expect(readEngineAgent(screen)).toBeNull();
     });
 
-    it('can still name an armed continuation when the existing Session identity is unknown', async () => {
+    it('keeps the unknown Session badge while Continue names the armed provider', async () => {
         const screen = await renderComposer({
             sessionId: 'unknown-session', agentType: 'claude',
             metadata: { path: '/repo', host: 'test.local' },
             armedContinuationTarget: { agentId: 'codex', label: 'Codex' },
         });
-        expect(readEngineAgent(screen)).toBe('codex');
+        expect(readEngineAgent(screen)).toBeNull();
+        expect(screen.findByTestId('session-composer-send')?.props.accessibilityLabel).toBe('session.agentContinuation.sendLabel Codex');
     });
 
     it('does not replace Codex with stale Claude flavor', async () => {
@@ -89,9 +90,10 @@ describe('AgentInput agent identity', () => {
         expect(rows[0]?.label).not.toBe(target);
     });
 
-    it('shows the armed continuation Agent while retaining the running Session', async () => {
+    it('keeps the running provider on the badge when another provider is armed', async () => {
         expect(readEngineAgent(await renderComposer({
+            sessionId: 'session-1',
             armedContinuationTarget: { agentId: 'claude', label: 'Claude' },
-        }))).toBe('claude');
+        }))).toBe('codex');
     });
 });

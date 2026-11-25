@@ -159,8 +159,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
     // "Continue with {Agent}" would promise something that press does not do.
     // An armed continuation is sendable even without text, and takes precedence
     // over the empty composer's microphone and Stop actions.
-    // The composer's engine chip reads the SAME armed target and only skips this
-    // narrowing, so the two cannot name different Agents.
+    // The submit control announces the pending switch while the engine badge describes the current session.
     const armedTarget = resolveArmedSubmitContinuation({
         armedContinuationTarget: props.armedContinuationTarget,
         otherActionHoldsSubmit: micHoldsSubmit || showStopWhenEmpty,

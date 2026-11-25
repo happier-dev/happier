@@ -18,8 +18,8 @@ export type SessionAgentPickerSelection = Readonly<{
     modelId: string;
     /**
      * What the pane called {@link modelId}, or null while the row is still on the
-     * Agent's own settings. Carried rather than re-derived so the composer's engine
-     * chip can name an armed model in the exact words the reader just selected.
+     * Agent's own settings. Keep the label with the pending selection so the picker
+     * can restore the same model name when it reopens.
      */
     modelLabel: string | null;
     sessionModeId: string | null;

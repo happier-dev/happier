@@ -673,13 +673,7 @@ describe('AgentInput (send button accessibility)', () => {
         await screen.unmount();
     });
 
-    it('names the armed engine on the chip before anything has been typed', async () => {
-        // Selection IS the arming: there is no confirm step, so the chip reports the
-        // choice the moment the rail is used. Requiring a keystroke first reinstates
-        // a confirm step made of typing — the reader picks another Agent, the rail
-        // ticks it, and the composer goes on naming the one that is running.
-        //
-        // The armed send names that same Agent and can submit without typing.
+    it('keeps the engine badge unknown when only the armed provider is known', async () => {
         const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(<AgentInput
@@ -697,20 +691,17 @@ describe('AgentInput (send button accessibility)', () => {
 
         const chip = screen.findByTestId('agent-input-agent-chip');
         if (!chip) throw new Error('agent-input-agent-chip not found');
-        expect(chip.findAllByType('AgentIcon' as any).map((node) => node.props?.agentId)).toEqual(['claude']);
+        expect(chip.findAllByType('AgentIcon' as any).map((node) => node.props?.agentId)).toEqual([null]);
         expect(chip.findAllByType('Text' as any)
             .flatMap((node) => (typeof node.props?.children === 'string' ? [node.props.children] : [])))
-            .toContain('Sonnet 4.6');
+            .toContain('status.unknown');
         expect(screen.findByTestId('session-composer-send')?.props.accessibilityLabel)
             .toBe('session.agentContinuation.sendLabel');
 
         await screen.unmount();
     });
 
-    it('names the armed engine and model on the chip, and agrees with the send control', async () => {
-        // Selection IS the selection. A picker showing a checkmark on Sonnet 4.6
-        // while the chip still read GPT 5.6 Sol was telling the reader two different
-        // things about one decision.
+    it('announces the armed switch for a non-empty draft while the badge shows the current provider', async () => {
         const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(<AgentInput
@@ -720,6 +711,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onChangeText={() => {}}
                     onSend={() => {}}
                     agentType="codex"
+                    metadata={{ path: '/repo', host: 'test.local', flavor: 'codex' }}
                     onAgentClick={() => {}}
                     armedContinuationTarget={{ agentId: 'claude', label: 'Claude', modelLabel: 'Sonnet 4.6' }}
                     autocompleteKinds={[]}
@@ -728,19 +720,17 @@ describe('AgentInput (send button accessibility)', () => {
 
         const chip = screen.findByTestId('agent-input-agent-chip');
         if (!chip) throw new Error('agent-input-agent-chip not found');
-        expect(chip.findAllByType('AgentIcon' as any).map((node) => node.props?.agentId)).toEqual(['claude']);
+        expect(chip.findAllByType('AgentIcon' as any).map((node) => node.props?.agentId)).toEqual(['codex']);
         expect(chip.findAllByType('Text' as any)
             .flatMap((node) => (typeof node.props?.children === 'string' ? [node.props.children] : [])))
-            .toContain('Sonnet 4.6');
-        // The pair must hold: a chip claiming an armed target while the button does
-        // not announce it would be the same contradiction in the other direction.
+            .toContain('agents.codex');
         expect(screen.findByTestId('session-composer-send')?.props.accessibilityLabel)
             .toBe('session.agentContinuation.sendLabel');
 
         await screen.unmount();
     });
 
-    it('names the armed Agent while it is still on that Agent\u2019s own model settings', async () => {
+    it('shows the current provider name when the applied model is unknown', async () => {
         const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(<AgentInput
@@ -750,6 +740,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onChangeText={() => {}}
                     onSend={() => {}}
                     agentType="codex"
+                    metadata={{ path: '/repo', host: 'test.local', flavor: 'codex' }}
                     onAgentClick={() => {}}
                     armedContinuationTarget={{ agentId: 'claude', label: 'Claude', modelLabel: null }}
                     autocompleteKinds={[]}
@@ -759,12 +750,12 @@ describe('AgentInput (send button accessibility)', () => {
         const chip = screen.findByTestId('agent-input-agent-chip');
         expect(chip?.findAllByType('Text' as any)
             .flatMap((node) => (typeof node.props?.children === 'string' ? [node.props.children] : [])))
-            .toContain('Claude');
+            .toContain('agents.codex');
 
         await screen.unmount();
     });
 
-    it('returns the chip to the running engine when the switch is disarmed', async () => {
+    it('shows the current provider with no armed switch', async () => {
         const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(<AgentInput

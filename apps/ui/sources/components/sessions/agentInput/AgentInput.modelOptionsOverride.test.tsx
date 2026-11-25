@@ -55,7 +55,8 @@ installAgentInputCommonModuleMocks({
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({
-            translate: (key: string, params?: { name?: string }) => {
+            translate: (key: string, params?: { name?: string; agent?: string }) => {
+                if (key === 'session.agentContinuation.sendLabel') return `Continue with ${params?.agent ?? ''}`;
                 if (key === 'agentInput.mode.badgeA11y') return `Mode: ${params?.name ?? ''}`;
                 return key;
             },
@@ -1362,6 +1363,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         lastModelPickerOverlayProps = null;
 
         const screen = await renderScreen(React.createElement(AgentInput, {
+            sessionId: 'session-1',
             value: 'hello',
             placeholder: 'placeholder',
             onChangeText: () => {},
@@ -1370,6 +1372,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
             autocompleteSuggestions: async () => [],
             agentType: 'codex',
             metadata: {
+                flavor: 'codex',
                 sessionModelsV1: {
                     v: 1,
                     provider: 'codex',
@@ -1391,6 +1394,8 @@ describe('AgentInput (modelOptionsOverride)', () => {
             onModelModeChange: () => {},
         } as any));
 
+        expect(findTestInstanceByTypeContainingText(screen.findByTestId('agent-input-agent-chip')!, 'Text', 'Session Model')).toBeTruthy();
+
         act(() => {
             screen.pressByTestId('agent-input-agent-chip');
         });
@@ -1402,6 +1407,58 @@ describe('AgentInput (modelOptionsOverride)', () => {
         );
         expect(appliedOption?.trailingStatusIcon?.props?.name).toBe('play-circle');
         expect(appliedOption?.accessibilityLabel).toContain('agentInput.model.running');
+    });
+
+    it('keeps the source provider and model on the badge until an armed provider switch is confirmed', async () => {
+        const onSend = vi.fn();
+        const sourceMetadata = {
+            path: '/tmp', host: 'host', flavor: 'codex',
+            sessionAppliedModelV1: { v: 1, provider: 'codex', modelId: 'source-model', updatedAt: 1 },
+        } as const;
+        const props: React.ComponentProps<typeof AgentInput> = {
+            sessionId: 'session-1',
+            value: '',
+            placeholder: 'Type',
+            onChangeText: () => {},
+            onSend,
+            agentType: 'codex',
+            metadata: sourceMetadata,
+            onAgentClick: () => {},
+            modelMode: 'source-model',
+            onModelModeChange: () => {},
+            modelOptionsOverride: [
+                { value: 'source-model', label: 'Source Model', description: '' },
+                { value: 'target-model', label: 'Target Model', description: '' },
+            ],
+            autocompleteKinds: [],
+            autocompleteSuggestions: async () => [],
+        };
+        const armed = <AgentInput {...props} armedContinuationTarget={{
+            agentId: 'claude', label: 'Claude', modelLabel: 'Target Model',
+        }} />;
+        const screen = await renderScreen(armed);
+        const assertBadge = (provider: string, label: string) => {
+            const chip = screen.findByTestId('agent-input-agent-chip')!;
+            const icon = chip.findAllByProps({ testID: 'agent-input-agent-chip-logo' })
+                .find((node) => Object.hasOwn(node.props, 'agentId'));
+            expect(icon?.props.agentId).toBe(provider);
+            expect(findTestInstanceByTypeContainingText(chip, 'Text', label)).toBeTruthy();
+        };
+
+        expect(screen.findByTestId('session-composer-send')?.props.accessibilityLabel).toBe('Continue with Claude');
+        assertBadge('codex', 'Source Model');
+        await screen.pressByTestIdAsync('session-composer-send');
+        expect(onSend).toHaveBeenCalledOnce();
+        assertBadge('codex', 'Source Model');
+        await screen.update(<AgentInput {...props} />);
+        assertBadge('codex', 'Source Model');
+
+        await screen.update(<AgentInput {...props} agentType="claude" modelMode="target-model" metadata={{
+            ...sourceMetadata,
+            flavor: 'claude',
+            sessionAppliedModelV1: { v: 1, provider: 'claude', modelId: 'target-model', updatedAt: 2 },
+        }} />);
+        assertBadge('claude', 'Target Model');
     });
 
     it('renders the selected model label and provider logo in the engine chip', async () => {

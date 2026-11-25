@@ -1317,10 +1317,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const engineChipAgentId = armedAgentId ?? props.agentType ?? agentId;
     // Existing Sessions may need a policy default while their identity is unavailable.
     // That default is not evidence for a brand; new-session selection and armed targets are.
-    const engineChipMarkAgentId = armedComposerTarget
+    const selectionMarkAgentId = armedComposerTarget
         ? armedAgentId
         : props.sessionId && !sessionAgentId ? null : engineChipAgentId;
-    const displayedAgentLabel = engineChipMarkAgentId ? props.agentLabel : t('status.unknown');
+    const displayedAgentLabel = selectionMarkAgentId ? props.agentLabel : t('status.unknown');
     const permissionMetadata = armedComposerTarget ? null : props.metadata ?? null;
     const modelOptions = React.useMemo(() => {
         if (props.modelOptionsOverride) return props.modelOptionsOverride;
@@ -1989,6 +1989,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         // Agent and the two columns must not disagree about one Session.
         const status = resolveAppliedRuntimeStatus(props.sessionActive);
         return {
+            label,
             optionValue: found?.value ?? appliedModelId,
             iconName: APPLIED_RUNTIME_MARKER_ICON[status],
             summary: t(`agentInput.model.${status}`, { model: label }),
@@ -2290,7 +2291,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         && (props.onModelModeChange || hasSettingsAcpConfigSection),
     );
 
-    // The picker retains the running provider's row while the outbound chip follows the armed one.
+    // The picker and badge use the session's current provider identity.
     const currentAgentMarkAgentId = props.sessionId && !sessionAgentId
         ? null : sessionAgentId ?? props.agentType ?? null;
     const currentAgentPickerLabel = armedComposerTarget
@@ -2517,16 +2518,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         closeSelectionOverlay,
         toggleSelectionOverlay,
     });
-    const engineChipLabel = React.useMemo(() => {
-        // Selection IS the selection. An armed target with a model chosen names
-        // that model; an armed target still on the Agent's own defaults names the
-        // Agent, because no model has been chosen to name.
-        if (armedComposerTarget) {
-            return armedComposerTarget.modelLabel ?? armedComposerTarget.label;
-        }
-        if (!engineChipMarkAgentId) return t('status.unknown');
-        return hasAgentPickerOptions ? selectedModelLabel : resolvedAgentLabel;
-    }, [armedComposerTarget, engineChipMarkAgentId, hasAgentPickerOptions, resolvedAgentLabel, selectedModelLabel]);
+    // The session badge describes the applied runtime. New-session drafts describe their selection.
+    const engineBadgeAgentId = props.sessionId ? currentAgentMarkAgentId : selectionMarkAgentId;
+    const selectedEngineLabel = armedComposerTarget
+        ? armedComposerTarget.modelLabel ?? armedComposerTarget.label
+        : selectionMarkAgentId && hasAgentPickerOptions ? selectedModelLabel : resolvedAgentLabel;
+    const engineChipLabel = props.sessionId
+        ? (engineBadgeAgentId ? appliedModelPresentation?.label : null) ?? currentAgentPickerLabel
+        : selectedEngineLabel;
     const hasRecipient = React.useMemo(() => {
         return (props.extraActionChips ?? []).some((chip) => chip.controlId === 'recipient');
     }, [props.extraActionChips]);
@@ -2739,8 +2738,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         actionBarIsCollapsed,
         hasAnyActions,
         tint: theme.colors.composer.chipTint,
-        // The engine control names what runs NEXT, so it follows the armed target.
-        agentId: engineChipMarkAgentId,
+        // The collapsed engine action uses the same provider mark as the badge.
+        agentId: engineBadgeAgentId,
         profileLabel,
         profileIcon,
         envVarsCount: props.envVarsCount,
@@ -2812,8 +2811,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         envVarsChipAnchorRef,
         envVarsCount: props.envVarsCount,
         onEnvVarsPress: handleEnvVarsPress,
-        // The engine chip names what runs NEXT, so it follows the armed target.
-        agentId: engineChipMarkAgentId,
+        // Use the badge's provider mark in every action-bar layout.
+        agentId: engineBadgeAgentId,
         hasAgentSelection: hasAgent,
         agentChipAnchorRef,
         agentLabel: resolvedAgentLabel,
