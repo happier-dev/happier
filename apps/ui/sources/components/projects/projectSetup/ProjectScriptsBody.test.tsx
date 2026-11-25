@@ -394,6 +394,7 @@ async function render(
     bottomPresentation?: 'docked' | 'overlay';
     /** The Project's phone bar: receives the way back a pushed page registers. */
     registerPageBack?: (back: (() => void) | null) => void;
+    mountedCommands?: boolean;
     authoredSession?: Readonly<{ id: string; response: Promise<Response>; reads: string[]; writes?: string[] }>;
     onOpenScripts?: () => void;
     onOpenServices?: () => void;
@@ -615,8 +616,7 @@ async function render(
   const panes = host.outputScopeId && host.terminalHost !== false
     ? <AppPaneProvider>{pageBody}</AppPaneProvider> : pageBody;
   const body = host.onCommit ? <React.Profiler id="scripts" onRender={host.onCommit}>{panes}</React.Profiler> : panes;
-  const screen = await renderScreen(
-    host.bottomPresentation ? (
+  const renderedBody = host.bottomPresentation ? (
       <AppPaneScopeLayoutProvider
         value={{
           arrangement: 'session', mainHidden: false, mainDrawerOpen: false, effectiveDetailsOpen: false, detailsAvailable: true,
@@ -632,8 +632,10 @@ async function render(
       >
         {body}
       </AppPaneScopeLayoutProvider>
-    ) : body,
-  );
+    ) : body;
+  const screen = host.mountedCommands
+    ? await (await import('@/dev/testkit/harness/mountedCurrentUiContext')).renderMountedCurrentUiContext(renderedBody)
+    : await renderScreen(renderedBody);
   await vi.waitFor(
     () => {
       if (screen.findByTestId(ready)) return;
@@ -2405,6 +2407,27 @@ describe('ProjectScriptsBody setup review on a phone', () => {
     publishActionOperationObservation({ serverId: workspace.serverId, machineId: pending.scope.machineId,
       observation: 'available', snapshots: [pending] });
   };
+
+  it('lets an agent open the file shown in the mounted Setup review', async () => {
+    present();
+    const screen = await render('page', 'scripts.setup.reviewEntry', { mountedCommands: true });
+    await act(async () => { await screen.pressByTestIdAsync('scripts.setup.reviewEntry'); });
+    await vi.waitFor(() => expect(screen.findByTestId('scripts.setup.reviewPage.viewFile')).toBeTruthy());
+    const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+    const { t } = await import('@/text');
+    const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+    const reader = readCurrentUiContextActionReader({ surface: 'agent' });
+    const open = reader?.readCurrentUiContext()?.commands.find(command => command.title === t('projects.scripts.setup.viewFile'));
+    expect(open).toBeDefined();
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    await act(async () => {
+      expect(await createDefaultActionExecutor().execute(
+        ACTION_ID_FAMILIES_V1.current_ui_context[1], { commandId: open!.id }, { surface: 'agent' },
+      )).toMatchObject({ ok: true });
+    });
+    await vi.waitFor(() => expect(screen.findByTestId('project-manifest-editor.raw')).toBeTruthy());
+    expect(screen.findByTestId('scripts.setup.reviewPage')).toBeNull();
+  });
 
   it('keeps the Setup card to the waiting state and pushes the review as its own page with a pinned footer', async () => {
     present();

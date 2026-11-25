@@ -67,6 +67,7 @@ export function ProjectSetupReviewPage(
     review: ReturnType<typeof useProjectSetupReviewDecision>;
     onBack: () => void;
     onViewFile: (() => void) | null;
+    viewFileContextKey?: string;
     /** Each effect line's layer when the project's setup has more than the repository file (lab L6 reviewp). */
     layerOf?: ((path: readonly string[]) => string | null) | null;
     sharedSetupName?: string | null;
@@ -99,7 +100,8 @@ export function ProjectSetupReviewPage(
               framed
               scope={scope}
               onScopeChange={review.setScope}
-              onViewFile={() => props.onViewFile?.()}
+              onViewFile={props.onViewFile}
+              viewFileContextKey={props.viewFileContextKey}
             />
           </View>
         </ItemGroup>

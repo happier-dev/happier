@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
@@ -364,18 +365,25 @@ type ProjectSetupReviewBodyProps = Readonly<{
   framed?: boolean;
   scope: ProjectSetupScope;
   onScopeChange: (scope: ProjectSetupScope) => void;
-  onViewFile: () => void;
+  onViewFile: (() => void) | null;
+  viewFileContextKey?: string;
 }>;
 
 /** What the review says and asks: the lead, the exact effect, where it came from, and the consent choice. */
 export const ProjectSetupReviewBody = React.memo(function ProjectSetupReviewBody(props: ProjectSetupReviewBodyProps) {
   const { theme } = useUnistyles();
+  const onViewFile = props.onViewFile ?? undefined;
+  useCurrentUiContextLocalCommands(onViewFile && props.viewFileContextKey ? [{
+    key: 'project-setup-view-file',
+    title: t('projects.scripts.setup.viewFile'),
+    invoke: onViewFile,
+  }] : [], { contextKey: props.viewFileContextKey });
   return (
     <>
       <Text style={[styles.body, { color: theme.colors.text.secondary }]}>
         {t('projects.scripts.setup.lead', { machine: props.machineName })}
       </Text>
-      <ProjectSetupReviewFacts {...props} />
+      <ProjectSetupReviewFacts {...props} onViewFile={onViewFile} />
       <ProjectSetupScopeChoice testID={props.testID} scope={props.scope} onChange={props.onScopeChange} />
     </>
   );
@@ -441,7 +449,8 @@ export const ProjectSetupReview = React.memo(function ProjectSetupReview(
     scope: ProjectSetupScope;
     onScopeChange: (scope: ProjectSetupScope) => void;
     onNotNow: () => void;
-    onViewFile: () => void;
+    onViewFile: (() => void) | null;
+    viewFileContextKey?: string;
   }>,
 ) {
   const phone = useDeviceType() === 'phone';

@@ -259,6 +259,7 @@ export function ProjectScriptsBody({
         review={setupReview}
         onBack={closeReviewPage}
         onViewFile={() => { closeReviewPage(); setEditor({ key, seed: false, mode: 'raw' }); }}
+        viewFileContextKey={key}
       />
     );
   } else if (page && workersKey === key) {
@@ -1077,7 +1078,8 @@ function SetupRow(
               setOpen(false);
               review.dismiss();
             }}
-            onViewFile={() => props.onViewFile?.()}
+            onViewFile={props.onViewFile}
+            viewFileContextKey={projectDefinitionInspectionKey(props.workspace)}
           />
         )}
       </ExpandableItem>
@@ -1603,6 +1605,7 @@ function PhoneSetupReviewPage(
     review: React.ComponentProps<typeof ProjectSetupReviewPage>['review'];
     onBack: () => void;
     onViewFile: (() => void) | null;
+    viewFileContextKey: string;
   }>,
 ) {
   const effective = readProjectEffectiveDefinition(props.inspection);
@@ -1619,6 +1622,7 @@ function PhoneSetupReviewPage(
       review={props.review}
       onBack={props.onBack}
       onViewFile={props.onViewFile}
+      viewFileContextKey={props.viewFileContextKey}
       layerOf={layers.sharedSourceId || layers.personalChanges > 0 ? layers.layerOf : null}
       sharedSetupName={layers.sharedSourceId ? sharedName ?? t('projects.scripts.layers.sharedUnnamed') : null}
     />
