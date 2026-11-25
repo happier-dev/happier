@@ -2556,6 +2556,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
       approvalTapRequired: '此請求需要在 Happier 中點選確認。開啟請求以批准或拒絕。',
       actionCanceled: '操作已取消。',
       approvalResultHeld: '已執行獲准的操作。結果由核准人保留。',
+      sessionMemoryOff: '此工作階段的記憶已關閉。你可以在這個工作階段的記憶設定中開啟。',
       reviewCredentials: '檢查認證資料',
       connectAgent: '連線',
       setUpAgent: ({ agent }: { agent: string }) => `設定 ${agent}`,

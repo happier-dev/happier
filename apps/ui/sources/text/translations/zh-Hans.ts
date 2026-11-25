@@ -9354,6 +9354,7 @@ export const zhHans: TranslationStructure = {
     approvalTapRequired: '此请求需要在 Happier 中点击确认。打开请求以批准或拒绝。',
     actionCanceled: '操作已取消。',
     approvalResultHeld: '已执行获批的操作。结果由批准人保留。',
+    sessionMemoryOff: '此会话的记忆已关闭。你可以在此会话的记忆设置中开启它。',
     reviewCredentials: '检查凭据',
     connectAgent: '连接',
     setUpAgent: ({ agent }: { agent: string }) => `设置 ${agent}`,
