@@ -4,8 +4,12 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, expect, it, vi } from 'vitest';
+import { View, ScrollView } from 'react-native';
 
 import { installWebLayoutBridge, measureWebLayout } from '@/dev/testkit/render/measureWebLayout';
+import { ReviewDetailView } from './ReviewDetailView';
+import { useScmComparisonLayout } from '@/components/projects/scm/useScmComparisonLayout';
+import { resolveScmChangeCompactRowHeight } from '@/components/workspaces/scm/changes/ScmChangeRow';
 
 vi.mock('react-native', async () => vi.importActual('react-native-web'));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -21,10 +25,6 @@ afterEach(async () => {
 });
 
 it.each([390, 1440])('keeps a large Changes comparison inside the physical page viewport at %s px', async width => {
-  const { View, ScrollView } = await import('react-native');
-  const { ReviewDetailView } = await import('./ReviewDetailView');
-  const { useScmComparisonLayout } = await import('@/components/projects/scm/useScmComparisonLayout');
-  const { resolveScmChangeCompactRowHeight } = await import('@/components/workspaces/scm/changes/ScmChangeRow');
   let demand: number | null = null;
   function Comparison() {
     const layout = useScmComparisonLayout();
