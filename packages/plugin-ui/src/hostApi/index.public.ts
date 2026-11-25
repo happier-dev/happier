@@ -5,8 +5,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import type { ResourceContent } from '@happier-dev/plugin-sdk/ui';
-import type { ReviewPrRoundQualityV1 } from '@happier-dev/protocol/reviews/reviewQualityPresentationV1';
-import type { ReviewPublicationWalkthroughStopV1 } from '@happier-dev/protocol/reviews/comments/actions';
+import type { ReviewPrRoundQualityV1, ReviewPublicationWalkthroughStopV1 } from '@happier-dev/plugin-sdk/reviews';
 
 import { usePluginHostApiResourceActive, usePluginHostApiResourceStore } from './context.js';
 import { usePluginHostReadiness, type PluginUiHostReadiness } from './readiness.public.js';

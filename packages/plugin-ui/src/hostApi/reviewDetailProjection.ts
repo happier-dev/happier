@@ -1,7 +1,6 @@
 import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
-import type { ReviewPrRoundQualityV1 } from '@happier-dev/protocol/reviews/reviewQualityPresentationV1';
-import type { ReviewPublicationWalkthroughStopV1 } from '@happier-dev/protocol/reviews/comments/actions';
+import type { ReviewPrRoundQualityV1, ReviewPublicationWalkthroughStopV1 } from '@happier-dev/plugin-sdk/reviews';
 
 import type { PluginUiResourceProjection } from './resourceStore.js';
 

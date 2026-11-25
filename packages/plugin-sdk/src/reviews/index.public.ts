@@ -1,3 +1,9 @@
+export {
+    presentReviewRoundQualityV1,
+    readReviewFindingRevisedBodyV1,
+    type ReviewPrRoundQualityV1,
+    type ReviewPublicationWalkthroughStopV1,
+} from './presentation.js';
 export { REVIEW_ARTIFACT_KIND_V1 } from './projections.js';
 export type { CreateReviewCommentFingerprintInput } from './comments.js';
 export { readReviewFindingDecisionV1 } from './comments.js';

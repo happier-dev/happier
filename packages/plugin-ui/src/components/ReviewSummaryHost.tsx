@@ -1,8 +1,12 @@
 import * as React from 'react';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
-import { presentReviewRoundQualityV1 } from '@happier-dev/protocol/reviews/reviewQualityPresentationV1';
-import { readReviewFindingRevisedBodyV1 } from '@happier-dev/protocol/reviews/comments/findingIdentity';
-import { readReviewFindingDecisionV1, type ReviewCommentV1, type ReviewFinding } from '@happier-dev/plugin-sdk/reviews';
+import {
+  presentReviewRoundQualityV1,
+  readReviewFindingDecisionV1,
+  readReviewFindingRevisedBodyV1,
+  type ReviewCommentV1,
+  type ReviewFinding,
+} from '@happier-dev/plugin-sdk/reviews';
 import { useLivePluginResourceProjection, type PluginUiResourceProjection, type PluginUiResourceProjectionSnapshot } from '../hostApi/index.js';
 import { usePluginHostApi } from '../hostApi/context.js';
 import { reviewDetailProjection } from '../hostApi/reviewDetailProjection.js';

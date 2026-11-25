@@ -3013,8 +3013,10 @@
 | `./reviews` | `ReviewFindingsV2` | type | daemon |
 | `./reviews` | `ReviewFindingsV2Schema` | value | daemon |
 | `./reviews` | `ReviewNarratorEngineOption` | type | any |
+| `./reviews` | `ReviewPrRoundQualityV1` | type | any |
 | `./reviews` | `ReviewPublicationSummaryInputV1` | type | any |
 | `./reviews` | `ReviewPublicationSummaryPartsV1` | type | any |
+| `./reviews` | `ReviewPublicationWalkthroughStopV1` | type | any |
 | `./reviews` | `ReviewScmScopeBaseRefSourceV1` | type | daemon |
 | `./reviews` | `ReviewScmScopeBaseRefSourceV1Schema` | value | daemon |
 | `./reviews` | `ReviewScmScopeBaseRefV1` | type | daemon |
@@ -3053,8 +3055,10 @@
 | `./reviews` | `parseReviewCommentPublicationPlanV1` | value | any |
 | `./reviews` | `parseReviewFindingsV2` | value | daemon |
 | `./reviews` | `preflightReviewCommentPublicationRoutingV1` | value | any |
+| `./reviews` | `presentReviewRoundQualityV1` | value | any |
 | `./reviews` | `produceScmPullRequestReviewScope` | value | daemon |
 | `./reviews` | `readReviewFindingDecisionV1` | value | any |
+| `./reviews` | `readReviewFindingRevisedBodyV1` | value | any |
 | `./reviews` | `readReviewStartActionResultV1` | value | daemon |
 | `./reviews` | `redactReviewCommentSensitiveText` | value | any |
 | `./reviews` | `renderReviewFindingsForVerifyV1` | value | daemon |
