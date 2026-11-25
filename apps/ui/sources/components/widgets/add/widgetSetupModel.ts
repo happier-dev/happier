@@ -42,7 +42,9 @@ export type WidgetSetupContextOffer = Readonly<{
 }>;
 
 /** One input as the step draws it: the neutral field plus what this surface can offer for it. */
-export type WidgetSetupInheritedReading = Readonly<{ kind: 'single'; valueLabel: string }> | Readonly<{ kind: 'several' }>;
+export type WidgetSetupInheritedReading =
+    | Readonly<{ kind: 'single'; valueLabel: string; pageSlot?: string }>
+    | Readonly<{ kind: 'several' }>;
 
 export type WidgetSetupField = Readonly<{
     field: InputFieldHint;
@@ -107,7 +109,11 @@ export type WidgetSetup = Readonly<{
      * The real widget at the draft's bindings; mounted only while the step is open and the draft
      * resolves. It returns nothing when it cannot read with the bound target's own authority.
      */
-    renderPreview?: (preview: Readonly<{ input: Readonly<Record<string, JsonValue>>; draft: WidgetSetupDraft }>) => React.ReactNode;
+    renderPreview?: (preview: Readonly<{
+        input: Readonly<Record<string, JsonValue>>;
+        draft: WidgetSetupDraft;
+        refusal?: Extract<WidgetSetupSubmitResult, { ok: false }>;
+    }>) => React.ReactNode;
     /**
      * A setup whose preview is its own frame (a saved group is a group, not a card): the step does not
      * wrap it in a widget card, and while inputs are still needed it draws that frame itself with
@@ -163,7 +169,7 @@ const NO_ISSUES: readonly WidgetInputIssueV1[] = Object.freeze([]);
 
 /** How one input row reads. Follows and pinned never mix: the follow glyph, or the thing's own mark. */
 export type WidgetSetupRow =
-    | Readonly<{ kind: 'follows'; label: string; valueLabel: string | null }>
+    | Readonly<{ kind: 'follows'; label: string; valueLabel: string | null; implicit?: true }>
     | Readonly<{ kind: 'pinned'; value: WidgetSetupValue | null; label: string }>
     | Readonly<{ kind: 'choices'; choices: readonly WidgetSetupValue[]; selectedIndex: number }>
     /** Each viewer's own connection; nothing to choose here. */
@@ -220,9 +226,12 @@ export function describeWidgetSetupRow(input: Readonly<{
         if (issue && issue.status !== 'selection_required') return { kind: 'invalid', label: null, issue };
         return { kind: 'viewer' };
     }
-    if (binding?.kind === 'context') {
+    const implicitPageFollow = binding === undefined && entry.follow !== undefined && entry.follow.group !== true
+        && entry.inherited?.kind === 'single' && entry.inherited.pageSlot === entry.follow.slot;
+    if (binding?.kind === 'context' || implicitPageFollow) {
         if (issue) return issue.status === 'selection_required' ? { kind: 'needed' } : { kind: 'invalid', label: entry.follow?.label ?? null, issue, follows: true };
-        return { kind: 'follows', label: entry.follow?.label ?? entry.field.title, valueLabel: offered[0]?.label ?? null };
+        return { kind: 'follows', label: entry.follow?.label ?? entry.field.title, valueLabel: offered[0]?.label ?? null,
+            ...(implicitPageFollow ? { implicit: true } : {}) };
     }
     if (binding?.kind === 'value') {
         if (issue && issue.status !== 'selection_required') {

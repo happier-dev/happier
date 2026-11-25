@@ -24,6 +24,7 @@ import { resolveWidgetGroupPointerDestination, widgetGroupDropTarget, widgetLayo
 import { WidgetGroupDropFeedback } from '@/components/widgets/group/WidgetGroupDropFeedback';
 import { WidgetGroupMembershipArrivalView, useWidgetGroupMembershipArrivals } from '@/components/widgets/group/widgetGroupMembershipArrival';
 import { useWidgetGroupMenu } from '@/components/widgets/group/useWidgetGroupMenu';
+import { WidgetGroupChildInputRepairContext } from '@/components/widgets/group/WidgetGroupChildInputRepairContext';
 import { randomUUID } from '@/platform/randomUUID';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useWidgetMenuSurface } from '@/components/widgets/flow/WidgetFlowShell';
@@ -89,7 +90,8 @@ import type { EntityDropEffectV1, EntityDropAdmissionV1 } from '@happier-dev/pro
 import { useWidgetAreaLayout, type WidgetAreaLayout, type WidgetAreaPort, type WidgetAreaWriteOutcome } from './useWidgetAreaLayout';
 import { renderWidgetSizeMenuSection, stepWidgetSizeControl, type WidgetSizeControl } from '@/components/widgets/frame/WidgetSizeControl';
 
-type WidgetAreaWrite = WidgetAreaLayout<WidgetSurfaceContext>['write'];
+type WidgetAreaWrite = (operation: Parameters<WidgetAreaLayout<WidgetSurfaceContext>['write']>[0],
+    repairInputInSetup?: true) => Promise<WidgetAreaWriteOutcome>;
 
 /**
  * How an area lays its widgets out (lab `dashboards` dlayout Q8): a plugin page area is Home's
@@ -276,11 +278,13 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
     } : null);
     useSessionSurfaceGeometryRefresh(drop.refresh);
     const layoutWrite = layout.write;
-    const write = React.useCallback(async (operation: Parameters<WidgetAreaWrite>[0]): Promise<WidgetAreaWriteOutcome> => {
+    const write = React.useCallback<WidgetAreaWrite>(async (operation, repairInputInSetup) => {
         const outcome = await layoutWrite(operation);
         const describe = (result: Exclude<WidgetAreaWriteOutcome, { kind: 'approvalPending' }>): AreaNotice | null =>
             result.kind === 'refused'
-                ? { kind: 'failed', ...('instanceId' in operation ? { instanceId: operation.instanceId } : {}), errorCode: result.errorCode, retry: () => write(operation) }
+                ? { kind: 'failed', ...('instanceId' in operation ? { instanceId: operation.instanceId } : {}), errorCode: result.errorCode,
+                    ...(repairInputInSetup && result.errorCode === 'widget_inputs_invalid'
+                        ? {} : { retry: () => write(operation, repairInputInSetup) }) }
                 : null;
         if (outcome.kind === 'approvalPending') {
             const pending = { write: layoutWrite, value: { kind: 'pending' as const, artifactId: outcome.artifactId,
@@ -383,7 +387,8 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
             {props.display !== 'add' && ready?.readFailure ? readFailureNotice : null}
             {areaFailure && props.dashboard ? <SurfaceStateCard testID={`${props.testID}.writeFailed`} kind="error" size="line" layout="inline"
                 title={resolveActionExecutionErrorMessage({ errorCode: areaFailure.errorCode }, t('widgetAdd.areaWriteFailed'))}
-                diagnosticCode={areaFailure.errorCode} action={{ label: t('common.retry'), onPress: () => { void areaFailure.retry(); } }} /> : null}
+                diagnosticCode={areaFailure.errorCode}
+                {...(areaFailure.retry ? { action: { label: t('common.retry'), onPress: () => { void areaFailure.retry?.(); } } } : {})} /> : null}
             {props.display !== 'widgets' && props.dashboard && canAdd ? (
                 <View style={styles.header}>
                     {organizeControl}
@@ -450,7 +455,7 @@ function WidgetAreaHeader(props: Readonly<{ title: string; meta?: string | undef
 
 type AreaNotice =
     | Readonly<{ kind: 'pending'; artifactId: string; /** The card the write changes, when it is one (a remove, a resize). */ instanceId?: string }>
-    | Readonly<{ kind: 'failed'; instanceId?: string; errorCode: string; retry: () => Promise<WidgetAreaWriteOutcome> }>;
+    | Readonly<{ kind: 'failed'; instanceId?: string; errorCode: string; retry?: () => Promise<WidgetAreaWriteOutcome> }>;
 
 type PlacementsProps = WidgetAreaProps & Readonly<{
     failed: Extract<AreaNotice, { kind: 'failed' }> | null;
@@ -652,7 +657,7 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
             if (outcome.kind === 'refused') throw Object.assign(new Error(outcome.errorCode), { code: outcome.errorCode });
         } : undefined,
         setInputs: props.canEdit ? (bindings: WidgetInputBindingsV1) => runAcknowledgedWidgetSetupCommand(
-            () => write({ actionId: 'widgets.group.inputs.set', instanceId: group.id, bindings }), t('widgetAdd.saveFailed'),
+            () => write({ actionId: 'widgets.group.inputs.set', instanceId: group.id, bindings }, true), t('widgetAdd.saveFailed'),
         ) : undefined,
     });
     const labels = menu.readings;
@@ -684,6 +689,7 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
     const subject = useWidgetGroupSubjectState();
     return (
         <View style={styles.cell}>
+            <WidgetGroupChildInputRepairContext.Provider value={menu.childRepair}>
             <WidgetGroupSubjectStateContext.Provider value={subject.lend}>
             <WidgetGroupFrame
                 testID={testID}
@@ -707,6 +713,7 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
                 dropFeedback={<WidgetGroupDropFeedback drag={drop} group={group} surface={props.surface} testID={`${testID}.drop`} />}
             />
             </WidgetGroupSubjectStateContext.Provider>
+            </WidgetGroupChildInputRepairContext.Provider>
             {menu.overlays}
             {slotAddOpen ? (
                 <WidgetAreaAddPopover anchorRef={slotAnchorRef} surface={props.surface} {...(props.area ? { area: props.area } : {})} placements={props.placements}
@@ -1028,7 +1035,8 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 // A change to this card that was refused stays on it, with Retry, until one succeeds.
                 // The reason is the one failure presenter's (the same copy an Add refusal gets); a code it does not map keeps the static line.
                 // A change that waits for someone's approval says so on the card it changes, as an add says Adding….
-                footer={props.failed ? { kind: 'refreshFailed', reason: resolveActionExecutionErrorMessage({ errorCode: props.failed.errorCode }, t('widgetAdd.areaWriteFailed')), onRetry: props.failed.retry }
+                footer={props.failed ? { kind: 'refreshFailed', reason: resolveActionExecutionErrorMessage({ errorCode: props.failed.errorCode }, t('widgetAdd.areaWriteFailed')),
+                    ...(props.failed.retry ? { onRetry: props.failed.retry } : {}) }
                     : props.pending ? { kind: 'pending', reason: t('widgetAdd.areaApprovalPending') } : null}
             />
             {edit.popover}

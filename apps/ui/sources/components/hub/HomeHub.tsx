@@ -44,6 +44,7 @@ import { resolveWidgetGroupColumns } from '@happier-dev/plugin-ui/presentation';
 import { resolveWidgetCardPointerDestination, resolveWidgetGroupPointerDestination, widgetGroupDropTarget, widgetLayoutCardDropTarget, widgetLayoutEndDropTarget, widgetLayoutSiblingIds } from '@/components/widgets/group/widgetGroupDropTarget';
 import { HomeWidgetAddPopoverEntry } from '@/components/widgets/add/HomeWidgetAddPopoverEntry';
 import { useWidgetGroupMenu } from '@/components/widgets/group/useWidgetGroupMenu';
+import { WidgetGroupChildInputRepairContext } from '@/components/widgets/group/WidgetGroupChildInputRepairContext';
 import { WidgetGroupDropFeedback } from '@/components/widgets/group/WidgetGroupDropFeedback';
 import { WidgetGroupMembershipArrivalView, useWidgetGroupMembershipArrivals } from '@/components/widgets/group/widgetGroupMembershipArrival';
 import { useHomeWidgetGroupOperations } from './layout/useHomeWidgetGroupOperations';
@@ -271,6 +272,7 @@ function HubGroupSlot(props: SlotProps & Readonly<{ section: HubGroupSection }>)
     }, [header, labels, props, section]);
     return (
         <View style={styles.card}>
+            <WidgetGroupChildInputRepairContext.Provider value={menu.childRepair}>
             <WidgetGroupFrame
                 testID={testID}
                 group={group}
@@ -292,6 +294,7 @@ function HubGroupSlot(props: SlotProps & Readonly<{ section: HubGroupSection }>)
                 onDropLayout={drop.onLayout}
                 dropFeedback={homeSurface ? <WidgetGroupDropFeedback drag={drop} group={group} surface={homeSurface} testID={`${testID}.drop`} /> : null}
             />
+            </WidgetGroupChildInputRepairContext.Provider>
             {menu.overlays}
             {slotAddOpen ? <HomeWidgetAddPopoverEntry anchorRef={slotAnchorRef} onRequestClose={closeSlotAdd} groupId={group.id} testID={`${testID}.slotAdd`} /> : null}
         </View>

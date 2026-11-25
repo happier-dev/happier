@@ -9,6 +9,7 @@ import type { WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSet
 import type { WidgetGroupInputReadings } from './widgetGroupFollowedInputs';
 
 import { useWidgetGroupInputsEditor } from './useWidgetGroupInputsEditor';
+import type { WidgetGroupChildInputRepairContext } from './WidgetGroupChildInputRepairContext';
 import { useWidgetGroupKeepFlows } from './useWidgetGroupKeepFlows';
 import { describeWidgetGroup, type WidgetGroupMenuInput, type WidgetGroupOperations } from './widgetGroupMenu';
 import { readWidgetGroupTitle } from './widgetGroupTitle';
@@ -35,6 +36,7 @@ export function useWidgetGroupMenu(input: Readonly<{
     commitName: ((next: string) => void | Promise<void>) | undefined;
     overlays: React.ReactNode;
     readings: WidgetGroupInputReadings;
+    childRepair: React.ContextType<typeof WidgetGroupChildInputRepairContext>;
 }> {
     const { group, childTitle, scope, testID } = input;
     const name = describeWidgetGroup(group, childTitle);
@@ -65,5 +67,6 @@ export function useWidgetGroupMenu(input: Readonly<{
         commitName,
         overlays: <>{inputs.popover}{keep.overlay}</>,
         readings: inputs.readings,
+        childRepair: inputs.childRepair,
     };
 }

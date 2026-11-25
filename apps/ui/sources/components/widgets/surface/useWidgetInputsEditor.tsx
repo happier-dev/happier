@@ -5,6 +5,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 
 import { WidgetSetupPopover } from '@/components/widgets/add/WidgetSetupPopover';
 import type { WidgetSetupDraft, WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
+import { WidgetGroupChildInputRepairContext } from '@/components/widgets/group/WidgetGroupChildInputRepairContext';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -104,6 +105,12 @@ export function useWidgetInputsEditor(input: Readonly<{
     const editInputs = React.useMemo(() => (editable ? { onPress: show, binding } : undefined), [binding, editable, show]);
 
     const { instance, scope, context, audience, setInputs, testID } = input;
+    const groupRepair = React.useContext(WidgetGroupChildInputRepairContext);
+    React.useEffect(() => {
+        if (!editable || !groupRepair || groupRepair.childId !== instance?.id) return;
+        groupRepair.consume();
+        void commands.invoke('open', groupRepair.fieldPath);
+    }, [commands, editable, groupRepair, instance?.id]);
     const buildSetup = React.useCallback(() => buildWidgetCandidateSetup({
         candidate: candidate!,
         context,

@@ -370,6 +370,58 @@ function projectMovementFixture() {
 }
 
 describe('a plugin page widget area', () => {
+    it('opens the child input editor from the group save refusal without retrying the draft', async () => {
+        const fixture = createArea();
+        await fixture.store.apply({ kind: 'add', instance: follow, size: 'small' });
+        await fixture.store.apply({ kind: 'group_create', groupId: 'inputs', instanceIds: [follow.id] });
+        await fixture.store.apply({ kind: 'rename', instanceId: 'inputs', displayName: 'Checks' });
+        const hostApi: PluginUiHostApi = { ...fixture.hostApi, widgetArea: async (raw, options) => {
+            const request = PluginUiWidgetAreaRequestV1Schema.parse(raw);
+            return request.operation.actionId === 'widgets.group.inputs.set'
+                ? PluginUiWidgetAreaResultV1Schema.parse({
+                    ok: false,
+                    errorCode: 'widget_inputs_invalid',
+                    error: 'widget_inputs_invalid',
+                    details: {
+                        status: 'invalid',
+                        fields: [{ path: 'repository', status: 'invalid', reasonCode: 'widget_input_schema_invalid' }],
+                        blockingChildId: follow.id,
+                    },
+                })
+                : fixture.hostApi.widgetArea(raw, options);
+        } };
+        const screen = await renderScreen(page(hostApi, 'happier'));
+        const groupId = 'prs.pinned.group.inputs';
+        const childRow = `${groupId}.groupInputs.followers.${follow.id}.repair`;
+        const fieldId = `${groupId}.groupInputs.field.repository`;
+        await flushHookEffects({ cycles: 6 });
+        await screen.pressByTestIdAsync(`${groupId}.menu.trigger`);
+        await screen.pressByTestIdAsync('groupInputs');
+        await vi.waitFor(() => expect(screen.findByTestId(`${fieldId}.trigger`)).not.toBeNull());
+        await screen.pressByTestIdAsync(`${fieldId}.trigger`);
+        await vi.waitFor(() => expect(screen.findByTestId(`${fieldId}.binding.own`)).not.toBeNull());
+        await screen.pressByTestIdAsync(`${fieldId}.binding.own`);
+        await vi.waitFor(() => expect(screen.findByTestId(`${fieldId}.input`)).not.toBeNull());
+        await act(async () => screen.changeTextByTestId(`${fieldId}.input`, 'another repository'));
+        await screen.pressByTestIdAsync(`${groupId}.groupInputs.submit`);
+        const pageRefusal = () => screen.findAllByType(SurfaceStateCard)
+            .find(node => node.props.testID === 'prs.pinned.writeFailed');
+        await vi.waitFor(() => expect(pageRefusal()?.props.diagnosticCode).toBe('widget_inputs_invalid'));
+        expect(pageRefusal()?.props.action).toBeUndefined();
+        expect(screen.getTextContent()).toContain('widgetAdd.groupChildInputsInvalid');
+        expect(screen.findByTestId(childRow)?.props.accessibilityLabel ?? '')
+            .toContain('widgetAdd.invalidReason');
+        await screen.pressByTestIdAsync(childRow);
+        await flushHookEffects({ cycles: 6 });
+        expect(screen.findByTestId(`${groupId}.groupInputs.submit`)).toBeNull();
+        await vi.waitFor(() => expect(screen.findByType(WidgetSetupStep)?.props).toMatchObject({
+            testID: 'prs.pinned.widget.follow.editInputs',
+            focusPath: 'repository',
+        }));
+        const group = (await fixture.store.read()).items.find(item => item.kind === 'group');
+        expect(group?.kind === 'group' ? group.context ?? {} : null).toEqual({});
+    });
+
     it.each(['applied', 'approvalPending', 'refused'] as const)('retains the group input draft until its real area write is applied (%s)', async kind => {
         const fixture = createArea();
         await fixture.store.apply({ kind: 'add', instance: follow, size: 'small' });
@@ -391,6 +443,10 @@ describe('a plugin page widget area', () => {
         const fieldId = 'prs.pinned.group.inputs.groupInputs.field.repository';
         const readDraftBinding = () => screen.findAllByType(DropdownMenu).find(row => row.props.testID === fieldId)?.props.selectedId;
         await vi.waitFor(() => expect(screen.findByTestId(`${fieldId}.trigger`)).not.toBeNull());
+        await screen.pressByTestIdAsync(`${fieldId}.trigger`);
+        await vi.waitFor(() => expect(screen.findByTestId(`${fieldId}.binding.own`)).not.toBeNull());
+        await screen.pressByTestIdAsync(`${fieldId}.binding.own`);
+        await vi.waitFor(() => expect(readDraftBinding()).toBe('own'));
         await screen.pressByTestIdAsync(`${fieldId}.trigger`);
         await vi.waitFor(() => expect(screen.findByTestId(`${fieldId}.binding.follow`)).not.toBeNull());
         await screen.pressByTestIdAsync(`${fieldId}.binding.follow`);

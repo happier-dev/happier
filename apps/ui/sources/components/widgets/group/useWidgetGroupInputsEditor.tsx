@@ -4,13 +4,14 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import type {
   WidgetInputBindingsV1,
+  WidgetInputIssueV1,
   WidgetLayoutGroupV1,
   WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
-import { isSameWidgetDefinitionV1, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets';
+import { isSameWidgetDefinitionV1, WidgetBindingResolutionV1Schema, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets';
 
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -34,9 +35,21 @@ import {
 } from './widgetGroupInputs';
 import { createWidgetGroupFollowedInputReader, readWidgetGroupInputFollowers, type WidgetGroupInputReadings } from './widgetGroupFollowedInputs';
 import { WIDGET_GROUP_ICON } from './widgetGroupMenu';
+import type { WidgetGroupChildInputRepairContext } from './WidgetGroupChildInputRepairContext';
 
 const NO_FIELDS: readonly never[] = [];
 const NO_BINDINGS: WidgetInputBindingsV1 = Object.freeze({});
+
+type RefusedChildInput = Readonly<{ childId: string; issue: WidgetInputIssueV1 | undefined }>;
+
+function readRefusedChildInput(details: unknown): RefusedChildInput | null {
+  if (!details || typeof details !== 'object' || !('blockingChildId' in details)) return null;
+  const { blockingChildId, ...resolution } = details;
+  if (typeof blockingChildId !== 'string') return null;
+  const result = WidgetBindingResolutionV1Schema.safeParse(resolution);
+  if (!result.success || result.data.status === 'ready') return null;
+  return { childId: blockingChildId, issue: result.data.fields[0] };
+}
 
 /** The opening page is fixed. Each draft uses the same composed inputs the following children read. */
 function createGroupInheritedReader(
@@ -62,14 +75,14 @@ function createGroupInheritedReader(
     const readChild = createWidgetGroupFollowedInputReader({
       context, surfaceOwner, bindings, labelledBindings, labels: readings.labels, fields: declaredSlots,
     });
-    const values = new Map<string, (WidgetBindingReading | null)[]>();
+    const values = new Map<string, { slot: string; reading: WidgetBindingReading | null }[]>();
     for (const { instance, descriptor, followers } of children) {
       const unset = followers.filter(({ field }) => bindings[field.path] === undefined);
       if (!unset.length) continue;
       const read = readChild(instance, descriptor);
       for (const follower of unset) {
         const { path } = follower.field;
-        const reading = read(follower);
+        const reading = { slot: follower.slot, reading: read(follower) };
         const matching = values.get(path);
         if (matching) matching.push(reading);
         else values.set(path, [reading]);
@@ -80,9 +93,20 @@ function createGroupInheritedReader(
     for (const field of fields) {
       const matching = values.get(field.path);
       if (!matching) continue;
-      const result = summarizeWidgetBindingReadings(matching);
-      inherited.set(field.path, result?.kind === 'several' ? result
-        : { kind: 'single', valueLabel: result?.label ?? fieldTitles.get(field.path)! });
+      const result = summarizeWidgetBindingReadings(matching.map(({ reading }) => reading));
+      if (result?.kind === 'several') {
+        inherited.set(field.path, result);
+        continue;
+      }
+      const slot = matching[0]!.slot;
+      // Only a common, resolved slot with no group override can be the field's implicit page binding.
+      const pageSlot = bindings[slot] === undefined && matching.every(candidate =>
+        candidate.slot === slot && candidate.reading !== null) ? slot : undefined;
+      inherited.set(field.path, {
+        kind: 'single',
+        valueLabel: result?.label ?? fieldTitles.get(field.path)!,
+        ...(pageSlot === undefined ? {} : { pageSlot }),
+      });
     }
     return inherited;
   };
@@ -115,6 +139,7 @@ export function useWidgetGroupInputsEditor(
     | undefined;
   popover: React.ReactElement | null;
   readings: WidgetGroupInputReadings;
+  childRepair: React.ContextType<typeof WidgetGroupChildInputRepairContext>;
 }> {
   const anchorRef = React.useRef<View | null>(null);
   const [open, setOpen] = React.useState<Readonly<{
@@ -126,6 +151,7 @@ export function useWidgetGroupInputsEditor(
     byChild: WidgetGroupInputReadings['byChild'];
   }> | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
+  const [repairTarget, setRepairTarget] = React.useState<RefusedChildInput | null>(null);
   const { group, scope, context, setInputs, testID } = input;
   // Each child declares its followers once. The label owner, preview, and card share this result.
   const byChild = React.useMemo(() => new Map(group.children.map(({ instance }, index) => {
@@ -155,6 +181,12 @@ export function useWidgetGroupInputsEditor(
   ] : [], { contextKey: `${testID}.groupInputs`, unbound: 'local' });
   const show = React.useCallback(() => { void commands.invoke('open'); }, [commands]);
   const close = React.useCallback(() => { void commands.invoke('close'); }, [commands]);
+  const repairChild = React.useCallback(async (target: RefusedChildInput) => {
+    if (await commands.invoke('close')) setRepairTarget(target);
+  }, [commands]);
+  const childRepair = React.useMemo(() => repairTarget ? {
+    childId: repairTarget.childId, fieldPath: repairTarget.issue?.path, consume: () => setRepairTarget(null),
+  } : null, [repairTarget]);
   const done = React.useCallback((result: Extract<WidgetSetupSubmitResult, { ok: true }>) => {
     if (result.approvalPending) setNotice(t('widgetAdd.areaApprovalPending'));
     else close();
@@ -192,9 +224,9 @@ export function useWidgetGroupInputsEditor(
           async () => {
             setNotice(null);
             const result = await setInputs!(draft.bindings);
-            if (result.ok || !result.details || typeof result.details !== 'object' || !('blockingChildId' in result.details)) return result;
-            const { blockingChildId } = result.details;
-            const blocked = group.children.find(({ instance }) => instance.id === blockingChildId);
+            if (result.ok) return result;
+            const target = readRefusedChildInput(result.details);
+            const blocked = target && group.children.find(({ instance }) => instance.id === target.childId);
             if (!blocked) return result;
             const descriptor = input.candidates.find(entry => entry &&
               isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(entry), blocked.instance.definition)) ?? null;
@@ -211,12 +243,14 @@ export function useWidgetGroupInputsEditor(
       title: t('widgetFrame.groupInputsTitle', { group: input.title }),
       hint: t('widgetFrame.groupInputsHint'),
       widget: { title: input.title, mark: WIDGET_GROUP_ICON },
-      renderPreview: () => (
+      renderPreview: ({ refusal }: Parameters<NonNullable<WidgetSetup['renderPreview']>>[0]) => (
         <WidgetGroupFollowers
           group={group}
           byChild={byChild}
           candidates={input.candidates}
           childTitle={childTitle}
+          refusal={refusal}
+          onRepair={repairChild}
           testID={`${testID}.groupInputs.followers`}
         />
       ),
@@ -230,6 +264,7 @@ export function useWidgetGroupInputsEditor(
     input.title,
     input.candidates,
     readInherited,
+    repairChild,
     scope,
     setInputs,
     testID,
@@ -249,7 +284,7 @@ export function useWidgetGroupInputsEditor(
         testID={`${testID}.groupInputs`}
       />
     ) : null;
-  return { anchorRef, editInputs, popover, readings };
+  return { anchorRef, editInputs, popover, readings, childRepair };
 }
 
 /** Who follows the group and who keeps its own value, then the boundary: the group grants nothing. */
@@ -259,6 +294,8 @@ function WidgetGroupFollowers(
     byChild: WidgetGroupInputReadings['byChild'];
     candidates: readonly (WidgetCandidate | null)[];
     childTitle?: ((instanceId: string) => string) | undefined;
+    refusal: Extract<WidgetSetupSubmitResult, { ok: false }> | undefined;
+    onRepair: (target: RefusedChildInput) => Promise<void>;
     testID: string;
   }>,
 ) {
@@ -275,12 +312,21 @@ function WidgetGroupFollowers(
     };
   }), [props.group.children, props.byChild, props.candidates, props.childTitle]);
   const following = React.useMemo(() => rows.filter(row => row.follows).length, [rows]);
+  const blocked = React.useMemo(() => readRefusedChildInput(props.refusal?.details), [props.refusal]);
+  const reason = t('widgetAdd.invalidReason');
   return (
     <View testID={props.testID} style={styles.list}>
       <Text style={styles.heading}>
         {t('widgetFrame.groupFollowCount', { following, count: rows.length })}
       </Text>
-      {rows.map((row) => (
+      {rows.map((row) => blocked?.childId === row.id ? (
+        <HappierPressable key={row.id} testID={`${props.testID}.${row.id}.repair`} style={styles.row}
+          accessibilityRole="button" accessibilityLabel={`${row.title}, ${reason}`} onPress={() => { void props.onRepair(blocked); }}>
+          <Text style={styles.title} numberOfLines={1}>{row.title}</Text>
+          <Icon name="warning" size={ICON_SIZE.xs} color={theme.colors.state.danger.foreground} />
+          <Text style={styles.meta}>{reason}</Text>
+        </HappierPressable>
+      ) : (
         <View key={row.id} style={styles.row}>
           <Text style={styles.title} numberOfLines={1}>
             {row.title}

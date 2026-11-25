@@ -32,9 +32,13 @@ import {
 const FOLLOW_ID = 'follow';
 const OWN_ID = 'own';
 
+function formatFollowReading(source: string, value: string | null | undefined): string {
+    return value && value !== source ? t('widgetAdd.inheritedValue', { value, source }) : source;
+}
+
 function formatGroupReading(reading: WidgetSetupInheritedReading, includeSource = true): string {
     const value = reading.kind === 'single' ? reading.valueLabel : t('widgetAdd.severalValues');
-    return includeSource ? t('widgetAdd.inheritedValue', { value, source: t('widgetFrame.followingGroup') }) : value;
+    return includeSource ? formatFollowReading(t('widgetFrame.followingGroup'), value) : value;
 }
 
 type WidgetBindingInForce =
@@ -43,7 +47,8 @@ type WidgetBindingInForce =
     | Readonly<{ kind: 'own' }>
     | Readonly<{ kind: 'unset' }>;
 
-function bindingInForce({ entry, row, plainValue }: React.ComponentProps<typeof WidgetSetupFieldRow>): WidgetBindingInForce {
+function bindingInForce({ entry, row, plainValue }: React.ComponentProps<typeof WidgetSetupFieldRow>, editingOwn: boolean): WidgetBindingInForce {
+    if (editingOwn && (row.kind === 'needed' || (row.kind === 'follows' && row.implicit))) return { kind: 'own' };
     if (row.kind === 'follows' || (row.kind === 'invalid' && row.follows === true)) {
         const source = row.label ?? entry.follow?.label ?? entry.field.title;
         return { kind: entry.follow?.group ? 'group' : 'page', source };
@@ -112,17 +117,15 @@ function NeededTag(): React.ReactElement {
 function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFieldRow> & Readonly<{
     binding: WidgetBindingInForce;
     onChooseOwn: () => void;
+    onChooseFollow: (slot: string) => void;
     controlRef: (node: HappierFocusable | null) => void;
 }>): React.ReactElement | null {
     const { theme } = useUnistyles();
     const follow = props.entry.follow;
-    const valueLabel = follow?.values[0]?.label;
-    const groupReading = follow?.group && valueLabel && valueLabel !== follow.label
-        ? formatGroupReading({ kind: 'single', valueLabel }) : undefined;
     const [open, setOpen] = React.useState(false);
     const { binding } = props;
     const selectedId = binding.kind === 'own' ? OWN_ID : binding.kind === 'unset' ? null : FOLLOW_ID;
-    const trigger = describeTrigger(binding, props.row, theme.colors.text.secondary, theme.colors.state.danger.foreground, groupReading);
+    const trigger = describeTrigger(binding, props.row, theme.colors.text.secondary, theme.colors.state.danger.foreground);
     const selectedReading = {
         title: trigger.detail,
         ...(trigger.field.secondary == null ? {} : { subtitle: trigger.field.secondary }),
@@ -137,10 +140,7 @@ function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFiel
         onOpenChange={next => { void commands.invoke('open', next); }}
         items={[
             { id: FOLLOW_ID, checked: selectedId === FOLLOW_ID,
-                ...(selectedId === FOLLOW_ID ? selectedReading : {
-                    title: groupReading ?? follow.label,
-                    ...(!groupReading && valueLabel !== undefined ? { subtitle: valueLabel } : {}),
-                }),
+                ...(selectedId === FOLLOW_ID ? selectedReading : { title: formatFollowReading(follow.label, follow.values[0]?.label) }),
                 testID: `${props.testID}.binding.follow`,
                 icon: <Icon name="link" size={16} color={theme.colors.text.secondary} /> },
             { id: OWN_ID, title: t('widgetAdd.ownValue'), subtitle: t('widgetAdd.ownValueHint'), checked: selectedId === OWN_ID,
@@ -149,7 +149,7 @@ function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFiel
                 icon: <Icon name="pencil-simple" size={16} color={theme.colors.text.secondary} /> },
         ]}
         onSelect={(id) => {
-            if (id === FOLLOW_ID && selectedId !== FOLLOW_ID) props.onChange({ kind: 'follow', slot: follow.slot });
+            if (id === FOLLOW_ID && selectedId !== FOLLOW_ID) props.onChooseFollow(follow.slot);
             if (id === OWN_ID) props.onChooseOwn();
         }}
         selectedId={selectedId}
@@ -187,24 +187,20 @@ function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFiel
     />;
 }
 
-function describeTrigger(binding: WidgetBindingInForce, row: WidgetSetupRow, secondary: string, danger: string, groupReading?: string): Readonly<{
+function describeTrigger(binding: WidgetBindingInForce, row: WidgetSetupRow, secondary: string, danger: string): Readonly<{
     detail: string;
     spoken: string;
     field: Readonly<{ leading?: React.ReactNode; secondary?: string | null; quietValue?: boolean; invalid?: boolean }>;
 }> {
     const warning = row.kind === 'invalid' ? t('widgetAdd.invalidValue') : null;
     if (binding.kind === 'group' || binding.kind === 'page') {
-        const { source } = binding;
-        const reading = row.kind === 'follows' ? groupReading : undefined;
-        const value = row.kind === 'follows' && row.valueLabel !== source ? row.valueLabel : null;
-        const detail = reading ?? source;
-        const extra = warning ?? (reading ? null : value);
+        const detail = formatFollowReading(binding.source, row.kind === 'follows' ? row.valueLabel : undefined);
         return {
             detail,
-            spoken: extra ? `${detail} ${extra}` : detail,
+            spoken: warning === null ? detail : `${detail} ${warning}`,
             field: warning !== null
-                ? { leading: <Icon name="warning" size={15} color={danger} />, secondary: extra, invalid: true }
-                : { leading: <Icon name="link" size={15} color={secondary} />, secondary: extra, quietValue: true },
+                ? { leading: <Icon name="warning" size={15} color={danger} />, secondary: warning, invalid: true }
+                : { leading: <Icon name="link" size={15} color={secondary} />, quietValue: true },
         };
     }
     const detail = binding.kind === 'own' ? t('widgetAdd.ownValue') : t('widgetAdd.needed');
@@ -247,12 +243,13 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     const placeholderInk = useOptionalHappierUiPalette(presentationTheme)?.placeholder ?? presentationTheme.colors.mutedText;
     const picker = useHappierInputPickerPort();
     const { entry, row } = props;
-    const binding = bindingInForce(props);
+    const [ownRequest, setOwnRequest] = React.useState(0);
+    const binding = bindingInForce(props, ownRequest > 0);
     // An unset group input can preview what its children read even without a binding of its own.
-    const groupReading = row.kind === 'needed' ? entry.inherited : undefined;
+    const groupReading = row.kind === 'needed' && binding.kind === 'unset' ? entry.inherited : undefined;
     const surfaceOnly = entry.follow !== undefined && (binding.kind === 'page' || binding.kind === 'group');
     const choices = entry.field.widget === 'select' || entry.field.widget === 'multiselect';
-    const value = props.plainValue ?? (row.kind === 'follows' ? entry.follow?.values[0]?.value : undefined);
+    const value = props.plainValue;
     const selection = choices ? value : undefined;
     const choicesOptions = row.kind === 'choices' ? row.choices : props.options;
     const options = React.useMemo(() => choicesOptions.map((option, index) => ({
@@ -293,7 +290,6 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     const registerControl = React.useCallback((node: HappierFocusable | null) => { controlRef.current = node; }, []);
     const bindingRef = React.useRef<HappierFocusable | null>(null);
     const registerBinding = React.useCallback((node: HappierFocusable | null) => { bindingRef.current = node; }, []);
-    const [ownRequest, requestOwnEditor] = React.useReducer((request: number) => request + 1, 0);
     const openRequest = (props.focusRequest ?? 0) + (props.autoOpen ? 1 : 0) + ownRequest;
     React.useEffect(() => {
         // An Add/repair hand-off stays in the row while the typed choice is unavailable.
@@ -304,8 +300,13 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
             const current = row.kind === 'follows' ? entry.follow?.values[0]?.value : undefined;
             props.onChange(current === undefined ? { kind: 'clear' } : { kind: 'pin', value: current });
         }
-        requestOwnEditor();
+        setOwnRequest(request => request + 1);
     };
+    const bindingMenu = entry.follow ? <WidgetBindingControl {...props} binding={binding} controlRef={registerBinding}
+        onChooseOwn={chooseOwn} onChooseFollow={(slot) => {
+            setOwnRequest(0);
+            props.onChange({ kind: 'follow', slot });
+        }} /> : undefined;
     const subtitle = row.kind === 'invalid' && !entry.follow && row.label
         ? `${row.label} · ${rowSubtitle(props)}`
         : choices || inheritedSubtitle !== undefined || (row.kind === 'needed' && entry.neededHint)
@@ -315,14 +316,14 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     // control, anything else one compact choice field); the row only places them: beside the title when
     // there is room, and multi-line text beneath it.
     // A value the choices cannot name (a period) is read from the row's own label.
-    const valueLabel = row.kind === 'pinned' ? row.label : row.kind === 'follows' ? row.valueLabel ?? undefined : row.kind === 'invalid' ? row.label ?? undefined : undefined;
+    const valueLabel = row.kind === 'pinned' ? row.label : row.kind === 'invalid' ? row.label ?? undefined : undefined;
     const stacked = props.phone || (presentation.kind === 'text' && presentation.multiline);
     // A source that settled with nothing to offer and nothing chosen: no choice field that cannot succeed, but what is
     // missing and, where the source names one, the place to make the first choice (DESIGN-1118-B M6).
-    if (inherited === undefined && field.optionsSourceId !== undefined && isNothingToChoose({ field, optionsStatus: props.optionsStatus,
+    if (field.optionsSourceId !== undefined && isNothingToChoose({ field, optionsStatus: props.optionsStatus,
         optionCount: choicesOptions.length, value, follows: binding.kind === 'group' || binding.kind === 'page' })) {
         return <NothingToChooseRow title={field.prompt ?? field.title} optionsSourceId={field.optionsSourceId}
-            phone={props.phone} testID={props.testID} />;
+            phone={props.phone} testID={props.testID} bindingMenu={bindingMenu} />;
     }
     if (surfaceOnly) {
         // Following the surface: the binding control is the row's one control and names the value.
@@ -335,7 +336,7 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
                 titleAccessory={titleAccessory}
                 showChevron={false}
                 accessoryLayout={props.phone ? 'stacked' : 'inline'}
-                rightElement={<WidgetBindingControl {...props} binding={binding} onChooseOwn={chooseOwn} controlRef={registerBinding} />}
+                rightElement={bindingMenu}
             />
         );
     }
@@ -359,8 +360,7 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
                 <View style={textPlaceholderStyle}>
                 <HappierInputField<JsonValue>
                     frame="none"
-                    leading={entry.follow ? <WidgetBindingControl {...props}
-                        binding={binding} onChooseOwn={chooseOwn} controlRef={registerBinding} /> : undefined}
+                    leading={bindingMenu}
                     field={field}
                     value={value}
                     selection={selection as JsonValue | readonly JsonValue[] | undefined}
@@ -389,10 +389,18 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
 }
 
 /** An input whose source has nothing to choose yet: says so, and offers the source's next step when it has one. */
-function NothingToChooseRow(props: Readonly<{ title: string; optionsSourceId: string; phone: boolean; testID: string }>): React.ReactElement {
+function NothingToChooseRow(props: Readonly<{
+    title: string;
+    optionsSourceId: string;
+    phone: boolean;
+    testID: string;
+    bindingMenu?: React.ReactElement;
+}>): React.ReactElement {
     const router = useRouter();
     const empty = readOptionSourceEmptyState(props.optionsSourceId);
     const action = empty.action;
+    const button = action ? <RoundButton testID={`${props.testID}.emptyAction`} size="small" display="secondary"
+        title={action.label} onPress={() => router.push(action.href as Parameters<typeof router.push>[0])} /> : undefined;
     return (
         <Item
             testID={props.testID}
@@ -401,8 +409,7 @@ function NothingToChooseRow(props: Readonly<{ title: string; optionsSourceId: st
             subtitleLines={0}
             showChevron={false}
             accessoryLayout={props.phone ? 'stacked' : 'adaptive'}
-            {...(action ? { rightElement: <RoundButton testID={`${props.testID}.emptyAction`} size="small" display="secondary"
-                title={action.label} onPress={() => router.push(action.href as Parameters<typeof router.push>[0])} /> } : {})}
+            rightElement={props.bindingMenu && button ? <View>{props.bindingMenu}{button}</View> : props.bindingMenu ?? button}
         />
     );
 }

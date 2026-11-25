@@ -63,14 +63,19 @@ describe('widget setup fields share the typed-field owners', () => {
         expect(screen.findByTestId('setup.note.input')?.props.value).toBe('');
         await screen.pressByTestIdAsync('setup.note.trigger');
         expect(screen.findByType(DropdownMenu).props.items).toMatchObject([
-            { id: 'follow', title: 'This page', checked: false },
+            { id: 'follow', title: 'Shared note (This page)', checked: false },
             { id: 'own', title: 'widgetAdd.ownValue', checked: false },
         ]);
         await screen.update(render({ entry: { field, follow, inherited }, row: { kind: 'pinned', value: null, label: 'Personal note' }, plainValue: 'Personal note' }));
         expect(bindingText(screen, 'setup.note')).toEqual(['widgetAdd.ownValue']);
         expect(screen.findByTestId('setup.note.input')?.props.value).toBe('Personal note');
         await screen.update(render({ entry: { field, follow }, row: { kind: 'follows', label: follow.label, valueLabel: option.label }, plainValue: undefined }));
-        expect(bindingText(screen, 'setup.note')).toEqual(['This page', 'Shared note']);
+        expect.soft(bindingText(screen, 'setup.note')).toEqual(['Shared note (This page)']);
+        expect.soft(screen.findByTestId('setup.note.trigger')?.props.accessibilityLabel).toBe('Note, Shared note (This page)');
+        expect(screen.findByType(DropdownMenu).props.items).toMatchObject([
+            { id: 'follow', title: 'Shared note (This page)', checked: true },
+            { id: 'own', checked: false },
+        ]);
         await screen.update(render({ entry: { field, follow: { ...follow, values: [] } }, row: needed, plainValue: undefined }));
         expect.soft(bindingText(screen, 'setup.note')).toEqual(['widgetAdd.needed']);
         await screen.pressByTestIdAsync('setup.note.trigger');
@@ -252,6 +257,12 @@ describe('widget setup fields share the typed-field owners', () => {
         expect(setup.resolve(empty).status).not.toBe('ready');
         await screen.update(render(empty));
         expect(screen.findByTestId('setup.invalidFollow.input')?.props.value).toBe('');
+        expect.soft(bindingText(screen, 'setup.invalidFollow')).toEqual(['widgetAdd.ownValue']);
+        expect.soft(screen.findByTestId('setup.invalidFollow.trigger')?.props.accessibilityLabel)
+            .toBe('Numeric calendar, widgetAdd.ownValue');
+        expect.soft(screen.findByType(DropdownMenu).props.items).toMatchObject([
+            { id: 'follow', checked: false }, { id: 'own', checked: true },
+        ]);
 
         // A stored pin can become invalid after the field changes type. The same typed
         // control must still mount for repair while the binder holds Save disabled.
@@ -281,6 +292,22 @@ describe('widget setup fields share the typed-field owners', () => {
         expect(onChange).not.toHaveBeenCalled();
         await screen.unmount();
     });
+    it('replaces a settled empty scope chooser with its empty state and keeps its binding menu', async () => {
+        const screen = await renderScreen(<WidgetSetupFieldRow
+            entry={{ field: { path: 'agents', title: 'Agents', widget: 'multiselect',
+                optionsSourceId: 'usage.filters.agents', placeholder: 'All agents' },
+                follow: { slot: 'agents', label: 'This page', values: [{ label: 'All agents', value: [] }] },
+                inherited: { kind: 'single', valueLabel: 'All agents' } }}
+            row={{ kind: 'needed' }} options={[]} optionsStatus="ready" plainValue={undefined}
+            phone testID="setup.agents" onChange={() => {}} />);
+        expect.soft(screen.getTextContent()).toContain('widgetAdd.noChoices');
+        expect.soft(screen.findByTestId('setup.agents.control.trigger')).toBeNull();
+        await screen.pressByTestIdAsync('setup.agents.trigger');
+        expect(screen.findByType(DropdownMenu).props.items).toMatchObject([
+            { id: 'follow', checked: false }, { id: 'own', checked: false },
+        ]);
+    });
+
     it('uses the public choice owner for own long choices and collections, including limits and failed discovery', async () => {
         const { HappierInputField } = await import('@happier-dev/plugin-ui/presentation');
         const options = [{ value: 'auto', label: 'Best available cost' }, { value: 'reported', label: 'Reported by agents' }];
@@ -517,7 +544,7 @@ describe('widget setup fields share the typed-field owners', () => {
         screen.changeTextByTestId('setup.limit.input', '');
         expect(onChange).toHaveBeenLastCalledWith({ kind: 'clear' });
     });
-    it('says what a follow chip follows and then what it currently is, never the same word twice (F4 D-12)', async () => {
+    it('names the followed value first without repeating the source when both names are the same', async () => {
         const entry: WidgetSetupField = { field: { path: 'agents', title: 'Agents', widget: 'select', options: [] },
             follow: { slot: 'agents', label: 'This page', values: [{ value: [], label: 'All agents' }] } };
         const render = async (row: Extract<React.ComponentProps<typeof WidgetSetupFieldRow>['row'], { kind: 'follows' }>) => {
@@ -525,7 +552,7 @@ describe('widget setup fields share the typed-field owners', () => {
                 plainValue={undefined} phone={false} onChange={() => {}} testID="setup.agents" />);
             return bindingText(screen, 'setup.agents');
         };
-        expect(await render({ kind: 'follows', label: 'This page', valueLabel: 'All agents' })).toEqual(['This page', 'All agents']);
+        expect(await render({ kind: 'follows', label: 'This page', valueLabel: 'All agents' })).toEqual(['All agents (This page)']);
         // A source whose value reads the same says it once.
         expect(await render({ kind: 'follows', label: 'Agents', valueLabel: 'Agents' })).toEqual(['Agents']);
     });

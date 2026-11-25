@@ -152,12 +152,13 @@ it('shows inherited values as placeholders without setting group overrides', asy
     group: { kind: 'group', id: 'group', width: 'full', frameStyle: 'card', dividers: 'hairline',
       context: { period: { kind: 'value', value: 'Today' } },
       children: [{ kind: 'widget', instance: { v: 1, id: 'summary', definition, bindings: {
-        project: { kind: 'context', slot: 'project' }, period: { kind: 'context', slot: 'period' },
+        project: { kind: 'context', slot: 'projectPreview' }, period: { kind: 'context', slot: 'period' },
       } } }],
     },
     candidates: [candidate], title: 'Usage', scope: { serverId: 'home', accountId: 'actor', owner: { kind: 'home' } },
     context: { slots: {
       project: { label: 'This page', value: { value: 'example', label: 'Example project' } },
+      projectPreview: { label: 'This page', value: { value: 'example', label: 'Example project' } },
       period: { label: 'This page', value: { value: 'Yesterday', label: 'Yesterday' } },
     } },
     testID: 'group', setInputs,
@@ -187,7 +188,7 @@ it('shows inherited values as placeholders without setting group overrides', asy
   };
   await openProjectMenu();
   expect(projectMenu().props.items).toMatchObject([
-    { id: 'follow', title: 'This page', checked: false },
+    { id: 'follow', title: 'widgetAdd.inheritedValue(value=Example project,source=This page)', checked: false },
     { id: 'own', title: 'widgetAdd.ownValue', checked: false },
   ]);
   await screen.pressByTestIdAsync('edit.field.project.binding.own');
@@ -201,10 +202,11 @@ it('shows inherited values as placeholders without setting group overrides', asy
     .toMatchObject([{ title: 'widgetAdd.ownValue' }]);
   await screen.pressByTestIdAsync('edit.field.project.binding.follow');
   await vi.waitFor(() => expect(screen.findByTestId('edit.field.project.input')).toBeNull());
-  expect(screen.findByTestId('edit.field.project.trigger')?.props.accessibilityLabel).toBe('Project, This page Example project');
+  expect(screen.findByTestId('edit.field.project.trigger')?.props.accessibilityLabel)
+    .toBe('Project, widgetAdd.inheritedValue(value=Example project,source=This page)');
   await openProjectMenu();
   expect(projectMenu().props.items.filter((item: { checked?: boolean }) => item.checked))
-    .toMatchObject([{ title: 'This page' }]);
+    .toMatchObject([{ title: 'widgetAdd.inheritedValue(value=Example project,source=This page)' }]);
   expect(setInputs).not.toHaveBeenCalled();
   await screen.pressByTestIdAsync('edit.submit');
   expect(setInputs).toHaveBeenCalledWith({ project: { kind: 'context', slot: 'project' }, period: { kind: 'value', value: 'Today' } });
@@ -237,7 +239,7 @@ describe('group inherited readings', () => {
     period: { label: 'This page', value: { value: 'Today', label: 'Today' } },
     calendar: { label: 'This calendar', value: { value: 'Yesterday', label: 'Yesterday' } },
     otherCalendar: { label: 'Other calendar', value: { value: 'Yesterday', label: 'Yesterday' } },
-    basis: { label: 'This page', value: { value: 'auto', label: 'Default cost basis' } },
+    basisPreview: { label: 'This page', value: { value: 'auto', label: 'Default cost basis' } },
     projects: { label: 'This page', value: { value: [], label: 'All projects' } },
     work: { label: 'This project area', value: { value: ['one', 'two'], label: '2 projects' } },
     retrySetting: { label: 'This page', value: { value: 1, label: '1' } },
@@ -270,8 +272,35 @@ describe('group inherited readings', () => {
     return { screen, setInputs };
   };
 
-  it('shows the same-slot inherited reading under the short choice and saves no overrides', async () => {
-    const { screen, setInputs } = await mount([{ basis: follow('basis') }]);
+  it('checks the page binding used by a group field with no saved override', async () => {
+    const { screen, setInputs } = await mount([{ period: follow('period') }]);
+    const trigger = () => screen.findByTestId('edit.field.period.trigger')?.props.accessibilityLabel;
+    const menu = () => screen.root.findAllByType(DropdownMenu).find(item => item.props.testID === 'edit.field.period')!;
+    await screen.pressByTestIdAsync('edit.field.period.trigger');
+    await vi.waitFor(() => expect(menu().props.open).toBe(true));
+    const pageReading = 'widgetAdd.inheritedValue(value=Today,source=This page)';
+    expect.soft(trigger()).toBe(`Period, ${pageReading}`);
+    expect.soft(menu().props.items).toMatchObject([
+      { id: 'follow', title: pageReading, checked: true },
+      { id: 'own', title: 'widgetAdd.ownValue', checked: false },
+    ]);
+    await screen.pressByTestIdAsync('edit.field.period.binding.own');
+    await vi.waitFor(() => expect(screen.findByTestId('edit.field.period.input')?.props.value).toBe('Today'));
+    expect(trigger()).toBe('Period, widgetAdd.ownValue');
+    await screen.pressByTestIdAsync('edit.field.period.trigger');
+    await vi.waitFor(() => expect(menu().props.open).toBe(true));
+    expect(menu().props.items).toMatchObject([{ id: 'follow', checked: false }, { id: 'own', checked: true }]);
+    expect(setInputs).not.toHaveBeenCalled();
+    await screen.pressByTestIdAsync('edit.submit');
+    expect(setInputs).toHaveBeenCalledWith({ period: pin('Today') });
+
+    const untouched = await mount([{ period: follow('period') }]);
+    await untouched.screen.pressByTestIdAsync('edit.submit');
+    expect(untouched.setInputs).toHaveBeenCalledWith({});
+  });
+
+  it('shows the child preview under the short choice and saves no overrides', async () => {
+    const { screen, setInputs } = await mount([{ basis: follow('basisPreview') }]);
     expect(screen.getTextContent()).toContain('Automatic');
     const control = screen.findByType(HappierSegmentedChoice);
     expect(control.props.segments.map((segment: { selected: boolean }) => segment.selected)).toEqual([false, false]);
@@ -332,6 +361,10 @@ describe('group inherited readings', () => {
     const { screen, setInputs } = await mount([{ period: follow('calendar'), calendar: follow('calendar') }]);
     const reading = () => screen.findByTestId('edit.field.period.input')?.props.placeholder;
     expect(reading()).toContain('Yesterday');
+    await screen.pressByTestIdAsync('edit.field.calendar.trigger');
+    await vi.waitFor(() => expect(screen.findByTestId('edit.field.calendar.binding.own')).not.toBeNull());
+    await screen.pressByTestIdAsync('edit.field.calendar.binding.own');
+    await vi.waitFor(() => expect(screen.findByTestId('edit.field.calendar.input')).not.toBeNull());
     await act(async () => screen.changeTextByTestId('edit.field.calendar.input', 'Today'));
     expect(reading()).toBe('Today');
     await screen.pressByTestIdAsync('edit.submit');
@@ -369,7 +402,10 @@ it('names the child whose effective inputs reject the group edit', async () => {
   // The save port reports the actual child that refused the group write.
   const write = vi.fn(async (bindings: WidgetInputBindingsV1) => {
     if (bindings.period?.kind === 'value' && bindings.period.value === 'Yesterday') {
-      throw Object.assign(new Error('widget_inputs_invalid'), { code: 'widget_inputs_invalid', details: { blockingChildId: 'daily' } });
+      throw Object.assign(new Error('widget_inputs_invalid'), { code: 'widget_inputs_invalid', details: {
+        status: 'invalid', fields: [{ path: 'period', status: 'invalid', reasonCode: 'widget_input_schema_invalid' }],
+        blockingChildId: 'daily',
+      } });
     }
   });
   const setInputs = (bindings: WidgetInputBindingsV1) => runWidgetSetupCommand(() => write(bindings), 'Save failed');
@@ -393,6 +429,10 @@ it('names the child whose effective inputs reject the group edit', async () => {
     throw new Error('Missing widget setup popover');
   }
   const screen = await renderScreen(<WidgetSetupStep setup={popover.props.setup()} phone={false} testID="edit" onDone={popover.props.onDone ?? popover.props.onRequestClose} />);
+  await screen.pressByTestIdAsync('edit.field.period.trigger');
+  await vi.waitFor(() => expect(screen.findByTestId('edit.field.period.binding.own')).not.toBeNull());
+  await screen.pressByTestIdAsync('edit.field.period.binding.own');
+  await vi.waitFor(() => expect(screen.findByTestId('edit.field.period.input')).not.toBeNull());
   await act(async () => screen.changeTextByTestId('edit.field.period.input', 'Yesterday'));
   await screen.pressByTestIdAsync('edit.submit');
   expect(screen.getTextContent()).toContain('widgetAdd.groupChildInputsInvalid(widget=Release activity)');

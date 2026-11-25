@@ -118,7 +118,7 @@ export function WidgetSetupStep(props: Readonly<{
     const [draft, setDraft] = React.useState<WidgetSetupDraft>(setup.initial);
     const [pickedOptions, setPickedOptions] = React.useState<Readonly<Record<string, readonly WidgetSetupValue[]>>>({});
     const [busy, setBusy] = React.useState(false);
-    const [error, setError] = React.useState<string | null>(null);
+    const [refusal, setRefusal] = React.useState<Extract<WidgetSetupSubmitResult, { ok: false }> | null>(null);
     // Gallery counts and server echoes rebuild entries. The unresolved invocation
     // keeps custody until its own receipt; a rebuilt entry cannot turn Retry into Add.
     const submission = React.useRef<WidgetSetup['submit'] | null>(null);
@@ -160,7 +160,7 @@ export function WidgetSetupStep(props: Readonly<{
     });
 
     const change = React.useCallback((path: string, next: WidgetSetupFieldChange) => {
-        setError(null);
+        setRefusal(null);
         const request = requests.find(request => request.field.path === path);
         const offered = request ? options.state(request.field, request).options : [];
         setPickedOptions(current => ({ ...current, [path]: next.kind === 'pin'
@@ -175,7 +175,7 @@ export function WidgetSetupStep(props: Readonly<{
         if (offersAnother) { props.onAddAnother?.(); return; }
         if (busy || !finishable) return;
         setBusy(true);
-        setError(null);
+        setRefusal(null);
         try {
             submission.current ??= setup.submit;
             const result = await submission.current(draft);
@@ -186,11 +186,11 @@ export function WidgetSetupStep(props: Readonly<{
                 props.onDone(result);
                 return;
             }
-            setError(result.message);
+            setRefusal(result);
             props.onRefused?.(result.message);
         } catch (error) {
             const message = resolveActionExecutionErrorMessage(error, t('widgetAdd.saveFailed'));
-            setError(message);
+            setRefusal({ ok: false, message });
             props.onRefused?.(message);
         } finally {
             setBusy(false);
@@ -241,13 +241,13 @@ export function WidgetSetupStep(props: Readonly<{
             invoke: (value?: import('@happier-dev/protocol/plugins/ui').PluginUiJsonValueV1) => {
                 const size = sizes.sizes.find(size => size === value);
                 if (!size) return false;
-                setError(null); setDraft(current => ({ ...current, size }));
+                setRefusal(null); setDraft(current => ({ ...current, size }));
             } }] : []),
         ...(!busy && widths && draft.width ? [{ key: 'width', title: `${setup.title}: ${t('widgetFrame.groupWidth')}`,
             invoke: (value?: import('@happier-dev/protocol/plugins/ui').PluginUiJsonValueV1) => {
                 const choice = widths.find(choice => choice.width === value && !choice.unavailableReason);
                 if (!choice) return false;
-                setError(null); setDraft(current => ({ ...current, width: choice.width }));
+                setRefusal(null); setDraft(current => ({ ...current, width: choice.width }));
             } }] : []),
     ], { unbound: 'local' });
 
@@ -275,15 +275,16 @@ export function WidgetSetupStep(props: Readonly<{
                         ...(option.description ? { description: option.description } : {}),
                         ...(option.disabled ? { disabled: true } : {}),
                     }));
-                    const row = describeWidgetSetupRow({ entry, draft, resolution, options: values, pickedOptions: pickedOptions[entry.field.path] });
                     const binding = draft.bindings[entry.field.path];
                     const field = facts ? { ...entry.field, required: facts.required } : entry.field;
                     const reading = inherited?.get(field.path);
+                    const setupField = field === entry.field && !reading ? entry : { ...entry, field, ...(reading ? { inherited: reading } : {}) };
+                    const row = describeWidgetSetupRow({ entry: setupField, draft, resolution, options: values, pickedOptions: pickedOptions[field.path] });
                     return (
                         <WidgetSetupFieldRow
                             key={entry.field.path}
                             testID={`${props.testID}.field.${entry.field.path}`}
-                            entry={field === entry.field && !reading ? entry : { ...entry, field, ...(reading ? { inherited: reading } : {}) }}
+                            entry={setupField}
                             row={row}
                             options={values}
                             optionsStatus={state.status}
@@ -307,7 +308,8 @@ export function WidgetSetupStep(props: Readonly<{
     // only preview with its own authority returns nothing for another target, and a per-viewer input
     // only resolves for each viewer once added; the card then says what it waits for rather than
     // drawing someone else's data.
-    const live = resolution.status === 'ready' && setup.renderPreview ? setup.renderPreview({ input: resolution.input, draft }) : null;
+    const live = resolution.status === 'ready' && setup.renderPreview
+        ? setup.renderPreview({ input: resolution.input, draft, ...(refusal ? { refusal } : {}) }) : null;
     // The input that blocks may have nothing to choose yet: its row says so, and the preview and footer say nothing
     // more (one message per state; DESIGN-1118-B Delta 1). The footer's Add stays disabled.
     const blockerIndex = blocker ? setup.fields.findIndex((entry) => entry.field.path === blocker.path) : -1;
@@ -408,7 +410,7 @@ export function WidgetSetupStep(props: Readonly<{
         ...(props.onCancel ? { onCancel: props.onCancel } : {}),
         ...(props.footerAccessory && finishable ? { footerAccessory: props.footerAccessory } : {}),
         noteTestID: `${props.testID}.why`,
-        error,
+        error: refusal?.message ?? null,
         note: blockerSaidOnRow ? null : blocker ? t('widgetAdd.stillNeeded', { field: blocker.title }) : props.blockedReason ?? props.notice ?? consequence,
         ...(props.backLabel ? { backLabel: props.backLabel } : {}),
         primary: {
