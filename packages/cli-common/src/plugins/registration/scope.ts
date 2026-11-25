@@ -595,9 +595,11 @@ export function createPluginRegistrationScope(
                 if (staged.family === REGISTRATION_FAMILY.dynamicResources
                     || staged.family === REGISTRATION_FAMILY.composerReferences) {
                     try {
-                        const methods = staged.family === REGISTRATION_FAMILY.dynamicResources ? ['read', 'observe'] : ['search', 'resolve'];
+                        const resource = staged.family === REGISTRATION_FAMILY.dynamicResources;
                         return freezeRegistration(staged.family, staged.localId,
-                            captureRegistrationMethods(staged.value, staged.family, methods));
+                            captureRegistrationMethods(staged.value, staged.family,
+                                resource ? ['read', 'observe'] : ['search', 'resolve'],
+                                resource ? ['createProducer'] : []));
                     } catch {
                         fail(`Plugin '${params.pluginId}' registered an invalid '${staged.family}/${staged.localId}' runtime`);
                     }

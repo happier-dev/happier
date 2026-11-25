@@ -3472,12 +3472,17 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         // The plugin contribution is an external runtime boundary. Keep the
         // launch composition, process, feed and reviewed Restart path real.
         const capturedLaunches: unknown[] = [];
+        const captureUnavailable = {
+            kind: 'unavailable', code: 'service_launch_environment_unavailable',
+            reason: 'private launch detail', diagnostic: { code: 'telemetry_capture_unavailable',
+                message: "Capture isn't available: the listener port is already in use." },
+        } as const;
         if (surface === 'ui') h.setServiceLaunchEnvironmentContribution(async launch => {
             capturedLaunches.push(launch);
             return [{
                 contribution: { pluginId: 'fixture.capture', localId: 'capture' },
                 result: captureAvailable ? { kind: 'replace', defaults: { OTEL_SERVICE_NAME: 'fixture-service' }, release: async () => {} }
-                    : { kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'unsupported_otlp_transport' },
+                    : captureUnavailable,
             }];
         });
         const channel = await createRequesterCurrentnessSocketHarness();
@@ -3495,7 +3500,8 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
             if (selection?.kind !== 'manifest') throw new Error('Expected a declared Project service');
             expect(capturedLaunches).toEqual([expect.objectContaining({ serviceName: selection.name })]);
             expect(selectedRow).toMatchObject({ serviceState: 'running', actions: expect.arrayContaining(['manage']),
-                diagnostics: [expect.objectContaining({ code: 'service_launch_environment_unavailable', severity: 'warning' })] });
+                diagnostics: [{ ...captureUnavailable.diagnostic, severity: 'warning' }] });
+            expect(JSON.stringify(selectedRow)).not.toContain(captureUnavailable.reason);
             captureAvailable = true;
         }
         const actionRoutes = createLocalServiceActionRoutes({ machineId: 'machine', projectManagedServices: h.owner,

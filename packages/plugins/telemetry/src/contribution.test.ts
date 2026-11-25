@@ -27,7 +27,7 @@ describe('local capture SDK launch contribution', () => {
   const on = createLocalCaptureContribution({ environmentNames: ['DATABASE_URL'], readEnabled: () => true, acquireLocalCapture: unexpected });
   // A launch with no admitted requester has no owner, so nothing is recorded for anyone.
   expect(await on.prepare({ ...original, requester: undefined })).toEqual({ kind: 'unchanged' });
-  expect(await on.prepare({ ...original, executionPlacement: { mode: 'spawn', machineId: 'remote' } })).toEqual({ kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'unsupported_execution_placement' });
+  expect(await on.prepare({ ...original, executionPlacement: { mode: 'spawn', machineId: 'remote' } })).toMatchObject({ kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'unsupported_execution_placement' });
  });
  it('groups credential-distinct URLs by upstream, binds B assignments, preserves authored OTLP and releases real sockets', async () => {
   const f = createCaptureSqliteFixture();
@@ -59,8 +59,12 @@ describe('local capture SDK launch contribution', () => {
   const contribution = createLocalCaptureContribution({ environmentNames: ['DATABASE_URL'], readEnabled: () => true, acquireLocalCapture: options => bindLocalCapture({ ...options, runtime }) });
   const original = input({ DATABASE_URL: 'postgres://localhost/db', OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector' });
   try {
-   expect(await contribution.prepare({ ...original, async requestListenerPorts(keys) { return { kind: 'ready', assignment: { ports: [], listenerPorts: Object.fromEntries(keys.map(key => [key, occupied.port])) } }; } })).toEqual({ kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'EADDRINUSE' });
-   expect(await contribution.prepare({ ...original, async requestListenerPorts() { return { kind: 'unavailable', code: 'project_worktree_ports_unavailable', reason: 'port_selection_failed' }; } })).toEqual({ kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'port_selection_failed' });
+   expect(await contribution.prepare({ ...original, async requestListenerPorts(keys) { return { kind: 'ready', assignment: { ports: [], listenerPorts: Object.fromEntries(keys.map(key => [key, occupied.port])) } }; } })).toMatchObject({
+    kind: 'unavailable', reason: 'EADDRINUSE', diagnostic: {
+     code: 'telemetry_capture_unavailable', message: expect.stringContaining('listener port is already in use'),
+    },
+   });
+   expect(await contribution.prepare({ ...original, async requestListenerPorts() { return { kind: 'unavailable', code: 'project_worktree_ports_unavailable', reason: 'port_selection_failed' }; } })).toMatchObject({ kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'port_selection_failed' });
   } finally { await occupied.close(); f.close(); }
  });
  it('keeps PostgreSQL forwarding with a typed warning when the OTLP listener cannot bind', async () => {
@@ -121,7 +125,7 @@ describe('local capture SDK launch contribution', () => {
   const unexpected = () => { throw new Error('Unsupported transport requested local capture'); };
   const contribution = createLocalCaptureContribution({ environmentNames: ['DATABASE_URL'], readEnabled: () => true, acquireLocalCapture: unexpected });
   for (const name of ['OTEL_EXPORTER_OTLP_PROTOCOL', 'OTEL_EXPORTER_OTLP_TRACES_PROTOCOL', 'OTEL_EXPORTER_OTLP_LOGS_PROTOCOL']) {
-   expect(await contribution.prepare(input({ [name]: 'grpc' }))).toEqual({ kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'unsupported_otlp_transport' });
+   expect(await contribution.prepare(input({ [name]: 'grpc' }))).toMatchObject({ kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'unsupported_otlp_transport' });
   }
  });
 });

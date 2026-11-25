@@ -86,7 +86,11 @@ Successful contribution cleanup stays with the actual service process lifetime.
 Unavailable capture leaves the ordinary service usable with a visible diagnostic.
 A replacement may include the same typed warning when a sibling listener fails.
 The host applies the available bindings, keeps their lease for the service
-lifetime, and projects the warning on that service.
+lifetime, and projects each optional contribution warning on the running Service.
+A contribution can supply a public `diagnostic` with a code and a message. Its
+`reason` stays private. Omitted diagnostics use the ordinary optional integration
+warning. Telemetry supplies public capture reasons such as an occupied listener
+port.
 
 The required `physicalRootIdentity` is the execution source's physical root in
 the worktree-port owner's canonical comparison form. Retain it verbatim: the
@@ -4215,7 +4219,9 @@ host supplies custody only when the authenticated requester is the daemon's
 active custody Account; foreign or missing requester identity receives none.
 The Machine projection contains `machineId` and `installationId`; it does not
 equate device-local server profile IDs with portable Home identity. Action
-contexts expose the same requester and admitted Machine facts. `agentCaller`
+contexts expose the same requester and admitted Machine facts. Durable Action
+replay retains the original requester and supplies the receiving installation's
+identity from the verified replay placement. `agentCaller`
 and `authority` preserve the canonical executor's caller facts rather
 than classifying domain-specific Automation policy. A producer may acquire its selected credential once
 and expose `invoke(input, { signal })` for operations on that held context.

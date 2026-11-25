@@ -65,6 +65,14 @@ describe('dynamic resource producer registration', () => {
                 invalidate();
                 return { dispose() {} };
             }
+
+            createProducer() {
+                return {
+                    read: () => `producer:${this.reads}`,
+                    observe: () => ({ dispose() {} }),
+                    dispose() {},
+                };
+            }
         }
 
         const registrationScope = scope();
@@ -86,17 +94,22 @@ describe('dynamic resource producer registration', () => {
         if (registration?.family !== 'resources') {
             throw new Error('Expected the committed dynamic Resource registration');
         }
-        const { read, observe } = registration.value;
+        const { read, observe, createProducer } = registration.value;
 
         value.reads = 2;
         value.read = () => 'replacement';
         value.observe = () => ({ dispose() { throw new Error('replacement observe'); } });
+        value.createProducer = () => { throw new Error('replacement producer'); };
 
         const options = createTestResourceInvocationContext({
             signal: new AbortController().signal,
             context: { kind: 'global' },
         });
         expect(read(options)).toBe('committed:3');
+        if (!createProducer) throw new Error('Expected the committed context producer factory');
+        const producer = await createProducer(options);
+        expect(await producer.read(options)).toBe('producer:3');
+        await producer.dispose();
         let invalidations = 0;
         await (await observe(() => { invalidations += 1; }, options)).dispose();
 

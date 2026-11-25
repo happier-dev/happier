@@ -197,8 +197,8 @@ export type ManagedServiceResourceTarget = Readonly<{
 }>;
 export type ProjectManagedServiceHandle = ManagedServiceHandle & ProjectManagedServiceWitness & Readonly<{
     terminalView?: import('@happier-dev/protocol/terminal/workspace').SessionTerminalViewTargetV1;
-    /** Launch-time outcome for this occurrence. Capture preference and ingest coverage have their own owner. */
-    launchEnvironment?: ManagedServiceProcessHandle['launchEnvironment'];
+    /** Launch-time warnings for this occurrence. Capture preference and ingest coverage have their own owner. */
+    launchEnvironmentDiagnostics?: ManagedServiceProcessHandle['launchEnvironmentDiagnostics'];
     /** Host-owned retained dependencies publish through the existing diagnostic projection. */
     reportDependencyFailure?(failure: ActionExecuteFailure | null): void;
     readDependencyFailure?(): ActionExecuteFailure | undefined;
@@ -4813,7 +4813,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 ...witness,
                 homeServerIdentityId,
                 get portSource() { return process.portSource ?? (witness.kind === 'workspace' ? witness.portSource : undefined); },
-                get launchEnvironment() { return process.launchEnvironment; },
+                get launchEnvironmentDiagnostics() { return process.launchEnvironmentDiagnostics; },
                 ...(process.terminalView && witness.kind === 'workspace' ? { terminalView: {
                     ...process.terminalView, workspace: { serverId: witness.workspace.serverId,
                         machineId: witness.workspace.machineId, workspaceId: witness.workspace.id, rootPath: witness.workspace.rootPath },

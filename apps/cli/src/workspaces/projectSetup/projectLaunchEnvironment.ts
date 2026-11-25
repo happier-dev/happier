@@ -2,7 +2,8 @@ import type { PluginServiceLaunchEnvironmentProjectionV1 } from '@happier-dev/pl
 import type { ServiceLaunchEnvironmentHostInput, PreparedServiceLaunchEnvironmentContribution } from '@/plugins/runtime/lifecycle/contributions/targetServiceLaunchEnvironments';
 import type { EnvVarRequirement } from '@happier-dev/protocol/profiles/environmentVariables';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import type { LocalServicePortSourceV1 } from '@happier-dev/protocol/local/services/launcher/v1';
+import type { LocalServiceLaunchTargetV1, LocalServicePortSourceV1 } from '@happier-dev/protocol/local/services/launcher/v1';
+import { PluginDiagnosticDataV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { mergeProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import { isProjectWorktreeRuntimeVariable } from '@/workspaces/execution/projectWorktreeRuntime';
@@ -16,9 +17,19 @@ export function mergeProjectLaunchLayers<T>(project: Readonly<Record<string, T>>
 }
 
 type Environment = Readonly<Record<string, string>>;
-export type ProjectServiceLaunchEnvironmentResult = Readonly<{ kind: 'ready' | 'unchanged' }>
-    | Extract<PreparedServiceLaunchEnvironmentContribution['result'], { kind: 'unavailable' }>
-    | Readonly<{ kind: 'conflict'; reason: 'replacement_key_conflict'; names: readonly string[] }>;
+export type ProjectServiceLaunchDiagnostics = Readonly<NonNullable<LocalServiceLaunchTargetV1['diagnostics']>>;
+type UnavailableContribution = Extract<PreparedServiceLaunchEnvironmentContribution['result'], { kind: 'unavailable' }>;
+
+function projectOptionalLaunchWarning(contribution: UnavailableContribution): ProjectServiceLaunchDiagnostics[number] {
+    const diagnostic = contribution.diagnostic;
+    if (diagnostic) {
+        const parsed = PluginDiagnosticDataV1Schema.safeParse({
+            code: diagnostic.code, message: diagnostic.message, severity: 'warning',
+        });
+        if (parsed.success) return parsed.data;
+    }
+    return { code: contribution.code, severity: 'warning', message: 'An optional Service integration is unavailable.' };
+}
 export type ProjectServiceLaunchEnvironmentInput = Omit<ServiceLaunchEnvironmentHostInput, 'workspace' | 'readEnvironment' | 'physicalRootIdentity'> & Readonly<{
     prepareServiceLaunchEnvironments(input: Omit<ServiceLaunchEnvironmentHostInput, 'workspace'>): Promise<readonly PreparedServiceLaunchEnvironmentContribution[]>;
 }>;
@@ -27,7 +38,7 @@ export type PreparedProjectLaunchInput = Readonly<{
     portSource?: LocalServicePortSourceV1;
     originalEnvironment: ProcessEnvInput;
     provenance: readonly Readonly<{ name: string; file: string }>[];
-    service: ProjectServiceLaunchEnvironmentResult;
+    serviceDiagnostics: ProjectServiceLaunchDiagnostics;
     /** Retained by the actual service process owner through settlement. */
     releaseServiceEnvironment?: () => Promise<void>;
 }>;
@@ -78,7 +89,7 @@ export async function prepareProjectLaunchEnvironment(input: Readonly<{
     const composed = composeProjectLaunchEnvironment({ ...layers, privateEnvironment: privateInput.environment });
     const { environment } = composed;
     let portSource = composed.portSource;
-    let service: ProjectServiceLaunchEnvironmentResult = { kind: 'unchanged' };
+    const serviceDiagnostics: ProjectServiceLaunchDiagnostics[number][] = [];
     const releases: (() => Promise<void>)[] = [];
     if (input.service) {
         const serviceInput = input.service;
@@ -116,19 +127,24 @@ export async function prepareProjectLaunchEnvironment(input: Readonly<{
             serviceId: serviceInput.serviceId, serviceName: serviceInput.serviceName, executionPlacement: serviceInput.executionPlacement,
             assignedPorts: serviceInput.assignedPorts, requestListenerPorts: serviceInput.requestListenerPorts,
             readEnvironment, readDeclaredEnvironment: () => readEnvironment(configNames) }); }
-        catch { service = { kind: 'unavailable', code: 'service_launch_environment_failed' }; contributions = []; }
+        catch {
+            serviceDiagnostics.push(projectOptionalLaunchWarning({ kind: 'unavailable', code: 'service_launch_environment_failed' }));
+            contributions = [];
+        }
         const replacements = new Map<string, { name: string; values: string[] }>();
         const defaults: Record<string, string> = {};
         const originalKeys = new Set(Object.keys(original).map(identity));
         for (const { result: contribution } of contributions) {
-            if (contribution.kind === 'unavailable') { service = contribution; continue; }
+            if (contribution.kind === 'unavailable') {
+                serviceDiagnostics.push(projectOptionalLaunchWarning(contribution));
+                continue;
+            }
             if (contribution.release) {
                 const release = contribution.release;
                 releases.push(() => release.call(contribution));
             }
             if (contribution.kind !== 'replace') continue;
-            if (contribution.warning) service = contribution.warning;
-            else if (service.kind === 'unchanged') service = { kind: 'ready' };
+            if (contribution.warning) serviceDiagnostics.push(projectOptionalLaunchWarning(contribution.warning));
             for (const [name, value] of Object.entries(contribution.defaults ?? {})) {
                 if (!secretNames.has(identity(name)) && !originalKeys.has(identity(name))) defaults[name] = value;
             }
@@ -138,17 +154,18 @@ export async function prepareProjectLaunchEnvironment(input: Readonly<{
                 entry.values.push(value); replacements.set(identity(name), entry);
             }
         }
-        const conflicts: string[] = [];
+        let conflict = false;
         const accepted: Record<string, string> = {};
         for (const { name, values } of replacements.values()) {
-            if (values.length > 1) conflicts.push(name);
+            if (values.length > 1) conflict = true;
             else accepted[name] = values[0]!;
         }
         if (Object.keys({ ...defaults, ...accepted }).some(name => identity(name) === 'PORT')) portSource = 'fixed';
         const merged = mergeProcessEnv({ baseEnv: original, explicitEnv: { ...defaults, ...accepted }, platform: input.platform });
         for (const name of Object.keys(environment)) delete environment[name];
         Object.assign(environment, merged);
-        if (conflicts.length) service = { kind: 'conflict', reason: 'replacement_key_conflict', names: conflicts.sort() };
+        if (conflict) serviceDiagnostics.push({ code: 'replacement_key_conflict', severity: 'warning',
+            message: 'Service integrations requested conflicting launch settings.' });
     }
     const valuesByIdentity = new Map(Object.entries(environment).map(([name, value]) => [identity(name), value]));
     for (const requirement of input.requirements) {
@@ -161,6 +178,6 @@ export async function prepareProjectLaunchEnvironment(input: Readonly<{
         }
     }
     return { kind: 'prepared', launchInput: { environment: Object.freeze(environment), originalEnvironment, ...(portSource ? { portSource } : {}),
-        provenance: privateInput.sources, service,
+        provenance: privateInput.sources, serviceDiagnostics,
         ...(releases.length ? { releaseServiceEnvironment: async () => { await Promise.all(releases.map(release => release())); } } : {}) } };
 }

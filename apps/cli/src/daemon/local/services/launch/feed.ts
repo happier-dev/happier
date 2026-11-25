@@ -113,13 +113,8 @@ function managedTarget(handle: ProjectManagedServiceHandle): LocalServiceLaunchT
         : active && snapshot.nativePhase === 'stopped'
             ? 'managed_service_native_cleanup_unconfirmed' : undefined;
     const endpointUrl = servingCurrent && !unavailableReason ? snapshot.baseUrl : null;
-    const launchEnvironment = handle.kind === 'workspace' && active ? handle.launchEnvironment : undefined;
-    const launchWarning = launchEnvironment?.kind === 'unavailable' ? launchEnvironment.code
-        : launchEnvironment?.kind === 'conflict' ? launchEnvironment.reason : undefined;
-    // Contributor reasons can contain private launch details. Publish the typed
-    // host code and a recovery message through the existing service output.
-    const diagnostics: NonNullable<LocalServiceLaunchTargetV1['diagnostics']> = launchWarning
-        ? [{ code: launchWarning, severity: 'warning', message: 'Service launch setup was incomplete. Restart this service to retry.' }] : [];
+    const diagnostics: NonNullable<LocalServiceLaunchTargetV1['diagnostics']> =
+        handle.kind === 'workspace' && active ? [...(handle.launchEnvironmentDiagnostics ?? [])] : [];
     if (snapshot.state === 'failed' || snapshot.state === 'unhealthy') {
         // The supervisor owns sanitization and retention bounds for process output.
         for (const { code, severity, message } of snapshot.diagnostics) {

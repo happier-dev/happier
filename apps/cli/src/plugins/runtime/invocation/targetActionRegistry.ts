@@ -213,6 +213,8 @@ export type InvokeTargetActionParams = Readonly<{
         machineAdmission?: Pick<SocketRpcMachineAdmissionContextV1, 'actorAccountId' | 'machineId' | 'installationId'>;
         authenticatedLocalRootCustody?: import('@/api/rpc/types').RpcLocalActionContext['authenticatedLocalRootCustody'];
     }>;
+    /** Current daemon identity from the already matched approval replay placement. */
+    approvalReplayMachine?: PluginInvocationContext['chosenMachine'];
     /** Account custody retained by the admitted containing Session. */
     requesterAccount?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
     /**
@@ -886,7 +888,8 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     const savedHealthCheck = admittedContext?.admittedSavedHealthCheck;
                     const requesterAccountId = savedHealthCheck?.accountId ?? admittedContext?.machineAdmission?.actorAccountId
                         ?? localCustody?.accountId ?? admittedContext?.runtimeAccountId;
-                    const chosenMachine = savedHealthCheck?.observer ?? admittedContext?.machineAdmission ?? localCustody;
+                    const chosenMachine = savedHealthCheck?.observer ?? admittedContext?.machineAdmission
+                        ?? localCustody ?? invocation.approvalReplayMachine;
                     const context: PluginInvocationContext = Object.freeze({
                         plugin: seed.plugin,
                         contribution: seed.contribution,

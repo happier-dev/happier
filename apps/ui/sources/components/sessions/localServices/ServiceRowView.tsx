@@ -399,6 +399,12 @@ function ServiceRowFacts(props: Readonly<{
                     {facts.reason.body}
                 </Text>
             ) : null}
+            {row.status === 'running' && row.target.diagnostics?.map(({ code, severity, message }, index) =>
+                severity === 'warning' && message ? (
+                    <Text key={`${code}:${index}`} style={styles.reasonText} numberOfLines={2}>
+                        {message}
+                    </Text>
+                ) : null)}
         </View>
     );
 }

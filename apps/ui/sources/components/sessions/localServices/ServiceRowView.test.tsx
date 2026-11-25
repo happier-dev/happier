@@ -268,6 +268,18 @@ describe('ServiceRowView', () => {
         expect(clipboardSpies.setClipboardStringSafe).not.toHaveBeenCalled();
     });
 
+    it('shows a capture warning on the running Service and clears it when the feed recovers', async () => {
+        const message = "Capture isn't available: the listener port is already in use.";
+        const target = launchTarget({ source: 'managed_service', sourceClass: { kind: 'managed_service', managedServiceId: 'capture-instance' },
+            state: 'available', serviceState: 'running', actions: ['manage'],
+            diagnostics: [{ severity: 'warning', code: 'telemetry_capture_unavailable', message }] });
+        const row = serviceRow({ target, scope: 'workspace', status: 'running', reasonCode: null });
+        const screen = await renderScreen(<ServiceRowView row={row} testID="row" />);
+        expect(screen.getTextContent()).toContain(message);
+        await screen.update(<ServiceRowView row={{ ...row, target: { ...target, diagnostics: [] } }} testID="row" />);
+        expect(screen.getTextContent()).not.toContain(message);
+    });
+
     beforeEach(() => {
         modalSpies.alert.mockReset();
         modalSpies.confirm.mockReset();

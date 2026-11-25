@@ -1,6 +1,7 @@
 import type { PluginServiceLaunchEnvironmentContributionV1 } from '@happier-dev/protocol/plugins/contributions/serviceLaunchEnvironments';
 import type { DatabaseWorktreeSourceV1, DatabaseWorktreeTargetV1 } from '@happier-dev/protocol/databases/databaseTargetIdentityV1';
 import type { WorktreePortsResultV1 } from '@happier-dev/protocol/workspaces/projectSetup/worktreePortsV1';
+import type { PluginDiagnosticDataV1 } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 
 export type { PluginServiceLaunchEnvironmentContributionV1 };
 export type PluginWorktreeDatabaseMemberV1 = Omit<DatabaseWorktreeTargetV1, 'source'> & Readonly<{
@@ -38,7 +39,10 @@ export type PluginServiceLaunchEnvironmentInputV1 = Readonly<{
 type UnavailableServiceLaunchEnvironmentV1 = Readonly<{
     kind: 'unavailable';
     code: 'service_launch_environment_unavailable' | 'service_launch_environment_failed';
+    /** Private cause. The Service feed does not publish it. */
     reason?: string;
+    /** Optional warning for the Service feed. Use public copy with no launch inputs or exception text. */
+    diagnostic?: Readonly<Required<Pick<PluginDiagnosticDataV1, 'code' | 'message'>>>;
 }>;
 export type PluginServiceLaunchEnvironmentResultV1 = Readonly<{
     kind: 'unchanged';

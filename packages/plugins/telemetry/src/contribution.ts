@@ -15,10 +15,23 @@ export type LocalCaptureContributionOptions = Readonly<{
  signal?: AbortSignal;
 }>;
 
+function captureUnavailableMessage(reason: string): string {
+ switch (reason) {
+  case 'EADDRINUSE': return "Capture isn't available: the listener port is already in use.";
+  case 'EACCES': return "Capture isn't available: the listener port could not be opened.";
+  case 'unsupported_execution_placement': return "Capture isn't available on this execution Machine.";
+  case 'unsupported_otlp_transport': return "Capture isn't available with the configured OTLP protocol.";
+  default: return "Capture isn't available: capture setup could not be completed.";
+ }
+}
+
 /** B assigns sockets; A alone applies these selected transformations and defaults. */
 export function createLocalCaptureContribution(options: LocalCaptureContributionOptions): PluginServiceLaunchEnvironmentRuntimeV1 {
  return { async prepare(input) {
-  const unavailable = (reason: string) => ({ kind: 'unavailable' as const, code: 'service_launch_environment_unavailable' as const, reason });
+  const unavailable = (reason: string) => ({
+   kind: 'unavailable' as const, code: 'service_launch_environment_unavailable' as const, reason,
+   diagnostic: { code: 'telemetry_capture_unavailable', message: captureUnavailableMessage(reason) },
+  });
   const scope = { serverId: input.project.serverId, machineId: input.workspace.machineId, projectId: input.project.projectId };
   // Captures belong to the admitted launch requester; an unattributed launch records nothing.
   if (!input.requester || !await options.readEnabled(scope)) return { kind: 'unchanged' };

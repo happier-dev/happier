@@ -230,11 +230,11 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
         const persistenceFailure = await persist(terminal);
         return persistenceFailure ?? targetActionReplayFailure('approval_stale');
       }
-      if (admittedWorkflowRequester) {
-        const installation = readInstallationIdentity();
-        if (installation) workflowRequester = await acquireWorkflowApprovalRequester({ requester: admittedWorkflowRequester,
+      const installationIdentity = readInstallationIdentity();
+      if (admittedWorkflowRequester && installationIdentity) {
+        workflowRequester = await acquireWorkflowApprovalRequester({ requester: admittedWorkflowRequester,
           serverHttpBaseUrl: resolveServerHttpBaseUrl(), happyHomeDir: configuration.happyHomeDir,
-          installationId: installation.installationId, ...(signal ? { signal } : {}) });
+          installationId: installationIdentity.installationId, ...(signal ? { signal } : {}) });
       }
       const executionClaim: TargetActionApprovalRequestV1 = {
         ...approved,
@@ -272,7 +272,6 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
       let executionResult: ActionExecuteResult | undefined;
       let externalActionContext: PluginExternalActionContext | undefined;
       if (executionResult === undefined && origin.externalActionExecutionAuthorization !== undefined) {
-        const installationIdentity = readInstallationIdentity();
         if (
           !installationIdentity
           || !origin.serverIdentityId
@@ -353,6 +352,7 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
               actionId: buildQualifiedPluginContributionKey(action),
               input: approved.input,
               expectedApprovalReplayPlacement: replayPlacement,
+              ...(installationIdentity ? { approvalReplayInstallationId: installationIdentity.installationId } : {}),
               // The decision owner already claimed this Ask. The gate binds
               // its stored fingerprint to the operands about to execute.
               requestCurrentIntent: async () => ({

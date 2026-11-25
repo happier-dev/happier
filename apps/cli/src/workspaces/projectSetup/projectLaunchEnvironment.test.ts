@@ -53,7 +53,7 @@ it('releases a read-only service observation without reporting a launch override
         },
     });
     expect(prepared).toMatchObject({ kind: 'prepared', launchInput: {
-        service: { kind: 'unchanged' }, environment: { DATABASE_URL: 'private-original' },
+        serviceDiagnostics: [], environment: { DATABASE_URL: 'private-original' },
     } });
     expect(released).toBe(false);
     if (prepared.kind === 'prepared') await prepared.launchInput.releaseServiceEnvironment?.();
@@ -108,7 +108,9 @@ it('offers each service contribution the same original private snapshot and pres
                     { contribution: { pluginId: 'capture', localId: 'two' }, result: { kind: 'replace', replacements: { URL: 'proxy-two' }, async release() {} } }];
             } } });
     expect(result.kind === 'prepared' && result.launchInput.environment).toEqual({ URL: 'private-original', OTEL_SERVICE_NAME: 'default' });
-    expect(result.kind === 'prepared' && result.launchInput.service).toEqual({ kind: 'conflict', reason: 'replacement_key_conflict', names: ['URL'] });
+    expect(result.kind === 'prepared' && result.launchInput.serviceDiagnostics).toEqual([
+        expect.objectContaining({ code: 'replacement_key_conflict', severity: 'warning' }),
+    ]);
 });
 
 it('does not demand dotenv without declared config or a service contribution requesting it', async () => {
@@ -148,7 +150,10 @@ it('carries listener demand privately to the contribution without allocating bef
             } } });
     if (result.kind !== 'prepared') throw new Error('Expected usable service without capture');
     expect(result.launchInput.environment).toEqual({});
-    expect(result.launchInput.service).toMatchObject({ kind: 'unavailable', reason: 'state_corrupt' });
+    expect(result.launchInput.serviceDiagnostics).toEqual([
+        expect.objectContaining({ code: 'service_launch_environment_unavailable', severity: 'warning' }),
+    ]);
+    expect(JSON.stringify(result.launchInput.serviceDiagnostics)).not.toContain('state_corrupt');
     expect(requested).toEqual([['acme.capture.database']]);
 });
 
@@ -156,7 +161,8 @@ it('carries listener demand privately to the contribution without allocating bef
 it('applies a working replacement and retains its warning and cleanup through launch', async () => {
     const selected = await workspace();
     await writeFile(join(selected.rootPath, '.env'), 'URL=original-file\nTOKEN=private-token\n');
-    const warning = { kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'EADDRINUSE' } as const;
+    const diagnostic = { code: 'telemetry_capture_unavailable', message: 'The capture listener port is already in use.' };
+    const warning = { kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'EADDRINUSE', diagnostic } as const;
     let released = false;
     const result = await prepareProjectLaunchEnvironment({ workspace: selected, originalEnvironment: { TOKEN: 'host-token' },
         requirements: [{ name: 'TOKEN', kind: 'secret', required: false }],
@@ -169,11 +175,17 @@ it('applies a working replacement and retains its warning and cleanup through la
                 expect((await input.readEnvironment(['URL'])).projectedEnvironment).toEqual({ URL: 'original-file' });
                 return [{ contribution: { pluginId: 'capture', localId: 'proxy' }, result: { kind: 'replace',
                     replacements: { URL: 'local-proxy', TOKEN: 'cannot-replace-secret' }, warning,
-                    async release() { released = true; } } }];
+                    async release() { released = true; } } },
+                { contribution: { pluginId: 'fixture.other', localId: 'launch' }, result: {
+                    kind: 'unavailable', code: 'service_launch_environment_failed',
+                } }];
             } } });
     if (result.kind !== 'prepared') throw new Error('Expected private launch preparation');
     expect(result.launchInput.environment).toEqual({ URL: 'local-proxy' });
-    expect(result.launchInput.service).toEqual(warning);
+    expect(result.launchInput.serviceDiagnostics).toEqual([
+        { ...diagnostic, severity: 'warning' },
+        expect.objectContaining({ code: 'service_launch_environment_failed', severity: 'warning' }),
+    ]);
     expect(released).toBe(false);
     await result.launchInput.releaseServiceEnvironment?.();
     expect(released).toBe(true);
@@ -187,7 +199,9 @@ it('keeps a service usable and safe diagnostics visible when a contribution fail
             async prepareServiceLaunchEnvironments() { throw new Error('private-upstream-password'); } } });
     if (result.kind !== 'prepared') throw new Error('Expected ordinary service launch');
     expect(result.launchInput.environment).toEqual({ PORT: '3000' });
-    expect(result.launchInput.service).toEqual({ kind: 'unavailable', code: 'service_launch_environment_failed' });
+    expect(result.launchInput.serviceDiagnostics).toEqual([
+        expect.objectContaining({ code: 'service_launch_environment_failed', severity: 'warning' }),
+    ]);
     expect(JSON.stringify(result.launchInput)).not.toContain('private-upstream-password');
 });
 

@@ -1,5 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DATABASE_CAPTURE_RESOURCE_REF_V1 } from '@happier-dev/database-protocol';
+import { DaemonPluginUiResourceReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
@@ -10,6 +12,47 @@ import { evaluateManifestPluginDevelopmentCandidate } from '@/plugins/authoring/
 import { resolveLocalPathPluginSource } from '@/plugins/discovery/sources/localPath';
 import { bindPluginRuntimeSourceAuthority } from '@/plugins/runtime/sourceAuthority';
 import { registerDaemonContributionRegistryProjectionHandler } from './daemonContributionRegistryProjection';
+
+it('reads capture-view through the placed daemon Resource producer', async () => {
+    const { pluginId, contributionId: localId } = DATABASE_CAPTURE_RESOURCE_REF_V1;
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{
+        manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: { resources: [{
+            id: localId, source: 'dynamic', kind: 'config', contentType: 'application/json',
+            scope: 'surface', execution: { target: 'daemon' },
+        }] } }),
+        files: { 'daemon.mjs': `
+            export function activate(api) {
+                const unavailable = () => { throw new Error('Capture requires a placed producer'); };
+                api.resources.registerDynamicResource(${JSON.stringify(localId)}, {
+                    read: unavailable,
+                    observe: unavailable,
+                    createProducer({ context }) {
+                        return { read: () => JSON.stringify(context.launchInput),
+                            observe: () => ({ dispose() {} }), dispose() {} };
+                    },
+                });
+            }
+        ` },
+    }] });
+    try {
+        const rpc = new RpcHandlerManager({ scopePrefix: 'resource-machine', encryptionMode: 'plain', logger: () => {} });
+        registerDaemonContributionRegistryProjectionHandler(rpc, {
+            resolveRuntimeRegistry: async () => fixture.registry,
+            resolveInstalledPackages: async () => [],
+        });
+        const occurrenceId = fixture.registry.readPluginOccurrenceId?.(pluginId);
+        if (!occurrenceId) throw new Error('Missing admitted capture Resource occurrence');
+        const demand = { view: 'trace', input: { id: 'retained-trace' } };
+        const result = DaemonPluginUiResourceReadResponseSchema.parse(await rpc.invokeLocal(
+            RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ, {
+                machineId: 'resource-machine', callerPluginId: pluginId, expectedCallerOccurrenceId: occurrenceId,
+                resource: { pluginId, localId }, context: { kind: 'surface', mountInstanceKey: 'capture-view-test', launchInput: demand },
+            }));
+        expect(result).toMatchObject({ ok: true, bytesBase64: Buffer.from(JSON.stringify(demand)).toString('base64') });
+    } finally {
+        await fixture.dispose();
+    }
+});
 
 it('keeps declared reads across retained activation replacement and identifies an undeclared ref without its payload', async () => {
     const pluginId = 'acme.resource-continuity';

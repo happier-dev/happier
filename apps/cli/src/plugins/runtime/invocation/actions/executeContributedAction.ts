@@ -367,6 +367,8 @@ export async function executeContributedAction(params: Readonly<{
   expectedExecutionRouting?: PluginMachineExecutionRoutingV1;
   /** Exact daemon placement re-read from a durable target-Action approval subject. */
   expectedApprovalReplayPlacement?: TargetActionApprovalReplayPlacementV1;
+  /** Host-private receiving installation identity for daemon approval replay. */
+  approvalReplayInstallationId?: string;
   /**
    * Host-stamped targeted-contribution admission fence. It is never Action
    * input, a target selector, or public SDK call option.
@@ -1020,6 +1022,10 @@ export async function executeContributedAction(params: Readonly<{
       invocationSurface: ownPressChild ? 'ui' as const : invocationSurface,
       invocationAuthority: params.approvalContext?.authority ?? 'account_automation',
       ...(params.approvalContext ? { approvalContext: params.approvalContext } : {}),
+      ...(beforeApprovalReplayPlacement?.status === 'resolved' && params.approvalReplayInstallationId
+        ? { approvalReplayMachine: { machineId: beforeApprovalReplayPlacement.placement.machineId,
+            installationId: params.approvalReplayInstallationId } }
+        : {}),
       ...(requesterAccount ? { requesterAccount } : {}),
       ...(params.resolveEnvironmentApprovalScope ? { resolveEnvironmentApprovalScope: params.resolveEnvironmentApprovalScope } : {}),
       ...(params.approvalContext?.invocationServices?.machineConnectorSecrets

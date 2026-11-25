@@ -975,7 +975,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                         // its existing cleanup proves the owned process tree settled.
                         retained = true;
                         return { ...launch,
-                            launchEnvironment: preparedLaunchInput.service,
+                            launchEnvironmentDiagnostics: preparedLaunchInput.serviceDiagnostics,
                             ...(preparedLaunchInput.portSource ? { portSource: preparedLaunchInput.portSource } : {}),
                             ...(current.command.kind === 'native' && current.command.source.tool === 'flox'
                                 ? { waitForGracefulRootExitBeforeTreeStop: true as const } : {}),

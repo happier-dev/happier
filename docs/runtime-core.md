@@ -2776,6 +2776,9 @@ severity and sanitized message while a managed lifetime is failed or unhealthy.
 The strict launcher target schema and existing Services row target carry those
 facts to the client; recovery omits them even if the supervisor retains earlier
 diagnostics. Private diagnostic details and remediation never enter this projection.
+Optional launch integration warnings use the same diagnostic fields on the
+running Service. Project launch preparation produces those warnings independently
+of required environment validation and native Service health.
 
 An unexpected Project Service process exit is a failed lifetime, including an
 endpoint-free command that exits immediately. The supervisor projects sanitized
