@@ -10,6 +10,7 @@ import { prepareStartedState } from './prepareStartedState';
 import { buildPrepareJobRecord, buildStartPendingStatus, buildStartRecoveryStatus, invalidRequest } from './prepareTargetState';
 
 import { createSessionHandoffStartActionHandler } from './start';
+import { prepareSessionHandoffAgentBundleExport } from '@/session/handoff/agentBundle/export';
 import { registerMachineSessionHandoffRpcHandlers } from './handlers';
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { RpcHandler } from '@/api/rpc/types';
@@ -89,6 +90,47 @@ const enabledServerFeaturesSnapshot = {
 };
 
 describe('session handoff start — source-derived transcript-storage authority', () => {
+  it('retains the native export diagnostics when preparation refuses before Stop', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'handoff-early-export-'));
+    const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      runtimeOptions: { pluginIds: ['happier.agent.claude'] } });
+    try {
+      const configDir = join(activeServerDir, 'claude');
+      await mkdir(join(configDir, 'projects', 'source-project'), { recursive: true });
+      const metadata = { machineId: 'machine-source', path: activeServerDir,
+        externalSessionV1: { v: 1, agentId: 'claude', machineId: 'machine-source', remoteSessionId: 'native-claude',
+          source: { kind: 'claudeConfig', configDir, projectId: 'source-project' } } };
+      const exportSessionBundle = async () => await (await prepareSessionHandoffAgentBundleExport({ metadata, activeServerDir }))();
+      const sourceExportStore = createSessionHandoffSourceExportStore({ activeServerDir });
+      const stop = vi.fn(async () => 'stopped' as const);
+      const handler = createSessionHandoffStartActionHandler({
+        activeServerDir, createUuid: () => 'early-export', loadSessionMetadata: async () => metadata,
+        machineTransferChannelPresent: true, directPeerTransfer: undefined,
+        resolveServerFeaturesSnapshot: () => enabledServerFeaturesSnapshot,
+        stopSessionForHandoff: stop,
+        prepareJobStore: createSessionHandoffPrepareTargetJobStore({ activeServerDir }), sourceExportStore,
+        prepareSessionBundleExport: async () => {
+          // Exercise the preparation catch with the real provider's sanitized refusal, not a copied diagnostic fixture.
+          const prepared = await prepareSessionHandoffAgentBundleExport({ metadata, activeServerDir });
+          await prepared();
+          return prepared;
+        },
+        prepareStartedState: async callInput => await prepareStartedState({ activeServerDir, callInput,
+          sourceExportStore, exportSessionBundle, directPeerTransfer: undefined, buildStartPendingStatus }),
+        exportSessionBundle, buildStartPendingStatus, buildStartRecoveryStatus, buildPrepareJobRecord, invalidRequest,
+        sessionOperationExclusion: createExternalSessionOperationExclusion({ activeServerDir, ownerId: 'early-export' }),
+        retainSessionOperationClaim: () => undefined, releaseSessionOperationClaim: async () => undefined,
+      });
+      const result = await handler({ sessionId: 'session', sourceMachineId: 'machine-source', targetMachineId: 'machine-target',
+        sessionStorageMode: 'direct', preferredTransportStrategies: ['server_routed_stream'] });
+      expect(result).toMatchObject({ ok: false, errorCode: 'source_export_failed',
+        failureCause: { phase: 'session_handoff.source_export', errorCode: 'handoff_failed' },
+        details: { diagnostics: [{ code: 'transcript_missing', details: { pathKind: 'transcript_file' } }] } });
+      expect(stop).not.toHaveBeenCalled();
+      expect(JSON.stringify(result)).not.toContain(configDir);
+    } finally { await runtime.dispose(); await rm(activeServerDir, { recursive: true, force: true }); }
+  });
+
   it.each([
     { strategy: 'server_routed_stream', sameMachine: false, sameDirectory: false, missingTranscript: false },
     { strategy: 'direct_peer', sameMachine: false, sameDirectory: false, missingTranscript: false },

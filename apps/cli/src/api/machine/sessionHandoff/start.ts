@@ -274,7 +274,9 @@ export function createSessionHandoffStartActionHandler(
         preparedExport = await params.prepareSessionBundleExport(metadata);
       } catch (error) {
         return { ok: false, errorCode: 'source_export_failed', error: error instanceof Error ? error.message : 'Failed to prepare session handoff export',
-          failureCause: projectActionFailureCauseV1(error, 'session_handoff.source_export', { allowUnknownErrorCode: true }) } as const;
+          failureCause: projectActionFailureCauseV1(error, 'session_handoff.source_export', { allowUnknownErrorCode: true }),
+          ...(isActionExecuteFailure(error) && error.details !== undefined ? { details: error.details } : {}),
+        } as const;
       }
     }
     const prepareAdmittedState = (callInput: Parameters<typeof prepareStartedState>[0]) => prepareStartedState({
