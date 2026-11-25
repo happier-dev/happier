@@ -1,3 +1,5 @@
+import { once } from 'node:events';
+import { createServer, type RequestListener } from 'node:http';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
@@ -25,6 +27,10 @@ import { createRepositoryCheckpointPromptLifecycle } from './checkpoints/reposit
 import { logger } from '@/ui/logger';
 import { createNativeAgentSessionEffectBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { createSessionPromptPlanResolver } from '@/agent/prompting/coding/sessionPromptPlan';
+import { createAgentRuntimeDaemonServiceAuthorityFixture } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthority.testkit';
+import { resolveCurrentAgentRuntimeDaemonTurnContributions } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient';
+import { publishAgentRuntimeDaemonServiceAuthority } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
 
 const { loggerDebugMock } = vi.hoisted(() => ({
   loggerDebugMock: vi.fn(),
@@ -185,6 +191,7 @@ it('collects observable runtime input while initial checkpoint retention is pend
 async function runSingleSpecialCommand(params: Readonly<{
   text: string;
   localId: string;
+  nextOnReady?: () => Pick<PermissionModeQueuedPrompt, 'text' | 'localId'> | undefined;
   promptContext?: Pick<PermissionModeQueuedPrompt, 'structuredInput' | 'attachments' | 'inputContextBlock'>;
   metadata?: Partial<Metadata>;
   runtime?: ReturnType<typeof createRuntime>;
@@ -260,7 +267,12 @@ async function runSingleSpecialCommand(params: Readonly<{
     getAbortSignal: () => new AbortController().signal,
     keepAlive: () => undefined,
     setThinking: () => undefined,
-    sendReady: () => { shouldExit = true; sendReadyCount += 1; },
+    sendReady: () => {
+      sendReadyCount += 1;
+      const next = params.nextOnReady?.();
+      if (next) queue.push(next, { permissionMode: 'default' });
+      else shouldExit = true;
+    },
     currentPermissionModeUpdatedAt: 0,
     setCurrentPermissionMode: () => undefined,
     setCurrentPermissionModeUpdatedAt: () => undefined,
@@ -483,6 +495,125 @@ function createRealWakeFollowContext() {
 describe('runPermissionModePromptLoop hook dispatch', () => {
   beforeEach(() => {
     loggerDebugMock.mockClear();
+  });
+
+  it('projects the retained prompt-plan failure when its daemon endpoint goes away', async () => {
+    await withTempDir('retained-prompt-daemon-', async directory => {
+      const authority = await createAgentRuntimeDaemonServiceAuthorityFixture({ happyHomeDir: directory,
+        runner: { pid: process.pid, processStartTimeMs: 1_717_171_717_000,
+          processCommandHash: 'a'.repeat(64), snapshotIdentity: 'snapshot:retained-prompt' },
+      });
+      const servePrompt: RequestListener = (_request, response) => {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ ok: true, result: { kind: 'turn_contributions', status: 'resolved',
+          contributions: { kind: 'prompt', promptAssetBlocks: [], toolPromptContributions: [] },
+        } }));
+      };
+      let serve: RequestListener = servePrompt;
+      const endpoint = createServer((request, response) => {
+        request.once('end', () => serve(request, response));
+        request.resume();
+      });
+      endpoint.listen(0, '127.0.0.1');
+      await once(endpoint, 'listening');
+      const address = endpoint.address();
+      if (!address || typeof address === 'string') throw new Error('Missing test daemon HTTP address');
+      const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => undefined);
+      const runtime = createRuntime();
+      const unused = async (): Promise<never> => { throw new Error('Unexpected daemon operation'); };
+      const prepare = createSessionPromptPlanResolver({
+        opts: { credentials: { token: 'fixture', encryption: null } },
+        session: { sessionId: authority.sessionId, getMetadataSnapshot: () => createTestMetadata({ path: '' }),
+          enqueueSessionEventCommitted: vi.fn() },
+        agentId: 'codex', machineId: 'test-machine', directory: '', memoryRecallGuidanceEnabled: false,
+        readNativeSessionId: () => 'provider-session-1',
+        daemonBridge: {
+          resolvePrompt: async ({ signal }) => {
+            const result = await resolveCurrentAgentRuntimeDaemonTurnContributions({
+              authority, requestId: 'retained-prompt', request: { kind: 'prompt' }, ...(signal ? { signal } : {}),
+            });
+            if (result.kind !== 'prompt') throw new Error('Wrong daemon contribution kind');
+            return result;
+          },
+          resolveAgentComposition: unused, resolveComposerReference: unused, resolveComposerAttachment: unused,
+          afterComposerAttachmentMessageAccepted: unused, transformAgentContext: unused,
+          transformSessionInput: unused, transformAgentRequest: unused,
+        },
+      });
+      type PromptFailureContext = Parameters<NonNullable<Parameters<typeof runPermissionModePromptLoop>[0]['onPromptFailure']>>[1];
+      const closeEndpoint = async () => await new Promise<void>((resolve, reject) => {
+        endpoint.close(error => error ? reject(error) : resolve());
+      });
+      try {
+        await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: address.port, capability: 'A'.repeat(43) });
+        const cases = [
+          { localId: 'authority-refusal', status: 403, responseCode: 'native_agent_privileged_effect_authority_unavailable',
+            errorCode: 'native_agent_privileged_effect_authority_unavailable', actionPhase: 'agent_runtime.daemon_response',
+            actionCause: { httpStatus: 403 } },
+          { localId: 'generation-refusal', status: 200, responseCode: 'agent_runtime_daemon_service_generation_not_current',
+            errorCode: 'agent_runtime_daemon_service_generation_not_current', actionPhase: 'agent_runtime.daemon_result' },
+          { localId: 'broker-refusal', status: 200, responseCode: 'broker_unavailable',
+            errorCode: 'broker_unavailable', actionPhase: 'agent_runtime.daemon_result' },
+          { localId: 'lost-reply', errorCode: 'native_agent_privileged_effect_outcome_unknown', actionPhase: 'agent_runtime.daemon_response' },
+          { localId: 'offline-original', errorCode: 'ECONNREFUSED', actionPhase: 'agent_runtime.daemon_connect',
+            actionCause: { errorCode: 'ECONNREFUSED' } },
+        ] as const;
+        // Keep one runner and one loop. Advance the fixture only once the actual
+        // Provider dispatch or the pre-turn failure completes.
+        let next = 0;
+        const configureNextEndpoint = async () => {
+          const failure = cases[next];
+          if (!failure) return;
+          if (failure.localId === 'offline-original') await closeEndpoint();
+          else if (failure.localId === 'lost-reply') serve = (_request, response) => response.destroy();
+          else serve = (_request, response) => {
+            response.writeHead(failure.status, { 'content-type': 'application/json' });
+            response.end(JSON.stringify({ ok: false, error: {
+              code: failure.responseCode, message: 'Private fixture diagnostic',
+            } }));
+          };
+        };
+        runtime.sendTurnPrompt.mockImplementationOnce(configureNextEndpoint);
+        const issues: ReturnType<typeof classifyPrimarySessionRuntimeIssue>[] = [];
+        const onPromptFailure = vi.fn(async (error: unknown, context: PromptFailureContext) => {
+          issues.push(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error, ...context }));
+          await configureNextEndpoint();
+        });
+        const settlements = await runSingleSpecialCommand({
+          text: 'control', localId: 'prompt-control', runtime, resolveFreshSessionSystemPrompt: prepare, onPromptFailure,
+          nextOnReady: () => {
+            const failure = cases[next];
+            if (failure) next += 1;
+            return failure ? { text: 'continue', localId: failure.localId } : undefined;
+          },
+        });
+        expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
+        expect(onPromptFailure).toHaveBeenCalledTimes(cases.length);
+        for (const [index, expected] of cases.entries()) {
+          expect(settlements.observeProviderInputSettlement).toHaveBeenCalledWith(expect.objectContaining({
+            kind: 'rejected_before_effect', localId: expected.localId,
+            reason: expected.localId === 'broker-refusal' ? 'runtime_config_blocked' : 'provider_unavailable_before_acceptance',
+            retryable: true,
+          }));
+          const failure = log.mock.calls.find(([label, payload]) => label === '[PermissionModePromptLoop] Prompt failed'
+            && payload && Reflect.get(payload, 'localId') === expected.localId)?.[1];
+          expect.soft(failure).toMatchObject({
+            phase: 'agent_composition', errorCode: expected.errorCode, actionPhase: expected.actionPhase,
+            sourceLocations: expect.arrayContaining([expect.stringMatching(/^agentRuntimeDaemonServiceAuthorityClient\.ts:\d+:\d+$/u),
+              expect.stringMatching(/^sessionPromptPlan\.ts:\d+:\d+$/u)]),
+          });
+          expect(JSON.stringify(failure ?? null)).not.toContain('Private fixture diagnostic');
+          expect.soft(issues[index]).toMatchObject({
+            failureCause: { actionCause: { phase: expected.actionPhase,
+              ...('responseCode' in expected && expected.status === 200 ? { errorCode: expected.responseCode } : {}),
+              ...('actionCause' in expected ? expected.actionCause : {}) } },
+          });
+        }
+      } finally {
+        log.mockRestore();
+        if (endpoint.listening) await closeEndpoint();
+      }
+    });
   });
 
   it('settles a native configuration refusal with the same sanitized cause as the runtime issue', async () => {

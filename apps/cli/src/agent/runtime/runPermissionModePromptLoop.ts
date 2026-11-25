@@ -2000,12 +2000,16 @@ export async function runPermissionModePromptLoop(opts: {
       }
       if (!isAbortLikeError(error) && !isRuntimeTurnFailureAlreadySurfaced(error)) {
         const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
+        // A required Session prompt-plan read runs after agent composition.
+        const planFailure = promptFailurePhase === 'agent_composition'
+          ? readSessionRuntimeFailureCause(error) : undefined;
         logger.infoFile('[PermissionModePromptLoop] Prompt failed', {
           sessionId: opts.session.sessionId,
           localId: normalizePermissionModeQueuedPromptLocalIds(message.message)[0] ?? null,
           phase: promptFailurePhase,
           errorClass: diagnostic.errorClass,
-          errorCode: preparation?.code ?? diagnostic.errorCode,
+          errorCode: preparation?.code ?? planFailure?.actionCause?.errorCode ?? planFailure?.code ?? diagnostic.errorCode,
+          ...(planFailure?.actionCause ? { actionPhase: planFailure.actionCause.phase } : {}),
           sourceLocations: projectProviderFailureSourceLocations(diagnostic),
           ...(preparation?.preparationCause ? { preparationCause: preparation.preparationCause } : {}),
         });

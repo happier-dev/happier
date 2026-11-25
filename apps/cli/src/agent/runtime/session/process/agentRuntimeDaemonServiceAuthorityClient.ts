@@ -442,6 +442,7 @@ export async function resolveCurrentAgentRuntimeDaemonTurnContributions(
   }
   const preparationCause = !response.ok && response.error.cause
     ? { ...response.error.cause, requestId: input.requestId } : undefined;
+  const failureCause = response.ok ? undefined : projectDaemonServiceRefusalCause(response.error);
   if (!response.ok
     && response.error.code !== NATIVE_AGENT_SESSION_EFFECT_AUTHORITY_UNAVAILABLE_CODE
     && response.error.code !== NATIVE_AGENT_SESSION_EFFECT_OUTCOME_UNKNOWN_CODE) {
@@ -449,7 +450,10 @@ export async function resolveCurrentAgentRuntimeDaemonTurnContributions(
     // and closed diagnostic; its message may contain private source content.
     throw new PluginError({ code: response.error.code, message: 'Session input preparation was refused',
       retryable: response.error.retryable ?? true,
-      ...(preparationCause ? { details: { cause: preparationCause } } : {}) });
+      ...(preparationCause || failureCause ? { details: {
+        ...(preparationCause ? { cause: preparationCause } : {}),
+        ...(failureCause ? { failureCause } : {}),
+      } } : {}) });
   }
   const boundaryError = createNativeAgentSessionEffectBoundaryError(
     // Turn contributions are resolved before new-turn admission and before
@@ -457,9 +461,10 @@ export async function resolveCurrentAgentRuntimeDaemonTurnContributions(
     // unusable, but cannot make the Provider effect ambiguous.
     'authority_unavailable_before_effect',
   );
-  // The response schema already admitted this code-only cause. Keep it when
-  // the native boundary owns the outer error as well as for PluginError above.
-  throw Object.assign(boundaryError, preparationCause ? { preparationCause } : {});
+  throw Object.assign(boundaryError, {
+    ...(preparationCause ? { preparationCause } : {}),
+    ...(failureCause ? { failureCause } : {}),
+  });
 }
 
 export async function admitCurrentRunnerSessionInput(
