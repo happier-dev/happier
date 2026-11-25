@@ -14,6 +14,8 @@ import { PLUGIN_MANIFEST } from '@happier-dev/plugins-triage/manifest';
 
 import { ApiMachineClient } from '@/api/apiMachine';
 import { createDaemonControlApp } from '@/daemon/controlServer';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import type { TrackedSession } from '@/daemon/types';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
@@ -167,6 +169,14 @@ it('delivers an Agent saved-view Action through authenticated daemon control whi
   const accountId = 'signed-in-account';
   const machineId = 'agent-machine';
   const sessionId = 'current-session';
+  const memberSessionId = 'member-session';
+  const trackedSessions: TrackedSession[] = [
+    { trackingKey: legacyPidSessionTrackingKey(4242), startedBy: 'daemon', pid: 4242, happySessionId: sessionId },
+    {
+      trackingKey: legacyPidSessionTrackingKey(4243), startedBy: 'daemon', pid: 4243, happySessionId: memberSessionId,
+      requesterWorkAttributionV1: { serverId: 'test-home', accountId: 'team-member', machineId, installationId: 'installation' },
+    },
+  ];
   const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
   const machine = new ApiMachineClient(token, { id: machineId, encryptionMode: 'plain', metadata: null, metadataVersion: 0,
     daemonState: null, daemonStateVersion: 0 });
@@ -178,7 +188,7 @@ it('delivers an Agent saved-view Action through authenticated daemon control whi
     expect(payload).toMatchObject({ method: `${machineId}:${ANSWERING_CLIENT_RPC_PREFIX_V1}${RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE}`,
       answeringClient: { requireSingle: true } });
     const request = UiContributedActionExecuteRequestV1Schema.parse(Reflect.get(payload as object, 'params'));
-    expect(request).toMatchObject({ action, input, surface: 'agent', defaultSessionId: sessionId });
+    expect(request).toMatchObject({ action, input });
     if (browserMount === null) return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
     expect(request.input).toMatchObject({ mountId: browserMount });
     selectedView = input.operation.viewId;
@@ -200,7 +210,7 @@ it('delivers an Agent saved-view Action through authenticated daemon control whi
   });
   const controlToken = 'fixture-control';
   const app = createDaemonControlApp({
-    getChildren: () => [], machineId, controlToken,
+    getChildren: () => trackedSessions, machineId, controlToken,
     stopSession: async () => ({ status: 'not_found' }),
     spawnSession: async () => ({ type: 'success', sessionId }),
     requestShutdown() {}, onHappySessionWebhook() {},
@@ -216,7 +226,8 @@ it('delivers an Agent saved-view Action through authenticated daemon control whi
     return response.json();
   } });
   const tools = createActionToolExecutorBridge({ executor, surface: 'agent' });
-  const invoke = () => tools.executeActionByToolName('action_execute', { actionId, input: JSON.stringify(input) }, sessionId);
+  const invoke = (defaultSessionId = sessionId) =>
+    tools.executeActionByToolName('action_execute', { actionId, input: JSON.stringify(input) }, defaultSessionId);
   try {
     // Control for the registered browser path with an already attributed call.
     expect(await executeClientAction({ v: 1, action, input, surface: 'agent', defaultSessionId: sessionId,
@@ -233,6 +244,20 @@ it('delivers an Agent saved-view Action through authenticated daemon control whi
       surface: 'agent', defaultSessionId: sessionId,
     });
     expect(wrappedReceipt, JSON.stringify(wrappedReceipt)).toMatchObject({ ok: true, result: { status: 'applied' } });
+    expect(selectedView).toBe(input.operation.viewId);
+
+    selectedView = null;
+    socket.emitWithAck.mockClear();
+    expect(await invoke(memberSessionId)).toMatchObject({ ok: false, errorCode: 'plugin_action_client_target_unavailable' });
+    expect(await executor.execute('action.invoke', { action, input }, {
+      surface: 'mcp', defaultSessionId: memberSessionId,
+    })).toMatchObject({ ok: false, errorCode: 'plugin_action_client_target_unavailable' });
+    expect(await invoke('untracked-session')).toMatchObject({ ok: false, errorCode: 'plugin_action_client_target_unavailable' });
+    expect(socket.emitWithAck).not.toHaveBeenCalled();
+    expect(selectedView).toBeNull();
+
+    expect(await executor.execute('action.invoke', { action, input }, { surface: 'cli' }))
+      .toMatchObject({ ok: true, result: { status: 'applied' } });
     expect(selectedView).toBe(input.operation.viewId);
 
     browserMount = null;

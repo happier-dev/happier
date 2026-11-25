@@ -210,10 +210,13 @@ and paths in `details.issues`. Rejected values are omitted. Use matching 0.3
 development daemon and App builds when the daemon sends the correlation field.
 Older strict App builds reject that field.
 
-In unreleased 0.3, the authenticated local plugin control route attaches the
-daemon's signed-in Account to reverse Client Action dispatch. The Home selects
-the answering App from its live RPC registrations. That App admits the Action
-through its usual dispatcher.
+In unreleased 0.3, the authenticated local plugin control route uses the
+tracked Session and its accepted requester attribution for reverse Client
+Actions. An owner Session or a local CLI call without a Session uses the
+daemon's Account. A member Session on a shared Machine gets
+`plugin_action_client_target_unavailable` before any reverse RPC is sent to the
+owner's App. The Home selects the answering App from its live RPC
+registrations, and that App admits the Action through its usual dispatcher.
 
 ## Channel message observation demand (unreleased 0.3)
 

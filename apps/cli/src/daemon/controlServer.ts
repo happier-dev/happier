@@ -206,7 +206,7 @@ import {
   ForegroundAgentRuntimeSessionOptionsResponseV1Schema,
 } from './agentRuntime/foregroundAdmissionContract';
 import type { SimulatorPreviewRoutes } from './devices/simulator/previewRoutes.types';
-import type { RequesterSessionAccountContextCustody } from './sessionEncryption/requesterSessionAccountContextCustody';
+import { findTrackedSessionByHappySessionId, type RequesterSessionAccountContextCustody } from './sessionEncryption/requesterSessionAccountContextCustody';
 import {
   ConnectedServiceRuntimeAuthFailureKindSchema,
   type ConnectedServiceRuntimeFailureClassification,
@@ -1562,11 +1562,24 @@ export function createDaemonControlApp({
     : { status: 'unavailable' as const });
 
   if (pluginChangeService) {
-    const runtimeAccountId = externalActionApi?.currentAccountId;
     registerDaemonPluginChangeRoutes(app, {
       service: pluginChangeService,
       requireAuth,
       executeAction: async (request, signal) => {
+        const daemonAccountId = externalActionApi?.currentAccountId;
+        let runtimeAccountId: string | undefined;
+        if (daemonAccountId && request.defaultSessionId) {
+          const tracked = findTrackedSessionByHappySessionId(
+            trackedSessionsByKey?.values() ?? getChildren(), request.defaultSessionId,
+          );
+          const requester = tracked?.requesterWorkAttributionV1 ?? tracked?.spawnOptions?.requesterWorkAttributionV1;
+          if (tracked && (!requester || requester.accountId === daemonAccountId)) {
+            runtimeAccountId = daemonAccountId;
+          }
+        } else if (request.surface === 'cli') {
+          runtimeAccountId = daemonAccountId;
+        }
+
         if (externalActionApi
           && (request.actionId === 'action.spec.search'
             || request.actionId === 'action.spec.get'
