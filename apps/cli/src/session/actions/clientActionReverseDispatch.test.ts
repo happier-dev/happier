@@ -1,7 +1,7 @@
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { WORKFLOW_RUN_VIEW_ACTION_IDS } from '@happier-dev/protocol/actions/scopeActionIdsV1';
+import { WORKFLOW_LIBRARY_VIEW_ACTION_IDS, WORKFLOW_RUN_VIEW_ACTION_IDS } from '@happier-dev/protocol/actions/scopeActionIdsV1';
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, getActionSpec, RPC_METHODS, RPC_ERROR_CODES, UiActionDispatchRequestV1Schema, ActionIdSchema } from '@happier-dev/protocol';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
@@ -596,6 +596,46 @@ describe('client Action reverse delivery', () => {
       .toEqual({ ok: true, result: { status: 'idle' } });
     expect(methods).toEqual([RPC_METHODS.UI_ACTION_EXECUTE]);
   });
+  const answeringClients = [{ id: 'app-a', deviceLabel: 'My phone' }];
+  const answeringClientFields = { answeringClientId: 'app-a', answeringClientIds: ['app-a'], answeringClients };
+  const executionOriginList = 'plugins.execution_origin.list';
+  const workflowLibraryGet = WORKFLOW_LIBRARY_VIEW_ACTION_IDS.get;
+  const selection = { status: 'available', storedTarget: null, storedOrigin: null, selectedOrigin: null,
+    selectionSource: null, candidates: [] };
+  const contextualList = { status: 'available', contextualTargets: [{ commandId: 'mounted', serverIdentityId: 'home', machineId: 'machine' }] };
+  const unavailableList = { status: 'unavailable',
+    reason: { code: 'current_ui_context_unavailable', phase: 'selection', retryable: false } };
+  const library = { view: 'all', filters: { view: 'all' }, searchQuery: '', offeredViews: ['all'],
+    visibleKeys: [], coverage: 'complete', selectedSpaceId: 'all' };
+
+  it.each([
+    { label: 'origin selection', actionId: executionOriginList, input: { pluginId: 'acme.plugin' }, result: selection, enriched: true },
+    { label: 'contextual origins', actionId: executionOriginList, input: { pluginId: 'acme.plugin', contextual: true }, result: contextualList, enriched: true },
+    { label: 'unavailable origins', actionId: executionOriginList, input: { pluginId: 'acme.plugin', contextual: true }, result: unavailableList, enriched: false },
+    { label: 'Workflow Library', actionId: workflowLibraryGet, input: {}, result: library, enriched: true },
+  ] as const)('validates reverse-dispatched $label at the Action output boundary', async ({ actionId, input, result, enriched }) => {
+    const client: ClientActionMachineRpc = {
+      hasConnectedClientRpcHandler: () => true,
+      callConnectedClientRpc: async (_method, _request, options) => {
+        options.onIssued();
+        return { ok: true, result: { v: 1, execution: { ok: true, result } }, ...answeringClientFields };
+      },
+    };
+    expect(await executor(client).execute(actionId, input, { surface: 'mcp', authority: 'account_automation' }))
+      .toEqual({ ok: true, result: enriched ? { ...result, ...answeringClientFields } : result });
+  });
+
+  it.each([
+    { actionId: executionOriginList, result: selection },
+    { actionId: executionOriginList, result: contextualList },
+    { actionId: workflowLibraryGet, result: library },
+  ] as const)('rejects unknown keys and malformed answering clients in $actionId output', ({ actionId, result }) => {
+    const schema = getActionSpec(actionId).outputSchema;
+    const enriched = { ...result, ...answeringClientFields };
+    expect(schema?.safeParse({ ...enriched, extra: true }).success).toBe(false);
+    expect(schema?.safeParse({ ...enriched, answeringClients: [{ id: 'app-a' }] }).success).toBe(false);
+  });
+
   it.each(['cli', 'mcp'] as const)('addresses Run-on mutations to an exact answering client from %s', async surface => {
     const client: ClientActionMachineRpc = {
       hasConnectedClientRpcHandler: () => true,

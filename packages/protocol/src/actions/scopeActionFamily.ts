@@ -1,4 +1,4 @@
-import { SocketRpcAnsweringClientCandidatesV1Schema } from '../rpc/answeringClient.js';
+import { socketRpcAnsweringClientResultFieldsV1 } from '../rpc/answeringClient.js';
 import { SCOPE_ACTION_IDS, WORKFLOW_LIBRARY_VIEW_ACTION_IDS, WORKFLOW_RUN_VIEW_ACTION_IDS } from './scopeActionIdsV1.js';
 export { SCOPE_ACTION_IDS } from './scopeActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -105,8 +105,7 @@ export const ScopeActionOutputSchemas = {
   'session.list.view.set': MutationResultSchema,
   'session.list.view.reset': MutationResultSchema,
   [WORKFLOW_LIBRARY_VIEW_ACTION_IDS.get]: z.strictObject({
-    answeringClientId: z.optional(z.string().check(z.minLength(1))),
-    answeringClientIds: z.optional(z.array(z.string().check(z.minLength(1)))),
+    ...socketRpcAnsweringClientResultFieldsV1,
     view: WorkflowLibraryViewSchema, filters: WorkflowListFilterV1StoredSchema, searchQuery: z.string(),
     offeredViews: z.array(WorkflowLibraryViewSchema), visibleKeys: z.array(z.string()),
     coverage: z.enum(['complete', 'partial', 'unavailable']),
@@ -115,9 +114,7 @@ export const ScopeActionOutputSchemas = {
   [WORKFLOW_LIBRARY_VIEW_ACTION_IDS.set]: MutationResultSchema,
   [WORKFLOW_LIBRARY_VIEW_ACTION_IDS.reset]: MutationResultSchema,
   [WORKFLOW_RUN_VIEW_ACTION_IDS.get]: lazyZodSchema(() => z.strictObject({
-    answeringClientId: z.optional(z.string().check(z.minLength(1))),
-    answeringClientIds: z.optional(z.array(z.string().check(z.minLength(1)))),
-    answeringClients: z.optional(SocketRpcAnsweringClientCandidatesV1Schema),
+    ...socketRpcAnsweringClientResultFieldsV1,
     filters: WorkflowRunListFilterV1StoredSchema,
     searchQuery: z.string(), visibleKeys: z.array(z.string()),
     coverage: z.enum(['complete', 'partial', 'unavailable']), selectedSpaceId: z.string(),

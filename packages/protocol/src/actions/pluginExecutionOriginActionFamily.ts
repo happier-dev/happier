@@ -1,3 +1,4 @@
+import { socketRpcAnsweringClientResultFieldsV1 } from '../rpc/answeringClient.js';
 import { PLUGIN_EXECUTION_ORIGIN_ACTION_IDS } from './pluginExecutionOriginActionIdsV1.js';
 export { PLUGIN_EXECUTION_ORIGIN_ACTION_IDS } from './pluginExecutionOriginActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
@@ -39,8 +40,7 @@ const mutation = lazyZodSchema(() => z.union([
 ]));
 const selection = lazyZodSchema(() => z.strictObject({
   status: z.literal('available'),
-  answeringClientId: z.optional(z.string().check(z.minLength(1))),
-  answeringClientIds: z.optional(z.array(z.string().check(z.minLength(1)))),
+  ...socketRpcAnsweringClientResultFieldsV1,
   storedTarget: z.optional(z.nullable(MachineAdministrationTargetV1Schema)),
   storedOrigin: z.nullable(PluginMachineExecutionOriginV1Schema),
   selectedOrigin: z.nullable(PluginMachineExecutionOriginV1Schema),
@@ -52,8 +52,10 @@ export type PluginExecutionOriginContextualSelection = z.infer<typeof selection>
 export const PluginExecutionOriginActionOutputSchemas = {
   'plugins.execution_origin.list': lazyZodSchema(() => z.union([listUnavailable,
     selection,
-    z.strictObject({ status: z.literal('available'), answeringClientId: z.optional(z.string().check(z.minLength(1))),
-      answeringClientIds: z.optional(z.array(z.string().check(z.minLength(1)))), contextualTargets: z.array(z.strictObject({ commandId: z.string().check(z.minLength(1)),
+    z.strictObject({
+      status: z.literal('available'),
+      ...socketRpcAnsweringClientResultFieldsV1,
+      contextualTargets: z.array(z.strictObject({ commandId: z.string().check(z.minLength(1)),
       serverIdentityId: z.string().check(z.minLength(1)), machineId: z.string().check(z.minLength(1)) })) }),
   ])),
   'plugins.execution_origin.set': mutation,

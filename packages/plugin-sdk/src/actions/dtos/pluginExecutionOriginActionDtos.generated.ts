@@ -74,16 +74,31 @@ export type PluginExecutionOriginActionInputById = {
 };
 export type PluginExecutionOriginActionResultById = {
     readonly "plugins.execution_origin.list": {
-        status: 'available';
         contextualTargets: {
             commandId: string;
             serverIdentityId: string;
             machineId: string;
         }[];
+        status: 'available';
         answeringClientId?: string | undefined;
         answeringClientIds?: string[] | undefined;
+        answeringClients?: undefined | {
+            id: string;
+            deviceLabel: null | string;
+            state?: undefined | {
+                computer: boolean;
+                focused: boolean;
+                lastFocusedAt?: number | undefined;
+            };
+        }[];
     } | {
-        status: 'available';
+        status: 'unavailable';
+        reason: {
+            code: 'account_scope_unavailable' | 'contextual_target_unavailable' | 'current_ui_context_unavailable';
+            phase: 'selection';
+            retryable: false;
+        };
+    } | {
         storedOrigin: null | {
             serverIdentityId: string;
             materializationRef: {
@@ -206,19 +221,22 @@ export type PluginExecutionOriginActionResultById = {
             version: string;
             selectable: boolean;
         }[];
-        answeringClientId?: string | undefined;
-        answeringClientIds?: string[] | undefined;
+        status: 'available';
         storedTarget?: null | undefined | {
             serverIdentityId: string;
             machineId: string;
         };
-    } | {
-        status: 'unavailable';
-        reason: {
-            code: 'account_scope_unavailable' | 'contextual_target_unavailable' | 'current_ui_context_unavailable';
-            phase: 'selection';
-            retryable: false;
-        };
+        answeringClientId?: string | undefined;
+        answeringClientIds?: string[] | undefined;
+        answeringClients?: undefined | {
+            id: string;
+            deviceLabel: null | string;
+            state?: undefined | {
+                computer: boolean;
+                focused: boolean;
+                lastFocusedAt?: number | undefined;
+            };
+        }[];
     };
     readonly "plugins.execution_origin.set": {
         status: 'applied';

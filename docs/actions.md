@@ -1661,9 +1661,11 @@ the administration picker's display state.
 In 0.3 development, `plugins.execution_origin.list/set/clear` operate on the
 answering device's preference for its current Account and Home, for UI, Agent,
 MCP and CLI alike. CLI/MCP inputs accept an optional `clientId` identifying
-the exact answering app socket. List returns `answeringClientId` and eligible
-`answeringClientIds` for follow-up
-calls; socket ids expire on reconnect. All three operations follow the shared
+the exact answering app socket. An available reverse-dispatched list result
+can include `answeringClientId`, eligible `answeringClientIds`, and
+`answeringClients` with each candidate's device label when advertised.
+Use socket ids for follow-up calls before they expire on reconnect. All three
+operations follow the shared
 client-choice rule: exact selector, sole eligible client, or unique latest
 pushed focus transition. Otherwise `client_ambiguous` lists candidates in
 `details.clients` for an exact retry. A missing selected client is unavailable;
@@ -7572,7 +7574,9 @@ persistence or cross-window coordination.
 
 Library view inputs accept optional `clientId` (CLI `--client-id`). Run
 `happier workflow library view get --json` to read the selected answering
-client and discover `answeringClientId` plus eligible `answeringClientIds`.
+client and discover `answeringClientId`, eligible `answeringClientIds`, and
+`answeringClients` with device labels when advertised. The Runs view read
+(`workflow.run.view.get`) returns the same answering-client metadata.
 When no unique focus fact can choose among several clients, this read returns
 `client_ambiguous` with `details.clients` instead.
 If that client has no focused Library, the unavailable result retains these

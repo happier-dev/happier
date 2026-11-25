@@ -18,3 +18,10 @@ export const SocketRpcAnsweringClientCandidateV1Schema = lazyZodSchema(() => z.s
 }));
 export const SocketRpcAnsweringClientCandidatesV1Schema = lazyZodSchema(() => z.array(SocketRpcAnsweringClientCandidateV1Schema));
 export type SocketRpcAnsweringClientCandidateV1 = Readonly<z.infer<typeof SocketRpcAnsweringClientCandidateV1Schema>>;
+
+/** Optional receiver metadata attached to selected client Action results. */
+export const socketRpcAnsweringClientResultFieldsV1 = {
+  answeringClientId: z.optional(z.string().check(z.minLength(1))),
+  answeringClientIds: z.optional(z.array(z.string().check(z.minLength(1)))),
+  answeringClients: z.optional(SocketRpcAnsweringClientCandidatesV1Schema),
+};
