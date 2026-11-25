@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 
 import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 import { compareExternalSessionCandidatePrecedence } from '@happier-dev/plugin-sdk/sessions/external';
+import type { ClaudeHandoffExportDiagnosticV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
 
 import { readClaudeProviderIdentityValue } from '../../../../protocol/providerIdentity.js';
 import { resolveClaudeConfigDir, type ClaudeExternalSessionSource } from './source.js';
@@ -53,11 +54,10 @@ type AuthorizedClaudeProjectsRoot = Readonly<{
     projectsRoot: string;
 }>;
 
-type ClaudeTranscriptPathKind = 'claude_projects_dir' | 'session_dir' | 'transcript_file';
+type ClaudeTranscriptPathKind = Exclude<ClaudeHandoffExportDiagnosticV1['details']['pathKind'], 'linked_source_root'>;
 
 export type ClaudeTranscriptLookupFailure = Readonly<{
-    code: 'transcript_missing' | 'root_mismatch' | 'permission_denied' | 'not_directory'
-        | 'not_regular_file' | 'invalid_session_id' | 'lookup_failed';
+    code: Exclude<ClaudeHandoffExportDiagnosticV1['code'], 'working_directory_missing'>;
     pathKind: ClaudeTranscriptPathKind;
 }>;
 

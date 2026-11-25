@@ -11,6 +11,26 @@ export const SessionHandoffSourceStoppedV1Schema = lazyZodSchema(() => z.strictO
   kind: z.literal('session_handoff_source_stopped'),
 }));
 
+// Closed vocabulary for Claude's transcript export refusal. The filesystem
+// lookup and bundle exporter use the inferred code and path-kind types.
+export const ClaudeHandoffExportDiagnosticV1Schema = lazyZodSchema(() => z.strictObject({
+  code: z.enum([
+    'transcript_missing', 'root_mismatch', 'permission_denied', 'not_directory',
+    'not_regular_file', 'invalid_session_id', 'lookup_failed', 'working_directory_missing',
+  ]),
+  details: z.strictObject({
+    pathKind: z.enum(['claude_projects_dir', 'session_dir', 'transcript_file', 'linked_source_root']),
+  }),
+}));
+export type ClaudeHandoffExportDiagnosticV1 = z.infer<typeof ClaudeHandoffExportDiagnosticV1Schema>;
+
+export const SESSION_HANDOFF_SOURCE_EXPORT_FAILURE_CODE = 'source_export_failed' as const;
+
+export const SessionHandoffSourceExportFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  diagnostics: z.array(ClaudeHandoffExportDiagnosticV1Schema),
+  handoffRecovery: z.optional(SessionHandoffSourceStoppedV1Schema),
+}));
+
 const MAX_HANDOFF_ID_LENGTH = 256;
 const MAX_JOB_ID_LENGTH = 256;
 const MAX_PATH_LENGTH = 4096;

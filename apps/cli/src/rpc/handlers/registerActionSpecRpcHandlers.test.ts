@@ -153,6 +153,27 @@ describe('ActionSpec-derived RPC registrar', () => {
         });
     });
 
+    it.each([
+        { label: 'typed diagnostic', details: { diagnostics: [{ code: 'transcript_missing', details: { pathKind: 'transcript_file' } }] }, public: true },
+        { label: 'typed diagnostic with existing recovery', details: {
+            diagnostics: [{ code: 'transcript_missing', details: { pathKind: 'transcript_file' } }],
+            handoffRecovery: { kind: 'session_handoff_source_stopped' },
+        }, public: true },
+        { label: 'extra private field', details: { diagnostics: [{ code: 'transcript_missing', details: { pathKind: 'transcript_file', credential: 'private' } }] }, public: false },
+        { label: 'unknown path kind', details: { diagnostics: [{ code: 'transcript_missing', details: { pathKind: '/private/root' } }] }, public: false },
+        { label: 'unknown lookup code', details: { diagnostics: [{ code: 'ENOENT', details: { pathKind: 'transcript_file' } }] }, public: false },
+        { label: 'raw vendor details', details: { vendorCode: 'UNAUTHORED_VENDOR_CODE', credential: 'private' }, public: false },
+    ])('projects a handoff refusal with $label', ({ details, public: isPublic }) => {
+        const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'source_export_failed',
+            error: 'Source export failed', details,
+            failureCause: { phase: 'session_handoff.source_export', errorClass: 'Error', errorCode: 'handoff_failed', httpStatus: null } });
+        const { details: _privateDetails, ...envelope } = failure;
+        expect(module.unwrapActionResultForRpc('session.handoff', failure)).toEqual(isPublic ? failure : envelope);
+        expect(module.unwrapActionResultForRpc('projects.script.run', failure)).toEqual(envelope);
+        const wrongCode = { ...envelope, errorCode: 'handoff_failed' };
+        expect(module.unwrapActionResultForRpc('session.handoff', { ...failure, errorCode: wrongCode.errorCode })).toEqual(wrongCode);
+    });
+
     it('preserves public Run Action quota details through RPC projection', () => {
         const runtimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1,
             code: 'usage_limit', source: 'usage_limit', usageLimit: { v: 1, quotaScope: 'account',

@@ -19,6 +19,63 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 describe('action operation observation RPC handlers', () => {
+  it.each([
+    { label: 'typed diagnostic', details: { diagnostics: [{ code: 'transcript_missing', details: { pathKind: 'transcript_file' } }] }, public: true },
+    { label: 'typed diagnostic and confirmed source stop',
+      details: { diagnostics: [{ code: 'transcript_missing', details: { pathKind: 'transcript_file' } }] },
+      handoffRecovery: { kind: 'session_handoff_source_stopped' as const }, public: true },
+    { label: 'extra private field', details: { diagnostics: [{ code: 'transcript_missing', details: { pathKind: 'transcript_file', credential: 'private' } }] }, public: false },
+    { label: 'unknown path kind', details: { diagnostics: [{ code: 'transcript_missing', details: { pathKind: '/private/root' } }] }, public: false },
+    { label: 'unknown lookup code', details: { diagnostics: [{ code: 'ENOENT', details: { pathKind: 'transcript_file' } }] }, public: false },
+    { label: 'wrong error code', details: { diagnostics: [{ code: 'transcript_missing', details: { pathKind: 'transcript_file' } }] },
+      errorCode: 'handoff_failed', public: false },
+    { label: 'wrong Action', details: { diagnostics: [{ code: 'transcript_missing', details: { pathKind: 'transcript_file' } }] },
+      actionId: 'session.fork' as const, public: false },
+    { label: 'no details on an earlier failure', details: undefined, public: false },
+    { label: 'raw vendor details', details: { vendorCode: 'UNAUTHORED_VENDOR_CODE', credential: 'private' }, public: false },
+  ])('settles and reads a tracked handoff refusal with $label', async ({ details, actionId = 'session.handoff', errorCode = 'source_export_failed', handoffRecovery, public: isPublic }) => {
+    const scope = { accountId: 'account', machineId: 'machine' };
+    const store = createActionOperationStore();
+    const spec = getActionSpec(actionId);
+    const operationId = 'handoff-refusal';
+    const runner = createActionOperationRunner({ store, generateOperationId: () => operationId,
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation, operationReentry: spec.operationReentry }) });
+    const rpc = new RpcHandlerManager({ scopePrefix: scope.machineId, encryptionMode: 'plain' });
+    registerActionOperationRpcHandlers(rpc, createActionOperationRpcHandlers({
+      store, runner, machineId: scope.machineId, resolveAccountId: async () => scope.accountId,
+    }));
+    const refusal = { errorCode, error: 'Source export failed' };
+    const request = { actionId: spec.id, scope, requestId: 'handoff-request',
+      input: { sessionId: 'session', targetMachineId: 'destination' },
+      execute: async (context: Parameters<Parameters<typeof runner.observe>[0]['execute']>[0]) => {
+        const failure = { ok: false as const, ...refusal, details };
+        if (handoffRecovery) context.publishOwnerUpdate({ outcome: { ...failure, details: { handoffRecovery } } });
+        return failure;
+      } };
+    await runner.observe(request);
+
+    const read = await rpc.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.get, { operationId });
+    const replay = await runner.observe({ ...request, execute: async () => {
+      throw new Error('A settled handoff cannot execute again');
+    } });
+    const expected = { ...refusal, ...(isPublic ? { details } : {}) };
+    expect({ read, replay }).toMatchObject({
+      read: { kind: 'found', operation: { state: 'failed', error: expected } },
+      replay: { ok: false, ...expected },
+    });
+    if (isPublic) {
+      expect(read).toHaveProperty('operation.error.details', details);
+      expect(replay).toHaveProperty('details', handoffRecovery ? { ...details, handoffRecovery } : details);
+      if (handoffRecovery) expect(read).toHaveProperty('operation.error.handoffRecovery', handoffRecovery);
+    }
+    const predecessor = await rpc.invokeLocal(ACTION_OPERATION_RPC_METHODS_V1.get, { operationId });
+    expect(PredecessorGetSchema.parse(predecessor)).toHaveProperty('operation.error', refusal);
+    if (!isPublic) {
+      expect(read).not.toHaveProperty('operation.error.details');
+      expect(replay).not.toHaveProperty('details');
+    }
+  });
+
   it('filters V2 Activity by requester and half-open creation time before its cursor without expanding Account scope', async () => {
     let now = 9;
     const store = createActionOperationStore({ now: () => now });

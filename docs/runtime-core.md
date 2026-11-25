@@ -3740,8 +3740,12 @@ entry, `root_mismatch` means the location failed Claude's physical source
 checks, and `permission_denied` means the filesystem refused access. A path kind
 identifies the linked source root, Claude projects directory, Session directory,
 or transcript file. These diagnostics contain fixed codes and omit paths,
-Session identifiers, and transcript content. A linked source remains exclusive.
-For a Session without a linked source, Claude export uses the admitted native
+Session identifiers, and transcript content. The direct Action reply, current
+operation read, and exact request replay retain the same typed diagnostic.
+Replay also carries the existing source-stop recovery marker when recorded.
+The older V1 operation RPC returns only the failure code and message. Earlier
+stored failures without diagnostics keep reading without them.
+A linked source remains exclusive. For a Session without a linked source, Claude export uses the admitted native
 Session ID, the Session working directory, and the config root recorded at
 runtime launch. The runner's published descriptor for the source Machine takes
 precedence over its daemon's startup snapshot. This lookup works independently

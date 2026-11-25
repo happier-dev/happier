@@ -25,6 +25,8 @@ import { CheckpointCodeRollbackActionRequestSchema, CheckpointCodeRollbackResult
 import { SessionCheckpointRequestV1Schema, SessionCheckpointResultV1Schema, SessionRestoreRequestV1Schema, SessionRestoreResultV1Schema } from '../../../sessions/control/checkpoints/v1.js';
 import { SessionHandoffAbortRequestSchema, SessionHandoffCommitRequestSchema, SessionHandoffPrepareTargetResultGetRequestSchema, SessionHandoffPrepareTargetResultGetResponseSchema, SessionHandoffPrepareTargetRequestSchema, SessionHandoffPrepareTargetResumeRequestSchema, SessionHandoffPrepareTargetResumeResponseSchema, SessionHandoffStatusGetRequestSchema, SessionHandoffActionResultV1Schema, refineSessionHandoffStateTransferV3 } from '../../../sessions/control/handoff/handoffSchemas.js';
 import { SessionHandoffStateTransferSchema } from '../../../sessions/control/handoff/handoffTypes.js';
+import { SESSION_HANDOFF_SOURCE_EXPORT_FAILURE_CODE, SessionHandoffSourceExportFailureDetailsV1Schema } from '../../../sessions/control/handoff/handoffStatus.js';
+import { SESSION_HANDOFF_ACTION_ID_V1 } from '../../actionIds.js';
 import { HandoffTargetReplacementApprovalV1Schema } from '../../../sessions/control/handoff/handoffTargetReplacementApprovalV1.js';
 import { HandoffWorkspaceActionV1Schema } from '../../../sessions/control/handoff/workspaceSyncSchemas.js';
 import { SessionContinueWithReplayRpcParamsSchema } from '../../../sessions/continueWithReplay.js';
@@ -100,6 +102,14 @@ export const SessionHandoffInputFieldsSchema = lazyZodSchema(() => z.strictObjec
   handoffTargetReplacementApprovalReceiptId: z.optional(z.string().check(z.minLength(1), z.maxLength(2_000))),
   handoffTargetReplacementApprovalActionInput: z.optional(z.unknown()),
 }));
+
+export function projectSessionHandoffFailureDetails(
+  actionId: string,
+  failure: Readonly<{ errorCode: string; details?: unknown }>,
+): z.infer<typeof SessionHandoffSourceExportFailureDetailsV1Schema> | undefined {
+  if (actionId !== SESSION_HANDOFF_ACTION_ID_V1 || failure.errorCode !== SESSION_HANDOFF_SOURCE_EXPORT_FAILURE_CODE) return undefined;
+  return SessionHandoffSourceExportFailureDetailsV1Schema.safeParse(failure.details).data;
+}
 
 export const SessionHandoffInputSchema = lazyZodSchema(() => SessionHandoffInputFieldsSchema.check(z.superRefine(refineSessionHandoffStateTransferV3)));
 
@@ -464,7 +474,7 @@ function createSessionLifecycleActionSpecs() {
     inputSchema: SessionRestoreRequestV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.handoff', executionPlacement: 'session', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'optional',flow: 'deferred'},
+    id: SESSION_HANDOFF_ACTION_ID_V1, executionPlacement: 'session', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'optional',flow: 'deferred'},
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     sideEffectClass: 'write',
     operation: {

@@ -19,6 +19,7 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/ca
 import { ProjectPrepareNoLaunchResultV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 import { OpenProjectResultV1Schema, projectOpenProjectRefusalV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectSessionHandoffFailureDetails } from '@happier-dev/protocol/actions/specs/session/lifecycle';
 import { MachineReachabilityConfigureResultV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { MachineServiceAdoptResultV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -617,7 +618,9 @@ export function createActionOperationRunner(deps: Readonly<{
               && 'handoffRecovery' in nativeOutcome.details
               ? ActionOperationFailureV1Schema.shape.handoffRecovery.safeParse(nativeOutcome.details.handoffRecovery)
               : null;
+            const handoffDetails = projectSessionHandoffFailureDetails(action.actionId, executionResult);
             const failure = { errorCode: executionResult.errorCode, error: executionResult.error,
+              ...(handoffDetails ? { details: handoffDetails } : {}),
               ...(handoffRecovery?.success ? { handoffRecovery: handoffRecovery.data } : {}),
               ...(executionResult.requestId !== undefined ? { requestId: executionResult.requestId } : {}),
               ...(executionResult.effectAttempted !== undefined ? { effectAttempted: executionResult.effectAttempted } : {}),

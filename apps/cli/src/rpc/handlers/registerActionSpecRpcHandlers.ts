@@ -21,6 +21,7 @@ import { SessionFollowSourceKeyPreparationResultV1Schema, SESSION_FOLLOW_SOURCE_
 import { ProjectWorkerDependencyV1Schema } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ActionOperationFailureV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { projectSessionHandoffFailureDetails } from '@happier-dev/protocol/actions/specs/session/lifecycle';
 import { ManagedMachineActionIdV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { SKILL_MACHINE_ACTION_OUTPUT_SCHEMAS_V1, type SkillMachineActionIdV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 
@@ -137,14 +138,14 @@ export function unwrapActionResultForRpc(actionId: ActionId, result: ActionExecu
     if (result.ok) {
         return result.result;
     }
-    let details: unknown = (actionId === 'execution.run.start'
+    let details: unknown = projectSessionHandoffFailureDetails(actionId, result) ?? ((actionId === 'execution.run.start'
         || (actionId === 'execution.run.ensure_or_start'
             && readObjectValue(result.details, 'executionRunStart') !== undefined))
         ? withExecutionRunStartFailureDetails(
             result.details,
             readExecutionRunStartRunCreation(result.details),
         )
-        : undefined;
+        : undefined);
     if (actionId === 'execution.run.action') {
         const runtimeIssueV1 = sanitizeSessionRuntimeIssueV1(readObjectValue(result.details, 'runtimeIssueV1'));
         const uxDiagnostic = readConnectedServiceUxDiagnosticFromError(result);

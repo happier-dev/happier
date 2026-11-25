@@ -14,6 +14,7 @@ import { RPC_METHODS } from '../rpc/methods.js';
 import { PET_ACTION_IDS_V1 } from './actionIdsPetsV1.js';
 export { PET_IMPORT_ACTION_ID_V1, PET_DELETE_ACTION_ID_V1, PET_ACTION_IDS_V1, isPetActionIdV1 } from './actionIdsPetsV1.js';
 export { isProjectCheckoutRemovalActionIdV1 } from './projectActionIdsV1.js';
+export const SESSION_HANDOFF_ACTION_ID_V1 = 'session.handoff' as const;
 export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
 export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
 export const PROJECT_SERVICE_RELOCATE_ACTION_ID_V1 = 'projects.service.relocate' as const;

@@ -5,13 +5,13 @@ import { join, relative, resolve, sep } from 'node:path';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 import type { HandoffExportSessionMetadata } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ClaudeHandoffExportDiagnosticV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
 
 import { resolveClaudeConfigDir, resolveClaudeConfigDirEnvOverlay } from '../../../environment.js';
 import { hasClaudeProviderIdentityValue } from '../../../../protocol/providerIdentity.js';
 import {
     classifyClaudeTranscriptLookupError,
     lookupClaudeJsonlSessionFile,
-    type ClaudeTranscriptLookupFailure,
 } from '../external/files.js';
 import type { ClaudeExternalSessionSource } from '../external/source.js';
 import { getClaudeProjectPath, readClaudeRuntimeConfigDir, resolveClaudeProjectId } from './path.js';
@@ -135,8 +135,8 @@ async function fileExists(path: string): Promise<boolean> {
     }
 }
 
-type ClaudeTranscriptExportRefusalCode = ClaudeTranscriptLookupFailure['code'] | 'working_directory_missing';
-type ClaudeTranscriptExportPathKind = ClaudeTranscriptLookupFailure['pathKind'] | 'linked_source_root';
+type ClaudeTranscriptExportRefusalCode = ClaudeHandoffExportDiagnosticV1['code'];
+type ClaudeTranscriptExportPathKind = ClaudeHandoffExportDiagnosticV1['details']['pathKind'];
 
 const transcriptRefusalMessages: Record<ClaudeTranscriptExportRefusalCode, string> = {
     transcript_missing: 'Claude could not find the handoff transcript in the selected source',

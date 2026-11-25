@@ -24,7 +24,9 @@ import { parseQualifiedPluginContributionKey } from '../../plugins/contributionI
 import { PluginActionFailureResponseV1Schema } from '../../plugins/actions/failureResponse.js';
 
 import { SessionForkStrategySchema } from '../../sessions/fork.js';
-import { SessionHandoffSourceStoppedV1Schema } from '../../sessions/control/handoff/handoffStatus.js';
+import { SESSION_HANDOFF_ACTION_ID_V1 } from '../actionIds.js';
+import { SESSION_HANDOFF_SOURCE_EXPORT_FAILURE_CODE, SessionHandoffSourceExportFailureDetailsV1Schema,
+  SessionHandoffSourceStoppedV1Schema } from '../../sessions/control/handoff/handoffStatus.js';
 import { isProjectCheckoutRemovalActionIdV1 } from '../projectActionIdsV1.js';
 import { ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema } from '../projectSetupConsentFailure.js';
 import { ProjectWorkerNoAcceptanceFailureDetailsV1Schema, readProjectWorkerNoAcceptanceFailureV1 } from '../projectWorkerRefusal.js';
@@ -341,7 +343,13 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
   : readProjectWorkerNoAcceptanceFailureV1({ ok: false, ...failure }) !== null), {
   path: ['details'], message: 'Public refusal facts must match their terminal failure code.',
 })));
-export type ActionOperationFailureV1 = Readonly<z.infer<typeof ActionOperationFailureV1Schema>>;
+// Keep the general selector schema closed to its existing Action families.
+const ActionOperationHandoffExportFailureV1Schema = lazyZodSchema(() => z.strictObject({
+  ...ActionOperationFailureV1Schema.shape,
+  errorCode: z.literal(SESSION_HANDOFF_SOURCE_EXPORT_FAILURE_CODE),
+  details: SessionHandoffSourceExportFailureDetailsV1Schema,
+}));
+export type ActionOperationFailureV1 = Readonly<z.infer<typeof ActionOperationFailureV1ReadSchema>>;
 
 /** Transient failure diagnostics are additive-open/drop; lifecycle and known details stay closed. */
 export const ActionOperationFailureV1ReadSchema = lazyZodSchema(() => z.pipe(z.transform(value => {
@@ -360,7 +368,7 @@ export const ActionOperationFailureV1ReadSchema = lazyZodSchema(() => z.pipe(z.t
     ...(record.failureCause !== undefined ? { failureCause: readActionFailureCauseV1(record.failureCause) }
       : 'cause' in record ? { failureCause: UNKNOWN_ACTION_FAILURE_CAUSE_V1 } : {}),
   };
-}), ActionOperationFailureV1Schema));
+}), z.union([ActionOperationFailureV1Schema, ActionOperationHandoffExportFailureV1Schema])));
 
 /** Actual command/output target, independent of the operation's observation custody. */
 export const ProjectCommandAttachmentV1Schema = lazyZodSchema(() => z.strictObject({
@@ -616,6 +624,10 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
     || snapshot.error !== undefined && snapshot.state !== 'failed' && !observationFailure) {
     context.addIssue({ code: 'custom', path: ['error'], message: 'Errors require failure settlement or an unconfirmed observation.' });
   }
+  if (snapshot.actionId !== SESSION_HANDOFF_ACTION_ID_V1 && snapshot.error?.details
+    && 'diagnostics' in snapshot.error.details && snapshot.error.errorCode === SESSION_HANDOFF_SOURCE_EXPORT_FAILURE_CODE) {
+    context.addIssue({ code: 'custom', path: ['error', 'details'], message: 'Only Session handoff retains source export diagnostics.' });
+  }
   if (snapshot.result !== undefined && snapshot.state !== 'succeeded') {
     // This new Action returns closed domain refusals, not physical success.
     // Preserve the exact receipt without accepting arbitrary failed results
@@ -741,8 +753,8 @@ export function readActionOperationTerminalResultV1(snapshot: ActionOperationSna
       ...(snapshot.error?.effectAttempted !== undefined ? { effectAttempted: snapshot.error.effectAttempted } : {}),
       ...(snapshot.error?.failureCause ?? linkFailure?.failureCause
         ? { failureCause: snapshot.error?.failureCause ?? linkFailure?.failureCause } : {}),
-      ...(snapshot.actionId === 'session.handoff' && snapshot.error?.handoffRecovery
-        ? { details: { handoffRecovery: snapshot.error.handoffRecovery } }
+      ...(snapshot.actionId === SESSION_HANDOFF_ACTION_ID_V1 && snapshot.error?.handoffRecovery
+        ? { details: { ...snapshot.error.details, handoffRecovery: snapshot.error.handoffRecovery } }
         : linkFailure ? { details: linkFailure.details }
         : snapshot.error?.details ? { details: snapshot.error.details } : backupFailure ? { details: backupFailure } : {}),
       ...metadata,
