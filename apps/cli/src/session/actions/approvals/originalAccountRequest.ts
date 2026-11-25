@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { ActionExecuteResult, ActionExecutorContext, ExternalActionTargetV1 } from '@happier-dev/protocol';
+import { isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { deriveApprovalRequestSourceIdFromIdentityV1 } from '@happier-dev/protocol/approvals/creation';
 import { deriveAccountScopedArtifactIdV1 } from '@happier-dev/protocol/artifacts/idScope';
@@ -45,7 +46,8 @@ export async function executeOriginalAccountCliApprovalRequest(options: Readonly
           // Connection can precede creation. Its eventual push invalidates this miss.
           if (!observed.ok) {
             if (observed.errorCode === 'approval_not_found') continue;
-            throw new Error(observed.errorCode);
+            lifetime.abort(observed);
+            return;
           }
           const { request } = ApprovalRequestGetResultV1Schema.parse(observed.result);
           if (request.status === 'open') {
@@ -68,7 +70,15 @@ export async function executeOriginalAccountCliApprovalRequest(options: Readonly
       onError: error => { lifetime.abort(error); },
     });
     try {
-      return await options.run(signal);
+      const result = await options.run(signal).catch(error => {
+        if (error === signal.reason && isActionExecuteFailure(error)) return error;
+        throw error;
+      });
+      // A transport can translate a pre-dispatch abort into cancellation.
+      // A settled response or uncertain delivery still owns its outcome.
+      const reason: unknown = signal.reason;
+      return result?.ok === false && result.errorCode === 'cancelled' && isActionExecuteFailure(reason)
+        ? reason : result;
     } finally {
       stopped = true;
       lifetime.abort();

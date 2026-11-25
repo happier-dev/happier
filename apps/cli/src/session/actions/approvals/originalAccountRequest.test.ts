@@ -1,5 +1,7 @@
 import fastify from 'fastify';
 import { expect, it, onTestFinished, vi } from 'vitest';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecuteResult, projectCliActionFailure, formatCliActionFailureText } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -47,6 +49,60 @@ it('retires the original Account observer when the persisted request has no appr
   })).resolves.toMatchObject({ ok: true });
   expect(presented).not.toHaveBeenCalled();
   expect(socket.clients.every(client => !client.active)).toBe(true);
+});
+
+it.each(['typed refusal', 'transport cancellation', 'uncertain delivery', 'untyped throw'] as const)('preserves the original Account observation outcome (%s)', async mode => {
+  const socket = await createRequesterCurrentnessSocketHarness();
+  onTestFinished(() => socket.close());
+  const failureCause = { phase: 'approval.request.get', errorClass: 'RpcError',
+    errorCode: 'credential_scope_denied', httpStatus: 403 } as const;
+  const untyped = new Error('Home connection lost');
+  const executor = createActionExecutor({ approvalsGet: async () => {
+    throw createActionExecuteFailureError({ ok: false, errorCode: 'credential_scope_denied',
+      error: 'credential_scope_denied', failureCause });
+  } });
+  let observedRequestId: string | undefined;
+  const pending = executeOriginalAccountCliApprovalRequest({
+    actionId: 'usage.sources.consent.set', requestId: 'original-request', homeId: 'srv_home', accountId,
+    target: { kind: 'machine', machineId: 'machine' }, token, serverHttpBaseUrl: 'https://home.test',
+    context: { surface: 'cli', authority: 'account_automation', runtimeAccountId: accountId },
+    execute: async (...args) => {
+      const result = await executor.execute(...args);
+      if (!result.ok) observedRequestId = result.requestId;
+      return result;
+    },
+    onApprovalRequested: () => { throw new Error('Unexpected prompt'); },
+    run: async signal => {
+      if (mode === 'untyped throw') throw untyped;
+      await new Promise<void>((resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          if (mode === 'typed refusal') reject(signal.reason);
+          else resolve();
+        }, { once: true });
+      });
+      const errorCode = mode === 'uncertain delivery' ? 'outcome_unknown' : 'cancelled';
+      return { ok: false, errorCode, error: errorCode };
+    },
+  });
+  if (mode === 'untyped throw') {
+    await expect(pending).rejects.toBe(untyped);
+    return;
+  }
+  const result = await pending;
+  if (mode === 'uncertain delivery') {
+    expect(result).toEqual({ ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' });
+    return;
+  }
+  expect(observedRequestId).toEqual(expect.any(String));
+  expect(result).toMatchObject({ ok: false, errorCode: 'credential_scope_denied', requestId: observedRequestId, failureCause });
+  if (!result) throw new Error('Expected an Action result');
+  const normalized = normalizeActionExecuteResult(result);
+  if (normalized.ok) throw new Error('Expected a typed refusal');
+  const projected = projectCliActionFailure(normalized);
+  expect(projected).toMatchObject({ code: 'credential_scope_denied', requestId: observedRequestId, failureCause });
+  const text = formatCliActionFailureText(projected.message ?? projected.code, normalized);
+  expect(text).toContain('approval.request.get');
+  expect(text).toContain(`requestId: ${observedRequestId}`);
 });
 
 it.each(['deferred', 'blocking', 'root_invoke_blocking', 'target_durable', 'target_live_only'] as const)('presents original Account approval only through its %s flow owner', async flow => {
