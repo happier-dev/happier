@@ -20,13 +20,14 @@ import { automationRunTone } from '@/components/automations/home/latestAutomatio
 import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { presentExecutionRunFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
-import type { InboxItem } from '@/components/inbox/inboxItems';
+import { countInboxNeedsYou, isInboxNeedsYouItem } from '@/components/inbox/inboxCounts';
 import type { SessionListNeedsYouProjection } from '@/components/sessions/shell/sessionListPaneRetention';
 
 export type VoiceBriefSource = Pick<InboxModel, 'sessionPresentation' | 'workGroups' | 'automationAttentionItems'
     | 'workflowAttention' | 'automationAttention' | 'isLoading' | 'showCaughtUp' | 'items'
     | 'openApprovals' | 'openUsageNotices' | 'actionOperationEntries' | 'friendRequests'> & Readonly<{
     source: Pick<InboxModel['source'], 'isDataReady' | 'personalSessionListCoverageComplete' | 'sessionListHomeObservationByServerId'>;
+    /** Omitted for an Account Inbox request. Null means the requested sidebar is unavailable. */
     needsYouShelf?: SessionListNeedsYouProjection | null;
 }>;
 export type VoiceBriefItem = Readonly<{
@@ -54,13 +55,14 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
     const { inbox } = input;
     const items: VoiceBriefItem[] = [];
     const shelf = inbox.needsYouShelf;
-    const needsYouKeys = new Set(shelf?.items.map(item => JSON.stringify([
-        item.type === 'session' ? 'session' : 'workflow_run', item.serverId,
-        item.type === 'session' ? item.sessionId : item.runId,
-    ])));
-    const needsYou = (kind: InboxItem['source']['kind'], serverId: string | null | undefined, id: string) =>
+    const accountBrief = shelf === undefined;
+    const needsYouKeys = new Set(accountBrief
+        ? inbox.items.filter(isInboxNeedsYouItem).map(({ source }) => JSON.stringify([source.kind, source.serverId, source.id]))
+        : shelf?.items.map(item => JSON.stringify(item.type === 'session'
+            ? ['session', item.serverId, item.sessionId] : ['workflow_run', item.serverId, item.runId])));
+    const needsYou = (kind: string, serverId: string | null | undefined, id: string) =>
         needsYouKeys.has(JSON.stringify([kind, serverId, id]));
-    const speechByKey = new Map<string, Readonly<{ title?: string; requests?: readonly string[] }>>();
+    const speechByKey = new Map<string, Readonly<{ title?: string; reason?: string; requests?: readonly string[] }>>();
     const privacy = readVoicePrivacySettings(input.settings);
     // Brief is an explicit request, not an automatic Follow update. The Account
     // sharing switches still bound disclosure; update frequency does not hide names.
@@ -106,7 +108,11 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
         const place = candidate.context?.segments.find(segment => segment.kind === 'workspace')?.label.trim();
         return place ? { place } : {};
     };
-    const projectSessionSpeech = (candidate: VoiceBriefSource['sessionPresentation']['readySessions'][number], requests: readonly (readonly [AgentRequestKind, string, string, unknown])[] = []) => {
+    const projectSessionSpeech = (
+        candidate: VoiceBriefSource['sessionPresentation']['readySessions'][number],
+        requests: readonly (readonly [AgentRequestKind, string, string, unknown])[] = [],
+        reason?: string,
+    ) => {
         const address = normalizeSessionAddress(candidate.address?.serverId ?? candidate.serverId, candidate.sessionId);
         if (!address) return;
         // The sidebar and Activity already use the Session display-label owner,
@@ -114,7 +120,7 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
         // label only within the same Session-summary disclosure policy.
         const label = prefs.voiceShareSessionSummary ? safeTitle(sessionTitle(candidate) ?? '') : null;
         speechByKey.set(sessionAddressKey(address), {
-            ...(label ? { title: label } : {}),
+            ...(label ? { title: label, ...(reason ? { reason: safeTitle(reason) } : {}) } : {}),
             ...(prefs.voiceSharePermissionRequests ? { requests: requests.map(([kind, id, tool, args]) => summarizeAgentRequestForVoiceHuman(kind, id, tool, args, prefs, label ?? undefined)).filter((value): value is string => Boolean(value)) } : {}),
         });
     };
@@ -129,8 +135,12 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
             title, ...sessionSubtitle(candidate, requestReason(entry)),
             hasRequestControls: entry.pendingPermissions.length + entry.pendingUserActions.length > 0,
             destination: { kind: 'session', address }, ...(candidate.route ? { route: candidate.route } : {}) });
-        projectSessionSpeech(candidate, [...(entry.requestDetails?.permissions ?? entry.pendingPermissions).map((request) => ['permission', request.id, request.tool, request.arguments] as const),
-            ...(entry.requestDetails?.userActions ?? entry.pendingUserActions).map((request) => ['user_action', request.id, request.tool, request.arguments] as const)]);
+        const requests = [...(entry.requestDetails?.permissions ?? entry.pendingPermissions).map((request) => ['permission', request.id, request.tool, request.arguments] as const),
+            ...(entry.requestDetails?.userActions ?? entry.pendingUserActions).map((request) => ['user_action', request.id, request.tool, request.arguments] as const)];
+        // Pending delivery can ask for attention without a permission or question to summarize.
+        const reason = accountBrief && requiresPerson && requests.length === 0
+            ? buildInboxSessionReasonLine(candidate) : undefined;
+        projectSessionSpeech(candidate, requests, reason);
     }
     for (const candidate of inbox.sessionPresentation.readySessions) {
         const address = normalizeSessionAddress(candidate.address?.serverId ?? candidate.serverId, candidate.sessionId);
@@ -177,7 +187,7 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
     // Provider context is not the navigation model: never serialize route/identity,
     // callbacks or private records from Inbox. Decisions stay with canonical request tools/UI.
     const approval = formatVoiceApprovalGuidance(prefs.voiceCanApproveRequests);
-    const counts = { needs_you: shelf?.count ?? null, failed: 0, ready: 0 };
+    const counts = { needs_you: accountBrief ? countInboxNeedsYou(inbox) : shelf?.count ?? null, failed: 0, ready: 0 };
     let projectedNeedsYou = 0;
     const spokenCounts = { needs_you: 0, failed: 0, ready: 0 };
     const speechGroups = new Map<string, Readonly<{ category: VoiceBriefItem['category']; title?: string; requests?: readonly string[] }> & { count: number }>();
@@ -193,9 +203,8 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
         if (existing) existing.count += 1;
         else speechGroups.set(key, { ...speech, count: 1 });
     }
-    // A collapsed/partial shelf may retain its exact total without all navigable
-    // details. Missing sidebar scope never becomes an Account-wide Inbox count.
-    const incomplete = sourceIncomplete || !shelf || shelf.incomplete
+    // A collapsed shelf or a count-only Inbox item can lack navigable details.
+    const incomplete = sourceIncomplete || (!accountBrief && (!shelf || shelf.incomplete))
         || (counts.needs_you !== null && counts.needs_you > projectedNeedsYou);
     const caughtUp = inbox.showCaughtUp && !incomplete && items.length === 0;
     const remaining = { needs_you: counts.needs_you === null ? null : counts.needs_you - spokenCounts.needs_you,

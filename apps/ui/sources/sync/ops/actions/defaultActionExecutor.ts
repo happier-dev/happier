@@ -2540,6 +2540,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         throwIfAborted(context.signal);
         const operation = actionId === 'ui.voice_global.brief.request' ? 'request' : actionId === 'ui.voice_global.brief.retry' ? 'retry'
           : actionId === 'ui.voice_global.brief.close' ? 'close' : 'stop';
+        const briefSurface = context.approvedActionReplay?.origin?.surface ?? context.surface;
         const result = await executeVoiceBriefOperationFromUi(operation, input as Readonly<{ expectedAttemptId?: string }>, async () => {
           const [{ router }, { openWorkspaceHrefOrElse }] = await Promise.all([
             import('expo-router'), import('@/components/appShell/workspace/workspaceActionRuntime'),
@@ -2548,7 +2549,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           throwIfAborted(context.signal);
           if (opts?.openRoute) { await opts.openRoute('/'); return; }
           await openWorkspaceHrefOrElse('/', () => router.push('/'));
-        });
+        }, briefSurface === 'voice' ? 'account' : 'sidebar');
         return result.ok ? result.result : { ...result, error: result.errorCode };
       }
       const modules = await Promise.all([

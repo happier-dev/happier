@@ -159,6 +159,44 @@ describe('Voice brief from the mounted Inbox', () => {
         expect(brief.items.filter(item => item.category === 'needs_you').map(item => item.destination)).toEqual(
             shelfItems.flatMap(item => item.type === 'session' ? [{ kind: 'session', address: { serverId: item.serverId, sessionId: item.sessionId } }] : []));
     });
+    it('names Account Inbox blocked deliveries even when the Home shelf excludes them', () => {
+        const base = source();
+        const ready = base.sessionPresentation.readySessions[0]!;
+        const session = readSessionPresentationControl(ready.session);
+        const blocked = Array.from({ length: 20 }, (_, index) => buildSessionActivityAttention({
+            session: createSessionFixture({ ...session, id: `blocked-${index}`, active: false, pendingBlockedCount: 1,
+                metadata: { ...session.metadata!, summary: { text: `Queued follow-up ${index + 1}`, updatedAt: 1 } },
+                viewer: { ...session.viewer!, attention: { needsAttention: true, reasons: ['pending_blocked', 'unread'],
+                    primary: 'pending_blocked', presentation: 'full' } },
+            }), nowMs: 1_000,
+        }));
+        const sessionPresentation = buildInboxSessionPresentation({
+            overview: buildActivityOverviewFromCandidates([...blocked, ready]),
+        });
+        const run = createAutomationRunFixture({ id: 'scheduled-check', state: 'dispatch_failed' });
+        const workGroups = buildInboxWorkGroups({ sessionEntries: sessionPresentation.sessionsNeedingAttention,
+            workflowRuns: [], automationRuns: [{ ...workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: run.id })),
+                automation: run }], automationServerId: 'home-a', openApprovals: [], stalledSessions: [], landings: [], snoozed: [],
+            resolveSession: () => null, resolveOriginRunId: () => null });
+        const inbox = { ...base, sessionPresentation, workGroups,
+            items: buildInboxItems({ sessionPresentation, workGroups, workflowServerId: 'home-a', accountServerId: 'home-a', notices: [] }),
+            automationAttentionItems: [{ key: `automation-run:${run.id}`, title: 'Scheduled checks', run,
+                route: '/workflows/runs/scheduled-check?target=occurrence&automationId=automation' as const }],
+        };
+        expect(inbox.items.filter(item => item.focus.kind === 'session' && item.view === 'needs_you')).toHaveLength(20);
+        const settings = { voice: { privacy: { shareSessionSummary: true, shareFilePaths: false } } };
+        const accountBrief = buildBrief({ inbox, settings });
+        expect(JSON.parse(accountBrief.context)).toMatchObject({
+            counts: { needs_you: 20, failed: 1, ready: 1 },
+            remaining: { needs_you: 0, failed: 0, ready: 0 },
+            items: expect.arrayContaining([expect.objectContaining({
+                category: 'needs_you', title: 'Queued follow-up 1',
+                reason: t('session.pendingMessages.deliveryBlockedReasons.unknown'),
+            })]),
+        });
+        const homeBrief = buildBrief({ inbox: { ...inbox, needsYouShelf: { count: 0, items: [], incomplete: false } }, settings });
+        expect(JSON.parse(homeBrief.context).counts).toEqual({ needs_you: 0, failed: 1, ready: 1 });
+    });
     it('reports the sidebar total unavailable when its projection is absent rather than using an Account Inbox total', () => {
         const inbox = source();
         const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, needsYouShelf: null }, settings: {} });

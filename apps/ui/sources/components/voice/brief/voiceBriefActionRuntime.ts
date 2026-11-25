@@ -8,11 +8,13 @@ export type VoiceBriefOperationOutcome =
     | Readonly<{ ok: true; result: Readonly<{ status: 'waiting' | 'sent' | 'refused' | 'stopped' | 'closed'; attemptId: string | null }> }>
     | Readonly<{ ok: false; errorCode: 'voice_brief_unavailable' | 'stale_voice_attempt' | 'voice_brief_not_retryable' | 'voice_brief_stop_unavailable'; details?: ActionExecuteFailure['details']; failureCause?: ActionExecuteFailure['failureCause'] }>;
 
-type MountedBriefOperation = (operation: VoiceBriefOperation) => VoiceBriefOperationOutcome;
+export type VoiceBriefScope = 'account' | 'sidebar';
+type MountedBriefOperation = (operation: VoiceBriefOperation, scope: VoiceBriefScope) => VoiceBriefOperationOutcome;
 let mountedBrief: MountedBriefOperation | null = null;
 let mountedHomeRequest: (() => VoiceBriefOperationOutcome) | null = null;
 let pendingHomeRequest: Readonly<{
     owner: (() => VoiceBriefOperationOutcome) | null;
+    scope: VoiceBriefScope;
     accountLifetime: ReturnType<typeof captureActiveServerAccountScopeCurrentness>;
     attemptId: string | null;
 }> | null = null;
@@ -50,20 +52,21 @@ export function resumeVoiceBriefHomeRequest(): VoiceBriefOperationOutcome | null
         return voiceBriefUnavailable('ui.voice_global.brief.account_scope');
     }
     if (request.attemptId !== getVoiceSessionPresentedAttemptId()) return { ok: false, errorCode: 'stale_voice_attempt' };
-    return mountedBrief('request');
+    return mountedBrief('request', request.scope);
 }
 
 export function voiceBriefOperationResult(status: 'waiting' | 'sent' | 'refused' | 'stopped' | 'closed'): VoiceBriefOperationOutcome {
     return { ok: true, result: { status, attemptId: getVoiceSessionPresentedAttemptId() } };
 }
 
-export function executeVoiceBriefOperation(operation: VoiceBriefOperation, input: VoiceBriefOperationInput = {}): VoiceBriefOperationOutcome {
+export function executeVoiceBriefOperation(operation: VoiceBriefOperation, input: VoiceBriefOperationInput = {},
+    scope: VoiceBriefScope = 'sidebar'): VoiceBriefOperationOutcome {
     if (input.expectedAttemptId !== undefined && input.expectedAttemptId !== getVoiceSessionPresentedAttemptId()) {
         return { ok: false, errorCode: 'stale_voice_attempt' };
     }
-    if (mountedBrief) return mountedBrief(operation);
+    if (mountedBrief) return mountedBrief(operation, scope);
     if (operation === 'request' && mountedHomeRequest) {
-        const request = { owner: mountedHomeRequest, accountLifetime: captureActiveServerAccountScopeCurrentness(),
+        const request = { owner: mountedHomeRequest, scope, accountLifetime: captureActiveServerAccountScopeCurrentness(),
             attemptId: getVoiceSessionPresentedAttemptId() };
         pendingHomeRequest = request;
         const outcome = mountedHomeRequest();
@@ -80,12 +83,12 @@ export function voiceBriefUnavailable(phase: string): VoiceBriefOperationOutcome
 
 /** Reach Home's existing demand-mounted producer from any Voice surface. */
 export async function executeVoiceBriefOperationFromUi(operation: VoiceBriefOperation, input: VoiceBriefOperationInput,
-    openHome: () => Promise<void>): Promise<VoiceBriefOperationOutcome> {
+    openHome: () => Promise<void>, scope: VoiceBriefScope = 'sidebar'): Promise<VoiceBriefOperationOutcome> {
     if (operation !== 'request' || mountedBrief || mountedHomeRequest
         || (input.expectedAttemptId !== undefined && input.expectedAttemptId !== getVoiceSessionPresentedAttemptId())) {
-        return executeVoiceBriefOperation(operation, input);
+        return executeVoiceBriefOperation(operation, input, scope);
     }
-    const pending = { owner: null, accountLifetime: captureActiveServerAccountScopeCurrentness(),
+    const pending = { owner: null, scope, accountLifetime: captureActiveServerAccountScopeCurrentness(),
         attemptId: getVoiceSessionPresentedAttemptId() };
     pendingHomeRequest = pending;
     try {

@@ -14,11 +14,11 @@ import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
 import { getVoiceSessionAttemptId, getVoiceSessionPresentedAttemptId, getVoiceSessionSnapshot, subscribeToVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 import type { VoiceSessionStatus } from '@/voice/session/types';
 
-import { registerVoiceBriefOperations, resumeVoiceBriefHomeRequest, voiceBriefOperationResult, voiceBriefUnavailable, type VoiceBriefOperation, type VoiceBriefOperationOutcome } from './voiceBriefActionRuntime';
+import { registerVoiceBriefOperations, resumeVoiceBriefHomeRequest, voiceBriefOperationResult, voiceBriefUnavailable, type VoiceBriefOperation, type VoiceBriefOperationOutcome, type VoiceBriefScope } from './voiceBriefActionRuntime';
 
 const SURFACE_PROPS = Object.freeze({ variant: 'sidebar' as const });
 type Delivery = 'waiting' | 'sent' | 'refused' | 'stopped';
-type PendingBrief = { attemptId: string | null; accountLifetime: ReturnType<typeof captureActiveServerAccountScopeCurrentness> };
+type PendingBrief = { attemptId: string | null; scope: VoiceBriefScope; accountLifetime: ReturnType<typeof captureActiveServerAccountScopeCurrentness> };
 
 function observeBriefControlResult(result: void | Promise<boolean>, settle: (accepted: boolean) => void): 'waiting' | 'settled' {
     if (result) {
@@ -49,7 +49,10 @@ export function useVoiceBriefRequest(onClose?: () => void): {
 } {
     const sourceInbox = useInboxModel();
     const needsYouShelf = useVoiceBriefNeedsYou();
-    const inbox = React.useMemo(() => ({ ...sourceInbox, needsYouShelf }), [sourceInbox, needsYouShelf]);
+    const inboxByScope = React.useMemo(() => ({ account: sourceInbox, sidebar: { ...sourceInbox, needsYouShelf } }),
+        [sourceInbox, needsYouShelf]);
+    const [scope, setScope] = React.useState<VoiceBriefScope>('sidebar');
+    const inbox = inboxByScope[scope];
     const voiceSettings = useSetting('voice');
     const brief = React.useMemo(() => buildVoiceBrief({ inbox, settings: { voice: voiceSettings } }), [inbox, voiceSettings]);
     const voice = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_GLOBAL);
@@ -61,8 +64,8 @@ export function useVoiceBriefRequest(onClose?: () => void): {
     const pending = React.useRef<PendingBrief | null>(null);
     const started = React.useRef(false);
     const initialized = React.useRef(false);
-    const current = React.useRef({ inbox, voice, surface, delivery, retryRequired, onClose, attemptId: getVoiceSessionAttemptId(), accountLifetime: captureActiveServerAccountScopeCurrentness() });
-    current.current = { inbox, voice, surface, delivery, retryRequired, onClose, attemptId: getVoiceSessionAttemptId(), accountLifetime: captureActiveServerAccountScopeCurrentness() };
+    const current = React.useRef({ inboxByScope, scope, voice, surface, delivery, retryRequired, onClose, attemptId: getVoiceSessionAttemptId(), accountLifetime: captureActiveServerAccountScopeCurrentness() });
+    current.current = { inboxByScope, scope, voice, surface, delivery, retryRequired, onClose, attemptId: getVoiceSessionAttemptId(), accountLifetime: captureActiveServerAccountScopeCurrentness() };
 
     const deliverWhenConnected = React.useCallback((): Delivery | null => {
         const request = pending.current;
@@ -81,7 +84,7 @@ export function useVoiceBriefRequest(onClose?: () => void): {
         // Retire before transport delivery: synchronous provider publication cannot send twice.
         pending.current = null;
         started.current = true;
-        const next = voiceHooks.onBriefRequested(snapshot.sessionId, current.current.inbox) ? 'sent' : 'refused';
+        const next = voiceHooks.onBriefRequested(snapshot.sessionId, current.current.inboxByScope[request.scope]) ? 'sent' : 'refused';
         setDelivery(next);
         return next;
     }, []);
@@ -93,7 +96,7 @@ export function useVoiceBriefRequest(onClose?: () => void): {
         return dispose;
     }, [deliverWhenConnected]);
 
-    const execute = React.useCallback((operation: VoiceBriefOperation): VoiceBriefOperationOutcome => {
+    const execute = React.useCallback((operation: VoiceBriefOperation, requestedScope: VoiceBriefScope): VoiceBriefOperationOutcome => {
         const owner = current.current;
         if (!owner.accountLifetime.isCurrent()) {
             return voiceBriefUnavailable('ui.voice_global.brief.account_scope');
@@ -125,8 +128,10 @@ export function useVoiceBriefRequest(onClose?: () => void): {
             return { ok: false, errorCode: 'voice_brief_not_retryable' };
         }
         if (operation === 'request' && pending.current) return voiceBriefOperationResult(deliverWhenConnected() ?? 'waiting');
-        const request = { attemptId: getVoiceSessionAttemptId(), accountLifetime: captureActiveServerAccountScopeCurrentness() };
+        const request = { attemptId: getVoiceSessionAttemptId(), scope: operation === 'retry' ? owner.scope : requestedScope,
+            accountLifetime: captureActiveServerAccountScopeCurrentness() };
         pending.current = request;
+        setScope(request.scope);
         const settleControl = (accepted: boolean) => {
             if (accepted || pending.current !== request || !isActionCurrent() || !request.accountLifetime.isCurrent()) return;
             pending.current = null;

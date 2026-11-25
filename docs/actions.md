@@ -8116,11 +8116,10 @@ result so the model can explain the missing owner rather than repeat the call. `
 remains for contributed plugin Actions. A malformed native or legacy text Action
 is refused before execution with a plain spoken explanation, without validator
 field names or diagnostics.
-In 0.3 development, Brief needs-you membership and totals come from the current
-sidebar's retained Needs-you shelf, including its scope and filters, rather than
-the Account Inbox's attention history. An unavailable shelf is unknown, never
-zero. Missing individual details are reported as incomplete coverage rather
-than reducing that total. Spoken groups use the app's disclosed Session labels,
+In 0.3 development, a spoken Brief request uses the Account Inbox's Needs you
+membership and total. Home's **Brief me** uses the retained sidebar shelf with
+its current scope and filters. An unavailable shelf yields an unknown count.
+Missing individual details are reported as incomplete coverage. Spoken groups use the app's disclosed Session labels,
 including its fallback labels. An explicit Brief uses the Account content-sharing
 switches; automatic Follow update levels do not suppress its requested names.
 The snapshot supplies the exact remaining count for “and N more” instead of

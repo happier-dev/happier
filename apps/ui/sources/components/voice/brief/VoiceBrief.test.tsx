@@ -204,6 +204,7 @@ let accountSettingsVersion = 1;
 let activityQueryRows: ReturnType<typeof createCompactSessionListRowFixture>[] = [];
 let sessionHttp: ReturnType<typeof createSessionMetadataHttpBoundary>;
 const SCALE_BRIEF_TEST = 'keeps projection-only Brief work local across a thousand admitted Sessions';
+const ACCOUNT_BRIEF_TEST = 'routes the admitted Voice Brief Action from outside Home to the existing Brief data producer';
 const SIDEBAR_BRIEF_TEST = 'sends the current sidebar ten through the real Home Brief entry with thirteen Account Sessions';
 let restorePopoverGlobals: (() => void) | null = null;
 const initialState = storage.getState();
@@ -314,7 +315,7 @@ async function prepareBriefAccount(onlinePersonalQuery = false) {
     voiceConversationRuntimeMachine.reset();
     setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
 }
-beforeEach(({ task }) => prepareBriefAccount(task.name === SCALE_BRIEF_TEST || task.name === SIDEBAR_BRIEF_TEST
+beforeEach(({ task }) => prepareBriefAccount(task.name === SCALE_BRIEF_TEST || task.name === SIDEBAR_BRIEF_TEST || task.name === ACCOUNT_BRIEF_TEST
     || task.name.startsWith('delivers the Home needs-you facts from Settings')));
 afterEach(async () => {
     await screen?.unmount(); screen = null;
@@ -1075,7 +1076,21 @@ describe('mounted Voice Brief request', () => {
             failureCause: { phase: 'ui.voice_global.brief.host' } });
     });
 
-    it('routes the admitted Voice Brief Action from outside Home to the existing Brief data producer', async () => {
+    it(ACCOUNT_BRIEF_TEST, async () => {
+        const serverId = account!.home.id;
+        const session = createSessionFixture({ id: 'blocked-outside-home-shelf', serverId,
+            metadata: { path: '/project', host: 'test', summary: { text: 'Review queued deployment', updatedAt: 1 } },
+            active: true, activeAt: Date.now(), pendingBlockedCount: 1, latestTurnStatus: 'completed' });
+        const withViewer = { ...session, viewer: createSessionOwnerViewerFixture(session) };
+        activityQueryRows = [createCompactSessionListRowFixture({
+            ...createPlainSessionByIdResponseFixture(session).session, viewer: withViewer.viewer,
+        })];
+        storage.getState().applySessions([withViewer]);
+        retainSessionListPaneState({ storageKind: 'all', pathname: '/', sourceScopeKey: 'brief-account-outside-shelf',
+            selectedServerIds: [serverId], queryMembershipActive: true, referenceCorpusActive: true,
+            paneState: { summary: { sessionsReady: true, sessionCount: 0 }, visibleSessionListIndex: [],
+                filterResult: { matchedCount: 0, coverage: 'complete' }, hasHiddenInactiveSessions: false,
+                folderFeatureEnabledServerIds: [], showLoading: false, showEmptyState: true } });
         const speech = await installTransport();
         await selectService();
         const { router } = await import('expo-router');
@@ -1085,7 +1100,9 @@ describe('mounted Voice Brief request', () => {
         function Route() {
             const [home, setHome] = React.useState(false);
             showHome = () => setHome(true);
-            return home ? <BriefHome available /> : null;
+            return home ? <ActivityPersonalSessionMembershipProvider enabled><InboxSummaryProvider>
+                <BriefHome available />
+            </InboxSummaryProvider></ActivityPersonalSessionMembershipProvider> : null;
         }
         vi.mocked(router.push).mockImplementation(() => showHome?.());
         screen = await renderScreen(<AuthProvider initialCredentials={account!.credentials}><Route /></AuthProvider>);
@@ -1097,7 +1114,13 @@ describe('mounted Voice Brief request', () => {
         await speech.waitForStart();
         await act(async () => speech.connect());
         await speech.waitForSpoken();
-        expect(speech.context.at(-1)).toContain('INBOX BRIEF');
+        const context = speech.context.at(-1)?.match(/INBOX BRIEF\n\n(\{[^\n]+\})/);
+        expect(context).not.toBeNull();
+        expect(JSON.parse(context![1]!)).toMatchObject({
+            counts: { needs_you: 1 },
+            items: [expect.objectContaining({ category: 'needs_you', title: 'Review queued deployment',
+                reason: t('session.pendingMessages.deliveryBlockedReasons.unknown') })],
+        });
         expect(speech.spoken).toEqual([t('voiceMoments.briefMe')]);
         vi.mocked(router.push).mockReset();
     });

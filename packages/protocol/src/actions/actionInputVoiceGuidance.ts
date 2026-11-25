@@ -182,7 +182,7 @@ const WORKFLOW_NOTES_BY_ACTION_ID: Readonly<Record<string, readonly VoiceGuidanc
     requiresActionIds: ['settings.list', 'settings.get', 'settings.set', 'settings.invoke'],
   }],
   [VOICE_BRIEF_REQUEST_ACTION_ID_V1]: [{
-    text: 'For a briefing about what needs attention, use requestVoiceBrief. Its mounted Brief owner supplies the current sidebar names, total and exact remainder and delivers the spoken answer. Do not substitute Account Inbox totals or speak a second summary',
+    text: 'For a spoken Account Inbox briefing, use requestVoiceBrief. Its mounted Brief owner supplies names, reasons, totals and exact remainders and delivers the spoken answer. Let that owner deliver the answer without speaking a second summary',
     requiresActionIds: [VOICE_BRIEF_REQUEST_ACTION_ID_V1],
   }],
   'inbox.get': [{
