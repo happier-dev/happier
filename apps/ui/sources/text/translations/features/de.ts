@@ -17781,6 +17781,7 @@ const german: TeamsTranslationRoot = {
             usage: {
                 title: 'Verbrauch',
                 homeAdminRequired: "Nur Home-Admins können die Nutzung des Home sehen",
+                invalidQuery: "Dieses Home hat die Nutzungsanfrage nicht akzeptiert. Wähle einen anderen Filter oder öffne Nutzung erneut.",
                 teamCredentialManagerRequired: "Nur Personen, die die Zugangsdaten dieses Teams verwalten, können die Team-Nutzung sehen",
                 empty: 'In diesem Zeitraum wurde nichts erfasst.',
                 rangeLabel: 'Zeitraum',

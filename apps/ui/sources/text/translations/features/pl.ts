@@ -17995,6 +17995,7 @@ const polish: TeamsTranslationRoot = {
             usage: {
                 title: 'Zużycie',
                 homeAdminRequired: "Tylko administratorzy Home mogą przeglądać użycie Home",
+                invalidQuery: "Ten Home odrzucił żądanie użycia. Wybierz inny filtr lub ponownie otwórz Użycie.",
                 teamCredentialManagerRequired: "Tylko osoby zarządzające danymi uwierzytelniającymi tego Team mogą przeglądać użycie Team",
                 empty: 'W tym okresie nic nie zapisano.',
                 rangeLabel: 'Okres',

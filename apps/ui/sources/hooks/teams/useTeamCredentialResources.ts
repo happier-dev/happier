@@ -506,6 +506,7 @@ export type TeamCredentialUsageProjection = Readonly<{
     status: 'loading' | 'ready' | 'error';
     /** A later page failed; the rows already shown are still authoritative. */
     partial: boolean;
+    failedContinuation: boolean;
     /**
      * Whether `result` was produced by the query currently being asked.
      *
@@ -542,10 +543,11 @@ export function useTeamCredentialUsage(params: Readonly<{
         result: TeamCredentialUsageQueryResultV1 | null;
         status: TeamCredentialUsageProjection['status'];
         partial: boolean;
+        failedContinuation: boolean;
         nextCursor: string | null;
         loadingMore: boolean;
         error: HomeDomainFailure | null;
-    }>>({ key: '', continuityKey: '', lifetime: null, resultKey: '', result: null, status: 'loading', partial: false, nextCursor: null, loadingMore: false, error: null });
+    }>>({ key: '', continuityKey: '', lifetime: null, resultKey: '', result: null, status: 'loading', partial: false, failedContinuation: false, nextCursor: null, loadingMore: false, error: null });
     const scope = params.scope;
     const inputKey = JSON.stringify(params.input);
     const input = React.useMemo(() => params.input, [inputKey]);
@@ -583,7 +585,7 @@ export function useTeamCredentialUsage(params: Readonly<{
         const controller = new AbortController();
         request.current = controller;
         setState((previous) => {
-            if (continuing) return { ...previous, loadingMore: true, error: null };
+            if (continuing) return { ...previous, loadingMore: true, failedContinuation: false, error: null };
             const keepPrevious = previous.continuityKey === continuityKey && previous.lifetime?.isCurrent();
             return {
                 key,
@@ -592,7 +594,7 @@ export function useTeamCredentialUsage(params: Readonly<{
                 resultKey: keepPrevious ? previous.resultKey : '',
                 result: keepPrevious ? previous.result : teamCredentialUsageObservations.get(observationKey) ?? null,
                 status: 'loading',
-                partial: false,
+                partial: false, failedContinuation: false,
                 nextCursor: null,
                 loadingMore: false,
                 error: null,
@@ -619,7 +621,7 @@ export function useTeamCredentialUsage(params: Readonly<{
                 resultKey: key,
                 result,
                 status: 'ready',
-                partial: false,
+                partial: false, failedContinuation: false,
                 nextCursor: outcome.value.nextCursor,
                 loadingMore: false,
                 error: null,
@@ -633,6 +635,7 @@ export function useTeamCredentialUsage(params: Readonly<{
                     ...(outcome.failure.retryable ? {} : { result: null, resultKey: '', nextCursor: null }),
                     status: 'error',
                     partial: outcome.failure.retryable && continuing && previous.result !== null,
+                    failedContinuation: continuing,
                     loadingMore: false,
                     error: outcome.failure,
                 });
@@ -649,18 +652,19 @@ export function useTeamCredentialUsage(params: Readonly<{
         : null;
     const current = active && state.lifetime?.isCurrent() && (state.key === key || state.continuityKey === continuityKey)
         ? state
-        : { resultKey: '', result: retained, status: 'loading' as const, partial: false, nextCursor: null, loadingMore: false, error: null };
+        : { resultKey: '', result: retained, status: 'loading' as const, partial: false, failedContinuation: false, nextCursor: null, loadingMore: false, error: null };
     return React.useMemo(() => Object.freeze({
         result: current.result,
         status: current.status,
         partial: current.partial,
+        failedContinuation: current.failedContinuation,
         resultIsCurrentQuery: current.result !== null && current.resultKey === key,
         hasMore: current.nextCursor !== null,
         loadingMore: current.loadingMore,
         error: current.error,
         reload,
         loadMore,
-    }), [current.error, current.loadingMore, current.nextCursor, current.partial, current.result, current.resultKey, current.status, key, loadMore, reload]);
+    }), [current.error, current.failedContinuation, current.loadingMore, current.nextCursor, current.partial, current.result, current.resultKey, current.status, key, loadMore, reload]);
 }
 
 /**

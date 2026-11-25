@@ -16,12 +16,13 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 installSettingsViewCommonModuleMocks({
     storage: 'real',
     router: async () => ({
-        useRouter: () => ({ push: vi.fn(), back: vi.fn(), replace: vi.fn() }),
+        useRouter: () => ({ push: routerPush, back: vi.fn(), replace: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),
         useLocalSearchParams: () => ({}),
     }),
 });
 
+const { push: routerPush } = vi.hoisted(() => ({ push: vi.fn() }));
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 // Load real owners after HTTP installation, outside a timed per-case setup.
@@ -286,6 +287,34 @@ describe('TeamCredentialUsageScreen', () => {
             expect(harness.requestsFor(TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1)).toHaveLength(0);
         },
     );
+
+    it.each([
+        { status: 400, error: 'invalid_resource_input', label: 'teams.credentials.usage.invalidQuery' },
+        { status: 404, error: 'not_found_or_not_visible', label: 'teams.credentials.detail.notFound' },
+        { status: 403, error: 'team_authentication_required', label: 'teams.credentials.errors.teamAuthenticationRequired', action: 'sign-in' },
+        { status: 503, error: 'team_authentication_policy_unavailable', label: 'teams.credentials.externalApi.authenticationUnavailable' },
+        { status: 503, error: 'feature_disabled', label: 'teams.credentials.errors.featureDisabled' },
+        { status: 400, error: 'cost_limit_unavailable', label: 'teams.credentials.limits.costReadUnavailable' },
+        { status: 503, error: 'temporarily_unavailable', label: 'teams.errors.loadFailed', action: 'retry' },
+    ] as const)('shows the usage query refusal $error and its recovery', async (scenario) => {
+        routerPush.mockClear();
+        const serverId = await addHome();
+        harness.answer(serverId, USAGE_QUERY_PATH, { status: scenario.status, body: { error: scenario.error } });
+        const screen = await renderUsage(serverId);
+        await waitForTestId(screen, 'team-credential-usage-error');
+        const action = 'action' in scenario ? scenario.action : null;
+        expect(screen.getTextContent()).toContain(scenario.label);
+        expect(screen.findByTestId('team-credential-usage-retry') !== null).toBe(action === 'retry');
+        expect(screen.findByTestId('team-credential-usage-sign-in') !== null).toBe(action === 'sign-in');
+        if (action === 'sign-in') {
+            await screen.pressByTestIdAsync('team-credential-usage-sign-in');
+            expect(routerPush).toHaveBeenCalledWith(expect.stringContaining(`/teams/team-1/sign-in?serverId=${serverId}`));
+        } else if (action === 'retry') {
+            harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult() });
+            await screen.pressByTestIdAsync('team-credential-usage-retry');
+            await waitForTestId(screen, 'team-credential-usage.requests');
+        }
+    });
 
     it.each([
         { subject: { kind: 'team', teamId: 'team-1' }, status: 404, error: 'not_found_or_not_visible', title: 'teams.credentials.detail.notFound' },
@@ -781,6 +810,39 @@ describe('TeamCredentialUsageScreen', () => {
         await waitForTestId(screen, 'team-credential-usage-slice:account-lin');
         expect((harness.requestsFor(USAGE_QUERY_PATH).at(-1)?.input as { cursor?: string }).cursor)
             .toBe('usage-page-2');
+    });
+
+    it('restarts a rejected usage cursor at the first page of the same breakdown', async () => {
+        const serverId = await addHome();
+        harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult() });
+        const screen = await renderUsage(serverId);
+        await waitForTestId(screen, 'team-credential-usage.requests');
+
+        harness.answer(serverId, USAGE_QUERY_PATH, {
+            body: usageResult({
+                breakdown: [{ key: 'account-maya', label: 'Maya Chen', requestCount: 7, tokens: 900 }],
+                nextCursor: 'expired-page',
+            }),
+        });
+        await screen.pressByTestIdAsync('team-credential-usage-breakdown-trigger');
+        await waitForTestId(screen, 'team-credential-usage-breakdown:member');
+        await screen.pressByTestIdAsync('team-credential-usage-breakdown:member');
+        await waitForTestId(screen, 'team-credential-usage-load-more');
+
+        harness.answer(serverId, USAGE_QUERY_PATH, { status: 400, body: { error: 'invalid_resource_input' } });
+        await screen.pressByTestIdAsync('team-credential-usage-load-more');
+        await waitForTestId(screen, 'team-credential-usage-refresh');
+        expect(screen.getTextContent()).toContain('teams.errors.listCursorExpired');
+        expect(screen.findByTestId('team-credential-usage-retry')).toBeNull();
+
+        harness.answer(serverId, USAGE_QUERY_PATH, {
+            body: usageResult({ breakdown: [{ key: 'account-lin', label: 'Lin Park', requestCount: 4, tokens: 600 }] }),
+        });
+        await screen.pressByTestIdAsync('team-credential-usage-refresh');
+        await waitForTestId(screen, 'team-credential-usage-slice:account-lin');
+        const fresh = harness.requestsFor(USAGE_QUERY_PATH).at(-1)?.input;
+        expect(fresh).toMatchObject({ breakdown: 'member' });
+        expect(fresh).not.toHaveProperty('cursor');
     });
 
     it('names a mixed resource’s request total as the brokered part it actually measured', async () => {

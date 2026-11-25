@@ -17843,6 +17843,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
             usage: {
                 title: '用量',
                 homeAdminRequired: "只有 Home 管理员才能查看 Home 用量",
+                invalidQuery: "此 Home 未接受用量请求。请选择其他筛选条件或重新打开用量页面。",
                 teamCredentialManagerRequired: "只有管理此 Team 凭据的人才能查看 Team 用量",
                 empty: '此期间没有任何记录。',
                 rangeLabel: '周期',

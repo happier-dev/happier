@@ -59,8 +59,9 @@ import { formatTokenCountLong, formatUsageCost } from '@/utils/format/usageNumbe
 
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 import {
-    credentialFailureMessage,
+    presentCredentialReadFailure,
     formatLimitResetUtc,
     limitMetricLabel,
     limitPeriodLabel,
@@ -160,6 +161,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
     displayName: string;
 }>) {
     const { scope, address, target, view, featureEnabled } = props;
+    const readFailureAction = useTeamReadFailureAction(address ?? undefined);
     const resource = view?.resource ?? null;
     const catalogResource = view?.catalogResource ?? null;
     const aggregate = target.subject !== undefined;
@@ -281,7 +283,19 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
             />
         </ItemGroup>
     ) : null;
-    const usageFailureMessage = usage.error ? credentialFailureMessage(usage.error) : null;
+    const usageFailure = usage.error;
+    const usageRefusal = !usageFailure ? null : usageFailure.code === 'invalid_resource_input'
+        ? usage.failedContinuation
+            ? {
+                message: t('teams.errors.listCursorExpired'),
+                action: { label: t('common.refresh'), testID: 'team-credential-usage-refresh', onPress: () => void usage.reload() },
+            }
+            : { message: t('teams.credentials.usage.invalidQuery') }
+        : presentCredentialReadFailure(usageFailure, () => readFailureAction(usageFailure, {
+            testIDPrefix: usage.partial ? 'team-credential-usage-load-more' : 'team-credential-usage',
+            onPress: () => void (usage.partial ? usage.loadMore() : usage.reload()),
+        }));
+    const showUsageRefusal = usageRefusal && usageRefusal.message !== view?.refusal?.message;
 
     if (!featureEnabled || (!aggregate && view?.resolved && resource === null && catalogResource === null && !view.refusal)) {
         return (
@@ -467,14 +481,14 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                 </ItemGroup>
             ) : null}
 
-            {usage.partial && usage.error && usageFailureMessage !== null ? (
+            {usage.partial && showUsageRefusal ? (
                 <ItemGroup>
                     <SurfaceStateCard
                         testID="team-credential-usage-load-more-error"
                         kind="error"
                         size="line"
-                        title={usageFailureMessage}
-                        action={{ label: t('common.retry'), disabled: usage.loadingMore, onPress: () => void usage.loadMore(), testID: 'team-credential-usage-load-more-retry' }}
+                        title={usageRefusal.message}
+                        action={usageRefusal.action}
                         accessibilitySemantics="alert"
                     />
                 </ItemGroup>
@@ -565,19 +579,19 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                 </ItemGroup>
             ) : null}
 
-            {usage.error && !usage.partial && usageFailureMessage !== null ? (
+            {usageFailure && !usage.partial && showUsageRefusal ? (
                 <ItemGroup>
                     <SurfaceStateCard
                         testID="team-credential-usage-error"
-                        kind={usage.error.kind === 'forbidden' || usage.error.kind === 'unauthorized' ? 'denied' : 'error'}
+                        kind={usageFailure.kind === 'forbidden' || usageFailure.kind === 'unauthorized' ? 'denied' : 'error'}
                         size="line"
-                        title={usageFailureMessage}
-                        reason={(usage.error.code === 'not_found_or_not_visible' || usage.error.code === 'forbidden') && target.subject
+                        title={usageRefusal.message}
+                        reason={(usageFailure.code === 'not_found_or_not_visible' || usageFailure.code === 'forbidden') && target.subject
                             ? target.subject.kind === 'home'
                                 ? t('teams.credentials.usage.homeAdminRequired')
                                 : t('teams.credentials.usage.teamCredentialManagerRequired')
                             : undefined}
-                        action={{ label: t('common.retry'), onPress: () => void usage.reload(), testID: 'team-credential-usage-retry' }}
+                        action={usageRefusal.action}
                         accessibilitySemantics="alert"
                     />
                 </ItemGroup>

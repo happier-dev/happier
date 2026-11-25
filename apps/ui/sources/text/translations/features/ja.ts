@@ -17903,6 +17903,7 @@ const japanese: TeamsTranslationRoot = {
             usage: {
                 title: '使用状況',
                 homeAdminRequired: "Home の使用状況を確認できるのは Home 管理者のみです",
+                invalidQuery: "この Home は使用状況のリクエストを受け付けませんでした。別のフィルターを選ぶか、使用状況を開き直してください。",
                 teamCredentialManagerRequired: "この Team の認証情報を管理する人のみが Team の使用状況を確認できます",
                 empty: 'この期間に記録はありません。',
                 rangeLabel: '期間',

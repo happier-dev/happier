@@ -17997,6 +17997,7 @@ const russian: TeamsTranslationRoot = {
             usage: {
                 title: 'Расход',
                 homeAdminRequired: "Только администраторы Home могут видеть использование Home",
+                invalidQuery: "Этот Home не принял запрос данных об использовании. Выберите другой фильтр или снова откройте раздел использования.",
                 teamCredentialManagerRequired: "Только те, кто управляет учётными данными этого Team, могут видеть использование Team",
                 empty: 'За этот период ничего не записано.',
                 rangeLabel: 'Период',

@@ -1216,6 +1216,7 @@ export const english = {
             usage: {
                 title: 'Usage',
                 homeAdminRequired: 'Only Home admins can see Home usage',
+                invalidQuery: "This Home did not accept the usage request. Choose another filter or reopen Usage.",
                 teamCredentialManagerRequired: "Only people who manage this Team's credentials can see Team usage",
                 empty: 'Nothing recorded in this period.',
                 rangeLabel: 'Period',

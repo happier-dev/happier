@@ -17953,6 +17953,7 @@ const portuguese: TeamsTranslationRoot = {
             usage: {
                 title: 'Consumo',
                 homeAdminRequired: "Só os administradores do Home podem ver o uso do Home",
+                invalidQuery: "Este Home não aceitou o pedido de utilização. Escolha outro filtro ou volte a abrir Utilização.",
                 teamCredentialManagerRequired: "Só quem gere as credenciais deste Team pode ver o uso do Team",
                 empty: 'Nada registado neste período.',
                 rangeLabel: 'Período',

@@ -17981,6 +17981,7 @@ const catalan: TeamsTranslationRoot = {
             usage: {
                 title: 'Consum',
                 homeAdminRequired: "Només els administradors del Home poden veure l’ús del Home",
+                invalidQuery: "Aquest Home no ha acceptat la sol·licitud d’ús. Tria un altre filtre o torna a obrir Ús.",
                 teamCredentialManagerRequired: "Només les persones que gestionen les credencials d’aquest Team poden veure l’ús del Team",
                 empty: 'No hi ha res registrat en aquest període.',
                 rangeLabel: 'Període',
