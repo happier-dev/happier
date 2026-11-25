@@ -11,7 +11,7 @@ import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/plugin-sdk/e
 import { databaseActionOperationClass } from '@happier-dev/plugin-sdk/actions';
 import type { DatabaseActionProducers } from './actions.js';
 import type { DatabaseWorkbenchConnection } from './connection.js';
-import { DATABASE_CONNECTION_RESOURCE_ID_V1 } from './resources.js';
+import { DATABASE_CONNECTION_RESOURCE_ID_V1, type DatabaseOperationExecution } from './resources.js';
 import { projectDatabaseFindingObservation } from './insights/findings.js';
 import { emitDatabaseFindingObservation } from './insights/events.js';
 import { projectCommittedDatabaseWrite } from './writeAudit.js';
@@ -32,26 +32,35 @@ export type DatabaseOperationAdmission = (request: Readonly<{
     access: DatabaseOperationClassV1;
 }>) => Promise<unknown>;
 
+export type ExecuteResolvedDatabaseOperation = (
+    input: DatabaseOperationInputV1, context: PluginInvocationContext,
+) => Promise<DatabaseOperationExecution>;
+
 export function createDatabaseRuntime(options: Readonly<{
     resolve: DatabaseOperationResolver;
     admit: DatabaseOperationAdmission;
     listTargets?: DatabaseActionProducers['listTargets'];
-}>): DatabaseActionProducers & Required<Pick<DatabaseActionProducers, 'executeOperation'>> {
-    return { listTargets: options.listTargets, async executeOperation(input, context) {
+}>): DatabaseActionProducers & Required<Pick<DatabaseActionProducers, 'executeOperation'>> & {
+    executeResolvedOperation: ExecuteResolvedDatabaseOperation;
+} {
+    const executeResolvedOperation: ExecuteResolvedDatabaseOperation = async (input, context) => {
         // The registered Action identity and its declaration are admitted by the SDK.
         const access = databaseActionOperationClass(context.contribution.qualifiedId as DatabaseActionIdV1, input);
         let result: DatabaseOperationResultV1;
+        let sourceScope: DatabaseOperationExecution['sourceScope'];
         let writeAudit: Readonly<Record<string, JsonValue>> | undefined;
         if (access === 'read' && input.subscriptionId) {
             // The demand was opened for whoever subscribed; this request is admitted for its own requester first.
             await options.admit({ input, context, access });
             // A host-owned demand validates its captured target and keeps its existing connection.
-            // The same plugin's producer returns this union; the SDK validates the Action result once.
-            result = await context.services.resources.invokeDemand({
+            // The same plugin's producer returns the result and placement of the held connection.
+            ({ result, sourceScope } = await context.services.resources.invokeDemand({
                 subscriptionId: input.subscriptionId, resourceId: DATABASE_CONNECTION_RESOURCE_ID_V1, input,
-            }, { signal: context.signal }) as DatabaseOperationResultV1;
+            }, { signal: context.signal }) as DatabaseOperationExecution);
         } else {
             const { descriptor, connection } = await options.resolve({ input, context, access });
+            const { serverId, machineId } = descriptor.placement;
+            sourceScope = { serverId, machineId };
             try {
                 result = input.operation === 'describe'
                     ? { ok: true, operation: 'describe', descriptor }
@@ -69,13 +78,12 @@ export function createDatabaseRuntime(options: Readonly<{
         }
         if (result.ok && result.operation === 'stats.read' && result.observation.status === 'available') {
             try {
-                const observation = projectDatabaseFindingObservation(result.observation, input.target, context);
+                const observation = projectDatabaseFindingObservation(result.observation, sourceScope, context);
                 const subject = readAutomationDatabaseSubjectV1(observation.sourceScope.serverId, input.target);
                 if (subject.ok) await emitDatabaseFindingObservation({ observation, subject: subject.subject,
                     observationReceivedAt: Date.now(), observedDelta: 1 }, context);
             } catch (error) {
-                // The read has settled: an Environment-admitted reader has no stamped Machine,
-                // and finding emission must never turn a completed read into a failed one.
+                // The read has settled; finding emission cannot replace the result.
                 context.services.logger.warn('Database finding observation was not emitted', {
                     code: error instanceof PluginError ? error.code : 'action_failed',
                 });
@@ -97,6 +105,14 @@ export function createDatabaseRuntime(options: Readonly<{
                 });
             }
         }
-        return result;
-    } };
+        return { result, sourceScope };
+    };
+    return {
+        listTargets: options.listTargets,
+        executeResolvedOperation,
+        async executeOperation(input, context) {
+            const { result } = await executeResolvedOperation(input, context);
+            return result;
+        },
+    };
 }

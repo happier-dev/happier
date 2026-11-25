@@ -1,4 +1,5 @@
-import { createCanonicalJsonSigningInput, isRecord, PluginError } from '@happier-dev/plugin-sdk';
+import { createCanonicalJsonSigningInput, isRecord, PluginError, type LoggerService } from '@happier-dev/plugin-sdk';
+import { isPluginError, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/plugin-sdk/errors';
 import { decideDatabaseAccessV1, summarizeDatabaseAccessV1 } from '@happier-dev/databases';
 import {
     DatabaseAgentAccessV1Schema,
@@ -81,6 +82,7 @@ export function createManualDatabaseTargets(options: Readonly<{
     storage: Pick<StorageScopeService, 'get' | 'set' | 'delete' | 'list'> | undefined;
     identity: Partial<DatabaseManualIdentity> | undefined;
     databaseEngines?: DatabaseEnginesServiceV1;
+    logger?: Pick<LoggerService, 'warn'>;
 }>): DatabaseManualTargets {
     const { storage, identity } = options;
     const requesterAccount = identity?.requesterAccount;
@@ -189,7 +191,14 @@ export function createManualDatabaseTargets(options: Readonly<{
             });
             try {
                 return describe({ target, label, engine: connection.engine, agentAccess: retainedAccess }, 'person');
-            } finally { await connection.close(); }
+            } finally {
+                try { await connection.close(); }
+                catch (error) {
+                    options.logger?.warn('Database connection cleanup failed', {
+                        code: isPluginError(error) ? error.code : readUnexpectedActionErrorDiagnosticV1(error).errorCode ?? 'action_failed',
+                    });
+                }
+            }
         },
         async forget({ target, signal }) {
             admitScope(targetScope(target));

@@ -23,7 +23,7 @@ const translations = translationLocales.map(locale => ({ locale, resourceId: `i1
 
 function manualTargets(context: PluginInvocationContext) {
     return createManualDatabaseTargets({ storage: context.services.storage.daemon, identity: context,
-        databaseEngines: context.services.databaseEngines });
+        databaseEngines: context.services.databaseEngines, logger: context.services.logger });
 }
 
 const worktreeTargets = createWorktreeDatabaseTargets();
@@ -106,7 +106,7 @@ export const plugin = definePlugin({
     events: { [DATABASE_FINDING_EVENT_REF.localId]: databaseFindingEvent },
     actions: { ...createDatabaseActions({
         ...runtime,
-        ...createDatabaseInsightProducers({ executeOperation: runtime.executeOperation, admit: admitDatabaseOperation }),
+        ...createDatabaseInsightProducers({ executeResolvedOperation: runtime.executeResolvedOperation, admit: admitDatabaseOperation }),
         connectTarget(input, context) {
             return manualTargets(context).connect({ scope: input.scope, savedSecretId: input.savedSecretRef,
                 label: input.label, secrets: context.services.secrets, signal: context.signal });

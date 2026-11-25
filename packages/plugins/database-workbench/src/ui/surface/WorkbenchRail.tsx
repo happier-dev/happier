@@ -59,7 +59,7 @@ export function AccessWord(
   const access = selected.value?.access ?? props.descriptor.access;
   if (!access) return null;
   const unavailable = selected.status === 'unavailable' || selected.status === 'stale';
-  const failureCode = isPluginError(selected.error) ? selected.error.code : undefined;
+  const failure = isPluginError(selected.error) ? selected.error : undefined;
   const word = unavailable
     ? translate('plugins.database.access.unavailable', 'Access unavailable')
     : access.canWrite
@@ -86,10 +86,10 @@ export function AccessWord(
     >
       <Stack gap="small">
         {unavailable ? <ErrorState layout="line" kind="unavailable"
-          title={failureCode === 'machine_unavailable' && !environmentTarget
+          title={failure?.data.message ?? (failure?.code === 'machine_unavailable' && !environmentTarget
             ? translate('plugins.database.access.machineUnavailable', 'Access is stored on the Machine, which is unavailable.')
-            : translate('plugins.database.access.readUnavailable', 'Database access could not be read')}
-          details={failureCode}
+            : translate('plugins.database.access.readUnavailable', 'Database access could not be read'))}
+          details={failure?.code}
           onRetry={selected.refresh} retryLabel={translate('plugins.database.retry', 'Try again')} /> :
           <Text value={databaseAccessLine(translate, access)} />}
         {open && selected.status === 'loading' ? <LoadingState layout="line" rows={1} /> : null}

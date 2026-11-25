@@ -28,7 +28,7 @@ async function fixture(native: Awaited<ReturnType<typeof createNativeFindingFixt
     };
     const runtime = createDatabaseRuntime({ resolve, admit });
     const plugin = definePlugin({ id: 'happier.database', version: '0.0.0', actions: createDatabaseActions({
-        ...runtime, ...createDatabaseInsightProducers({ executeOperation: runtime.executeOperation, admit }),
+        ...runtime, ...createDatabaseInsightProducers({ executeResolvedOperation: runtime.executeResolvedOperation, admit }),
     }) });
     const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { ...services,
         ...(producer ? { resources: { ...resourceContext.resources, async invokeDemand(input, options) {

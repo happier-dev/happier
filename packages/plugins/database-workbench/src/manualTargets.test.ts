@@ -3,10 +3,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
+import { createCanonicalJsonSigningInput, PluginError } from '@happier-dev/plugin-sdk';
 import type { StorageScopeService } from '@happier-dev/plugin-sdk/storage';
 import type { DatabaseManualTargetV1, DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
 import { DatabaseTargetsListInputV1Schema } from '@happier-dev/plugin-sdk/database';
@@ -85,6 +85,28 @@ describe('manual target associations in the persistent daemon KV boundary', () =
         await owner.forget({ target: manual(connected.target) });
         expect((await owner.list({ input: { scope: selected }, requester: 'person' })).targets).toEqual([]);
         expect(await state.secrets.readSavedSecret(input.savedSecretId)).toBe(state.secretValue);
+    });
+
+    it('keeps a successful connection and its saved association when the selected driver fails to close', async () => {
+        const state = await fixture();
+        const close = vi.fn(async () => { throw new PluginError({ code: 'fixture_close_failed' }); });
+        const warn = vi.fn();
+        const services = { storage: state.storage, identity: identity('owner'), logger: { warn },
+            databaseEngines: {
+                list: () => [{ id: 'fixture', engineId: 'fixture', scheme: 'fixture', capabilities: [] }],
+                async open() {
+                    return { engine: 'fixture' as const, close, async execute() { throw new Error('Connect only opens the driver'); } };
+                },
+            },
+        };
+        const owner = createManualDatabaseTargets(services);
+        const selected = scope('owner');
+        const connection = await owner.connect({ scope: selected, savedSecretId: 'fixture-secret', label: 'Fixture database',
+            secrets: { async readSavedSecret() { return 'fixture://test'; } } });
+        expect(connection).toMatchObject({ engine: 'fixture', target: { savedSecretId: 'fixture-secret' } });
+        expect((await owner.list({ input: { scope: selected }, requester: 'person' })).targets).toEqual([connection]);
+        expect(close).toHaveBeenCalledOnce();
+        expect(warn).toHaveBeenCalledWith('Database connection cleanup failed', { code: 'fixture_close_failed' });
     });
 
     it('lists a Project across worktrees without acquiring secrets or disclosing another scope', async () => {

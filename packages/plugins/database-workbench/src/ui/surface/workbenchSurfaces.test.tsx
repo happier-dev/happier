@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from 'react';
+import { act, Profiler } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
     DATABASE_ACCESS_READ_ACTION_ID_V1,
@@ -27,6 +27,7 @@ import { computeSha256HexDigest, createCanonicalJsonSigningInput, PluginError } 
 import {
   createPluginUiActionControlTestHost,
   createPluginClientTestkit,
+  createPluginTestkit,
   createPluginUiTestkit,
   createSurfaceContextFixture,
   type PluginUiTestkitExecuteActionInput,
@@ -44,7 +45,7 @@ import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { renderSurface as renderRail } from './DatabaseRailTab.js';
 import { WORKBENCH_PAGE_ARTIFACT_ID, WORKBENCH_PAGE_VIEW_ID } from './views.js';
 import { encodeWorkbenchRootSubPath } from './subPath.js';
-import { PLUGIN_MANIFEST } from '../../manifest.js';
+import { PLUGIN_MANIFEST, plugin } from '../../manifest.js';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -463,18 +464,34 @@ describe('Database workbench surfaces', () => {
     }
   });
 
-  it('refreshes the open Environment access word on publication without polling', async () => {
+  it('reads Environment access on demand and carries a registered handler refusal to the access sheet', async () => {
     const target = { kind: 'deployment_service', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
       deploymentId: 'deployment', targetLinkId: 'link', serviceId: 'postgres', database: 'billing_dev' } as const;
     const connected = { ...descriptor, target, access: { canRead: true, canWrite: true } };
-    const digest = `sha256:${computeSha256HexDigest(JSON.stringify({ descriptor: connected, ownWriteRevision: 0, relationRevisions: [] }))}`;
+    const connection = connectionResourceHandlers(connected);
+    const watchResource = vi.fn(connection.watchResource);
+    const readResource = vi.fn(connection.readResource);
+    const commits = vi.fn();
     const readAccess = databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1);
     const daemon = daemonAnswers([connected]);
+    let refused = false;
+    const refusalCode = 'deployment_target_role_unavailable';
+    const refusalMessage = 'The Environment’s database reader is unavailable.';
+    const unexpected = async (): Promise<never> => { throw new Error('Unexpected database request'); };
+    const host = await createPluginTestkit({ manifest: plugin.manifest, module: plugin,
+      services: { deploymentDatabases: { listTargets: unexpected, resolve: unexpected,
+        async admit(input, access) {
+          expect(input).toEqual({ operation: 'describe', target });
+          expect(access).toBe('read');
+          if (refused) throw new PluginError({ code: refusalCode, message: refusalMessage });
+          return { environment: { serverId: 'home', environmentId: 'template', revision: 2 },
+            access: { canRead: true, canWrite: false, reason: 'database_not_an_editor' } };
+        },
+      } },
+    });
     const executeAction = vi.fn(async (request: PluginUiTestkitExecuteActionInput) => {
       if (request.action !== readAccess) return daemon(request);
-      expect(request.input).toEqual({ target });
-      return { setBy: 'environment', serverId: 'home', environmentId: 'template', expectedRevision: 2,
-        access: { canRead: true, canWrite: false, reason: 'database_not_an_editor' } };
+      return host.invokeAction(readAccess, request.input ?? null);
     });
     let publish: (() => void) | undefined;
     const databaseWorkbench = {
@@ -488,35 +505,64 @@ describe('Database workbench surfaces', () => {
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'environment-access', mountNonce: 'environment-access' },
       authorPlugin: { id: 'happier.database', version: '0.0.0' },
-      surface: context => <PluginUiHostPresentationScope
+      surface: context => <Profiler id="Workbench" onRender={commits}><PluginUiHostPresentationScope
         environment={projectHappierUiEnvironment(context.surface)} presentationHost={{
           renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, databaseWorkbench,
           renderPopover: input => input.content({ presentation: 'sheet', maxHeight: 240, requestClose: input.onRequestClose }),
-        }}>{renderPage(context)}</PluginUiHostPresentationScope>,
+        }}>{renderPage(context)}</PluginUiHostPresentationScope></Profiler>,
       subPath: encodeWorkbenchRootSubPath(target),
       surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
         pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-      handlers: { ...connectionResourceHandlers(), executeAction,
-        async watchResource() { return { digest }; },
-        async readResource() {
-          const body = { descriptor: connected, ownWriteRevision: 0, relationRevisions: [] };
-          return { contentType: 'application/json', digest, bytes: new TextEncoder().encode(JSON.stringify(body)) };
-        },
-      },
+      handlers: { ...connection, executeAction, watchResource, readResource },
     });
     try {
-      expect(await fixture.getByRole('button', { name: 'Can edit' })).toBeTruthy();
+      await settle(20);
+      expect(await fixture.queryByRole('button', { name: 'Can edit' })).toBeTruthy();
+      expect(watchResource).toHaveBeenCalledTimes(1);
+      expect(readResource).toHaveBeenCalledTimes(1);
+      const statsRead = databaseActionLocalIdV1(DATABASE_STATS_READ_ACTION_ID_V1);
+      expect(executeAction.mock.calls.map(([request]) => request.action).sort()).toEqual([
+        databaseActionLocalIdV1(DATABASE_SCHEMAS_LIST_ACTION_ID_V1),
+        databaseActionLocalIdV1(DATABASE_RELATIONS_LIST_ACTION_ID_V1),
+        statsRead,
+        statsRead,
+      ].sort());
+      expect(executeAction.mock.calls.filter(([request]) => request.action === statsRead)).toEqual(expect.arrayContaining([
+        [expect.objectContaining({ input: expect.objectContaining({ request: expect.objectContaining({ group: 'size' }) }) })],
+        [expect.objectContaining({ input: expect.objectContaining({ request: expect.objectContaining({ group: 'statements' }) }) })],
+      ]));
       const reads = () => executeAction.mock.calls.filter(([request]) => request.action === readAccess);
       expect(reads()).toHaveLength(0);
       expect(publish).toBeTypeOf('function');
       await act(async () => { publish?.(); });
       await settle(20);
-      await fixture.press(await fixture.getByRole('button', { name: 'Read only' }));
-      expect(await fixture.getByText('You aren’t in this Environment’s database editors.')).toBeTruthy();
+      const button = await fixture.queryByRole('button', { name: 'Read only' });
+      expect(button).toBeTruthy();
+      await fixture.press(button!);
+      expect(document.body.textContent).toContain('You aren’t in this Environment’s database editors.');
       expect(reads()).toHaveLength(1);
+      commits.mockClear();
+      vi.useFakeTimers();
+      act(() => { vi.advanceTimersByTime(60_000); });
+      vi.useRealTimers();
+      await settle();
+      expect(executeAction).toHaveBeenCalledTimes(5);
+      expect(watchResource).toHaveBeenCalledTimes(1);
+      expect(readResource).toHaveBeenCalledTimes(1);
+      expect(commits).not.toHaveBeenCalled();
+      refused = true;
+      await act(async () => { publish?.(); });
+      await settle(20);
+      expect(reads()).toHaveLength(2);
+      expect(document.body.textContent).toContain(refusalMessage);
+      expect(commits).toHaveBeenCalledTimes(1);
+      await fixture.press(await fixture.getByRole('button', { name: 'Details' }));
+      expect(document.body.textContent).toContain(refusalCode);
     } finally {
+      vi.useRealTimers();
       await fixture.dispose();
+      await host.dispose();
     }
   });
 

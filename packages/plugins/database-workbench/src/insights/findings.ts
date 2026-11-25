@@ -14,7 +14,7 @@ import {
 } from '@happier-dev/plugin-sdk/database';
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import type { DatabaseActionProducers } from '../actions.js';
-import type { DatabaseOperationAdmission } from '../runtime.js';
+import type { DatabaseOperationAdmission, ExecuteResolvedDatabaseOperation } from '../runtime.js';
 import { workbenchTargetKey } from '../targetIdentity.js';
 import { buildDatabaseFindingBriefV1 } from './brief.js';
 import { selectDatabaseStatement } from './presentation.js';
@@ -138,19 +138,14 @@ function summaryFor(stats: AvailableStats, rows: readonly FindingRow[]): Summary
 }
 
 /** The native stats completion and finding Actions share this content-free projection. */
-export function projectDatabaseFindingObservation(stats: AvailableStats, target: DatabaseFindingsListInputV1['target'],
+export function projectDatabaseFindingObservation(stats: AvailableStats, sourceScope: DatabaseFindingObservationV1['sourceScope'],
     context: PluginInvocationContext, rows: readonly FindingRow[] = rowsFor(stats)): DatabaseFindingObservationV1 {
-    const machine = context.chosenMachine;
-    if (!machine || !context.invocationId) throw new PluginError({ code: 'plugin_service_unavailable',
+    if (!context.invocationId) throw new PluginError({ code: 'plugin_service_unavailable',
         message: 'Completed database findings require native Action identity.' });
-    // The successful target resolver has already bound the exact routed
-    // Home. The Machine itself is stamped by native Action admission.
-    const serverId = target.kind === 'worktree' || target.kind === 'manual'
-        ? target.workspace.serverId : target.environment.serverId;
     return {
         v: 1, sourceRef: { pluginId: context.plugin.id,
             localId: databaseActionLocalIdV1(DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1) },
-        sourceScope: { serverId, machineId: machine.machineId },
+        sourceScope,
         evidenceIdentity: computeCanonicalDomainSeparatedDigest('happier.database.completed-finding-read.v1', [
             context.invocationId, String(stats.observedAtMs), createCanonicalJsonSigningInput(stats.intervalBasis),
         ]),
@@ -163,20 +158,21 @@ export function projectDatabaseFindingObservation(stats: AvailableStats, target:
 /** Native stats owns connection custody, demand reuse, SQL and sanitization.
  * This producer only projects completed evidence and rereads selected keys. */
 export function createDatabaseInsightProducers(options: Readonly<{
-    executeOperation: NonNullable<DatabaseActionProducers['executeOperation']>;
+    executeResolvedOperation: ExecuteResolvedDatabaseOperation;
     admit: DatabaseOperationAdmission;
 }>): Required<Pick<DatabaseActionProducers, 'listFindings' | 'readFinding' | 'readInsightSource' | 'dismissFinding' | 'buildInsightBrief'>> {
     async function read(input: DatabaseFindingsListInputV1, context: PluginInvocationContext) {
         // The existing operation owner pairs this operand with its stats result;
         // its broader union does not express the input/output correspondence.
-        const result = await options.executeOperation({ operation: 'stats.read', target: input.target,
-            request: input.request, ...(input.subscriptionId === undefined ? {} : { subscriptionId: input.subscriptionId }) }, context) as StatsResult;
+        const execution = await options.executeResolvedOperation({ operation: 'stats.read', target: input.target,
+            request: input.request, ...(input.subscriptionId === undefined ? {} : { subscriptionId: input.subscriptionId }) }, context);
+        const result = execution.result as StatsResult;
         if (!result.ok) return result;
         const stats = result.observation;
         if (stats.status === 'unavailable') return { ok: false as const, status: 'unavailable' as const,
             code: 'database_stats_unavailable', reason: stats.reason };
         const rows = rowsFor(stats);
-        const observation = projectDatabaseFindingObservation(stats, input.target, context, rows);
+        const observation = projectDatabaseFindingObservation(stats, execution.sourceScope, context, rows);
         return { ok: true as const, observation, rows, stats };
     }
     const readFinding: NonNullable<DatabaseActionProducers['readFinding']> = async (input, context) => {

@@ -46,7 +46,8 @@ describe('database connection Resource', () => {
                 descriptor: expected, ownWriteRevision: 0, relationRevisions: [],
             });
             expect(await producer.invoke!({ operation: 'describe', target: worktree }, { signal })).toEqual({
-                ok: true, operation: 'describe', descriptor: expected,
+                result: { ok: true, operation: 'describe', descriptor: expected },
+                sourceScope: { serverId: 'server', machineId: 'machine' },
             });
         } finally { await producer.dispose(); }
     });
@@ -124,11 +125,11 @@ describe('database connection Resource', () => {
         try {
             expect(JSON.parse(String(await producer.read(options)))).toEqual({ descriptor: published, ownWriteRevision: 0, relationRevisions: [] });
             expect(await producer.invoke!({ operation: 'describe', target }, { signal: controller.signal }))
-                .toEqual({ ok: true, operation: 'describe', descriptor: published });
+                .toEqual({ result: { ok: true, operation: 'describe', descriptor: published }, sourceScope: { serverId: 'server', machineId: 'machine' } });
             const read = { operation: 'statement.run' as const, target, mode: 'read' as const,
                 statement: { sql: 'SELECT label FROM selected', parameters: [] } };
             expect(await producer.invoke!(read, { signal: controller.signal }))
-                .toMatchObject({ ok: true, results: [{ rows: [{ cells: [{ type: 'text', value: 'before' }] }] }] });
+                .toMatchObject({ result: { ok: true, results: [{ rows: [{ cells: [{ type: 'text', value: 'before' }] }] }] } });
             await expect(producer.invoke!({ ...read, target: { ...target, savedSecretId: 'other' } }, { signal: controller.signal }))
                 .rejects.toMatchObject({ code: 'database_demand_target_mismatch' });
             const write = await openManualDatabaseConnection({ target, secretValue: pathToFileURL(path).toString(), access: 'write' });
@@ -139,11 +140,11 @@ describe('database connection Resource', () => {
             producer.notify!({ target }); expect(invalidations).toBe(1);
             expect(JSON.parse(String(await producer.read(options)))).toEqual({ descriptor: published, ownWriteRevision: 1, relationRevisions: [] });
             expect(await producer.invoke!(read, { signal: controller.signal }))
-                .toMatchObject({ ok: true, results: [{ rows: [{ cells: [{ type: 'text', value: 'after' }] }] }] });
+                .toMatchObject({ result: { ok: true, results: [{ rows: [{ cells: [{ type: 'text', value: 'after' }] }] }] } });
             expect({ acquisitions, resolutions }).toEqual({ acquisitions: 1, resolutions: 1 });
         } finally { observation.dispose(); controller.abort(); await producer.dispose(); }
         expect(await producer.invoke!({ operation: 'schemas.list', target, page: { rows: 1 } }, { signal: new AbortController().signal }))
-            .toMatchObject({ ok: false, code: 'database_connection_unavailable' });
+            .toMatchObject({ result: { ok: false, code: 'database_connection_unavailable' } });
         const { requesterAccount: _requesterAccount, secrets: _secrets, ...withoutCustody } = options;
         await expect(runtime.createProducer!(withoutCustody))
             .rejects.toMatchObject({ code: 'plugin_resource_demand_unavailable' });

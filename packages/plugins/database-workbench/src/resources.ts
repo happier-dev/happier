@@ -6,6 +6,8 @@ import {
     DatabaseOperationInputV1Schema,
     type DatabaseDescribeInputV1,
     type DatabaseDescriptorV1,
+    type DatabaseFindingObservationV1,
+    type DatabaseOperationResultV1,
     type DatabaseRelationV1,
 } from '@happier-dev/plugin-sdk/database';
 import { DatabaseOwnWriteV1Schema, type DatabaseDemandSnapshotV1 } from '@happier-dev/database-protocol';
@@ -22,6 +24,12 @@ export type DatabaseDemandResolver = (input: Readonly<{
     signal: AbortSignal;
 }> & Pick<PluginDynamicResourceInvocationOptionsV1, 'chosenMachine' | 'daemonStorage' | 'agentCaller' | 'authority' | 'deploymentDatabases' | 'databaseEngines' | 'worktreeEnvironment'>)
     => Promise<Readonly<{ descriptor: DatabaseDescriptorV1; connection: Pick<DatabaseWorkbenchConnection, 'execute' | 'close'> }>>;
+
+/** Private result of invoking the selected connection, including its admitted placement. */
+export type DatabaseOperationExecution = Readonly<{
+    result: DatabaseOperationResultV1;
+    sourceScope: DatabaseFindingObservationV1['sourceScope'];
+}>;
 
 function unavailable(): never {
     throw new PluginError({ code: 'plugin_resource_producer_placement_unavailable' });
@@ -69,9 +77,11 @@ export function createDatabaseConnectionResourceRuntime(options: Readonly<{
                     if (workbenchTargetKey(operation.target) !== targetKey) {
                         throw new PluginError({ code: 'database_demand_target_mismatch' });
                     }
-                    return operation.operation === 'describe'
+                    const { serverId, machineId } = descriptor.placement;
+                    const result = operation.operation === 'describe'
                         ? { ok: true as const, operation: 'describe' as const, descriptor }
                         : await connection.execute(operation, invocation.signal);
+                    return { result, sourceScope: { serverId, machineId } } satisfies DatabaseOperationExecution;
                 },
                 notify(operand: JsonValue) {
                     const change = DatabaseOwnWriteV1Schema.parse(operand);
