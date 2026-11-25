@@ -799,9 +799,7 @@ async function startLocalVoiceCapture(args: Readonly<{
   let startError: unknown = null;
   const startListening = async (signal?: AbortSignal) => {
     try {
-      if (args.interrupted) {
-        await startBargeInRearmListening(args.sessionId, signal, args.currentUiContext);
-      } else {
+      if (!args.interrupted || !localVoiceCaptureOwner.isCaptureActive(args.sessionId)) {
         await startCaptureForAdmission(admission, captureAttempt, signal);
       }
     } catch (error) {
