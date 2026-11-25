@@ -1286,10 +1286,6 @@ describe('MachineServicesTab rendered production wiring', () => {
 
 it('withdrawn secret notice stops the admitted generation and offers Start only after the service push confirms stopped', async () => {
     const { DeploymentSecretBindingsNotice } = await import('@/components/projects/deployments/DeploymentSecretBindingsNotice');
-    const { formatSharedSavedSecretRefV1 } = await import('@happier-dev/protocol/account/settings/savedSecretReferenceV1');
-    const { seedSavedSecretCatalogForTest } = await import('@/dev/testkit/harness/savedSecretEditorHttpHarness');
-    const scope = { serverId, accountId };
-    await seedSavedSecretCatalogForTest(scope, []);
     const environmentId = 'production';
     const row = service('Web', { serviceId: 'instance/web', authority: 'project', environmentId,
         deployment: { deploymentId: 'serving', installationId: 'installation', service: {
@@ -1307,10 +1303,10 @@ it('withdrawn secret notice stops the admitted generation and offers Start only 
     let credentialScope: ReturnType<typeof useServerCredentialAccountScopeBinding> | undefined;
     function Notice() {
         credentialScope = useServerCredentialAccountScopeBinding(serverId);
-        return <DeploymentSecretBindingsNotice scope={scope} bindings={[{
-        purpose: 'variable', name: 'TOKEN', phase: 'runtime', source: { kind: 'secret',
-            ref: formatSharedSavedSecretRefV1('withdrawn'), resourceRevision: 1 },
-    }]} controlTarget={target} />;
+        return <DeploymentSecretBindingsNotice secretScope={{
+            status: 'actionNeeded', reason: 'secret_scope_resource_unavailable',
+            requiredGrantCount: 1, missingGrantCount: 1,
+        }} canManageBindings={true} controlTarget={target} />;
     }
     const screen = await renderScreen(<Notice />);
     await vi.waitFor(() => expect(credentialScope?.binding?.isCurrent()).toBe(true));
