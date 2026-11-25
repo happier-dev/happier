@@ -360,14 +360,14 @@ describe('External Discussion composer through the public Action and native repl
             expect(await settlePendingInputAdmission({ actorUserId: owner.id, sessionId: receiver.id, localId, publisherAuthority,
                 decision: { kind: 'admit', finalContent, validation: { reply } } })).toMatchObject({ ok: true, result: { status: 'accepted' } });
             const turnId = 'external-question-turn';
-            expect(await resolveAcceptedPendingDelivery({ actorUserId: owner.id, sessionId: receiver.id, localId, publisherAuthority,
-                acceptedTurn: { kind: 'newTurn', turnId } })).toMatchObject({ ok: true, didResolve: true });
-            const original = await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: receiver.id, localId } } });
             const observedAt = Date.now();
             expect(await applySessionTurnMutation({ actorUserId: owner.id, authentication, mutation: {
                 v: 1, sessionId: receiver.id, mutationId: 'external-turn-begin', action: 'begin', turnId,
-                startingInputId: localId, observedAt, transcriptAnchors: { startSeqInclusive: original.seq, userMessageSeqs: [original.seq] },
+                startingInputId: localId, observedAt,
             } satisfies SessionTurnMutationV1 })).toMatchObject({ ok: true });
+            expect(await resolveAcceptedPendingDelivery({ actorUserId: owner.id, sessionId: receiver.id, localId, publisherAuthority,
+                acceptedTurn: { kind: 'newTurn', turnId } })).toMatchObject({ ok: true, didResolve: true });
+            const original = await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: receiver.id, localId } } });
             const answerText = 'The external participant answer';
             const answerLocalId = deriveSessionMessageReplyReturnLocalIdV1({ sessionId: receiver.id, localId, acceptedTurnId: turnId });
             transportSocket.connected = true;
