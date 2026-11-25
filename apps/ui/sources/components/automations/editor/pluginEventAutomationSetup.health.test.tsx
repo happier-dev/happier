@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import * as React from 'react';
+import { TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
 import { DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -100,7 +101,7 @@ describe('configures a prebound guided deployment and bound health starters', ()
 
 // Host-owned setup now crosses the Account Action HTTP boundary. The simulated
 // daemon delegates action.invoke to the same external plugin handler replies.
-async function restoreServerAccountForTest(params: Parameters<typeof restoreAccount>[0] & { peerMachineId?: string }) {
+async function restoreServerAccountForTest(params: Parameters<typeof restoreAccount>[0] & { machineId?: string; peerMachineId?: string }) {
     if (!params.accountId || !params.serverIdentityId) throw new Error('Expected an identified Health Account');
     const createBoundary = (machineId: string) => createExternalActionAccountHttpBoundary({
         serverUrl: params.serverUrl, serverIdentityId: params.serverIdentityId, accountId: params.accountId,
@@ -120,7 +121,7 @@ async function restoreServerAccountForTest(params: Parameters<typeof restoreAcco
             return result.ok ? result.result : result;
         },
     });
-    const boundary = await createBoundary(healthSetupFixture().machineId);
+    const boundary = await createBoundary(params.machineId ?? healthSetupFixture().machineId);
     const peer = params.peerMachineId ? await createBoundary(params.peerMachineId) : null;
     return restoreAccount({ ...params, credentials: { token: createServedHomeAccountToken(params.accountId, true) },
         request: async (input, init) => {
@@ -1259,7 +1260,7 @@ it.each(['configured', 'refused'] as const)('settles native Add check after show
 });
 
 // The alternate Machine can finish its first origin read after the native form opens.
-it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'projectionRefused', 'retiredWhileOpening'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
+it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'telemetryWatcherEstablishing', 'projectionRefused', 'retiredWhileOpening'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
     const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
     const { AddCheckSetup } = await import('@/components/projects/deployments/AddCheckSetup');
     const { Modal } = await import('@/modal');
@@ -1274,6 +1275,9 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
     const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
     const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
     const disposeLoader = await installRealActionExecutorModuleLoader();
+    const telemetry = outcome === 'telemetryWatcherEstablishing';
+    // The Plain R2 replay used one Machine for the Source controller and collector.
+    const collectorMachineId = telemetry ? '3f180abc-ddbd-450b-9fa0-d1c32ae7bab9' : undefined;
     const accountId = 'native-add-check';
     const serverIdentityId = 'srv_native_add_check';
     const http = createHomeHubArtifactHttpBoundary(accountId);
@@ -1283,7 +1287,7 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
     let exactIntentRead: unknown;
     let savedWithoutReceipt = false;
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://native-add-check.test',
-        serverIdentityId, accountId, peerMachineId: outcome === 'switched' ? peerMachineId : undefined, request: async (input, init) => {
+        serverIdentityId, accountId, machineId: collectorMachineId, peerMachineId: outcome === 'switched' ? peerMachineId : undefined, request: async (input, init) => {
             const path = new URL(String(input)).pathname;
             if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'] && exactIntentRead)
                 return Response.json(exactIntentRead);
@@ -1306,6 +1310,7 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
     if (!lifetime) throw new Error('Expected Add check Account');
     const { machineId, pluginId, event, fresh, inputs, projection } = healthSetupFixture(
         connection.serverId, serverIdentityId, true, { eventId: HEALTH_CHECK_EVENT_REFS_V1.status.localId, actionId: 'health/setup' },
+        PLUGIN_MANIFEST, collectorMachineId,
     );
     const peer = outcome === 'switched'
         ? healthSetupFixture(connection.serverId, serverIdentityId, true,
@@ -1327,7 +1332,7 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
     replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
         availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [{ pluginId, response: intentRead }],
     } });
-    const subject = { kind: 'environment' as const, environmentId: 'production' };
+    const subject = { kind: 'environment' as const, environmentId: telemetry ? 'cmwvm7d9q007u9gew94nd3zk5' : 'production' };
     const sourceInstanceId = createHealthCheckSourceInstanceIdV1(subject);
     const setupInput = HealthCheckSetupInputV1ProtocolSchema.parse({ v: 1, subject,
         checks: [{ checkId: 'http', kind: { pluginId, localId: 'http' }, binding: { kind: 'healthCheck' },
@@ -1339,7 +1344,9 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
             machineId: member.machineId, serverId: connection.serverId, serverIdentityId,
             projection: member.inputs.pluginUiProjection, phase: 'current', interactionEnabled: true,
         })) });
-    let sourceFacts = readSourceFacts(outcome === 'refreshedBeforeWatcher' ? [] : [{ machineId, inputs }]);
+    let sourceFacts = telemetry
+        ? { ...readSourceFacts([]), establishingTargets: [{ serverIdentityId, machineId }] }
+        : readSourceFacts(outcome === 'refreshedBeforeWatcher' ? [] : [{ machineId, inputs }]);
     const projectionListeners = new Set<() => void>();
     const disposeProjection = publishCommittedAppShellPluginUiProjection(() => inputs.pluginUiProjection,
         id => id === pluginId ? sourceFacts : null, listener => {
@@ -1389,11 +1396,18 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
         await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
         await publishMachineInventoryForTest(lifetime.scope,
             [fresh.machineTarget.machine, ...(peer ? [peer.fresh.machineTarget.machine] : [])]);
-        const seed = subjectStarterEventSeed('addCheck', { subject: { ...subject, machineId }, controllerMachineId: machineId });
+        const seed = subjectStarterEventSeed('addCheck', {
+            subject: { ...subject, machineId }, controllerMachineId: machineId,
+            ...(telemetry ? { newContributedCheck: {
+                kind: TELEMETRY_KEY_FLOW_HEALTH_KIND_V1,
+                config: { environmentId: subject.environmentId, serviceName: 'checkout',
+                    measure: { kind: 'route', routes: [{ method: 'POST', route: '/checkout' }], statistic: 'p95' } },
+            } } : {}),
+        });
         if (!seed) throw new Error('Expected the Environment Add check seed');
         const onClose = vi.fn();
         const deploymentEnvironment = { serverId: serverIdentityId, projectSourceId: 'production-source', environmentId: subject.environmentId };
-        screen = await renderScreen(<AddCheckSetup testID="add-check" lifetime={lifetime} seed={seed}
+        screen = await renderScreen(<AddCheckSetup testID="add-check" lifetime={lifetime} seed={seed} collectorPlacement={telemetry}
             deploymentEnvironment={deploymentEnvironment} onClose={onClose} />);
         const scope = { machineId, serverId: connection.serverId };
         const projectionEntry = () => readObservedDaemonMergedProjectionCacheEntry({
@@ -1421,6 +1435,15 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
             await act(async () => schemaResponse.resolve());
             await act(async () => state.props.action.onPress());
         }
+        if (telemetry) {
+            await waitForHomeGovernance(() => expect(projectionEntry()?.kind).toBe('ready'));
+            expect(screen.findByTestId('add-check.unavailable')).toBeNull();
+            expect(modal).not.toHaveBeenCalled();
+            await act(async () => {
+                sourceFacts = readSourceFacts([{ machineId, inputs }]);
+                projectionListeners.forEach(listener => listener());
+            });
+        }
         if (outcome === 'refreshedBeforeWatcher') {
             await waitForHomeGovernance(() => expect(screen!.findByTestId('add-check.unavailable')).not.toBeNull());
             const original = projectionEntry();
@@ -1442,6 +1465,10 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
         await waitForHomeGovernance(() => expect(modal.mock.calls, screen!.getTextContent()).toHaveLength(1));
         expect(rpc.hostActions).toEqual([]);
         expect(modal.mock.calls[0]?.[0].props).toMatchObject({ launchInput: { observerMachineId: machineId, initialInput: { subject } } });
+        if (telemetry) {
+            expect(modal.mock.calls[0]?.[0].props).toMatchObject({ launchInput: { initialInput: seed.setupInput } });
+            return;
+        }
         if (peer) {
             const props = modal.mock.calls[0]?.[0].props;
             const selection = Reflect.get(Object(props), 'watcherSelection') as NativeSetupWatcherSelection;

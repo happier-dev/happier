@@ -286,8 +286,8 @@ export function PluginEventAutomationEditor(props: Readonly<{
             </View>;
         }
         const waiting = model.eventCatalogStatus === 'loading' || model.sourceStatus === 'settingUp' || applying
-            || (newSetup ? model.sourceStatus === 'idle' && nativeWatcherId !== null && nativeSetupStarted.current !== setupKey
-                && (nativeWatcherId !== machineId || readyToOpen)
+            || (newSetup ? model.sourceStatus === 'idle' && (model.seededWatcherDiscoveryPending
+                || (nativeWatcherId !== null && nativeSetupStarted.current !== setupKey && (nativeWatcherId !== machineId || readyToOpen)))
                 : !chooseWatcher && model.eventCatalogStatus === 'ready' && model.sourceStatus === 'idle');
         if (waiting) return <>
             {newSetup && model.nativeSetupProjectionTargets &&

@@ -174,6 +174,7 @@ export type PluginEventAutomationComposerModel = Readonly<{
     webhookEndpointRefreshing: boolean;
     watcherCandidates: readonly PluginExecutionOriginCandidateV1[];
     nativeSetupProjectionTargets?: readonly MachineAdministrationTargetV1[];
+    seededWatcherDiscoveryPending?: boolean;
     /** Sole row failure/remedy facts. Consumers match origin; they never re-derive from candidates. */
     watcherFailures?: readonly (PluginEventAutomationWatcherFailure & Readonly<{ origin: PluginMachineExecutionOriginV1 }>)[];
     selectedWatcherOrigin: PluginMachineExecutionOriginV1 | null;
@@ -573,6 +574,11 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         return { watcherFailures, selectableWatchers };
     }, [movingSavedSource, watcherEvent, watcherCandidates]);
 
+    const seededWatcherDiscoveryPending = React.useMemo(() => suppliedWatcherFacts.establishingTargets.some(target =>
+        target.machineId === monitoringMachineId
+        && Boolean(params.serverId && areServerProfileIdentifiersEquivalent(target.serverIdentityId, params.serverId))),
+    [monitoringMachineId, params.serverId, suppliedWatcherFacts.establishingTargets]);
+
     // The catalog refusal applies to every row. Only seed-bound rows ask for a
     // failure on their required watcher before a person has chosen one.
     const catalogFailure = params.projectionPhase === 'unsupported' ? 'not-supported'
@@ -584,12 +590,10 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         plugin: params.projectionInputs?.pluginProjectionById[watcherPluginId],
         selectableWatchers,
         watcherFailures,
-        discoveryPending: suppliedWatcherFacts.establishingTargets.some(target =>
-            target.machineId === monitoringMachineId
-            && Boolean(params.serverId && areServerProfileIdentifiersEquivalent(target.serverIdentityId, params.serverId))),
+        discoveryPending: seededWatcherDiscoveryPending,
     }) : null, [catalogFailure, eventCatalogStatus, monitoringMachineId,
-        params.serverId, params.projectionInputs, watcherPluginId, watcherEvent, selectableWatchers,
-        suppliedWatcherFacts.establishingTargets, watcherFailures]);
+        params.projectionInputs, watcherPluginId, watcherEvent, selectableWatchers,
+        seededWatcherDiscoveryPending, watcherFailures]);
 
     const { payloadBrowser, filter, filterClauses, setFilterClauses, addFilterClause, removeFilterClause,
         setFilterClauseField, setFilterClauseOperator, setFilterClauseValueText } = useAutomationEventFilterDraft({
@@ -1219,6 +1223,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         webhookEndpointRefreshing,
         watcherCandidates,
         nativeSetupProjectionTargets,
+        seededWatcherDiscoveryPending,
         watcherFailures,
         selectedWatcherOrigin,
         selectWatcher,
@@ -1283,6 +1288,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setFilterClauseValueText,
         watcherCandidates,
         nativeSetupProjectionTargets,
+        seededWatcherDiscoveryPending,
         watcherFailures,
     ]);
 }
