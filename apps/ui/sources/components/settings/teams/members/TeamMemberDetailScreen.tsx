@@ -12,6 +12,8 @@ import { PageHeader, PageHeaderPlaceholder } from '@/components/ui/layout/PageHe
 import { HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
 import { useUnistyles } from 'react-native-unistyles';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { useTeamsDirectoryRow } from '@/hooks/teams/useTeamsDirectoryRow';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
@@ -70,7 +72,11 @@ const REPRESENTATIVE_JOINED_AT = Date.UTC(2026, 8, 30);
  * facts the arriving header draws, so the person's own header lands where this one stood (never the Members
  * sub-page header first).
  */
-const TeamMemberLoadingHeader = React.memo(function TeamMemberLoadingHeader() {
+const TeamMemberLoadingHeader = React.memo(function TeamMemberLoadingHeader(props: Readonly<{
+    /** The Team's name once known (its directory row or the read Team); pending until then. */
+    teamName: string | null;
+    homeName: string | undefined;
+}>) {
     const { theme } = useUnistyles();
     const reducedMotion = useReducedMotionPreference();
     return (
@@ -92,11 +98,24 @@ const TeamMemberLoadingHeader = React.memo(function TeamMemberLoadingHeader() {
                 { key: 'joined', text: t('teams.members.joined', {
                     when: formatCalendarDate(REPRESENTATIVE_JOINED_AT, getPreferredLanguage()),
                 }), pending: true },
+                // The exact Team and Home, as the person's header says them.
+                props.teamName !== null
+                    ? { key: 'team', text: props.teamName }
+                    : { key: 'team', text: t('teams.title'), pending: true },
+                ...(props.homeName ? [{ key: 'home', icon: 'house' as const, text: props.homeName }] : []),
             ]}
         />
     );
 });
-const renderTeamMemberLoadingHeader = () => <TeamMemberLoadingHeader />;
+/** While the Team is read: its directory row names it when this device holds one. */
+const TeamMemberTeamLoadingHeader = React.memo(function TeamMemberTeamLoadingHeader(props: Readonly<{
+    teamId: string;
+    homeName: string | undefined;
+    scope: ServerAccountScope | null;
+}>) {
+    const row = useTeamsDirectoryRow(props.scope, props.teamId);
+    return <TeamMemberLoadingHeader teamName={row?.name ?? null} homeName={props.homeName} />;
+});
 
 type MembershipLoad =
     | Readonly<{ kind: 'loading' }>
@@ -452,7 +471,7 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
     if (load.kind === 'loading') {
         return (
             <>
-                <TeamMemberLoadingHeader />
+                <TeamMemberLoadingHeader teamName={context.team.name} homeName={context.homeName} />
                 {props.banners}
                 {/* The page's known first section holds its place while the person is read. */}
                 <ItemGroup title={t('teams.members.roleLabel')}>
@@ -777,7 +796,9 @@ export const TeamMemberDetailScreen = React.memo(function TeamMemberDetailScreen
 }>) {
     return (
         <TeamSection serverId={props.serverId} teamId={props.teamId} title={t('teams.tabs.members')} childRendersHeader
-            renderLoadingHeader={renderTeamMemberLoadingHeader}>
+            renderLoadingHeader={(known) => (
+                <TeamMemberTeamLoadingHeader teamId={props.teamId} homeName={known.homeName} scope={known.scope} />
+            )}>
             {(context, banners) => (
                 <MemberDetail
                     context={context}
