@@ -15,7 +15,7 @@ export function describeMachineSignInScope(
     scope: MachineCliSignInAuthentication['signInScope'] | null;
     account: string;
     /** The Machine's own OS user, when the scope is that user and the Machine published its name. */
-    hostUser: string | null;
+    hostUser: string | null | undefined;
   }>,
 ): string | null {
   const { scope, account } = input;

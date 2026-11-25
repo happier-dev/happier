@@ -128,7 +128,7 @@ describe('ActionOperationDetailModal sudo answer', () => {
       const operation = snapshot ? { serverId, snapshot, observation: 'available' as const, isUnavailableProjection: false } : null;
       return <MachineSetupRunRegion serverId={serverId} machineName="Developer box" reviewing={!operation}
         attachment={attachment} operation={operation} progressOperation={operation} onRetry={null}
-        steps={projectMachineSetupStepChecklist(attachment, label => label.fallback)!} />;
+        steps={projectMachineSetupStepChecklist(attachment, label => typeof label === 'string' ? label : label.fallback)!} />;
     };
     let screen = await renderScreen(region(null));
     const rowId = 'machine-setup-steps-row-0:script:0';

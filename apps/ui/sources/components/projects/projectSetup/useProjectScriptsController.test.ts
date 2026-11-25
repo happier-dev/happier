@@ -94,7 +94,7 @@ describe('Project Scripts Setup controls', () => {
         const home = await harness.addHome({ name: 'Member Scripts', serverUrl: 'https://member-scripts.test', accountId: 'member' });
         const serverId = resolveServerProfileScopeIdForIdentifier(home);
         const workspace = { serverId, workspaceId: 'checkout', machineId: 'source', rootPath: '/srv/member/checkout' };
-        const source = { kind: 'native' as const, tool: 'package_script', file: 'package.json', target: 'build' };
+        const source = { kind: 'native' as const, tool: 'package_script' as const, file: 'package.json', target: 'build' };
         const selection = kind === 'named' ? { kind: 'named' as const, name: 'build' } : { kind: 'native' as const, source };
         const accepted = { ...operation(serverId).snapshot, operationId: 'member-script', actionId: 'projects.script.run', state: 'accepted' as const,
             scope: { accountId: 'member', machineId: 'custody' },

@@ -10,6 +10,7 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
+import { teamSharedKindPath } from './teamsRoutes';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -487,12 +488,12 @@ describe('TeamSettingsScreen', () => {
                 { kind: 'otherArtifacts', status: 'available', count: 1 },
                 { kind: 'reviews', status: 'available', count: 2 },
             ], error: null, reload: vi.fn() }}
-            destinationOf={({ kind }) => `/settings/teams/team-1/shared/${kind}`} onOpen={open}
+            destinationOf={({ kind }) => teamSharedKindPath({ serverId: 'home-a', teamId: 'team-1' }, kind)} onOpen={open}
         />);
         const ids = collectRenderedTestIds(screen.tree.toJSON());
         expect(ids.indexOf('team-overview-shared:reviews')).toBeLessThan(ids.indexOf('team-overview-shared:otherArtifacts'));
         await screen.pressByTestIdAsync('team-overview-shared:reviews');
-        expect(open).toHaveBeenCalledWith('/settings/teams/team-1/shared/reviews');
+        expect(open).toHaveBeenCalledWith('/settings/teams/home-a/team-1/shared?kind=reviews');
     });
 
     it('changes Review creation policy independently and retains the published choice after refusal for retry', async () => {

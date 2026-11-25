@@ -1,3 +1,4 @@
+import { PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { resolveProviderConnectedAccountDeclarationsV1 } from '@happier-dev/protocol/providers/contributions';
 import { createCliActionInventoryDeps } from '@/session/actions/cliActionDeps/createCliActionInventoryDeps';
@@ -827,7 +828,9 @@ describe('runtime provider model-management composition', () => {
     const fixture = await createManagedRunLaunchFixture();
     let sourceAvailable = true;
     const unexpected = async (): Promise<never> => { throw new Error('Eligibility must not materialize credentials or mutate bindings'); };
-    const { id: localId, authentication } = boatManifest.contributes.connectedAccountDescriptors[0]!;
+    const { id: localId, authentication } = PluginConnectedAccountDescriptorContributionV2Schema.parse(
+      boatManifest.contributes.connectedAccountDescriptors?.[0],
+    );
     const service = { pluginId: boatManifest.id, localId };
     const profile = QualifiedConnectedAccountProfileV4Schema.parse({
       ref: { service, accountId: 'selected-source' }, status: 'connected',

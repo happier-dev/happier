@@ -232,7 +232,7 @@ describe('Team overview: Shared with this Team', () => {
     );
     expect(ids(screen)).not.toContain('team-overview-shared-empty');
     expect(screen.getTextContent()).toContain(t(message));
-    expect(screen.findByTestId('team-overview-shared:credentials').props.accessibilityLabel).toContain(t(message));
+    expect(screen.findByTestId('team-overview-shared:credentials')?.props.accessibilityLabel).toContain(t(message));
 
     screen.pressByTestId('team-overview-shared-retry:credentials');
     await vi.waitFor(() =>
