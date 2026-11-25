@@ -1,6 +1,6 @@
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { withoutClientActionInput } from '@happier-dev/protocol/actions/clientDispatchV1';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { ProjectSourcesMoveToTeamInputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { readProjectDeploymentDefaultsForHost } from '@/deployments/readProjectDeploymentDefaultsForHost';
 import { AccountApiTokensListActionOutputV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
@@ -28,7 +28,7 @@ export async function prepareCliProjectSourceTeamMove(request: Request, host: Re
     const deps = host.readDeps();
     if (!deps.projectSourcesRead || !deps.deploymentAction || !deps.machineAccessAction || !deps.workflowAction
         || !deps.accountApiTokensListAction) return moveFailure('admission_unavailable');
-    const input = ProjectSourcesMoveToTeamInputV1Schema.parse(request.input);
+    const input = withoutClientActionInput(request.input);
     const preparation = createProjectSourceTeamMovePreparationV1({ accountId: host.accountId,
         credentialAuthorityKind: host.credentialAuthorityKind, invocationSignal: request.context.signal, assertCurrent: host.assertCurrent }, {
         projectSourcesRead: deps.projectSourcesRead, deploymentAction: deps.deploymentAction,

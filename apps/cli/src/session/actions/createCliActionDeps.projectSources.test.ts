@@ -12,6 +12,7 @@ import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_
   EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createCliActionDeps } from './createCliActionDeps';
+import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -40,6 +41,22 @@ function deps() {
 }
 
 describe('Source Actions through the CLI Account front door', () => {
+  it('preserves the Source access refusal during move preparation with an explicit App client', async () => {
+    const accountToken = `header.${Buffer.from(JSON.stringify({ sub: 'source-account', tokenEpoch: 0,
+      provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+    vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { ok: true, source, canManage: false } });
+    const account = createAccountServerActionDeps({ token: accountToken });
+    const owner: ReturnType<typeof createCliActionDeps> = createCliActionDeps({ token: accountToken,
+      credentials: { token: accountToken, encryption: null }, sessionId: 'source-session', mode: 'plain', ctx: null,
+      serverId: 'source-home', serverHttpBaseUrl: 'https://source-home.test',
+    }, () => ({ ...account, ...owner }));
+
+    await expect(owner.prepareHostReviewedChildren!({ actionId: 'projects.sources.moveToTeam', context: {}, input: {
+      serverId: 'source-home', sourceId: source.id, expectedRevision: source.revision, teamId: 'team',
+      requestKey: 'move-to-team', clientId: '1qBAExQcYz6SVbxxAABQ',
+    } })).resolves.toMatchObject({ ok: false, errorCode: 'source_access_denied' });
+  });
+
   it.each(['signed_phase', 'signed_unknown', 'signed_forbidden', 'bearer'] as const)(
     'reports %s Home refusal through the real signed Source transport and CLI writer', async scenario => {
       await withConfiguredDaemonTestHome({ prefix: 'source-http-refusal-' }, async () => {
