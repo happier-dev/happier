@@ -50,6 +50,8 @@ export const DeploymentDomainFailureDetailsV1Schema = lazyZodSchema(() => z.unio
             z.nonoptional(MachineElevationFailureV1Schema.shape.requiredFact)]),
         remedy: z.string().check(z.trim(), z.minLength(1)) }),
     z.strictObject({ environmentId: id, domainId: id, step: z.literal('native_execution'),
+        /** Exact serving Machine for administrator recovery. The operation address still names its controller. */
+        machineId: z.optional(id),
         ...cloudflareRecoveryFields,
         /** Authored endpoint templates, issue paths and expected types; never response values. */
         providerOutput: z.optional(z.string().check(z.minLength(1))),

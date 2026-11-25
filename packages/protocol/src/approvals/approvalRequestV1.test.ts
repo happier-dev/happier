@@ -273,7 +273,7 @@ it('retains the Domain setup refusal naming the origin on an approved controller
     decision: { kind: 'approve', decidedAtMs: 2 }, execution });
   const publicRead = ApprovalRequestPublicReadSchema.parse(projectApprovalRequestForPublicRead(stored));
   expect(readApprovalExecutionFailure(publicRead)).toMatchObject({ errorCode, details: {
-    operation, remedy: expect.stringContaining('origin-machine'),
+    operation, machineId: 'origin-machine',
   } });
   expect(projectApprovalExecutionFailureV2({ request, failure: { ...failure, details: {
     ...failure.details, environmentId: 'wrong-environment',

@@ -5344,8 +5344,11 @@ managed-CLI recovery. Domain presentation maps only proven administrator-policy
 refusals to `machine_admin_access_required`; a generic denial does not establish
 missing Admin Access. When a placement cannot capture its administrator setup,
 the Domain controller preserves `admin_access_unavailable`. Both administrator
-refusals name the serving Machine and open its Administrator access settings.
-The operation address still names the controller that owns the operation.
+refusals retain the serving Machine ID in the closed native Domain failure.
+The live result, retained operation, and approval read use that ID to show the
+Machine's name and open its Security tab for Administrator access. The
+operation address still names the controller that owns the operation. Older
+failures without a serving Machine ID keep their existing recovery.
 An uncertain native effect remains `outcome_unknown`.
 Own-server preparation also preserves `plugin_exec_system_tool_unavailable`
 with the closed Docker details `kind: 'systemToolUnavailable'`, `toolId: 'docker'`

@@ -494,11 +494,10 @@ export function projectDeploymentFailureRecoveryV1<T extends Record<string, unkn
     });
 }
 
-/** Retain the named remedy in the closed Domain failure. Live Action navigation uses the exact Machine field. */
+/** Retain the serving Machine and its remedy together for live and stored Domain recovery. */
 export function projectDeploymentDomainFailureStorageDetailsV1(errorCode: string, details: unknown): unknown {
     if (!isRecord(details) || !readDomainAdminRecoveryMachineId(details, errorCode)) return details;
-    const { machineId: _recoveryMachineId, ...stored } = projectDeploymentFailureRecoveryV1(details, errorCode);
-    return stored;
+    return projectDeploymentFailureRecoveryV1(details, errorCode);
 }
 
 /**

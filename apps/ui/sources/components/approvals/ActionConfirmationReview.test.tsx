@@ -131,6 +131,33 @@ describe('native confirmation of a carried executor review', () => {
     expect(screen.findByTestId('actions.confirmation-review.domain-setup.consumer-fixture')?.props.onPress).toBeUndefined();
     await screen.unmount();
   });
+
+  it('offers the refusing fleet Machine’s Security destination when an approved Domain Add fails', async () => {
+    const { createMachineMetadataFixture } = await import('@/dev/testkit');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { ApprovalReviewFacts } = await import('./ApprovalReviewFacts');
+    const { router } = await import('expo-router');
+    storage.setState({ profileScope: { serverId: 'home', accountId: 'owner' } });
+    storage.getState().applyMachines([
+      createMachineFixture({ id: 'fleet-holder', metadata: createMachineMetadataFixture({ host: 'Fleet Holder' }) }),
+    ], true, { sourceServerId: 'home', sourceAccountId: 'owner' });
+    const screen = await renderScreen(<ApprovalReviewFacts actionId="deployments.domains.add"
+      actionArgs={{}} serverId="home" testID="approvals" status="failed"
+      preview={{ hostReviewedContent: { domainNativeSetup: [{ machineId: 'fleet-holder', status: 'authorized' }] } }}
+      execution={{ ok: false, errorCode: 'machine_admin_access_required', error: 'machine_admin_access_required',
+        executedAtMs: 3, details: { environmentId: 'environment', domainId: 'domain', step: 'native_execution',
+          machineId: 'fleet-holder', operation: { serverId: 'home', machineId: 'controller', operationId: 'operation' } } }} />);
+    try {
+      const row = screen.findByTestId('approvals.domain-setup.fleet-holder');
+      expect(screen.getTextContent()).toContain('Fleet Holder');
+      expect(row?.props.onPress).toBeTypeOf('function');
+      await screen.pressByTestIdAsync('approvals.domain-setup.fleet-holder');
+      expect(router.push).toHaveBeenLastCalledWith('/settings/machines/fleet-holder?serverId=home&tab=security');
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it.each([
     { source: { kind: 'installed', pluginId: 'acme.example' } },
     { source: { kind: 'marketplace', sourceId: 'marketplace:fixture', pluginId: 'acme.example', version: '1.1.0', packageName: 'acme-example' } },

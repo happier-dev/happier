@@ -290,20 +290,22 @@ describe('finite host operation custody', () => {
   });
 
   it.each([
-    { operationMachine: 'controller', refusingMachine: 'serving-origin' },
-    { operationMachine: 'only-serving-machine', refusingMachine: 'only-serving-machine' },
-  ])('names the refusing Domain member $refusingMachine in the live and retained operation', async ({ operationMachine, refusingMachine }) => {
+    { operationMachine: 'controller', refusingMachine: 'fleet-edge', code: 'machine_admin_access_required', nativeCode: 'mode_none' },
+    { operationMachine: 'single-origin', refusingMachine: 'single-origin', code: 'admin_access_unavailable', nativeCode: 'admin_access_unavailable' },
+  ])('retains the exact Domain administrator refusal on $refusingMachine in the live and retained operation',
+    async ({ operationMachine, refusingMachine, code, nativeCode }) => {
     const runtime = createHostActionOperationRuntime({ machineId: operationMachine, serverId: 'home',
       resolveAccountId: async () => 'owner', generateOperationId: () => 'domain-result' });
+    const failureCause = { phase: 'deployment.domain.native_execution', errorClass: 'UnknownThrownValue', errorCode: nativeCode, httpStatus: null } as const;
     const result = await runtime.observeExecution({ actionId: 'deployments.domains.add',
       input: { serverId: 'home', environmentId: 'environment', domainId: 'domain', targetLinkId: 'link',
         expectedRevision: 1, expectedTargetLinkRevision: 1, requestKey: 'add-domain',
         contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1 },
-      execute: async () => ({ ok: false, errorCode: 'machine_admin_access_required', error: 'machine_admin_access_required',
+      execute: async () => ({ ok: false, errorCode: code, error: code, failureCause,
         details: { environmentId: 'environment', domainId: 'domain', step: 'native_execution',
           machineId: refusingMachine, requiredFact: 'nativeExecutionResult' } }) });
-    const error = { errorCode: 'machine_admin_access_required', details: {
-      environmentId: 'environment', domainId: 'domain', remedy: expect.stringContaining(refusingMachine),
+    const error = { errorCode: code, failureCause, details: {
+      environmentId: 'environment', domainId: 'domain', machineId: refusingMachine, requiredFact: 'nativeExecutionResult',
       operation: { serverId: 'home', machineId: operationMachine, operationId: 'domain-result' },
     } };
     expect(result).toMatchObject({ ok: false, ...error });

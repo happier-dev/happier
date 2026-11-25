@@ -8,6 +8,7 @@ import { DeploymentEnvironmentCreationReviewV1Schema, type DeploymentEnvironment
 import { DeploymentTemplateInstantiationReviewV1Schema, type DeploymentTemplateInstantiationReviewV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { DeploymentDomainNativeSetupReviewV1Schema, type DeploymentDomainNativeSetupReviewV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 import { ArtifactEditProposalReview } from '@/components/artifacts/ArtifactEditProposal';
 import { renderDeploymentCreationDefaultsRows } from '@/components/projects/deployments/DeploymentCreationDefaultsRows';
@@ -84,11 +85,17 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
     [actionId, actionArgs, preview, props.status, props.execution]);
   const deployment = React.useMemo(() => readDeploymentReviewApproval(request), [request]);
   const template = React.useMemo(() => readDeploymentTemplateApprovalReview(preview), [preview]);
-  const domainSetup = React.useMemo(() => {
+  const domainSetup = React.useMemo((): DeploymentDomainNativeSetupReviewV1['domainNativeSetup'] | null => {
     if (actionId !== DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1) return null;
+    if (props.execution?.ok === false) {
+      const recovery = readDeploymentRefusalRecoveryV1(props.execution.errorCode, props.execution.details)?.nextAction;
+      if (recovery?.destination === 'machineAdminAccess' && recovery.machineId) {
+        return [{ machineId: recovery.machineId, status: 'accessRequired' }];
+      }
+    }
     const parsed = DeploymentDomainNativeSetupReviewV1Schema.safeParse(readRecord(preview).hostReviewedContent);
     return parsed.success ? parsed.data.domainNativeSetup : null;
-  }, [actionId, preview]);
+  }, [actionId, preview, props.execution]);
   const creation = React.useMemo(() => {
     const parsed = DeploymentEnvironmentCreationReviewV1Schema.safeParse(readRecord(preview).deploymentReview);
     return parsed.success ? parsed.data : null;

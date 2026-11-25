@@ -1040,7 +1040,14 @@ describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER
   });
 
   it.each(['machine_admin_access_required', 'admin_access_unavailable'] as const)(
-    'opens the serving Machine administrator setup when Domain Add returns %s', async (code) => {
+    'names the serving Machine and opens its administrator setup when Domain Add returns %s', async (code) => {
+    const { createMachineFixture, createMachineMetadataFixture } = await import('@/dev/testkit');
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.setState({ profileScope: { serverId: scope.serverId, accountId: scope.accountId } });
+    storage.getState().applyMachines([
+      createMachineFixture({ id: 'controller-machine', metadata: createMachineMetadataFixture({ host: 'Controller' }) }),
+      createMachineFixture({ id: 'origin-machine', metadata: createMachineMetadataFixture({ host: 'Fleet Edge' }) }),
+    ], true, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
     const detail = createDeploymentEnvironmentDetailV1();
     const actions = { ...domainActions(detail), addDomain: vi.fn(async () => ({
       ok: false as const, error: code,
@@ -1069,8 +1076,8 @@ describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER
         .find(node => String(node.props.testID).startsWith('project-deployments.outcome.refused'));
       await act(async () => { banner?.props.action?.onPress(); });
       expect(openRecovery).toHaveBeenCalledExactlyOnceWith('machineAdminAccess', { machineId: 'origin-machine' });
-      expect(banner?.props.description).toContain('origin-machine');
-      expect(banner?.props.description).not.toContain('controller-machine');
+      expect(banner?.props.description).toContain('Fleet Edge');
+      expect(banner?.props.description).not.toMatch(/origin-machine|controller-machine|Controller/);
     } finally { await screen.unmount(); controller.retire(); }
   });
 
