@@ -457,9 +457,8 @@ export async function createProtectedLocalStateFileExclusive(
     await rm(path, { force: true }).catch(() => {});
     throw error;
   }
-  await handle.close();
-
   try {
+    await handle.close();
     await assertProtectedPath(path, 'file', options);
   } catch (error) {
     await rm(path, { force: true }).catch(() => {});
@@ -623,9 +622,9 @@ export async function writeProtectedLocalStateFileAtomic(
     }
   }
   const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  await createProtectedLocalStateFileExclusive(temporaryPath, contents, options);
   let published = false;
   try {
-    await createProtectedLocalStateFileExclusive(temporaryPath, contents, options);
     await rename(temporaryPath, path);
     published = true;
     await assertProtectedPath(path, 'file', options);

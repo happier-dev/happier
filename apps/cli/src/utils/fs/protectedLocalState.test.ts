@@ -18,8 +18,9 @@ import {
   writeProtectedLocalStateFileAtomic,
 } from './protectedLocalState';
 
-const { directorySyncFailure } = vi.hoisted(() => ({
+const { directorySyncFailure, fileCloseFailure } = vi.hoisted(() => ({
   directorySyncFailure: { forPath: undefined as ((path: string) => Promise<boolean>) | undefined },
+  fileCloseFailure: { forPath: undefined as ((path: string) => boolean) | undefined },
 }));
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -31,6 +32,13 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       if (typeof args[0] === 'string' && args[1] === 'r' && await directorySyncFailure.forPath?.(args[0])) {
         vi.spyOn(handle, 'sync').mockRejectedValueOnce(Object.assign(new Error('directory sync failed'), { code: 'EIO' }));
       }
+      if (typeof args[0] === 'string' && fileCloseFailure.forPath?.(args[0])) {
+        const close = handle.close.bind(handle);
+        vi.spyOn(handle, 'close').mockImplementationOnce(async () => {
+          await close();
+          throw Object.assign(new Error('file close failed'), { code: 'EIO' });
+        });
+      }
       return handle;
     },
   };
@@ -40,6 +48,7 @@ const roots: string[] = [];
 
 afterEach(async () => {
   directorySyncFailure.forPath = undefined;
+  fileCloseFailure.forPath = undefined;
   vi.restoreAllMocks();
   await Promise.all(roots.splice(0).map(async (root) =>
     await rm(root, { recursive: true, force: true })));
@@ -254,6 +263,7 @@ describe('protected local state publication', () => {
     directorySyncFailure.forPath = undefined;
 
     await expect(readProtectedLocalStateFile(path)).resolves.toBe('saved');
+    await expect(readdir(directory)).resolves.toEqual(['state.json']);
     expect(outcome).toEqual({ value: result });
     expect(warning.mock.calls.some(([, options]) => (
       typeof options === 'object' && options?.code === 'HAPPIER_PROTECTED_LOCAL_STATE_SYNC_FAILED'
@@ -285,6 +295,21 @@ describe('protected local state publication', () => {
     { name: 'exclusive create', publish: createProtectedLocalStateFileExclusive },
     { name: 'atomic replacement', publish: writeProtectedLocalStateFileAtomic },
     { name: 'hard-link publication', publish: publishProtectedLocalStateFileIfAbsent },
+  ])('removes the unpublished file when close fails for $name', async ({ publish }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-protected-close-'));
+    roots.push(directory);
+    const path = join(directory, 'state.json');
+    fileCloseFailure.forPath = candidate => candidate === path
+      || (candidate.startsWith(`${path}.`) && candidate.endsWith('.tmp'));
+
+    await expect(publish(path, 'unpublished')).rejects.toMatchObject({ code: 'EIO', message: 'file close failed' });
+    await expect(readdir(directory)).resolves.toEqual([]);
+  });
+
+  it.each([
+    { name: 'exclusive create', publish: createProtectedLocalStateFileExclusive },
+    { name: 'atomic replacement', publish: writeProtectedLocalStateFileAtomic },
+    { name: 'hard-link publication', publish: publishProtectedLocalStateFileIfAbsent },
   ])('removes published bytes when final protection fails for $name', async ({ publish }) => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-protected-refusal-'));
     roots.push(directory);
@@ -302,6 +327,7 @@ describe('protected local state publication', () => {
     })).rejects.toBe(protectionError);
 
     await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readdir(directory)).resolves.toEqual([]);
   });
 
   it('publishes complete bytes once and reports the loser without disturbing them', async () => {
