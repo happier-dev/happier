@@ -68,7 +68,9 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
             isCurrentRoute={isCurrentRoute} rereadAutomationStatus={sync.refreshAutomations} /> : null}
         {observationWarning ? <SurfaceFreshnessLine testID={`session-work-trigger-history:${props.automationId}-observation`}
             tone="warning" reason={observationWarning} /> : null}
+        {/* The hold says why in full: it wraps, and Open run moves beneath it when the row is narrow (R11 M8). */}
         {held ? <Item testID={`session-work-trigger-history:${props.automationId}-held`} title={held.text} mode="info"
+            titleLines={0} accessoryLayout="adaptive"
             rightElement={<ToolbarButton testID={`session-work-trigger-history:${props.automationId}-open-run`}
                 label={t('workflows.events.openRun')} onPress={openHoldingRun} />} />
             : nextRunAt !== null && !emptyWithNext ? <Item title={formatNextScheduledRun(nextRunAt, true, nowMs)} mode="info"

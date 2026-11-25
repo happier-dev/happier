@@ -95,6 +95,25 @@ describe('Scheduled Work rows', () => {
         expect(JSON.stringify(subtitle?.props.children)).toContain('sessionWork.scheduled.step(ordinal=2,title=Draft the notes)');
         expect(JSON.stringify(subtitle?.props.children)).not.toContain('nextHours');
     });
+    // R11 M8: in Writes here a hold is a state sentence; it moves beneath the title so the title keeps its words.
+    it('moves a due hold beneath the title in a Session section and keeps a time beside it', async () => {
+        const now = new Date(2026, 9, 10, 10).getTime();
+        vi.useFakeTimers();
+        vi.setSystemTime(now);
+        const trigger = { id: 'timer', revision: 1, enabled: true, kind: 'schedule', nextRunAt: now - 60_000,
+            createdAt: now, updatedAt: now, triggerDefinitionEnvelope: null,
+            schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } };
+        const set = WorkflowTriggerSetV1Schema.parse({ automationId: 'held', revision: 1, enabled: true, health: 'available',
+            destinations: { targetSessionIds: ['session-one'], usesOriginSession: false, unresolvedWorkflowRefs: [], leaves: [] },
+            scheduleHolds: [{ triggerId: 'timer', reason: 'open_occurrence', runId: 'run-held', runState: 'interrupted' }],
+            triggers: [trigger] });
+        const screen = await renderScreen(<ScheduledWorkflowSectionView rows={projectScheduledWorkflowRows([set])}
+            onOpen={() => {}} sessionId="session-one" />);
+        const subtitle = JSON.stringify(screen.findByTestId('scheduled-workflow:held:timer-subtitle')?.props.children);
+        expect(subtitle).toContain('workflows.triggers.row.heldInterruptedShort');
+        expect(screen.getTextContent().split('workflows.triggers.row.heldInterruptedShort').length - 1).toBe(1);
+    });
+
     it('keeps the Account Scheduled group out of the session list until it has rows, and says a failed read once', async () => {
         // The group may not exist: drawing a loading strip that later turns into a group (or vanishes)
         // moves every session row under it. Last-known rows stay put while a read refreshes.

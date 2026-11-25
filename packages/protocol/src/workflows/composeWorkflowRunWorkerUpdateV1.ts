@@ -1,4 +1,4 @@
-import { classifyWorkerUpdateEventV1, resolveWorkerUpdateWakeV1, WorkerUpdateV1Schema, type WorkerUpdateV1 } from '../sessions/relations/workerUpdateV1.js';
+import { classifyWorkerUpdateEventV1, composeWorkflowRunWorkerUpdateHeadlineV1, resolveWorkerUpdateWakeV1, WorkerUpdateV1Schema, type WorkerUpdateV1 } from '../sessions/relations/workerUpdateV1.js';
 import type { WorkflowFinalResultV1, WorkflowProgressEnvelopeV1, WorkflowReviewV1, WorkflowRunSummaryV1 } from './workflowProgressV1.js';
 import { EXECUTION_RUN_COMPLETION_SUMMARY_MAX_LENGTH } from '../execution/runs/completionInputV1.js';
 import type { WorkflowRunFollowEventV1 } from '../sessions/follow/sessionFollowInputV1.js';
@@ -26,7 +26,6 @@ export function composeWorkflowRunWorkerUpdateV1(input: Readonly<{
   const event = classifyWorkerUpdateEventV1({ workerKind: 'workflow_run', ownerState: input.run.state,
     ...(input.run.attentionRequired ? { wake: 'needs_you' } : {}) });
   if (!event) return null;
-  const terminal = event === 'finished' || event === 'failed_or_stopped';
   const selected = input.finalResult?.result;
   const failure = event === 'failed_or_stopped' || event === 'needs_you' ? input.failure : undefined;
   const text = selected?.kind === 'json' ? JSON.stringify(selected.value) : selected?.value
@@ -45,7 +44,8 @@ export function composeWorkflowRunWorkerUpdateV1(input: Readonly<{
     wake: resolveWorkerUpdateWakeV1(event),
     ...(failure?.reason.runtimeIssueV1 ? { runtimeIssueV1: failure.reason.runtimeIssueV1 } : {}),
     // The optional allowance truncates result text, never this exact follow-up fact.
-    headline: `${terminal ? `Workflow ${input.run.state}` : 'Workflow needs your attention'}${followUpText ? ` · ${followUpText}` : ''}`,
+    headline: `${composeWorkflowRunWorkerUpdateHeadlineV1({ ownerState: input.run.state,
+      ...(input.run.attentionRequired ? { wake: 'needs_you' as const } : {}) })}${followUpText ? ` · ${followUpText}` : ''}`,
     ...(result === undefined ? {} : { result: truncated
       ? `${(text ?? '').slice(0, maxResultLength - suffix.length)}${suffix}` : result }),
     ...(truncated ? { truncated: true } : {}),

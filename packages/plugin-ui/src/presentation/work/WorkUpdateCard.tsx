@@ -102,11 +102,23 @@ const styles = StyleSheet.create({
   },
   headAlone: { paddingBottom: HAPPIER_PAGE_METRICS.cardPaddingPx },
   mark: { flexShrink: 0, alignItems: 'center', justifyContent: 'center' },
-  // The title keeps its words; the state word and the kind give way first.
-  title: { flexShrink: 1, minWidth: 0, maxWidth: '62%' },
-  word: { flexShrink: 2, minWidth: 0 },
+  // Title, then the state word and kind: one line when they fit; on a narrow card (a phone) the state word and kind
+  // move beneath the title instead of truncating with it, so the name holds its line and the state word survives.
+  heading: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    columnGap: HAPPIER_PAGE_METRICS.headerGapPx,
+    rowGap: 2,
+  },
+  title: { flexShrink: 1, minWidth: 0, maxWidth: '100%' },
+  status: { flexGrow: 1, flexDirection: 'row', alignItems: 'center', gap: HAPPIER_PAGE_METRICS.headerGapPx, minWidth: 0 },
+  word: { flexShrink: 1, minWidth: 0 },
   grow: { flexGrow: 1 },
-  kind: { flexShrink: 3, minWidth: 0 },
+  kind: { flexShrink: 1, minWidth: 0 },
   body: { paddingHorizontal: HAPPIER_PAGE_METRICS.cardPaddingPx, paddingTop: 6, paddingBottom: 13 },
   footer: {
     flexDirection: 'row',
@@ -145,16 +157,20 @@ export const HappierWorkUpdateCard = memo(function HappierWorkUpdateCard(props: 
     <>
       <View style={[styles.head, hasBody ? null : styles.headAlone]}>
         <View style={styles.mark}>{props.mark}</View>
-        <View style={styles.title}>{slot(props.title, 'cardTitle', theme.colors.text, `${prefix}-title`)}</View>
-        {props.state === undefined || props.state === null ? null : (
-          <View style={styles.word}>
-            {slot(props.state, 'cardWord', wordColor ?? theme.colors.secondaryText, `${prefix}-state`, wordColor !== null)}
+        <View style={styles.heading} testID={`${prefix}-heading`}>
+          <View style={styles.title}>{slot(props.title, 'cardTitle', theme.colors.text, `${prefix}-title`)}</View>
+          <View style={styles.status}>
+            {props.state === undefined || props.state === null ? null : (
+              <View style={styles.word}>
+                {slot(props.state, 'cardWord', wordColor ?? theme.colors.secondaryText, `${prefix}-state`, wordColor !== null)}
+              </View>
+            )}
+            <View style={styles.grow} />
+            {props.meta === undefined || props.meta === null ? null : (
+              <View style={styles.kind}>{slot(props.meta, 'cardMeta', theme.colors.mutedText, `${prefix}-kind`)}</View>
+            )}
           </View>
-        )}
-        <View style={styles.grow} />
-        {props.meta === undefined || props.meta === null ? null : (
-          <View style={styles.kind}>{slot(props.meta, 'cardMeta', theme.colors.mutedText, `${prefix}-kind`)}</View>
-        )}
+        </View>
       </View>
       {hasBody ? <View style={styles.body}>{props.children}</View> : null}
       {hasFooter ? (

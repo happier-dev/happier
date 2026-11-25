@@ -176,6 +176,14 @@ export function classifyWorkerUpdateEventV1(update: Readonly<
 }
 
 /** Plain-language fallback for native Session reports; clients localize the same outcome facts. */
+/** A workflow Run's content-free headline: its outcome when settled, otherwise that it needs the person. */
+export function composeWorkflowRunWorkerUpdateHeadlineV1(update: Readonly<
+  Pick<Extract<WorkerUpdateV1, { workerKind: 'workflow_run' }>, 'ownerState'> & Partial<Pick<WorkerUpdateV1, 'wake'>>
+>): string {
+  const event = classifyWorkerUpdateEventV1({ ...update, workerKind: 'workflow_run' });
+  return event === 'finished' || event === 'failed_or_stopped' ? `Workflow ${update.ownerState}` : 'Workflow needs your attention';
+}
+
 export function composeSessionWorkerUpdateHeadlineV1(update: Readonly<
   Pick<Extract<WorkerUpdateV1, { workerKind: 'session' }>, 'ownerState' | 'wake'>
 >): string {

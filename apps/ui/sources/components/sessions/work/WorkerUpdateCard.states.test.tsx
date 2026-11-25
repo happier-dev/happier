@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { composeExecutionRunWorkerUpdateHeadlineV1, type WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
+import { composeExecutionRunWorkerUpdateHeadlineV1, composeWorkflowRunWorkerUpdateHeadlineV1, type WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -288,6 +288,28 @@ describe('WorkerUpdateCard states (lab cards-T1/T2)', () => {
         await card.pressByTestIdAsync('worker-update-inspect');
         expect(navigate).toHaveBeenCalledTimes(1);
     });
+    // R11 M9: "Workflow succeeded · finished" said one fact twice; the run's name leads and the state word speaks once.
+    it('names a content-free workflow run by its workflow and states its outcome once', async () => {
+        act(() => {
+            storage.setState({ profileScope: { serverId: 'home-a', accountId: 'account-a' } });
+            storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(
+                createWorkflowRunSummaryFixture({ id: 'run_named', state: 'succeeded' }),
+                { kind: 'available', value: { title: 'FIN D06 Named Workflow' } },
+            )]);
+        });
+        const update: WorkerUpdateV1 = { v: 1, workerKind: 'workflow_run', workerId: 'run_named', ownerState: 'succeeded',
+            wake: 'finished', headline: composeWorkflowRunWorkerUpdateHeadlineV1({ ownerState: 'succeeded' }), canInspect: false };
+        const card = await renderCard(update, 'home-a');
+        expect(card.findHostByTestId('worker-update-title')?.props.children).toBe('FIN D06 Named Workflow');
+        expect(card.findHostByTestId('worker-update-state')?.props.children).toBe(t('sessionWork.workerUpdate.state.finished'));
+        await card.unmount();
+        // Unknown on this device: the kind names it, still with one state word.
+        const unknown = await renderCard({ ...update, workerId: 'run_unknown' }, 'home-a');
+        expect(unknown.findHostByTestId('worker-update-title')?.props.children).toBe(t('sessionWork.kinds.workflowRun'));
+        expect(unknown.findHostByTestId('worker-update-state')?.props.children).toBe(t('sessionWork.workerUpdate.state.finished'));
+        await unknown.unmount();
+    });
+
     it('names a content-free failed run by its kind with one state word, and does not repeat the kind beside it', async () => {
         const card = await renderCard({ v: 1, workerKind: 'execution_run', workerId: 'run_plain', ownerState: 'failed',
             wake: 'needs_you', headline: composeExecutionRunWorkerUpdateHeadlineV1('failed'), canInspect: false },

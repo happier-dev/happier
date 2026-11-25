@@ -8,7 +8,7 @@ import type { SessionViewerProjectionV1 } from '@happier-dev/protocol/sessions/p
 import type { SessionManagedSessionsV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { resolveFollowDeliveryV1, type InboxItemAttentionTypeV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import type { WorkflowInvocationLifecycleV1, WorkflowRunStateV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import { classifyWorkerUpdateEventV1, composeExecutionRunWorkerUpdateHeadlineV1, composeSessionWorkerUpdateHeadlineV1, type WorkerUpdateHeadlineFactsV1, type WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
+import { classifyWorkerUpdateEventV1, composeExecutionRunWorkerUpdateHeadlineV1, composeSessionWorkerUpdateHeadlineV1, composeWorkflowRunWorkerUpdateHeadlineV1, type WorkerUpdateHeadlineFactsV1, type WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import type { ActionOperationSnapshotV1, ActionOperationStateV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { PluginWorkItemCategoryV1 } from '@happier-dev/protocol/plugins/contributions/workItems';
 
@@ -77,6 +77,7 @@ export function isContentFreeWorkerUpdateHeadline(update: WorkerUpdateHeadlineFa
     const headline = update.headline.trim();
     if (update.workerKind === 'session') return headline === composeSessionWorkerUpdateHeadlineV1(update);
     if (update.workerKind === 'execution_run') return headline === composeExecutionRunWorkerUpdateHeadlineV1(update.ownerState);
+    if (update.workerKind === 'workflow_run') return headline === composeWorkflowRunWorkerUpdateHeadlineV1(update);
     return false;
 }
 

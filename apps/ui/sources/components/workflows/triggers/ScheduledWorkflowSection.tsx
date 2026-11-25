@@ -206,7 +206,12 @@ const ScheduledRow = React.memo(function ScheduledRow(props: Readonly<{
                 ? { height: geometry.densityViewState.rowHeight, minHeight: geometry.densityViewState.rowHeight, paddingVertical: 0 }
                 : { minHeight: geometry.densityViewState.rowHeight }] };
     })() : {};
-    const quiet = [...steps, formatTriggerSummary(row.trigger)].join(' · ');
+    // In a Session's section a hold is a state sentence, too wide for the title line's meta: it leads the quiet line
+    // beneath instead, so the title keeps its words on a narrow pane (R11 M8). A time stays beside the title.
+    const holdBeneath = props.sessionId !== undefined && hold !== null && enabled
+        && (row.trigger.nextRunAt === null || row.trigger.nextRunAt <= nowMs);
+    const quiet = [...(holdBeneath ? [formatNextScheduledRunTime(row.trigger.nextRunAt, enabled, nowMs, hold)] : []),
+        ...steps, formatTriggerSummary(row.trigger)].join(' · ');
     // A compact list row is one line (lab `clfamily`: "Morning brief · Mon 9:00"); its schedule, steps and
     // destinations stay in its name for assistive technology and on the page it opens.
     const oneLine = listDensity === 'minimal';
@@ -220,7 +225,7 @@ const ScheduledRow = React.memo(function ScheduledRow(props: Readonly<{
         // In a Session's section the next run is the title line's meta, as a Run's state word is (lab Writes here); the
         // session list keeps it in the trailing column its Session rows use.
         {...(props.sessionId !== undefined
-            ? { titleMeta: formatNextScheduledRunTime(row.trigger.nextRunAt, enabled, nowMs, hold) }
+            ? holdBeneath ? {} : { titleMeta: formatNextScheduledRunTime(row.trigger.nextRunAt, enabled, nowMs, hold) }
             : { detail: formatNextScheduledRunTime(row.trigger.nextRunAt, enabled, nowMs, hold), detailTestID: `scheduled-workflow:${row.key}-next` })}
         icon={<Icon name={props.sessionId !== undefined ? 'sign-in' : resolveTriggerEventGroup(row.trigger).glyph} />}
         {...listRow}

@@ -139,6 +139,11 @@ it('says a due schedule waits for its interrupted previous run and opens that ru
   expect(screen.getTextContent()).not.toContain(
     t('automations.list.nextRunPending'),
   );
+  // R11 M8: the reason is never clamped, and Open run may move beneath it on a narrow row.
+  const reason = screen.findAll((node) => typeof node.type === 'string'
+    && node.props.children === t('workflows.triggers.row.heldByInterruptedRun'));
+  expect(reason.length).toBeGreaterThan(0);
+  expect(reason.every((node) => !node.props.numberOfLines)).toBe(true);
   await screen.pressByTestIdAsync(
     'session-work-trigger-history:hourly-open-run',
   );

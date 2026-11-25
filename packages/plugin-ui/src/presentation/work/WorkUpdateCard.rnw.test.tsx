@@ -63,6 +63,32 @@ describe('HappierWorkUpdateCard for plugin authors', () => {
     }
   });
 
+  // R11 M7: on a phone the name keeps its line; the state word and age move beneath instead of truncating with it.
+  it('lets the state word and kind wrap beneath the title rather than share its truncation', () => {
+    const mounted = mountThroughReactNativeWeb(
+      inSurface(
+        <HappierWorkUpdateCard testID="named" tone="attention" mark={null}
+          title="Started a workflow · FIN D06 READY309 Written for this task held" state="Needs you" meta="5h" />,
+      ),
+    );
+    try {
+      const heading = byTestId(mounted.container, 'named-heading')!;
+      expect(getComputedStyle(heading).flexWrap).toBe('wrap');
+      const title = byTestId(heading, 'named-title')!;
+      const state = byTestId(heading, 'named-state')!;
+      const kind = byTestId(heading, 'named-kind')!;
+      // The title's own block never caps itself to leave room for the state word on the same line.
+      const titleBlock = title.parentElement!;
+      expect(titleBlock.parentElement).toBe(heading);
+      expect(getComputedStyle(titleBlock).maxWidth).toBe('100%');
+      // State and kind form one group that wraps as a unit.
+      expect(state.closest('[data-testid="named-heading"] > div:not(:first-child)')).not.toBeNull();
+      expect(kind.parentElement?.parentElement).toBe(state.parentElement?.parentElement);
+    } finally {
+      mounted.unmount();
+    }
+  });
+
   it('draws no footer when there is nothing to state or do, and names slots from the given prefix', () => {
     const mounted = mountThroughReactNativeWeb(
       inSurface(

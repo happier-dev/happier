@@ -315,11 +315,20 @@ export function WorkerUpdateCard(props: Readonly<{
         const ranges = find.ranges(`structured-worker-${field}`);
         return ranges?.length ? <FindHighlightedText text={text} ranges={ranges} selectable={selectable} /> : text;
     };
-    const title = useWorkerTitle(update, props.serverId);
     const engine = update.engine;
     const pointer = update.transcriptPointer;
     const canInspect = update.canInspect && props.navigationEnabled !== false && transcriptSource.navigate !== null && pointer !== undefined;
     const serverId = props.serverId ?? transcriptSource.serverId;
+    // The run's own progress and name, when this device already knows the run in its exact Home (the active
+    // store holds only the active Account's runs). A stated fact, never a read the card starts.
+    const activeScope = useActiveServerAccountScope();
+    const runInActiveHome = update.workerKind === 'workflow_run' && activeScope !== null && Boolean(serverId)
+        && areServerProfileIdentifiersEquivalent(activeScope.serverId, serverId ?? '');
+    const run = useWorkflowRun(runInActiveHome ? update.workerId : null);
+    const progress = run?.summary ? describeWorkflowRunProgress(run.summary.stepProgress) : null;
+    // A run is named by its workflow when this device reads it, so the state word says the outcome once.
+    const workerTitle = useWorkerTitle(update, props.serverId);
+    const title = run?.metadata?.kind === 'available' ? run.metadata.value.title : workerTitle;
     // Transcript order owns currentness: a worker's latest notice asks and answers in place; an
     // earlier one keeps its result and says it needed you, in the past tense and neutral.
     const asksInTranscript = update.workerKind === 'session' && props.messageId !== undefined
@@ -330,14 +339,6 @@ export function WorkerUpdateCard(props: Readonly<{
     const needsYou = status.bucket === 'needs_you';
     const disclosure = useCoreDisclosureToggleBinding();
     const [detailsOpen, setDetailsOpen] = React.useState(false);
-
-    // The run's own progress, when this device already knows the run in its exact Home (the active
-    // store holds only the active Account's runs). A stated fact, never a read the card starts.
-    const activeScope = useActiveServerAccountScope();
-    const runInActiveHome = update.workerKind === 'workflow_run' && activeScope !== null && Boolean(serverId)
-        && areServerProfileIdentifiersEquivalent(activeScope.serverId, serverId ?? '');
-    const run = useWorkflowRun(runInActiveHome ? update.workerId : null);
-    const progress = run?.summary ? describeWorkflowRunProgress(run.summary.stepProgress) : null;
 
     const inspect = () => {
         if (!canInspect || !pointer) return;
