@@ -1100,7 +1100,7 @@ describe("managed acquisition durable authority", () => {
             .toMatchObject({ machine: { id: row.id, desired: 'stop', intentRevision: 1 } });
     });
 
-    it.each(['active', 'canceled'] as const)('lets the custodian read a cross-account reservation and settles %s enrollment', async state => {
+    it.each(['active', 'canceled'] as const)('lets the custodian and controller Admin read a cross-account reservation and settles %s enrollment', async state => {
         const fixture = await createManagedComputeFixture(`requester-enrollment-${state}`);
         const { account: custodian, homeId, controller } = fixture;
         const requester = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' } });
@@ -1111,11 +1111,13 @@ describe("managed acquisition durable authority", () => {
         const created = await admitManagedAcquire(request);
         expect(created.machine).toMatchObject({ custodianAccountId: custodian.id, enrollmentAccountId: requester.id });
         const reservation = { homeId, creationRequestId: request.input.requestId };
-        await expect(getManagedMachine({ actorAccountId: custodian.id, input: reservation })).resolves.toMatchObject({
+        const reservationDetails = {
             id: created.machine.id, enrollmentAccountId: requester.id, controller, allocation: 'unsubmitted',
-        });
+        };
+        await expect(getManagedMachine({ actorAccountId: custodian.id, input: reservation }))
+            .resolves.toMatchObject(reservationDetails);
         await expect(getManagedMachine({ actorAccountId: requester.id, input: reservation }))
-            .rejects.toMatchObject({ code: 'managed_not_found' });
+            .resolves.toMatchObject(reservationDetails);
         expect((await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } })).admittedInput)
             .toMatchObject({ enrollmentAccountId: requester.id });
         expect(await admitManagedAcquire(request)).toMatchObject({ replayed: true });
