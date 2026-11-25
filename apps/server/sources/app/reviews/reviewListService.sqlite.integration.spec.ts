@@ -5,6 +5,8 @@ import { inTx } from '@/storage/inTx';
 import { createDatabaseIntegrationHarness } from '@/testkit/databaseIntegrationHarness';
 import { resolveReviewAccessInTx } from './reviewAccess';
 import { listReviewsInTx, readReviewHistoryInTx, readAdmittedReviewDetailInTx } from './reviewListService';
+import { createReviewCommentOperations } from './comments/operations';
+import { createSqlReviewCommentStore } from './comments/store';
 
 describe('Review metadata demand', () => {
     let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
@@ -51,6 +53,53 @@ describe('Review metadata demand', () => {
         expect(personal.items.map(row => row.reviewId)).toEqual([manual]);
         expect(await inTx(tx => readReviewHistoryInTx(tx, { actorAccountId: owner.id, workflowId: 'absent', reviewId: matches[0]! })))
             .toEqual({ previousReviewId: null, items: [] });
+    });
+
+    it('pages sparse project findings needing decisions without counting replies or repeated reviewer appearances', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const projectSourceId = randomUUID();
+        const tiedAt = new Date('2026-01-01');
+        const operations = createReviewCommentOperations(createSqlReviewCommentStore(), {
+            now: () => 1, createId: () => randomUUID(),
+        });
+        const make = async (project: string, pending: boolean, at: Date) => {
+            const reviewId = randomUUID();
+            await db.artifact.create({ data: { id: reviewId, accountId: owner.id,
+                header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array(), updatedAt: at } });
+            await db.reviewMetadata.create({ data: { artifactId: reviewId, projectSourceId: project,
+                subjectKind: 'comparison', sourceKind: 'direct', state: 'completed', currentRoundOrdinal: 1, startedAt: at } });
+            if (pending) {
+                const access = await inTx(tx => resolveReviewAccessInTx(tx, { actorAccountId: owner.id, reviewId }));
+                if (!access) throw new Error('Owner Review fixture was not admitted');
+                const principal = { accountId: owner.id, storageMode: 'plain' as const,
+                    actor: { kind: 'user' as const, userId: owner.id }, reviewAccess: access };
+                const input = { reviewId, findingIdentity: randomUUID().replaceAll('-', '').repeat(2),
+                    anchor: { kind: 'file' as const, filePath: 'src/input.ts' }, snapshot: { kind: 'none' as const, capturedAt: 1 },
+                    body: 'Validate the input before using it.', authorIntent: 'open' as const };
+                const first = await operations.create({ ...principal, input: { ...input, clientMutationId: randomUUID(),
+                    appearance: { roundOrdinal: 1, runId: `${reviewId}-run`, reviewerId: 'reviewer-a' } } });
+                const repeated = await operations.create({ ...principal, input: { ...input, clientMutationId: randomUUID(),
+                    appearance: { roundOrdinal: 1, runId: `${reviewId}-run`, reviewerId: 'reviewer-b' } } });
+                expect(repeated.comment.id).toBe(first.comment.id);
+                await operations.reply({ ...principal, input: { reviewId, parentCommentId: repeated.comment.id,
+                    expectedParentServerRevision: repeated.comment.serverRevision, body: 'Investigating this finding.', clientMutationId: randomUUID() } });
+                await db.artifact.update({ where: { id: reviewId }, data: { updatedAt: at } });
+            }
+            return reviewId;
+        };
+        const matches = [await make(projectSourceId, true, tiedAt), await make(projectSourceId, true, tiedAt)].sort().reverse();
+        for (let index = 0; index < 12; index++) await make(projectSourceId, false, new Date());
+        await make(randomUUID(), true, new Date());
+
+        const input = { actorAccountId: owner.id, projectSourceId, needsDecision: true, limit: 1 };
+        const first = await inTx(tx => listReviewsInTx(tx, input));
+        expect(first.items.map(row => ({ id: row.reviewId, counts: row.counts })))
+            .toEqual([{ id: matches[0], counts: { total: 1, needsDecision: 1 } }]);
+        expect(first.cursor).toEqual(expect.any(String));
+        const second = await inTx(tx => listReviewsInTx(tx, { ...input, cursor: first.cursor! }));
+        expect(second.items.map(row => ({ id: row.reviewId, counts: row.counts })))
+            .toEqual([{ id: matches[1], counts: { total: 1, needsDecision: 1 } }]);
+        expect(second.cursor).toBeNull();
     });
 
     it('groups only authorized workflow history and never imports a decision from another Review', async () => {
