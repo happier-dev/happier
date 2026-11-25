@@ -32,8 +32,8 @@ const NO_FORGES: readonly NewAppForge[] = Object.freeze([]);
 
 /**
  * Code lives on (journey-deploy F5). The offered forges come from the catalog snapshot (`forges`): a suggested setup
- * keeps only forges its validator still admits with the suggested target; a starter picked by hand reads the same
- * snapshot once and offers every publisher, since no target is chosen yet. Each offered forge is described once while
+ * keeps only forges its validator still admits with the suggested target; a starter picked by hand reads just the
+ * publisher projection, since no target is chosen yet. Each offered forge is described once while
  * the step is open (where the repository would go, or what it needs); choosing a forge reads and writes nothing.
  */
 export function useNewAppForges(
@@ -53,7 +53,7 @@ export function useNewAppForges(
     if (!active || suggestion || !serverId || catalogRead.current === serverId)
       return;
     catalogRead.current = serverId;
-    void readDeploySuggestionCatalog({ serverId }).then((listed) => {
+    void readDeploySuggestionCatalog({ serverId, input: { projection: 'forges' } }).then((listed) => {
       if (listed.kind === 'catalog') setOwnCatalog(listed.catalog);
       // Without the snapshot the row keeps the default forge alone; reopening the step reads it again.
       else catalogRead.current = null;

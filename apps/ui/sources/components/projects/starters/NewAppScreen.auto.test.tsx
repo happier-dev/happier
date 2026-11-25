@@ -277,7 +277,11 @@ it('Describe your app replaces the Ask-an-agent door: one run on a ready Machine
 });
 
 it('a starter picked by hand after Use this setup is not the suggestion: the step says describe, and Back returns to the source step (REVIEW-DELTA7 F1)', async () => {
+  const readTargets = vi.fn(async () => ({ targets, stores: [] }));
+  const readForges = vi.fn(async () => [{ providerKind: 'github' as const, title: 'GitHub' }]);
   suggestionBoundary({
+    deploymentSuggestionTargets: readTargets,
+    deploymentSuggestionForges: readForges,
     executionRunWait: async () => ({
       ok: true,
       status: 'succeeded',
@@ -305,6 +309,8 @@ it('a starter picked by hand after Use this setup is not the suggestion: the ste
     await screen.pressByTestIdAsync('newApp.starter:website');
     await screen.pressByTestIdAsync('newApp.continue');
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.nameField')).toBeTruthy());
+    await waitForHomeGovernance(() => expect(readForges).toHaveBeenCalledTimes(2));
+    expect(readTargets, 'manual starter only needs the forge projection').toHaveBeenCalledTimes(1);
     // Create would send no plan brief for this starter, so the step promises none.
     expect(screen.getTextContent()).toContain(t('newApp.describeDescription'));
     expect(screen.getTextContent()).not.toContain(t('newApp.createDescription'));

@@ -1,3 +1,4 @@
+import type { AdmittedActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import type { ExecutionRunError } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -56,10 +57,13 @@ export type DeploySuggestionOutcome =
     | Readonly<{ kind: 'failed'; code: string; stage: 'run'; runError?: ExecutionRunError; runner: LlmTaskRunnerConfigV1 }>
     | Readonly<{ kind: 'stopped' }>;
 
-/** The one read of what can be offered (`deployments.suggestions.catalog`); a starter picked by hand reads the same snapshot. */
-export async function readDeploySuggestionCatalog(params: Readonly<{ serverId: string; signal?: AbortSignal }>): Promise<
-    Readonly<{ kind: 'catalog'; catalog: DeploySuggestionCatalogV1 }> | Readonly<{ kind: 'failed'; code: string }>> {
-    const listed = await executeAction(DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, {}, { surface: 'ui', authority: 'present_user',
+/** Read the requested projection from the suggestion catalog owner. */
+export async function readDeploySuggestionCatalog(params: Readonly<{
+    serverId: string;
+    signal?: AbortSignal;
+    input?: AdmittedActionInputById[typeof DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1];
+}>): Promise<Readonly<{ kind: 'catalog'; catalog: DeploySuggestionCatalogV1 }> | Readonly<{ kind: 'failed'; code: string }>> {
+    const listed = await executeAction(DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, params.input ?? {}, { surface: 'ui', authority: 'present_user',
         actionCaller: { kind: 'host' }, serverId: params.serverId, ...(params.signal ? { signal: params.signal } : {}) });
     if (!listed.ok) return { kind: 'failed', code: listed.errorCode };
     const parsed = DeploySuggestionCatalogV1Schema.safeParse(listed.result);
