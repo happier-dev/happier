@@ -151,7 +151,7 @@ async function mount(params: Readonly<{
     readAccountVersion?: () => number;
     afterCommitArchivedSessions?: ReturnType<typeof retainedSession>[];
     afterCommitInventoryFails?: boolean;
-    beforeMigrationAcknowledgement?: () => void;
+    beforeMigrationAcknowledgement?: () => void | Promise<void>;
     artifactRows?: ArtifactAccountEncryptionMigrationInventoryV1['items'];
     beforeArtifactInventory?: () => Promise<void>;
     promptLibraryRows?: readonly Readonly<{ key: PromptLibraryCatalogKeyV1; revision: number; content: PromptLibraryContentV1 | null }>[];
@@ -249,7 +249,7 @@ async function mount(params: Readonly<{
                         : { status: 'present', revision, content: directive.content });
                     return [[field, { revision, content: directive.content }]];
                 }));
-                params.beforeMigrationAcknowledgement?.();
+                await params.beforeMigrationAcknowledgement?.();
                 // The browser transport rejects an aborted pending response even after the server commits.
                 if (init.signal?.aborted) throw init.signal.reason;
                 return json(AccountEncryptionMigrateSuccessResponseSchema.parse({ success: true, mode, accountVersion: committedAccountVersion, settingsVersion,
@@ -554,9 +554,11 @@ describe('Account encryption historical material custody', () => {
                         ciphertext: directive.content.c })?.value).toEqual(record);
                 }
             }
-            const completedToggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            expect(completedToggle.props.value, JSON.stringify(vi.mocked(Modal.alertAsync).mock.calls)).toBe(initialMode === 'plain');
+            await vi.waitFor(() => {
+                const completedToggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
+                    && typeof node.props.onValueChange === 'function')[0]!;
+                expect(completedToggle.props.value, JSON.stringify(vi.mocked(Modal.alertAsync).mock.calls)).toBe(initialMode === 'plain');
+            });
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
@@ -1019,8 +1021,8 @@ describe('Account encryption historical material custody', () => {
             expect(h.migrations[0]?.toMode).toBe('plain');
             await expectKeysKeptAsHistory(h);
             expect(Modal.alertAsync).not.toHaveBeenCalled();
-            expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && node.props.value === false && node.props.disabled === false).length).toBeGreaterThan(0);
+            await vi.waitFor(() => expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
+                && node.props.value === false && node.props.disabled === false).length).toBeGreaterThan(0));
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
@@ -1037,6 +1039,20 @@ describe('Account encryption historical material custody', () => {
             expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
                 && node.props.value === true).length).toBeGreaterThan(0);
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
+    });
+
+    it('does not replace the newly selected Home mode with an old Home conversion acknowledgement', async () => {
+        let other: Awaited<ReturnType<typeof restoreOtherHome>> | undefined;
+        const h = await mount({ initialMode: 'plain', beforeMigrationAcknowledgement: async () => {
+            other = await restoreOtherHome(`https://conversion-ack-other-${crypto.randomUUID()}.test`);
+        } });
+        try {
+            await convertWithReview(h.screen, true);
+            expect(h.migrations).toHaveLength(1);
+            expect(h.migrations[0]?.toMode).toBe('e2ee');
+            await vi.waitFor(() => expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
+                && node.props.value === false && node.props.disabled === false).length).toBeGreaterThan(0));
+        } finally { await h.screen.unmount(); await other?.dispose(); await h.restored.dispose(); }
     });
 
     it('makes retained keys active again when this device re-enables end-to-end encryption', async () => {

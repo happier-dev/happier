@@ -99,12 +99,14 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
             recoveryRequired = false,
             downgradeUnverified = false,
         ) => {
-            setAccountEncryptionPresentation({
+            // A credential adoption may temporarily withdraw the active runtime;
+            // settled results still belong to this presentation's captured scope.
+            setAccountEncryptionPresentation(previous => previous.scope === scope ? {
                 scope,
                 mode,
                 recoveryRequired,
                 downgradeUnverified,
-            });
+            } : previous);
         },
         [],
     );
@@ -373,8 +375,8 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
                                                 anchor: ACCOUNT_SETTINGS.settings.encryptionMode.anchor,
                                                 input: { kind: 'account_encryption_mode_convert', toMode: nextMode },
                                             }, { surface: 'ui', serverId: settingsScope.serverId, expectedAccountId: settingsScope.accountId });
-                                            if (!isCurrent()) return;
                                             if (!invocation.ok) {
+                                                if (!isCurrent()) return;
                                                 if (isActionApprovalDeclinedErrorCode(invocation.errorCode)) return;
                                                 requireActionSuccess(invocation);
                                             }
