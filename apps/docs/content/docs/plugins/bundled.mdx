@@ -3,7 +3,7 @@ title: What ships in the box
 description: Every plugin Happier bundles — agents, model providers, voice engines, source control and channels — generated from their projected manifests.
 ---
 
-Happier bundles 91 plugins. That number is the clearest statement
+Happier bundles 97 plugins. That number is the clearest statement
 of how this version is built: coding agents, model providers, voice engines,
 version-control backends and hosting forges all use the plugin platform.
 
@@ -51,9 +51,9 @@ Native review integrations with engine-specific scope, model and authentication 
 
 | Plugin | Id | What it does |
 | --- | --- | --- |
+| **clawpatch** | `happier.review.clawpatch` | Review repository slices with native evidence and resumable engine state. |
 | **CodeRabbit review engine** | `happier.review.coderabbit` | Runs CodeRabbit as a review-only execution engine. |
 | **DeepSec review engine** | `happier.review.deepsec` | Runs DeepSec as a review and security-review execution engine. |
-| **clawpatch** | `happier.review.clawpatch` | Review repository slices with native evidence and resumable engine state. |
 | **roborev** | `happier.review.roborev` | Native single and panel code reviews on the selected Machine. |
 
 ### Model providers
@@ -130,7 +130,7 @@ Machine provisioning plugins in the 0.3 development source.
 | **Daytona Machines** | `happier.machine.daytona` | Create and manage Daytona sandboxes as ordinary Happier Machines. |
 | **DigitalOcean Machines** | `happier.machine.digitalocean` | Manage exact reviewed DigitalOcean resources through captured cloud credentials. |
 | **Docker container Machines** | `happier.devcontainer` | Ordinary managed children on their physical Docker controller. |
-| **Docker Sandbox Machines** | `happier.machine.docker-sandboxes` | Native local Docker Sandboxes with retained names and private bootstrap IO. |
+| **Docker Sandbox Machines** | `happier.machine.docker-sandboxes` | Local and remote Docker sandboxes with retained identities and private bootstrap IO. |
 | **E2B Machines** | `happier.machine.e2b` | A Linux sandbox on E2B, connected as an ordinary Happier Machine. |
 | **Fly Machines** | `happier.machine.fly` | Native Fly Machine control and private buffered bootstrap IO. |
 | **Freestyle Machines** | `happier.machine.freestyle` | Create and manage Freestyle VMs as ordinary Happier Machines. |
@@ -142,6 +142,7 @@ Machine provisioning plugins in the 0.3 development source.
 | **Maritime Machines** | `happier.machine.maritime` | A persistent Linux machine. Idle machines may sleep; Happier resumes them before work. |
 | **Modal Machines** | `happier.machine.modal` | Finite Modal Sandboxes with private native bootstrap IO. |
 | **Railway Machines** | `happier.machine.railway` | Create and manage Railway sandboxes as ordinary Happier Machines. |
+| **SSH workspaces** | `happier.machine.ssh` | Use folders on an existing SSH host. |
 | **Superserve Machines** | `happier.machine.superserve` | Create and manage Superserve sandboxes as ordinary Happier Machines. |
 | **Upstash Box Machines** | `happier.machine.upstash-box` | Create and manage Upstash Box sandboxes as ordinary Happier Machines. |
 | **Vercel Machines** | `happier.machine.vercel` | Sandboxes that keep their files between runs. |
@@ -165,9 +166,9 @@ Deploy targets, managed databases and deployment templates in the 0.3 developmen
 | **Cloudflare deployments** | `happier.deploy.cloudflare` | — |
 | **Deployment templates** | `happier.deployment.templates` | — |
 | **Neon deployments** | `happier.deploy.neon` | — |
-| **Supabase deployments** | `happier.deploy.supabase` | — |
-| **Railway databases** | `happier.deploy.railway-data` | PostgreSQL and MySQL services in Railway environments (unreleased 0.3). |
+| **Railway databases** | `happier.deploy.railway-data` | — |
 | **Railway deployments** | `happier.deploy.railway` | — |
+| **Supabase deployments** | `happier.deploy.supabase` | — |
 | **Vercel deployments** | `happier.deploy.vercel` | — |
 
 ### Backups
@@ -177,6 +178,14 @@ Backup destinations in the 0.3 development source.
 | Plugin | Id | What it does |
 | --- | --- | --- |
 | **Backup destinations** | `happier.backup.destinations` | — |
+
+### Databases
+
+Database workbenches and capture tools in the 0.3 development source.
+
+| Plugin | Id | What it does |
+| --- | --- | --- |
+| **Database** | `happier.database` | — |
 
 ### Secret sources
 
@@ -201,6 +210,7 @@ Single-purpose plugins that do not belong to a family.
 | **PostHog** | `happier.posthog` | Brings PostHog error issues into PRs & Issues with their own detail body. |
 | **PRs & Issues** | `happier.triage` | Aggregates pull requests, issues and error groups from configured sources into one reviewable surface. |
 | **Sentry** | `happier.sentry` | Brings Sentry error issues into PRs & Issues with their own detail body. |
+| **Telemetry** | `happier.telemetry` | Machine-local database observations and application telemetry. |
 
 ## What they contribute
 
@@ -210,44 +220,47 @@ useful to know before you build on it.
 
 | Family | Plugins |
 | --- | --- |
-| `mcp` | 91 |
-| `ui` | 91 |
-| `resources` | 67 |
-| `actions` | 44 |
-| `connectedAccountDescriptors` | 42 |
-| `systemTools` | 32 |
-| `agents` | 23 |
-| `machineProvisioners` | 21 |
+| `mcp` | 97 |
+| `ui` | 97 |
+| `resources` | 75 |
+| `actions` | 48 |
+| `connectedAccountDescriptors` | 44 |
+| `systemTools` | 33 |
+| `agents` | 25 |
+| `machineProvisioners` | 22 |
 | `settings` | 17 |
-| `managedDependencies` | 14 |
-| `targetedPluginContributions` | 13 |
+| `managedDependencies` | 16 |
+| `targetedPluginContributions` | 14 |
+| `events` | 13 |
 | `providers` | 11 |
-| `backgroundServices` | 8 |
-| `events` | 8 |
-| `inputTypes` | 7 |
+| `backgroundServices` | 9 |
+| `inputTypes` | 8 |
+| `accountCollections` | 6 |
+| `deploymentTargets` | 6 |
+| `machineRoles` | 6 |
+| `notifications` | 6 |
 | `voiceProviders` | 6 |
-| `accountCollections` | 5 |
+| `webhooks` | 6 |
 | `notificationChannels` | 5 |
-| `notifications` | 5 |
-| `deploymentTargets` | 5 |
+| `executionRunProfiles` | 4 |
 | `hooks` | 4 |
+| `pluginContributionPoints` | 4 |
+| `promptAssets` | 4 |
 | `scmHostingProviders` | 4 |
 | `composerAttachments` | 3 |
 | `languageServers` | 3 |
-| `machineRoles` | 3 |
-| `pluginContributionPoints` | 3 |
-| `webhooks` | 3 |
 | `composerControls` | 2 |
 | `composerReferences` | 2 |
-| `executionRunProfiles` | 2 |
-| `promptAssets` | 2 |
+| `healthCheckKinds` | 2 |
+| `machineRecipes` | 2 |
 | `scmBackends` | 2 |
+| `serviceLaunchEnvironments` | 2 |
+| `workflows` | 2 |
 | `backupDestinations` | 1 |
 | `composerRegions` | 1 |
+| `daemonDatabases` | 1 |
 | `dragSources` | 1 |
 | `dropTargets` | 1 |
-| `healthCheckKinds` | 1 |
-| `machineRecipes` | 1 |
 | `machineSetupPresets` | 1 |
 | `projectNativeAdapters` | 1 |
 | `registrySources` | 1 |
@@ -256,7 +269,6 @@ useful to know before you build on it.
 | `sessionHeaderActions` | 1 |
 | `sessionInfoSections` | 1 |
 | `transcriptActivities` | 1 |
-| `workflows` | 1 |
 | `workItems` | 1 |
 
 ## Related
