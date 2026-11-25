@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { Readable } from 'node:stream';
 import fastify from 'fastify';
+import { io } from 'socket.io-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveUsagePageAggregation, UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
@@ -17,9 +18,18 @@ import { encodeBase64, encrypt } from '@/api/encryption';
 import { AgentStateSchema } from '@happier-dev/session-core/state';
 import { projectSessionUsageWorkEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
+import { createApiSessionSocketStub, createAvailableSessionSpawnMachineSnapshot } from '@/testkit/backends/apiSessionSocketHarness';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { readCliUsageDetail } from './readCliUsageDetail';
+
+vi.mock('socket.io-client', async importOriginal => ({
+    ...await importOriginal<typeof import('socket.io-client')>(),
+    io: vi.fn(),
+}));
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -72,6 +82,61 @@ describe('CLI Usage Session evidence demand', () => {
         expect(answer?.sources).toContainEqual({ source: 'work', status: 'partial', asOfMs: 275,
             ...(mixed ? { errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 1 } } : {}) });
         expect(detail.work[0]?.branchEvidence).toHaveLength(1);
+    });
+
+    it.each([
+        { name: 'setup only', overrideMs: undefined, elapsedMs: 60_000 },
+        { name: 'explicit deadline', overrideMs: 20_000, elapsedMs: 20_000 },
+    ])('settles Work through the Usage sender at $elapsedMs ms ($name)', async ({ overrideMs, elapsedMs }) => {
+        const ids = ['read', 'unread'];
+        const machineId = 'work-machine';
+        vi.spyOn(axios, 'post').mockImplementation(async (_url, request) => batchResponse({ results: ids.map(id => ({
+            sessionId: id, detail: { status: 200, body: { session: createSessionRecordFixture({
+                id, encryptionMode: 'plain', share: null, metadata: JSON.stringify({ path: '/repo', machineId, agent: 'claude' }),
+            }) } },
+        })) }, 200, request));
+        vi.spyOn(axios, 'get').mockResolvedValue({ data: { machine: {
+            ...createAvailableSessionSpawnMachineSnapshot(machineId), storageMode: 'plain',
+        } } });
+        const reply = { sessions: [
+            { sessionId: 'read', status: 'partial', evidence: [], pullRequestsRead: true },
+            { sessionId: 'unread', status: 'error', errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_TIMEOUT },
+        ] };
+        const socket = createApiSessionSocketStub({ emitWithAck: (event, packet) => {
+            expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
+            expect(packet).toMatchObject({ method: `${machineId}:${RPC_METHODS.SCM_WORK_EVIDENCE_READ}` });
+            return new Promise(resolve => setTimeout(() => resolve({ ok: true, result: reply }), 60_000));
+        } });
+        vi.mocked(io).mockReturnValue(socket as unknown as ReturnType<typeof io>);
+        const callMachineRpc = machineRpc.callMachineRpc;
+        const sender = vi.spyOn(machineRpc, 'callMachineRpc');
+        if (overrideMs !== undefined) {
+            // Exercise the explicit override at the real transport seam.
+            sender.mockImplementation(params => callMachineRpc({ ...params, timeoutMs: overrideMs }));
+        }
+
+        const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, session: ids,
+            includeWorkEvidence: true, includeSessionEvidence: false });
+        vi.useFakeTimers();
+        try {
+            const start = Date.now();
+            const pending = readCliUsageDetail({ queries: [query],
+                accounting: [{ query, value: twoSessionAccounting(ids), status: 'available' }],
+                credentials: { token: 'token', encryption: null }, serverId: 'home', serverHttpBaseUrl: 'http://usage-batch.test',
+                accountEncryptionMode: 'plain', allowPrivateRead: true, nowMs: 200, assertCurrent: async () => {},
+                resolveHeaders: () => ({ Authorization: 'Bearer token' }),
+            }).then(detail => ({ detail, elapsed: Date.now() - start }));
+            await vi.advanceTimersByTimeAsync(60_000);
+            const { detail, elapsed } = await pending;
+            expect(elapsed).toBe(elapsedMs);
+            expect(detail.work).toMatchObject(overrideMs === undefined
+                ? [{ status: 'partial', asOfMs: start + 60_000, pullRequestReadSessions: ['read'], unreadSessions: { timed_out: 1 } }]
+                : [{ status: 'error', unreadSessions: { timed_out: 2 } }]);
+            expect(sender).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: null }));
+        } finally {
+            vi.mocked(io).mockReset();
+            vi.useRealTimers();
+        }
     });
 
     it.each(['request', 'detail'])('carries a failing Session evidence %s into Work instead of reporting unknown Work', async failed => {

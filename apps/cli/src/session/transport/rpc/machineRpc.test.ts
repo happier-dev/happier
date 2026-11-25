@@ -95,7 +95,6 @@ import {
 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 
 import { callExactMachineRpc, callMachineRpc, readMachineRpcRequestDisposition } from './machineRpc';
 import { prepareSessionFollowSourceKey } from '@/agent/runtime/session/follow/prepareSessionFollowSourceKey';
@@ -546,32 +545,25 @@ describe('callMachineRpc', () => {
     }
   });
 
-  it.each([undefined, 20_000])('keeps a Work reply beyond the default setup window with deadline %s', async timeoutMs => {
-    const credentials = { token: 'work-read-fixture', encryption: null };
-    const machineId = 'work-machine';
-    const method = RPC_METHODS.SCM_WORK_EVIDENCE_READ;
-    const sessions = [{ sessionId: 'read', cwd: '/repo', turnIds: ['turn'] },
-      { sessionId: 'unread', cwd: '/other', turnIds: ['turn'] }];
-    const reply = { sessions: [
-      { sessionId: 'read', status: 'partial', evidence: [], pullRequestsRead: true },
-      { sessionId: 'unread', status: 'error', errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_TIMEOUT },
-    ] };
-    axiosGet.mockResolvedValue({ data: { machine: { id: machineId, storageMode: 'plain',
-      dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } } });
-    const originalIo = vi.mocked(io).getMockImplementation()!;
-    vi.mocked(io).mockImplementation(() => createApiSessionSocketStub({ emitWithAck: event => {
-      if (event !== SOCKET_RPC_EVENTS.CALL) throw new Error('Unexpected socket event');
-      return new Promise(resolve => setTimeout(() => resolve({ ok: true, result: reply }), 60_000));
-    } }) as unknown as ReturnType<typeof io>);
+  it('expires an omitted deadline for a non-Work call at the transport default', async () => {
     vi.useFakeTimers();
+    const controller = new AbortController();
+    axiosGet.mockResolvedValueOnce({ data: { machine: { id: 'machine-plain', storageMode: 'plain',
+      dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } } });
+    socket.emit.mockImplementationOnce(() => undefined);
+    const start = Date.now();
+    const pending = callMachineRpc({ credentials: { token: 'plain-token', encryption: null },
+      machineId: 'machine-plain', method: 'status', request: {}, signal: controller.signal,
+    }).then(() => null, error => ({ error, elapsed: Date.now() - start }));
     try {
-      const outcome = callMachineRpc({ credentials, machineId, method, request: { sessions }, timeoutMs,
-        authorization: { kind: 'scm.workEvidence', sessionIds: sessions.map(row => row.sessionId) },
-      }).then(value => ({ value }), error => ({ code: error.code }));
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(await outcome).toEqual(timeoutMs === undefined ? { value: reply } : { code: 'MACHINE_RPC_TIMEOUT' });
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.CALL, expect.objectContaining({
+        method: 'machine-plain:status',
+      }), expect.any(Function));
+      expect(await pending).toMatchObject({ error: { code: 'MACHINE_RPC_TIMEOUT' }, elapsed: 20_000 });
     } finally {
-      vi.mocked(io).mockImplementation(originalIo);
+      controller.abort();
+      await pending;
       vi.useRealTimers();
     }
   });

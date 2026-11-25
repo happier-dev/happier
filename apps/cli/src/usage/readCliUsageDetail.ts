@@ -319,7 +319,7 @@ export async function readCliUsageDetail(input: Readonly<{
         readMachine: async (machineId, request) => {
             await input.assertCurrent();
             const response = await callMachineRpc({ credentials: input.credentials, serverUrl: input.serverHttpBaseUrl,
-                machineId, method: RPC_METHODS.SCM_WORK_EVIDENCE_READ, request,
+                machineId, method: RPC_METHODS.SCM_WORK_EVIDENCE_READ, request, timeoutMs: null,
                 authorization: { kind: 'scm.workEvidence', sessionIds: request.sessions.map(session => session.sessionId) }, signal: input.signal });
             await input.assertCurrent();
             return response;
