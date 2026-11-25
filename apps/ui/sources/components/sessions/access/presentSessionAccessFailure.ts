@@ -26,6 +26,14 @@ function sessionAccessFailureMessage(code: string, status?: number): string {
         // explainable row state, so it must never surface as a generic failure.
         case 'session_access_self_grant_invalid':
             return t('session.access.selfGrantManaged');
+        case 'session_access_session_not_found':
+            return t('session.access.sessionNotAvailable');
+        case 'session_access_permission_delegation_forbidden':
+            return t('session.access.delegationForbidden');
+        case 'session_access_permission_delegation_requires_edit':
+            return t('session.access.delegationRequiresEdit', {
+                view: t('session.access.view'), edit: t('session.access.edit'), admin: t('session.access.admin'),
+            });
         case 'session_access_subject_not_found':
             return t('session.access.subjectNotFound');
         case 'session_access_subject_ineligible':
@@ -93,6 +101,7 @@ export function presentSessionAccessFailure(
         const message = sessionAccessFailureMessage(error.code, error.status);
         const terminal = error.status === 403 || error.status === 404 || error.status === 409
             || error.code === 'public_share_isolation_unavailable'
+            || error.code === 'session_access_session_not_found'
             || error.code === 'session_access_subject_ineligible'
             || error.code === 'session_access_owner_grant_invalid'
             || error.code === 'session_access_self_grant_invalid'

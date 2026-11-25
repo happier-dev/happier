@@ -348,7 +348,10 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
             return new Response(JSON.stringify({ changed: state.mutationChanged, primaryTeamId: state.primaryTeamId }));
         }
         if (path === '/v2/sessions/access-grants/set') {
-            if (state.grantFailure) return Response.json({ error: state.grantFailure.code, statusCode: state.grantFailure.status }, { status: state.grantFailure.status });
+            if (state.grantFailure) return Response.json({
+                error: state.grantFailure.code,
+                ...(state.grantFailure.code.startsWith('database_') ? { statusCode: state.grantFailure.status } : {}),
+            }, { status: state.grantFailure.status });
             const body = JSON.parse(String(init?.body)) as {
                 accessLevel: 'view' | 'edit' | 'admin';
                 accountEnvelopeInput?: { encryptedDataKey: string };
@@ -492,6 +495,35 @@ afterEach(async () => {
     MANAGER.serverId = '';
     MANAGER.keys = null;
     webLocks.restore();
+});
+
+describe('Team grant refusals', () => {
+    it.each([
+        ['session_access_session_not_found', 404, /session.*no longer available/i],
+        ['session_access_subject_not_found', 404, /person, group, or team.*no longer available/i],
+        ['session_access_subject_ineligible', 400, /can no longer receive access/i],
+        ['session_access_permission_delegation_forbidden', 403, /session owner.*permission requests/i],
+        ['session_access_permission_delegation_requires_edit', 400, /can steer.*permission requests/i],
+        ['session_access_external_sharing_disabled', 403, /sharing outside the Team.*not allowed/i],
+        ['session_access_external_sharing_requires_team_admin', 403, /team admin/i],
+        ['session_access_team_policy_required', 409, /team policy requires this access/i],
+    ] as const)('explains %s once on the failed row without a Retry', async (code, status, message) => {
+        const home = await setupHome({ sharing: true, encrypted: false });
+        TEAM_DIRECTORY.items = [{ id: 'team-design', name: 'Design', policy: {
+            sessionCreationPolicy: 'team_default', externalSharingPolicy: 'allowed',
+        } }];
+        home.state.grantFailure = { code, status };
+        const controller = await mountController(home.profile.id);
+        const candidate = () => controller().model.directory.sections.find(section => section.kind === 'team')?.candidates[0];
+        await vi.waitFor(() => expect(candidate()).toBeDefined());
+
+        await act(async () => { controller().actions.addPrincipal({ kind: 'team', teamId: 'team-design' }); });
+        await vi.waitFor(() => expect(candidate()?.operation).toMatchObject({
+            kind: 'error', error: { code, message: expect.stringMatching(message), retryable: false },
+        }));
+        expect(controller().model.content.issue).toBeUndefined();
+        expect(controller().model.grants).toHaveLength(0);
+    });
 });
 
 describe('useLiveSessionAccessEditorController encrypted-access preparation', () => {
