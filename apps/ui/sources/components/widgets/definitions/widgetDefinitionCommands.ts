@@ -6,7 +6,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { matchesWidgetWriteAcknowledgement, type WidgetDefinitionV1, type WidgetInstanceRefV1, type WidgetLayoutFragmentV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import { randomUUID } from '@/platform/randomUUID';
-import { createFrontDoorActionExecute, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createFrontDoorActionExecute, requireActionSuccess, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
@@ -229,4 +229,20 @@ export async function runWidgetDefinitionCommand<Id extends CommandId>(
         const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'widget_command_failed';
         return { kind: 'refused', errorCode: code };
     }
+}
+
+/** Read the placement Action's admission without dispatching the prepared write. */
+export async function reviewWidgetGroupAddCommandV1(
+    input: PublicActionInputById['widgets.group.add'],
+    widgetAreaContext: ActionExecutorContext['widgetAreaContext'],
+    signal: AbortSignal,
+): Promise<void> {
+    const { serverId, accountId } = input.surface;
+    const reviewed = await executeWidgetAction.prepare('widgets.group.add', input, {
+        surface: 'ui', authority: 'present_user', serverId, expectedAccountId: accountId, signal,
+        ...(widgetAreaContext ? { widgetAreaContext } : {}),
+    }, { reviewOnly: true });
+    if (reviewed.kind === 'ready') return;
+    requireActionSuccess(reviewed.result);
+    throw new Error('Expected a prepared group placement');
 }

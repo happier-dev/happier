@@ -166,7 +166,7 @@ describe('WidgetAddSurface', () => {
         expect(rec.submits).toEqual([]);
     });
 
-    it('clears an optional saved-group pin in preview and persists the same empty context atomically without changing the saved fragment', async () => {
+    it('keeps a saved group unplaced until its changed draft resolves and writes only that copy', async () => {
         const scope: WidgetSurfaceRefV1 = { ...HOME, owner: { kind: 'corePage', pageId: 'example', area: 'main' } };
         const descriptor = { inputs: { fields: [{ path: 'amount', title: 'Amount', widget: 'number' as const }] },
             inputSchema: { type: 'object' as const, properties: { amount: { type: 'number' as const } }, additionalProperties: false } };
@@ -184,6 +184,10 @@ describe('WidgetAddSurface', () => {
         const screen = await renderPanel({ sections: buildAccountWidgetAddSections({ candidates: [], instances: [], scope,
             labels: { count: String, submit: 'Add' }, addInstance: async () => ({ ok: true }), fragments: [fragment],
             renderGroupPreview: (_saved, draft) => JSON.stringify(resolve(draft.bindings)),
+            reviewGroup: async (saved) => {
+                const resolution = resolve(saved.group.context ?? {});
+                return resolution.status === 'ready' ? { ok: true } : { ok: false, message: 'Amount is needed', details: resolution };
+            },
             // The Artifact transport is the persistence boundary; instantiation, reduction and reads stay real.
             addGroup: async (saved) => { await port.apply({ kind: 'group_add', group: instantiateWidgetLayoutFragmentGroupV1(saved.group,
                 { groupId: 'copy', childIds: ['copy-child'] }) }); return { ok: true }; },
@@ -194,14 +198,17 @@ describe('WidgetAddSurface', () => {
         await act(async () => screen.changeTextByTestId('add.detail.field.amount.input', ''));
         await flushHookEffects({ cycles: 2 });
         expect(screen.getTextContent()).not.toContain('"amount":42');
+        expect(screen.findByTestId('add.detail.submit')?.props.disabled).toBe(true);
         expect(boundary.rows.size).toBe(0);
+        await act(async () => screen.changeTextByTestId('add.detail.field.amount.input', '7'));
+        await flushHookEffects({ cycles: 2 });
+        expect(screen.getTextContent()).toContain('"amount":7');
         await screen.pressByTestIdAsync('add.detail.submit');
         await flushHookEffects({ cycles: 2 });
         const persisted = (await createWidgetSurfaceArtifactPortV1(boundary.forAccount('me'), { surface: scope, isCurrent: () => true }).read()).items[0]!;
         expect(persisted.kind).toBe('group');
         if (persisted.kind !== 'group') throw new Error('expected copied group');
-        expect(persisted.context).toEqual({});
-        expect(resolve(persisted.context ?? {})).toMatchObject({ status: 'selection_required', fields: [{ path: 'amount' }] });
+        expect(persisted.context).toEqual({ amount: { kind: 'value', value: 7 } });
         expect(boundary.rows.size).toBe(1);
         expect(fragment).toEqual(original);
     });

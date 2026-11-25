@@ -239,6 +239,7 @@ async function transferWidget(
 export async function executeWidgetInstanceActionV1(
   deps: ActionExecutorDeps, actionId: WidgetInstanceActionIdV1, input: unknown, context: ActionExecutorContext,
   admittedSurfaceRead?: WidgetSurfaceReadV1,
+  reviewGroupAdd?: true,
 ): Promise<ActionExecuteResult> {
   const args = WidgetInstanceActionInputSchemasV1[actionId].parse(input);
   const ref = 'ref' in args ? args.ref : undefined;
@@ -369,6 +370,7 @@ export async function executeWidgetInstanceActionV1(
         const size = await admitWidgetInstanceSizeV1(deps, childRef, child.instance, child.size, context, groupIntent.group.context, state);
         if ('ok' in size) return size;
       }
+      if (reviewGroupAdd) return { ok: true, result: null };
     }
     try { return await port.apply(surface, groupIntent, context, context.signal); }
     catch (error) {

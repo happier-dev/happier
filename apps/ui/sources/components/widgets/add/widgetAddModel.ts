@@ -3,7 +3,7 @@ import type * as React from 'react';
 import type { IconName } from '@/components/ui/icons/Icon';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 
-import type { WidgetSetup, WidgetSetupSubmitResult } from './widgetSetupModel';
+import type { WidgetSetupStepModel, WidgetSetupSubmitResult } from './widgetSetupModel';
 
 /**
  * The one Add surface's content model (lab `widget-add` wsplit A). Every placement — Home, a
@@ -13,7 +13,7 @@ import type { WidgetSetup, WidgetSetupSubmitResult } from './widgetSetupModel';
  */
 export type WidgetAddEntry = WidgetAddEntryBase & (
     /** A widget: its pane is its setup, and its Add is the setup's canonical Action. */
-    | Readonly<{ setup: () => WidgetSetup; onPick?: never; renderPreview?: never; actionLabel?: never; closesOnPick?: never }>
+    | Readonly<{ setup: () => WidgetSetupStepModel; onPick?: never; renderPreview?: never; actionLabel?: never; closesOnPick?: never }>
     | WidgetAddPickEntry
 );
 

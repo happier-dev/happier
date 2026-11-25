@@ -11,6 +11,8 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
+const reviewPlacement = async () => ({ ok: true as const });
+
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -135,7 +137,7 @@ describe('a saved group in Add', () => {
       group: { width: 'full', frameStyle: 'card', dividers: 'hairline', context: { location: { kind: 'value', value: path } }, children } };
     const setup = buildWidgetGroupFragmentEntry({ fragment, candidates: [candidate], scope: { ...account, owner: { kind: 'home' } },
       context: { slots: { project: { label: 'Page project', value: { value: 'project-id', label: 'Project name' } } } },
-      submitLabel: 'Add', add: async () => ({ ok: true }), renderGroupPreview: () => null }).setup!();
+      submitLabel: 'Add', review: reviewPlacement, add: async () => ({ ok: true }), renderGroupPreview: () => null }).setup!();
     const screen = await renderScreen(<WidgetSetupStep setup={setup} phone={false} presentation="pane" testID="gallery" onDone={() => {}} />);
     expect(screen.findByTestId('gallery.field.location.input')?.props.value).toBe(path);
     expect(screen.getTextContent()).toContain(order === 'own' ? 'value=null' : 'value=Location');
@@ -146,7 +148,7 @@ describe('a saved group in Add', () => {
     expect(several).toContain('value=null');
   });
 
-  it('places a saved Usage group with sparse overrides when the destination already supplies its child scope', async () => {
+  it('keeps saved Usage bindings sparse when assembling the placement', async () => {
     const descriptor = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'usage_daily' })!;
     const candidate: WidgetCandidate = { ...descriptor, pluginName: 'Happier', sharedPluginName: false };
     const { buildWidgetGroupInputsCandidate } = await import('./widgetGroupInputs');
@@ -168,18 +170,11 @@ describe('a saved group in Add', () => {
     const add = vi.fn(async () => ({ ok: true as const }));
     const setup = buildWidgetGroupFragmentEntry({ fragment, candidates: [candidate], context,
       scope: { ...account, owner: { kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'overview' } },
-      submitLabel: 'Add', add, renderGroupPreview: () => null }).setup!();
+      submitLabel: 'Add', review: reviewPlacement, add, renderGroupPreview: () => null }).setup!();
 
-    expect(setup.resolve(setup.initial)).toMatchObject({
-      status: 'ready', input: { period: { relative: 'today' }, costBasis: 'auto', session: null },
-    });
+    expect(setup.initial.bindings).toEqual({ period });
     await setup.submit(setup.initial);
     expect(add).toHaveBeenCalledWith(fragment, { bindings: { period }, width: 'full' });
-
-    const home = buildWidgetGroupFragmentEntry({ fragment, candidates: [candidate], context: {},
-      scope: { ...account, owner: { kind: 'home' } }, submitLabel: 'Add', add, renderGroupPreview: () => null }).setup!();
-    expect(home.resolve(home.initial)).toMatchObject({ status: 'selection_required',
-      fields: expect.arrayContaining([{ path: 'costBasis', status: 'selection_required', reasonCode: 'widget_input_missing' }]) });
   });
   it('does not ask for or retain private group pins when copying to Public profile', () => {
     const descriptor = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'usage_parallel' })!;
@@ -194,10 +189,9 @@ describe('a saved group in Add', () => {
     const preview = vi.fn((_fragment: WidgetLayoutFragmentSummaryV1, _draft: WidgetSetupDraft) => null);
     const setup = buildWidgetGroupFragmentEntry({ fragment, candidates: [candidate],
       scope: { ...account, owner: { kind: 'corePage', pageId: 'public-profile', area: 'main', layoutId: 'minimal' } },
-      context: {}, submitLabel: 'Add', add: async () => ({ ok: true }), renderGroupPreview: preview }).setup!();
+      context: {}, submitLabel: 'Add', review: reviewPlacement, add: async () => ({ ok: true }), renderGroupPreview: preview }).setup!();
     expect(setup.fields).toEqual([]);
     expect(setup.initial.bindings).toEqual({});
-    expect(setup.resolve(setup.initial)).toMatchObject({ status: 'ready', input: {} });
     setup.renderPreview?.({ draft: setup.initial, input: {} });
     expect(preview.mock.calls[0]?.[0].group).toMatchObject({ children: [{ instance: { bindings: { style: { kind: 'value', value: 'peak' } } } }] });
     expect(JSON.stringify(preview.mock.calls)).not.toMatch(/private-agent|lanes/);
@@ -215,10 +209,10 @@ describe('a saved group in Add', () => {
       group: { width: 'full', frameStyle: 'card', dividers: 'hairline',
         children: candidates.map(candidate => ({ kind: 'widget', instance: { v: 1, definition: widgetCandidateDefinitionV1(candidate), bindings: {} } })) } };
     const setup = buildWidgetGroupFragmentEntry({ fragment, candidates, scope: { ...account, owner: { kind: 'home' } },
-      context: {}, submitLabel: 'Add', add: async () => ({ ok: true }), renderGroupPreview: () => null }).setup!();
+      context: {}, submitLabel: 'Add', review: reviewPlacement, add: async () => ({ ok: true }), renderGroupPreview: () => null }).setup!();
     expect(setup.optionsContext?.({ bindings: {} }, field)?.consumer).toMatchObject({ definition: fragment.group.children[1]!.instance.definition });
     const unavailable = buildWidgetGroupFragmentEntry({ fragment, candidates: [], scope: { ...account, owner: { kind: 'home' } },
-      context: {}, submitLabel: 'Add', add: async () => ({ ok: true }), renderGroupPreview: () => null }).setup!();
+      context: {}, submitLabel: 'Add', review: reviewPlacement, add: async () => ({ ok: true }), renderGroupPreview: () => null }).setup!();
     expect(unavailable.optionsContext?.({ bindings: {} }, field)?.consumer).toMatchObject({ definition: fragment.group.children[0]!.instance.definition });
   });
   it("previews the group live at the draft's inputs and width", async () => {
@@ -255,6 +249,7 @@ describe('a saved group in Add', () => {
       scope: null,
       context: {},
       submitLabel: 'Add',
+      review: reviewPlacement,
       add: async () => ({ ok: true }),
       renderGroupPreview,
     });
@@ -281,7 +276,7 @@ describe('a saved group in Add', () => {
       group: { width: 'half', frameStyle: 'card', dividers: 'hairline', children: ['a', 'b'].map(localId => ({ kind: 'widget' as const,
         instance: { v: 1 as const, definition: { kind: 'installed' as const, surface: { pluginId: 'acme.ci', localId } }, bindings: {} } })) } };
     const setup = buildWidgetGroupFragmentEntry({ fragment, candidates: [], scope: { ...account, owner: { kind: 'home' } },
-      context: {}, submitLabel: 'Add', add: async () => ({ ok: true }), renderGroupPreview: () => 'group frame' }).setup!();
+      context: {}, submitLabel: 'Add', review: reviewPlacement, add: async () => ({ ok: true }), renderGroupPreview: () => 'group frame' }).setup!();
     expect(setup.fields.map(entry => entry.neededHint !== undefined)).toEqual([false, true, false]);
   });
   it('says where the group came from, asks once and keeps its own frame while waiting', () => {
@@ -292,7 +287,7 @@ describe('a saved group in Add', () => {
         instance: { v: 1 as const, definition: { kind: 'installed' as const, surface: { pluginId: 'acme.ci', localId } }, bindings: {} } })) } };
     const renderGroupPreview = vi.fn(() => 'group frame');
     const setup = buildWidgetGroupFragmentEntry({ fragment, candidates: [], scope: { ...account, owner: { kind: 'home' } },
-      context: {}, submitLabel: 'Add', add: async () => ({ ok: true }), renderGroupPreview }).setup!();
+      context: {}, submitLabel: 'Add', review: reviewPlacement, add: async () => ({ ok: true }), renderGroupPreview }).setup!();
     // Provenance is the fragment's own origin and date, not "Your widget".
     expect(setup.provenance).toContain('widgetFrame.groupProvenance');
     expect(setup.provenance).toContain('common.home');

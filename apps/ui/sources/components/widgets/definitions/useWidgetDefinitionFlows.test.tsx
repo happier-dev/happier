@@ -329,10 +329,11 @@ describe('widget definition flows', () => {
                 const sections: readonly WidgetAddSection[] = screen.tree.root.findByType(WidgetAddSurface).props.sections;
                 const missing = sections.flatMap(section => section.entries).find(entry => entry.id === 'plugin-acme.preview/missing')!.setup!();
                 // Its pane mounts a body only once the draft resolves; a missing input never does.
+                if (!missing.resolve) throw new Error('A Board widget uses the local binder');
                 expect(missing.resolve(missing.initial).status).not.toBe('ready');
                 const app = sections.flatMap(section => section.entries).find(entry => entry.id === 'plugin-acme.preview/app')!.setup!();
-                const resolution = app.resolve(app.initial);
-                if (resolution.status !== 'ready') throw new Error('An inputless App widget resolves at once');
+                const resolution = app.resolve?.(app.initial);
+                if (resolution?.status !== 'ready') throw new Error('An inputless App widget resolves at once');
                 const preview = app.renderPreview!({ input: resolution.input, draft: app.initial });
                 const body = await renderScreen(React.createElement(AppShellPluginUiProjectionValueProvider, { value: {
                     pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: false, machineId: 'app-machine',

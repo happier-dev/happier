@@ -81,8 +81,7 @@ export type WidgetSetupDraft = Readonly<{
 
 export type WidgetSetupSubmitResult = Readonly<{ ok: true; approvalPending?: true }> | Readonly<{ ok: false; message: string; details?: unknown }>;
 
-/** The one step a surface hands the add panel (or an Edit inputs / repair entry point). */
-export type WidgetSetup = Readonly<{
+type WidgetSetupPresentation = Readonly<{
     /** "Set up Checks" or "Checks · inputs". */
     title: string;
     /** One line under the title: what it shows, or what an edit changes. */
@@ -101,8 +100,6 @@ export type WidgetSetup = Readonly<{
     sizeChoices?: Readonly<{ surface: WidgetSurfaceRefV1['owner']['kind']; sizes: readonly WidgetSizeV1[] }>;
     /** A group's widths instead of a size; an unavailable one names the widget that prevents it. */
     widthChoices?: ReadonlyArray<Readonly<{ width: WidgetGroupWidthV1; unavailableReason?: string }>>;
-    /** The binder's answer for a draft (pure; re-run on every change). */
-    resolve: (draft: WidgetSetupDraft) => WidgetBindingResolutionV1;
     /** Presentation-only readings for group fields, from the children's binder and the opening page snapshot. */
     readInherited?: (bindings: WidgetInputBindingsV1) => ReadonlyMap<string, WidgetSetupInheritedReading>;
     /**
@@ -130,6 +127,16 @@ export type WidgetSetup = Readonly<{
     /** The canonical Action behind the button (`widgets.item.add` / `.inputs.set`). */
     submit: (draft: WidgetSetupDraft) => Promise<WidgetSetupSubmitResult>;
 }>;
+
+/** A draft gets its readiness from one owner: the local binder or the placement Action. */
+export type WidgetSetup = WidgetSetupPresentation & Readonly<{
+    resolve: (draft: WidgetSetupDraft) => WidgetBindingResolutionV1;
+    readAdmission?: never;
+}>;
+export type WidgetSetupStepModel = WidgetSetup | (WidgetSetupPresentation & Readonly<{
+    resolve?: never;
+    readAdmission: (draft: WidgetSetupDraft, signal: AbortSignal) => Promise<WidgetSetupSubmitResult>;
+}>);
 
 /**
  * The bindings a fresh copy starts with: a field the surface fills with exactly one value follows it,

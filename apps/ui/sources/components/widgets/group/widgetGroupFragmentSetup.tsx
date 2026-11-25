@@ -4,7 +4,6 @@ import {
   composeWidgetGroupContextV1,
   getWidgetSizeFootprintV1,
   isSameWidgetDefinitionV1,
-  resolveConfiguredWidgetInputs,
   widgetCandidateDefinitionV1,
   translateWidgetPublicProfileCopyV1,
   type WidgetLayoutFragmentSummaryV1,
@@ -13,7 +12,7 @@ import {
 
 import type { WidgetAddEntry } from '@/components/widgets/add/widgetAddModel';
 import type {
-  WidgetSetup,
+  WidgetSetupStepModel,
   WidgetSetupDraft,
   WidgetSetupSubmitResult,
 } from '@/components/widgets/add/widgetSetupModel';
@@ -21,7 +20,6 @@ import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
 import { WidgetSetupPreview } from '@/components/widgets/surface/WidgetSetupPreview';
 import {
   buildWidgetCandidateSetup,
-  widgetProvidedContext,
   widgetSetupFieldsForCandidate,
   type WidgetSurfaceContext,
 } from '@/components/widgets/surface/widgetSurfaceSetup';
@@ -46,8 +44,6 @@ import { readWidgetBindingFieldTitle, summarizeWidgetBindingReadings } from '../
 import { isPublicProfileWidgetSurfaceV1 } from '@happier-dev/protocol/widgets';
 import { PublicProfileWidgetPreviewBoundary } from '@/components/settings/account/publicProfile/PublicProfileWidgetSurface';
 import type { ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
-
-const NO_VIEWER_VALUES = Object.freeze({});
 
 /** A saved group's widgets as people know them: each one's own name, else the widget it is. */
 function describeFragmentChildren(
@@ -95,6 +91,7 @@ export function buildWidgetGroupFragmentEntry(
     scope: WidgetSurfaceRefV1 | null;
     context: WidgetSurfaceContext;
     submitLabel: string;
+    review: (fragment: WidgetLayoutFragmentSummaryV1, draft: WidgetSetupDraft, signal: AbortSignal) => Promise<WidgetSetupSubmitResult>;
     add: (
       fragment: WidgetLayoutFragmentSummaryV1,
       draft: WidgetSetupDraft,
@@ -106,7 +103,7 @@ export function buildWidgetGroupFragmentEntry(
   const { fragment } = input;
   const children = describeFragmentChildren(fragment, input.candidates);
   const names = children.map((child) => child.title).join(' · ');
-  const setup = (): WidgetSetup => {
+  const setup = (): WidgetSetupStepModel => {
     const publicArea = input.scope !== null && isPublicProfileWidgetSurfaceV1(input.scope);
     let prepared = fragment;
     let publicAvailable = true;
@@ -136,12 +133,6 @@ export function buildWidgetGroupFragmentEntry(
     );
     const firstRequired = baseFields.findIndex((entry) => entry.field.required === true);
     const fields = baseFields.map((entry, index) => (index === firstRequired ? { ...entry, neededHint: askedOnce } : entry));
-    const providedContext = widgetProvidedContext(input.context);
-    const childSlots = new Set(fragment.group.children.flatMap(child =>
-      Object.values(child.instance.bindings).flatMap(binding => binding.kind === 'context' ? [binding.slot] : [])));
-    // The destination already fills these child slots. Validate the effective inputs without saving new group overrides.
-    const inheritedBindings = Object.fromEntries(fields.flatMap(({ field, follow }) =>
-      follow && childSlots.has(follow.slot) ? [[field.path, { kind: 'context' as const, slot: follow.slot }]] : []));
     const candidates = fragment.group.children.map(child => input.candidates.find(candidate =>
       isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(candidate), child.instance.definition)));
     const followers = publicArea ? [] : fragment.group.children.flatMap((child, index) => {
@@ -172,15 +163,7 @@ export function buildWidgetGroupFragmentEntry(
         width: fragment.group.width,
       },
       widthChoices: widths,
-      resolve: (draft) => publicArea ? publicAvailable && Object.keys(draft.bindings).length === 0
-        ? { status: 'ready', input: {} }
-        : { status: 'denied', fields: [{ path: 'input', status: 'denied', reasonCode: 'widget_public_profile_presentation_unavailable' }] }
-        : resolveConfiguredWidgetInputs({
-          instance: { v: 1, id: 'draft', definition, bindings: { ...inheritedBindings, ...draft.bindings } },
-          descriptor,
-          providedContext,
-          viewerValues: NO_VIEWER_VALUES,
-        }),
+      readAdmission: (draft, signal) => input.review(fragment, draft, signal),
       optionsContext: (() => {
         if (publicArea) return () => ({ draftInput: {} });
         const candidate = buildWidgetGroupInputsCandidate({ title: fragment.name, candidates });
@@ -221,7 +204,7 @@ export function buildWidgetGroupFragmentEntry(
         }
         return t('widgetFrame.groupAddsFollowing', { name: fragment.name, count: fragment.childCount, value: name });
       },
-      submit: (draft) => input.add(publicArea && publicAvailable ? prepared : fragment, draft),
+      submit: (draft) => input.add(fragment, draft),
     };
   };
   return {
@@ -279,10 +262,10 @@ export function WidgetGroupFragmentPreview(props: Readonly<{
           <WidgetFrame testID={`${props.testID}.${id}`} frameStyle="plain" grouped placement="home"
             {...(size && footprint ? { widgetPresentation: { size, footprint } } : {})}
             mark={entry.candidate?.icon ?? 'squares-four'} title={title}
-            body={{ kind: 'content', children: props.waiting ? (
+            body={{ kind: 'content', children: props.waiting !== undefined ? (
               <View style={styles.waitingBody}>
                 <Icon name={entry.candidate?.icon ?? 'squares-four'} size={ICON_SIZE.sm} color={theme.colors.text.tertiary} />
-                <Text style={styles.waiting}>{props.waiting}</Text>
+                {props.waiting ? <Text style={styles.waiting}>{props.waiting}</Text> : null}
               </View>
             ) : entry.candidate ? (
               <WidgetSetupPreview scope={props.scope} providedContext={groupContext} candidate={entry.candidate}

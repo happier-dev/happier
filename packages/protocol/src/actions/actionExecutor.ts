@@ -319,6 +319,7 @@ import { isWorkBoardActionIdV1 } from '../boards/actionIdsV1.js';
 import { WorkBoardActionInputSchemasV1 } from '../boards/actionsV1.js';
 import { HOME_HUB_LAYOUT_ACTION_IDS, HomeHubLayoutUpdateInputSchema } from './specs/homeHub.js';
 import { WidgetInstanceActionIdV1Schema, WidgetInstanceActionInputSchemasV1, WidgetSurfaceReadV1Schema, readWidgetActionSurfaceV1, readWidgetActionDestinationV1, readWidgetCatalogBoundSessionV1 } from '../widgets/actionsV1.js';
+import { WIDGET_GROUP_ADD_ACTION_ID_V1 } from '../widgets/instanceIdsV1.js';
 import { executeWidgetInstanceActionV1, admitWidgetGroupConfigurationV1, admitWidgetInstanceConfigurationV1, admitWidgetInstanceSizeV1, isWidgetAdmissionUndecidableHereV1, readWidgetActionSurfacePortV1 } from '../widgets/executeWidgetInstanceActionV1.js';
 import { getWidgetSizeFootprintV1, WIDGET_SIZE_ORDER_V1 } from '../widgets/widgetPresentationV1.js';
 import { clientActionUnavailable } from './clientDispatchV1.js';
@@ -4180,6 +4181,12 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       semanticInput,
       ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
     });
+
+    if (options?.prepareOnly && options.reviewOnly && actionId === WIDGET_GROUP_ADD_ACTION_ID_V1) {
+      // Gallery reviews the same placement the Action would write. Reviewing never invokes the writer or grants approval.
+      const reviewed = await executeWidgetInstanceActionV1(deps, actionId, admittedInput, ctx, widgetSourceRead, true);
+      if (!reviewed.ok) return reviewed;
+    }
 
     if (options?.prepareOnly && options.reviewOnly && !isApprovalAction && approvalRouting.required) {
       // This is a review projection, not an admitted effect. Its ordinary run

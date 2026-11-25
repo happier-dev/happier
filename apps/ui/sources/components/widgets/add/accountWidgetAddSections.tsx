@@ -6,7 +6,7 @@ import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/App
 import { useHomeWidgetCandidates } from '@/components/hub/layout/useHomeWidgetCandidates';
 import { useYourWidgetCandidatesState, type AccountInventoryStatus } from '@/components/widgets/definitions/useYourWidgetCandidates';
 import { useYourWidgetLayoutFragments } from '@/components/widgets/definitions/useYourWidgetLayoutFragments';
-import { runAddWidgetLayoutFragmentCommandV1 } from '@/components/widgets/definitions/widgetLayoutFragmentCommands';
+import { reviewAddWidgetLayoutFragmentCommandV1, runAddWidgetLayoutFragmentCommandV1 } from '@/components/widgets/definitions/widgetLayoutFragmentCommands';
 import { buildWidgetGroupFragmentEntry, WidgetGroupFragmentPreview } from '@/components/widgets/group/widgetGroupFragmentSetup';
 import { useDeviceType } from '@/utils/platform/responsive';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
@@ -60,6 +60,7 @@ export type AccountWidgetAddInput = Readonly<{
     fragments?: readonly WidgetLayoutFragmentSummaryV1[];
     fragmentActions?: (fragment: WidgetLayoutFragmentSummaryV1) => ItemAction[];
     addGroup?: (fragment: WidgetLayoutFragmentSummaryV1, draft: WidgetSetupDraft) => Promise<WidgetSetupCommandResult>;
+    reviewGroup?: (fragment: WidgetLayoutFragmentSummaryV1, signal: AbortSignal) => Promise<WidgetSetupCommandResult>;
     /** A saved group's live preview in its pane. */
     renderGroupPreview?: (fragment: WidgetLayoutFragmentSummaryV1, draft: WidgetSetupDraft, waiting?: string) => React.ReactNode;
 }>;
@@ -132,12 +133,14 @@ export function buildAccountWidgetAddSections(input: AccountWidgetAddInput): rea
         };
     };
     const widgets = partitionWidgetCandidatesBySource(input.scope ? selectHostableWidgetCandidates(input.candidates, input.scope.owner.kind) : input.candidates);
-    const addGroup = input.addGroup;
-    const groups = addGroup ? (input.fragments ?? []).map(fragment => ({ ...buildWidgetGroupFragmentEntry({
+    const { addGroup, reviewGroup } = input;
+    const groupDraft = (saved: WidgetLayoutFragmentSummaryV1, draft: WidgetSetupDraft) => ({ ...saved, group: {
+        ...saved.group, context: draft.bindings, ...(draft.width ? { width: draft.width } : {}),
+    } });
+    const groups = addGroup && reviewGroup ? (input.fragments ?? []).map(fragment => ({ ...buildWidgetGroupFragmentEntry({
         fragment, candidates: input.candidates, scope: input.scope, context, submitLabel: input.labels.submit,
-        add: (saved, draft) => runWidgetSetupCommand(() => addGroup({ ...saved, group: {
-            ...saved.group, context: draft.bindings, ...(draft.width ? { width: draft.width } : {}),
-        } }, draft), t('widgetAdd.addFailed')),
+        add: (saved, draft) => runWidgetSetupCommand(() => addGroup(groupDraft(saved, draft), draft), t('widgetAdd.addFailed')),
+        review: (saved, draft, signal) => runWidgetSetupCommand(() => reviewGroup(groupDraft(saved, draft), signal), t('widgetAdd.addFailed')),
         renderGroupPreview: input.renderGroupPreview ?? (() => null),
     }), ...(input.fragmentActions ? { actions: input.fragmentActions(fragment) } : {}) })) : [];
     const yours = [...widgets.yours.map(entry), ...groups];
@@ -204,11 +207,18 @@ export function useAccountWidgetAddSections(input: Readonly<{
     const groupCapable = scope !== null && supportsWidgetGroupsV1(scope.owner.kind);
     const { fragments, status: fragmentsStatus, retry: retryFragments, actionsFor: fragmentActions } = useYourWidgetLayoutFragments(groupCapable ? { serverId: scope.serverId, accountId: scope.accountId } : null);
     const area = input.area;
+    const providedContext = React.useMemo(() => context ? widgetProvidedContext(context) : NO_PROVIDED_CONTEXT, [context]);
+    const widgetAreaContext = React.useMemo(() => scope ? { surface: scope, values: providedContext } : undefined, [providedContext, scope]);
     const addGroup = React.useCallback(async (fragment: WidgetLayoutFragmentSummaryV1) => {
         if (!scope) throw new Error('widget_area_unavailable');
         return runAcknowledgedWidgetSetupCommand(() => runAddWidgetLayoutFragmentCommandV1(fragment.group, scope,
-            { name: fragment.name, ...(area ? { area } : {}) }), t('widgetAdd.addFailed'));
-    }, [area, scope]);
+            { name: fragment.name, ...(area ? { area } : {}), widgetAreaContext }), t('widgetAdd.addFailed'));
+    }, [area, scope, widgetAreaContext]);
+    const reviewGroup = React.useCallback(async (fragment: WidgetLayoutFragmentSummaryV1, signal: AbortSignal) => {
+        if (!scope) throw new Error('widget_area_unavailable');
+        await reviewAddWidgetLayoutFragmentCommandV1(fragment.group, scope,
+            { name: fragment.name, ...(area ? { area } : {}), widgetAreaContext, signal });
+    }, [area, scope, widgetAreaContext]);
     const sections = React.useMemo(() => buildAccountWidgetAddSections({
         candidates,
         instances,
@@ -216,15 +226,15 @@ export function useAccountWidgetAddSections(input: Readonly<{
         scope,
         labels,
         ...(context ? { context } : {}),
-        ...(groupCapable && scope ? { fragments, fragmentActions, addGroup, renderGroupPreview: (fragment: WidgetLayoutFragmentSummaryV1, draft: WidgetSetupDraft, waiting?: string) => (
+        ...(groupCapable && scope ? { fragments, fragmentActions, addGroup, reviewGroup, renderGroupPreview: (fragment: WidgetLayoutFragmentSummaryV1, draft: WidgetSetupDraft, waiting?: string) => (
             <WidgetGroupFragmentPreview fragment={fragment} draft={draft} candidates={candidates} scope={scope} phone={phone} waiting={waiting}
-                providedContext={context ? widgetProvidedContext(context) : NO_PROVIDED_CONTEXT} projectContext={context?.projectContext} testID={`${testID}.groupPreview.${fragment.artifactId}`} />
+                providedContext={providedContext} projectContext={context?.projectContext} testID={`${testID}.groupPreview.${fragment.artifactId}`} />
         ) } : {}),
         ...(scope ? {
             renderSetupPreview: (candidate: WidgetCandidate, preview: Readonly<{ draft: WidgetSetupDraft }>) => (
                 <WidgetSetupPreview
                     scope={scope}
-                    providedContext={context ? widgetProvidedContext(context) : NO_PROVIDED_CONTEXT}
+                    providedContext={providedContext}
                     projectContext={context?.projectContext}
                     candidate={candidate}
                     draft={preview.draft}
@@ -232,7 +242,7 @@ export function useAccountWidgetAddSections(input: Readonly<{
                 />
             ),
         } : {}),
-    }), [addGroup, addInstance, appRuntime, candidates, context, fragmentActions, fragments, groupCapable, instances, labels, phone, scope, testID]);
+    }), [addGroup, addInstance, candidates, context, fragmentActions, fragments, groupCapable, instances, labels, phone, providedContext, reviewGroup, scope, testID]);
     const statuses = [yoursStatus, ...(groupCapable ? [fragmentsStatus] : [])];
     const loading = statuses.includes('loading');
     const failed = statuses.includes('failed');

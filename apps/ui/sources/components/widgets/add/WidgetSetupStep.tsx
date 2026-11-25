@@ -16,7 +16,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ITEM_GROUP_HEADER_NO_TITLE_PADDING_TOP_PX } from '@/components/ui/lists/itemGroupSpacing';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { Text } from '@/components/ui/text/Text';
-import { getWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets';
+import { getWidgetSizeFootprintV1, WidgetBindingResolutionV1Schema, type WidgetBindingResolutionV1 } from '@happier-dev/protocol/widgets';
 import { Typography } from '@/constants/Typography';
 import { useRetainedPlacement } from '@/modal/components/RetainedModalFrame';
 import { t } from '@/text';
@@ -34,7 +34,7 @@ import {
     isLiteralWidgetSetupField,
     setWidgetSetupBinding,
     widgetSetupBlockingIssues,
-    type WidgetSetup,
+    type WidgetSetupStepModel,
     type WidgetSetupDraft,
     type WidgetSetupValue,
     type WidgetSetupSubmitResult,
@@ -51,6 +51,8 @@ const PHONE_PREVIEW_HEIGHT_PX = 168;
 const SIDE_BY_SIDE_MIN_WIDTH_PX = POPOVER_PREVIEW_WIDTH_PX + 260;
 
 const NO_OPTIONS: readonly WidgetSetupValue[] = Object.freeze([]);
+const UNRESOLVED_ADMISSION: WidgetBindingResolutionV1 = { status: 'unavailable', fields: [] };
+const ADMITTED_GROUP: WidgetBindingResolutionV1 = { status: 'ready', input: {} };
 /** Cancels the untitled group's top spacer, so its sheet starts at the pane's top edge. The pane owns its own
  * sides (a contained list scope), so the sheet adds no inset there to cancel with a negative margin. */
 const PANE_SHEET_FLUSH = {
@@ -68,12 +70,12 @@ const PANE_SHEET_FLUSH = {
  *
  * On phones the inputs come first and a compact preview follows. The button says where it goes
  * ("Add to Home") or "Save"; while something is still needed it stays off and the line says what is
- * left. The step owns only the draft. Admission is the binder's (`setup.resolve`, run on every change)
- * and the write is the canonical Action behind `setup.submit`; leaving writes nothing. The live body
+ * left. The step owns only the draft. It reads readiness from the setup's binder or placement Action.
+ * The write is the canonical Action behind `setup.submit`; leaving writes nothing. The live body
  * mounts only while the step is open and the draft resolves.
  */
 export function WidgetSetupStep(props: Readonly<{
-    setup: WidgetSetup;
+    setup: WidgetSetupStepModel;
     phone: boolean;
     presentation?: 'pane' | 'popover';
     /** Back to the list (the narrow Add surface and phones); absent for Edit inputs and in-card repair. */
@@ -121,17 +123,39 @@ export function WidgetSetupStep(props: Readonly<{
     const [refusal, setRefusal] = React.useState<Extract<WidgetSetupSubmitResult, { ok: false }> | null>(null);
     // Gallery counts and server echoes rebuild entries. The unresolved invocation
     // keeps custody until its own receipt; a rebuilt entry cannot turn Retry into Add.
-    const submission = React.useRef<WidgetSetup['submit'] | null>(null);
+    const submission = React.useRef<WidgetSetupStepModel['submit'] | null>(null);
     // The Add pane stays open after acknowledgement. Approval keeps custody of
     // this request; only an applied Add offers an intentional additional copy.
     const [completion, setCompletion] = React.useState<'added' | 'approvalPending' | null>(null);
-    const resolution = React.useMemo(() => setup.resolve(draft), [draft, setup]);
-    const { readInherited } = setup;
+    const { readAdmission, readInherited, resolve } = setup;
+    const [review, setReview] = React.useState<Readonly<{
+        read: NonNullable<WidgetSetupStepModel['readAdmission']>; draft: WidgetSetupDraft; result: WidgetSetupSubmitResult;
+    }> | null>(null);
+    React.useEffect(() => {
+        if (!readAdmission) return;
+        const controller = new AbortController();
+        void readAdmission(draft, controller.signal).then(result => {
+            if (!controller.signal.aborted) setReview({ read: readAdmission, draft, result });
+        });
+        return () => controller.abort();
+    }, [draft, readAdmission]);
+    const admission = review && review.read === readAdmission && review.draft === draft ? review.result : null;
+    const resolution = React.useMemo(() => {
+        if (resolve) return resolve(draft);
+        if (admission?.ok) return ADMITTED_GROUP;
+        const details = admission?.details;
+        if (details && typeof details === 'object' && 'status' in details && 'fields' in details) {
+            const parsed = WidgetBindingResolutionV1Schema.safeParse({ status: details.status, fields: details.fields });
+            if (parsed.success && parsed.data.status !== 'ready') return parsed.data;
+        }
+        return UNRESOLVED_ADMISSION;
+    }, [admission, draft, resolve]);
     const { bindings } = draft;
     const inherited = React.useMemo(() => readInherited?.(bindings), [readInherited, bindings]);
     const blocker = describeWidgetSetupBlocker(setup.fields, resolution);
     // Finishable once nothing blocks; a per-viewer input is each viewer's own and never blocks.
-    const finishable = completion !== 'approvalPending' && widgetSetupBlockingIssues(setup.fields, resolution).length === 0
+    const finishable = completion !== 'approvalPending'
+        && (readAdmission ? admission?.ok === true : widgetSetupBlockingIssues(setup.fields, resolution).length === 0)
         && (!props.blockedReason || submission.current !== null);
     const pane = props.presentation === 'pane';
     const offersAnother = pane && completion === 'added' && props.onAddAnother !== undefined;
@@ -320,7 +344,10 @@ export function WidgetSetupStep(props: Readonly<{
     const blockerSaidOnRow = !!blockerEntry && !!blockerState && isNothingToChoose({ field: blockerEntry.field,
         optionsStatus: blockerState.status, optionCount: blockerState.options.length,
         value: blockerBinding?.kind === 'value' ? blockerBinding.value : undefined, follows: blockerBinding?.kind === 'context' });
-    const waitingText = blockerSaidOnRow ? '' : finishable || props.blockedReason ? t('widgetAdd.previewAfterAdd')
+    const admissionNotice = readAdmission && !admission ? t('common.loading') : admission?.ok === false ? admission.message : null;
+    const neededNotice = blocker && (blocker.status === 'selection_required' || !admissionNotice)
+        ? t('widgetAdd.stillNeeded', { field: blocker.title }) : null;
+    const waitingText = blockerSaidOnRow ? '' : admissionNotice && !blocker ? admissionNotice : finishable || props.blockedReason ? t('widgetAdd.previewAfterAdd')
         : t('widgetAdd.previewWaiting', { field: blocker?.title ?? setup.fields[0]?.field.title ?? '' });
     // A group's width as the same footprint a size has: one or both of the surface's two columns.
     const widthFootprint = (width: 'half' | 'full') => ({ columns: 2, columnSpan: width === 'half' ? 1 : 2, rowSpan: 1 });
@@ -411,7 +438,7 @@ export function WidgetSetupStep(props: Readonly<{
         ...(props.footerAccessory && finishable ? { footerAccessory: props.footerAccessory } : {}),
         noteTestID: `${props.testID}.why`,
         error: refusal?.message ?? null,
-        note: blockerSaidOnRow ? null : blocker ? t('widgetAdd.stillNeeded', { field: blocker.title }) : props.blockedReason ?? props.notice ?? consequence,
+        note: blockerSaidOnRow ? null : neededNotice ?? admissionNotice ?? props.blockedReason ?? props.notice ?? consequence,
         ...(props.backLabel ? { backLabel: props.backLabel } : {}),
         primary: {
             testID: `${props.testID}.submit`,
