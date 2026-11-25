@@ -155,6 +155,16 @@ strict storage routes reject the added request field. The inspected `../0.2`
 frontier `24731ff73c0e032af6ee6b1347b0fceef947949b` has no Workflow storage route;
 no released-client adapter or wire epoch change is added.
 
+## Detached Workflow Project context (unreleased 0.3)
+
+Private detached Workflow correspondence retains the optional, qualified
+`projectContext` already accepted by the Workflow and native Run launch.
+The closed selection carries Project and Source addresses. The native
+launch owner resolves the environment and secret material. Earlier progress
+without the field reads as before. Load matching 0.3 Protocol and CLI
+readers because earlier strict readers reject correspondence with the
+new field. The released 0.2 frontier has no Workflow correspondence.
+
 ## Applied parent Connected Service reads (unreleased 0.3)
 
 The daemon and Session runner may return a closed `reason` on an unavailable

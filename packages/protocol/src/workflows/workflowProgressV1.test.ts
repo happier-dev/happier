@@ -505,6 +505,7 @@ describe('workflow progress v1', () => {
   });
 
   it('persists only the canonical safe runtime selection needed to reuse a detached conversation', () => {
+    const projectContext = { projectRef: { serverId: 'home', projectKey: 'selected-project' } };
     const runtimeSelection = projectWorkflowRetainedRuntimeSelectionV1({
       agentTarget: {
         kind: 'agent',
@@ -538,6 +539,7 @@ describe('workflow progress v1', () => {
           'happier.test.connected/service': { source: 'native' },
         },
       },
+      projectContext,
       conversation: { kind: 'shared_run' },
       workspace: { kind: 'reuse_original' },
     });
@@ -575,6 +577,7 @@ describe('workflow progress v1', () => {
           'happier.test.connected/service': { source: 'native' },
         },
       },
+      projectContext,
     });
 
     const progress = WorkflowProgressEnvelopeV1Schema.parse({

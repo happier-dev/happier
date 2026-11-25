@@ -318,12 +318,13 @@ const WorkflowExecutionCorrespondenceBaseV1Schema = lazyZodSchema(() => z.object
  * config, MCP and Connected Service intent. The workflow execution adapter
  * supplies the effective selection that it actually admitted.
  */
-/** A background run's runtime choices, including the saved-secret bindings its launch materializes. */
-export const WorkflowRetainedRuntimeSelectionV1Schema = lazyZodSchema(() => z.extend(WorkflowSessionAuthoringSelectionSchema, {
-  secretReferenceOverlay: WorkflowStepExecutionSelectionSchema.shape.secretReferenceOverlay,
-}));
+/** The retained Project address and saved-secret bindings are launch selections. */
+export const WorkflowRetainedRuntimeSelectionV1Schema = lazyZodSchema(() => z.extend(
+  WorkflowSessionAuthoringSelectionSchema,
+  z.pick(WorkflowStepExecutionSelectionSchema, { projectContext: true, secretReferenceOverlay: true }).shape,
+));
 export type WorkflowRetainedRuntimeSelectionV1 = WorkflowSessionAuthoringSelection
-  & Pick<WorkflowStepExecutionSelection, 'secretReferenceOverlay'>;
+  & Pick<WorkflowStepExecutionSelection, 'projectContext' | 'secretReferenceOverlay'>;
 
 export function projectWorkflowRetainedRuntimeSelectionV1(
   selection: WorkflowStepExecutionSelection,
