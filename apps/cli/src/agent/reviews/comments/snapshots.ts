@@ -15,6 +15,7 @@ import {
 } from '@happier-dev/protocol/reviews/comments/snapshots';
 import { parseUnifiedDiffHunks } from '@happier-dev/protocol';
 import { runGitCheckpointCommand } from '@/scm/checkpoints/gitCheckpointCommands';
+import { logger } from '@/ui/logger';
 
 const DEFAULT_CONTEXT_LINE_COUNT = 5;
 
@@ -184,7 +185,11 @@ async function resolveComparisonSnapshot(params: Readonly<{
             diffContext: { side, ...(comparison.endpoints.before ? { baseSha: comparison.endpoints.before } : {}),
                 ...(comparison.endpoints.after ? { headSha: comparison.endpoints.after } : {}) } };
     } finally {
-        await rm(directory, { recursive: true, force: true });
+        try {
+            await rm(directory, { recursive: true, force: true });
+        } catch {
+            logger.warnLocalFile('Temporary review snapshot directory could not be removed.');
+        }
     }
 }
 

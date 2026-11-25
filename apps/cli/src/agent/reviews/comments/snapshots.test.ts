@@ -1,14 +1,45 @@
-import { mkdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { buildReviewCommentTextSnapshotHashes } from '@happier-dev/protocol';
 
 import { resolveReviewCommentSnapshot } from './snapshots';
+import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
+import { captureScmComparison } from '@/scm/comparisons/captureScmComparison';
+import { runWithScmAccountScope } from '@/scm/accountScope';
+
+// Filesystem disposal is an OS boundary; comparison capture and snapshot reading stay real.
+vi.mock('node:fs/promises', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('node:fs/promises')>();
+    return { ...actual, rm: vi.fn(actual.rm) };
+});
 
 describe('resolveReviewCommentSnapshot', () => {
+    it('retains captured evidence when temporary blob disposal fails', async () => runWithScmAccountScope('snapshot-cleanup', async () => {
+        const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-snapshot-cleanup-' });
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+        const leaked: string[] = [];
+        try {
+            await writeFile(join(fixture.rootPath, fixture.trackedPath), 'captured finding evidence\n');
+            const { comparison } = await captureScmComparison({ cwd: fixture.rootPath, source: { kind: 'workingTree', area: 'both' } });
+            const anchor = { kind: 'line' as const, filePath: fixture.trackedPath, line: 1 };
+            const control = await resolveReviewCommentSnapshot({ cwd: fixture.rootPath, anchor, comparison });
+            expect(control).toMatchObject({ kind: 'text', source: 'diffSide' });
+            vi.mocked(rm).mockImplementationOnce(async (path) => {
+                leaked.push(String(path));
+                throw Object.assign(new Error('Temporary directory is busy'), { code: 'EBUSY' });
+            });
+            await expect(resolveReviewCommentSnapshot({ cwd: fixture.rootPath, anchor, comparison }))
+                .resolves.toMatchObject({ kind: 'text', source: 'diffSide', selectedLines: control?.kind === 'text' ? control.selectedLines : [] });
+        } finally {
+            vi.mocked(rm).mockReset().mockImplementation(actual.rm);
+            await Promise.all([...leaked, fixture.rootPath].map(path => actual.rm(path, { recursive: true, force: true })));
+        }
+    }));
+
     it('does not relocate an out-of-range selection onto the final line', async () => {
         const root = join(tmpdir(), `happier-review-snapshot-range-${Date.now()}-${Math.random()}`);
         await mkdir(root, { recursive: true });
