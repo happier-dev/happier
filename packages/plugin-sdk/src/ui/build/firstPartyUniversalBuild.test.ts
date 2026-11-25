@@ -120,7 +120,8 @@ describe('first-party universal Plugin UI artifacts', () => {
                     const vendorBoundary = Object.assign(new Error('vendor socket boundary'), {
                         code: 'voice_test_vendor_socket_boundary',
                     });
-                    vi.stubGlobal('WebSocket', class { constructor() { throw vendorBoundary; } });
+                    const openVendorSocket = vi.fn(() => { throw vendorBoundary; });
+                    vi.stubGlobal('WebSocket', class { constructor() { openVendorSocket(); } });
                     vi.stubGlobal('navigator', {
                         userAgent: 'Voice artifact web test',
                         mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
@@ -145,7 +146,11 @@ describe('first-party universal Plugin UI artifacts', () => {
                             },
                         }]);
                         if (!open) throw new Error('voice_media_driver_missing');
-                        await expect(open()).rejects.toMatchObject({ code: vendorBoundary.code });
+                        await expect(open()).rejects.toMatchObject({
+                            code: 'voice_service_unavailable',
+                            failureCause: { phase: 'elevenlabs.session.start', errorCode: null },
+                        });
+                        expect(openVendorSocket).toHaveBeenCalled();
                     } finally {
                         vi.unstubAllGlobals();
                     }
