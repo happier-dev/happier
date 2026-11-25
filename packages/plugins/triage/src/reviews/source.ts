@@ -70,6 +70,7 @@ function observation(review: Omit<Review, 'needsYou'>, facts: Facts, titles: Rea
         // The place is the Reviews list itself; the id only routes (a raw id is never a place).
         locator: { v: 1, displayPath: 'Reviews', routingToken: review.reviewId },
         snapshot: { v: 1, title: title(review.reviewId, titles), scopeLabel: 'Reviews', facts: [],
+            ...(review.currentRoundOrdinal > 1 ? { designation: `Round ${review.currentRoundOrdinal}` } : {}),
             state: { presentation: facts.needsYou ? 'active' : 'resolved', nativeLabel: facts.needsYou ? 'Needs you' : 'Reviewed' },
             createdAtMs: review.createdAt },
         viewer: viewer(facts), sourceUpdatedAtMs: review.updatedAt };
