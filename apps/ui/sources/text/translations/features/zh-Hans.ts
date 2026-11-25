@@ -17541,6 +17541,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
             revokedTitle: '此邀请已被撤销',
             usedTitle: '此邀请已被使用',
             archivedTitle: '此团队已归档',
+            archivedBody: "团队管理员可以恢复团队并向你发送新邀请。",
             inactiveTitle: '此账户目前无法加入',
             invalidTitle: '此邀请链接无效',
             unresolvedHomeTitle: '此链接未标明所属 Home',

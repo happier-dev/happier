@@ -17665,6 +17665,7 @@ const italian: TeamsTranslationRoot = {
             revokedTitle: 'Questo invito è stato revocato',
             usedTitle: 'Questo invito è già stato usato',
             archivedTitle: 'Questo team è archiviato',
+            archivedBody: "Chi gestisce il team può ripristinarlo e inviarti un nuovo invito.",
             inactiveTitle: 'Questo account non può entrare in questo momento',
             invalidTitle: 'Questo collegamento di invito non è valido',
             unresolvedHomeTitle: 'Questo link non identifica il suo Home',

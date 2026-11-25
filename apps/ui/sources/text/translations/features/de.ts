@@ -17479,6 +17479,7 @@ const german: TeamsTranslationRoot = {
             revokedTitle: 'Diese Einladung wurde widerrufen',
             usedTitle: 'Diese Einladung wurde bereits verwendet',
             archivedTitle: 'Dieses Team ist archiviert',
+            archivedBody: "Wer das Team verwaltet, kann es wiederherstellen und dir eine neue Einladung senden.",
             inactiveTitle: 'Dieser Account kann derzeit nicht beitreten',
             invalidTitle: 'Dieser Einladungslink ist ungültig',
             unresolvedHomeTitle: 'Dieser Link nennt sein Home nicht',

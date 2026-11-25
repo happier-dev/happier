@@ -17601,6 +17601,7 @@ const spanish: TeamsTranslationRoot = {
             revokedTitle: 'Esta invitación fue revocada',
             usedTitle: 'Esta invitación ya se usó',
             archivedTitle: 'Este equipo está archivado',
+            archivedBody: "Una persona que gestione el equipo puede restaurarlo y enviarte una nueva invitación.",
             inactiveTitle: 'Esta cuenta no puede unirse ahora mismo',
             invalidTitle: 'Este enlace de invitación no es válido',
             unresolvedHomeTitle: 'Este enlace no identifica su Home',

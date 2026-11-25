@@ -626,11 +626,11 @@ describe('TeamAuthEntrySurface', () => {
     });
 
     it.each([
-        ['revoked', 'teams.join.revokedTitle'],
-        ['used', 'teams.join.usedTitle'],
-        ['expired', 'teams.join.expiredTitle'],
-        ['team_archived', 'teams.join.archivedTitle'],
-    ] as const)('shows the exact invitation refusal and recovery for %s', async (reason, title) => {
+        ['revoked', 'teams.join.revokedTitle', true],
+        ['used', 'teams.join.usedTitle', true],
+        ['expired', 'teams.join.expiredTitle', true],
+        ['team_archived', 'teams.join.archivedTitle', false],
+    ] as const)('shows the exact invitation refusal and recovery for %s', async (reason, title, replacementHelps) => {
         endpointFetch.mockImplementation(async (path: string) => new Response(JSON.stringify(
             path === PREVIEW_PATH
                 ? TeamInvitationPreviewResultV1Schema.parse({ outcome: 'unavailable', reason })
@@ -643,7 +643,7 @@ describe('TeamAuthEntrySurface', () => {
         const screen = await renderScreen(<TeamAuthEntrySurface invitation={{ token: 'F'.repeat(43) }}
             target={target} onSelectAction={() => {}} onAdmissionComplete={() => {}} />);
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t(title)));
-        expect(screen.getTextContent()).toContain(t('teams.join.askForNew'));
+        expect(screen.getTextContent().includes(t('teams.join.askForNew'))).toBe(replacementHelps);
         expect(screen.findByTestId('team-auth-entry-unavailable-secondary-action')).not.toBeNull();
         expect(screen.findByTestId('team-auth-entry-unavailable-action')).toBeNull();
     });

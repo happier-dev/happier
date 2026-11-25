@@ -17695,6 +17695,7 @@ const russian: TeamsTranslationRoot = {
             revokedTitle: 'Это приглашение отозвано',
             usedTitle: 'Это приглашение уже использовано',
             archivedTitle: 'Эта команда в архиве',
+            archivedBody: "Управляющий командой может восстановить её и отправить вам новое приглашение.",
             inactiveTitle: 'Этот аккаунт сейчас не может вступить',
             invalidTitle: 'Эта ссылка-приглашение недействительна',
             unresolvedHomeTitle: 'Эта ссылка не указывает свой Home',

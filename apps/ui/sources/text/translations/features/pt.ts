@@ -17651,6 +17651,7 @@ const portuguese: TeamsTranslationRoot = {
             revokedTitle: 'Este convite foi revogado',
             usedTitle: 'Este convite já foi utilizado',
             archivedTitle: 'Esta equipa está arquivada',
+            archivedBody: "Uma pessoa que gere a equipa pode restaurá-la e enviar-lhe um novo convite.",
             inactiveTitle: 'Esta conta não pode juntar-se neste momento',
             invalidTitle: 'Esta ligação de convite não é válida',
             unresolvedHomeTitle: 'Este link não identifica o seu Home',

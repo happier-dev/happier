@@ -17722,6 +17722,7 @@ const french: TeamsTranslationRoot = {
             revokedTitle: 'Cette invitation a été révoquée',
             usedTitle: 'Cette invitation a déjà été utilisée',
             archivedTitle: 'Cette équipe est archivée',
+            archivedBody: "Une personne qui gère l’équipe peut la restaurer et vous envoyer une nouvelle invitation.",
             inactiveTitle: 'Ce compte ne peut pas rejoindre pour le moment',
             invalidTitle: 'Ce lien d’invitation n’est pas valide',
             unresolvedHomeTitle: 'Ce lien n’identifie pas son Home',

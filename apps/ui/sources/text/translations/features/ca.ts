@@ -17679,6 +17679,7 @@ const catalan: TeamsTranslationRoot = {
             revokedTitle: 'Aquesta invitació s’ha revocat',
             usedTitle: 'Aquesta invitació ja s’ha fet servir',
             archivedTitle: 'Aquest equip està arxivat',
+            archivedBody: "Una persona que gestioni l’equip pot restaurar-lo i enviar-te una invitació nova.",
             inactiveTitle: 'Aquest compte no s’hi pot unir ara mateix',
             invalidTitle: 'Aquest enllaç d’invitació no és vàlid',
             unresolvedHomeTitle: 'Aquest enllaç no identifica el seu Home',

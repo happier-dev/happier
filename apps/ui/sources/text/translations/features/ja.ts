@@ -17601,6 +17601,7 @@ const japanese: TeamsTranslationRoot = {
             revokedTitle: 'この招待は取り消されました',
             usedTitle: 'この招待はすでに使用されています',
             archivedTitle: 'このチームはアーカイブ済みです',
+            archivedBody: "チームの管理者はチームを復元して、新しい招待を送ることができます。",
             inactiveTitle: 'このアカウントは現在参加できません',
             invalidTitle: 'この招待リンクは無効です',
             unresolvedHomeTitle: 'このリンクは Home を特定できません',

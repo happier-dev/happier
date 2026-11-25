@@ -90,8 +90,7 @@ export function resolveTeamJoinPresentation(
                 ...base,
                 glyph: 'archive',
                 title: t('teams.join.archivedTitle'),
-                body: t('teams.join.askForNew'),
-                askForNew: true,
+                body: t('teams.join.archivedBody'),
             });
         case 'account_inactive':
             return Object.freeze({

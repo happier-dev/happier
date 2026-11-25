@@ -17693,6 +17693,7 @@ const polish: TeamsTranslationRoot = {
             revokedTitle: 'To zaproszenie zostało unieważnione',
             usedTitle: 'To zaproszenie zostało już wykorzystane',
             archivedTitle: 'Ten zespół jest zarchiwizowany',
+            archivedBody: "Osoba zarządzająca zespołem może go przywrócić i wysłać Ci nowe zaproszenie.",
             inactiveTitle: 'To konto nie może teraz dołączyć',
             invalidTitle: 'Ten link zapraszający jest nieprawidłowy',
             unresolvedHomeTitle: 'Ten link nie wskazuje swojego Home',

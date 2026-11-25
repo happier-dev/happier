@@ -49,7 +49,7 @@ describe('resolveTeamJoinPresentation', () => {
             .filter((outcome) => resolveTeamJoinPresentation(outcome).askForNew)
             .map((outcome) => outcome.outcome);
 
-        expect(askForNew.sort()).toEqual(['expired', 'not_found', 'revoked', 'team_archived', 'used']);
+        expect(askForNew.sort()).toEqual(['expired', 'not_found', 'revoked', 'used']);
     });
 
     it('routes an address mismatch to the person’s own identity, not to a manager', () => {

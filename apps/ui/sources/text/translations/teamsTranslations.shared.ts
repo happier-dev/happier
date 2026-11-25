@@ -918,6 +918,7 @@ export const english = {
             revokedTitle: 'This invitation was revoked',
             usedTitle: 'This invitation has already been used',
             archivedTitle: 'This Team is archived',
+            archivedBody: "A Team manager can restore the Team and send you a new invitation.",
             inactiveTitle: 'This Account cannot join right now',
             inactiveBody: "Use an active Account on this Home, or ask a Home administrator to restore your access.",
             invalidTitle: 'This invitation link is not valid',
