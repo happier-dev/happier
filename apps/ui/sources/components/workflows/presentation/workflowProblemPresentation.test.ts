@@ -64,6 +64,8 @@ describe('workflowProblemPresentation', () => {
     it.each([
         ['admission_unavailable', 'session.startFailure.cause.admission_unavailable'],
         ['invalid_token', 'errors.authenticationFailed'],
+        ['event_watcher_not_owned', 'workflows.problem.accessDenied'],
+        ['event_watcher_not_current', 'workflows.problem.targetUnavailable'],
     ])('explains %s as authorization or authentication, not unreadable content', (code, message) => {
         const presentation = resolveWorkflowProblemPresentation(actionError(code));
         expect(presentation).toMatchObject({

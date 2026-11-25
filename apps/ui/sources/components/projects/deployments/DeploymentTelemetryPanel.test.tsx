@@ -903,7 +903,7 @@ describe('Environment Telemetry tabs', () => {
       expect(screen.getTextContent()).toContain('Saved checks need this Environment’s collector on one of your Machines.');
       await screen.pressByTestIdAsync('project-deployments.telemetry.add-check.collector-refused-details-toggle');
       expect(screen.findByTestId('project-deployments.telemetry.add-check.collector-refused-details-code')?.props.children)
-        .toBe('event_watcher_not_current');
+        .toBe('event_watcher_not_owned');
       expect(calls).toHaveLength(beforeSetup);
     } finally {
       await screen.unmount();

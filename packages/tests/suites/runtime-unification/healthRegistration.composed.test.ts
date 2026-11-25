@@ -3,7 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createActionExecutor, arePluginMachineMaterializationRefsEqual, MachineServicesDiscoveryResultV1Schema, MachineServicesListResultV1Schema, type MachineMetadataFieldReadV1, type MachineMetadataFieldPortV1,
+import { createActionExecutor, FeaturesResponseSchema, arePluginMachineMaterializationRefsEqual, MachineServicesDiscoveryResultV1Schema, MachineServicesListResultV1Schema, type MachineMetadataFieldReadV1, type MachineMetadataFieldPortV1,
     PluginEventAutomationSetupResultV1Schema,
     ActionsSettingsV1Schema, setActionApprovalOverride } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -20,6 +20,9 @@ import { createHealthCheckSourceAdapter } from '../../../plugins/machine-service
 import { configuration, reloadConfiguration } from '../../../../apps/cli/src/configuration';
 import { readCurrentMachineInstallation } from '../../../../apps/cli/src/daemon/identity/currentMachineInstallation';
 import { withTempDir } from '../../../../apps/cli/src/testkit/fs/tempDir';
+import { createDaemonPluginAvailabilityReporter } from '../../../../apps/cli/src/plugins/availability/daemonReporter';
+import { createPluginMachineAvailabilityPublication } from '../../../../apps/cli/src/plugins/availability/machineAvailabilityPublication';
+import { createPluginRegistryStateStore } from '../../../../apps/cli/src/plugins/store/registry/currentState';
 import { createAdmittedPluginRuntimeFixture } from '../../../../apps/cli/src/plugins/testkit/admittedRuntime';
 import { createActionSettingsProvider } from '../../../../apps/cli/src/settings/actionsSettingsProvider';
 import { registerDaemonContributionRegistryProjectionHandler } from '../../../../apps/cli/src/rpc/handlers/daemonContributionRegistryProjection';
@@ -85,9 +88,29 @@ it.skipIf(process.platform !== 'linux').each(['e2ee', 'plain'] as const)('%s: re
                 privateKey: Buffer.from(home.keys.secretKey).toString('base64url') }), { mode: 0o600 });
             const credentials = { token: home.token, encryption: home.encryption, credentialProvenance: 'stored_session' as const };
             const origin = { serverIdentityId: home.serverId, machineId: home.machineId };
+            const reporter = createDaemonPluginAvailabilityReporter({
+                credentials, getMachineId: () => home.machineId,
+                serverFeaturesSnapshotStore: { getSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
+                    features: {}, capabilities: { serverIdentity: { serverIdentityId: home.serverId } },
+                }) }) },
+            });
+            const registryStore = createPluginRegistryStateStore({ happyHomeDir });
+            await registryStore.initialize();
+            const publication = createPluginMachineAvailabilityPublication(reporter.report);
+            let publicationFailure: unknown;
             expect((await readCurrentMachineInstallation())?.machineId).toBe(home.machineId);
             const startRuntime = () => runWithServerHttpBaseUrl(home.baseUrl, () => createAdmittedPluginRuntimeFixture({ happyHomeDir, controller: pluginReloadController, runtimeOptions: {
                 pluginIds: [plugin.manifest.id], resolveCurrentMachineId: () => home.machineId,
+                async settleEventWatcherMaterialization(registry) {
+                    const lease = runtime?.lease;
+                    if (lease?.registry !== registry) throw new Error('Expected the serving watcher registry');
+                    try {
+                        await publication.settle(lease, () => registryStore.readAvailabilityInventory());
+                    } catch (error) {
+                        publicationFailure = error;
+                        throw error;
+                    }
+                },
                 externalActionHomeBinding: { serverId: home.serverId, serverIdentityId: home.serverId },
                 resolveCurrentMachineExecutionOriginContext: async () => origin,
                 scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider({
@@ -100,10 +123,10 @@ it.skipIf(process.platform !== 'linux').each(['e2ee', 'plain'] as const)('%s: re
             const sourceCustody = registry.readPluginSourceCustody?.(plugin.manifest.id);
             if (!materialization || !occurrenceId || !sourceCustody) throw new Error('Expected admitted Health observer');
             expect(materialization.materializationId).not.toBe(plugin.manifest.id);
-            // Match the pre-existing installation to the real daemon declaration producer.
-            await db.pluginMachineMaterialization.update({ where: { machineId_materializationId: {
-                machineId: home.machineId, materializationId: home.installationId } },
-                data: { materializationId: materialization.materializationId } });
+            // The local daemon can expose the exact observer before Home receives
+            // the Machine Availability report for that observer.
+            expect(await db.pluginMachineMaterialization.findUnique({ where: { machineId_materializationId: {
+                machineId: home.machineId, materializationId: materialization.materializationId } } })).toBeNull();
             const handlers = new Map<string, RpcHandler>();
             registerDaemonContributionRegistryProjectionHandler({ registerHandler(method, handler) { handlers.set(method, handler); } }, {
                 resolveRuntimeRegistry: async () => registry, resolveInstalledPackages: async () => [],
@@ -152,7 +175,7 @@ else process.exitCode=17;
                 checkId: 'http', kind: { pluginId: plugin.manifest.id, localId: 'http' }, binding: { kind: 'healthCheck' },
                 config: { endpoint: 'http://127.0.0.1:18087', expectStatus: 200 }, periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1,
             }] });
-            expect(prepared, JSON.stringify(prepared)).toMatchObject({ ok: true });
+            expect(prepared, String(publicationFailure ?? JSON.stringify(prepared))).toMatchObject({ ok: true });
             if (!prepared || typeof prepared !== 'object' || !('result' in prepared)) throw new Error('Expected prepared Health source');
             const source = PluginEventAutomationSetupResultV1Schema.parse(prepared.result);
             const triggers = createCliWorkflowTriggerActions({ credentials, serverHttpBaseUrl: home.baseUrl,
@@ -162,13 +185,14 @@ else process.exitCode=17;
                 filter: null, maximumObservationAgeMs: null, enabled: true };
             // v belongs to the setup result, not the Event definition request.
             const { v: _version, ...eventTrigger } = trigger;
+            const written = await triggers.add({ observationOnly: { kind: 'observationOnly' }, name: 'Observed service', trigger: eventTrigger });
+            expect(written.set.health).toBe('available');
+
             await expect(triggers.add({ observationOnly: { kind: 'observationOnly' }, name: 'Invalid installation',
-                trigger: { ...eventTrigger, observationTransport: { kind: 'checkpointedPull',
+                trigger: { ...eventTrigger, sourceInstanceId: randomUUID(), observationTransport: { kind: 'checkpointedPull',
                     watcherMaterializationRef: { ...materialization, materializationId: plugin.manifest.id } } } }))
                 .rejects.toMatchObject({ code: 'event_watcher_not_current', response: { status: 400 } });
             expect(refusalBodies).toEqual([{ error: 'event_watcher_not_current' }]);
-            const written = await triggers.add({ observationOnly: { kind: 'observationOnly' }, name: 'Observed service', trigger: eventTrigger });
-            expect(written.set.health).toBe('available');
 
             const noticeResults: unknown[] = [];
             let probes = 0;

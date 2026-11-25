@@ -38,6 +38,7 @@ import {
 import { ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATIONS_MAX_ITEMS, ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS, AccountEncryptionMigrateAutomationsDirectiveSchema, AccountEncryptionMigrateAutomationsInventoryResponseSchema } from '@happier-dev/protocol/account/encryptionMigrate';
 import { AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND, normalizeAutomationTemplateEnvelopeStoredRead } from '@happier-dev/protocol/automations/automationTemplateEnvelope';
 import { AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS, AUTOMATION_V3_RUN_LIST_MAX_ITEMS, type AutomationDefinitionReconcileRequest, type AutomationTriggerCreateRequest, type AutomationTriggerPatchRequest } from '@happier-dev/protocol/automations/automationApiV3';
+import { AUTOMATION_EVENT_WATCHER_NOT_OWNED } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { parseWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { isAccountScopedBlobCiphertextForKind } from '@happier-dev/protocol/crypto/accountScopedCipherEnvelope';
 import { AutomationEventTriggerDefinitionStoredPayloadV1Schema, validateAutomationEventFilterAgainstPayloadSchemaV1, validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1 } from '@happier-dev/protocol/automations/event';
@@ -522,11 +523,12 @@ async function admitAutomationEventWatcherTx(params: Readonly<{
             select: { installationId: true },
         }),
     ]);
+    if (!machine) throw new AutomationEventWatcherCurrentnessError(AUTOMATION_EVENT_WATCHER_NOT_OWNED);
     if (
         !materialization
         || materialization.accountId !== params.accountId
         || materialization.pluginId !== watcher.pluginId
-        || !machine?.installationId
+        || !machine.installationId
     ) {
         throw new AutomationEventWatcherCurrentnessError();
     }

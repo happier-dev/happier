@@ -593,6 +593,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         /** Daemon startup injects the measured Background Indexer policy. */
         daemonDatabaseLimits?: PluginDaemonDatabaseLimitsPolicy;
         connectedAccounts?: StablePluginConnectedAccountsOwner;
+        settleEventWatcherMaterialization?: (registry: ResolvedExecutablePluginRuntimeRegistry) => Promise<void>;
         automationEventWatcherTransport?: import('@/providers/broker/teamCredentialWatcherClient').TeamCredentialWatcherTransport;
         /** Canonical current Account resolver for dynamic target-Action form refs. */
         actionFormConnectedAccounts?: Pick<
@@ -5348,9 +5349,13 @@ export async function resolveExecutablePluginRuntimeRegistry(
             const source = authoritativeContributes.automationEligibleEvents?.find(entry =>
                 entry.setupAction.identity.pluginId === demand.pluginId
                 && entry.setupAction.identity.localId === demand.localId);
-            // A usable source must join its declaration admission. Ordinary
-            // activation and daemon readiness do not wait for Account publication.
-            if (source) await claimReleaseLessDeclaration(source.event.identity.pluginId);
+            if (!source) continue;
+            await claimReleaseLessDeclaration(source.event.identity.pluginId);
+            // The mounted Action must settle the watcher the source will hand
+            // to Save. Background activation remains independent of this join.
+            if (trigger === 'consumer' && resolvedRuntimeRegistryOwner) {
+                await params?.settleEventWatcherMaterialization?.(resolvedRuntimeRegistryOwner);
+            }
         }
         return results;
     }

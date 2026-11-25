@@ -1063,6 +1063,14 @@ describe('Plugin Event Automation setup orchestration', () => {
 
         if (result.kind !== 'configured') throw new Error('expected configured Event setup');
         selectedOrigin = executionOrigin('github-materialization-b');
+        expect(result).toMatchObject({
+            trigger: {
+                observationTransport: {
+                    kind: 'checkpointedPull',
+                    watcherMaterializationRef: { materializationId: 'github-materialization-a' },
+                },
+            },
+        });
         const changedWatcherOrigin = result.draft.resolveFreshWatcherOrigin();
         expect(changedWatcherOrigin).not.toBeNull();
         if (!changedWatcherOrigin) throw new Error('expected current watcher origin');

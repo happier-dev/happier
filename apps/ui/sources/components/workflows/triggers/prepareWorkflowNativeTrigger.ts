@@ -3,7 +3,6 @@ import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contribut
 import { getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
-import { buildPluginEventAutomationTriggerInput } from '@/components/automations/editor/pluginEventAutomationDraft';
 import { configurePluginEventAutomationSetup } from '@/components/automations/editor/pluginEventAutomationSetup';
 import { resolveFreshMachineAdministrationExecutionTarget } from '@/sync/domains/machines/administration/executionTarget';
 import { PLUGIN_EVENT_AUTOMATION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
@@ -100,9 +99,5 @@ export async function prepareWorkflowNativeTrigger(
         if ('code' in setup && setup.code && caller !== undefined) throw new WorkflowActionError({ message: setup.code, rawCode: setup.code });
         return null;
     }
-    const watcher = setup.draft.resolveFreshWatcherOrigin();
-    const trigger = watcher ? buildPluginEventAutomationTriggerInput({
-        eligibleEvents, draft: setup.draft.draft, watcherOrigin: watcher.origin,
-    }) : null;
-    return trigger ? { trigger: { ...trigger, subject }, payloadSchema: eligible.event.payloadSchema } : null;
+    return { trigger: { ...setup.trigger, subject }, payloadSchema: eligible.event.payloadSchema };
 }

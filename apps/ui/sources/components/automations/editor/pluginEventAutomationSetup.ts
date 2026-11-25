@@ -33,6 +33,7 @@ import {
 } from '@/sync/domains/automations/pluginEventAutomationCurrentness';
 
 import {
+    buildPluginEventAutomationTriggerInput,
     createPluginEventAutomationAuthoringDraft,
     supportsPluginEventAutomationObservationTransport,
     type PluginEventAutomationCreateDraft,
@@ -62,6 +63,7 @@ type SetupOutcome =
     | Readonly<{
         kind: 'configured';
         draft: PluginEventAutomationCreateDraft;
+        trigger: NonNullable<ReturnType<typeof buildPluginEventAutomationTriggerInput>>;
         /**
          * Present only for the durable-push arm. The server discloses the
          * shared secret exactly once, so the composer must surface it with the
@@ -547,8 +549,13 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
             maximumObservationAgeMs: params.maximumObservationAgeMs,
         });
         if (!draft) return { kind: 'unavailable' };
+        const trigger = buildPluginEventAutomationTriggerInput({
+            eligibleEvents: [current.event], draft, watcherOrigin: current.origin.origin,
+        });
+        if (!trigger) return { kind: 'unavailable' };
         return {
             kind: 'configured',
+            trigger,
             draft: Object.freeze({
                 draft,
                 resolveFreshWatcherOrigin: params.resolveExecutionOrigin,

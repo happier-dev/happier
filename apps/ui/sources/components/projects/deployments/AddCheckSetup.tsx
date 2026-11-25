@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { isActionOutcomeUnknownErrorCodeV1, UNEXPECTED_ACTION_FAILURE_CODES_V1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { AUTOMATION_EVENT_WATCHER_NOT_CURRENT } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { AUTOMATION_EVENT_WATCHER_NOT_CURRENT, AUTOMATION_EVENT_WATCHER_NOT_OWNED } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { PluginUiActionFailureV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
@@ -87,6 +87,11 @@ export function AddCheckSetup(
   const unconfirmed = isActionOutcomeUnknownErrorCodeV1(failedWrite?.failure.errorCode);
   const writeFailure = failedWrite && presentActionExecutionFailure(failedWrite.failure,
     t(unconfirmed ? 'errors.scmOutcomeUnknown' : 'common.requestFailed'), { closedCodesOnly: true });
+  const writeReason = failedWrite?.failure.errorCode === AUTOMATION_EVENT_WATCHER_NOT_OWNED
+    ? t('projects.deployments.monitoring.addCheckCollectorOwnership')
+    : failedWrite?.failure.errorCode === AUTOMATION_EVENT_WATCHER_NOT_CURRENT
+      ? t('workflows.problem.targetUnavailable')
+      : writeFailure?.reason;
   return (
     <View testID={props.testID}>
       {write?.status === 'saving' ? (
@@ -101,7 +106,7 @@ export function AddCheckSetup(
           size="line"
           kind="error"
           title={t(unconfirmed ? 'projects.deployments.stateUnknown' : 'projects.deployments.services.addCheckFailed')}
-          reason={writeFailure.reason}
+          reason={writeReason}
           diagnosticCode={failedWrite.failure.errorCode}
           diagnosticDetail={writeFailure.technicalDetails
             .filter(line => line.key !== 'code').map(line => `${line.label} ${line.value}`).join('\n')}
@@ -115,8 +120,8 @@ export function AddCheckSetup(
           size="line"
           kind="unavailable"
           title={t('projects.deployments.services.addCheckFailed')}
-          reason={t('projects.deployments.monitoring.addCheckCollectorOwnership')}
-          diagnosticCode={AUTOMATION_EVENT_WATCHER_NOT_CURRENT}
+          reason={t(ownedCollector === false ? 'projects.deployments.monitoring.addCheckCollectorOwnership' : 'workflows.problem.targetUnavailable')}
+          diagnosticCode={ownedCollector === false ? AUTOMATION_EVENT_WATCHER_NOT_OWNED : AUTOMATION_EVENT_WATCHER_NOT_CURRENT}
           accessibilitySemantics="alert"
           action={{ label: t('common.close'), onPress: props.onClose }}
         />

@@ -2212,12 +2212,17 @@ The Event reader admits its selected body through the same Protocol load
 ingester before using its Event declaration. Earlier full-body lists remain
 readable. Publication and claim admission remain strict.
 
-In unreleased 0.3 source, demand for an Event's declared setup Action joins that
-plugin's existing release-less Account declaration claim before exposing usable
-source configuration. Background publication and setup share the Account Data
-owner's retained admission result. Ordinary activation and daemon readiness stay
-independent of that optional Account publication; a refused setup claim remains
-a typed Action failure before its handler runs.
+In unreleased 0.3 source, an Event's declared setup Action joins the existing
+release-less Account declaration claim and the serving Machine's Availability
+report before exposing usable source configuration. Setup consumes an in-flight
+or acknowledged report for that registry. A fresh setup can publish through
+the same Availability owner when background publication has yet to run.
+Ordinary activation and daemon readiness stay independent of the setup wait.
+Immediate definition writes consume the trigger returned by setup. Home still
+enforces watcher ownership and currentness at write admission.
+`event_watcher_not_owned` means the Machine is outside the Account's owned
+inventory. `event_watcher_not_current` means Home could not admit the selected
+watcher on an owned Machine.
 
 In unreleased 0.3 source, the Account/plugin intent keeps Machine and legacy
 digest references in storage version 4. A private child table holds one admitted

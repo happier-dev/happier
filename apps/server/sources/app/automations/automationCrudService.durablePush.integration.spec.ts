@@ -450,7 +450,7 @@ describe("Automation durable-push authoring", () => {
                     assignments: [{ machineId: ownedMachineId }],
                 } });
             expect(response.statusCode).toBe(400);
-            expect(response.json()).toEqual({ error: "event_watcher_not_current" });
+            expect(response.json()).toEqual({ error: "event_watcher_not_owned" });
         });
         expect(await db.automation.findUnique({ where: { id: automationId } })).toBeNull();
         expect(await db.automationTrigger.findUnique({ where: { id: trigger.triggerId } })).toBeNull();

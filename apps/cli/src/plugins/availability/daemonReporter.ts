@@ -52,7 +52,7 @@ export function createDaemonPluginAvailabilityReporter(params: Readonly<{
       const serverIdentityId = features?.status === 'ready'
         ? features.features.capabilities.serverIdentity.serverIdentityId
         : null;
-      if (!serverIdentityId) return;
+      if (!serverIdentityId) throw new Error('Machine Availability has no ready Home identity');
 
       for (const release of current.inventory.releasePublications) {
         try {

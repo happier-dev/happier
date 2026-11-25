@@ -268,7 +268,7 @@ describe('daemon plugin Availability reporter', () => {
       getMachineId: () => 'machine-current',
     });
 
-    await reporter.report(inventory);
+    await expect(reporter.report(inventory)).rejects.toThrow('Machine Availability has no ready Home identity');
 
     expect(publisher.publishRelease).not.toHaveBeenCalled();
     expect(publisher.reportMaterializations).not.toHaveBeenCalled();

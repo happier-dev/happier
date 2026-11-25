@@ -1070,13 +1070,10 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 ? { code: 'webhook_endpoint_unavailable', reason: 'webhook_endpoint_unavailable' } : null);
             advanceRevision();
             if (params.savedSourceSetup || params.newSourceSetup) {
-                const watcher = resolveExecutionOrigin();
-                const trigger = watcher && buildPluginEventAutomationTriggerInput({
-                    eligibleEvents, draft: configured.draft.draft, watcherOrigin: watcher.origin,
-                });
+                const { trigger } = configured;
                 const observationOnly = configured.draft.draft.source.observationOnly;
-                if (trigger && params.savedSourceSetup) params.savedSourceSetup.onSettled({ kind: 'configured', trigger });
-                else if (trigger && observationOnly && params.newSourceSetup) {
+                if (params.savedSourceSetup) params.savedSourceSetup.onSettled({ kind: 'configured', trigger });
+                else if (observationOnly && params.newSourceSetup) {
                     params.newSourceSetup.onSettled({ kind: 'configured', trigger, observationOnly });
                 } else setSourceStatus('unavailable');
             }

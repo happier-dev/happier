@@ -97,6 +97,7 @@ const WORKFLOW_PROBLEM_SHAPES = {
     run_access_denied: { messageKey: 'workflows.problem.accessDenied', repair: 'none', accessibilitySemantics: 'alert' },
     currentness_conflict: { messageKey: 'workflows.problem.conflict', repair: 'refresh', accessibilitySemantics: 'alert' },
     event_watcher_not_current: { messageKey: 'workflows.problem.targetUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
+    event_watcher_not_owned: { messageKey: 'workflows.problem.accessDenied', repair: 'none', accessibilitySemantics: 'alert' },
     workflow_input_too_large: { messageKey: 'workflows.problem.inputTooLarge', repair: 'none', accessibilitySemantics: 'alert' },
     // A stop that cannot yet be proven is a wait, not a rejection — and no
     // acknowledgement anywhere may bypass it, so the copy has to say what is

@@ -2,7 +2,7 @@ import { PluginDiagnosticError } from '@/plugins/runtime/moduleFailure';
 import { realpath } from 'node:fs/promises';
 import { createDaemonArchivePluginChangePreparer } from '@/plugins/daemon/archiveChangePreparer';
 import type { PluginPendingChangeEntry } from './changeContract';
-import { isPluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
   createDaemonPluginChangeService,
@@ -15,6 +15,7 @@ import { createDaemonPathPluginChangePreparer } from '@/plugins/daemon/pathChang
 import { projectPluginTransactionChangeResult } from '@/plugins/daemon/transactionChangeResult';
 import { readServerPluginManagedResources, type PluginManagedResourcePreflightBinding } from '@/plugins/availability/serverPublisher';
 import { readCurrentDaemonPluginCatalog, readCurrentDaemonPluginList } from '@/plugins/daemon/currentCatalog';
+import { createPluginMachineAvailabilityPublication } from '@/plugins/availability/machineAvailabilityPublication';
 import { projectPluginInstalledAvailabilityInventory } from '@/plugins/availability/releaseLessDeclarations';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
@@ -272,6 +273,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   const runtimeLifecycle = createDaemonPluginRegistryRuntimeLifecycle({
     ...(params.agentIsolation ? { agentIsolation: params.agentIsolation } : {}),
     ...(params.signal ? { signal: params.signal } : {}),
+    ...(params.availabilityReporter ? { settleEventWatcherMaterialization } : {}),
     beforeInstallPublish: async (registry, pluginIds, firstInstallPluginIds) => {
       const declarations = (registry.contributes.mcpServers ?? []).filter(entry => entry.pluginId && pluginIds.includes(entry.pluginId));
       const skillDeclarations = (registry.contributes.skills ?? []).filter(entry => firstInstallPluginIds.includes(entry.pluginId));
@@ -771,6 +773,27 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       ...(failures.length > 0 ? { failures } : {}),
     });
   };
+  const machineAvailability = params.availabilityReporter
+    ? createPluginMachineAvailabilityPublication(params.availabilityReporter.report)
+    : null;
+
+  async function settleEventWatcherMaterialization(registry: ResolvedExecutablePluginRuntimeRegistry): Promise<void> {
+    const lease = params.reloadController.tryAcquireRuntimeRegistry();
+    try {
+      if (!machineAvailability || lease?.registry !== registry) throw new Error('Serving Machine registry changed');
+      await machineAvailability.settle(lease, () => stateStore.readAvailabilityInventory());
+    } catch (cause) {
+      throw new PluginError({
+        code: 'target_unavailable',
+        message: 'The Home could not confirm the Event watcher on this Machine.',
+        retryable: true,
+        effectAttempted: false,
+      }, { cause });
+    } finally {
+      await lease?.release();
+    }
+  }
+
   /**
    * The install registry reports what it records. Daemon-selected plugins with
    * a release-less declaration and no registry record (bundled first-party,
@@ -789,15 +812,9 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
     let declarationClaims: Promise<void> | undefined;
     try {
       const failures: unknown[] = [];
-      if (inventory && reporter) {
+      if (inventory && reporter && machineAvailability) {
         try {
-          const complete = projectPluginInstalledAvailabilityInventory({
-            inventory,
-            registry: lease.registry.contributes,
-            registryRevision: lease.durableRevision,
-            runtimeMaterializations: lease.registry.readReleaseLessMaterializations?.() ?? [],
-          });
-          await reporter.report(complete);
+          const complete = await machineAvailability.publish(lease, async () => inventory);
           if (complete.accountExecutableSources && reporter.publishAccountExecutables) {
             void reporter.publishAccountExecutables(complete.accountExecutableSources)
               .catch((error: unknown) => reportAvailabilityFailure(error, complete.revision));
@@ -965,6 +982,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
         resolveRuntimeRegistry: async () => {
           const registry = await resolveExecutablePluginRuntimeRegistry({
             ...(params.automationEventWatcherTransport ? { automationEventWatcherTransport: params.automationEventWatcherTransport } : {}),
+            ...(params.availabilityReporter ? { settleEventWatcherMaterialization } : {}),
             ...(params.signal ? { signal: params.signal } : {}),
             ...(params.awaitAccountSettingsReadiness
               ? { awaitAccountSettingsReadiness: params.awaitAccountSettingsReadiness }

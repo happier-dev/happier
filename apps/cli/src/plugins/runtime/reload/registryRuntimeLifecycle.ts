@@ -224,6 +224,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
   /** Existing authenticated Machine admission authority for protected Session input. */
   machineAdmissionTransport?: PluginRuntimeMachineAdmissionTransport;
   externalActionHomeBinding?: ExternalActionHomeBinding;
+  settleEventWatcherMaterialization?: (registry: ResolvedExecutablePluginRuntimeRegistry) => Promise<void>;
   deploymentAccountExecution?: NonNullable<Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]>['deploymentAccountExecution'];
   /** Existing daemon-local transfer carrier for host-authored Composer media. */
   resolveComposerMediaStageTransferRpcHandler?: () => RpcHandlerInvoker | null;
@@ -463,6 +464,9 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
             happyHomeDir: params.happyHomeDir,
             contributes,
             generation: activationOccurrenceId,
+          ...(params.settleEventWatcherMaterialization
+            ? { settleEventWatcherMaterialization: params.settleEventWatcherMaterialization }
+            : {}),
           ...(params.executeClientAction ? { executeClientAction: params.executeClientAction } : {}),
           ...(params.resolveCurrentMachineId
             ? { resolveCurrentMachineId: params.resolveCurrentMachineId }
