@@ -89,19 +89,28 @@ async function didLeaveTerminalConnect(page: TerminalConnectApprovePage, timeout
   }
 }
 
-export async function approveTerminalConnect(params: Readonly<{ page: Page | TerminalConnectApprovePage; timeoutMs?: number }>): Promise<void> {
+export async function approveTerminalConnect(params: Readonly<{
+  page: Page | TerminalConnectApprovePage;
+  timeoutMs?: number;
+  cliAuthentication?: Promise<void>;
+}>): Promise<void> {
   const timeoutMs = params.timeoutMs ?? 60_000;
   const intervalMs = 250;
   const attempts = resolvePollAttempts(timeoutMs, intervalMs);
   let clicked = false;
+  let cliAuthenticated = false;
+  void params.cliAuthentication?.then(() => { cliAuthenticated = true; }, () => {});
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (clicked && cliAuthenticated) return;
     const approve = await findVisibleApproveLocator(params.page);
     if (approve) {
-      clicked = true;
       await approve.click({ timeout: 15_000, noWaitAfter: true });
+      clicked = true;
       await params.page.waitForTimeout(intervalMs);
-      if (await maybeAcknowledgeTerminalConnect({ page: params.page, timeoutMs: 1_000 })) {
+      const acknowledged = await maybeAcknowledgeTerminalConnect({ page: params.page, timeoutMs: 1_000 });
+      if (cliAuthenticated) return;
+      if (acknowledged) {
         if (await didLeaveTerminalConnect(params.page, 5_000)) {
           return;
         }
@@ -116,6 +125,7 @@ export async function approveTerminalConnect(params: Readonly<{ page: Page | Ter
     await params.page.waitForTimeout(intervalMs);
   }
 
+  if (clicked && cliAuthenticated) return;
   throw new Error(clicked
     ? 'terminal connect approval did not complete'
     : 'terminal connect approval button did not appear');

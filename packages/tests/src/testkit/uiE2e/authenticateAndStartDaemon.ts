@@ -111,8 +111,9 @@ export async function authenticateAndStartDaemon(params: Readonly<{
       },
       timeoutMs: params.terminalConnectUrlTimeoutMs,
     });
-    await approveTerminalConnect({ page: params.page });
-    await cliLogin.waitForSuccess();
+    const cliAuthentication = cliLogin.waitForSuccess();
+    await approveTerminalConnect({ page: params.page, cliAuthentication });
+    await cliAuthentication;
     await acknowledgeTerminalConnectSuccessIfPresent(params.page);
   } finally {
     await cliLogin.stop().catch(() => {});
