@@ -82,15 +82,17 @@ describe('Project Open writer-target ingress', () => {
   });
 
   // Security review B19 A1: a Project Open into a devcontainer child Machine D takes a second hop to
-  // D's physical parent P2, which Home admits under the joint target routing. P2 binds the Open to the
-  // admitted child D and runs the same comparison; only D can open an encrypted Open.
+  // D's physical parent P2. Home relays that joint-routed hop only from D's own socket with D's
+  // installation signature (registerSocketRpcHandlers readCurrent), after D compared the Open at its
+  // own ingress. P2 consumes that decision, so an encrypted Open only D can open also passes there.
+  // A call a SOURCE writer can address to P2 carries no joint routing and is still compared and refused.
   it.each([
-    ['admits an honest plain Open', 'honest', 1, { ok: true }],
-    ['refuses a forged two-way prepare under a plain one-way Open', 'forged', 1, { errorCode: 'RPC_FORBIDDEN',
-      failureCause: { phase: 'rpc.admission.project_input_binding' } }],
-    ['refuses an encrypted Open it could otherwise open', 'honest', 2, { errorCode: 'RPC_FORBIDDEN',
-      failureCause: { phase: 'rpc.admission.project_input_binding' } }],
-  ] as const)('at the Home-admitted physical parent of the Open\'s child Machine, %s', async (_name, prepare, version, expected) => {
+    ['D\'s parent admits an honest plain Open forwarded by D', 'parent', true, 'honest', 1, true],
+    ['D\'s parent admits an honest encrypted Open forwarded by D', 'parent', true, 'honest', 2, true],
+    ['D\'s parent refuses an encrypted Open a SOURCE writer addresses to it', 'parent', false, 'honest', 2, false],
+    ['D admits an honest encrypted Open before forwarding it', 'child', false, 'honest', 2, true],
+    ['D refuses a forged two-way prepare under an encrypted one-way Open before forwarding', 'child', false, 'forged', 2, false],
+  ] as const)('%s', async (_name, receiver, joint, prepare, version, admitted) => {
     // The encrypted binding needs Home's canonical identity and a credential UUID.
     const home = 'srv_home';
     const credentialId = '22222222-2222-4222-8222-222222222222';
@@ -101,11 +103,11 @@ describe('Project Open writer-target ingress', () => {
         serverId: home, workspaceId: 'original', machineId: 'source', rootPath: '/original' } },
       materialization: { kind: 'sync', targetPath: '/workspaces/project', workspaceAction: { kind: 'copy_once', contentPolicy } } });
     const target = { kind: 'machine' as const, machineId: 'child' };
+    // Only D holds this material; P2 is given none.
     const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(19) };
-    const encryptionBinding = { serverIdentityId: home, accountId: 'owner', actionId: 'projects.open', requestId: 'open',
-      target, credentialId };
     const envelope = version === 1 ? ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'open', target, input })
-      : sealExternalActionRequestV2({ binding: encryptionBinding, projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      : sealExternalActionRequestV2({ binding: { serverIdentityId: home, accountId: 'owner', actionId: 'projects.open', requestId: 'open',
+        target, credentialId }, projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
         material, input, randomBytes: tweetnacl.randomBytes });
     const sourceAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'source',
       installationId: 'source-installation', role: 'manage' as const, encryptionMode: 'plain' as const };
@@ -133,29 +135,29 @@ describe('Project Open writer-target ingress', () => {
       target: targetPhase };
     // D's second hop: the joint routing carries D's own admission as the target context.
     const jointTarget = { ...targetPhase, targetContext: { ...sourceContext, machineAdmission: childAdmission } };
-    // Home's verification is the network boundary; here it admits P2 as D's physical parent.
-    const boundary: MachineRpcAdmissionBoundary = { machineId: 'parent', resolveInstallationId: () => 'parent-installation',
+    // Home's verification is the network boundary; here it admits every call, the worst case for this ingress.
+    const boundary: MachineRpcAdmissionBoundary = { machineId: receiver, resolveInstallationId: () => `${receiver}-installation`,
       resolveCustodianAccountId: async () => 'owner', resolveHomeServerIdentityId: async () => home,
       verifyMachineAdmission: async () => true };
-    // The worst case for the encrypted Open: P2 holds material that could open it.
-    const rpc = new RpcHandlerManager({ scopePrefix: 'parent', localMachineId: 'parent', encryptionMode: 'plain', logger: () => {},
-      resolveExternalActionEncryption: async () => ({ serverIdentityId: home, material }),
+    const rpc = new RpcHandlerManager({ scopePrefix: receiver, localMachineId: receiver, encryptionMode: 'plain', logger: () => {},
+      ...(receiver === 'child' ? { resolveExternalActionEncryption: async () => ({ serverIdentityId: home, material }) } : {}),
       authorizeRequest: request => authorizeMachineRpcRequest(request, boundary) });
     let effects = 0;
     rpc.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE, () => { effects++; return { ok: true }; });
-    const result = await rpc.handleRequest({ method: `parent:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE}`,
+    const result = await rpc.handleRequest({ method: `${receiver}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE}`,
       params: { v: 1, ...(prepare === 'forged' ? { bootstrapOperationId: relationshipId,
         owner: { kind: 'relationship', relationshipId },
         transientRelationship: { v: 1, relationshipId, controllerMachineId: 'source', alphaWorkspaceRefId: 'original',
           betaWorkspaceRefId: 'target-ref', mode: 'keep_both_in_sync', contentPolicy, enabled: true, createdAtMs: 1, updatedAtMs: 1 },
-      } : { bootstrapOperationId: 'materialize', owner: { kind: 'copy_once', operation: { v: 1, operationId: 'materialize', controllerMachineId: 'source',
-        alphaWorkspaceRefId: 'original', betaWorkspaceRefId: 'target-ref', contentPolicy } } }),
+      } : { bootstrapOperationId: 'materialize', owner: { kind: 'copy_once', operation: { v: 1, operationId: 'materialize',
+        controllerMachineId: 'source', alphaWorkspaceRefId: 'original', betaWorkspaceRefId: 'target-ref', contentPolicy } } }),
         targetWorkspaceRefId: 'target-ref', endpointRole: 'beta', policyDigest: contentPolicy.policyDigest,
         createIfMissing: true, targetBootstrap: 'materialize_from_source_workspace' },
       machineAdmission: childAdmission, callerAuthority: 'account_automation' as const, callerInputConstraints,
       callerInputAuthorization: authorization, workspaceSyncSourceExecution: execution,
-      workspaceSyncSourceWriterTargetRouting: writerTarget, workspaceSyncTargetRouting: jointTarget });
-    expect(result, JSON.stringify(result)).toMatchObject(expected);
-    expect(effects).toBe('ok' in expected ? 1 : 0);
+      workspaceSyncSourceWriterTargetRouting: writerTarget, ...(joint ? { workspaceSyncTargetRouting: jointTarget } : {}) });
+    expect(result, JSON.stringify(result)).toMatchObject(admitted ? { ok: true } : { errorCode: 'RPC_FORBIDDEN',
+      failureCause: { phase: 'rpc.admission.project_input_binding' } });
+    expect(effects).toBe(admitted ? 1 : 0);
   });
 });

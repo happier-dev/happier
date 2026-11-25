@@ -1106,9 +1106,14 @@ export class RpcHandlerManager {
                 : isServerOriginRequest ? 'server_origin'
                     : sessionAuthorization?.sessionId === this.scopePrefix ? 'session' : 'unattributed';
 
+            // Home relays joint target routing only from D's own socket with D's installation signature, and
+            // only to D's physical parent. D compared its Open at this ingress before forwarding, so the parent
+            // consumes that decision, including for an encrypted Open only D can open.
+            const forwardedByOpenMachine = workspaceSyncTargetRouting?.success
+                && workspaceSyncTargetRouting.data.targetMachineId !== this.scopePrefix;
             if (parsedInputAuthorization?.success && parsedInputAuthorization.data.binding.actionId === 'projects.open'
                 && (machineInputAuthorizationMatchesRequest && targetMethod === RPC_METHODS.PROJECTS_OPEN
-                    || writerTargetInputAuthorizationMatchesRequest && workspaceSyncSourceWriterTargetRouting?.success
+                    || writerTargetInputAuthorizationMatchesRequest && !forwardedByOpenMachine && workspaceSyncSourceWriterTargetRouting?.success
                         && workspaceSyncSourceWriterTargetRouting.data.target.phase !== 'release')) {
                 // Only D can open its original protected Project input. P1/P2
                 // retain the exact envelope and D's packet, never D's key. Any other
@@ -1125,13 +1130,8 @@ export class RpcHandlerManager {
                     return await deny('project_envelope');
                 }
                 const envelope = parsedEnvelope.data;
-                // Home admits the joint routing only at the Open's child D's physical parent P2. P2 binds
-                // the Open to D and compares a plain Open; only D can open an encrypted one.
-                const physicalParentChildId = workspaceSyncTargetRouting?.success
-                    && workspaceSyncTargetRouting.data.targetMachineId !== this.scopePrefix
-                    ? workspaceSyncTargetRouting.data.targetMachineId : undefined;
                 let originalInput: unknown = envelope.v === 1 ? envelope.input : undefined;
-                if (envelope.v === 2 && physicalParentChildId === undefined) {
+                if (envelope.v === 2) {
                     const encryption = await this.resolveExternalActionEncryption?.(controller.signal, authorization).catch(() => null);
                     if (encryption?.serverIdentityId === binding.serverIdentityId) {
                         originalInput = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, material: encryption.material, binding: {
@@ -1148,7 +1148,7 @@ export class RpcHandlerManager {
                     ? WorkspaceSyncTargetBootstrapPrepareV1Schema.safeParse(decryptedParams) : undefined;
                 const body = source ? undefined : OpenProjectInputV1Schema.safeParse(decryptedParams);
                 const matches = isExternalActionAuthorizationBoundToEnvelope(binding,
-                    { actionId: 'projects.open', machineId: physicalParentChildId ?? this.scopePrefix, envelope }) && opened.success
+                    { actionId: 'projects.open', machineId: this.scopePrefix, envelope }) && opened.success
                     && (source && workspaceSyncSourceWriterTargetRouting?.success
                         ? doesWorkspaceSyncProjectSourceRequestMatchRouting(opened.data, authorization, source)
                             && opened.data.materialization.kind === 'sync'
