@@ -138,11 +138,13 @@ const databaseActionDeclarations = {
     },
     [database.DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1]: {
         ...write, dangerLevel: 'writesLocal', title: 'Change capture', placementBindings: ['secondary'],
-        // Turning capture on, off and retrying it are this one Action: the confirmation names the change and its cost.
+        // Turning capture on (and retrying it) asks once, in the menu's words ("Turn on capture"); turning it off is
+        // the person taking back what they turned on and asks nothing (DBW services item 8).
+        confirmationWhen: { op: 'eq', path: 'enabled', value: true },
         confirmation: {
-            title: 'Change capture for this project?',
-            body: 'Turning capture on or off restarts this checkout’s dev servers once.',
-            confirmLabel: 'Change capture',
+            title: 'Turn on capture?',
+            body: 'Records each request’s route, time, database queries and logs on this Machine. Restarts this checkout’s dev servers once.',
+            confirmLabel: 'Turn on capture',
         },
     },
     [database.TELEMETRY_METRICS_READ_ACTION_ID_V1]: { ...read, title: 'Read selected telemetry metrics' },
