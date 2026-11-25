@@ -157,6 +157,7 @@ export type HostAgentNativeMcpPlacement =
         nativeAdmission: HostAgentIsolationLaunchContext;
         localTransport: NonNullable<NonNullable<ReturnType<HostAgentIsolationLaunchContext['read']>>['localTransport']>;
         managedHappierBinaryPath: string;
+        runtimeHome: string;
     }>;
 
 type NativeLaunchQualifiers = WeakSet<object>;
@@ -2625,7 +2626,7 @@ export function createStablePluginExecService(params: Readonly<{
         // cannot confer the selected Agent identity or provision it here.
         if (!params.agentIsolation || !snapshot?.launch || !snapshot.localTransport) return undefined;
         return { kind: 'prepared', nativeAdmission, localTransport: snapshot.localTransport,
-            managedHappierBinaryPath: snapshot.launch.managedHappierBinaryPath };
+            managedHappierBinaryPath: snapshot.launch.managedHappierBinaryPath, runtimeHome: snapshot.launch.runtimeHome };
     }, authorize: async (launch, signal, nativeLaunch, agentLaunchKind, mcpLaunchMaterial) => {
         const combinedSignal = signal ? AbortSignal.any([params.signal, signal]) : params.signal;
         const nativeIsolation = nativeLaunch ? INTERNAL_NATIVE_OPERATIONS.get(nativeLaunch) : undefined;

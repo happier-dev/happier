@@ -49,6 +49,10 @@ export function projectAgentIsolationOperationMaterial(identity: AgentIsolationM
 
 export const SESSION_MCP_CONTEXT_RELATIVE_PATH = '.happier/session-mcp.json';
 
+export function sessionMcpAgentLaunchContextFile(runtimeHome: string): string {
+  return join(runtimeHome, SESSION_MCP_CONTEXT_RELATIVE_PATH);
+}
+
 /** Pure projection; only the Agent-launch shim publishes these selected bytes. */
 export function withSessionMcpAgentLaunchMaterial(
   materialization: AgentLaunchMaterialization,
@@ -59,7 +63,7 @@ export function withSessionMcpAgentLaunchMaterial(
     ...materialization,
     environment: Object.freeze({
       ...materialization.environment,
-      [SESSION_MCP_CONTEXT_FILE_ENV]: join(materialization.runtimeHome, SESSION_MCP_CONTEXT_RELATIVE_PATH),
+      [SESSION_MCP_CONTEXT_FILE_ENV]: sessionMcpAgentLaunchContextFile(materialization.runtimeHome),
     }),
     selectedMaterials: Object.freeze([
       ...materialization.selectedMaterials.filter(file => file.relativePath !== SESSION_MCP_CONTEXT_RELATIVE_PATH),

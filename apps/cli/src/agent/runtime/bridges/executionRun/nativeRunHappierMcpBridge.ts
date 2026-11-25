@@ -5,6 +5,7 @@ import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/acti
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { resolveHappierMcpServerConfig } from '@/agent/runtime/createHappierMcpBridge';
+import { sessionMcpAgentLaunchContextFile } from '@/daemon/agentIsolation/agentLaunchMaterials';
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
 import { registerSessionMcpEndpointSession } from '@/mcp/runtime/sessionMcpHostEndpoint';
 import { serveSessionMcpRelayUpgrade } from '@/mcp/runtime/sessionMcpRelayEndpoint';
@@ -63,10 +64,14 @@ export async function createNativeRunHappierMcpBridge(input: Readonly<{
         }),
     });
     try {
+        const prepared = input.placement.kind === 'prepared' ? input.placement : undefined;
+        // A cross-UID endpoint has no daemon context file. Name the same Run
+        // material the native launch publishes for the provider's child.
+        const relay = prepared ? { localContext: registration.localContext,
+            contextFilePath: sessionMcpAgentLaunchContextFile(prepared.runtimeHome) } : registration;
         return {
             readContext: () => registration.localContext,
-            mcpServer: resolveHappierMcpServerConfig(registration,
-                input.placement.kind === 'prepared' ? input.placement.managedHappierBinaryPath : undefined),
+            mcpServer: resolveHappierMcpServerConfig(relay, prepared?.managedHappierBinaryPath),
             async dispose() { await registration.retire(); await requests.dispose(); },
         };
     } catch (error) {
