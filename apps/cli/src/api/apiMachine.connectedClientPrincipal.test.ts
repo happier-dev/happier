@@ -5,6 +5,8 @@ import { createBrowserAutomationReverseDispatcher } from '@/daemon/browser/autom
 import { createClientActionReverseDispatcher } from '@/session/actions/clientActionReverseDispatch';
 import { registerDaemonBrowserControlHandler } from '@/rpc/handlers/daemonBrowserControl';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { ApiMachineClient } from './apiMachine';
 import type { Machine } from './types';
@@ -43,6 +45,39 @@ describe('ApiMachineClient reverse client RPC principal', () => {
     await browser({ actionId: 'browser.automation.snapshot', input: view, context: context('owner') } as never);
     await presenter({ actionId: 'inbox.get', input: {}, context: context('owner') });
     expect(emitted).toHaveLength(3);
+  });
+
+  it('explains when a Session Agent cannot reach its requester App to review an exact Worker Script', async () => {
+    const delivered: string[] = [];
+    const socket = createApiSessionSocketStub({ connected: true, emitWithAck: async (_event, payload) => {
+      delivered.push(String((payload as { method?: unknown }).method));
+      return { ok: true, result: { v: 1, execution: { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' } } };
+    } });
+    const ownerToken = `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`;
+    const client = new ApiMachineClient(ownerToken, plainMachine);
+    Reflect.set(client, 'socket', socket);
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      clientActionExecute: createClientActionReverseDispatcher(() => client) });
+    const input = {
+      workspace: { serverId: 'home', workspaceId: 'source', machineId: 'source-machine', rootPath: '/source' },
+      selection: { kind: 'named', name: 'qa-one' },
+      choice: { kind: 'workers', destination: { kind: 'machine', machineId: plainMachine.id } },
+    };
+    const context = {
+      surface: 'agent', authority: 'account_automation', serverId: 'home',
+      defaultSessionId: 'hosted-session', defaultSessionMachineId: plainMachine.id,
+      actionCaller: { kind: 'session', sessionId: 'hosted-session', starterDepth: 0, turnDepth: 0 },
+    } as const;
+    expect(await executor.execute('projects.script.run', input, { ...context, runtimeAccountId: 'owner' }))
+      .toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+    expect(delivered).toHaveLength(1);
+
+    const refusal = await executor.execute('projects.script.run', input, { ...context, runtimeAccountId: 'member' });
+    expect(delivered).toHaveLength(1);
+    expect(refusal).toMatchObject({
+      ok: false, errorCode: 'client_not_available', effectAttempted: false,
+      details: { reason: 'client_unavailable' },
+    });
   });
 
   it('refuses a reverse call without an Account and keeps a manage-grantee login import out of the owner Apps', async () => {

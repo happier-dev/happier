@@ -53,9 +53,6 @@ export function createClientActionReverseDispatcher(
     const principalAccountId = readActionPrincipalAccountId(context);
     const requestedClientId: unknown = input && typeof input === 'object' ? Reflect.get(input, 'clientId') : undefined;
     const clientId = typeof requestedClientId === 'string' ? requestedClientId : undefined;
-    const unavailable = () => isThemeActionId(actionId) ? clientActionUnavailable(actionId) : clientId
-      ? { ok: false as const, errorCode: 'client_not_available', error: 'The selected clientId is not eligible or is disconnected' }
-      : clientActionUnavailable(actionId);
     const machineTransportUnavailable = (errorCode = 'machine_transport_unavailable') => ({
       ok: false as const, errorCode, error: errorCode,
     });
@@ -84,8 +81,22 @@ export function createClientActionReverseDispatcher(
     // still require the App viewing their exact Session, without fallback.
     const { getActionSpec, requiresRequesterAppReview } = await import('@happier-dev/protocol/actions/actionSpecs');
     const spec = getActionSpec(actionId);
+    const requesterAppReview = requiresRequesterAppReview(spec, input, context.actionCaller, context.surface);
+    const unavailable = () => {
+      if (requesterAppReview) return {
+        ok: false as const,
+        errorCode: 'client_not_available',
+        error: 'Could not reach the requesting account’s Happier app for review. Review and run this action from that account in the Happier app.',
+        details: { reason: 'client_unavailable' },
+        effectAttempted: false,
+      };
+      if (clientId && !isThemeActionId(actionId)) return {
+        ok: false as const, errorCode: 'client_not_available', error: 'The selected clientId is not eligible or is disconnected',
+      };
+      return clientActionUnavailable(actionId);
+    };
     const accountClientAction = isVoiceConversationActionId(actionId) || isSettingsDeclarationActionIdV1(actionId)
-      || requiresRequesterAppReview(spec, input, context.actionCaller, context.surface)
+      || requesterAppReview
       || isSessionClientControlActionId(actionId)
       || isSessionOrganizationAppearanceActionId(actionId)
       || isWorkspaceActionId(actionId) || actionId === USAGE_HISTORY_ACTION_IDS.read
