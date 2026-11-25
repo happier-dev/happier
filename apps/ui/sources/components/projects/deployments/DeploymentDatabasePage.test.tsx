@@ -630,6 +630,7 @@ async function renderDatabase(
   }
   const publicReadTransport = input.moveDestination || input.movePickerScope || input.readDatabaseAutomations
     ? (await import('./deploymentReadTransport')).createDeploymentReadTransport(account.accountLifetime) : null;
+  const readRetainedReceipt = vi.fn(async () => ({ ok: true as const, value: receipt }));
   const controller = createDeploymentReadControllerV1({
     scope: {
       serverId: detail.environment.serverId,
@@ -652,7 +653,7 @@ async function renderDatabase(
         ok: true,
         value: { ok: true, items: [receipt.deployment], nextCursor: null },
       }),
-      readReceipt: async () => ({ ok: true, value: receipt }),
+      readReceipt: readRetainedReceipt,
       ...(input.sizeReadUnavailable ? { listDataServicePage: async () => ({
         ok: false as const, failure: { code: 'deployment_read_failed', retryable: true },
       }) } : {}),
@@ -721,6 +722,7 @@ async function renderDatabase(
     serverIdentityId,
     machineId,
     movePickerQueries,
+    readRetainedReceipt,
     requests: () => homes.requests,
     reviewedWorkflowAudiences,
     accountId: account.accountId,
@@ -932,6 +934,7 @@ describe('Environment → Database → Workbench', () => {
       await waitForHomeGovernance(async () => { await act(async () => {}); expect(view.opened).toHaveLength(1); });
       expectOpenedDatabaseConsole(view);
       expect(view.opened[0]).not.toHaveProperty('input');
+      expect(view.readRetainedReceipt).not.toHaveBeenCalled();
       expect(view.effects.filter(effect => effect.actionId === 'action.invoke')).toEqual([
         expect.objectContaining({ input: expect.objectContaining({ input: { scope: {
           ...view.scope, selection: { kind: 'managed_link', targetLinkId: 'managed-database' } } } }) })]);

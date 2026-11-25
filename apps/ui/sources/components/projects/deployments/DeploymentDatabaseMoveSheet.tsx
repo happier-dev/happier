@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployments/contracts/v1';
-import { deploymentDataTargetOperands, type DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
+import { deploymentDataTargetOperands, isDeploymentDatabaseMoveCandidateV1, type DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { Item } from '@/components/ui/lists/Item';
@@ -60,13 +60,24 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const selected = useDeploymentEnvironmentRecord(controller, selectedId, { mounted: true, visible: true, focused: true });
   const destination = selected.snapshot.value;
-  const destinationDecision = deploymentDatabaseMoveDestination(destination);
+  const [candidate, setCandidate] = React.useState<{ detail: Detail; supported: boolean } | null>(null);
+  React.useEffect(() => {
+    if (!destination) return;
+    let active = true;
+    void isDeploymentDatabaseMoveCandidateV1(destination.content, destination.runtimeTargetLink).then(supported => {
+      if (active) setCandidate({ detail: destination, supported });
+    });
+    return () => { active = false; };
+  }, [destination]);
+  const checked = candidate && candidate.detail === destination ? candidate.supported : undefined;
+  const destinationDecision = destination && checked !== undefined
+    ? deploymentDatabaseMoveDestination({ ...destination, databaseMoveCandidate: checked }) : null;
   const selection = destinationDecision?.kind === 'ready' ? destinationDecision.selection : null;
   const destinationRefusal = destinationDecision?.kind === 'unavailable' ? destinationDecision.reason : undefined;
   const prerequisite = destinationRefusal === 'backup_required'
     ? { section: 'backups' as const, label: t('projects.deployments.settingsSections.setupTitle'),
       testID: 'project-deployments.move.destination.setUpBackups' }
-    : selected.snapshot.status === 'ready' && destination && !destinationDecision ? { section: 'sharing' as const, label: t('projects.deployments.databaseShare'),
+    : selected.snapshot.status === 'ready' && destination && checked !== undefined && !destinationDecision ? { section: 'sharing' as const, label: t('projects.deployments.databaseShare'),
       testID: 'project-deployments.move.destination.share' } : null;
   const [busy, setBusy] = React.useState(false);
   const [refusal, setRefusal] = React.useState<Readonly<{ code: string; variable?: string }> | null>(null);
@@ -76,7 +87,7 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
   // A managed destination is refused by the same Move destination owner before it is chosen, so its row says why
   // where it is listed; the chosen row shows its own read working instead of a line that resizes the sheet.
   const providerTitle = useDeploymentPlatformTargetTitles(props.lifetime, true);
-  const selectedReading = selectedId !== null && selected.snapshot.status !== 'ready' && selected.snapshot.status !== 'unavailable';
+  const selectedReading = selectedId !== null && selected.snapshot.status !== 'unavailable' && checked === undefined;
   const rowStatus = (row: DeploymentEnvironmentCollectionV1['items'][number]) => {
     const managed = row.managedDataTargetLink;
     if (managed && deploymentDatabaseMoveManagedRefusal([managed])) {

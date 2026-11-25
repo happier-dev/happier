@@ -65,6 +65,7 @@ export function ServicesColumnTypeSections(props: TypeSectionsProps) {
   const databases = useDeploymentDataServicePage(
     props.controller,
     props.demand,
+    { operationalFacts: false },
   );
   const domains = useDeploymentDomainPage(props.controller, props.demand);
   const checks = useAccountConfiguredChecks(props.scope, props.demand.mounted && props.demand.visible && props.demand.focused);

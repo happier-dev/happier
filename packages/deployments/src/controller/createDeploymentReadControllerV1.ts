@@ -399,7 +399,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
     function acquireAccountPage<T extends DeploymentAccountDomainReadPageV1 | DeploymentDataServiceReadPageV1>(
         kind: 'domainPage' | 'dataServicePage', query: DeploymentDataServiceQueryV1, demand: DeploymentReadDemandV1,
     ) {
-        const key = (cursor: string | undefined) => JSON.stringify([kind, cursor ?? null, query.limit ?? null, query.environmentId ?? null, query.database ?? null]);
+        const key = (cursor: string | undefined) => JSON.stringify([kind, cursor ?? null, query.limit ?? null, query.environmentId ?? null, query.database ?? null, query.operationalFacts ?? null]);
         return createDeploymentReadPageLease<T>({ initialCursor: query.cursor, demand,
             nextCursor: cursor => entries.get(key(cursor))?.nextCursor ?? null,
             acquire: (cursor, pageDemand) => acquire<T>({ key: key(cursor), kind, previousPage: cursor !== undefined,

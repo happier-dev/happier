@@ -63,7 +63,7 @@ export function DeploymentWorkbenchProductionBackup({ target, scope }: Readonly<
         && configured.sources.some(source => source.kind === 'dump' && source.service === target.serviceId)
         ? configured : null;
     const input = configuration && detail ? deploymentBackupTargetOperands(detail, configuration) : null;
-    const backup = useDeploymentBackupFacts(actions, input, presented);
+    const backup = useDeploymentBackupFacts(actions, input, presented, null, { includeMissedSchedules: false });
     const operations = useDeploymentBackupOperations({
         actions: detail?.environment.capabilities.role === 'manager' ? actions : null,
         configuration, detail: detail ?? null, review, onSettled: backup.reload,

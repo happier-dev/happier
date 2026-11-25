@@ -169,8 +169,16 @@ describe('deployment scoped read transport', () => {
             homes.answer(serverId, `${path}/${environment.id}`, { body: { ok: true, environment, targetLinks: [links[index]] } });
         }
         const lifetime: ServerAccountScopeLifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const transport = createDeploymentReadTransport(lifetime);
+        const signal = new AbortController().signal;
+        const beforeBrowse = homes.requests.length;
+        const browseOptions: Parameters<NonNullable<typeof transport.listDataServicePage>>[1] & { operationalFacts: false } = { operationalFacts: false };
+        const browse = await transport.listDataServicePage!(scope, browseOptions, { signal });
+        expect(browse).toMatchObject({ ok: true, value: { items: environments.map(environment => ({ environment,
+            content: { template: { data: [{ service: 'database', engine: 'postgres' }] } } })) } });
+        expect(homes.requests.slice(beforeBrowse).filter(request => request.path.startsWith(path))).toHaveLength(0);
         const before = homes.requests.length;
-        const result = await createDeploymentReadTransport(lifetime).listDataServicePage(scope, {}, { signal: new AbortController().signal });
+        const result = await transport.listDataServicePage!(scope, {}, { signal });
         const metadata = homes.requests.slice(before).filter(request => request.path.startsWith(path))
             .map(request => new URL(request.path, 'https://home.invalid'));
         expect(metadata.map(url => url.pathname)).toEqual([path]);
@@ -1074,7 +1082,7 @@ describe('deployment scoped read transport', () => {
         const beforeDetail = homes.requests.filter(request => request.path === '/v1/artifacts/read').length;
         expect(await transport.readEnvironment(scope, environmentHeader.id, options)).toEqual({ ok: true, value: {
             environment: environmentHeader, content: detail.content, targetLinks: targetLinks.map(targetLink => ({ targetLink })),
-            controller: controllerAvailability, databaseMoveCandidate: false,
+            controller: controllerAvailability,
         } });
         expect(homes.requests.filter(request => request.path === '/v1/artifacts/read').slice(beforeDetail).map(request => request.input))
             .toEqual([{ artifactIds: [environmentHeader.contentArtifactId] }]);
@@ -1208,8 +1216,11 @@ describe('deployment scoped read transport', () => {
         for (const candidate of [unconfigured, notNeeded]) {
             homes.answer(serverId, `${root}/${candidate.environment.id}`, { body: { ok: true,
                 environment: candidate.environment, targetLinks: [candidateRuntimeLinks.find(link => link.environmentId === candidate.environment.id)!] } });
-            expect(await transport.readEnvironment(scope, candidate.environment.id, options)).toMatchObject({ ok: true,
-                value: { databaseMoveCandidate: candidate === unconfigured } });
+            const parseSelectedCompose = vi.spyOn(storedAppInput, 'parseDeploymentComposeSourceV1');
+            try {
+                expect(await transport.readEnvironment(scope, candidate.environment.id, options)).toMatchObject({ ok: true });
+                expect(parseSelectedCompose).not.toHaveBeenCalled();
+            } finally { parseSelectedCompose.mockRestore(); }
         }
         homes.answer(serverId, '/v1/artifacts/read', { status: 503, body: { error: 'artifact_content_unavailable' } });
         expect(await transport.listEnvironments(scope, {}, options)).toMatchObject({ ok: false,

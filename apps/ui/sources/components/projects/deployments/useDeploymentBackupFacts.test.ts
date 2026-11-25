@@ -73,6 +73,31 @@ it('counts only currently kept database snapshots, including captures whose rece
   } finally { await hook.unmount(); account.dispose(); }
 });
 
+it('reads backup history without opening schedule status when only history is presented', async () => {
+  const serverId = await homes.addHome({ name: 'History only', serverUrl: 'https://backups-history.test',
+    serverIdentityId: 'srv_backups_history', accountId: 'owner', currentAccount: true });
+  const account = await captureLazyActionAccountContext(serverId);
+  const environment = createDeploymentEnvironmentHeaderV1({ serverId: 'srv_backups_history' });
+  homes.answer(serverId, `/v1/deployments/environments/${environment.id}`, { body: { ok: true, environment, targetLinks: [] } });
+  const input = { environmentId: environment.id, expectedRevision: 1, machineId: environment.controllerMachineId,
+    installationId: 'installation-a', targetLinkId: 'target-link', deploymentId: 'deployment-a', configRevision: 1 };
+  let historyReads = 0;
+  await answerExternalActionAccountForHome(homes, serverId, { machineId: input.machineId,
+    installationId: input.installationId, actionId: 'deployments.backups.history', tokenEpoch: 0,
+    execute: () => {
+      historyReads++;
+      return { kind: 'history', environmentId: environment.id, configRevision: 1, history: { entries: [] } };
+    } });
+  const actions = createDeploymentActions(account.accountLifetime, environment.projectSourceId);
+  const schedule = vi.spyOn(actions, 'missedBackupSchedules');
+  const hook = await renderHook(() => useDeploymentBackupFacts(actions, input, true, null, { includeMissedSchedules: false }));
+  try {
+    await vi.waitFor(() => expect(hook.getCurrent().facts).toMatchObject({ status: 'ready', history: { kind: 'history' } }));
+    expect(historyReads).toBe(1);
+    expect(schedule).not.toHaveBeenCalled();
+  } finally { schedule.mockRestore(); await hook.unmount(); account.dispose(); }
+});
+
 it('hides the prior Account count when a new lifetime reads the same target operands', async () => {
   const input = { environmentId: 'environment-a', expectedRevision: 1, machineId: 'machine-a',
     installationId: 'installation-a', targetLinkId: 'target-link', deploymentId: 'deployment-a', configRevision: 1 };

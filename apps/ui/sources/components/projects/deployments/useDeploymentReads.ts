@@ -121,7 +121,7 @@ export function useDeploymentDomainPage(controller: DeploymentReadControllerV1 |
 export function useDeploymentDataServicePage(controller: DeploymentReadControllerV1 | null, demand: DeploymentReadDemandV1,
     query: DeploymentDataServiceQueryV1 = {}) {
     const acquire = React.useMemo(() => controller ? () => controller.acquireDataServicePage(query, INACTIVE) : null,
-        [controller, query.cursor, query.limit, query.environmentId, query.database]);
+        [controller, query.cursor, query.limit, query.environmentId, query.database, query.operationalFacts]);
     return useDeploymentPage(acquire, demand);
 }
 

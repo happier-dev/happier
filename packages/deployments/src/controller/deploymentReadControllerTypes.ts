@@ -91,8 +91,8 @@ export type DeploymentDomainReadItemV1 = Readonly<{
 export type DeploymentAccountPageQueryV1 = Readonly<{ cursor?: string | undefined; limit?: number }>;
 /** A selected Environment reads its database facts independently of Account page navigation. */
 export type DeploymentDataServiceQueryV1 = DeploymentAccountPageQueryV1 & (
-    | Readonly<{ environmentId?: undefined; database?: undefined }>
-    | Readonly<{ environmentId: string; database?: string }>
+    | Readonly<{ environmentId?: undefined; database?: undefined; operationalFacts?: false }>
+    | Readonly<{ environmentId: string; database?: string; operationalFacts?: undefined }>
 );
 export type DeploymentAccountDomainReadItemV1 = DeploymentDomainReadItemV1 & Readonly<{
     environment: DeploymentEnvironmentHeaderV1; environmentTitle: string; projectSourceName: string | null;

@@ -22,8 +22,9 @@ export function useDeploymentBackupFacts(
   input: Parameters<ReturnType<typeof createDeploymentActions>['backupHistory']>[0] | null,
   presented: boolean,
   restorePointSourceIds: readonly string[] | null = null,
+  { includeMissedSchedules = true }: Readonly<{ includeMissedSchedules?: boolean }> = {},
 ) {
-  const key = input ? JSON.stringify([input, restorePointSourceIds]) : null;
+  const key = input ? JSON.stringify([input, restorePointSourceIds, includeMissedSchedules]) : null;
   const [settled, setSettled] = React.useState<{ key: string | null; actions: typeof actions; facts: DeploymentBackupFacts }>({
     key: null, actions: null, facts: LOADING_FACTS,
   });
@@ -31,11 +32,12 @@ export function useDeploymentBackupFacts(
   React.useEffect(() => {
     if (!actions || !input || !presented) return;
     let live = true;
-    void Promise.allSettled([actions.backupHistory(input), actions.missedBackupSchedules({ environmentId: input.environmentId }),
+    void Promise.allSettled([actions.backupHistory(input),
+      includeMissedSchedules ? actions.missedBackupSchedules({ environmentId: input.environmentId }) : Promise.resolve(null),
       restorePointSourceIds === null ? Promise.resolve(null) : actions.backupInventory(input),
     ]).then(([history, missed, inventory]) => {
       if (!live) return;
-      if (history.status === 'rejected' && missed.status === 'rejected'
+      if (history.status === 'rejected' && (missed.status === 'rejected' || missed.value === null)
         && (inventory.status === 'rejected' || inventory.value === null)) {
         setSettled({ key, actions, facts: { status: 'unavailable' } });
         return;
@@ -49,7 +51,7 @@ export function useDeploymentBackupFacts(
           : { status: 'unavailable' };
       }
       setSettled({ key, actions, facts: { status: 'ready', history: history.status === 'fulfilled' ? history.value : null,
-        missed: missed.status === 'fulfilled' ? missed.value : NO_MISSED, restorePoints } });
+        missed: missed.status === 'fulfilled' ? missed.value ?? NO_MISSED : NO_MISSED, restorePoints } });
     });
     return () => { live = false; };
     // Parsed operands and source IDs may be rebuilt by callers; their serialized values own this read's identity.

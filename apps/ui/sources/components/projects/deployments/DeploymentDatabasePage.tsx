@@ -151,13 +151,13 @@ export function DeploymentDatabasePage(
   const detail = record.snapshot.value;
   const activeId = detail?.runtimeTargetLink?.activeDeploymentId ?? null;
   const databaseRead = useDeploymentDataServicePage(props.controller, props.demand, { environmentId: props.environmentId, database: props.database });
+  const selection = React.useMemo(() => detail ? resolveDatabase(detail, props.database) : null, [detail, props.database]);
   const retained = useEnvironmentBackupSummary(
     props.controller,
     props.environmentId,
-    activeId,
+    selection?.kind === 'selfHosted' ? activeId : null,
     props.demand,
   );
-  const selection = React.useMemo(() => detail ? resolveDatabase(detail, props.database) : null, [detail, props.database]);
   const presented = props.demand.mounted && props.demand.visible && props.demand.focused;
   const targets = React.useMemo(() => selection?.kind === 'managed' ? [selection.link] : [], [selection]);
   const { choices, retry: retryTargetLink } = useDeploymentTargetLinkChoices({ lifetime: props.lifetime,
