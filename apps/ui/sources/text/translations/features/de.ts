@@ -17327,6 +17327,7 @@ const german: TeamsTranslationRoot = {
             archivedReadOnly: 'Diese Gruppe ist archiviert. Stelle sie wieder her, um sie zu ändern.',
             invalidLifecycleRequest: 'Dieses Home hat die Anfrage für diese Gruppe nicht erkannt.',
             notFound: 'Diese Gruppe ist nicht verfügbar.',
+            personNotInTeam: "Diese Person ist nicht mehr Mitglied dieses Teams.",
             lifecycleManagedAtSource: 'Diese Gruppe wird vom Verzeichnis verwaltet. Ändere sie an der Quelle.',
             searchLoadedPlaceholder: 'Gruppen filtern',
             noLoadedMatches: 'Keine passenden geladenen Gruppen',

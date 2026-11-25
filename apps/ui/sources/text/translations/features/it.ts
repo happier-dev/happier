@@ -17513,6 +17513,7 @@ const italian: TeamsTranslationRoot = {
             archivedReadOnly: 'Questo gruppo è archiviato. Ripristinalo per modificarlo.',
             invalidLifecycleRequest: 'Questa Home non ha riconosciuto la richiesta per questo gruppo.',
             notFound: 'Questo gruppo non è disponibile.',
+            personNotInTeam: "Questa persona non fa più parte del team.",
             lifecycleManagedAtSource: 'Questo gruppo è gestito dalla sua directory. Modificalo all’origine.',
             searchLoadedPlaceholder: 'Filtra i gruppi',
             noLoadedMatches: 'Nessun gruppo caricato corrisponde',

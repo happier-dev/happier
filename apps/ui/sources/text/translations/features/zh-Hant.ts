@@ -17389,6 +17389,7 @@ const traditionalChinese: TeamsTranslationRoot = {
             archivedReadOnly: '此群組已封存。還原後才能變更。',
             invalidLifecycleRequest: '此 Home 無法辨識針對這個團隊群組的請求。',
             notFound: '此團隊群組無法使用。',
+            personNotInTeam: "此人已不是此團隊的成員。",
             lifecycleManagedAtSource: '此團隊群組由目錄管理。請在來源中變更。',
             searchLoadedPlaceholder: '篩選群組',
             noLoadedMatches: '已載入的群組中沒有符合項目',

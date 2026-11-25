@@ -17541,6 +17541,7 @@ const polish: TeamsTranslationRoot = {
             archivedReadOnly: 'Ta grupa jest zarchiwizowana. Przywróć ją, aby wprowadzać zmiany.',
             invalidLifecycleRequest: 'Ten Home nie rozpoznał żądania dotyczącego tej grupy.',
             notFound: 'Ta grupa jest niedostępna.',
+            personNotInTeam: "Ta osoba nie jest już członkiem tego zespołu.",
             lifecycleManagedAtSource: 'Tą grupą zarządza katalog. Zmień ją u źródła.',
             searchLoadedPlaceholder: 'Filtruj grupy',
             noLoadedMatches: 'Brak pasujących wczytanych grup',

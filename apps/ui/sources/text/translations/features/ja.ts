@@ -17449,6 +17449,7 @@ const japanese: TeamsTranslationRoot = {
             archivedReadOnly: 'このグループはアーカイブ済みです。変更するには復元してください。',
             invalidLifecycleRequest: 'このHomeではグループへのリクエストを認識できませんでした。',
             notFound: 'このグループは利用できません。',
+            personNotInTeam: "この人はもうこのチームのメンバーではありません。",
             lifecycleManagedAtSource: 'このグループはディレクトリで管理されています。管理元で変更してください。',
             searchLoadedPlaceholder: 'グループを絞り込む',
             noLoadedMatches: '読み込み済みのグループに一致するものはありません',

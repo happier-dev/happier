@@ -244,7 +244,7 @@ async function groupMemberMutation(params: Readonly<{
     actionId: TeamActionIdV1;
     input: unknown;
     onApprovalSucceeded?: (result: TeamGroupMemberMutationResultV1) => void | Promise<void>;
-    onApprovalFailed?: (code: string) => void;
+    onApprovalFailed?: Parameters<typeof runTeamAction>[0]['onApprovalFailed'];
 }>): Promise<TeamGroupOutcome<TeamGroupMemberMutationResultV1>> {
     // A refusal or truthful idempotent no-op changed nothing on the Home, so it
     // must not cost every holder of these rows a re-read. In particular, an
@@ -296,7 +296,7 @@ export function addTeamGroupMember(params: Readonly<{
      * would silently abandon the manager's `all_existing` instruction.
      */
     onApprovalSucceeded?: (result: TeamGroupMemberMutationResultV1) => void | Promise<void>;
-    onApprovalFailed?: (code: string) => void;
+    onApprovalFailed?: Parameters<typeof runTeamAction>[0]['onApprovalFailed'];
 }>): Promise<TeamGroupOutcome<TeamGroupMemberMutationResultV1>> {
     return groupMemberMutation({
         scope: params.scope,

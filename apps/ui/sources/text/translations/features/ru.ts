@@ -17543,6 +17543,7 @@ const russian: TeamsTranslationRoot = {
             archivedReadOnly: 'Эта группа в архиве. Восстановите её, чтобы вносить изменения.',
             invalidLifecycleRequest: 'Этот Home не распознал запрос для этой группы.',
             notFound: 'Эта группа недоступна.',
+            personNotInTeam: "Этот человек больше не входит в эту команду.",
             lifecycleManagedAtSource: 'Эта группа управляется через каталог. Внесите изменения в источнике.',
             searchLoadedPlaceholder: 'Фильтровать группы',
             noLoadedMatches: 'Нет подходящих загруженных групп',

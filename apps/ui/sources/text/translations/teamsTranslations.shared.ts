@@ -753,6 +753,7 @@ export const english = {
             archivedReadOnly: 'This Group is archived. Restore it to make changes.',
             invalidLifecycleRequest: 'This Home didn’t recognize this Group request.',
             notFound: 'This Group is unavailable.',
+            personNotInTeam: "This person is no longer a member of this Team.",
             lifecycleManagedAtSource: 'This Group is managed by its directory. Change it at the source.',
             searchLoadedPlaceholder: 'Filter Groups',
             noLoadedMatches: 'No loaded Groups match',

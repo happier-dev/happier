@@ -17527,6 +17527,7 @@ const catalan: TeamsTranslationRoot = {
             archivedReadOnly: 'Aquest grup està arxivat. Restaura’l per fer-hi canvis.',
             invalidLifecycleRequest: 'Aquest Home no ha reconegut la sol·licitud per a aquest grup.',
             notFound: 'Aquest grup no està disponible.',
+            personNotInTeam: "Aquesta persona ja no és membre d’aquest equip.",
             lifecycleManagedAtSource: 'El directori gestiona aquest grup. Fes-hi els canvis des de l’origen.',
             searchLoadedPlaceholder: 'Filtra els grups',
             noLoadedMatches: 'Cap grup carregat coincideix',

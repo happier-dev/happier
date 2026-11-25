@@ -17389,6 +17389,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
             archivedReadOnly: '此群组已归档。恢复后才能更改。',
             invalidLifecycleRequest: '此 Home 无法识别针对该团队组的请求。',
             notFound: '此团队组不可用。',
+            personNotInTeam: "此人已不是该团队的成员。",
             lifecycleManagedAtSource: '此团队组由目录管理。请在来源中更改。',
             searchLoadedPlaceholder: '筛选群组',
             noLoadedMatches: '已加载的群组中没有匹配项',

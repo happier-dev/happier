@@ -64,6 +64,7 @@ import {
     teamGroupMemberDetailPath,
     teamGroupsPath,
     teamIdentityConnectionPath,
+    teamMembersPath,
 } from '../teamsRoutes';
 import { TeamMemberDefaultsSection } from '../defaults/TeamMemberDefaultsSection';
 import { memberDefaultsAccess } from '../defaults/memberDefaults';
@@ -77,12 +78,13 @@ const GROUP_DETAIL_CHUNK_SIZE = 12;
  */
 type GroupNotice =
     | Readonly<{ place: 'roster' | 'restore'; message: string | null }>
-    | Readonly<{ place: 'archive'; failure: HomeDomainFailure<string> }>;
+    | Readonly<{ place: 'archive' | 'roster-refusal'; failure: HomeDomainFailure<string> }>;
 
-function groupChangeFailureLabel(failure: HomeDomainFailure<string>, operation: 'save' | 'archive'): string | null {
+function groupChangeFailureLabel(failure: HomeDomainFailure<string>, operation: 'save' | 'archive' | 'roster'): string | null {
     switch (failure.code) {
         case 'invalid_team_input': return t(operation === 'save' ? 'teams.groups.invalidDetails' : 'teams.groups.invalidLifecycleRequest');
         case 'group_not_found': return t('teams.groups.notFound');
+        case 'not_team_member': return t('teams.groups.personNotInTeam');
         case 'managed_by_directory': return t('teams.groups.lifecycleManagedAtSource');
         default: return teamMutationFailureLabel(failure);
     }
@@ -90,13 +92,16 @@ function groupChangeFailureLabel(failure: HomeDomainFailure<string>, operation: 
 
 function groupChangeFailureAction(
     failure: HomeDomainFailure<string>,
-    operation: 'save' | 'archive',
+    operation: 'save' | 'archive' | 'roster',
     address: TeamSectionContext['address'],
     navigate: (href: string) => void,
 ) {
     const testID = `team-group-${operation}-refusal`;
-    if (failure.code === 'group_not_found' || (operation === 'archive' && failure.code === 'invalid_team_input')) {
+    if (failure.code === 'group_not_found' || (operation !== 'save' && failure.code === 'invalid_team_input')) {
         return { label: t('teams.tabs.groups'), testID: `${testID}-groups`, onPress: () => navigate(teamGroupsPath(address)) };
+    }
+    if (operation === 'roster' && failure.code === 'not_team_member') {
+        return { label: t('teams.tabs.members'), testID: `${testID}-members`, onPress: () => navigate(teamMembersPath(address)) };
     }
     return teamSignInFailureAction(failure, address, navigate, testID);
 }
@@ -337,6 +342,11 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
     const [busy, setBusy] = React.useState(false);
     const [notice, setNotice] = React.useState<GroupNotice | null>(null);
     const rosterNotice = notice?.place === 'roster' ? notice.message : null;
+    const rosterRefusal = notice?.place === 'roster-refusal' ? notice.failure : null;
+    const rosterRefusalMessage = rosterRefusal ? groupChangeFailureLabel(rosterRefusal, 'roster') : null;
+    const rosterAddSettled = rosterRefusal && rosterRefusalMessage && rosterRefusal.code
+        && rosterRefusal.code !== 'not_team_member'
+        && (!rosterRefusal.retryable || rosterRefusal.code === 'team_authentication_unavailable');
     const [picking, setPicking] = React.useState(false);
     /** The person whose add is in flight, so their row shows it until the Home answers. */
     const [addingAccountId, setAddingAccountId] = React.useState<string | null>(null);
@@ -423,6 +433,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         && groupCurrent
         && !archived;
     const canEditRoster = rosterEditable && !busy && members.status !== 'refreshing';
+    const canAddToRoster = canEditRoster && !rosterAddSettled;
     const nativeAccountIds = React.useMemo(() => new Set(
         members.rows.filter((member) => member.contributions.native).map((member) => member.accountId),
     ), [members.rows]);
@@ -454,6 +465,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
     const runRosterChange = React.useCallback(async (
         operation: () => Promise<TeamGroupOutcome<TeamGroupMemberMutationResultV1>>,
         externalLabel: string | null,
+        onFailed?: (failure: HomeDomainFailure<string>) => void,
     ) => {
         if (mutationInFlightRef.current) return;
         mutationInFlightRef.current = true;
@@ -479,7 +491,8 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         setBusy(false);
         mutationInFlightRef.current = false;
         if (outcome.kind === 'failed') {
-            setNotice({ place: 'roster', message: teamMutationFailureLabel(outcome.failure) });
+            if (onFailed) onFailed(outcome.failure);
+            else setNotice({ place: 'roster', message: teamMutationFailureLabel(outcome.failure) });
             if (outcome.failure.kind === 'outcome_unknown') {
                 void members.reload();
                 void detail.reload();
@@ -510,6 +523,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                 { prepareHistory: true },
             ));
         };
+        const onFailed = (failure: HomeDomainFailure<string>) => setNotice({ place: 'roster-refusal', failure });
         const outcome = await runRosterChange(
             () => addTeamGroupMember({
                 scope: context.scope,
@@ -524,9 +538,12 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                     settleRosterChange(result, null);
                     continueHistoryPreparation(result);
                 },
-                onApprovalFailed: (code) => setNotice({ place: 'roster', message: teamMutationFailureLabel({ kind: 'unknown', code, retryable: false }) }),
+                onApprovalFailed: (code, failure) => onFailed(failure
+                    ? homeDomainFailureFromActionFailure(failure, 'teams.groups.members.add')
+                    : { kind: 'unknown', code, retryable: false }),
             }),
             null,
+            onFailed,
         );
         if (outcome?.kind !== 'succeeded') return;
         continueHistoryPreparation(outcome.value);
@@ -558,7 +575,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                 icon="plus"
                 title={t('teams.groups.addMember')}
                 expanded={picking}
-                disabled={busy}
+                disabled={busy || Boolean(rosterAddSettled)}
                 onPress={() => setPicking((current) => !current)}
             />
         ) : undefined;
@@ -643,6 +660,17 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
             ));
         }
 
+        if (rosterRefusal && rosterRefusalMessage) {
+            add('roster-refusal', () => <ItemGroup><SurfaceStateCard
+                testID="team-group-roster-refusal"
+                size="line"
+                kind="error"
+                title={rosterRefusalMessage}
+                action={groupChangeFailureAction(rosterRefusal, 'roster', context.address, (href) => router.push(href))}
+                accessibilitySemantics="alert"
+            /></ItemGroup>);
+        }
+
         // Keep the roster section visible while its first page is in flight. The
         // shared pager owns the request lifetime; this surface only presents its
         // canonical loading state and preserves any rows during refresh.
@@ -713,7 +741,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                                 id: 'add-to-group',
                                 title: t('teams.groups.addMember'),
                                 icon: 'user-plus' as const,
-                                disabled: !canEditRoster,
+                                disabled: !canAddToRoster,
                                 onPress: () => { void addNative(member); },
                             }] : []),
                             ...member.contributions.external.map((contribution) => ({
@@ -836,7 +864,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                                             monogram={person.named ? person.name : null}
                                         />
                                     )}
-                                    disabled={!canEditRoster}
+                                    disabled={!canAddToRoster}
                                     loading={addingAccountId === membership.accountId}
                                     onPress={async () => {
                                         // The picker stays open on this person, marked in progress, until the
@@ -1045,6 +1073,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         addingAccountId,
         archived,
         busy,
+        canAddToRoster,
         canEditRoster,
         candidates,
         context,
@@ -1060,7 +1089,11 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         members,
         notice,
         picking,
+        rosterAddSettled,
         rosterEditable,
+        rosterNotice,
+        rosterRefusal,
+        rosterRefusalMessage,
         router,
         runRosterChange,
         settleRosterChange,

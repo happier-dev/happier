@@ -17570,6 +17570,7 @@ const french: TeamsTranslationRoot = {
             archivedReadOnly: 'Ce groupe est archivé. Restaure-le pour le modifier.',
             invalidLifecycleRequest: 'Ce Home n’a pas reconnu la demande pour ce groupe.',
             notFound: 'Ce groupe est indisponible.',
+            personNotInTeam: "Cette personne ne fait plus partie de cette équipe.",
             lifecycleManagedAtSource: 'Ce groupe est géré par son annuaire. Modifiez-le à la source.',
             searchLoadedPlaceholder: 'Filtrer les groupes',
             noLoadedMatches: 'Aucun groupe chargé ne correspond',

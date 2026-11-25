@@ -802,6 +802,55 @@ describe('TeamGroupDetailScreen', () => {
         expect(screen.getTextContent()).toContain('teams.errors.loadFailed');
     });
 
+    describe('Group roster add', () => {
+        it.each([
+            { code: 'invalid_team_input', details: undefined, label: 'teams.groups.invalidLifecycleRequest', recovery: 'groups' },
+            { code: 'teams_unavailable', details: undefined, label: 'teams.unavailable.disabled', recovery: undefined },
+            { code: 'team_not_found', details: undefined, label: 'teams.errors.notFound', recovery: undefined },
+            { code: 'group_not_found', details: undefined, label: 'teams.groups.notFound', recovery: 'groups' },
+            { code: 'team_archived', details: undefined, label: 'teams.errors.archived', recovery: undefined },
+            { code: 'group_archived', details: undefined, label: 'teams.groups.archivedReadOnly', recovery: undefined },
+            { code: 'team_forbidden', details: undefined, label: 'teams.errors.forbidden', recovery: undefined },
+            { code: 'team_forbidden', details: { reason: 'legacy_home_credential' }, label: 'teams.errors.signInOutdated', recovery: 'sign-in' },
+            { code: 'team_authentication_required', details: undefined, label: 'teams.errors.authenticationRequired', recovery: 'sign-in' },
+            { code: 'team_authentication_unavailable', details: undefined, label: 'teams.credentials.externalApi.authenticationUnavailable', recovery: undefined },
+            { code: 'not_team_member', details: undefined, label: 'teams.groups.personNotInTeam', recovery: 'members' },
+        ] as const)('shows the exact $code and its recovery once', async ({ code, details, label, recovery }) => {
+            const serverId = await addManagedHome();
+            harness.answer(serverId, GROUP_GET_PATH, {
+                body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES }),
+            });
+            harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, {
+                body: { items: [], nextCursor: null },
+            });
+            harness.answer(serverId, TEAM_MEMBERS_LIST_PATH, {
+                body: { items: [teamMembershipFixture({ id: 'membership-ada', accountId: 'account-ada' })], nextCursor: null },
+            });
+            harness.answer(serverId, GROUP_MEMBER_ADD_PATH, {
+                status: teamErrorHttpStatusV1(code),
+                body: { error: code, ...(details ? { details } : {}) },
+            });
+            const screen = await renderGroupDetail(serverId);
+            await waitForTestId(screen, 'team-group-add-member');
+            await screen.pressByTestIdAsync('team-group-add-member');
+            await waitForTestId(screen, 'team-group-candidate:account-ada');
+            await screen.pressByTestIdAsync('team-group-candidate:account-ada');
+
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain(label));
+            expect(screen.getTextContent().split(label)).toHaveLength(2);
+            expect(screen.findByTestId('team-group-roster-refusal-retry')).toBeNull();
+            if (recovery) {
+                await screen.pressByTestIdAsync(`team-group-roster-refusal-${recovery}`);
+                const destination = new URL(groupRouterPush.mock.lastCall?.[0] ?? '', 'https://app.example').pathname;
+                const expected = recovery === 'groups' ? /\/settings\/teams\/[^/]+\/team-1\/groups$/u
+                    : recovery === 'members' ? /\/settings\/teams\/[^/]+\/team-1\/members$/u
+                        : code === 'team_authentication_required' ? '/teams/team-1/sign-in' : '/settings/account';
+                expect(destination).toMatch(expected);
+            }
+            expect(harness.requestsFor(GROUP_MEMBER_ADD_PATH)).toHaveLength(1);
+        });
+    });
+
     it('routes a native removal through the approval owner when a source still contributes', async () => {
         const serverId = await addManagedHome();
         harness.answer(serverId, GROUP_GET_PATH, {
