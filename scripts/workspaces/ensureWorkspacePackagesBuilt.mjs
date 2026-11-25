@@ -1275,7 +1275,7 @@ export const defaultWorkspaceBuildBoundary = {
   ),
 };
 
-async function captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDirs, env }) {
+async function captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDirs, includePriorOwnDist, env }) {
   const { directory, cleanup } = await createOwnedBuildStaging(tmpdir(), { prefix: 'happier-workspace-capture' });
   const repoDir = join(directory, 'repo');
   const capturedDirs = [packageDir, ...dependencyDirs];
@@ -1290,7 +1290,9 @@ async function captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDir
       };
       for (const dir of capturedDirs) {
         for (const path of readWorkspaceBuildInputs(dir, { includeShippedFiles: true })) await visit(resolve(dir, path));
-        await visit(join(dir, 'dist'));
+        // Dependencies' published outputs are build inputs. A full rebuild
+        // writes its own outputs to a fresh stage and needs no prior own dist.
+        if (dir !== packageDir || includePriorOwnDist) await visit(join(dir, 'dist'));
       }
       for (const name of await readdir(monorepoRoot, { withFileTypes: true })) {
         if (name.isFile()) await visit(join(monorepoRoot, name.name));
@@ -1581,7 +1583,9 @@ async function consumeWorkspacePackageBuildInputs({
   });
   // Every compiler consumes one private input view, including strict builds.
   // Later authored edits invalidate the next demand, never this publication.
-  const capture = await captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDirs, env });
+  const capture = await captureWorkspacePackage({
+    monorepoRoot, packageDir, dependencyDirs, includePriorOwnDist: refreshOnly || checkOnly, env,
+  });
   if (sharedOutput && sourcePackageOutputStorePath(env, capture) !== sharedOutput) {
     await capture.cleanup();
     throw new BuildInputDriftError(`[workspace-build] shared output identity changed capturing ${initialPackageJson.name}; retry with current inputs`);

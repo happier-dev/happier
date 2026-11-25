@@ -3366,12 +3366,18 @@ test('every workspace build publishes its captured start identity and rebuilds o
     const declarationBytes = 'export declare const helper: string;\n';
     for (const name of declarations) writeFileSync(join(dir, name), declarationBytes);
     const fingerprint = readWorkspacePackageInputFingerprint({ packageDir: dir });
+    const oldOutput = join(dir, 'dist/retired.js');
+    mkdirSync(dirname(oldOutput), { recursive: true });
+    writeFileSync(oldOutput, 'obsolete compiled output');
     let attempts = 0;
     let editing = true;
-    const build = () => ensureWorkspacePackagesBuiltByName(root, ['@happier-dev/moving'], { quiet: true, buildMode,
+    const build = () => ensureWorkspacePackagesBuiltByName(root, ['@happier-dev/moving'], {
+      quiet: true, buildMode, env: { ...process.env, HAPPIER_STACK_CANONICAL_HOME_DIR: join(root, 'stack-home') },
       workspaceBuildBoundary: { prepareEnv: async (_dir, env) => env,
         runPackageBuild: async (buildDir, { env }) => {
           attempts++;
+          assert.equal(existsSync(join(buildDir, 'dist')), false, 'a clean compiler does not consume old output');
+          assert.equal(await readFile(oldOutput, 'utf8'), 'obsolete compiled output', 'capture leaves the live last-green tree intact');
           for (const name of declarations) {
             const currentDeclaration = await readFile(join(dir, name), 'utf8');
             const capturedDeclaration = await readFile(join(buildDir, name), 'utf8');
