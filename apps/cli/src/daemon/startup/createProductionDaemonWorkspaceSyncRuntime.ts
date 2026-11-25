@@ -3077,7 +3077,10 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         // Create's target preparation and settlement use its ingress admission.
         // Later requests use the retained relationship's SOURCE custody.
         const boundary = input.requesterMachineAdmissionBoundary;
-        const verifyCurrent = checkout ? verifyWorkspaceSyncRelationshipMachineAdmissionCurrent : verifyWorkspaceSyncSourceMachineAdmissionCurrent;
+        // Machine ingress already admitted this exact direct Use Replica.
+        // Its reconnect needs current access to that Machine, like a captured link.
+        const verifyCurrent = checkout || (directRequester && admission.role === 'use')
+          ? verifyWorkspaceSyncRelationshipMachineAdmissionCurrent : verifyWorkspaceSyncSourceMachineAdmissionCurrent;
         targetPhaseContext = { ...targetPhaseContext, verifyMachineAdmissionCurrent: async () => {
           if (!boundary) return false;
           return await verifyCurrent({ credentials: requester.credentials,
