@@ -12,6 +12,7 @@ import { API_TOKEN_FULL_GRANT_V1, ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, Features
 import { projectSessionSummaryV1, SessionStatusActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
 
 import { configuration, reloadConfiguration } from '@/configuration';
+import { DAEMON_CONTROL_TOKEN_HEADER } from '@/daemon/controlHttp';
 import { registerDaemonExternalActionRoute } from '@/daemon/externalActions/registerDaemonExternalActionRoute';
 import { installDaemonMachineAdmissionTransport } from '@/daemon/machineAdmissionTransport';
 import { SIGNED_ROOT_ACTION_EXECUTE_PATH } from '@/daemon/externalActions/signedRootActionControl';
@@ -1150,8 +1151,14 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const receivedTargets: unknown[] = [];
     const receivedBodies: unknown[] = [];
     const app = fastify();
+    app.post('/ping', async (request, reply) => {
+      if (request.headers[DAEMON_CONTROL_TOKEN_HEADER] !== testDaemonControlToken) {
+        return reply.code(401).send();
+      }
+      return { status: 'ok' };
+    });
     app.addHook('preHandler', async (request) => {
-      receivedBodies.push(request.body);
+      if (request.routeOptions.url !== '/ping') receivedBodies.push(request.body);
     });
     registerDaemonExternalActionRoute(app, {
       currentMachineId: 'machine-daemon-local',
@@ -1196,6 +1203,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
         startedAt: Date.now(),
         startedWithCliVersion: 'test',
         machineId: 'machine-daemon-local',
+        controlToken: testDaemonControlToken,
       }), 'utf8');
       process.env.HAPPIER_HOME_DIR = homeDir;
       process.env.HAPPIER_SERVER_URL = address;
@@ -1586,12 +1594,16 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       resolveTarget: async ({ target }) => target ?? null,
     });
     const address = await app.listen({ host: '127.0.0.1', port: 0 });
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-pat-session-selector-'));
+    const originalHomeDir = process.env.HAPPIER_HOME_DIR;
     const originalServerUrl = process.env.HAPPIER_SERVER_URL;
     const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-    process.env.HAPPIER_SERVER_URL = address;
-    process.env.HAPPIER_WEBAPP_URL = address;
-    reloadConfiguration();
     try {
+      process.env.HAPPIER_HOME_DIR = homeDir;
+      process.env.HAPPIER_SERVER_URL = address;
+      process.env.HAPPIER_WEBAPP_URL = address;
+      reloadConfiguration();
+      await updateMachineRegistration(() => ({ machineId: 'machine-selected' }));
       vi.unstubAllGlobals();
       const executor = createCliActionExecutorFromCredentials({
         credentials: {
@@ -1619,8 +1631,12 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       expect(fetchSessionById).not.toHaveBeenCalled();
       expect(fetchSessionsPage).not.toHaveBeenCalled();
       expect(lookupSessionsByTags).not.toHaveBeenCalled();
+      expect(resolveCurrentAccountMachineTarget).not.toHaveBeenCalled();
     } finally {
       await app.close();
+      await rm(homeDir, { recursive: true, force: true });
+      if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = originalHomeDir;
       if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
       else process.env.HAPPIER_SERVER_URL = originalServerUrl;
       if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
