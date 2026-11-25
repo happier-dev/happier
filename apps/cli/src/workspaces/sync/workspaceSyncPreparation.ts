@@ -218,18 +218,24 @@ export function assertWorkspaceSyncWorkerTargetCurrent(basis: WorkspaceSyncWorke
     })) fail('relationship_changed');
 }
 
-/** A queued spoke-to-spoke operation can depend on either edge while running on a third Machine. */
+/**
+ * `component`: a queued spoke-to-spoke operation can depend on either edge while running on a third Machine.
+ * `relationship`: only this link's own two Machines (definition-only retirement, Sync owner ruling 2026-11-24 14:32Z:
+ * "ask the other Machine"); a component Machine can belong to another person, whose Machine this requester cannot read.
+ */
 export function resolveWorkspaceSyncRelationshipDependencyMachines(input: Readonly<{
   serverId: string;
   relationshipId: string;
   workspaceRefs: readonly WorkspaceRefV1[];
   relationships: readonly WorkspaceSyncRelationshipV1[];
+  scope?: 'component' | 'relationship';
 }>): string[] {
   const component = deriveWorkspaceSyncTopology(input).sets
     .find(set => set.relationships.some(relationship => relationship.relationshipId === input.relationshipId));
   if (!component) throw Object.assign(new Error('workspace_sync_dependencies_unavailable'), { code: 'workspace_sync_dependencies_unavailable' });
-  const endpointIds = new Set(component.relationships.flatMap(relationship =>
-    [relationship.alphaWorkspaceRefId, relationship.betaWorkspaceRefId]));
+  const endpointIds = new Set(component.relationships
+    .filter(relationship => input.scope !== 'relationship' || relationship.relationshipId === input.relationshipId)
+    .flatMap(relationship => [relationship.alphaWorkspaceRefId, relationship.betaWorkspaceRefId]));
   return [...new Set(input.workspaceRefs.filter(ref => ref.serverId === input.serverId && endpointIds.has(ref.id))
     .map(ref => ref.machineId))];
 }

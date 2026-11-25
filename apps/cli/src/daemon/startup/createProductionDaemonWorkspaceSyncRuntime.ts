@@ -1846,11 +1846,12 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   const relationshipDependencyReader = (credentials: StoredCredentials): NonNullable<WorkspaceSyncRelationshipOwnerOptions['readRelationshipDependencies']> =>
     async (relationship, snapshot, removal) => {
       const serverId = semanticServerId;
-      // Retirement asks every component Machine. Keeping files may proceed when a
-      // Machine cannot be reached, but must report the missing observation.
-      // Byte removal still requires every dependency observation to succeed.
+      // Byte removal asks every component Machine and needs every answer. Keeping
+      // files asks this link's own Machines (Sync owner ruling 2026-11-24 14:32Z):
+      // one that cannot be reached is reported, one that refuses refuses. Another
+      // component Machine can be another person's, which this requester cannot read.
       const machineIds = resolveWorkspaceSyncRelationshipDependencyMachines({ ...snapshot, serverId,
-        relationshipId: relationship.relationshipId });
+        relationshipId: relationship.relationshipId, scope: removal ? 'component' : 'relationship' });
       const uncheckedMachineIds = new Set<string>();
       const dependencies = await Promise.all(machineIds.flatMap(machineId =>
         [relationship.alphaWorkspaceRefId, relationship.betaWorkspaceRefId].map(async workspaceRefId => {
@@ -1875,7 +1876,11 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
               uncheckedMachineIds.add(machineId);
               return [];
             }
-            throw compositionError('workspace_sync_dependencies_unavailable', 'Worker dependency observation is unavailable');
+            // The person sees which step refused and the answering Machine's own code.
+            throw Object.assign(compositionError('workspace_sync_dependencies_unavailable', 'Worker dependency observation is unavailable'), {
+              failureCause: { phase: 'workspace_sync.retirement.dependencies', errorClass: 'Error',
+                errorCode: 'workspace_sync_dependencies_unavailable', httpStatus: null,
+                ...(typeof code === 'string' ? { nativeErrorCode: code } : {}) } });
           }
         })));
       return { dependencies: [...new Map(dependencies.flat().map(dependency => [dependency.operationId, dependency])).values()],

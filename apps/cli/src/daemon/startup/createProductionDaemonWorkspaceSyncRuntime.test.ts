@@ -12,6 +12,7 @@ import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '
 import type { DevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema, WorkspaceSyncHandoffSourcePhaseResultV1Schema,
@@ -1199,17 +1200,31 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     } else await expect(stat(fixture.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it.each(['idle', 'unavailable', 'running'] as const)('retires a fresh remote copy on both sides (%s)', async scenario => {
+  it.each(['idle', 'unavailable', 'running', 'another-persons-copy', 'target-refuses'] as const)('retires a fresh remote copy on both sides (%s)', async scenario => {
     const rows: ProjectAccountRowV1[] = [];
     const http = createProjectAccountRowsHttpBoundary(rows);
     let offline = false;
+    let refuseTarget = false;
+    const otherPersonCalls: string[] = [];
+    // Home's machine-access answer to a caller who is not the Machine's custodian
+    // on a custodian_only method (registerSocketRpcHandlers buildForbiddenRpcResponse).
+    const homeCustodianOnlyRefusal = { ok: false, error: 'Forbidden', errorCode: 'RPC_FORBIDDEN', effectAttempted: false,
+      failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: 403 } };
+    const custodianOnly = (method: string) =>
+      resolveMachineRpcRoutePolicy(method.slice(method.indexOf(':') + 1)).sharedMachineAccess === 'custodian_only';
     const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, withScmRuntime: true,
       projectRowsFromHttp: true, separateTargetParent: true, remoteSeed: true, workerRunAtMost: 1,
       handleAdditionalSocketAck: async raw => {
-        if (offline && raw && typeof raw === 'object' && 'method' in raw && typeof raw.method === 'string'
-          && raw.method.startsWith('target-parent:')) {
+        if (!raw || typeof raw !== 'object' || !('method' in raw) || typeof raw.method !== 'string') return undefined;
+        if (raw.method.startsWith('another-person-machine:')) {
+          otherPersonCalls.push(raw.method);
+          // The requester has Manage through a share, never custody, on another person's Machine.
+          return custodianOnly(raw.method) ? homeCustodianOnlyRefusal : undefined;
+        }
+        if (offline && raw.method.startsWith('target-parent:')) {
           return { ok: false, error: 'Target Machine is offline', errorCode: 'peer_unavailable' };
         }
+        if (refuseTarget && raw.method === `target-parent:${RPC_METHODS.DAEMON_PROJECT_WORKER_DEPENDENCIES}`) return homeCustodianOnlyRefusal;
         return undefined;
       },
       readAdditionalHttpPostResponse: async (url, body) => url.includes('/v1/account/project-rows/') ? await http(url, body) : undefined,
@@ -1217,6 +1232,18 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
     const key = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: fixture.sourceRef.id };
     rows.push(ProjectAccountRowV1Schema.parse({ key, revision: 0, content: cipher.seal({ key, value: fixture.sourceRef }) }));
+    if (scenario === 'another-persons-copy') {
+      // READY221's hub also has a Fresh copy on another person's Machine, shared to this
+      // requester with Manage. It joins the Sync component, not this copy's two Machines.
+      const spoke = { ...fixture.sourceRef, id: 'another-persons-copy', machineId: 'another-person-machine', rootPath: '/home/other/copy' };
+      const spokeKey = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: spoke.id };
+      rows.push(ProjectAccountRowV1Schema.parse({ key: spokeKey, revision: 0, content: cipher.seal({ key: spokeKey, value: spoke }) }));
+      const graphKey = { kind: 'relationship-graph' as const };
+      rows.push(ProjectAccountRowV1Schema.parse({ key: graphKey, revision: 0, content: cipher.seal({ key: graphKey, value: { relationships: [{
+        v: 1, relationshipId: 'another-persons-fresh-copy', controllerMachineId: fixture.sourceRef.machineId,
+        alphaWorkspaceRefId: fixture.sourceRef.id, betaWorkspaceRefId: spoke.id, mode: 'keep_synced', contentPolicy,
+        enabled: false, createdAtMs: 1, updatedAtMs: 1 }] } }) }));
+    }
     await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () =>
       readProjectAccountRows({ credentials: fixture.credentials, serverId: fixture.serverId, publication: 'installed' }));
     await fixture.settleProjects();
@@ -1226,7 +1253,9 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       mode: 'keep_synced', contentPolicy, destinationIntent: 'materialize_from_source_workspace', purpose: 'worker_clean_copy',
     } }));
     expect(created.status.state).toBe('watching');
-    const expectedRelationship = getActiveProjectAccountRowsSnapshot()!.relationships[0]!;
+    const expectedRelationship = getActiveProjectAccountRowsSnapshot()!.relationships
+      .find(relationship => relationship.relationshipId === created.relationshipId)!;
+    const others = getActiveProjectAccountRowsSnapshot()!.relationships.filter(relationship => relationship !== expectedRelationship);
     expect(expectedRelationship.enabled).toBe(true);
     if (scenario === 'running') {
       const worker = fixture.workerAdmissions.get(fixture.targetRef.machineId)!;
@@ -1239,6 +1268,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       await expect.poll(() => worker.dependencies().some(item => item.state === 'running')).toBe(true);
     }
     offline = scenario === 'unavailable';
+    refuseTarget = scenario === 'target-refuses';
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), projectWorkerAction: createProjectWorkerAction({
       machineId: fixture.sourceRef.machineId, serverId: fixture.serverId, serverHttpBaseUrl: 'https://bind-child-home.invalid',
       credentials: fixture.credentials, accountId: 'owner', admission: fixture.workerAdmissions.get(fixture.sourceRef.machineId)!,
@@ -1253,8 +1283,11 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
         approvalWaivedSurfaces: { 'projects.worker.copy.retire': ['ui'] } }),
       presentUserConfirmation: { actionId: 'projects.worker.copy.retire' },
     });
-    if (scenario === 'running') {
-      expect(result).toMatchObject({ ok: false, errorCode: 'workspace_sync_relationship_in_use' });
+    if (scenario === 'running' || scenario === 'target-refuses') {
+      // A reachable Machine that answers with an authorization refusal is not an unchecked one.
+      expect(result).toMatchObject(scenario === 'running' ? { ok: false, errorCode: 'workspace_sync_relationship_in_use' }
+        : { ok: false, errorCode: 'workspace_sync_dependencies_unavailable', failureCause: {
+          phase: 'workspace_sync.retirement.dependencies', errorCode: 'workspace_sync_dependencies_unavailable', nativeErrorCode: 'RPC_FORBIDDEN' } });
       expect(getActiveProjectAccountRowsSnapshot()?.relationships).toEqual([expectedRelationship]);
       expect(await fixture.parentManagedWorkspaceSync.list()).toContainEqual(expect.objectContaining({ relationshipId: created.relationshipId }));
     } else {
@@ -1263,9 +1296,11 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       expect(ProjectWorkerActionOutputSchemasV1['projects.worker.copy.retire'].parse(result.result)).toEqual({
         status: 'retired', ...(scenario === 'unavailable' ? { uncheckedMachineIds: [fixture.targetRef.machineId] } : {}),
       });
-      expect(getActiveProjectAccountRowsSnapshot()?.relationships).toEqual([]);
-      expect(await fixture.parentManagedWorkspaceSync.list()).toEqual([]);
+      expect(getActiveProjectAccountRowsSnapshot()?.relationships).toEqual(others);
+      expect((await fixture.parentManagedWorkspaceSync.list()).map(value => value.relationshipId)).not.toContain(created.relationshipId);
     }
+    // Keeping files asks this copy's own two Machines; another person's Machine is never read.
+    expect(otherPersonCalls).toEqual([]);
     expect(await readFile(join(fixture.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
   });
 
