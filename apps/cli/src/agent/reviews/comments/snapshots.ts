@@ -137,15 +137,17 @@ async function resolveComparisonSnapshot(params: Readonly<{
         : file.previousPath === filePath || !file.afterBlobId ? 'before' : 'after';
     const blobId = side === 'before' ? file.beforeBlobId : file.afterBlobId;
     if (!blobId && comparison.source.kind === 'pullRequest' && file.evidence.state === 'available'
-        && (anchor.kind === 'line' || anchor.kind === 'range')) {
+        && (anchor.kind === 'line' || anchor.kind === 'range' || anchor.kind === 'file')) {
         // Hosted comparisons retain immutable patch lines rather than local Git objects.
         const patchSide = 'side' in anchor && anchor.side ? anchor.side
             : file.changeKind === 'deleted' || file.previousPath === filePath ? 'before' : 'after';
-        const start = anchor.kind === 'line' ? anchor.line : anchor.startLine;
-        const end = anchor.kind === 'line' ? anchor.line : anchor.endLine;
+        const reportedStart = anchor.kind === 'line' ? anchor.line : anchor.kind === 'range' ? anchor.startLine : null;
+        const reportedEnd = anchor.kind === 'line' ? anchor.line : anchor.kind === 'range' ? anchor.endLine : null;
         for (const hunk of parseUnifiedDiffHunks(file.evidence.unifiedDiff)) {
             const firstLine = patchSide === 'before' ? hunk.oldStart : hunk.newStart;
             const lines = hunk.lines.filter(line => line.kind !== (patchSide === 'before' ? 'add' : 'remove')).map(line => line.text);
+            const start = reportedStart ?? firstLine;
+            const end = reportedEnd ?? firstLine;
             if (start < firstLine || end >= firstLine + lines.length) continue;
             const snapshot = createTextSnapshot({ lines, capturedAt, anchor: { kind: 'range', filePath,
                 startLine: start - firstLine + 1, endLine: end - firstLine + 1 } });

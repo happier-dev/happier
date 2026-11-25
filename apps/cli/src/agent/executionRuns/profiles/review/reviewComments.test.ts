@@ -147,7 +147,7 @@ describe('canonical review Run comments', () => {
       requests.push(body);
       return { status: 200, data: { comment: commentForCreate(body), replayed: false } };
     });
-    const result = await service().materialize({ run: run(), findings, reviewedFingerprint: null,
+    const result = await service().materialize({ run: run(), findings: [...findings, { ...findings[1], id: 'file-only', filePath: 'a.ts' }], reviewedFingerprint: null,
       comparison: { ...comparison, pullRequest: { baseOid: 'a'.repeat(40), url } } });
     expect(result).toMatchObject({ status: 'materialized', failures: [] });
     expect(requests).toMatchObject([
@@ -156,6 +156,8 @@ describe('canonical review Run comments', () => {
         snapshot: { kind: 'text', selectedLines: ['reviewed input();'], source: 'diffSide',
           diffContext: { baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), side: 'after' } } },
       { linkedRefs: expect.arrayContaining([{ kind: 'pullRequest', url }]), anchor: { kind: 'finding' } },
+      { linkedRefs: expect.arrayContaining([{ kind: 'pullRequest', url }]), anchor: { kind: 'file', filePath: 'a.ts' },
+        snapshot: { kind: 'text', selectedLines: ['reviewed input();'], source: 'diffSide' } },
     ]);
   });
 
