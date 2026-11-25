@@ -554,7 +554,7 @@ const TeamLifecycleSection = React.memo(function TeamLifecycleSection(props: Rea
     const router = useRouter();
     const { context } = props;
     const [busy, setBusy] = React.useState(false);
-    const [error, setError] = React.useState<string | null>(null);
+    const [failure, setFailure] = React.useState<HomeDomainFailure<string> | null>(null);
     const lifecycleInFlightRef = React.useRef(false);
     const name = context.team.name;
 
@@ -566,7 +566,7 @@ const TeamLifecycleSection = React.memo(function TeamLifecycleSection(props: Rea
         if (lifecycleInFlightRef.current) return;
         lifecycleInFlightRef.current = true;
         setBusy(true);
-        setError(null);
+        setFailure(null);
         let outcome: Awaited<ReturnType<typeof archiveTeam>>;
         try {
             outcome = await archiveTeam({
@@ -575,14 +575,14 @@ const TeamLifecycleSection = React.memo(function TeamLifecycleSection(props: Rea
             });
         } catch (cause) {
             if (isTeamActionApprovalPendingError(cause)) context.requestApproval(cause.artifactId);
-            else setError(t('teams.errors.generic'));
+            else setFailure({ kind: 'unknown', code: null, retryable: false });
             setBusy(false);
             lifecycleInFlightRef.current = false;
             return;
         }
         setBusy(false);
         lifecycleInFlightRef.current = false;
-        if (outcome.kind === 'failed') { setError(teamMutationFailureLabel(outcome.failure)); return; }
+        if (outcome.kind === 'failed') { setFailure(outcome.failure); return; }
         router.back();
     }, [context, router]);
 
@@ -590,7 +590,7 @@ const TeamLifecycleSection = React.memo(function TeamLifecycleSection(props: Rea
         if (lifecycleInFlightRef.current) return;
         lifecycleInFlightRef.current = true;
         setBusy(true);
-        setError(null);
+        setFailure(null);
         let outcome: Awaited<ReturnType<typeof restoreTeam>>;
         try {
             outcome = await restoreTeam({
@@ -599,19 +599,23 @@ const TeamLifecycleSection = React.memo(function TeamLifecycleSection(props: Rea
             });
         } catch (cause) {
             if (isTeamActionApprovalPendingError(cause)) context.requestApproval(cause.artifactId);
-            else setError(t('teams.errors.generic'));
+            else setFailure({ kind: 'unknown', code: null, retryable: false });
             setBusy(false);
             lifecycleInFlightRef.current = false;
             return;
         }
         setBusy(false);
         lifecycleInFlightRef.current = false;
-        if (outcome.kind === 'failed') setError(teamMutationFailureLabel(outcome.failure));
+        if (outcome.kind === 'failed') setFailure(outcome.failure);
     }, [context]);
 
     // Restore stays reachable from the archived Team; archive does not.
     const showArchive = context.team.capabilities.archiveTeam && !context.archived;
     const showRestore = context.team.capabilities.restoreTeam && context.archived;
+    const error = failure ? teamMutationFailureLabel(failure) : null;
+    const recovery = failure && error
+        ? teamSignInFailureAction(failure, context.address, (href) => router.push(href), 'team-settings-lifecycle')
+        : undefined;
 
     // Archived (lab `tsSettings-R`): one banner says the Team's condition and carries Restore, the
     // page's one action. It leads the page, so it is this section's whole output.
@@ -623,14 +627,14 @@ const TeamLifecycleSection = React.memo(function TeamLifecycleSection(props: Rea
                 title={t('teams.archive.archivedTitle', { name })}
                 description={error ?? t('teams.archive.archivedBody')}
                 accessibilityLiveRegion={error ? 'assertive' : undefined}
-                action={showRestore ? {
+                action={recovery ?? (showRestore ? {
                     label: t('common.restore'),
                     onPress: () => void restore(),
                     testID: 'team-settings-restore',
                     display: 'default',
                     loading: busy,
                     disabled: busy || !context.mutationsAvailable || context.approvalPending,
-                } : null}
+                } : null)}
             />
         );
     }
@@ -644,7 +648,9 @@ const TeamLifecycleSection = React.memo(function TeamLifecycleSection(props: Rea
                 footnote={error ?? t('teams.archive.archivedBody')}
                 footnoteTone={error ? 'danger' : 'secondary'}
                 footnoteTestID={error ? 'team-settings-lifecycle-error' : undefined}
-                trailing={(
+                trailing={recovery ? (
+                    <RoundButton size="small" title={recovery.label} testID={recovery.testID} onPress={recovery.onPress} />
+                ) : (
                     <RoundButton
                         testID="team-settings-archive"
                         size="small"

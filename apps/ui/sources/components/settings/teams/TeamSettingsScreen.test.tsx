@@ -896,6 +896,42 @@ describe('TeamSettingsScreen', () => {
         await vi.waitFor(() => expect(routerBack).toHaveBeenCalled());
     });
 
+    describe.each(['archive', 'restore'] as const)('Team %s refusals', (operation) => {
+        it.each([
+            { status: 403, code: 'team_authentication_required', details: undefined, message: 'teams.errors.authenticationRequired', destination: '/teams/team-1/sign-in' },
+            { status: 403, code: 'team_forbidden', details: { reason: 'legacy_home_credential' }, message: 'teams.errors.signInOutdated', destination: '/settings/account' },
+            { status: 503, code: 'team_authentication_unavailable', details: undefined, message: 'teams.credentials.externalApi.authenticationUnavailable', destination: null },
+            { status: 403, code: 'team_forbidden', details: undefined, message: 'teams.errors.forbidden', destination: null },
+            { status: 404, code: 'team_not_found', details: undefined, message: 'teams.errors.notFound', destination: null },
+            { status: 404, code: 'teams_unavailable', details: undefined, message: 'teams.unavailable.disabled', destination: null },
+        ])('shows $code with its available recovery once', async ({ status, code, details, message, destination }) => {
+            const team = teamSummaryFixture({
+                ...(operation === 'restore' ? { archivedAt: 1_700_000_000_000 } : {}),
+                capabilities: teamCapabilitiesFixture({ archiveTeam: operation === 'archive', restoreTeam: operation === 'restore' }),
+            });
+            const serverId = await addHomeWithTeam(team);
+            const path = operation === 'archive' ? TEAM_ARCHIVE_PATH : TEAM_RESTORE_PATH;
+            harness.answer(serverId, path, { status, body: { error: code, ...(details ? { details } : {}) } });
+            const screen = await renderSettings(serverId);
+            await waitForTestId(screen, `team-settings-${operation}`);
+            await screen.pressByTestIdAsync(`team-settings-${operation}`);
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain(message));
+            expect(screen.getTextContent().split(message)).toHaveLength(2);
+            expect(harness.requestsFor(path)).toHaveLength(1);
+            expect(screen.findByTestId('team-settings-lifecycle-retry')).toBeNull();
+            const signIn = screen.findByTestId('team-settings-lifecycle-sign-in');
+            if (destination === null) {
+                expect(signIn).toBeNull();
+            } else {
+                expect(signIn).not.toBeNull();
+                await screen.pressByTestIdAsync('team-settings-lifecycle-sign-in');
+                const recovery = new URL(routerPush.mock.lastCall?.[0] ?? '', 'https://app.example');
+                expect(recovery.pathname).toBe(destination);
+                if (destination === '/teams/team-1/sign-in') expect(recovery.searchParams.get('serverId')).toBe(serverId);
+            }
+        });
+    });
+
     it('confirms archive once under explicit Ask and executes without a self-approval Artifact', async () => {
         const team = teamSummaryFixture({
             capabilities: teamCapabilitiesFixture({ manageSettings: true, archiveTeam: true }),
