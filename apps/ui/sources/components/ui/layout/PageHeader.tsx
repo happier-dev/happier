@@ -346,7 +346,9 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
             leading={props.leading}
             markSpan={props.markSpan}
             actions={actions ? <RoundButtonSizeScope size="normal">{actions}</RoundButtonSizeScope> : actions}
-            actionsLayout={props.actionsLayout}
+            // The editor takes the title's column. The shared hanging layout moves controls below
+            // once the remaining width cannot hold the title column.
+            actionsLayout={props.actionsLayout ?? (props.titleControl == null && props.titleEditor ? 'hang' : undefined)}
             status={props.status}
             renderBack={renderBack}
             initialFrameWidthPx={initialFrameWidthPx}

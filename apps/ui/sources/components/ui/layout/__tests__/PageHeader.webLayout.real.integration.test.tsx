@@ -9,7 +9,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { installWebLayoutBridge, measureWebLayout } from '@/dev/testkit/render/measureWebLayout';
-import { PageHeader } from '../PageHeader';
+import { NavigationTitleChromeProvider, PageHeader } from '../PageHeader';
 import { PageHeaderMenu } from '../PageHeaderEntityParts';
 
 vi.mock('react-native', async () => vi.importActual('react-native-web'));
@@ -56,6 +56,42 @@ it('centers a wrapped editable title at 375px and keeps the rename button with t
         expect(pencil.left - last.right).toBeLessThanOrEqual(titleBox.fontSize!);
         expect(Math.abs(centerX({ left: last.left, right: pencil.right }) - axis)).toBeLessThanOrEqual(1);
         expect(pencil.receivesPointer).toBe(true);
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
+
+it.each([1440, 390])('uses the full title column for a long editable name at %spx', async (width) => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const title = 'QA delta 18 editable title that is long enough to wrap onto a second line on a phone screen';
+    try {
+        const page = <ItemList pageColumn="wide">
+            <PageHeader testID="document-header" title={title} alwaysShowTitle
+                titleEditor={{ value: title, accessibilityLabel: 'Document title', placeholder: 'New document',
+                    onChangeText: () => {}, testID: 'document-name' }}
+                primaryAction={{ title: 'Save', onPress: () => {}, testID: 'document-save' }}
+                cancelAction={{ title: 'Cancel', onPress: () => {}, testID: 'document-cancel' }}
+            />
+        </ItemList>;
+        await act(async () => root.render(width === 390
+            ? <NavigationTitleChromeProvider showsTitle>{page}</NavigationTitleChromeProvider>
+            : page));
+        const input = host.querySelector<HTMLTextAreaElement>('[data-testid="document-name"]')!;
+        await act(async () => input.focus());
+        const layout = await measureWebLayout(host, { viewport: { width, height: 900 }, settle: replay => act(replay) });
+        const field = layout.rect('document-name');
+        if (width === 1440) {
+            const cancel = layout.rect('document-cancel');
+            expect(field.width).toBeGreaterThan(298);
+            expect(field.right).toBeLessThanOrEqual(cancel.left);
+            // The browser measures all textarea lines, including those outside its current scroll viewport.
+            expect(input.scrollHeight).toBeLessThanOrEqual(field.lineHeight! * 2 + 1);
+        } else {
+            expect(field.width).toBeGreaterThan(320);
+        }
     } finally {
         await act(async () => root.unmount());
         host.remove();
