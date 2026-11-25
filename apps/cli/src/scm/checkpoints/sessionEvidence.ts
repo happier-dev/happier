@@ -63,10 +63,36 @@ async function readRetainedChange(cwd: string, commitSha: string, targetSha: str
     return { targetSha, method: 'changed_file_tree_comparison', status: partial ? 'partial' : 'retained', addedLines, removedLines };
 }
 
+type RepositoryCheckpointGraph = Readonly<{ success: true; commits: ReadonlySet<string> }>
+    | Readonly<{ success: false; stderr: string }>;
+
+export type ReadSharedRepositoryCheckpointGraph = (
+    repositoryKey: string, revision: string, read: () => Promise<RepositoryCheckpointGraph>,
+) => Promise<RepositoryCheckpointGraph>;
+
+type RepositoryCheckpointEvidenceScope = Readonly<{
+    cwd: string; sessionId: string; signal?: AbortSignal; readSharedGraph?: ReadSharedRepositoryCheckpointGraph;
+}>;
+
+async function readRepositoryCheckpointGraph(
+    input: RepositoryCheckpointEvidenceScope, repositoryKey: string | undefined, revision: string,
+): Promise<RepositoryCheckpointGraph> {
+    input.signal?.throwIfAborted();
+    const read = async (): Promise<RepositoryCheckpointGraph> => {
+        const result = await runGitCheckpointCommand({ cwd: input.cwd, signal: input.signal,
+            args: ['--no-replace-objects', 'rev-list', revision] });
+        if (!result.success) return { success: false, stderr: result.stderr };
+        return { success: true,
+            commits: new Set(result.stdout.trim().split('\n').filter(oid => ScmCommitOidSchema.safeParse(oid).success)) };
+    };
+    const graph = input.readSharedGraph && repositoryKey !== undefined
+        ? await input.readSharedGraph(repositoryKey, revision, read) : await read();
+    input.signal?.throwIfAborted();
+    return graph;
+}
+
 /** A branch without hosting metadata still has a witnessed immutable local graph. */
-export async function readRepositoryCheckpointBranchEvidence(input: Readonly<{
-    cwd: string; sessionId: string; signal?: AbortSignal;
-}>): Promise<ScmBranchWorkEvidence[]> {
+export async function readRepositoryCheckpointBranchEvidence(input: RepositoryCheckpointEvidenceScope): Promise<ScmBranchWorkEvidence[]> {
     const git = async (args: string[]) => {
         input.signal?.throwIfAborted();
         const result = await runGitCheckpointCommand({ cwd: input.cwd, args: ['--no-replace-objects', ...args], signal: input.signal });
@@ -81,11 +107,12 @@ export async function readRepositoryCheckpointBranchEvidence(input: Readonly<{
         return ref?.startsWith('refs/heads/') && ScmCommitOidSchema.safeParse(headSha).success && type === 'commit'
             ? [{ ref, headSha }] : [];
     });
-    const graphs = new Map<string, Set<string>>();
+    const graphs = new Map<string, ReadonlySet<string>>();
     for (const { headSha } of branches) {
         if (graphs.has(headSha)) continue;
-        const graph = await git(['rev-list', headSha]);
-        graphs.set(headSha, new Set(graph.trim().split('\n').filter(oid => ScmCommitOidSchema.safeParse(oid).success)));
+        const graph = await readRepositoryCheckpointGraph(input, repositoryKey, headSha);
+        if (!graph.success) throw new Error(graph.stderr || 'Branch graph is unavailable');
+        graphs.set(headSha, graph.commits);
     }
     const witnesses = await readRepositoryCheckpointCommitEvidence({ ...input, repositoryKey,
         commitShas: [...new Set([...graphs.values()].flatMap(graph => [...graph]))] });
@@ -99,8 +126,8 @@ export async function readRepositoryCheckpointBranchEvidence(input: Readonly<{
         })));
 }
 
-type PullRequestCheckpointJoinInput = Readonly<{
-    cwd: string; sessionId: string; pullRequests: readonly ScmPullRequestSummary[]; signal?: AbortSignal;
+type PullRequestCheckpointJoinInput = RepositoryCheckpointEvidenceScope & Readonly<{
+    pullRequests: readonly ScmPullRequestSummary[];
 }>;
 
 export async function readRepositoryCheckpointPullRequestEvidence(input: PullRequestCheckpointJoinInput): Promise<ScmPullRequestWorkEvidence[]> {
@@ -123,7 +150,7 @@ export async function joinRepositoryCheckpointPullRequestEvidence(input: PullReq
     }) : null;
     const branchRepositoryKey = branches === null ? undefined : await readLocalBranchRepositoryKey(input.cwd, input.signal);
     const retained = new Map<string, Promise<RepositoryCheckpointCommitEvidence['retainedChange']>>();
-    const repositories = new Map<string, { commits: Set<string>; pullRequests: { summary: ScmPullRequestSummary; commits: Set<string> }[] }>();
+    const repositories = new Map<string, { commits: Set<string>; pullRequests: { summary: ScmPullRequestSummary; commits: ReadonlySet<string> }[] }>();
     for (const pullRequest of input.pullRequests) {
         input.signal?.throwIfAborted();
         const { headSha, baseSha, provider } = pullRequest;
@@ -134,14 +161,12 @@ export async function joinRepositoryCheckpointPullRequestEvidence(input: PullReq
             allEvaluated = false;
             continue;
         }
-        const graph = await runGitCheckpointCommand({ cwd: input.cwd, signal: input.signal,
-            args: ['--no-replace-objects', 'rev-list', `${baseSha}..${headSha}`] });
-        input.signal?.throwIfAborted();
+        const graph = await readRepositoryCheckpointGraph(input, branchRepositoryKey, `${baseSha}..${headSha}`);
         if (!graph.success) {
             allEvaluated = false;
             continue;
         }
-        const commits = new Set(graph.stdout.trim().split('\n').filter(oid => ScmCommitOidSchema.safeParse(oid).success));
+        const { commits } = graph;
         const repositoryKey = JSON.stringify(repository);
         let group = repositories.get(repositoryKey);
         if (!group) {

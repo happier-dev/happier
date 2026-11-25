@@ -32,15 +32,40 @@ const pullRequest: ScmPullRequestWorkEvidence = {
 };
 
 /** Observe the genuine process boundary while executing real Git. */
-function recordCommands(commands: ScmCommandInput[]) {
+function recordCommands(commands: ScmCommandInput[], onComplete?: (input: ScmCommandInput, elapsedMs: number) => void) {
     return (input: ScmCommandInput): Promise<ScmExecResult> => new Promise(resolve => {
         commands.push(input);
+        const started = performance.now();
         const child = execFile(input.bin, input.args, {
             cwd: input.cwd, env: { ...process.env, ...input.env }, encoding: 'utf8', signal: input.signal,
-        }, (error, stdout, stderr) => resolve({ success: !error, stdout, stderr,
-            exitCode: error ? typeof error.code === 'number' ? error.code : -1 : 0 }));
+        }, (error, stdout, stderr) => {
+            onComplete?.(input, performance.now() - started);
+            resolve({ success: !error, stdout, stderr, exitCode: error ? typeof error.code === 'number' ? error.code : -1 : 0 });
+        });
         child.stdin?.end(input.stdin);
     });
+}
+
+async function commitWitnessedChange(cwd: string, sessionId: string, turnId: string, file: string, contents: string): Promise<string> {
+    const scopeId = `${sessionId}:${runGit(cwd, ['rev-parse', '--show-toplevel'])}`;
+    const refs = buildRepositoryCheckpointRefs({ scopeId, turnId });
+    const context = { cwd, projectKey: 'repo', detection: { isRepo: true, rootPath: cwd, mode: '.git' as const } };
+    const before = await gitCheckpointAdapter.capture({ context, checkpointRef: refs.turnStart! });
+    writeFileSync(join(cwd, file), contents);
+    const after = await gitCheckpointAdapter.capture({ context, checkpointRef: refs.turnFinal! });
+    if (!before.success || !after.success) throw new Error('Checkpoint fixture capture failed');
+    await retainRepositoryCheckpointTurnEvidence({ cwd, scopeId, turnChangeSet: {
+        sessionId, turnId, seqRange: { startSeqInclusive: 1, endSeqInclusive: 2 },
+        status: 'completed', files: [], provider: 'agent', derivedAt: 1,
+        repositoryCheckpoint: {
+            version: 1, scopeId, startRef: refs.turnStart!.ref, finalRef: refs.turnFinal!.ref,
+            baseRefSource: 'turn_start', contentConfidence: 'exact', attributionScope: 'shared_worktree',
+            receipts: [...before.receipts, ...after.receipts],
+        },
+    } });
+    runGit(cwd, ['add', '--', file]);
+    runGit(cwd, ['commit', '-m', contents.trim()]);
+    return runGit(cwd, ['rev-parse', 'HEAD']);
 }
 
 describe('SCM batched work evidence', () => {
@@ -108,6 +133,124 @@ describe('SCM batched work evidence', () => {
         } finally { rmSync(cwd, { recursive: true, force: true }); rmSync(other, { recursive: true, force: true }); }
     });
 
+    it.each([[1, 3], [14, 3], [14, 9]])('walks each Git head and PR range once for %i Sessions and %i ranges', async (sessionCount, rangeCount) => {
+        const cwd = createGitWorkspace('happier-work-cost-');
+        try {
+            const git = (args: string[]) => runGit(cwd, args);
+            git(['symbolic-ref', 'HEAD', 'refs/heads/main']);
+            git(['commit', '--allow-empty', '-m', 'base']);
+            const baseSha = git(['rev-parse', 'HEAD']);
+            const heads = Array.from({ length: rangeCount }, (_, index) => {
+                git(['commit', '--allow-empty', '-m', `range ${index}`]);
+                git(['branch', `range-${index}`]);
+                return git(['rev-parse', 'HEAD']);
+            });
+            const nameWithOwner = 'owner/work-cost';
+            const cloneUrl = `https://github.com/${nameWithOwner}.git`;
+            const forge = createGithubForgeHttpFixture({ nameWithOwner, cloneUrl, listPullRequests: query =>
+                query.get('state') !== 'open' ? [] : heads.map((headSha, index): ScmPullRequestSummary => ({
+                    provider: forge.provider, number: index + 1, title: `Range ${index}`, state: 'open',
+                    url: `https://github.com/${nameWithOwner}/pull/${index + 1}`,
+                    headBranch: 'main', baseBranch: 'release', baseSha, headSha,
+                })) });
+            git(['remote', 'add', 'origin', cloneUrl]);
+            git(['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+            git(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
+            const registry = createDeploymentGitRegistry({ resolveScmHostingProviderRegistry: async () => forge.hosting });
+            const { call } = createTestRpcManager({ workingDirectory: cwd, registry });
+            const sessions = Array.from({ length: sessionCount }, (_, index) => ({ sessionId: `session-${index}`, cwd, turnIds: ['turn'] }));
+            const timings: Record<string, { count: number; ms: number }> = {};
+            const count = ({ args, env }: ScmCommandInput, elapsed: number) => {
+                let kind = 'discovery';
+                if (args.includes('rev-list')) kind = args.some(arg => arg.includes('..')) ? 'prRange' : 'branchHead';
+                else if (args.includes('refs/heads/')) kind = 'joinRefs';
+                else if (args.includes('--git-common-dir')) kind = 'commonDir';
+                else if (env?.GIT_NO_REPLACE_OBJECTS === '1') kind = 'checkpoint';
+                const total = timings[kind] ??= { count: 0, ms: 0 };
+                total.count++;
+                total.ms += elapsed;
+            };
+            const started = performance.now();
+            const result = ScmWorkEvidenceReadResponseSchema.parse(await runWithScmCommandRunner(
+                recordCommands([], count),
+                () => call(RPC_METHODS.SCM_WORK_EVIDENCE_READ, { sessions },
+                    { kind: 'scm.workEvidence.admitted', admissions: sessions.map(({ sessionId }) => ({ kind: 'session.write', sessionId })) }),
+            ));
+            const forgeLists = forge.httpRequests.filter(row => row.path.endsWith('/pulls')).length;
+            console.info('work-reader-cost', JSON.stringify({ sessionCount, rangeCount, timings, forgeLists, wallMs: performance.now() - started }));
+            expect(result.sessions).toEqual(sessions.map(({ sessionId }) => ({ sessionId, status: 'partial',
+                evidence: [], branchEvidence: [], pullRequestsRead: true })));
+            expect(forgeLists).toBe(3);
+            expect(timings.branchHead?.count).toBe(rangeCount);
+            expect(timings.prRange?.count).toBe(rangeCount);
+        } finally { rmSync(cwd, { recursive: true, force: true }); }
+    });
+
+    it('shares Git walks across worktrees without sharing Session witnesses or changing missing-range coverage', async () => {
+        const cwd = realpathSync(createGitWorkspace('happier-work-shared-graph-'));
+        const checkouts = realpathSync(mkdtempSync(join(tmpdir(), 'happier-work-checkouts-')));
+        const worktree = join(checkouts, 'linked');
+        const detached = join(checkouts, 'detached');
+        try {
+            runGit(cwd, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+            runGit(cwd, ['commit', '--allow-empty', '-m', 'base']);
+            const baseSha = runGit(cwd, ['rev-parse', 'HEAD']);
+            runGit(cwd, ['worktree', 'add', '-b', 'feature', worktree, baseSha]);
+            const heads = {
+                main: await commitWitnessedChange(cwd, 'main-session', 'main-turn', 'main.txt', 'main change\n'),
+                feature: await commitWitnessedChange(worktree, 'feature-session', 'feature-turn', 'feature.txt', 'feature change\n'),
+            };
+            runGit(cwd, ['worktree', 'add', '--detach', detached, heads.feature]);
+            const nameWithOwner = 'owner/shared-graph';
+            const cloneUrl = `https://github.com/${nameWithOwner}.git`;
+            runGit(cwd, ['remote', 'add', 'origin', cloneUrl]);
+            runGit(cwd, ['update-ref', 'refs/remotes/origin/main', heads.main]);
+            runGit(cwd, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
+            const missingHead = 'f'.repeat(40);
+            const forge = createGithubForgeHttpFixture({ nameWithOwner, cloneUrl, listPullRequests: query => {
+                const head = query.get('head');
+                if (query.get('state') !== 'open' || (head !== 'owner:main' && head !== 'owner:feature')) return [];
+                const headBranch = head === 'owner:main' ? 'main' : 'feature';
+                return [heads[headBranch], missingHead].map((headSha, index): ScmPullRequestSummary => ({
+                    provider: forge.provider, number: index + 1, title: `Range ${index}`, state: 'open',
+                    url: `https://github.com/${nameWithOwner}/pull/${index + 1}`, headBranch,
+                    baseBranch: 'release', baseSha, headSha,
+                }));
+            } });
+            const registry = createDeploymentGitRegistry({ resolveScmHostingProviderRegistry: async () => forge.hosting });
+            const { call } = createTestRpcManager({ workingDirectory: cwd, registry });
+            const selectors = [
+                { sessionId: 'main-session', cwd, turnIds: ['main-turn'] },
+                { sessionId: 'feature-session', cwd: worktree, turnIds: ['feature-turn'] },
+                { sessionId: 'detached-session', cwd: detached, turnIds: ['detached-turn'] },
+            ];
+            const read = async (sessions: typeof selectors) => ScmWorkEvidenceReadResponseSchema.parse(
+                await call(RPC_METHODS.SCM_WORK_EVIDENCE_READ, { sessions },
+                    { kind: 'scm.workEvidence.admitted', admissions: sessions.map(({ sessionId }) => ({ kind: 'session.write', sessionId })) }),
+            );
+            const commands: ScmCommandInput[] = [];
+            const batched = await runWithScmCommandRunner(recordCommands(commands), () => read(selectors));
+            const separate = (await Promise.all(selectors.map(selector => read([selector])))).flatMap(result => result.sessions);
+            expect(JSON.stringify(batched.sessions)).toBe(JSON.stringify(separate));
+            for (const [index, headSha] of [heads.main, heads.feature].entries()) {
+                expect(batched.sessions[index]).toMatchObject({
+                    evidence: [{ commitSha: headSha, pullRequest: { headSha } }],
+                    branchEvidence: [{ commitSha: headSha, branch: { headSha } }],
+                });
+                expect(batched.sessions[index]).not.toHaveProperty('pullRequestsRead');
+            }
+            expect(batched.sessions[2]).toMatchObject({ status: 'error', evidence: [], branchEvidence: [] });
+            expect(batched.sessions[2]).not.toHaveProperty('pullRequestsRead');
+            const ranges = commands.filter(command => command.args.includes('rev-list')).map(command => command.args.at(-1));
+            expect(ranges.sort()).toEqual([
+                heads.main, heads.feature, `${baseSha}..${heads.main}`, `${baseSha}..${heads.feature}`, `${baseSha}..${missingHead}`,
+            ].sort());
+        } finally {
+            rmSync(checkouts, { recursive: true, force: true });
+            rmSync(cwd, { recursive: true, force: true });
+        }
+    });
+
     it.each(['empty', 'complete', 'missing graph', 'invalid endpoint'] as const)(
         'reports answered current-head Work only when all returned PRs can be evaluated (%s)',
         async scenario => {
@@ -123,25 +266,7 @@ describe('SCM batched work evidence', () => {
 
                 const sessionId = 'work-scope-fixture';
                 const turnId = 'turn';
-                const scopeId = `${sessionId}:${git(['rev-parse', '--show-toplevel'])}`;
-                const refs = buildRepositoryCheckpointRefs({ scopeId, turnId });
-                const context = { cwd, projectKey: 'repo', detection: { isRepo: true, rootPath: cwd, mode: '.git' as const } };
-                const before = await gitCheckpointAdapter.capture({ context, checkpointRef: refs.turnStart! });
-                writeFileSync(join(cwd, 'file'), 'after\n');
-                const after = await gitCheckpointAdapter.capture({ context, checkpointRef: refs.turnFinal! });
-                if (!before.success || !after.success) throw new Error('Checkpoint fixture capture failed');
-                await retainRepositoryCheckpointTurnEvidence({ cwd, scopeId, turnChangeSet: {
-                    sessionId, turnId, seqRange: { startSeqInclusive: 1, endSeqInclusive: 2 },
-                    status: 'completed', files: [], provider: 'agent', derivedAt: 1,
-                    repositoryCheckpoint: {
-                        version: 1, scopeId, startRef: refs.turnStart!.ref, finalRef: refs.turnFinal!.ref,
-                        baseRefSource: 'turn_start', contentConfidence: 'exact', attributionScope: 'shared_worktree',
-                        receipts: [...before.receipts, ...after.receipts],
-                    },
-                } });
-                git(['add', 'file']);
-                git(['commit', '-m', 'feature change']);
-                const headSha = git(['rev-parse', 'HEAD']);
+                const headSha = await commitWitnessedChange(cwd, sessionId, turnId, 'file', 'after\n');
 
                 const repositoryOwner = 'owner';
                 const nameWithOwner = `${repositoryOwner}/repository`;

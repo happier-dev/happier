@@ -13,7 +13,8 @@ import { SCM_OPERATION_ERROR_CODES, ScmNativeOperationRefusalSchema } from '@hap
 
 import { resolveCwd } from '@/scm/runtime';
 import { resolveFilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
-import { joinRepositoryCheckpointPullRequestEvidence, readRepositoryCheckpointBranchEvidence } from '../checkpoints/sessionEvidence';
+import { joinRepositoryCheckpointPullRequestEvidence, readRepositoryCheckpointBranchEvidence,
+    type ReadSharedRepositoryCheckpointGraph } from '../checkpoints/sessionEvidence';
 import { notRepositoryResponse, runScmRoute } from '../rpc/dispatch';
 import { executeScmActionOperation, type ExecuteScmActionOperationParams } from './executeScmActionOperation';
 
@@ -112,8 +113,19 @@ export async function readScmWorkEvidence(input: Readonly<{
             }))));
         return { branch, pullRequests, git };
     };
-    // This request owns discovery sharing; no retained cache or freshness policy.
-    const repositories = new Map<string, ReturnType<typeof discover>>();
+    // Discovery follows the checkout. Immutable walks follow its canonical Git
+    // common-directory identity and exact revision. Both are shared only in this RPC.
+    const reads = new Map<string,
+        | { kind: 'checkout'; promise: ReturnType<typeof discover> }
+        | { kind: 'graph'; promise: ReturnType<ReadSharedRepositoryCheckpointGraph> }>();
+    const readSharedGraph: ReadSharedRepositoryCheckpointGraph = (repositoryKey, revision, read) => {
+        const key = JSON.stringify(['graph', repositoryKey, revision]);
+        const incumbent = reads.get(key);
+        if (incumbent?.kind === 'graph') return incumbent.promise;
+        const promise = read();
+        reads.set(key, { kind: 'graph', promise });
+        return promise;
+    };
     const sessions = await Promise.all(input.request.sessions.map(async (session): Promise<ScmWorkEvidenceSessionResult> => {
         const { sessionId } = session;
         if (!await input.authorizeSession(sessionId)) return {
@@ -123,16 +135,17 @@ export async function readScmWorkEvidence(input: Readonly<{
         const resolved = resolveCwd(session.cwd, input.workingDirectory, accessPolicy);
         if (!resolved.ok) return { sessionId, status: 'error', evidence: [], branchEvidence: [], errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH };
         try {
-            let repository = repositories.get(resolved.cwd);
-            if (!repository) {
-                repository = discover(resolved.cwd);
-                repositories.set(resolved.cwd, repository);
+            const key = JSON.stringify(['checkout', resolved.cwd]);
+            let checkout = reads.get(key);
+            if (checkout?.kind !== 'checkout') {
+                checkout = { kind: 'checkout', promise: discover(resolved.cwd) };
+                reads.set(key, checkout);
             }
-            const { branch, pullRequests, git } = await repository;
+            const { branch, pullRequests, git } = await checkout.promise;
             if ('data' in branch && !branch.data.success && branch.data.errorCode === SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY) {
                 return { sessionId, status: 'unsupported', evidence: [], branchEvidence: [] };
             }
-            const scope = { cwd: resolved.cwd, sessionId, signal: input.signal };
+            const scope = { cwd: resolved.cwd, sessionId, signal: input.signal, readSharedGraph };
             const branchSource: SourceResult = 'failure' in branch ? branch.failure
                 : !branch.data.success ? failedSource(branch.data.errorCode)
                 : !git ? { status: 'unsupported' }
