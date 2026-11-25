@@ -15,7 +15,7 @@ import { readPluginUiContributionOrigin, resolvePluginUiExecutionDeclaration, ty
 import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { areServerAccountScopesEqual, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { readCurrentAppShellPluginUiExecutionOriginSelectionPending, readCurrentAppShellPluginUiProjection,
+import { readCommittedAppShellClientActionAdmission, readCurrentAppShellPluginUiExecutionOriginSelectionPending, readCurrentAppShellPluginUiProjection,
     subscribeCommittedAppShellPluginUiProjection } from '../plugins/committedPluginUiProjection';
 
 export type CurrentContributedAction = Readonly<{ action: PluginUiActionProjection }> & (
@@ -51,12 +51,17 @@ export async function acquireCurrentContributedAction(input: Readonly<{
     readProjection(): PluginUiProjectionModel | null;
     identity: PluginContributionIdentityV1;
     admission?: PluginUiClientActionAdmissionSource;
+    expectedAction?: PluginUiActionProjection;
+    callerLifetime?: ServerAccountScopeLifetime;
     scope?: ServerAccountScope | null;
     signal?: AbortSignal;
     isCurrent(): boolean;
 }>): Promise<CurrentContributedAction | null> {
     if (input.signal?.aborted || !input.isCurrent()) return null;
-    const resolved = resolveCurrentContributedAction(input.readProjection, input.identity);
+    const readAction = () => createPluginUiProjectedActionResolver(input.readProjection()?.actionsById)(input.identity);
+    const readExpectedAction = (action: PluginUiActionProjection | null) => input.expectedAction
+        ? resolvePluginUiExecutionDeclaration(input.expectedAction, { current: action }) : action;
+    const resolved = resolveDeclaredContributedAction(readExpectedAction(readAction()));
     if (resolved) return resolved;
     const source = input.admission;
     const owner = source?.read()?.accountLifetime;
@@ -66,11 +71,9 @@ export async function acquireCurrentContributedAction(input: Readonly<{
     const isPending = () => {
         const admission = source.read();
         if (!isPluginUiClientExecutableAccountCurrent(admission?.accountLifetime, owner)) return false;
-        const action = createPluginUiProjectedActionResolver(input.readProjection()?.actionsById)(input.identity);
-        // Acquisition has not borrowed a registration yet. Follow its current
-        // declaration through replacement, including a temporary discovery gap;
-        // only the returned registration pins an observation to an occurrence.
-        if (resolveCurrentContributedAction(input.readProjection, input.identity)) return false;
+        const action = readExpectedAction(readAction());
+        if (input.expectedAction && !action) return false;
+        if (resolveDeclaredContributedAction(action)) return false;
         // Administration's selected source can still be answering the surface's
         // declaration demand. Unopened alternative Machines never hold this wait.
         if (readCurrentAppShellPluginUiExecutionOriginSelectionPending(input.identity.pluginId, {
@@ -89,6 +92,7 @@ export async function acquireCurrentContributedAction(input: Readonly<{
     let unsubscribeRegistration: (() => void) | undefined;
     let unsubscribeProjection: (() => void) | undefined;
     const retirement = owner.onRetire(settlement.notify);
+    const callerRetirement = input.callerLifetime !== owner ? input.callerLifetime?.onRetire(settlement.notify) : undefined;
     try {
         const pending = settlement.wait({ isPending, isCurrent, signal: input.signal });
         if (pending) {
@@ -102,11 +106,12 @@ export async function acquireCurrentContributedAction(input: Readonly<{
         if (!isCurrent()) return null;
         // Borrow only the registration current after the settlement await;
         // no earlier declaration owns this not-yet-started observation.
-        return resolveCurrentContributedAction(input.readProjection, input.identity);
+        return resolveDeclaredContributedAction(readExpectedAction(readAction()));
     } finally {
         unsubscribeAdmission?.();
         unsubscribeRegistration?.();
         unsubscribeProjection?.();
+        callerRetirement?.dispose();
         retirement.dispose();
         settlement.dispose();
     }
@@ -140,7 +145,7 @@ export async function executeCapturedScopeContributedAction(
     const machineId = target?.kind === 'machine' ? target.machineId : undefined;
     const declaration = createPluginUiProjectedActionResolver(readProjection()?.actionsById)(request.action);
     const committed = resolveDeclaredContributedAction(declaration);
-    const resolved = machineId && committed?.kind === 'machine' && committed.origin.machineId !== machineId ? null : committed;
+    let resolved = machineId && committed?.kind === 'machine' && committed.origin.machineId !== machineId ? null : committed;
     const parsedInput = PluginJsonValueV2Schema.safeParse(request.input ?? null);
     if ((!resolved && !machineId) || !parsedInput.success || request.signal?.aborted || !accountLifetime.isCurrent()) {
         return refused('contributed_action_unavailable');
@@ -149,30 +154,42 @@ export async function executeCapturedScopeContributedAction(
         || resolved.kind === 'account' && resolved.origin.accountId !== scope.accountId)) return refused('action_account_scope_changed');
     if (resolved && request.context.expectedContributedActionOccurrenceId !== undefined
         && request.context.expectedContributedActionOccurrenceId !== resolved.action.occurrenceId) return refused('plugin_action_generation_retired');
-    if (resolved && invokeMounted) return invokeMounted();
-    if (invokeMounted && machineId && declaration?.execution.target === 'client') {
+    let expectedOccurrenceId = request.context.expectedContributedActionOccurrenceId;
+    let capturedClientDeclaration: PluginUiActionProjection | undefined;
+    if (!resolved && machineId && declaration?.execution.target === 'client') {
         const origin = readPluginUiContributionOrigin(declaration);
-        // A published client declaration can precede registration. The mounted
-        // reader owns that wait for this exact Machine and occurrence.
-        if (origin?.phase === 'current' && origin.interactionEnabled && origin.machineId === machineId
-            && areServerProfileIdentifiersEquivalent(origin.serverId, scope.serverId)) {
-            if (request.context.expectedContributedActionOccurrenceId !== undefined
-                && request.context.expectedContributedActionOccurrenceId !== declaration.occurrenceId) {
+        if (origin?.machineId === machineId && areServerProfileIdentifiersEquivalent(origin.serverId, scope.serverId)) {
+            if (expectedOccurrenceId !== undefined && expectedOccurrenceId !== declaration.occurrenceId) {
                 return refused('plugin_action_generation_retired');
             }
-            return invokeMounted(declaration.occurrenceId);
+            expectedOccurrenceId = declaration.occurrenceId;
+            if (invokeMounted) return invokeMounted(expectedOccurrenceId);
+            // The declaration can commit before the executable and presentation
+            // port. Borrow the same AppShell readiness in the captured entry.
+            capturedClientDeclaration = declaration;
+            resolved = await acquireCurrentContributedAction({
+                readProjection, identity: request.action, expectedAction: declaration,
+                admission: readCommittedAppShellClientActionAdmission(), callerLifetime: accountLifetime, scope, signal: request.signal,
+                isCurrent: () => accountLifetime.isCurrent(),
+            });
         }
     }
+    if (resolved && invokeMounted) return invokeMounted();
     const followsAccountPublication = resolved?.action.execution.target === 'client'
         && !isPluginSurfaceClientActionOccurrencePinned({ hostAction,
-            expectedContributorOccurrenceId: request.context.expectedContributedActionOccurrenceId });
+            expectedContributorOccurrenceId: expectedOccurrenceId });
+    const readCurrentAction = (identity: PluginContributionIdentityV1) =>
+        createPluginUiProjectedActionResolver(readProjection()?.actionsById)(identity);
     const isCurrent = () => !request.signal?.aborted && accountLifetime.isCurrent()
-        && (!resolved || followsAccountPublication || isResolvedContributedActionCurrent(readProjection, request.action, resolved));
+        && (resolved
+            ? followsAccountPublication || isResolvedContributedActionCurrent(readProjection, request.action, resolved)
+            : !capturedClientDeclaration || resolvePluginUiExecutionDeclaration(
+                capturedClientDeclaration, { current: readCurrentAction(request.action) }) !== null);
     // A cold exact Machine has no AppShell declaration yet. The common
     // dispatcher joins that Machine's current Action projection before admission.
     const daemonMachineId = resolved
         ? resolved.kind === 'machine' && resolved.action.execution.target === 'daemon' ? resolved.origin.machineId : undefined
-        : machineId;
+        : capturedClientDeclaration ? undefined : machineId;
     const sessionId = request.context.defaultSessionId ?? request.messageActionReference?.sessionId;
     const outcome = await dispatchPluginSurfaceAction({
         action: request.action, input: parsedInput.data,
@@ -183,11 +200,9 @@ export async function executeCapturedScopeContributedAction(
         ...(request.context.actionRequestId ? { actionRequestId: request.context.actionRequestId } : {}),
         invocationSurface: 'ui', hostAction, actionAccountLifetime: accountLifetime, pluginUiProjection: readProjection(),
         ...(followsAccountPublication ? { readPluginUiProjection: readProjection } : {}),
-        ...(resolved ? {
-            resolveContributedAction: identity => createPluginUiProjectedActionResolver(readProjection()?.actionsById)(identity),
-        } : {}),
+        ...(resolved || capturedClientDeclaration ? { resolveContributedAction: readCurrentAction } : {}),
         requiredDangerLevel: request.requiredDangerLevel,
-        expectedContributorOccurrenceId: request.context.expectedContributedActionOccurrenceId,
+        expectedContributorOccurrenceId: expectedOccurrenceId,
         clientAction: { ...(sessionId ? { sessionId } : {}),
             ...(request.messageActionReference ? { messageActionReference: request.messageActionReference } : {}) },
         ...(daemonMachineId ? {

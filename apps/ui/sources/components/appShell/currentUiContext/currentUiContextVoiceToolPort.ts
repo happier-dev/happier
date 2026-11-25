@@ -18,7 +18,7 @@ import type {
     PluginUiJsonValueV1,
 } from '@happier-dev/protocol/plugins/ui';
 
-import { useAppShellPluginUiProjectionSubscription } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { createAppShellClientActionAdmissionSource, useAppShellPluginUiProjectionSubscription } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import {
     usePluginSurfaceDestinationNavigationBinding,
     type PluginSurfaceDestinationNavigationBinding,
@@ -42,7 +42,6 @@ import {
 } from '@/sync/domains/plugins/ui/projection';
 import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { projectedActionToDefinition } from './contributedActionDefinition';
-import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { machinePluginActionSchemasRead } from '@/sync/ops/machineContributionRegistryProjection';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { registerCurrentUiContextActionPort } from './currentUiContextActionRuntime';
@@ -653,16 +652,7 @@ function useCurrentUiContextToolPortFactory() {
                 invocationSurface,
                 hostAction,
                 readProjection: () => appShellProjection.getSnapshot().pluginUiProjection,
-                clientExecutableAdmission: {
-                    read: () => {
-                        const value = appShellProjection.getSnapshot();
-                        return { projection: value.pluginUiProjection, platform: resolvePluginUiClientExecutablePlatform(),
-                            accountCensusPending: value.accountCensusPending,
-                            mountedActionProjections: value.mountedActionProjections,
-                            activation: value.clientExecutableActivation, accountLifetime: value.accountLifetime };
-                    },
-                    subscribe: appShellProjection.subscribe,
-                },
+                clientExecutableAdmission: createAppShellClientActionAdmissionSource(appShellProjection),
                 readNavigationBinding: () => navigationBindingRef.current,
             })
             : null,

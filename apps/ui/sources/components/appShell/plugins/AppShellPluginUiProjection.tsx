@@ -88,6 +88,7 @@ import {
     retainAppShellProjectedClientExecutables,
     unloadAppShellProjectedClientExecutables,
 } from './appShellClientExecutableActivation';
+import type { PluginUiClientActionAdmissionSource } from '@/components/plugins/reactNative/clientActionAdmission';
 import type { PluginUiClientExecutableReconciliationAttempt } from '@/components/plugins/reactNative/clientExecutableActivation';
 import { readPluginUiClientExecutableProjectionFacts,
     type PluginUiClientExecutableProjectionSource } from '@/components/plugins/reactNative/clientExecutableProjection';
@@ -212,6 +213,20 @@ type AppShellPluginUiProjectionSubscription = Readonly<{
     getSnapshot(): AppShellPluginUiProjectionValue;
     subscribe(listener: () => void): () => void;
 }>;
+export function createAppShellClientActionAdmissionSource(
+    subscription: AppShellPluginUiProjectionSubscription,
+): PluginUiClientActionAdmissionSource {
+    return {
+        read: () => {
+            const value = subscription.getSnapshot();
+            return { projection: value.pluginUiProjection, platform: resolvePluginUiClientExecutablePlatform(),
+                accountCensusPending: value.accountCensusPending, mountedActionProjections: value.mountedActionProjections,
+                activation: value.clientExecutableActivation, accountLifetime: value.accountLifetime };
+        },
+        subscribe: subscription.subscribe,
+    };
+}
+
 const noProjectionSubscription = () => () => {};
 const AppShellPluginUiProjectionContext = React.createContext<AppShellPluginUiProjectionSubscription>({
     getSnapshot: () => EMPTY_APP_SHELL_PLUGIN_UI_PROJECTION_VALUE,
@@ -408,8 +423,9 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
         committedProjectionCleanup.current = publishCommittedAppShellPluginUiProjection(read, readCandidates,
             publication ? listener => publication.subscribe(listener, 'committed') : undefined, translationRuntime,
             providerId => valueRef.current.getVoiceProviderActivation?.(providerId) ?? null, readRegistrySourcesPending,
-            publication?.acquireExecutionOriginDemand, readExecutionOriginSelectionPending, readDeclarationsPending);
-    }, [lifetime, props.publication, standaloneProjection, standalonePhase, standaloneDeclarationReady, standaloneCandidates, standaloneSkills, translationRuntime]);
+            publication?.acquireExecutionOriginDemand, readExecutionOriginSelectionPending, readDeclarationsPending,
+            createAppShellClientActionAdmissionSource(valueSubscription));
+    }, [lifetime, props.publication, standaloneProjection, standalonePhase, standaloneDeclarationReady, standaloneCandidates, standaloneSkills, translationRuntime, valueSubscription]);
     React.useLayoutEffect(() => () => {
         committedProjectionCleanup.current?.();
         committedProjectionCleanup.current = null;

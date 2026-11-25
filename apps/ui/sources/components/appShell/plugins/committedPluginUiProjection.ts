@@ -3,6 +3,8 @@ import type { PluginUiTranslationRuntime } from '@/sync/domains/plugins/ui/i18n'
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { PluginUiExecutionOriginCandidateFacts } from '@/sync/domains/plugins/ui/projectionUnion';
 
+import type { PluginUiClientActionAdmissionSource } from '@/components/plugins/reactNative/clientActionAdmission';
+
 export type AppShellPluginUiProjectionRead = Readonly<{ scope: ServerAccountScope; declarationsOnly: true }>;
 
 // The app shell's committed plugin UI projection, readable outside React (Actions, settings normalization).
@@ -17,6 +19,7 @@ type CommittedProjectionBinding = Readonly<{
     readDeclarationsPending?: (input: AppShellPluginUiProjectionRead) => boolean;
     readRegistrySourcesPending?: (input?: AppShellPluginUiProjectionRead) => boolean;
     readExecutionOriginSelectionPending?: (pluginId: string, input: AppShellPluginUiProjectionRead) => boolean;
+    clientActionAdmission?: PluginUiClientActionAdmissionSource;
     disposeSource(): void;
 }>;
 let committed: CommittedProjectionBinding | null = null;
@@ -89,6 +92,11 @@ export function getCurrentAppShellVoiceProviderActivation(providerId: string): P
     return committed?.getVoiceProviderActivation?.(providerId) ?? null;
 }
 
+/** Borrow the same readiness source as the mounted Action port. */
+export function readCommittedAppShellClientActionAdmission(): PluginUiClientActionAdmissionSource | undefined {
+    return committed?.clientActionAdmission;
+}
+
 /** Publishes the committed reader; the returned cleanup clears it only if it is still the current one. */
 export function publishCommittedAppShellPluginUiProjection(
     read: (input?: AppShellPluginUiProjectionRead) => PluginUiProjectionModel | null,
@@ -100,6 +108,7 @@ export function publishCommittedAppShellPluginUiProjection(
     acquireCandidates?: (pluginId: string) => () => void,
     readExecutionOriginSelectionPending?: (pluginId: string, input: AppShellPluginUiProjectionRead) => boolean,
     readDeclarationsPending?: (input: AppShellPluginUiProjectionRead) => boolean,
+    clientActionAdmission?: PluginUiClientActionAdmissionSource,
 ): () => void {
     let unsubscribe: (() => void) | undefined;
     const binding: CommittedProjectionBinding = {
@@ -111,6 +120,7 @@ export function publishCommittedAppShellPluginUiProjection(
         readDeclarationsPending,
         readRegistrySourcesPending,
         readExecutionOriginSelectionPending,
+        clientActionAdmission,
         disposeSource() { unsubscribe?.(); unsubscribe = undefined; },
     };
     committed?.disposeSource();

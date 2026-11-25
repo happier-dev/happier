@@ -3001,6 +3001,81 @@ describe('Account Action placement through the executable dispatcher', () => {
         }
     });
 
+    it.each(['registered', 'absent'] as const)('settles a cold captured-scope client Action when its lazy executable is %s', async settlement => {
+        const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+        const lifetime = clientAccountLifetime(resolveServerProfileScopeIdForIdentifier('server-client-action'));
+        await publishManageMachine(lifetime.scope);
+        const handler = vi.fn(async () => ({ actions: [] }));
+        const fixture = createClientActionActivation({ accountLifetime: lifetime, handler });
+        const action = { pluginId: fixture.action.pluginId, localId: fixture.action.id };
+        const machineId = CLIENT_ACTION_ORIGIN.materializationRef.machineId;
+        const machineProjection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            actionsById: { [buildQualifiedPluginContributionKey(action)]: fixture.daemonAction } });
+        daemonRpc.mockImplementation(async request =>
+            request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+                ? { protocolVersion: 1, projection: machineProjection } : answerActionSchemasRead(request));
+        const value: AppShellPluginUiProjectionValue = {
+            pluginUiProjection: fixture.projection, pluginBrowserProjection: null,
+            phase: 'current', interactionEnabled: true, machineId, serverId: lifetime.scope.serverId,
+            platform: 'web', accountLifetime: lifetime, clientExecutableActivation: { status: 'establishing' },
+            reloadConnectedAccountProjection: () => {}, reloadClientExecutables: () => {},
+        };
+        let activationState = value.clientExecutableActivation;
+        function Owner(props: React.PropsWithChildren) {
+            return React.createElement(AppShellPluginUiProjectionValueProvider, { value: { ...value,
+                clientExecutableActivation: activationState } }, props.children);
+        }
+        const hook = await renderHook(() => null, { wrapper: Owner });
+        const controller = new AbortController();
+        const context = { surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId,
+            expectedAccountId: lifetime.scope.accountId, externalActionTarget: { kind: 'machine', machineId } } as const;
+        const invoke = () => executeCurrentUiContextContributedAction({ action, input: {}, context, signal: controller.signal },
+            { execute: async () => { throw new Error('Unexpected child Action'); }, context }, lifetime);
+        let releaseChunk!: () => void;
+        const lazyChunk = new Promise<void>(resolve => { releaseChunk = resolve; });
+        const loadInstalledBundle = vi.fn(async () => {
+            await lazyChunk;
+            return fixture.activate as PluginReactNativeExecutableExport;
+        });
+        const activation = { ...fixture.activation, backend: { ...fixture.activation.backend, loadInstalledBundle } };
+        let registration: ReturnType<typeof fixture.composition.reconcile> | undefined;
+        let read: ReturnType<typeof invoke> | undefined;
+        try {
+            await fixture.composition.unload();
+            await fixture.composition.reconcile([fixture.activation]);
+            await expect(invoke()).resolves.toEqual({ ok: true, result: { actions: [] } });
+            handler.mockClear();
+            await fixture.composition.unload();
+            if (settlement === 'registered') registration = fixture.composition.reconcile([activation]);
+            let outcome: Awaited<ReturnType<typeof invoke>> | undefined;
+            read = invoke().then(answer => { outcome = answer; return answer; });
+            await act(async () => {});
+            expect(outcome, JSON.stringify(outcome)).toBeUndefined();
+            expect(handler).not.toHaveBeenCalled();
+
+            if (registration) {
+                expect(loadInstalledBundle).toHaveBeenCalledOnce();
+                releaseChunk();
+                expect((await registration).map(attempt => attempt.result)).toEqual([{ ok: true }]);
+                await expect(read).resolves.toEqual({ ok: true, result: { actions: [] } });
+                expect(handler).toHaveBeenCalledOnce();
+            } else {
+                activationState = { status: 'ready' };
+                await hook.rerender();
+                await expect(read).resolves.toMatchObject({ ok: false, errorCode: 'plugin_surface_client_action_unavailable' });
+                expect(handler).not.toHaveBeenCalled();
+            }
+        } finally {
+            controller.abort();
+            releaseChunk();
+            await registration;
+            await read;
+            await hook.unmount();
+            await fixture.composition.unload();
+            lifetime.retire();
+        }
+    });
+
     it('delivers a real Artifact refusal through the mounted dispatcher and native author API while peer activation is pending', async () => {
         const { createPluginAccountAvailabilityReaderStore } = await import('@/sync/domains/plugins/availability/reader');
         const { reconcileProjectedPluginUiClientExecutables } = await import('@/components/plugins/reactNative/clientExecutableActivation');
