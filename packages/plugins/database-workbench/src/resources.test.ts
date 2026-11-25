@@ -128,6 +128,14 @@ describe('database connection Resource', () => {
                 .toEqual({ result: { ok: true, operation: 'describe', descriptor: published }, sourceScope: { serverId: 'server', machineId: 'machine' } });
             const read = { operation: 'statement.run' as const, target, mode: 'read' as const,
                 statement: { sql: 'SELECT label FROM selected', parameters: [] } };
+            for (const operation of [
+                { operation: 'schemas.list', target, page: { rows: 1 } },
+                { operation: 'relations.list', target, schema: 'main', page: { rows: 1 } },
+                { operation: 'relation.structure', target, relation: { schema: 'main', name: 'selected' } },
+            ] as const) {
+                expect(await producer.invoke!(operation, { signal: controller.signal }))
+                    .toMatchObject({ result: { ok: true, operation: operation.operation } });
+            }
             expect(await producer.invoke!(read, { signal: controller.signal }))
                 .toMatchObject({ result: { ok: true, results: [{ rows: [{ cells: [{ type: 'text', value: 'before' }] }] }] } });
             await expect(producer.invoke!({ ...read, target: { ...target, savedSecretId: 'other' } }, { signal: controller.signal }))
