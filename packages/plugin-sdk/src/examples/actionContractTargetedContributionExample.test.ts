@@ -100,7 +100,7 @@ function expectTriageSourcePointSemantics(
     }).success).toBe(false);
     expect(semantics.operations.map(({ role }) => role)).toEqual(Object.keys(protocol.operations).sort());
     expect(semantics.surfaces.map(({ role, presentation }) => ({ role, presentation })))
-        .toEqual([{ role: 'detail', presentation: 'content' }]);
+        .toEqual([{ role: 'detail', presentation: 'fill' }]);
     expect(semantics.surfaces[0]?.inputSchema.jsonSchema)
         .toEqual(admittedProtocol.data.surfaces?.detail?.inputSchema);
 }
@@ -535,7 +535,7 @@ describe('cross-plugin contribution public authoring example', () => {
                         surfaces: {
                             detail: {
                                 required: true,
-                                presentation: 'content',
+                                presentation: 'fill',
                             },
                         },
                     }],
