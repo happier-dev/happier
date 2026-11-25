@@ -8,7 +8,7 @@ import { createPlainSessionByIdResponseFixture, createSessionAccessFixture, crea
 import { createSessionListQuerySourceHarness, type SessionListQuerySourceHarness } from '@/dev/testkit/harness/sessionListQuerySourceHarness';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { answerDiscussionThreadForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { answerDiscussionThreadForTests, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { Item } from '@/components/ui/lists/Item';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -19,7 +19,6 @@ import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPan
 import type { DetailsSurfaceRenderInputV1 } from '@/components/appShell/panes/details/surfaces';
 import { SessionDiscussionSourceLinksProvider, DiscussionSourceMarkers } from './SessionDiscussionSourceLinks';
 import { publishMountedDiscussionChanges } from '@/sync/domains/discussions/discussionChangeWatch';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 
 vi.mock('socket.io-client', async (importOriginal) => (
   await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -73,7 +72,7 @@ function setSharing(serverId: string, enabled: boolean) {
 }
 
 async function mount(options: { sharingEnabled?: boolean; intent?: 'second_opinion' | 'discuss'; pane?: boolean; sheet?: boolean; longList?: boolean;
-  sourceText?: string; directory?: string; resultAndMarkers?: boolean } = {}) {
+  sourceText?: string; directory?: string; resultAndMarkers?: boolean; approvalReview?: boolean } = {}) {
   const serverId = boundary.serverIds[1]!;
   const sourceText = options.sourceText ?? 'The source answer.';
   setSharing(serverId, options.sharingEnabled ?? true);
@@ -135,13 +134,16 @@ async function mount(options: { sharingEnabled?: boolean; intent?: 'second_opini
     React.useEffect(() => { open({ source, sourceText, intent: options.intent ?? 'second_opinion', onNavigate: () => {} }); }, [open]);
     return null;
   }
-  const screen = await renderScreen(<AppPaneProvider><SourcePaneProbe scopeId={sourcePaneScopeId} />{options.sheet
+  const content = <><SourcePaneProbe scopeId={sourcePaneScopeId} />{options.sheet
     ? <ModalProvider><DetailsStartSheetHost><NoPane /></DetailsStartSheetHost></ModalProvider>
     : options.resultAndMarkers ? <SessionDiscussionSourceLinksProvider sessionId="source-session" serverId={serverId}>
       <DiscussionSourceMarkers source={source.message} navigate={markerNavigation} />
       <DiscussionSourceMarkers source={{ ...source.message, messageId: 'unselected-answer' }} navigate={markerNavigation} />
       <Pane />
-    </SessionDiscussionSourceLinksProvider> : <Pane />}</AppPaneProvider>);
+    </SessionDiscussionSourceLinksProvider> : <Pane />}</>;
+  const screen = options.approvalReview
+    ? await (await import('@/dev/testkit/harness/mountedCurrentUiContext')).renderMountedCurrentUiContext(<ModalProvider>{content}</ModalProvider>)
+    : await renderScreen(<AppPaneProvider>{content}</AppPaneProvider>);
   return { screen, serverId, previewPath, markerNavigation, setActive: (active: boolean) => setActive(active), commits: () => commits };
 }
 
@@ -283,58 +285,86 @@ it('publishes no unchanged opinion draft and keeps retry identities through a re
   await screen.unmount();
 });
 
-it.each(['preview', 'ask'] as const)('presents an approval pending during %s instead of failure and retry', async phase => {
-  const { screen, serverId, previewPath } = await mount();
+// A basic native confirmation reaches the testkit Modal boundary. A carried review uses its real card controls.
+function inPlaceApproval() {
+  const decision = createDeferred<boolean>();
+  const confirm = vi.spyOn(Modal, 'confirm').mockReturnValue(decision.promise);
+  return {
+    async review(screen: Awaited<ReturnType<typeof renderScreen>>) {
+      return await waitForHomeGovernance(() => {
+        if (screen.findByTestId('actions.confirmation-review.decision-approve')) {
+          return (approve: boolean) => act(() => screen.pressByTestId(
+            `actions.confirmation-review.decision-${approve ? 'approve' : 'reject'}`,
+          ));
+        }
+        expect(confirm).toHaveBeenCalledTimes(1);
+        return decision.resolve;
+      });
+    },
+    dispose() { decision.resolve(false); confirm.mockRestore(); },
+  };
+}
+
+it.each(['preview', 'ask'] as const)('asks the present person in place during %s before doing the work', async phase => {
+  const { screen, serverId, previewPath } = await mount({ approvalReview: true });
+  const approval = inPlaceApproval();
   try {
     if (phase === 'preview') await boundary.http.requireUiApproval(serverId, 'discussion.second_opinion.start');
     await vi.waitFor(() => expect(screen.findByTestId('second-opinion.reviewer:reviewer-session')).not.toBeNull());
-    await screen.pressByTestIdAsync('second-opinion.reviewer:reviewer-session');
+    act(() => screen.pressByTestId('second-opinion.reviewer:reviewer-session'));
     if (phase === 'ask') {
       await vi.waitFor(() => expect(screen.findByTestId('second-opinion.ask')?.props.disabled).toBe(false));
       await boundary.http.requireUiApproval(serverId, 'discussion.second_opinion.start');
-      await screen.pressByTestIdAsync('second-opinion.ask');
+      act(() => screen.pressByTestId('second-opinion.ask'));
     }
-    await vi.waitFor(() => expect(screen.findByTestId('second-opinion.approval-pending')).not.toBeNull());
+    const answer = await approval.review(screen);
+    expect(screen.findByTestId('second-opinion.approval-pending')).toBeNull();
     expect(screen.findByTestId('second-opinion.failed')).toBeNull();
+    expect(boundary.http.artifacts(serverId).list()).toEqual([]);
     expect(boundary.http.requestsFor('/v1/discussions')).toHaveLength(0);
     if (phase === 'preview') expect(boundary.http.requestsFor(previewPath)).toHaveLength(0);
-  } finally { await screen.unmount(); }
+    answer(false);
+    if (phase === 'ask') {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('second-opinion.failed')).not.toBeNull());
+      expect(screen.findByTestId('second-opinion.ask')?.props.disabled).toBe(false);
+    }
+    expect(boundary.http.requestsFor('/v1/discussions')).toHaveLength(0);
+  } finally { approval.dispose(); await screen.unmount(); }
 });
 
-it.each(['approve', 'reject'] as const)('settles a pending Discuss %s from Inbox without resubmitting the form', async decision => {
-  const { screen, serverId } = await mount({ pane: true, intent: 'discuss', resultAndMarkers: true, sharingEnabled: true });
+it.each(['approve', 'reject'] as const)('settles Discuss %s in place without resubmitting the form', async decision => {
+  const { screen, serverId } = await mount({ pane: true, intent: 'discuss', resultAndMarkers: true, sharingEnabled: true, approvalReview: true });
   const thread = answerDiscussionThreadForTests(boundary.http, serverId, { accountId: boundary.accountId(serverId),
     loseCreate: false, loseFirstRejoin: false });
   await vi.waitFor(() => expect(screen.findByTestId('second-opinion.ask')?.props.disabled).toBe(false));
   await boundary.http.requireUiApproval(serverId, 'discussion.create');
-  await screen.pressByTestIdAsync('second-opinion.ask');
-  await vi.waitFor(() => expect(screen.findByTestId('second-opinion.approval-pending')).not.toBeNull());
-  const approvals = () => boundary.http.artifacts(serverId).list().filter(artifact =>
-    boundary.http.artifacts(serverId).readPlainBody(artifact.id)?.includes('"actionId":"discussion.create"'));
-  const artifactId = approvals()[0]?.id;
-  if (!artifactId) throw new Error('missing_approval');
-  expect(thread.messages).toHaveLength(0);
-  expect(await decideApprovalAsInbox(serverId, artifactId, decision)).toMatchObject({ ok: true });
-  if (decision === 'approve') {
-    await vi.waitFor(() => expect(sourcePane.scopeState?.details.tabs.map(tab => tab.kind)).toEqual(['discussion']));
-    expect(thread.messages).toHaveLength(1);
-    expect(boundary.http.requestsFor('/v1/discussions').filter(request => request.input !== null)).toHaveLength(1);
-    await act(async () => publishMountedDiscussionChanges({ serverId, accountId: boundary.accountId(serverId),
-      changes: [{ cursor: 1, kind: 'discussion', entityId: 'committed-thread', changedAt: 1 }] }));
-    await vi.waitFor(() => expect(screen.findAllHostsByTestId('transcript-message-discussion:committed-thread')).toHaveLength(1));
-  } else {
-    await vi.waitFor(() => expect(screen.findByTestId('second-opinion.approval-pending')).toBeNull());
-    expect(screen.findByTestId('second-opinion.ask')?.props.disabled).toBe(false);
-    await act(async () => screen.changeTextByTestId('second-opinion.question', 'A revised question'));
-    expect(screen.findByTestId('second-opinion.question')?.props.value).toBe('A revised question');
+  const approval = inPlaceApproval();
+  try {
+    act(() => screen.pressByTestId('second-opinion.ask'));
+    const answer = await approval.review(screen);
+    expect(screen.findByTestId('second-opinion.approval-pending')).toBeNull();
     expect(thread.messages).toHaveLength(0);
-  }
-  expect(approvals()).toHaveLength(1);
-  await screen.unmount();
+    answer(decision === 'approve');
+    if (decision === 'approve') {
+      await waitForHomeGovernance(() => expect(sourcePane.scopeState?.details.tabs.map(tab => tab.kind)).toEqual(['discussion']));
+      expect(thread.messages).toHaveLength(1);
+      expect(boundary.http.requestsFor('/v1/discussions').filter(request => request.input !== null)).toHaveLength(1);
+      await act(async () => publishMountedDiscussionChanges({ serverId, accountId: boundary.accountId(serverId),
+        changes: [{ cursor: 1, kind: 'discussion', entityId: 'committed-thread', changedAt: 1 }] }));
+      await vi.waitFor(() => expect(screen.findAllHostsByTestId('transcript-message-discussion:committed-thread')).toHaveLength(1));
+    } else {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('second-opinion.failed')).not.toBeNull());
+      expect(screen.findByTestId('second-opinion.ask')?.props.disabled).toBe(false);
+      await act(async () => screen.changeTextByTestId('second-opinion.question', 'A revised question'));
+      expect(screen.findByTestId('second-opinion.question')?.props.value).toBe('A revised question');
+      expect(thread.messages).toHaveLength(0);
+    }
+    expect(boundary.http.artifacts(serverId).list()).toEqual([]);
+  } finally { approval.dispose(); await screen.unmount(); }
 });
 
-it.each(['approve', 'reject'] as const)('settles a pending opinion Ask %s without another admission', async decision => {
-  const { screen, serverId } = await mount({ pane: true, resultAndMarkers: true, sharingEnabled: true });
+it.each(['approve', 'reject'] as const)('settles opinion Ask %s in place without another admission', async decision => {
+  const { screen, serverId } = await mount({ pane: true, resultAndMarkers: true, sharingEnabled: true, approvalReview: true });
   const thread = answerDiscussionThreadForTests(boundary.http, serverId, { accountId: boundary.accountId(serverId),
     loseCreate: false, loseFirstRejoin: false });
   boundary.http.answer(serverId, 'POST /v1/discussions/committed-thread/participants/invite', { body: {
@@ -344,46 +374,52 @@ it.each(['approve', 'reject'] as const)('settles a pending opinion Ask %s withou
   await screen.pressByTestIdAsync('second-opinion.reviewer:reviewer-session');
   await vi.waitFor(() => expect(screen.findByTestId('second-opinion.ask')?.props.disabled).toBe(false));
   await boundary.http.requireUiApproval(serverId, 'discussion.second_opinion.start');
-  await screen.pressByTestIdAsync('second-opinion.ask');
-  await vi.waitFor(() => expect(screen.findByTestId('second-opinion.approval-pending')).not.toBeNull());
-  const approvals = () => boundary.http.artifacts(serverId).list().filter(artifact =>
-    boundary.http.artifacts(serverId).readPlainBody(artifact.id)?.includes('"actionId":"discussion.second_opinion.start"'));
-  const artifactId = approvals()[0]?.id;
-  if (!artifactId) throw new Error('missing_approval');
-  expect(await decideApprovalAsInbox(serverId, artifactId, decision)).toMatchObject({ ok: true });
-  if (decision === 'approve') {
-    await vi.waitFor(() => expect(sourcePane.scopeState?.details.tabs.map(tab => tab.kind)).toEqual(['discussion']));
-    expect(thread.messages).toHaveLength(2); // One source quote and one addressed question, one anchored Discussion.
-    expect(boundary.http.requestsFor('/v1/discussions').filter(request => request.input !== null)).toHaveLength(1);
-    expect(thread.stored()?.discussion.anchor).toMatchObject({ kind: 'session', sessionId: 'source-session', messageId: 'committed-answer' });
-    await act(async () => publishMountedDiscussionChanges({ serverId, accountId: boundary.accountId(serverId),
-      changes: [{ cursor: 1, kind: 'discussion', entityId: 'committed-thread', changedAt: 1 }] }));
-    await vi.waitFor(() => expect(screen.findAllHostsByTestId('transcript-message-discussion:committed-thread')).toHaveLength(1));
-  } else {
-    await vi.waitFor(() => expect(screen.findByTestId('second-opinion.approval-pending')).toBeNull());
-    expect(screen.findByTestId('second-opinion.ask')?.props.disabled).toBe(false);
+  const approval = inPlaceApproval();
+  try {
+    act(() => screen.pressByTestId('second-opinion.ask'));
+    const answer = await approval.review(screen);
+    expect(screen.findByTestId('second-opinion.approval-pending')).toBeNull();
     expect(thread.messages).toHaveLength(0);
-  }
-  expect(approvals()).toHaveLength(1);
-  await screen.unmount();
+    answer(decision === 'approve');
+    if (decision === 'approve') {
+      await waitForHomeGovernance(() => expect(sourcePane.scopeState?.details.tabs.map(tab => tab.kind)).toEqual(['discussion']));
+      expect(thread.messages).toHaveLength(2); // One source quote and one addressed question, one anchored Discussion.
+      expect(boundary.http.requestsFor('/v1/discussions').filter(request => request.input !== null)).toHaveLength(1);
+      expect(thread.stored()?.discussion.anchor).toMatchObject({ kind: 'session', sessionId: 'source-session', messageId: 'committed-answer' });
+      await act(async () => publishMountedDiscussionChanges({ serverId, accountId: boundary.accountId(serverId),
+        changes: [{ cursor: 1, kind: 'discussion', entityId: 'committed-thread', changedAt: 1 }] }));
+      await vi.waitFor(() => expect(screen.findAllHostsByTestId('transcript-message-discussion:committed-thread')).toHaveLength(1));
+    } else {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('second-opinion.failed')).not.toBeNull());
+      expect(screen.findByTestId('second-opinion.ask')?.props.disabled).toBe(false);
+      expect(thread.messages).toHaveLength(0);
+    }
+    expect(boundary.http.artifacts(serverId).list()).toEqual([]);
+  } finally { approval.dispose(); await screen.unmount(); }
 });
 
-it('retains a pending opinion preview instead of admitting it again when the Start body returns', async () => {
-  const { screen, serverId } = await mount();
+it('retains the opinion preview while its in-place review waits and executes it once', async () => {
+  const { screen, serverId, previewPath } = await mount({ approvalReview: true });
   const { createDiscussionSecondOpinionController } = await import('./discussionSecondOpinionController');
   const controller = createDiscussionSecondOpinionController({ scope: { serverId, accountId: boundary.accountId(serverId) },
     availability: 'available', source: { kind: 'session', message: { kind: 'session',
       session: { serverId, sessionId: 'source-session' }, messageId: 'committed-answer' } },
     draft: { title: 'Review', question: 'Question', reviewers: [] } });
   await boundary.http.requireUiApproval(serverId, 'discussion.second_opinion.start');
-  await act(async () => { await controller.preview(); });
-  const pending = controller.getSnapshot().approval;
-  expect(pending).not.toBeNull();
-  await act(async () => { await controller.preview(); });
-  expect(controller.getSnapshot().approval).toBe(pending);
-  expect(boundary.http.artifacts(serverId).list().filter(artifact =>
-    boundary.http.artifacts(serverId).readPlainBody(artifact.id)?.includes('"actionId":"discussion.second_opinion.start"'))).toHaveLength(1);
-  await screen.unmount();
+  const approval = inPlaceApproval();
+  const before = boundary.http.requestsFor(previewPath).length;
+  try {
+    const preview = controller.preview();
+    const answer = await approval.review(screen);
+    expect(controller.getSnapshot()).toMatchObject({ working: true, approval: null, preview: null });
+    await expect(controller.preview()).resolves.toBeUndefined();
+    expect(boundary.http.requestsFor(previewPath)).toHaveLength(before);
+    answer(true);
+    await waitForHomeGovernance(() => expect(controller.getSnapshot().working).toBe(false));
+    await expect(preview).resolves.toMatchObject({ kind: 'succeeded', value: { status: 'preview' } });
+    expect(boundary.http.requestsFor(previewPath)).toHaveLength(before + 1);
+    expect(boundary.http.artifacts(serverId).list()).toEqual([]);
+  } finally { approval.dispose(); await screen.unmount(); }
 });
 
 it('submits an edited question once using the shown disclosure consent', async () => {

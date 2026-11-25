@@ -462,7 +462,8 @@ describe('useActionApprovalContinuation', () => {
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         storage.setState({ profileScope: { serverId, accountId: ACCOUNT_ID }, profile: AccountProfileSchema.parse({ id: ACCOUNT_ID }) });
         const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'personal' };
-        harness.answer(serverId, '/v1/account/profile', { select: () => ({ body: AccountProfileSchema.parse({ id: ACCOUNT_ID,
+        let profileAccountId = ACCOUNT_ID;
+        harness.answer(serverId, '/v1/account/profile', { select: () => ({ body: AccountProfileSchema.parse({ id: profileAccountId,
             connectedAccountsV4: [{ ref: account, status: 'connected', authenticationModeId: 'oauth', configurationReady: true,
                 configurationRevision: null, revisionSemantics: 'legacy_unfenced', credentialRevision: null }] }) }) });
         harness.answer(serverId, '/v1/account/entity-rows/connected-metadata/acknowledgements', {
@@ -495,14 +496,17 @@ describe('useActionApprovalContinuation', () => {
             pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
         })], now).accounts[0]!;
         const refreshed = vi.fn();
+        const { useAuth } = await import('@/auth/context/AuthContext');
+        let refreshAuth!: ReturnType<typeof useAuth>['refreshFromActiveServer'];
         function Editor() {
+            refreshAuth = useAuth().refreshFromActiveServer;
             const [, refresh] = React.useReducer(value => value + 1, 0);
             return <UsageSubscriptionPriceEditor account={projectedAccount()} serverId={serverId} testID="price"
                 onSettled={() => { refreshed(); refresh(); }} />;
         }
         const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
         const review = await mountActionReviewHost();
-        const screen = await renderMountedCurrentUiContext(<review.Provider><Editor /></review.Provider>);
+        const screen = await renderMountedCurrentUiContext(<review.Provider><Editor /></review.Provider>, { withAccountLifecycle: true });
         const { router } = await import('expo-router');
         vi.mocked(router.push).mockClear();
         const { FieldTextInput } = await import('@/components/ui/forms/FieldTextInput');
@@ -512,6 +516,7 @@ describe('useActionApprovalContinuation', () => {
         const edit = async (amount: string, currency: string) => {
             await act(async () => { field('amount').props.onChangeText(amount); field('currency').props.onChangeText(currency); });
         };
+        let release = () => {};
         try {
             expect(screen.findByTestId('price.amount')).toBeNull();
             await screen.pressByTestIdAsync('price-header');
@@ -545,6 +550,49 @@ describe('useActionApprovalContinuation', () => {
             approveRemoval();
             await waitForHomeGovernance(() => expect(refreshed).toHaveBeenCalledTimes(2));
             expect(record.entries).toEqual([]);
+            const reply = new Promise<void>(resolve => { release = resolve; });
+            let committed = false;
+            harness.answer(serverId, `POST ${path}`, { select: raw => {
+                const mutation = ConnectedPresentationRowMutationV1Schema.parse(raw);
+                if (mutation.content?.t !== 'plain') throw new Error('Expected keyless price metadata');
+                record = mutation.content.v; revision += 1; committed = true;
+                return { body: { status: 'updated', revision, cursor: revision }, respondAfter: reply };
+            } });
+            await edit('17', 'EUR');
+            act(() => screen.pressByTestId('price.save'));
+            const approveBeforeSwitch = await review.decision(screen, true);
+            approveBeforeSwitch();
+            await waitForHomeGovernance(() => expect(committed).toBe(true));
+            expect(record.entries).toMatchObject([{ subscriptionMonthlyPrice: { amount: 17, currency: 'EUR' } }]);
+            // The next Account starts with its own empty row; the held response was already captured for the old one.
+            profileAccountId = 'account-b';
+            record = { v: 1, entries: [] };
+            revision = 1;
+            await act(async () => {
+                await harness.switchAccount(serverId, profileAccountId);
+                await refreshAuth();
+                await harness.requireUiApproval(serverId, 'connectedServices.subscription.price.set');
+            });
+            await waitForHomeGovernance(() => expect(storage.getState().profileScope).toEqual({ serverId, accountId: profileAccountId }));
+            expect(field('amount').props.value).toBe('');
+            expect(field('currency').props.value).toBe('');
+            await act(async () => { release(); });
+            expect(harness.artifacts(serverId).list()).toEqual([]);
+            // The old Account committed its own write; its late reply cannot refresh the new editor.
+            expect(refreshed).toHaveBeenCalledTimes(2);
+            await edit('23', 'USD');
+            await waitForHomeGovernance(() => {
+                expect(field('amount').props.value).toBe('23');
+                expect(field('currency').props.value).toBe('USD');
+                expect(save().props.disabled).toBe(false);
+            });
+            act(() => screen.pressByTestId('price.save'));
+            const approveAfterSwitch = await review.decision(screen, true);
+            expect(save().props.disabled).toBe(true);
+            approveAfterSwitch();
+            await waitForHomeGovernance(() => expect(refreshed).toHaveBeenCalledTimes(3));
+            expect(save().props.disabled).toBe(false);
+            expect(record.entries).toMatchObject([{ subject: { kind: 'account', account }, subscriptionMonthlyPrice: { amount: 23, currency: 'USD' } }]);
             expect(harness.artifacts(serverId).list()).toEqual([]);
             expect(router.push).not.toHaveBeenCalled();
 
@@ -553,8 +601,9 @@ describe('useActionApprovalContinuation', () => {
             expect(harness.artifacts(serverId).list()).toEqual([expect.objectContaining({ id: agentRequest })]);
             expect(ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(agentRequest)!)))
                 .toMatchObject({ status: 'open', requestedSurface: 'agent' });
-            expect(record.entries).toEqual([]);
+            expect(record.entries).toMatchObject([{ subscriptionMonthlyPrice: { amount: 23, currency: 'USD' } }]);
         } finally {
+            release();
             try { await screen.unmount(); } finally { review.dispose(); }
             storage.setState({ profileScope: previous.profileScope, profile: previous.profile });
             publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
