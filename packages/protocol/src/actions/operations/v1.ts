@@ -1,6 +1,6 @@
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { LocalServiceStartFailureDetailsV1Schema } from '../../local/services/launcher/v1.js';
-import { HomeApplicationOriginV1Schema } from '../../auth/accountDirectory.js';
+import { HomeApplicationOriginV1Schema } from '../../auth/homeApplicationOriginV1.js';
 import { DeploymentReceiptSettlementFailureDetailsV1Schema, readDeploymentReceiptFailureCodeV1 } from '../../deployments/deploymentReceiptResultV1.js';
 import { DeploymentExecutionFailureDetailsV1Schema } from '../../deployments/deploymentReceiptEventsV1.js';
 import { ActionActorV1Schema } from '../actionRequestAttributionV1.js';
