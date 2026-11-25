@@ -45,10 +45,10 @@ export function revisionInstallDir(treesRoot, identity) {
  * revision on a host whose mirror has no Git objects. Unpacked into outputDir with
  * tar, which every supported OS ships.
  */
-export async function extractRevision({ repoDir, revision, outputDir, archivePath }) {
+export async function extractRevision({ repoDir, revision, outputDir, archivePath, paths = [] }) {
   const { spawn } = await import('node:child_process');
   await new Promise((resolvePromise, reject) => {
-    const archive = archivePath ? null : spawn('git', ['-C', repoDir, 'archive', '--format=tar', revision], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const archive = archivePath ? null : spawn('git', ['--literal-pathspecs', '-C', repoDir, 'archive', '--format=tar', revision, '--', ...paths], { stdio: ['ignore', 'pipe', 'pipe'] });
     const tar = spawn('tar', archivePath ? ['-xzf', archivePath, '-C', outputDir] : ['-x', '-C', outputDir],
       { stdio: [archive ? 'pipe' : 'ignore', 'ignore', 'pipe'] });
     const errors = [];

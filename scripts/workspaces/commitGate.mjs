@@ -17,6 +17,7 @@ import { commitImportCycles } from './commitImportCycles.mjs';
 import { APPROVAL_DTO_PATH, commitTreeEntryLoads, defaultCommitTreeLedger, EntryLoadAdmissionRequired, EntryLoadAdmissionUnavailable,
   selectCommitTreeEntryGraphs, withAdmittedCommitEntryPhase } from './commitTreeEntryLoads.mjs';
 import { withCommitLock } from './commitWriterLock.mjs';
+import { assertCommitGateDisk } from './commitGateScratch.mjs';
 export { commitGateLockPath, withCommitLock } from './commitWriterLock.mjs';
 
 
@@ -45,6 +46,7 @@ async function measureCheck(notes, check, run) {
 
 export async function runCommitGate({ repo, base, tree, compareAdmittedEntryLoads, env = process.env, phase = 'commit',
   cacheDir = env.P03_GATE_CACHE, expectedEnvironment, entryProof }) {
+  assertCommitGateDisk(env, repo, cacheDir);
   const fast = await runFastCommitGate({ repo, base, tree, phase, cacheDir });
   if (fast.verdict === 'refused' || phase === 'post-commit') return fast;
   return await judgeEntryLoads({ repo, base, tree, compareAdmittedEntryLoads, env, expectedEnvironment, entryProof, notes: fast.notes });
@@ -518,6 +520,7 @@ export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, c
   const waiting = candidate && !dry ? { candidate, label, message } : undefined;
   try {
     const queuedAt = performance.now();
+    assertCommitGateDisk(process.env, repo, replayScratchRoot, process.env.P03_GATE_CACHE);
     const priority = waiting && await identifyHeadRestoration({ repo, git, ref, packet, message, projections, replayScratchRoot });
     const land = async priority => {
       const timing = { applyMs: 0, recheckMs: 0, regenerationMs: 0, regenerations: 0, entryGenerationMs: 0, entryChecks: 0,
@@ -526,6 +529,7 @@ export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, c
       let published = 0;
       const self = { packet, projections, message, createCommit };
       const plan = async (head, queued) => {
+        assertCommitGateDisk(process.env, repo, replayScratchRoot, process.env.P03_GATE_CACHE);
         const writers = [self];
         if (queued && !priority && !dry) {
           for await (const { id, packet: waiting, restoresHead, saveLanding } of queued()) {

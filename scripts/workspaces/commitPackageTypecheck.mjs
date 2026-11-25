@@ -1257,7 +1257,9 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
 }
 
 async function withControllerDeclarationScratch(env, run) {
-  const scratch = mkdtempSync(join(env.P03_COMMIT_TREE_WORK_DIR || env.TMPDIR || tmpdir(), 'happier-controller-declarations-'));
+  const { assertCommitGateDisk, commitGateScratchRoot } = await import('./commitGateScratch.mjs');
+  assertCommitGateDisk(env);
+  const scratch = mkdtempSync(join(commitGateScratchRoot(env), 'happier-controller-declarations-'));
   const stop = new AbortController();
   const interrupt = signal => stop.abort(signal);
   const signals = ['SIGHUP', 'SIGINT', 'SIGTERM'];
@@ -1367,6 +1369,7 @@ function canMountPublishedDependencies(selected, installed, dirs) {
 }
 
 async function compileControllerDeclarations({ repo, trees, packages, sides, scratch }, signal) {
+  const { assertCommitGateDisk } = await import('./commitGateScratch.mjs');
   const { extractRevision } = await import('../../apps/stack/scripts/build/source_revision_install.mjs');
   const { mountCapturedWorkspaceDependencies } = await import('./buildInputConvergence.mjs');
   const { inspectDependencyRefresh, readDependencyPublicationState, withDependencyConsumption } = await import('../../apps/stack/scripts/utils/proc/dependency_refresh.mjs');
@@ -1385,6 +1388,7 @@ async function compileControllerDeclarations({ repo, trees, packages, sides, scr
         const state = join(scratch, String(index));
         const worktree = join(state, 'worktree');
         try {
+          assertCommitGateDisk(admittedEnv, scratch);
           mkdirSync(worktree, { recursive: true });
           await extractRevision({ repoDir: repo, revision: tree, outputDir: worktree });
           const selected = await inspectDependencyRefresh({ installDir: worktree });

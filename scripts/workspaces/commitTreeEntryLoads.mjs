@@ -1,10 +1,10 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, renameSync, writeFileSync, openSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, readdirSync, renameSync, writeFileSync, openSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isRuntimeImportProgressLine } from '../../apps/stack/scripts/utils/proc/runtimeImportProbe.mjs';
@@ -160,7 +160,11 @@ async function prepareGeneratedInputs({ git, tree, dir, installDir, root, env, s
   if (!tracked && !existsSync(cached) && (await lstat(own).catch(() => null))?.isDirectory()) {
     await mkdir(cacheDir, { recursive: true });
     const staging = `${cached}.tmp-${process.pid}`;
-    await rename(own, staging);
+    try { await rename(own, staging); }
+    catch (error) {
+      if (error.code === 'EXDEV') return key; // The disposable tree is on its own filesystem.
+      throw error;
+    }
     await rename(staging, cached).catch(async error => {
       if (!['EEXIST', 'ENOTEMPTY'].includes(error.code)) throw error;
       await rm(staging, { recursive: true, force: true });
@@ -374,59 +378,76 @@ export async function withAdmittedCommitEntryPhase({ repo, tree, projects, entry
     try { return await run(requireAdmission, requireAdmission); }
     catch (error) { if (!(error instanceof EntryLoadAdmissionRequired)) throw error; }
   }
-  const child = await spawnEntryLoadCommand({ repo, projects, env, stdio: ['pipe', 'pipe', 'inherit'],
-    payload: [process.execPath, self, '--entry-load-commit-session'] });
-  const terminal = waitForTreeChild(child);
-  // The stream can close before the child reports its exit status.
-  terminal.catch(() => {});
-  child.stdin.on('error', () => {}); // An early child exit is handled by the response and terminal status.
-  const output = createInterface({ input: child.stdout, crlfDelay: Infinity });
-  const lines = output[Symbol.asyncIterator]();
-  const readLine = async predicate => {
-    for (;;) {
-      const { done, value } = await lines.next();
-      if (done) return undefined;
-      if (predicate(value)) return value;
-    }
-  };
-  try {
-    if (!await readLine(line => line === ENTRY_LOAD_READY)) {
-      const status = await terminal.catch(error => error.code ?? error.name);
-      throw new EntryLoadAdmissionUnavailable(status);
-    }
-    const send = async request => {
-      child.stdin.write(JSON.stringify(request) + '\n');
-      const line = await readLine(line => line.startsWith(ENTRY_LOAD_RESULT));
-      if (!line) throw new Error(`admitted entry loads did not return a verdict (exit ${await terminal})`);
-      const result = JSON.parse(line.slice(ENTRY_LOAD_RESULT.length));
-      if (result.error) throw new Error(result.error);
-      return result;
+  return await withEntryLoadScratch(env, defaultRoot(), async admittedEnv => {
+    const child = await spawnEntryLoadCommand({ repo, projects, env: admittedEnv, stdio: ['pipe', 'pipe', 'inherit'],
+      payload: [process.execPath, self, '--entry-load-commit-session'] });
+    const terminal = waitForTreeChild(child);
+    // The stream can close before the child reports its exit status.
+    terminal.catch(() => {});
+    child.stdin.on('error', () => {}); // An early child exit is handled by the response and terminal status.
+    const output = createInterface({ input: child.stdout, crlfDelay: Infinity });
+    const lines = output[Symbol.asyncIterator]();
+    const readLine = async predicate => {
+      for (;;) {
+        const { done, value } = await lines.next();
+        if (done) return undefined;
+        if (predicate(value)) return value;
+      }
     };
-    return await run(request => {
-      assertCovered(request);
-      return send(request);
-    }, (combined, output, projections) => send({ repo, tree: combined, projectionOutput: output, projections }));
+    try {
+      if (!await readLine(line => line === ENTRY_LOAD_READY)) {
+        const status = await terminal.catch(error => error.code ?? error.name);
+        throw new EntryLoadAdmissionUnavailable(status);
+      }
+      const send = async request => {
+        child.stdin.write(JSON.stringify(request) + '\n');
+        const line = await readLine(line => line.startsWith(ENTRY_LOAD_RESULT));
+        if (!line) throw new Error(`admitted entry loads did not return a verdict (exit ${await terminal})`);
+        const result = JSON.parse(line.slice(ENTRY_LOAD_RESULT.length));
+        if (result.error) throw new Error(result.error);
+        return result;
+      };
+      return await run(request => {
+        assertCovered(request);
+        return send(request);
+      }, (combined, output, projections) => send({ repo, tree: combined, projectionOutput: output, projections }));
+    } finally {
+      child.stdin.end();
+      output.close();
+      await terminal.catch(() => {});
+    }
+  });
+}
+
+async function withEntryLoadScratch(env, cacheRoot, run) {
+  const { assertCommitGateDisk, commitGateScratchRoot } = await import('./commitGateScratch.mjs');
+  const root = commitGateScratchRoot(env);
+  assertCommitGateDisk(env, cacheRoot);
+  await mkdir(root, { recursive: true });
+  const scratch = await mkdtemp(join(root, 'happier-entry-load-'));
+  try {
+    return await run({ ...env, P03_COMMIT_TREE_WORK_DIR: scratch });
   } finally {
-    child.stdin.end();
-    output.close();
-    await terminal.catch(() => {});
+    await rm(scratch, { recursive: true, force: true });
   }
 }
 
 async function admitEntryLoads(request, { env, signal, admissionClass }) {
-  const child = await spawnEntryLoadCommand({ ...request, projects: request.selected, signal, admissionClass,
-    payload: [process.execPath, self, '--entry-load-admitted'],
-    env: { ...env, HAPPIER_COMMIT_ENTRY_LOAD_REQUEST: JSON.stringify(request) },
-    stdio: ['ignore', 'pipe', 'inherit'] });
-  let stdout = '';
-  child.stdout.setEncoding('utf8').on('data', data => { stdout += data; });
-  const status = await waitForTreeChild(child);
-  const line = stdout.split('\n').find(line => line.startsWith(ENTRY_LOAD_RESULT));
-  if (status !== 0 || !line) throw new Error(`entry-load admission did not return a verdict (exit ${status})`);
-  return JSON.parse(line.slice(ENTRY_LOAD_RESULT.length));
+  return await withEntryLoadScratch(env, request.root, async admittedEnv => {
+    const child = await spawnEntryLoadCommand({ ...request, projects: request.selected, signal, admissionClass,
+      payload: [process.execPath, self, '--entry-load-admitted'],
+      env: { ...admittedEnv, HAPPIER_COMMIT_ENTRY_LOAD_REQUEST: JSON.stringify(request) },
+      stdio: ['ignore', 'pipe', 'inherit'] });
+    let stdout = '';
+    child.stdout.setEncoding('utf8').on('data', data => { stdout += data; });
+    const status = await waitForTreeChild(child);
+    const line = stdout.split('\n').find(line => line.startsWith(ENTRY_LOAD_RESULT));
+    if (status !== 0 || !line) throw new Error(`entry-load admission did not return a verdict (exit ${status})`);
+    return JSON.parse(line.slice(ENTRY_LOAD_RESULT.length));
+  });
 }
 
-async function compareSelectedEntryLoads({ repo, base, tree, installDir, root, selected, graphs, phase, waitForDependencies }, env, signal) {
+async function compareSelectedEntryLoads({ repo, base, tree, installDir, root, selected, graphs, phase, waitForDependencies }, env, signal, capture) {
   const started = performance.now();
   const cpuBefore = process.cpuUsage();
   const childBefore = childCpuMs();
@@ -437,7 +458,7 @@ async function compareSelectedEntryLoads({ repo, base, tree, installDir, root, s
     return { ...result, selected, graphs, timings: { ...timings, totalMs: Math.round(performance.now() - started),
       cpuMs: Math.round((cpu.user + cpu.system) / 1000) + (children !== null && childBefore !== null ? children - childBefore : 0) } };
   };
-  const candidate = await loadTreeGraphs({ repo, tree, ids: selected, installDir, root, env, signal, timings, waitForDependencies });
+  const candidate = await loadTreeGraphs({ repo, tree, ids: selected, installDir, root, env, signal, timings, waitForDependencies, capture });
   const requiredFailures = candidate.failures.filter(failure => REQUIRED_RUNTIME_GRAPHS.has(failure.graph));
   if (requiredFailures.length) return finish({
     findings: requiredFailures.map(failure => failure.finding), preexisting: [], results: candidate.results,
@@ -457,37 +478,92 @@ async function compareSelectedEntryLoads({ repo, base, tree, installDir, root, s
   return finish({ findings, preexisting, results: candidate.results });
 }
 
+function captureFiles(dir) {
+  return readdirSync(dir, { recursive: true, withFileTypes: true }).flatMap(entry => {
+    const path = join(entry.parentPath, entry.name);
+    if (entry.isDirectory()) return [`${relative(dir, path)}/`];
+    const stat = lstatSync(path, { bigint: true });
+    return [`${relative(dir, path)}\0${stat.ino}:${stat.ctimeNs}:${stat.mtimeNs}:${stat.size}:${stat.mode}`];
+  }).sort();
+}
+
+async function releaseCapture(capture) {
+  const current = capture.current;
+  capture.current = undefined;
+  if (current) await rm(current.dir, { recursive: true, force: true });
+}
+
 /** Mount the exact tree and hold the existing dependency reader during its use. */
-async function withMountedCommitTree({ repo, tree, installDir, root, env, signal, timings, waitForDependencies }, run) {
-  const trees = env.P03_COMMIT_TREE_WORK_DIR || join(root, 'trees');
-  await mkdir(trees, { recursive: true });
-  const dir = await mkdtemp(join(trees, 'tree-'));
-  const mark = (name, from) => { timings[name] = Math.round(performance.now() - from); return performance.now(); };
-  try {
-    const { extractRevision } = await import(new URL('apps/stack/scripts/build/source_revision_install.mjs', tooling).href);
-    const { mountCapturedWorkspaceDependencies } = await import(new URL('scripts/workspaces/buildInputConvergence.mjs', tooling).href);
-    const { readWorkspacePackages } = await import(new URL('packages/cli-common/sourceRuntimeEntries.mjs', tooling).href);
-    const { withDependencyConsumption } = await import(new URL('apps/stack/scripts/utils/proc/dependency_refresh.mjs', tooling).href);
+async function withMountedCommitTree({ repo, tree, installDir, root, env, signal, timings, waitForDependencies,
+  capture, projectionOutput }, run) {
+  const { assertCommitGateDisk, commitGateScratchRoot } = await import('./commitGateScratch.mjs');
+  const { extractRevision } = await import(new URL('apps/stack/scripts/build/source_revision_install.mjs', tooling).href);
+  const { mountCapturedWorkspaceDependencies } = await import(new URL('scripts/workspaces/buildInputConvergence.mjs', tooling).href);
+  const { readWorkspacePackages } = await import(new URL('packages/cli-common/sourceRuntimeEntries.mjs', tooling).href);
+  const { readDependencyPublicationState, withDependencyConsumption } =
+    await import(new URL('apps/stack/scripts/utils/proc/dependency_refresh.mjs', tooling).href);
+  assertCommitGateDisk(env, root);
+  return await withDependencyConsumption({ installDir, env, signal, wait: waitForDependencies }, async () => {
+    assertCommitGateDisk(env, root);
+    const mark = (name, from) => { timings[name] = Math.round(performance.now() - from); return performance.now(); };
     let at = performance.now();
-    await extractRevision({ repoDir: repo, revision: tree, outputDir: dir });
-    signal?.throwIfAborted();
-    at = mark('extractMs', at);
-    return await withDependencyConsumption({ installDir, env, signal, wait: waitForDependencies }, async () => {
-      const workspaceDirs = [...(await readWorkspacePackages(dir)).values()].map(workspace => relative(dir, workspace.root)).filter(Boolean);
-      const mount = () => mountCapturedWorkspaceDependencies({ sourceDir: installDir, captureDir: dir, workspaceDirs, capturedOnly: true });
-      await mount();
+    let dir;
+    let mount;
+    try {
+      const state = capture && await readDependencyPublicationState({ installDir, env });
+      const installation = state && !state.writerActive && state.generation === state.completedGeneration
+        && (state.identity || !existsSync(join(installDir, 'node_modules')))
+        ? JSON.stringify([installDir, state.identity, state.generation]) : null;
+      const previous = capture?.current;
+      if (previous && !projectionOutput && installation && previous.installation === installation && previous.repo === repo) {
+        const git = gitAt(repo);
+        const changes = git(['diff-tree', '-r', '--no-commit-id', '--no-renames', '--name-status', '-z', previous.tree, tree])
+          .toString().split('\0');
+        changes.pop();
+        const paths = changes.filter((_, index) => index % 2 === 1);
+        if (paths.every((path, index) => changes[index * 2] === 'M' && previous.outputs.has(path)
+          && lstatSync(join(previous.dir, path), { throwIfNoEntry: false })?.isFile())) {
+          const currentFiles = captureFiles(previous.dir);
+          if (currentFiles.length === previous.files.length && currentFiles.every((file, index) => file === previous.files[index])) {
+            ({ dir, mount } = previous);
+            capture.current = undefined;
+            if (paths.length) await extractRevision({ repoDir: repo, revision: tree, outputDir: dir, paths });
+            at = mark('extractMs', at);
+          }
+        }
+      }
+      if (!dir) {
+        if (capture) await releaseCapture(capture);
+        // Source trees are per attempt. Keep the reusable generated-input cache separate.
+        const trees = join(commitGateScratchRoot(env), 'happier-commit-tree-scratch');
+        await mkdir(trees, { recursive: true });
+        dir = await mkdtemp(join(trees, 'tree-'));
+        await extractRevision({ repoDir: repo, revision: tree, outputDir: dir });
+        signal?.throwIfAborted();
+        at = mark('extractMs', at);
+        const workspaceDirs = [...(await readWorkspacePackages(dir)).values()].map(workspace => relative(dir, workspace.root)).filter(Boolean);
+        mount = () => mountCapturedWorkspaceDependencies({ sourceDir: installDir, captureDir: dir, workspaceDirs, capturedOnly: true });
+        await mount();
+      }
       at = mark('mountMs', at);
-      return await run({ dir, mount, report: name => { at = mark(name, at); } });
-    });
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+      const files = projectionOutput && installation ? captureFiles(dir) : null;
+      const result = await run({ dir, mount, report: name => { at = mark(name, at); } });
+      if (files) {
+        const outputs = new Set((existsSync(projectionOutput) ? readdirSync(projectionOutput, { recursive: true, withFileTypes: true }) : [])
+          .filter(entry => entry.isFile()).map(entry => relative(projectionOutput, join(entry.parentPath, entry.name)).split(sep).join('/')));
+        capture.current = { dir, mount, repo, tree, installation, files, outputs };
+      }
+      return result;
+    } finally {
+      if (dir && dir !== capture?.current?.dir) await rm(dir, { recursive: true, force: true });
+    }
+  });
 }
 
 /** Derive the requested projections using the combined tree's canonical generators. */
-async function regenerateCommitProjections({ repo, tree, output, projections }, env, signal) {
+async function regenerateCommitProjections({ repo, tree, output, projections }, env, signal, capture) {
   return await withMountedCommitTree({ repo, tree, installDir: repo, root: defaultRoot(), env, signal,
-    timings: {}, waitForDependencies: false }, async ({ dir }) => {
+    timings: {}, waitForDependencies: false, capture, projectionOutput: output }, async ({ dir }) => {
     const { sourceBuildNodeArgs } = await import(new URL('apps/stack/scripts/utils/proc/sourceBuildNodeArgs.mjs', tooling).href);
     const featurePolicy = join(dir, 'packages/protocol/scripts/generate-embedded-feature-policies.mjs');
     const generator = join(dir, 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts');
@@ -499,36 +575,45 @@ async function regenerateCommitProjections({ repo, tree, output, projections }, 
       const status = await waitForTreeChild(child);
       if (status !== 0) throw new Error(`Action projection generation exited ${status}: ${stderr.trim()}`);
     };
-    if (existsSync(featurePolicy)) await run([featurePolicy]);
-    if (projections.cli) {
-      await run(sourceBuildNodeArgs({ repoDir: dir, scriptPath: generator,
-        args: ['--daemon-projections', '--daemon-output-root', output] }));
-      const { readBundledPluginPublicationFailures } = await import('./bundledPluginPublicationFailure.mjs');
-      const selectedFailures = readBundledPluginPublicationFailures(output)
-        .filter(({ packageName }) => projections.plugins.includes(packageName.replace(/^@happier-dev\/plugins-/u, '')));
-      if (selectedFailures.length) throw new Error(`bundled plugin manifest generation failed: ${JSON.stringify(selectedFailures)}`);
-    }
-    if (projections.approvals) {
-      const dtoGenerator = pathToFileURL(join(dir, 'packages/plugin-sdk/scripts/generateActionTypeMap.mjs')).href;
-      await run(['--input-type=module', '--eval', `
-        import { prepareActionTypeMap } from ${JSON.stringify(dtoGenerator)};
-        import { mkdir, writeFile } from 'node:fs/promises';
-        import { dirname } from 'node:path';
-        const [source, target] = process.argv.slice(1);
-        const { outputs } = await prepareActionTypeMap();
-        const text = outputs.get(source);
-        if (text === undefined) throw new Error('Canonical Action DTO generator omitted ' + source);
-        await mkdir(dirname(target), { recursive: true });
-        await writeFile(target, text);
-      `, join(dir, APPROVAL_DTO_PATH), join(output, APPROVAL_DTO_PATH)]);
+    // The policy generator supplies an untracked compiler input for this
+    // preparation. The entry check derives its own inputs from the judged tree.
+    const policyPath = existsSync(featurePolicy)
+      ? join(dir, 'packages/protocol/src/features/embeddedFeaturePolicies.generated.ts') : null;
+    const hadPolicy = policyPath && existsSync(policyPath);
+    try {
+      if (policyPath) await run([featurePolicy]);
+      if (projections.cli) {
+        await run(sourceBuildNodeArgs({ repoDir: dir, scriptPath: generator,
+          args: ['--daemon-projections', '--daemon-output-root', output] }));
+        const { readBundledPluginPublicationFailures } = await import('./bundledPluginPublicationFailure.mjs');
+        const selectedFailures = readBundledPluginPublicationFailures(output)
+          .filter(({ packageName }) => projections.plugins.includes(packageName.replace(/^@happier-dev\/plugins-/u, '')));
+        if (selectedFailures.length) throw new Error(`bundled plugin manifest generation failed: ${JSON.stringify(selectedFailures)}`);
+      }
+      if (projections.approvals) {
+        const dtoGenerator = pathToFileURL(join(dir, 'packages/plugin-sdk/scripts/generateActionTypeMap.mjs')).href;
+        await run(['--input-type=module', '--eval', `
+          import { prepareActionTypeMap } from ${JSON.stringify(dtoGenerator)};
+          import { mkdir, writeFile } from 'node:fs/promises';
+          import { dirname } from 'node:path';
+          const [source, target] = process.argv.slice(1);
+          const { outputs } = await prepareActionTypeMap();
+          const text = outputs.get(source);
+          if (text === undefined) throw new Error('Canonical Action DTO generator omitted ' + source);
+          await mkdir(dirname(target), { recursive: true });
+          await writeFile(target, text);
+        `, join(dir, APPROVAL_DTO_PATH), join(output, APPROVAL_DTO_PATH)]);
+      }
+    } finally {
+      if (capture && policyPath && !hadPolicy) await rm(policyPath, { force: true });
     }
     return {};
   });
 }
 
 /** One tree: derive its generated inputs, then load the graphs. */
-async function loadTreeGraphs({ repo, tree, ids, installDir, root, env, signal, timings, waitForDependencies }) {
-  return await withMountedCommitTree({ repo, tree, installDir, root, env, signal, timings, waitForDependencies },
+async function loadTreeGraphs({ repo, tree, ids, installDir, root, env, signal, timings, waitForDependencies, capture }) {
+  return await withMountedCommitTree({ repo, tree, installDir, root, env, signal, timings, waitForDependencies, capture },
     async ({ dir, mount, report }) => {
       const generatedKey = await prepareGeneratedInputs({ git: gitAt(repo), tree, dir, installDir, root, env, signal });
       timings.generatedKey = generatedKey.slice(0, 12);
@@ -719,6 +804,7 @@ if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[
   process.once('SIGINT', interrupt);
   process.once('SIGTERM', interrupt);
   if (args.includes('--entry-load-commit-session')) {
+    const capture = {};
     const requests = createInterface({ input: process.stdin, crlfDelay: Infinity });
     stop.signal.addEventListener('abort', () => requests.close(), { once: true });
     process.stdout.write(`${ENTRY_LOAD_READY}\n`);
@@ -726,9 +812,9 @@ if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[
       for await (const line of requests) {
         const { projectionOutput, ...request } = JSON.parse(line);
         const result = projectionOutput
-          ? await regenerateCommitProjections({ ...request, output: projectionOutput }, process.env, stop.signal)
+          ? await regenerateCommitProjections({ ...request, output: projectionOutput }, process.env, stop.signal, capture)
             .catch(error => ({ error: error.message }))
-          : await compareSelectedEntryLoads(request, process.env, stop.signal);
+          : await compareSelectedEntryLoads(request, process.env, stop.signal, capture);
         process.stdout.write(`${ENTRY_LOAD_RESULT}${JSON.stringify(result)}\n`);
       }
     } catch (error) {
@@ -736,6 +822,7 @@ if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[
       process.exitCode = 75;
     } finally {
       requests.close();
+      await releaseCapture(capture);
     }
   } else if (args.includes('--entry-load-admitted')) {
     try {
