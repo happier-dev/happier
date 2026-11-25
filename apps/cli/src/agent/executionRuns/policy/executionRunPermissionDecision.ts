@@ -123,19 +123,17 @@ function resolveExecutionRunImmediateDecision(args: Readonly<{
   const actionPermission = resolveProviderPermissionForHappierAction({
     toolName: args.toolName, input: args.input, permissionMode: effectiveMode,
   });
-  // An admitted Action ceiling cannot be widened by a legacy tool allowlist.
-  if (effective.authority === 'admittedSessionInputV1' && actionPermission.decision === 'denied') {
-    return { decision: 'denied' };
-  }
-
-  // Legacy no_tools names a shared-safe tool allowlist, not the canonical
-  // read-only Action ceiling. Preserve it after any admitted Action denial.
-  if (rawLower === 'no_tools') {
+  // The legacy no_tools allowlist cannot widen an admitted Action ceiling.
+  const deniedByAdmittedActionCeiling = effective.authority === 'admittedSessionInputV1'
+    && actionPermission.decision === 'denied';
+  if (rawLower === 'no_tools' && !deniedByAdmittedActionCeiling) {
     return { decision: shouldAlwaysApproveExecutionRunTool(args.toolName) ? 'approved' : 'denied' };
   }
 
-  if (actionPermission.decision) return resolveNativePermissionImmediateDecision(
-    { decision: actionPermission.decision }, args.context?.nativeChoices, actionPermission);
+  if (actionPermission.decision) {
+    const { actionId: _actionId, ...decision } = actionPermission;
+    return resolveNativePermissionImmediateDecision(decision, args.context?.nativeChoices, actionPermission);
+  }
 
   if (shouldAlwaysApproveExecutionRunTool(args.toolName)) return { decision: 'approved' };
 

@@ -23,6 +23,11 @@ These are the modes you may see in the CLI and/or the app:
 - **Auto** (`auto`): requests automatic tool use according to the Agent's closest supported policy.
 - **YOLO** (`yolo`): skips approvals as much as the Agent allows (full speed, least safe).
 
+In 0.3 development builds, Happier applies the **Read-only** ceiling to Happier
+Actions for every Agent. An Agent can read through Happier tools. To write
+through them, such as saving a Workflow draft, choose a write-capable permission
+mode. Your Action approval settings still apply in that mode.
+
 Not every Agent realizes each intent the same way. Auto does **not** universally mean that writes are confined to the workspace; consult the Agent notes below for the behavior of the runtime you use.
 
 For Codex App Server in development builds, Read-only also disables network access for sandboxed commands and approval-based escalation. See [Codex permissions and modes](/agents/codex#permissions-and-modes) for backend differences.

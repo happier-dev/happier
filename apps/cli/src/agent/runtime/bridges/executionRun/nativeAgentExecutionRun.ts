@@ -555,7 +555,12 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
             const placement = await admitAgentNativeMcpPlacementForHost(bound.services.exec, signal);
             if (placement) {
                 happierBridge = await createNativeRunHappierMcpBridge({ services: bound.services, placement,
-                    signal, directory: params.directory, machineId: params.machineId });
+                    signal, directory: params.directory, machineId: params.machineId,
+                    readPermission: () => ({
+                        mode: normalizeExecutionRunPermissionMode(params.permissionMode),
+                        witness: readActiveTurnAdmissionWitness?.() ?? null,
+                    }),
+                });
                 mcpServers = { ...mcpServers, happier: happierBridge.mcpServer };
             }
             const created = createNativeAgentInvocationContext({

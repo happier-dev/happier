@@ -14,6 +14,9 @@ import type { RpcLocalActionContext } from '@/api/rpc/types';
 import { listHappierMcpToolNames, registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createSessionAgentTitleWriteGuard, SessionAgentTitleUpdateDenied } from '@/agent/permissions/codingPromptTitlePermission';
+import { createHappierActionIngressExecutor } from '@/agent/permissions/happierActionPermission';
+import { isAgentStartActionInvocationV1, requiresActionAgentStartDepthV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { createChangeTitleToolHandler } from '@/agent/tools/happierTools/createChangeTitleToolHandler';
 import { dispatchBuiltInHappierTool, unknownBuiltInHappierToolFailure } from '@/agent/tools/happierTools/dispatchBuiltInHappierTool';
 import type { HappierBuiltInToolDispatchResult } from '@/agent/tools/happierTools/types';
@@ -709,27 +712,42 @@ export function createHappierMcpServer(
         return await createHarness(host).executor.execute(id, operands, { ...admittedContext, actionCaller: admission.caller });
       }) } : {}),
   });
-  const executor = {
-    execute: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => {
+  const turnExecutor = {
+    execute: async (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => {
       const witness = client.getActiveTurnAdmissionWitness?.();
       // Manual tools share this entry point with the common Action bridge.
       // The host witness supplies their restriction and exact admission lifetime.
       if (witness?.nativeRealtimeAdmission) {
         const admission = resolveInitiatingActionCaller(witness);
-        if (!admission.ok) return Promise.resolve(admission.result);
+        if (!admission.ok) return admission.result;
       }
       const signals = [toolExecutionSignal, context?.signal, witness?.signal]
         .filter((signal): signal is AbortSignal => signal != null);
       const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
-      return accountExecutor.execute(actionId, input, {
+      // Read the daemon policy only after the ingress has admitted the Action.
+      const sessionAgentSpawnPolicyV1 = requiresActionAgentStartDepthV1(actionId)
+        || isAgentStartActionInvocationV1(actionId, readRecord(input))
+        ? await readSessionAgentSpawnPolicyV1(signal)
+        : undefined;
+      return await accountExecutor.execute(actionId, input, {
         ...context,
         sourceSessionEncryptionMode: client.getStoredContentEncryptionContext?.()?.mode ?? 'unknown',
         ...(actionInvocation ? { surface: toolSurface, authority: actionInvocation.authority, actionCaller: actionInvocation.caller } : {}),
         ...(witness?.nativeRealtimeAdmission ? { nativeRealtimeInput: true as const, callerPermissionMode: witness.callerPermissionMode ?? null } : {}),
         ...(signal ? { signal } : {}),
+        ...(sessionAgentSpawnPolicyV1 === undefined ? {} : { sessionAgentSpawnPolicyV1 }),
       });
     },
   };
+  const executor = toolSurface === 'agent' ? createHappierActionIngressExecutor({
+    executor: turnExecutor,
+    readPermission: () => ({
+      mode: resolveAgentCallerPermissionMode(),
+      witness: (client.getActiveTurnAdmissionWitness
+        ? client.getActiveTurnAdmissionWitness()
+        : client.getActiveTurnPermissionWitness?.()) ?? null,
+    }),
+  }) : turnExecutor;
 
   const actionToolBridge = createActionToolExecutorBridge({
     executor,
@@ -753,7 +771,6 @@ export function createHappierMcpServer(
       return target ? { kind: 'agent', agentId: resolveExecutionRunPublicBackendId(target), sessionId: client.sessionId } : null;
     },
     sessionInputVia: opts?.sessionInputVia ?? 'mcp',
-    getSessionAgentSpawnPolicyV1: readSessionAgentSpawnPolicyV1,
     resolveRuntimeRunId: () => {
       const caller = client.getAgentStartRunCaller?.();
       return caller && 'callingRunId' in caller ? caller.callingRunId : client.getSessionActionConfirmationBinding?.()?.run?.runId;

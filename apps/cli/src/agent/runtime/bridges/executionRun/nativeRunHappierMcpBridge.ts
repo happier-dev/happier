@@ -4,6 +4,7 @@ import { parsePluginHostActionInvocation } from '@happier-dev/plugin-sdk/actions
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
+import { createHappierActionIngressExecutor } from '@/agent/permissions/happierActionPermission';
 import { resolveHappierMcpServerConfig } from '@/agent/runtime/createHappierMcpBridge';
 import { sessionMcpAgentLaunchContextFile } from '@/daemon/agentIsolation/agentLaunchMaterials';
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
@@ -19,23 +20,27 @@ export async function createNativeRunHappierMcpBridge(input: Readonly<{
     signal: AbortSignal;
     directory: string;
     machineId: string;
+    readPermission: Parameters<typeof createHappierActionIngressExecutor>[0]['readPermission'];
 }>) {
     const bridge = createActionToolExecutorBridge({
-        executor: {
+        executor: createHappierActionIngressExecutor({
+          readPermission: input.readPermission,
+          executor: {
             async execute(actionId, rawInput, context) {
                 try {
                     const contribution = parseQualifiedPluginActionId(actionId);
                     if (contribution) return { ok: true, result: await input.services.actions.execute(contribution,
-                        StrictJsonValueSchema.parse(rawInput), { signal: context.signal ?? input.signal }) };
+                        StrictJsonValueSchema.parse(rawInput), { signal: context?.signal ?? input.signal }) };
                     const request = parsePluginHostActionInvocation(actionId, rawInput);
                     return { ok: true, result: await input.services.actions.execute(request.actionId, request.input,
-                        { signal: context.signal ?? input.signal }) };
+                        { signal: context?.signal ?? input.signal }) };
                 } catch (error) {
                     if (!isPluginError(error)) throw error;
                     return { ok: false, errorCode: error.code, error: error.message, details: error.data.details };
                 }
             },
-        },
+          },
+        }),
         surface: 'agent', defaultSessionMachineId: input.machineId, defaultSessionRootPath: input.directory,
     });
     const createServer = (signal: AbortSignal) => {

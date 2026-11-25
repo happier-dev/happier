@@ -3,7 +3,7 @@ import { findActionSpec, getActionSpec } from '@happier-dev/protocol/actions/act
 import type { ActionId } from '@happier-dev/protocol';
 
 import type { PermissionMode } from '@/api/types';
-import { resolveHappierActionPermission } from '@/agent/permissions/happierActionPermission';
+import { resolveHappierActionPermission, type HappierActionPermissionResult } from '@/agent/permissions/happierActionPermission';
 
 import { getEquivalentActionIdForBuiltInTool } from './actionToolCatalog';
 import { parseTrustedHappierToolsShellBridgeCommand } from './runtime/buildHappierToolsShellBridgeCommand';
@@ -52,7 +52,7 @@ export function resolveHappierActionForMcpToolName(params: Readonly<{
 }
 
 export type HappierActionPermissionDecision =
-  | Readonly<{ decision: 'approved' | 'denied'; actionId: ActionId }>
+  | (HappierActionPermissionResult & Readonly<{ actionId: ActionId }>)
   | Readonly<{ decision: null; actionId: null }>;
 
 export function resolveProviderPermissionForHappierAction(params: Readonly<{
@@ -67,7 +67,7 @@ export function resolveProviderPermissionForHappierAction(params: Readonly<{
   if (!actionId) return { decision: null, actionId: null };
 
   return {
-    decision: resolveHappierActionPermission({ spec: getActionSpec(actionId), permissionMode: params.permissionMode }),
+    ...resolveHappierActionPermission({ spec: getActionSpec(actionId), permissionMode: params.permissionMode }),
     actionId,
   };
 }

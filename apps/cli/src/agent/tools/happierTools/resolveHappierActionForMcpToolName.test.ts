@@ -83,7 +83,8 @@ describe('resolveProviderPermissionForHappierAction', () => {
         toolName: 'happier_action_execute',
         input: { actionId: 'session.board.item.remove' },
         permissionMode,
-      })).toEqual({ decision: 'denied', actionId: 'session.board.item.remove' });
+      })).toMatchObject({ decision: 'denied', actionId: 'session.board.item.remove',
+        reasonCode: 'permission_exceeds_ceiling', rationale: expect.stringContaining(permissionMode) });
 
       expect(resolveProviderPermissionForHappierAction({
         toolName: 'mcp__happier__session_board_get',
@@ -106,7 +107,7 @@ describe('resolveProviderPermissionForHappierAction', () => {
           ]),
         },
         permissionMode,
-      })).toEqual({ decision: 'denied', actionId: 'session.board.item.remove' });
+      })).toMatchObject({ decision: 'denied', actionId: 'session.board.item.remove', reasonCode: 'permission_exceeds_ceiling' });
     },
   );
 
@@ -122,7 +123,7 @@ describe('resolveProviderPermissionForHappierAction', () => {
         toolName: 'happier_action_execute',
         input: { actionId },
         permissionMode: 'read-only',
-      })).toEqual({ decision: 'denied', actionId });
+      })).toMatchObject({ decision: 'denied', actionId, reasonCode: 'permission_exceeds_ceiling' });
     }
   });
 

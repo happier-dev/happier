@@ -107,6 +107,10 @@ The important user-facing result is the same:
 
 ## Built-in actions vs custom MCP tools
 
+In 0.3 development builds, both delivery paths honor the Session's
+[Read-only permission mode](/sessions/permissions#permission-modes) for Happier
+Actions. A call that would write fails with `permission_exceeds_ceiling`.
+
 Happier tools intentionally mix:
 
 - **built-in actions** backed by Happier `ActionSpec`

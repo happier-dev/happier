@@ -1393,6 +1393,12 @@ one-call choice. This does not grant shell access or bypass the Action's own
 authorization and confirmation; ambiguous or unavailable offered choices remain
 pending.
 
+In 0.3 development, Session and detached Run Happier tool execution also
+consumes the host Action permission decision. An effective Read-only mode
+refuses writes, external effects, and dangerous Actions before execution with
+`permission_exceeds_ceiling`, including calls delivered without a native
+permission offer. Read-only Actions remain available under their usual policy.
+
 In 0.3 development source, OpenCode's server runtime requires the Happier MCP
 bridge only when the Session or Run open request supplies it. Detached Runs may
 omit the bridge while retaining native tools and any selected user MCP servers.

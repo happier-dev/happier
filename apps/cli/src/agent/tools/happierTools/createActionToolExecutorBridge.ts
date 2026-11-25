@@ -7,7 +7,7 @@ import {
   type ReviewCommentPrincipalHeaderV1,
 } from '@happier-dev/protocol';
 import { createActionToolNameToIdMap, resolveActionToolCatalogAvailability, resolveDiscoveredPluginActionAvailability } from './actionToolCatalog';
-import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
+import { ActionDefinitionV1Schema, type ActionDefinitionV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import { isAgentStartActionInvocationV1, requiresActionAgentStartDepthV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { normalizeExecutionRunToolResult } from './executionRunToolResult';
@@ -44,6 +44,7 @@ type ActionExecutorLike = Readonly<{
       sessionListAccess?: 'current_session' | 'led_subtree';
       reviewCommentPrincipal?: ReviewCommentPrincipalHeaderV1;
     }>,
+    definition?: ActionDefinitionV1,
   ) => Promise<ActionExecutorResult>;
 }>;
 
@@ -425,6 +426,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
           actionId as ActionId,
           actionInput,
           executorContext,
+          ...(definition ? [definition] as const : [] as const),
         ), actionInput);
       }
 

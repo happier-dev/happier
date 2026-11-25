@@ -71,10 +71,13 @@ import { createNativeAgentSessionOperations } from '@/agent/runtime/registry/eng
 import type { AgentSessionRealtimeConversation, AgentSessionRuntime, AgentSessionRuntimeContext, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createRestrictedCurrentSessionListActionDependency } from '@/session/actions/sessionListActionDependency';
 import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { registerAgentSessionRealtimeVoiceRpc } from '@/agent/runtime/session/realtime/registerAgentSessionRealtimeVoiceRpc';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import type { NativeRealtimeInputAdmissionV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceTurnWitness';
 import { withCodexNativeAttachFixture } from '../../../../packages/plugins/codex/src/agent/runtime/appServer/runtime.nativeAttach.test-support';
+import { buildCodexAppServerConfigOverrides } from '../../../../packages/plugins/codex/src/agent/runtime/appServer/config/overrides';
+import { buildPiRpcArgs } from '../../../../packages/plugins/pi/src/agent/runtime/rpc/args';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 // The native socket fixture owns TMPDIR. Isolate only its OS-user startup
@@ -256,6 +259,7 @@ async function withTitleHost(
   const restore = installAxiosFastifyAdapter({ app, origin: getTestServerBinding().serverUrl });
   app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ mode: 'plain' }));
   app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: getAccountSettings() }, version: 1 }));
+  app.get(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, async () => ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
   app.get('/v1/artifacts', async request => artifactListResponse(`http://localhost${request.url}`, []));
   app.get(ACP_CATALOG_ROWS_ROUTE_V1, async () => ({ status: 'absent' }));
   app.post('/v2/sessions/query', async () => SessionListQueryResponseV1Schema.parse({ sessions: [],
@@ -1102,6 +1106,55 @@ describe('createHappierMcpServer real host admission', () => {
         if (!validatorId) throw new Error('Start must identify its definition validator');
         const validator = ActionDiscoveryDefinitionV1Schema.parse(await readSpec(validatorId));
         expect(validator.id).toBe('workflow.validate');
+      });
+    } finally { await daemon.close(); }
+  });
+
+  it('refuses wrapped and direct Workflow draft creation at the Session MCP ingress for Codex and Pi', async () => {
+    const sessionId = 'c666666666666666666668125';
+    const actionId = 'workflow.definition.create';
+    const toolName = getActionSpec(actionId).bindings?.mcpToolName;
+    if (!toolName) throw new Error('Workflow creation must declare a named MCP tool');
+    const daemon = await installAccountCatalogDaemonTransport({ sessionId, readMetadata: () => createTestMetadata(),
+      features: { features: { workflows: { enabled: true } }, capabilities: {} } });
+    const runtime = createHappierMcpServer(hostClient(sessionId, {
+      getPermissionMode: () => 'read-only',
+      getServerFeaturesSnapshot: () => daemon.serverFeaturesSnapshot,
+    }), { sessionCredentials: daemon.credentials, requiredDirectActionIds: [actionId] });
+    const input = {
+      definitionId: '912ae652-cab1-4ad9-a027-3aee5a679125',
+      metadata: { title: 'Read-only draft' },
+      definition: { version: 1, inputs: [], defaults: {}, blocks: [{ id: 'wait', kind: 'wait',
+        document: { text: 'Continue', references: [], attachments: [] } }] },
+    };
+    try {
+      await withMcpClient(runtime, async client => {
+        const tools = (await client.listTools()).tools.map(tool => tool.name);
+        expect(tools).toEqual(expect.arrayContaining(['action_execute', toolName]));
+        const codex = buildCodexAppServerConfigOverrides({ happier: { command: 'bridge' } });
+        expect(codex.mcpOverrides).toContain('mcp_servers.happier.tools.action_execute.approval_mode="approve"');
+        const pi = buildPiRpcArgs({ permissionMode: 'read-only', happierToolsExtension: {
+          extensionPath: '/fixture/extension.mjs', configPath: '/fixture/config.json', toolNames: tools,
+        } });
+        expect(pi[pi.indexOf('--tools') + 1]?.split(',')).toEqual(expect.arrayContaining(['action_execute', toolName]));
+        // The vendor process is the boundary. Deliver the exact calls those
+        // launch policies allow to the shared in-session MCP server.
+        const calls = [
+          { label: 'Codex wrapped', name: 'action_execute', arguments: { actionId, input } },
+          { label: 'Pi wrapped', name: 'action_execute', arguments: { actionId, input } },
+          { label: 'Pi named', name: toolName, arguments: input },
+        ];
+        const results = await Promise.all(calls.map(async ({ label, ...request }) => ({
+          label, result: await client.callTool(request),
+        })));
+        for (const { label, result } of results) {
+          const reply = CallToolResultSchema.parse(result);
+          const content = reply.content[0];
+          expect.soft(reply.isError, label).toBe(true);
+          expect.soft(content.type === 'text' ? JSON.parse(content.text) : null, label).toMatchObject({
+            errorCode: 'permission_exceeds_ceiling', error: expect.stringContaining('read-only'),
+          });
+        }
       });
     } finally { await daemon.close(); }
   });
@@ -2249,9 +2302,25 @@ describe('createHappierMcpServer', () => {
     expect(toolNames).toContain('session_list');
   });
 
-  it('reads current account action settings when registered session-agent MCP tools run', async () => {
+  it('enforces the Session MCP ceiling before account Action settings and admits reads and later writes', async () => {
     let settings = accountSettingsParse({});
+    let mode: import('@/api/types').PermissionMode = 'read-only';
     await withTitleHost('c111111111111111111111112', () => settings, async fixture => withMcpClient(fixture.runtime, async client => {
+      const wrapped = { name: 'action_execute', arguments: { actionId: 'session.title.set', input: { title: 'Denied' } } };
+      for (const request of [wrapped, { name: 'change_title', arguments: { title: 'Denied' } }]) {
+        const reply = CallToolResultSchema.parse(await client.callTool(request));
+        const content = reply.content[0];
+        expect(reply.isError).toBe(true);
+        expect(content.type === 'text' ? JSON.parse(content.text) : null).toMatchObject({
+          errorCode: 'permission_exceeds_ceiling', error: expect.stringContaining('read-only'),
+        });
+      }
+      expect(fixture.persistedWrites()).toBe(0);
+      expect(fixture.localWrites()).toBe(0);
+      const read = CallToolResultSchema.parse(await client.callTool({ name: 'action_spec_get', arguments: { id: 'session.title.set' } }));
+      expect(read.isError, JSON.stringify(read)).not.toBe(true);
+      mode = 'default';
+
       settings = accountSettingsParse({ actionsSettingsV1: { v: 1, actions: {
         'session.title.set': { enabled: false },
       } } });
@@ -2262,8 +2331,9 @@ describe('createHappierMcpServer', () => {
       settings = accountSettingsParse({});
       const accepted = CallToolResultSchema.parse(await client.callTool({ name: 'change_title', arguments: { title: 'Allowed' } }));
       expect(accepted.isError, JSON.stringify(accepted)).not.toBe(true);
+      expect(fixture.persistedWrites()).toBe(1);
       expect(fixture.readSharedMetadata()).toMatchObject({ summary: { text: 'Allowed' } });
-    }));
+    }), { getPermissionMode: () => mode });
   });
 
   it('uses account action settings for in-session MCP approval policy when provided', async () => {
@@ -2297,16 +2367,13 @@ describe('createHappierMcpServer', () => {
       }),
     }), { requiredDirectActionIds: ['session.transcript.get'], sessionInputVia: 'action' });
     try {
-      await runtime.executeTool({ toolName: 'action_execute', args: {
+      const denied = await runtime.executeTool({ toolName: 'action_execute', args: {
         actionId: 'session.spawn_new', input: { prompt: 'Spawn a helper' },
       }, toolCallId: 'native_tool_call_1' });
+      expect(denied).toMatchObject({ ok: false, errorCode: 'permission_exceeds_ceiling', error: expect.stringContaining('read-only') });
       await runtime.executeTool({ toolName: 'session_transcript_get', args: { limit: 10 },
         toolCallId: 'native_tool_call_2' });
       expect(operations).toMatchObject([
-        { kind: 'action.execute', actionId: 'session.spawn_new', input: { prompt: 'Spawn a helper' },
-          toolCallId: 'native_tool_call_1', surface: 'agent', witness: { turnId: 'native-turn',
-            callerPermissionMode: 'yolo', causalPermissionAuthority,
-            agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 } } },
         { kind: 'action.execute', actionId: 'session.transcript.get',
           input: { sessionId, limit: 10 }, toolCallId: 'native_tool_call_2', surface: 'agent' },
       ]);
