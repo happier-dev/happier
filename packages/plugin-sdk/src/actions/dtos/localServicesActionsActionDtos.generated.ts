@@ -664,6 +664,17 @@ export type LocalServicesActionsActionResultById = {
                     remedy: string;
                     domainHostname?: string | undefined;
                 } | {
+                    establishmentFailure: {
+                        cause: 'port_in_use' | 'process_exited' | 'runtime_unavailable';
+                        reason?: 'active' | 'activity_unavailable' | 'cancelled' | 'port_selection_failed' | 'root_unavailable' | 'state_corrupt' | 'state_read_failed' | 'state_write_failed' | undefined;
+                        causeCode?: string | undefined;
+                        exitCode?: number | undefined;
+                        signal?: string | undefined;
+                        lastStderrLine?: string | undefined;
+                        port?: number | undefined;
+                        sameProject?: boolean | undefined;
+                    };
+                } | {
                     failure: {
                         kind: 'native_effect_failed' | 'native_observation_unavailable';
                         reason: 'native_effect_failed' | 'port_in_use' | 'required_fact_unavailable';
