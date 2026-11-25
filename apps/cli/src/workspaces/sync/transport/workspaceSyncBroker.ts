@@ -112,7 +112,7 @@ type PendingCommand = {
   reject: (error: Error) => void;
   abortCleanup?: () => void;
   endpointIds?: readonly string[];
-  resumeCarrierFailure?: BrokerProtocolError;
+  endpointFailure?: BrokerProtocolError;
   trace?: WebLatencyTracePoint;
 };
 
@@ -475,7 +475,14 @@ export class WorkspaceSyncBroker {
   private openData(socket: Socket, message: Extract<BrokerControlV1, { t: 'open_data' }>): void {
     const now = this.config.now();
     if (this.pending.size >= this.config.maxStreams) {
-      this.sendError(socket, message.requestId, 'stream_limit', 'stream limit reached'); return;
+      const failure = new BrokerProtocolError('stream_limit', 'stream limit reached');
+      // Native replies can flatten the refusal into engine_unavailable.
+      // Keep the cause on the matching command until its own verdict arrives.
+      for (const command of this.commands.values()) {
+        if (command.endpointIds?.includes(message.endpointId)) command.endpointFailure ??= failure;
+      }
+      this.sendError(socket, message.requestId, failure.code, failure.message);
+      return;
     }
     if (this.pending.has(message.requestId)) {
       this.sendError(socket, message.requestId, 'protocol_error', 'duplicate request id'); return;
@@ -532,7 +539,7 @@ export class WorkspaceSyncBroker {
         // Resume tries both endpoints before reporting the first initialization
         // refusal. Closing the stream lets it finish and report that refusal.
         if (command.type === 'resume') {
-          command.resumeCarrierFailure ??= failure;
+          command.endpointFailure ??= failure;
           continue;
         }
         // The endpoint failure is terminal for the other transfer commands.
@@ -752,7 +759,7 @@ export class WorkspaceSyncBroker {
       // SendResult's generic code came from a responding native process.
       // Keep the broker-owned endpoint refusal when one exists, else its native message.
       command.reject(error.code === 'engine_unavailable'
-        ? command.resumeCarrierFailure ?? Object.assign(new Error(error.message, { cause: error }), { code: 'workspace_sync_unavailable' })
+        ? command.endpointFailure ?? Object.assign(new Error(error.message, { cause: error }), { code: 'workspace_sync_unavailable' })
         : error);
     } else command.resolve(result);
   }

@@ -15189,6 +15189,7 @@ const enWorkspaceSync = {
     errorCode: 'Error code',
   },
   error: {
+    streamLimit: 'Workspace Sync is at capacity. Pause an active sync link on the source machine, then try again.',
     componentUnavailable:
       'Workspace sync is unavailable in this build. Install the required component, then try again.',
     machineOffline:

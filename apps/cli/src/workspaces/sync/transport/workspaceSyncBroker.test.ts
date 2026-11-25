@@ -17,6 +17,7 @@ import {
   createBrokerHelloProof,
   deriveWorkspaceSyncEndpointId,
   encodeBrokerControlFrame,
+  MAX_CONCURRENT_DATA_STREAMS,
   OPEN_REMOTE_DEADLINE_MS,
   WORKSPACE_SYNC_BROKER_MAX_MESSAGE_BYTES,
   WORKSPACE_SYNC_BROKER_ATTACH_TTL_MS,
@@ -1114,6 +1115,40 @@ describe('workspace sync broker authentication and attach rules', () => {
       } finally { await client.close(); }
     },
   );
+
+  it('preserves a saturated broker refusal for the new link and admits both endpoints after a link closes', async () => {
+    const fixture = await useFixture(await startBroker());
+    const client = await connectClient(fixture);
+    const operationId = 'fresh-worker-copy';
+    const startLink = async (id: string) => [
+      await client.openStream(deriveWorkspaceSyncEndpointId(id, 'alpha')),
+      await client.openStream(deriveWorkspaceSyncEndpointId(id, 'beta')),
+    ];
+    client.onCommand(async () => {
+      try {
+        return await startLink(operationId).then(() => ({ ok: true }));
+      } catch (error) {
+        // The pinned native client loses the stream error code on its reply.
+        throw new BrokerProtocolError('engine_unavailable', String(error));
+      }
+    });
+    try {
+      const liveLinks = [];
+      for (let index = 0; index < MAX_CONCURRENT_DATA_STREAMS / 2; index++) {
+        liveLinks.push(await startLink(`watching-${index}`));
+      }
+      expect(fixture.externalStreams).toHaveLength(MAX_CONCURRENT_DATA_STREAMS);
+      const resume = (requestId: string) => fixture.broker.command({
+        t: 'resume', requestId, sessionIdentifier: 'new-link',
+      }, { operationId });
+      await expect(resume('at-capacity')).rejects.toMatchObject({ code: 'stream_limit' });
+      expect(fixture.externalStreams).toHaveLength(MAX_CONCURRENT_DATA_STREAMS);
+
+      for (const stream of liveLinks[0]) await stream.close();
+      await expect(resume('retry-after-pause')).resolves.toEqual({ ok: true });
+      expect(fixture.externalStreams).toHaveLength(MAX_CONCURRENT_DATA_STREAMS + 2);
+    } finally { await client.close(); }
+  });
 
   it('settles only the pending operation whose endpoint refused and retains no error history', async () => {
     const fixture = await useFixture(await startBroker({ openExternalStream: async () => {

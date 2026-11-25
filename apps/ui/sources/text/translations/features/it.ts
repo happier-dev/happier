@@ -21849,6 +21849,7 @@ const it = completeWorkspaceSyncTranslation({
     lastChecked: ({ at }) => `Ultimo controllo: ${at}`,
     endpoint: { source: ({ label }) => `Origine · ${label}`, destination: ({ label }) => `Destinazione · ${label}`, synced: ({ label }) => `Estremità sincronizzata · ${label}` },
     error: {
+        streamLimit: 'La sincronizzazione degli spazi di lavoro ha raggiunto il limite. Metti in pausa un collegamento di sincronizzazione attivo sulla macchina di origine e riprova.',
         componentUnavailable: 'La sincronizzazione dell’area di lavoro non è disponibile in questa build. Installa il componente richiesto e riprova.',
         machineOffline: 'Il computer di destinazione non è disponibile. Ricollegalo e riprova.',
         destinationNeedsPreparation: 'La cartella di destinazione deve essere preparata prima di avviare la sincronizzazione.',

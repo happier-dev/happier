@@ -18,6 +18,11 @@ function failure(message: string, code: string) {
 }
 
 describe('workspaceSyncPresentation', () => {
+    it('gives recovery guidance for a saturated Sync broker', () => {
+        const presented = presentWorkspaceSyncFailure(new RpcError('stream limit reached', 'stream_limit'), 'source_relationship');
+        expect(presented).toEqual(failure(t('workspaceSync.error.streamLimit'), 'stream_limit'));
+    });
+
     it('keeps the redacted originating create message under Technical details', () => {
         const error = { code: 'workspace_sync_unavailable', error: 'Native create failed: no space left on device; token=fixture-sync-secret',
             requestId: 'private-request-reference', failureCause: { phase: 'dispatch', errorClass: 'Error',
