@@ -26,11 +26,14 @@ export type WorkflowRunDisplayName =
 export function resolveWorkflowRunDisplayName(
     metadata: WorkflowRunPrivateMetadataV1 | null | undefined,
     acceptedContext?: Parameters<typeof readWorkflowRunDisplayMetadataV1>[0],
+    /** The opened source Workflow's title, for a Run whose own content is not admitted yet (a queued Run). */
+    sourceWorkflowTitle?: string | null,
 ): WorkflowRunDisplayName {
     if (metadata?.kind === 'available') return { kind: 'name', value: metadata.value.title };
     if (metadata?.kind === 'unavailable') return { kind: 'unavailable', reason: metadata.reason };
     const displayMetadata = acceptedContext ? readWorkflowRunDisplayMetadataV1(acceptedContext) : null;
-    return displayMetadata ? { kind: 'name', value: displayMetadata.title } : { kind: 'unknown' };
+    if (displayMetadata) return { kind: 'name', value: displayMetadata.title };
+    return sourceWorkflowTitle ? { kind: 'name', value: sourceWorkflowTitle } : { kind: 'unknown' };
 }
 
 /** Failed list rows lead with the Run name while exact detail can still show its typed read problem. */

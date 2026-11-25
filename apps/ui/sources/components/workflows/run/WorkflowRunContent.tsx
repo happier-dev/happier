@@ -6,6 +6,7 @@ import { useMountedScopeActionCommand } from '@/components/approvals/useMountedS
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { normalizeResultPreview } from '@/components/workflows/presentation/resultPreview';
 import type { WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
+import { presentWorkflowRunMachineWait } from '@/components/work/status/workflowWorkStatusFacts';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import {
     ScrollView,
@@ -1066,9 +1067,13 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // "Waiting for you — X is waiting for you." beside the row naming X (U8 R4 A1).
     const holdNamedBelow = props.run.state === 'waiting_for_review' && firstAttention !== undefined
         && attentionWaitsForYou(firstAttention);
+    // A queued Run waiting for its offline Machine has one fact, and its status word already states it whole:
+    // "Waits for <Machine> to come online", never followed by "— Waiting to start" (R12 M3).
+    const machineWaitIsWhole = outcomeWord === presentWorkflowRunMachineWait(props.run.state,
+        { reachable: props.machineReachable, name: props.machineName ?? props.run.machineId });
     const outcomeLine = formatWorkflowRunOutcomeLine({
         word: outcomeWord,
-        sentence: holdNamedBelow ? outcomeWord : formatWorkflowRunOutcomeSentence({
+        sentence: holdNamedBelow || machineWaitIsWhole ? outcomeWord : formatWorkflowRunOutcomeSentence({
             run: props.run,
             cancelRequested: props.cancelRequested,
             coverage,
@@ -1459,6 +1464,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 {/* Contact loss is all that is known; resume choices come from
                     the recovery owner once the current state is. */}
                 {props.machineReachable === false && (!props.machineStatus || props.machineStatus.bucket === 'offline') && !isTerminalWorkflowRunState(props.run.state)
+                    // A queued Run never started on that Machine: it lost nothing, and its outcome line says what it waits for.
+                    && props.run.state !== 'queued'
                     && !failureSaysReconnect
                     // A selected step that stopped says when its choices appear, in its recovery card (DESIGN-17 R1).
                     && !(selectedInvocation?.lifecycle === 'failed' || selectedInvocation?.lifecycle === 'outcome_uncertain') ? (

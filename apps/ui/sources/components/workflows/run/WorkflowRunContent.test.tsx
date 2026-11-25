@@ -3906,6 +3906,25 @@ describe('WorkflowRunContent', () => {
     expect(settled.findByTestId('workflow-run-machine-unavailable')).toBeNull();
   });
 
+  // R12 M3 (FIN ruling): a Run queued on an offline Machine never started, so it states its one fact once and
+  // offers its own Stop; it is not a lost-contact Run with recovery choices to wait for.
+  it('states a queued Run waiting for its offline Machine once, with Stop and no lost-contact recovery', async () => {
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'queued', workflowCustodyState: 'pending',
+        availability: { cancel: true, pause: true } }),
+      machineName: 'Build box',
+      machineReachable: false,
+      onCancel: vi.fn(),
+    });
+    const waits = 'workflows.run.waitsForMachineOnline:{"machine":"Build box"}';
+    expect(screen.getTextContent().split(waits)).toHaveLength(2);
+    expect(screen.getTextContent()).not.toContain('workflows.run.outcomeLine');
+    expect(screen.findByTestId('workflow-run-machine-unavailable')).toBeNull();
+    expect(screen.getTextContent()).not.toContain('workflows.run.machineUnavailableBody');
+    expect(screen.findByTestId('workflow-run-cancel')).not.toBeNull();
+    await screen.unmount();
+  });
+
   it('omits missing usage for settled steps, running steps and containers', async () => {
     const renderStep = (lifecycle: 'completed' | 'running') =>
       renderContent({

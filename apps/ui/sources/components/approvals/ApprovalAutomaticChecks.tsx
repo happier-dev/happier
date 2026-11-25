@@ -375,7 +375,8 @@ export const ApprovalAutomaticChecks = React.memo(
                 testID={props.testID ? `${props.testID}:queued-glyph` : undefined} />
             ) : <ActivitySpinner size="small" color={theme.colors.text.secondary} />}
             <Text variant="body" emphasis="semiBold" style={[styles.primary, styles.leadText]}>
-              {t('workflows.triggers.checks.checkingBefore', {
+              {/* A check held on an offline Machine leads with that hold, not with progress (R12 M3). */}
+              {checkingMachineWait ?? t('workflows.triggers.checks.checkingBefore', {
                 action: props.actionTitle,
               })}
             </Text>
@@ -383,7 +384,7 @@ export const ApprovalAutomaticChecks = React.memo(
           {running ? (
             <View style={styles.line}>
               <Text variant="meta" style={styles.secondary}>
-                {checkingMachineWait ? `${nameOf(running)} · ${checkingMachineWait}`
+                {checkingMachineWait ? nameOf(running)
                   : checkingProgress ? `${nameOf(running)} · ${checkingProgress}` : nameOf(running)}
                 {Number.isFinite(checkingStartedMs) ? <>{' · '}<CheckElapsed fromMs={checkingStartedMs} /></> : null}
               </Text>

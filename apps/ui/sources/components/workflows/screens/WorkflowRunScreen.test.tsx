@@ -1964,6 +1964,29 @@ describe('WorkflowRunScreen', () => {
         expect(routerSpy.push).toHaveBeenCalledWith(`/workflows/${sourceArtifactId}`);
     });
 
+    // R12 M3 (FIN ruling): a Run queued on an offline Machine never started, so its exact read answers
+    // custody_pending. The page names it by its Workflow, offers its own Stop, and shows no Refresh problem.
+    it('names a queued Run by its Workflow and offers Stop without a custody Refresh while its content waits', async () => {
+        const artifact = await sourceArtifact('owner');
+        getStorage().getState().updateArtifact(artifact);
+        const run = createWorkflowRunSummaryFixture({ state: 'queued', workflowCustodyState: 'pending', sourceArtifactId,
+            availability: { cancel: true, pause: true } });
+        await renderRunScreen({
+            run,
+            getRunFailure: new WorkflowActionError({ message: 'Custody pending', rawCode: 'custody_pending' }),
+            wrap: (element) => {
+                getStorage().getState().upsertWorkflowRuns([workflowRunRowFromSummary(run, null, undefined, { canEdit: true })]);
+                return element;
+            },
+        });
+        await vi.waitFor(() => expect(detailActions.getRun).toHaveBeenCalled());
+        await act(async () => {});
+        expect(readContentProps()?.title).toBe('Source');
+        expect(readContentProps()?.errorLabel).toBeNull();
+        expect(readContentProps()?.onReload).toBeUndefined();
+        expect(readContentProps()?.onCancel).toBeTypeOf('function');
+    });
+
     it('keeps a deleted source distinct from a sourceless Run', async () => {
         await renderRunScreen({ run: createWorkflowRunSummaryFixture({ sourceArtifactId }) });
         expect(readContentProps()?.hasSource).toBe(true);

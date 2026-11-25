@@ -947,10 +947,14 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
             });
         return () => { current = false; abort.abort(); retirement.dispose(); };
     }, [accountLifetime, contentIdentity, isContentIdentityCurrent, loadAttempt, seenRunId, seenRevision, seenFailedAt, workflowRunDetailActions]);
-    const callerAccess = contentBelongsToActiveScope ? cachedRow?.callerAccess : undefined;
+    // A queued Run has no admitted content to open yet (its exact read answers custody_pending), so its own
+    // lean row's access is the whole fact: the person can still Stop a Run waiting for its Machine (R12 M3).
+    const neverStarted = summary?.state === 'queued' && accountLifetime?.isCurrent() === true;
+    const callerAccess = contentBelongsToActiveScope || neverStarted ? cachedRow?.callerAccess : undefined;
     const canEdit = callerAccess?.canEdit === true;
     const acceptedSource = visibleAcceptedContext?.source;
-    const sourceArtifactId = contentBelongsToActiveScope ? observedSourceArtifactId : null;
+    // A queued Run's own lean row names its source too, so the page can title it and open its Workflow (R12 M3).
+    const sourceArtifactId = contentBelongsToActiveScope || neverStarted ? observedSourceArtifactId : null;
     const catalogSourceRef = acceptedSource?.kind === 'catalog' ? acceptedSource.ref : null;
     const sourceRef = sourceArtifactId ?? catalogSourceRef;
     const hasSource = sourceRef !== null;
@@ -2011,7 +2015,7 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
      * The one problem the outcome region reports, keeping the canonical
      * presentation rather than flattening it to a sentence.
      */
-    const visibleProblem: WorkflowProblemPresentation | null = controlError
+    const reportedProblem: WorkflowProblemPresentation | null = controlError
         ?? (loadState === 'failed' ? loadProblem : null)
         ?? (loadState === 'failed'
             ? {
@@ -2023,6 +2027,9 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
                 accessibilitySemantics: 'alert',
             }
             : null);
+    // A queued Run's content waits on its Machine's custody: the outcome line states that wait, and the next
+    // pushed Run change reloads it, so it is not a problem with a Refresh (R12 M3).
+    const visibleProblem = neverStarted && reportedProblem?.code === 'custody_pending' ? null : reportedProblem;
     const openEncryptionSettings = React.useCallback(() => {
         if (!activelyViewed || !isContentIdentityCurrent(contentIdentity) || !activeAccountScope) return;
         router.push({ pathname: SETTINGS_ROUTES.accountSecurity,
@@ -2199,6 +2206,9 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
                 // sidecar without rewriting the frozen replay context.
                 title={formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(
                     cachedRow?.metadata, visibleAcceptedContext ?? undefined,
+                    // A queued Run is named by its Workflow (the source Artifact's projected title) until its own
+                    // content is admitted (R12 M3).
+                    sourceArtifact?.title,
                 ), summary.state)}
                 definition={visibleDefinition}
                 mapUnavailable={visibleDefinition === null && loadState !== 'loading'}

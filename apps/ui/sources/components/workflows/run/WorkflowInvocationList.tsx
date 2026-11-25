@@ -365,11 +365,11 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
                 // Run with no history. Once loaded, no rows means nothing has
                 // started yet in this Run — not the collection's empty copy.
                 ListEmptyComponent={props.loaded ? (
-                    <Text testID={`${testIDPrefix}-empty`} style={styles.empty}>
+                    <Text testID={`${testIDPrefix}-empty`} style={[styles.empty, props.rowInsetStyle as object]}>
                         {t('workflows.problem.executionNotStarted')}
                     </Text>
                 ) : (
-                    <Text testID={`${testIDPrefix}-loading`} style={styles.empty}>
+                    <Text testID={`${testIDPrefix}-loading`} style={[styles.empty, props.rowInsetStyle as object]}>
                         {t('common.loading')}
                     </Text>
                 )}

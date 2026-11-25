@@ -187,6 +187,18 @@ describe('checking block waits for an offline Machine', () => {
     await screen.unmount();
   });
 
+  it('leads with the hold instead of presenting it as a check in progress (R12 M3)', async () => {
+    const { t } = await import('@/text');
+    const { screen, name } = await mountQueued('offline');
+    const waits = t('workflows.run.waitsForMachineOnline', { machine: name });
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(waits));
+    const text = screen.getTextContent();
+    expect(text).not.toContain(t('workflows.triggers.checks.checkingBefore', { action: 'Deploy' }));
+    // The hold is stated once: the lead, not again in the facts line.
+    expect(text.split(waits)).toHaveLength(2);
+    await screen.unmount();
+  });
+
   it.each(['online', 'unknown'] as const)('keeps the neutral held state when the Machine is %s', async (machine) => {
     const { t } = await import('@/text');
     const { screen, name } = await mountQueued(machine);
