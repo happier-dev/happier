@@ -3,13 +3,15 @@ import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import { ProviderContributionV1Schema } from '@happier-dev/protocol/providers/contributions';
 
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
-import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { createConnectedAccountPurposeBindingOwner, type ConnectedAccountPurposeResolvedTarget } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createConnectedAccountRequestAuthService } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthService';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import {
   VERCEL_AI_GATEWAY_PROVIDER_CONTRIBUTION,
+  VERCEL_GATEWAY_ACCOUNT_PURPOSE,
   VERCEL_GATEWAY_PROVIDER_IDENTITY,
 } from '../../../../../packages/plugins/vercel-ai-gateway/src/provider/contribution.js';
+import { PLUGIN_MANIFEST as VERCEL_MACHINE } from '../../../../../packages/plugins/machine-vercel/src/manifest.js';
 import { createConnectedServicesBrokerSourceMemberSelect, createConnectedServicesBrokerSourceOpen } from './connectedServicesSource';
 import { createBrokerProviderRegistry, readProviderBrokerResponseBody } from './providerBroker.testkit';
 import { createProviderConnectionHttpTransport } from './providerConnectionHttpTransport';
@@ -53,13 +55,13 @@ function request(signal = new AbortController().signal) {
 function bindingOwner(account: QualifiedConnectedAccountRef, pool?: Readonly<{
   group: { groupId: string; generation: number };
   isCurrent(): boolean;
-}>) {
+}>, observation?: ConnectedAccountPurposeResolvedTarget['observation']) {
   const unusedBoundary = (): never => { throw new Error('Unexpected effect boundary'); };
   return createConnectedAccountPurposeBindingOwner({
     store: { read: async () => ({ v: 1, bindings: [] }), update: unusedBoundary, subscribe: () => ({ dispose() {} }) },
     selectTarget: unusedBoundary,
     resolveTarget: async () => pool?.isCurrent() === false ? null : ({
-      displayName: 'Account 1', account, ...(pool ? { group: pool.group } : {}),
+      displayName: 'Account 1', account, ...(pool ? { group: pool.group } : {}), ...(observation ? { observation } : {}),
     }),
     materializeAccount: unusedBoundary,
     projectTargetAccounts: unusedBoundary,
@@ -76,16 +78,23 @@ describe('Connected Services Team credential broker source', () => {
     const provider = VERCEL_GATEWAY_PROVIDER_IDENTITY;
     const otherProvider = { pluginId: 'example.provider.other', localId: 'other' };
     const definition = ProviderContributionV1Schema.parse(VERCEL_AI_GATEWAY_PROVIDER_CONTRIBUTION);
-    const account = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'vercel-team-one' };
+    const account = { service: VERCEL_GATEWAY_ACCOUNT_PURPOSE.service, accountId: 'vercel-team-one' };
     const qualified = {
       ...source, target: { ...source.target, account },
-      providerPurpose: { consumer: provider, purpose: 'model-inference' },
+      providerPurpose: { consumer: provider, purpose: VERCEL_GATEWAY_ACCOUNT_PURPOSE.purpose },
     };
     const registry = createResolvedContributionRegistry({ providers: [provider, otherProvider].map(identity => ({
       identity, pluginId: identity.pluginId, definition: { ...definition, id: identity.localId },
       provenance: 'external', source: { kind: 'path' },
     })) });
-    const purposeBindings = bindingOwner(account);
+    const descriptor = VERCEL_MACHINE.contributes.connectedAccountDescriptors.find(entry => entry.id === account.service.localId);
+    if (!descriptor) throw new Error('Missing Vercel Account descriptor');
+    const purposeBindings = bindingOwner(account, undefined, {
+      authentication: descriptor.authentication,
+      profiles: [{ ref: account, kind: 'oauth', status: 'connected', authenticationModeId: 'oauth',
+        revisionSemantics: 'revisioned', credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+        configurationReady: true, configurationRevision: 'configuration-one', scopes: [] }],
+    });
     const materialize = vi.fn(async () => ({
       headers: { authorization: 'Bearer test-account-credential', 'x-vercel-ai-gateway-team': 'team_from_account' },
       facts: { teamId: 'team_from_account' },
