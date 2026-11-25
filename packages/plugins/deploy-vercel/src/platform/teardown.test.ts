@@ -61,6 +61,20 @@ it('recovers teardown by reading the exact project rather than the retained depl
   } finally { await kit.dispose(); }
 });
 
+it('returns the native refusal from observe-only teardown without sending a DELETE', async () => {
+  const requests: HttpRequest[] = [];
+  const http = createPluginHttpFixture({ async request(request) {
+    requests.push(request);
+    return response(503, { error: { code: 'service_unavailable' } });
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
+  try {
+    await expect(kit.invokeAction('observe', input)).rejects.toMatchObject({ code: 'provider_request_failed',
+      data: { failureCause: { httpStatus: 503, errorCode: 'service_unavailable' } } });
+    expect(requests.map(request => [request.method, new URL(request.url).pathname])).toEqual([['GET', '/v9/projects/prj_exact']]);
+  } finally { await kit.dispose(); }
+});
+
 it.each(['delete', 'observe'] as const)('retains the native timeout as unknown during %s without replaying the mutation', async phase => {
   const requests: HttpRequest[] = [];
   const http = createPluginHttpFixture({ async request(request) {

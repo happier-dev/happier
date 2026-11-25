@@ -24,17 +24,18 @@ async function requestProject(input: Selection, operation: Operation, context: V
     if (isPluginError(error)) {
       const status = error.data.failureCause?.httpStatus;
       if (status === 404) return undefined;
-      // A refused DELETE has a known cause; a failed confirming GET cannot prove the effect absent.
-      if (operation[0] === 'write' && status != null && status >= 400 && status < 500) throw error;
+      if (status != null && status >= 400 && status < 500) throw error;
     }
+    if (operation[0] === 'read') throw error;
     return unknownOutcome(error, operation);
   }
   if (response.status === 404) return undefined;
   if (response.status >= 200 && response.status < 300) return response;
-  if (operation[0] === 'write' && response.status >= 400 && response.status < 500) {
+  if (operation[0] === 'read' || (response.status >= 400 && response.status < 500)) {
     throw new PluginError({ code: response.status === 401 || response.status === 403 ? 'deployment_access_denied'
       : response.status === 409 ? 'deployment_conflict' : 'provider_request_failed', retryable: false,
-    details: { phase: 'teardown' }, failureCause: projectActionFailureCauseV1(response, 'deployment.vercel.teardown.send') });
+    details: { phase: 'teardown' }, failureCause: projectActionFailureCauseV1(response,
+      operation[0] === 'read' ? 'deployment.vercel.teardown.observe' : 'deployment.vercel.teardown.send') });
   }
   return unknownOutcome(response, operation);
 }

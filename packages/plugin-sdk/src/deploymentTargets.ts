@@ -73,6 +73,7 @@ export async function settleDeploymentTargetResourceRemovalV1(input: Readonly<{
         try {
             absent = await input.observeAbsent();
         } catch (error) {
+            if (!input.remove) throw error;
             throw withActionFailureDiagnostic(new PluginError({ code: 'outcome_unknown', retryable: false,
                 details: { phase: 'teardown' }, failureCause: projectActionFailureCauseV1(error, phase) }),
             { phase, causeKind: 'native_failure', error });
