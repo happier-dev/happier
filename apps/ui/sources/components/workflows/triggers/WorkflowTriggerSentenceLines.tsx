@@ -316,7 +316,8 @@ function WorkflowSentenceRowsChip(
           anchorRef={anchorRef}
           placement="bottom"
           phonePresentation="sheet"
-          // A phone sheet's band names the step it shows.
+          // The block already supplies the trigger's heading. The setup step uses the sheet's heading.
+          sheetHeader={stepping ? undefined : 'none'}
           accessibilityLabel={stepping ? t('workflows.triggers.popover.configureEvent') : props.title}
           portal={{
             web: { target: 'body' },

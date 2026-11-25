@@ -113,7 +113,7 @@ export function useWorkflowRunCollection(focused: boolean) {
         const todayStart = new Date().setHours(0, 0, 0, 0);
         return runs.rows.map((run): WorkflowRunCollectionRow => {
             const { summary } = run;
-            const title = formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(run.metadata));
+            const title = formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(run.metadata), summary?.state);
             const workflowId = summary?.sourceArtifactId
                 ?? (summary?.origin.kind === 'automation' ? summary.origin.automationId : run.automation?.automationId);
             const project = summary?.where && runs.serverId ? census?.sessionProjectKeyResolver?.({

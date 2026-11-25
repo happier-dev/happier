@@ -593,6 +593,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const sidePanesAvailable = useDetailsPaneAvailable();
     const detailsPaneAvailable = sidePanesAvailable && props.embedded !== true;
     const phone = useDeviceType() === 'phone';
+    const pageSectionStyle = phone ? styles.pageSectionSheet : styles.pageSection;
     const navigationScope = useActiveServerAccountScope(props.serverId ?? null);
     // The Review the embedded summary shows: when the Run's final output names it, that Review is the Run's result,
     // opened from the header, and no step pane prints its raw record (U8 R4 R1, R2).
@@ -1546,7 +1547,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             {attentionRows.length === 0 || phoneDock ? null : (
                 <View
                     testID={`${testIDPrefix}-needs-you`}
-                    style={[styles.section, styles.pageSection, phone ? null : styles.onTitleEdge]}
+                    style={[styles.section, pageSectionStyle, phone ? null : styles.onTitleEdge]}
                     // A still-paged window cannot promise a total: the loaded
                     // rows are stated as loaded so a reader never mistakes them
                     // for every intervention that remains.
@@ -1632,7 +1633,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             {producedReviewId ? <WorkflowRunReview runId={props.run.id} scope={navigationScope} enabled={props.active !== false}
                 workflowFailureCode={props.run.errorCode}
                 openedFromHeader={resultIsReview}
-                testID={`${testIDPrefix}-review`} style={[styles.section, styles.pageSection, phone ? null : styles.onTitleEdge,
+                testID={`${testIDPrefix}-review`} style={[styles.section, pageSectionStyle, phone ? null : styles.onTitleEdge,
                     phone && !navigationShown && sourceFolded && isTerminalWorkflowRunState(props.run.state) ? styles.sectionBeforeView : null]} /> : null}
 
             {/* The view switch: Map · Steps · Activity (07 §2.1, §3 control table). `flow` stays the
@@ -1920,7 +1921,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
 
     const footer = (
         <View style={styles.root}>
-            {props.occurrenceDetails == null ? null : <View style={styles.pageSection}>{props.occurrenceDetails}</View>}
+            {props.occurrenceDetails == null ? null : <View style={pageSectionStyle}>{props.occurrenceDetails}</View>}
             {technicalOpen ? (
             <View testID={`${testIDPrefix}-technical`} style={[styles.section, styles.pageSection]}>
                 <Text style={styles.sectionLabel}>{t('workflows.run.technicalDetails')}</Text>
@@ -2001,7 +2002,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         <ScrollView testID={`${testIDPrefix}-steps`} style={styles.scroll}
             contentContainerStyle={[styles.root, props.contentContainerStyle]}>
             {header}
-            <View style={[styles.pageSection, phone ? null : styles.documentInset]}><WorkflowRunSteps runId={props.run.id} machineId={props.run.machineId} serverId={props.serverId}
+            <View style={phone ? pageSectionStyle : [pageSectionStyle, styles.documentInset]}><WorkflowRunSteps runId={props.run.id} machineId={props.run.machineId} serverId={props.serverId}
                 reviewerStatuses={reviewerStatuses}
                 invocationStatusContext={invocationStatusContext}
                 notStartedLabel={notStartedLabel}
@@ -2071,7 +2072,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 />
             )}
             {/* The map shares the header's text edge, so mark, outcome, tabs and cards line up (lab run-A). */}
-            <View style={styles.pageSection}><WorkflowFlowView
+            <View style={pageSectionStyle}><WorkflowFlowView
                 invocationStatusContext={invocationStatusContext}
                 testIDPrefix={`${testIDPrefix}-flow`}
                 projection={flowProjection}

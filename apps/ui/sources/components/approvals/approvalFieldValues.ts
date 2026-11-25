@@ -2,9 +2,13 @@ import {
     describeApprovalActionFields as describeProtocolApprovalActionFields,
     describeApprovalRequestFields as describeProtocolApprovalRequestFields,
     describeActionResultFields as describeProtocolStructuredFields,
+    resolveApprovalRequestApproveAdmission as resolveProtocolApprovalRequestApproveAdmission,
+    type ApprovalRequestApproveAdmission,
 } from '@happier-dev/protocol/actions';
 import { WORKFLOW_TRIGGER_ADD_ACTION_ID, WORKFLOW_TRIGGER_UPDATE_ACTION_ID } from '@happier-dev/protocol/actions/workflowTriggerActionIds';
 import { WorkflowTriggerAddRequestV1Schema, WorkflowTriggerUpdateRequestV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { formatTriggerSummary } from '@/components/workflows/triggers/formatTriggerSummary';
 import { t } from '@/text';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
@@ -13,7 +17,7 @@ function presentTriggerDetails(
     input: Parameters<typeof describeProtocolApprovalRequestFields>[0],
     presentation: ReturnType<typeof describeProtocolApprovalRequestFields>,
 ): ReturnType<typeof describeProtocolApprovalRequestFields> {
-    if (!('actionArgs' in input)) return presentation;
+    if (presentation.unrepresentable || !('actionArgs' in input)) return presentation;
     const added = input.actionId === WORKFLOW_TRIGGER_ADD_ACTION_ID ? WorkflowTriggerAddRequestV1Schema.safeParse(input.actionArgs) : null;
     const updated = input.actionId === WORKFLOW_TRIGGER_UPDATE_ACTION_ID ? WorkflowTriggerUpdateRequestV1Schema.safeParse(input.actionArgs) : null;
     const trigger = added?.success ? added.data.trigger : updated?.success ? updated.data.patch.trigger : undefined;
@@ -51,12 +55,21 @@ export function describeApprovalRequestFields(input: Parameters<typeof describeP
     return presentTriggerDetails(input, describeProtocolApprovalRequestFields(input, { formatDataBytes: formatHappierDataBytes }));
 }
 
+/** Keep Protocol's admission decision and adapt its disclosure through the same UI presenter. */
+export function resolveApprovalRequestApproveAdmission(request: ApprovalRequest): ApprovalRequestApproveAdmission;
+export function resolveApprovalRequestApproveAdmission(request: ApprovalRequest | TargetActionApprovalRequestV1):
+    ReturnType<typeof resolveProtocolApprovalRequestApproveAdmission>;
+export function resolveApprovalRequestApproveAdmission(request: ApprovalRequest | TargetActionApprovalRequestV1) {
+    const admission = resolveProtocolApprovalRequestApproveAdmission(request);
+    const presentation = presentTriggerDetails(request, admission.presentation);
+    return presentation === admission.presentation ? admission : { ...admission, presentation };
+}
+
 export {
     describeActionResultFields,
     formatApprovalFieldValues,
     getApprovalFieldValues,
     projectApprovalStructuredAnswers,
-    resolveApprovalRequestApproveAdmission,
     resolveApprovalVisualPreview,
     shouldHideApprovalField,
     type ApprovalVisualPreview,

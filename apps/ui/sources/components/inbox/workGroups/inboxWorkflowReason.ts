@@ -5,8 +5,7 @@ import { t } from '@/text';
 
 /** Failed Updates lead with the Run name even when opening its history will show a read problem. */
 export function readInboxWorkflowRunTitle(row: Extract<InboxWorkItem, { kind: 'workflow_run' }>['row']): string {
-    const name = resolveWorkflowRunDisplayName(row.metadata);
-    return formatWorkflowRunDisplayName(row.summary?.state === 'failed' && name.kind === 'unavailable' ? { kind: 'unknown' } : name);
+    return formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(row.metadata), row.summary?.state);
 }
 
 /** The Run's admitted hold, shared by its Inbox row and Brief; never inferred from its title. */

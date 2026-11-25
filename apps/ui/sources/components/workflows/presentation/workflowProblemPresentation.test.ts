@@ -190,7 +190,10 @@ describe('workflowProblemPresentation', () => {
             expect(name).toMatchObject({ kind: 'unavailable', reason });
             expect(formatWorkflowRunDisplayName(name)).toBe(resolveWorkflowProblemPresentation(actionError(reason)).title);
         }
-        expect(formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName({ kind: 'available', value: { title: 'My known run' } })))
+        const unread = resolveWorkflowRunDisplayName({ kind: 'unavailable', reason: 'history_not_readable' });
+        expect(formatWorkflowRunDisplayName(unread, 'failed')).toBe('workflows.run.untitled');
+        expect(formatWorkflowRunDisplayName(unread, 'succeeded')).toBe(formatWorkflowRunDisplayName(unread));
+        expect(formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName({ kind: 'available', value: { title: 'My known run' } }), 'failed'))
             .toBe('My known run');
     });
     it('names opened built-ins without overriding explicit names or unreadable state', () => {

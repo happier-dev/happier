@@ -161,6 +161,9 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
     pageSection: {
         paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx,
     },
+    pageSectionSheet: {
+        paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx,
+    },
     /** A phone page's last header section when no view switch row follows it: the page's section gap before the Map. */
     sectionBeforeView: {
         marginBottom: HAPPIER_PAGE_METRICS.sectionGapPx,

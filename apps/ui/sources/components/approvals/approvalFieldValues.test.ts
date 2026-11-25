@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { describeApprovalActionFields, describeApprovalRequestFields, projectApprovalStructuredAnswers, readAcknowledgedActionResult } from './approvalFieldValues';
+import { describeApprovalActionFields, describeApprovalRequestFields, projectApprovalStructuredAnswers, readAcknowledgedActionResult, resolveApprovalRequestApproveAdmission } from './approvalFieldValues';
 import { resolveAcknowledgedActionInverse } from './actionResultFacts';
 import { readApprovalPreviewSummary } from './actionApprovalPresentation';
 import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
@@ -15,8 +15,12 @@ it.each([WORKFLOW_TRIGGER_ADD_ACTION_ID, WORKFLOW_TRIGGER_UPDATE_ACTION_ID])('re
         ? { workflow: 'builtin:review-and-converge', project: { machineId: 'raw-machine-id', directory: '/workspace' },
             trigger: { ...trigger, enabled: true } }
         : { automationId: 'raw-automation-id', triggerId: 'raw-trigger-id', expectedRevision: 1, patch: { trigger } };
-    for (const describe of [describeApprovalActionFields, describeApprovalRequestFields]) {
-        const rows = describe({ actionId, actionArgs }).rows.filter(row => row.kind === 'value' && !row.technical);
+    const request = { v: 1 as const, status: 'open' as const, createdAtMs: 1, updatedAtMs: 1,
+        createdBy: { surface: 'agent' as const, agentId: 'codex' }, summary: 'Review trigger change', actionId, actionArgs };
+    const admission = resolveApprovalRequestApproveAdmission(request);
+    expect(admission).toMatchObject({ status: 'unavailable', reason: 'legacy_request' });
+    for (const presentation of [describeApprovalActionFields(request), describeApprovalRequestFields(request), admission.presentation]) {
+        const rows = presentation.rows.filter(row => row.kind === 'value' && !row.technical);
         expect(rows).toContainEqual(expect.objectContaining({ value: formatTriggerSummary(trigger) }));
         expect(JSON.stringify(rows)).not.toMatch(/raw-machine-id|raw-automation-id|raw-trigger-id|"label":"Kind"|"label":"Enabled"/);
     }

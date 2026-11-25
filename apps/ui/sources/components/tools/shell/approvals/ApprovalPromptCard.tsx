@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import type { ApprovalRequest, ApprovalRequesterConfirmationV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
-import { describeApprovalRequestFields, resolveApprovalRequestApproveAdmission } from '@happier-dev/protocol/actions';
+import { describeApprovalRequestFields, resolveApprovalRequestApproveAdmission } from '@/components/approvals/approvalFieldValues';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';

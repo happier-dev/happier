@@ -2,8 +2,8 @@ import { readPetImportConfirmationV1 } from '@happier-dev/protocol/pets/importAc
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { isProjectSetupTrustRequestV1, PROJECT_ACTION_INPUT_SCHEMAS_V1, readProjectSetupTrustRequestOperationV1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import { resolveApprovalRequestApproveAdmission, resolveApprovalVisualPreview,
-    readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { resolveApprovalRequestApproveAdmission, resolveApprovalVisualPreview } from './approvalFieldValues';
 import { resolveApprovalExecutor, type ApprovalExecutor, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { t } from '@/text';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';

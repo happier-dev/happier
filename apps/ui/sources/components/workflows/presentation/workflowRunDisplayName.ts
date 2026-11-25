@@ -1,4 +1,4 @@
-import type { WorkflowOperationErrorCodeV1} from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { WorkflowOperationErrorCodeV1, WorkflowRunStateV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowRunPrivateMetadataV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { readWorkflowRunDisplayMetadataV1 } from '@happier-dev/protocol/workflows/workflowRunDisplayMetadataV1';
 import { describeWorkflowOperationProblem } from './workflowProblemPresentation';
@@ -33,8 +33,9 @@ export function resolveWorkflowRunDisplayName(
     return displayMetadata ? { kind: 'name', value: displayMetadata.title } : { kind: 'unknown' };
 }
 
-/** The one localized label for each resolved name. */
-export function formatWorkflowRunDisplayName(name: WorkflowRunDisplayName): string {
+/** Failed list rows lead with the Run name while exact detail can still show its typed read problem. */
+export function formatWorkflowRunDisplayName(name: WorkflowRunDisplayName, listState?: WorkflowRunStateV1): string {
+    if (listState === 'failed' && name.kind === 'unavailable') return t('workflows.run.untitled');
     switch (name.kind) {
         case 'name': return name.value;
         case 'unavailable': return name.reason === 'content_unavailable'

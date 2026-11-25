@@ -217,7 +217,7 @@ export function ResourceLinkWorkflowSheet(
               testID="resource-link-event-configure-event"
               fill={stackedFields}
               label={t('workflows.triggers.card.source')}
-              value={entry.detail ?? t(entry.configured ? 'workflows.triggers.popover.editEvent' : 'workflows.triggers.card.setUp')}
+              value={entry.configured ? props.resourceName : t('workflows.triggers.card.setUp')}
               onPress={entry.onPress}
             />
           </View>

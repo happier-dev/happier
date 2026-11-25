@@ -147,6 +147,8 @@ describe('Link a workflow to a resource', () => {
       // The real Event editor's accepted configuration is the presentation owner's input.
       await act(async () => screen.findAllByType(TriggerPluginEventRows)[0]!.props.onChange(configured));
       expect(screen.findAllByType(TriggerPluginEventRows)[0]!.props.when).toMatchObject(configured);
+      expect(screen.findByTestId('resource-link-event-configure-event')?.props.accessibilityLabel)
+        .toMatch(/Production$/);
       expect(link.setDraft).toHaveBeenLastCalledWith({ workflow: 'builtin:review-and-converge', trigger: configured.value }, eventOption);
       await act(async () => workflowSelect!.props.onSelect('builtin:plan-with-a-panel'));
       expect(link.setDraft).toHaveBeenLastCalledWith({ workflow: 'builtin:plan-with-a-panel', trigger: configured.value }, eventOption);
