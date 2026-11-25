@@ -41,27 +41,35 @@ export function consumeRequestedSessionDirectoryFromEnvironment(
     return requestedDirectory;
 }
 
-export function resolveRequestedSessionDirectory(params?: Readonly<{
+type RequestedSessionDirectoryInput = Readonly<{
     requestedDirectory?: string | null;
     env?: NodeJS.ProcessEnv;
     cwd?: string;
-}>): string {
+}>;
+
+/** The selected launcher expands home intent in its own execution identity. */
+export function resolveRequestedSessionDirectoryIntent(params?: RequestedSessionDirectoryInput): string {
     const env = params?.env ?? sessionProcessEnvironment();
     const explicitDirectory = normalizeNonEmptyString(params?.requestedDirectory);
     if (explicitDirectory) {
-        return expandHomeDirPath(explicitDirectory, env);
+        return explicitDirectory;
     }
 
     const cwd = params?.cwd ?? sessionWorkingDirectory();
     const requestedDirectory = consumeRequestedSessionDirectoryFromEnvironment(env);
     if (requestedDirectory) {
-        return expandHomeDirPath(requestedDirectory, env);
+        return requestedDirectory;
     }
 
     const stackInvokedCwd = normalizeNonEmptyString(env[STACK_INVOKED_CWD_ENV]);
     if (stackInvokedCwd) {
-        return expandHomeDirPath(stackInvokedCwd, env);
+        return stackInvokedCwd;
     }
 
-    return expandHomeDirPath(resolveLogicalPwd({ env, cwd }) ?? cwd, env);
+    return resolveLogicalPwd({ env, cwd }) ?? cwd;
+}
+
+export function resolveRequestedSessionDirectory(params?: RequestedSessionDirectoryInput): string {
+    const env = params?.env ?? sessionProcessEnvironment();
+    return expandHomeDirPath(resolveRequestedSessionDirectoryIntent({ ...params, env }), env);
 }

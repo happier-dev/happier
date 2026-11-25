@@ -44,7 +44,8 @@ import {
 } from '@/cli/providerSessionArgPartition';
 import { resolveSessionStartBackendTarget, resolveSessionStartModelSelection } from '@/cli/resolveSessionStartModelSelection';
 import { selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup } from '@/daemon/platform/linux/daemonSpawnedSessionCgroupSelfMigration';
-import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
+import { resolveRequestedSessionDirectoryIntent } from '@/agent/runtime/resolveRequestedSessionDirectory';
+import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { presentProviderCliRefusal } from '@/providers/lifecycle/presentProviderCliRefusal';
 import { AGENT_CLI_MISSING_PREVIEW } from '@/packagedRuntime/managedTools/agentCliNotFoundError';
 import { createForegroundAdmissionError, DirectProviderLaunchError } from './foregroundAdmissionFailure';
@@ -315,7 +316,8 @@ Provider CLI Options:
       const runtimeDescriptorV1 = extraOptions.runtimeDescriptorV1 === undefined ? undefined : RuntimeDescriptorV1Schema.parse(extraOptions.runtimeDescriptorV1);
       const isExplicitCliSubcommand = params.isExplicitCliSubcommand
         ?? (params.context.args[0] === cliArgumentAgentId);
-      const directory = parsed.directory ?? resolveRequestedSessionDirectory();
+      const directoryIntent = parsed.directory ?? resolveRequestedSessionDirectoryIntent();
+      const directory = parsed.directory ?? expandHomeDirPath(directoryIntent);
 
       const selfMigration = await selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup();
       if (selfMigration) {
@@ -558,7 +560,7 @@ Provider CLI Options:
               const input = SessionSpawnNewInputV2Schema.parse({
                 creationKey: attemptId,
                 executionTarget: { serverId: configuration.activeServerId, machineId: admission.sessionSpawnRequired.machineId },
-                directory: { kind: 'path', path: directory }, agentTarget: selectedAgentTarget,
+                directory: { kind: 'path', path: directoryIntent }, agentTarget: selectedAgentTarget,
                 agentArgs: parsed.providerArgs,
                 ...(selectedProfile ? { profileId: selectedProfile.id } : {}),
                 ...(parsed.secretReferenceOverlay ? { secretReferenceOverlay: parsed.secretReferenceOverlay } : {}),

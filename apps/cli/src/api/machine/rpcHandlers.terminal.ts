@@ -47,6 +47,7 @@ import { createTerminalPtySessionManager, type TerminalPtySessionManager, type T
 import { byteStreamHoldEndsAtMs, readByteStreamHeld } from '@/terminal/pty/byteStreamHold';
 import { createNodePtyProvider } from '@/terminal/pty/provider';
 import { resolveTerminalShell } from '@/terminal/pty/shells';
+import { SESSION_REQUESTED_DIRECTORY_ENV } from '@/agent/runtime/resolveRequestedSessionDirectory';
 import { getSharedTerminalProcessRegistry, type TerminalProcessRegistry } from '@/daemon/local/services/inventory/terminalRegistry';
 import {
   resolveDaemonTerminalLaunch,
@@ -657,15 +658,23 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
 
   const prepareAssociatedTerminalLaunch = async (input: Readonly<{
     launchProcess?: TerminalLaunchProcess;
-    nativeSignIn: boolean;
+    request: Pick<import('@happier-dev/protocol').DaemonTerminalEnsureRequest, 'cwd' | 'workspace' | 'launch'>;
+    placement: ReturnType<typeof resolveTerminalPlacement>;
     context: RpcHandlerContext | undefined;
     requesterAccountId: string;
     sessionId: string | undefined;
     terminalKey: string;
     actionId: Parameters<ApiMachineClient['prepareConnectedAccountProcessEnvironment']>[0]['actionId'];
   }>): Promise<TerminalLaunchProcess | undefined> => {
+    const { request, launchProcess } = input;
+    if (launchProcess && input.placement === 'person' && !input.sessionId && !request.workspace
+      && request.cwd === undefined && request.launch?.kind === 'happier_cli') {
+      // The PTY starts in the person's home. A fresh Session resolves this home
+      // intent under the Agent's execution identity when delegated to the daemon.
+      return { ...launchProcess, env: { ...launchProcess.env, [SESSION_REQUESTED_DIRECTORY_ENV]: '~' } };
+    }
     const runtime = params.deps?.nativeOperationRuntime;
-    if (!input.sessionId || input.nativeSignIn || !runtime || !input.context) return input.launchProcess;
+    if (!input.sessionId || request.launch?.kind === 'agent_login' || !runtime || !input.context) return launchProcess;
     const credentials = await runtime.prepareConnectedAccountProcessEnvironment({
       authorization: input.context.callerInputAuthorization, requesterAccountId: input.requesterAccountId,
       sessionId: input.sessionId, operationId: input.context.transportRequestId ?? input.terminalKey,
@@ -861,8 +870,8 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         nativeOperation, context?.signal);
       if (!launch.ok) { await nativeOperation?.dispose(); return launch; }
       launchProcess = launch.launchProcess;
-      if (!warm) launchProcess = await prepareAssociatedTerminalLaunch({ launchProcess,
-        nativeSignIn: parsed.data.launch?.kind === 'agent_login', context, requesterAccountId: requesterIdentity.requester.accountId,
+      if (!warm) launchProcess = await prepareAssociatedTerminalLaunch({ launchProcess, request: parsed.data, placement,
+        context, requesterAccountId: requesterIdentity.requester.accountId,
         sessionId, terminalKey: parsed.data.terminalKey, actionId: 'machines.terminal.open' });
       const preparation = projectCustody && !warm
         ? await prepareProjectShell(projectCustody, launchProcess, context, requesterIdentity, nativeOperation)
@@ -1053,8 +1062,8 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       const launch = await resolveRequestedLaunch(parsed.data.launch, nativeOperation, context?.signal);
       if (!launch.ok) { await nativeOperation?.dispose(); return launch; }
       launchProcess = launch.launchProcess;
-      launchProcess = await prepareAssociatedTerminalLaunch({ launchProcess,
-        nativeSignIn: parsed.data.launch?.kind === 'agent_login', context, requesterAccountId: requesterIdentity.requester.accountId,
+      launchProcess = await prepareAssociatedTerminalLaunch({ launchProcess, request: parsed.data, placement,
+        context, requesterAccountId: requesterIdentity.requester.accountId,
         sessionId, terminalKey: parsed.data.terminalKey, actionId: 'machines.terminal.restart' });
       const preparation = projectCustody
         ? await prepareProjectShell(projectCustody, launchProcess, context, requesterIdentity, nativeOperation)

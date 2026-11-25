@@ -921,6 +921,12 @@ restores the array directly to Agent passthrough without interpreting its
 contents as Happier controls. Browser-safe server-start drafts and persisted
 runner respawn descriptors omit this raw launch input.
 
+A person's standalone Machine terminal keeps its shell working directory. When
+the terminal launches Happier without a selected folder and the foreground start
+hands off to the daemon, it carries the home intent used by a fresh app start.
+Session directory preparation expands that intent under the selected Agent's
+execution identity. Explicit folder and Workspace selections carry their paths.
+
 A native fork keeps its source workspace. Its private foreground admission
 marks continuation locality without copying the source into public spawn input.
 Directly policy preserves the existing local fork path; a sandbox policy

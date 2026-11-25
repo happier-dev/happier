@@ -4,7 +4,8 @@ import { absentAccountPluginAvailabilityHttpResponse } from '@/testkit/http/acco
 import { handleConfiguredAcpCatalogCliCommand } from '@/agent/acp/catalog/configured/handleCatalogCliCommand';
 import { dispatchCli } from './dispatch';
 import { createServer } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import fs from 'fs/promises';
 import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -50,6 +51,17 @@ import { attemptNativeForkOpen } from '@/session/actions/lifecycle/fork/attemptN
 import { buildHappySessionControlArgs } from '@/daemon/sessionSpawnArgs';
 import { prepareForegroundAgentRuntimeAdmission } from '@/daemon/agentRuntime/prepareForegroundAdmission';
 import { projectCurrentAgentSessionView } from '@happier-dev/agents';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { readSessionCreationTargetPreparationResultV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
+import type { RpcHandler } from '@/api/rpc/types';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { registerMachineTerminalRpcHandlers } from '@/api/machine/rpcHandlers.terminal';
+import { registerSessionCreationDirectoryPreflightRpc } from '@/session/creation/registerSessionCreationTargetPreparationRpc';
+import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
+import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
+import type { PtySpawnParams } from '@/terminal/pty/provider';
+import { resolveDefaultDirectoryForMachine } from '../../../ui/sources/utils/sessions/machineDefaultDirectory';
 
 afterEach(() => { vi.restoreAllMocks(); reloadConfiguration(); });
 
@@ -57,7 +69,7 @@ type ForegroundAuthorityCase = Readonly<{
   prior: string | undefined; definitionId: string | undefined; missingCli: boolean; profileRouting?: boolean;
   disabled?: boolean; explicitProfile?: boolean; fileStoreAgent?: 'pi' | 'ohmypi'; hostedScope?: string;
   providerConnectionId?: string;
-  policyHandoff?: boolean | 'approval' | 'attach' | 'missing-cli';
+  policyHandoff?: boolean | 'approval' | 'attach' | 'missing-cli' | 'fresh-directory';
   nativeForkPolicy?: 'directly' | 'sandbox';
   modelSelection?: 'native' | 'provider';
   diagnosticDebug?: Readonly<{ host: string | undefined; session: string | undefined }>;
@@ -71,6 +83,7 @@ describe('foreground CLI runner authority scope', () => {
     { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'attach' },
     { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'approval' },
     { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'missing-cli' },
+    { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'fresh-directory' },
     { prior: undefined, definitionId: undefined, missingCli: false, profileRouting: false },
     { prior: '', definitionId: undefined, missingCli: false },
     { prior: 'previous-invocation', definitionId: undefined, missingCli: false },
@@ -131,6 +144,15 @@ describe('foreground CLI runner authority scope', () => {
     const requests: string[] = [];
     const boundaryErrors: unknown[] = [];
     let policySpawnInput: unknown;
+    const freshDirectory = policyHandoff === 'fresh-directory';
+    const nativeHome = join(home, 'agent-home');
+    const nativeRpc = new RpcHandlerManager({ scopePrefix: 'policy-machine', encryptionMode: 'plain', logger() {} });
+    if (freshDirectory) registerSessionCreationDirectoryPreflightRpc({ rpcHandlerManager: nativeRpc });
+    const preflight = async (path: string) => readSessionCreationTargetPreparationResultV1(
+      await runAddedHostedSession({ environment: { ...process.env, HOME: nativeHome, USERPROFILE: nativeHome },
+        workingDirectory: nativeHome, end() {} }, () => nativeRpc.invokeLocal(
+        RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT, { directory: { kind: 'path', path } })),
+    );
     // This is the daemon/Home HTTP boundary. CLI parsing, credentials, engine
     // resolution, physical Agent admission and Session construction stay real.
     const profile = { v: 2, id: 'profile-default', name: 'Profile Default',
@@ -177,7 +199,14 @@ describe('foreground CLI runner authority scope', () => {
           if (policyHandoff === 'approval') return respond(200, { ok: true, result: {
             kind: 'approval_request_created', artifactId: 'foreground-spawn-approval', actionId: 'session.spawn_new',
           } });
-          if (policyHandoff === 'attach') return respond(200, { ok: true, result: {
+          if (freshDirectory) {
+            const spawn = SessionSpawnNewInputV2Schema.parse(root.input);
+            if (spawn.directory.kind !== 'path') throw new Error('Expected an ordinary Session directory');
+            const prepared = await preflight(spawn.directory.path);
+            if (!prepared.ok) return respond(200, { ok: true, result: prepared.result });
+            expect(prepared.preparedTarget.directory).toBe(nativeHome);
+          }
+          if (policyHandoff === 'attach' || freshDirectory) return respond(200, { ok: true, result: {
             type: 'success', disposition: 'created', sessionId: 'cforegroundpolicysession01',
             executionTarget: { serverId: 'foreground-fixture', machineId: 'policy-machine' },
             organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' },
@@ -242,7 +271,7 @@ describe('foreground CLI runner authority scope', () => {
         }
         // Successful birth hands control to the real attach owner. Stop at its
         // Home transport boundary, before opening an external terminal client.
-        if (policyHandoff === 'attach' && path.startsWith('/v2/sessions/cforegroundpolicysession01')) {
+        if ((policyHandoff === 'attach' || freshDirectory) && path.startsWith('/v2/sessions/cforegroundpolicysession01')) {
           return respond(503, { error: 'attach-fixture-unavailable' });
         }
         if (path === '/v1/sessions') {
@@ -334,6 +363,64 @@ describe('foreground CLI runner authority scope', () => {
         expect(process.env[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY]).toBe(previous[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY]);
         throw new Error('foreground-command-exit');
       }) as never);
+      if (freshDirectory) {
+        await Promise.all([mkdir(directory), mkdir(nativeHome)]);
+        const access = fs.access.bind(fs);
+        // The worker runs as the admitted Agent. Substitute only the native OS
+        // traversal failure on the custodian's home.
+        vi.spyOn(fs, 'access').mockImplementation(async (path, mode) => {
+          if (path === directory) throw Object.assign(new Error('Permission denied'), { code: 'EACCES' });
+          return access(path, mode);
+        });
+        const machineId = 'policy-machine';
+        const appDefault = resolveDefaultDirectoryForMachine({ machineId, machines: [], recentPaths: [],
+          ownStatus: { protection: 'setup_pending', status: { kind: 'member_not_prepared' } } });
+        expect(await preflight(appDefault)).toMatchObject({ ok: true, preparedTarget: { directory: nativeHome } });
+
+        const handlers = new Map<string, RpcHandler>();
+        let launch: PtySpawnParams | undefined;
+        const shellEnv = { ...process.env, HOME: directory, USERPROFILE: directory };
+        const terminal = registerMachineTerminalRpcHandlers({
+          rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
+          deps: { env: shellEnv, resolveHostHomeServerIdentityId: async () => 'foreground-fixture', serverId: 'foreground-fixture',
+            sessionManager: createTerminalPtySessionManager({ env: shellEnv, config: readDaemonTerminalPtyConfig(shellEnv).sessionManager,
+              ptyProvider: { spawn(params) {
+                launch = params;
+                return { pid: 0, write() {}, resize() {}, kill() {},
+                  onData: () => ({ dispose() {} }), onExit: () => ({ dispose() {} }) };
+              } } }),
+          },
+        });
+        try {
+          for (const cwd of [undefined, directory]) {
+            await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({
+              terminalKey: cwd === undefined ? 'fresh-default' : 'explicit-folder',
+              ...(cwd === undefined ? {} : { cwd }), launch: { kind: 'happier_cli', args: ['codex'] }, cols: 100, rows: 30,
+            }, { signal: new AbortController().signal, callerAuthority: 'present_user',
+              machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId,
+                installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+              verifyMachineAdmissionCurrent: async () => true,
+            })).resolves.toMatchObject({ ok: true, reused: false });
+            expect(launch?.options.cwd).toBe(directory);
+            if (!launch?.options.env) throw new Error('Expected the owner terminal process environment');
+            await runAddedHostedSession({ environment: { ...launch.options.env }, workingDirectory: directory, end() {} },
+              () => runBackendSessionCliCommand({ resolveSessionRuntimePreferences: null,
+                context: { args: [], rawArgv: [], terminalRuntime: null }, backendIdForSessionRuntime: agentId,
+                runtimeAuthorityAgentId: agentId }));
+            expect(boundaryErrors).toEqual([]);
+            if (cwd === undefined) {
+              expect(requests.some(path => path.startsWith('/v2/sessions/cforegroundpolicysession01')),
+                JSON.stringify(vi.mocked(console.error).mock.calls)).toBe(true);
+              requests.length = 0;
+            } else {
+              expect(policySpawnInput).toMatchObject({ directory: { kind: 'path', path: directory } });
+              expect(requests).toContain('/actions/root/execute');
+              expect(requests.some(path => path.startsWith('/v2/sessions/cforegroundpolicysession01'))).toBe(false);
+            }
+          }
+        } finally { terminal.dispose(); }
+        return;
+      }
       const invoke = () => explicitProfile ? handleConfiguredAcpCatalogCliCommand({ args: ['acp-catalog', '--backend', definitionId!, '--profile', 'ignored-profile', '--profile', profile.id], rawArgv: [], terminalRuntime: null }) : profileRouting ? dispatchCli({ args: ['--profile', 'ignored-profile', '--profile', profile.id], rawArgv: diagnosticDebug ? ['happier', '--api-token', 'foreground-fixture-token', 'session-diagnostic-fixture'] : [], terminalRuntime: null }) : runBackendSessionCliCommand({ resolveSessionRuntimePreferences: null, context: { args: nativeForkPolicy ? nativeForkArgs : policyHandoff ? ['--native-flag', 'native value'] : agentTarget || modelSelection ? ['--model', 'fixture-native-model', ...(providerConnectionId ? ['--provider-connection', providerConnectionId] : [])] : [], rawArgv: [], terminalRuntime: null },
         backendIdForSessionRuntime: agentId, runtimeAuthorityAgentId: agentId,
         ...(fileStoreAgent ? { agentIdForAccountSettings: agentId } : {}),
