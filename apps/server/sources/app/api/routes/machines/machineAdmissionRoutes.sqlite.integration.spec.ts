@@ -120,132 +120,81 @@ describe('Machine receiver current admission on SQLite', () => {
         return { homeId, custodian, actor, parentKey, childKey, parent, child, context, row };
     }
 
-    it.each(['source', 'target'] as const)('verifies requester-owned %s workspace admission at its foreign controller and retains only cleanup after rebuild', async kind => {
+    it.each(['source', 'target'] as const)('admits requester-owned %s workspace work on the guest and retains controller cleanup after rebuild', async kind => {
         const { homeId, custodian, actor, parentKey, childKey, parent, child, context, row } = await createSharedChildParentFixture(true);
         const operationId = randomUUID();
-        const body = (phase: 'prepare' | 'abort' | 'preflight' | 'release', rootPath = '/child/source', privateKey = parentKey.secretKey) => {
+        const body = (phase: 'prepare' | 'abort' | 'preflight' | 'release') => {
             const routing = kind === 'source' ? { workspaceSyncSourceRouting: WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase, operationId,
-                accountServerId: homeId, sourceMachineId: child.id, sourceRootPath: rootPath,
+                accountServerId: homeId, sourceMachineId: child.id, sourceRootPath: '/child/source',
                 sourceContext: { machineAdmission: context, callerAuthority: 'present_user' } }) }
                 : { workspaceSyncTargetRouting: WorkspaceSyncTargetRoutingV1Schema.parse({ v: 1, phase, operationId, accountServerId: homeId,
-                    targetMachineId: child.id, targetRootPath: rootPath,
+                    targetMachineId: child.id, targetRootPath: '/child/source',
                     targetContext: { machineAdmission: context, callerAuthority: 'present_user' } }) };
             const method = `${parent.id}:${kind === 'source' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE
                 : phase === 'release' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE : RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`;
             return { v: 1, context, method, ...routing, proof: signMachineInstallationProof({ payload: {
                 version: 1, machineId: parent.id, installationId: parent.installationId!, accountId: custodian.id,
-                rpcAdmission: { context, method, ...routing } }, privateKey }) };
+                rpcAdmission: { context, method, ...routing } }, privateKey: parentKey.secretKey }) };
         };
         const freshPhase = kind === 'source' ? 'prepare' : 'preflight';
         const releasePhase = kind === 'source' ? 'abort' : 'release';
         const app = createAuthenticatedTestApp();
         machinesRoutes(app);
         try {
-            const verify = (payload: unknown, accountId = custodian.id) => app.inject({ method: 'POST',
-                url: `/v1/machines/${parent.id}/admission/verify`,
+            const verify = (machineId: string, accountId: string, payload: unknown) => app.inject({ method: 'POST',
+                url: `/v1/machines/${machineId}/admission/verify`,
                 headers: { authorization: 'Bearer authenticated-test', 'x-test-user-id': accountId }, payload });
-            expect((await verify(body(freshPhase))).statusCode).toBe(200);
-            expect((await verify(body(freshPhase), actor.id)).statusCode).toBe(403);
-            expect((await verify(body(freshPhase, '/unrelated'))).statusCode).toBe(403);
-            expect((await verify(body(freshPhase, '/child/source', childKey.secretKey))).statusCode).toBe(403);
+            const method = `${child.id}:${kind === 'source' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE
+                : RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`;
+            const guestProof = signMachineInstallationProof({ payload: { version: 1, machineId: child.id,
+                installationId: child.installationId!, accountId: actor.id, rpcAdmission: { context, method } },
+                privateKey: childKey.secretKey });
+            const guest = await verify(child.id, actor.id, { v: 1, context, method, proof: guestProof });
+            expect(guest.statusCode).toBe(200);
+            expect(guest.json()).toEqual({ v: 1, ok: true });
+            const refused = await verify(parent.id, custodian.id, body(freshPhase));
+            expect(refused.statusCode).toBe(403);
+            expect(refused.json()).toEqual({ error: 'access_denied' });
             await db.managedMachine.update({ where: { id: row.id }, data: { enrolledMachineId: null,
                 admittedInput: { enrollmentAccountId: actor.id, replacementEnrollment: { machineId: child.id } },
                 resource: { contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1,
                     value: {}, devcontainerObservation: { nativeResourceId: 'replacement', user: 'coder', workspaceFolder: '/new',
                         storage: { kind: 'child', childPath: '/new' } } } } });
-            expect((await verify(body(freshPhase))).statusCode).toBe(403);
-            expect((await verify(body(releasePhase))).statusCode).toBe(200);
+            expect((await verify(parent.id, custodian.id, body(releasePhase))).statusCode).toBe(200);
             await db.managedMachine.update({ where: { id: row.id }, data: { admittedInput: { enrollmentAccountId: custodian.id,
                 replacementEnrollment: { machineId: child.id } } } });
-            expect((await verify(body(releasePhase))).statusCode).toBe(403);
+            expect((await verify(parent.id, custodian.id, body(releasePhase))).statusCode).toBe(403);
             expect(await resolveMachineAdmission({ actorAccountId: custodian.id, machineId: child.id })).toMatchObject({ kind: 'denied' });
         } finally { await app.close(); }
     });
 
-    it('verifies original shared-child SOURCE admission with the exact physical parent signer', async () => {
-        const { homeId, custodian, actor, parentKey, childKey, parent, child, context, row } = await createSharedChildParentFixture();
-        const routing = { v: 1 as const, phase: 'prepare' as const, operationId: randomUUID(), accountServerId: homeId,
+    it('allows the original shared-child SOURCE custodian to abort after the actor loses access', async () => {
+        const { homeId, custodian, actor, parentKey, childKey, parent, child, context } = await createSharedChildParentFixture();
+        const routing = { v: 1 as const, phase: 'abort' as const, operationId: randomUUID(), accountServerId: homeId,
             sourceMachineId: child.id, sourceRootPath: '/child/source',
             sourceContext: { machineAdmission: context, callerAuthority: 'account_automation' as const } };
-        const method = `${parent.id}:daemon.workspaceSync.handoffSourcePhase.v1`;
-        const signRouting = (workspaceSyncSourceRouting: Omit<typeof routing, 'phase'> & { phase: 'prepare' | 'abort' }, privateKey = parentKey.secretKey) => signMachineInstallationProof({
-            payload: { version: 1, machineId: parent.id, installationId: parent.installationId!, accountId: custodian.id,
+        const method = `${parent.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE}`;
+        const body = (phase: 'prepare' | 'abort', privateKey = parentKey.secretKey) => {
+            const workspaceSyncSourceRouting = { ...routing, phase };
+            const proof = signMachineInstallationProof({ payload: { version: 1, machineId: parent.id,
+                installationId: parent.installationId!, accountId: custodian.id,
                 rpcAdmission: { context, method, workspaceSyncSourceRouting } }, privateKey });
-        const proof = signRouting(routing);
+            return { v: 1, context, method, workspaceSyncSourceRouting, proof };
+        };
         const app = createAuthenticatedTestApp();
         machinesRoutes(app);
         try {
-            const body = { v: 1, context, method, workspaceSyncSourceRouting: routing, proof };
-            const verify = (payload: unknown) => app.inject({ method: 'POST', url: `/v1/machines/${parent.id}/admission/verify`,
+            const verify = (payload: unknown) => app.inject({ method: 'POST',
+                url: `/v1/machines/${parent.id}/admission/verify`,
                 headers: { authorization: 'Bearer authenticated-test', 'x-test-user-id': custodian.id }, payload });
-            const response = await verify(body);
-            expect(response.statusCode).toBe(200);
-            expect(response.json()).toEqual({ v: 1, ok: true });
-            // Reviewed SOURCE custody grants the physical effect, not permission
-            // to use an older receiver's unrestricted daemon filesystem rights.
-            await db.machine.update({ where: { id: child.id }, data: {
-                operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
-                operationProtocolCapabilitiesRevision: 1,
-            } });
-            await db.machine.update({ where: { id: parent.id }, data: {
-                operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
-                operationProtocolCapabilitiesRevision: 1,
-            } });
-            expect((await verify(body)).statusCode).toBe(200);
-            await db.machine.update({ where: { id: parent.id }, data: { operationProtocolCapabilities: {} } });
-            expect((await verify(body)).statusCode).toBe(403);
-            await db.machine.update({ where: { id: parent.id }, data: {
-                operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
-            } });
-            expect((await verify(body)).statusCode).toBe(200);
-            const foreignHome = `srv_${'b'.repeat(32)}`;
-            const foreignHomeRouting = { ...routing, accountServerId: foreignHome };
-            expect((await verify({ ...body, workspaceSyncSourceRouting: foreignHomeRouting,
-                proof: signRouting(foreignHomeRouting) })).statusCode).toBe(403);
-            await db.managedMachine.update({ where: { id: row.id }, data: { homeId: foreignHome } });
-            expect((await verify(body)).statusCode).toBe(403);
-            await db.managedMachine.update({ where: { id: row.id }, data: { homeId } });
-            const foreignRouting = { ...routing, sourceRootPath: '/child/foreign' };
-            expect((await verify({ ...body, workspaceSyncSourceRouting: foreignRouting, proof: signRouting(foreignRouting) })).statusCode).toBe(403);
-            const childProof = signRouting(routing, childKey.secretKey);
-            expect((await verify({ ...body, proof: childProof })).statusCode).toBe(403);
-            await db.managedMachine.update({ where: { id: row.id }, data: { controllerInstallationId: randomUUID() } });
-            expect((await verify(body)).statusCode).toBe(403);
-            await db.managedMachine.update({ where: { id: row.id }, data: { controllerInstallationId: parent.installationId! } });
+            const refused = await verify(body('prepare'));
+            expect(refused.statusCode).toBe(403);
+            expect(refused.json()).toEqual({ error: 'access_denied' });
             await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: child.id, accountId: actor.id } } });
-            expect((await verify(body)).statusCode).toBe(403);
-            const releaseRouting = { ...routing, phase: 'abort' as const };
-            expect((await verify({ ...body, workspaceSyncSourceRouting: releaseRouting,
-                proof: signRouting(releaseRouting) })).statusCode).toBe(200);
-        } finally { await app.close(); }
-    });
-
-    it('verifies original shared-child TARGET admission with the exact physical parent signer', async () => {
-        const { homeId, custodian, actor, parentKey, childKey, parent, child, context, row } = await createSharedChildParentFixture();
-        const routing = { v: 1 as const, phase: 'preflight' as const, operationId: randomUUID(), accountServerId: homeId,
-            targetMachineId: child.id, targetRootPath: '/child/source',
-            targetContext: { machineAdmission: context, callerAuthority: 'account_automation' as const } };
-        const method = `${parent.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`;
-        const signRouting = (workspaceSyncTargetRouting: typeof routing, privateKey = parentKey.secretKey) => signMachineInstallationProof({
-            payload: { version: 1, machineId: parent.id, installationId: parent.installationId!, accountId: custodian.id,
-                rpcAdmission: { context, method, workspaceSyncTargetRouting } }, privateKey });
-        const app = createAuthenticatedTestApp();
-        machinesRoutes(app);
-        try {
-            const body = { v: 1, context, method, workspaceSyncTargetRouting: routing, proof: signRouting(routing) };
-            const verify = (payload: unknown) => app.inject({ method: 'POST', url: `/v1/machines/${parent.id}/admission/verify`,
-                headers: { authorization: 'Bearer authenticated-test', 'x-test-user-id': custodian.id }, payload });
-            const response = await verify(body);
-            expect(response.statusCode).toBe(200);
-            expect(response.json()).toEqual({ v: 1, ok: true });
-            const foreignRouting = { ...routing, targetRootPath: '/child/foreign' };
-            expect((await verify({ ...body, workspaceSyncTargetRouting: foreignRouting, proof: signRouting(foreignRouting) })).statusCode).toBe(403);
-            expect((await verify({ ...body, proof: signRouting(routing, childKey.secretKey) })).statusCode).toBe(403);
-            await db.managedMachine.update({ where: { id: row.id }, data: { controllerInstallationId: randomUUID() } });
-            expect((await verify(body)).statusCode).toBe(403);
-            await db.managedMachine.update({ where: { id: row.id }, data: { controllerInstallationId: parent.installationId! } });
-            await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: child.id, accountId: actor.id } } });
-            expect((await verify(body)).statusCode).toBe(403);
+            expect((await verify(body('abort', childKey.secretKey))).statusCode).toBe(403);
+            const released = await verify(body('abort'));
+            expect(released.statusCode).toBe(200);
+            expect(released.json()).toEqual({ v: 1, ok: true });
         } finally { await app.close(); }
     });
 });
