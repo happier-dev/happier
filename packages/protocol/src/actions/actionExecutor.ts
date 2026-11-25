@@ -965,7 +965,11 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     onEffectDispatch?: () => void;
   }>): Promise<Readonly<{ ok: true; request: StoredApprovalRequestV2; artifactId: string }> | ActionExecuteFailure> {
     if (!deps.approvalsCreate) return { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' };
-    const { actionId, input, context: ctx } = args;
+    const { actionId, input, context } = args;
+    // An unsigned native Ask needs an identity even when Automation selection has no rows.
+    const ctx = context.externalActionCredential || context.externalActionExecutionAuthorization
+      || normalizeId(readRecord(args.actionArgs).creationKey)
+      ? context : withInvocationRequestId(context);
     const pluginCaller = projectApprovalRequestPluginCaller(ctx.actionCaller);
     if (ctx.actionCaller?.kind === 'plugin' && !pluginCaller) {
       return { ok: false, errorCode: 'plugin_action_caller_required', error: 'plugin_action_caller_required' };

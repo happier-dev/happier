@@ -403,7 +403,7 @@ it.each(['plain', 'e2ee'] as const)('retains selected private Only-when matching
             value: row.phase === 'before' ? 'after' : 'failed' }] } },
       })) })) };
   const unexpectedWrite = async (): Promise<never> => { throw new Error('Matching performs no write'); };
-  let retainedRow = stored;
+  let retainedRow: AutomationDefinitionDetail | null = stored;
   const actions = createAccountWorkflowTriggerActions({ resolveEncryption: async () => current,
     randomBytes: length => new Uint8Array(length).fill(1), newId: () => 'unused',
     resolveWorkflow: async () => { workflowReads++; return { definition: WorkflowDefinitionV1Schema.parse({ version: 1,
@@ -461,7 +461,7 @@ it.each(['plain', 'e2ee'] as const)('retains selected private Only-when matching
   const cold = restoreApprovalAutomaticContextV1({ automaticChecks: createApprovalAutomaticChecksV1(selection, false) },
     actionId, { actionRequestId: 'cold-request', actionAutomationAdmission: invocation }, { ...http, prepareMatching: checks.prepareMatching });
   expect(await cold.actionAutomationAdmission!.settle({ ok: false, errorCode: 'target_unavailable', error: 'unavailable' }))
-    .toMatchObject({ automationNotices: [expect.objectContaining({ reason: 'content_unavailable' })] });
+    .toMatchObject({ automationNotices: [expect.objectContaining({ reason: 'triggerNotFound' })] });
   expect(sent).toHaveLength(1);
   expect(definitionReads).toBe(3);
   retainedRow = { ...stored, triggers: [...stored.triggers, { ...stored.triggers[0]!, id: 'unrelated',
@@ -477,6 +477,19 @@ it.each(['plain', 'e2ee'] as const)('retains selected private Only-when matching
   expect(sent).toHaveLength(2);
   expect(definitionReads).toBe(4);
   expect(workflowReads).toBe(0);
+
+  const replayPort = { ...http, prepareMatching: checks.prepareMatching };
+  const continuationAfterRemoval = createAutomaticApprovalContinuation({ actionAutomations: replayPort }, async () => null);
+  for (const [row, reason] of [[{ ...stored, triggers: [] }, 'triggerNotFound'], [null, 'automationNotFound']] as const) {
+    retainedRow = row;
+    const replayContext = restoreApprovalAutomaticContextV1(approval, actionId, context, replayPort);
+    expect(await continuationAfterRemoval.admit('approval', approval, replayContext)).toMatchObject({
+      status: 'failed', automaticChecks: { phase: 'refused', runs: [], selected: [{ triggerId: 'before' }, { triggerId: 'after' }] },
+      execution: { ok: false, effectAttempted: false, errorCode: 'target_unavailable',
+        details: { kind: 'automatic_check_start_refusal', automationId: 'own', triggerId: 'before', reason } },
+    });
+  }
+  expect(sent).toHaveLength(2);
 });
 
 it.each([true, false])('admits shared Action checks for the actor through Workflow content (filtered=%s)', async filtered => {

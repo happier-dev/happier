@@ -123,6 +123,34 @@ function context(
 }
 
 describe('Before checks on the Action operand Machine', () => {
+  it.each(['empty', 'unavailable'] as const)('opens an unkeyed native terminal approval with an %s Automation index', async index => {
+    const reads: string[] = [];
+    const port = createActionAutomationHttpPortV1({ accountId: 'actor', request: async (path, request) => {
+      expect(request.method).toBe('GET');
+      reads.push(path);
+      if (index === 'unavailable') throw Object.assign(new Error('Home unreachable'), { code: 'server_unreachable' });
+      return { v: 1, rows: [] };
+    } });
+    const approvals: Request[] = [];
+    const effect = vi.fn(async () => ({ ok: true }));
+    const executor = createActionExecutor({ actionAutomations: port, machineTerminalAction: effect,
+      approvalsCreate: async ({ request }) => { approvals.push(request); return { artifactId: 'approval' }; } });
+    const caller = context(TERMINAL_OPEN, 'ui', { surface: 'agent', authority: 'account_automation',
+      actionCaller: undefined, actionRequestId: undefined, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) });
+    const notices = index === 'unavailable' ? [{ code: 'action_automations_not_checked', reason: 'server_unreachable' }] : [];
+    try {
+      const result = await executor.execute(TERMINAL_OPEN, operands[TERMINAL_OPEN], caller);
+      expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval' } });
+      expect(result.automationNotices ?? []).toEqual(notices);
+      expect(approvals).toEqual([expect.objectContaining({ status: 'open',
+        executionOriginV1: expect.objectContaining({ requestId: expect.stringMatching(/\S/), machineId: 'operand-machine' }),
+        automaticChecks: expect.objectContaining({ selectionStatus: index === 'empty' ? 'ready' : 'unavailable', notices }),
+      })]);
+      expect(reads).toEqual(['/v1/automations/actions/index']);
+      expect(effect).not.toHaveBeenCalled();
+    } finally { port.dispose(); }
+  });
+
   it.each(['no Account credentials', 'lost matching', 'unreadable content'] as const)('decides a terminal approval with %s', async capability => {
     const port = createActionAutomationHttpPortV1({
       accountId: 'actor',

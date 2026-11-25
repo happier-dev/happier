@@ -482,10 +482,13 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     const resolved = await deps.resolveSession(sessionId, caller, { checkNativeGoalOwner: false });
     return { ...resolved, ...admission };
   };
-  const readRetained = async (automationId: string, caller?: Caller) => {
+  const findRetained = (automationId: string, caller?: Caller) => {
     const admission = caller?.workflowTriggerMutationAdmission;
     const admitted = admission && 'row' in admission ? admission.row : undefined;
-    const row = admitted?.id === automationId ? admitted : await deps.automations.get(automationId);
+    return admitted?.id === automationId ? Promise.resolve(admitted) : deps.automations.get(automationId);
+  };
+  const readRetained = async (automationId: string, caller?: Caller) => {
+    const row = await findRetained(automationId, caller);
     if (!row) refuse('content_unavailable');
     return row;
   };
@@ -949,7 +952,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     }, row, undefined, caller?.signal);
   const actions = {
     prepareActionMatching: (accountId: string) => createActionAutomationPrivateMatchingV1({ accountId,
-      readDefinition: readRetained,
+      readDefinition: findRetained,
       ...(deps.openSharedActionTrigger ? { readSharedDefinition: deps.openSharedActionTrigger } : {}),
       openTrigger: async (row, trigger) => {
         if (!deps.openActionTrigger) refuse('target_unavailable');

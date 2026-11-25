@@ -24,7 +24,7 @@ export function createActionAutomationPrivateMatchingV1(options: Readonly<{
       .map(async (automationId): Promise<readonly [string, Source]> => {
         try {
           const row = await options.readDefinition(automationId, context);
-          return [automationId, row ? { row } : { reason: 'content_unavailable' }];
+          return [automationId, row ? { row } : { reason: 'automationNotFound' }];
         } catch (error) {
           return [automationId, { reason: readActionErrorCodeV1(error) ?? 'action_failed' }];
         }
@@ -37,9 +37,10 @@ export function createActionAutomationPrivateMatchingV1(options: Readonly<{
       }
       const source = sources.get(reference.automationId)!;
       if ('reason' in source) return [key(reference), source];
-      const retained = source.row.enabled ? source.row.triggers.find(trigger => trigger.id === reference.triggerId
-        && trigger.revision === reference.triggerRevision && trigger.enabled) : undefined;
-      if (!retained || retained.kind !== 'action' || 'consentFor' in retained) return [key(reference), { reason: 'content_unavailable' }];
+      const retained = source.row.triggers.find(trigger => trigger.id === reference.triggerId);
+      if (!retained) return [key(reference), { reason: 'triggerNotFound' }];
+      if (!source.row.enabled || !retained.enabled || retained.revision !== reference.triggerRevision
+        || retained.kind !== 'action' || 'consentFor' in retained) return [key(reference), { reason: 'content_unavailable' }];
       try { return [key(reference), { trigger: await options.openTrigger(source.row, retained) }]; }
       catch (error) { return [key(reference), { reason: readActionErrorCodeV1(error) ?? 'action_failed' }]; }
     })));
