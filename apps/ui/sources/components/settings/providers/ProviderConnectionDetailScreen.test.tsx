@@ -1602,16 +1602,41 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(bundled.findByTestId('provider-connection-experimental')).toBeNull();
     });
 
-    it('renders an initial typed load failure instead of falsely claiming the connection was deleted', async () => {
-        state.connection = null;
-        account.home.answer(account.serverId, `GET ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, { status: 503, body: {} });
+    it('shows an unavailable Account catalog cause and retries a purpose-bound Gateway with two Machine grants', async () => {
+        const saved = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_bound_gateway',
+            source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
+            role: 'named', displayName: 'Subscriptions', displayNameMode: 'custom',
+            deployment: { kind: 'managedLocal' }, gatewayPlacement: { kind: 'sessionMachine' },
+            purposeBindingDefaults: { 'openai-upstream': {
+                kind: 'account', account: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' },
+            } },
+            revision: 3, createdAt: 1, updatedAt: 1 });
+        const catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+            connections: [saved],
+            accountGrants: [{ v: 1, connectionId: saved.id, connectionSecurityFingerprint: 'account-security', confirmedAt: 1 }],
+            machineGrants: ['machine-a', 'machine-b'].map(machineId => ({
+                v: 1, connectionId: saved.id, machineId, endpointSetFingerprint: 'endpoints',
+                connectionSecurityFingerprint: 'machine-security', confirmedAt: 1,
+            })),
+        });
+        await account.restore({ accountId: 'account-gateway-catalog-recovery', catalog, machines: [] });
+        await account.home.selectHomes([account.serverId]);
+        await account.selectMachine(account.serverId, null);
+        const rowRead = `GET ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`;
+        account.home.answer(account.serverId, rowRead, { body: { error: 'forbidden' }, status: 403 });
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
-        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const titles = presentedTitles(screen);
-        expect(screen.findAll(node => node.props.diagnosticCode === 'provider_catalog_unavailable')).not.toHaveLength(0);
-        expect(titles).toContain('settingsProviders.errors.genericTitle');
-        expect(titles).toContain('settingsProviders.errors.actions.retry');
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId={saved.id} />);
+        const recoveryId = 'provider-error-action:provider_catalog_unavailable';
+        await waitForHomeGovernance(() => expect(screen.findByTestId(recoveryId)).not.toBeNull());
+        expect(screen.findByTestId('provider-connection-enabled')).toBeNull();
         expect(screen.findByTestId('provider-connection-not-found')).toBeNull();
+        expect(findComposite(screen, 'provider-error:provider_catalog_unavailable', 'diagnosticCode')?.props.diagnosticCode)
+            .toBe('forbidden');
+
+        account.home.answer(account.serverId, rowRead, { body: { status: 'present', revision: 1, content: { t: 'plain', v: catalog } } });
+        await screen.pressByTestIdAsync(recoveryId);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-enabled')).not.toBeNull());
+        expect(screen.findByTestId(recoveryId)).toBeNull();
     });
 
     it('reports a failed probe beside the header Test action', async () => {

@@ -207,8 +207,13 @@ export function useProviderConnections(input: Readonly<{
             if (requestGeneration !== generation.current || !requestStillCurrent()) return;
             const admitted = readCatalogAdmission();
             if (!admitted?.data) {
+                const result = admitted?.catalog;
+                const error = createProviderErrorV1('provider_catalog_unavailable', result?.status === 'unavailable' ? {
+                    failureCause: { phase: 'providers.connections.describe', errorClass: 'Error',
+                        errorCode: result.reason, httpStatus: null },
+                } : {});
                 setState({ scopeKey, accountScopeKey, accountLifetime, data: null, accountData: null,
-                    error: createProviderErrorV1('provider_catalog_unavailable'), machineError: null, accountAnswered: true, loading: true });
+                    error, machineError: null, accountAnswered: true, loading: true });
                 return null;
             }
             const accountResult = describeAccountProviderConnectionsV1(admitted.data,
