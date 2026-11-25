@@ -7637,6 +7637,8 @@ const zhHans: typeof en = {
     errorTeamOwnerTransferRequired: '某个团队仍需要此账户作为所有者。请先为该团队指定另一位所有者。',
     errorAccountNotFound: '此账户已不在该 Home 中。',
     errorAccountInactive: '此账户未处于活跃状态，无法获得该权限。',
+    errorAccountSignOutInactive: '只有活跃账户才能在所有设备上退出登录。',
+    errorAccountRetired: '此账户已停用，无法再更改其状态。',
     errorErasureTransitionCleanupPending: '账户删除正在等待加密数据清理完成。请再次尝试删除账户。',
     errorErasureUploadPending: '仍有上传正在进行。请等待上传完成后，再尝试删除账户。',
     errorErasureDeploymentCleanupRequired: '某个部署仍需清理或存在共享依赖。请完成拆除并解决这些依赖后，再尝试删除账户。',

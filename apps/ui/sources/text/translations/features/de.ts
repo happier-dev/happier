@@ -7752,6 +7752,8 @@ const de: typeof en = {
     errorTeamOwnerTransferRequired: 'Ein Team braucht dieses Konto noch als Eigentümer. Gib diesem Team zuerst einen anderen Eigentümer.',
     errorAccountNotFound: 'Dieses Konto existiert auf diesem Home nicht mehr.',
     errorAccountInactive: 'Dieses Konto ist nicht aktiv und kann diese Berechtigung nicht erhalten.',
+    errorAccountSignOutInactive: 'Nur aktive Konten können überall abgemeldet werden.',
+    errorAccountRetired: 'Dieses Konto wurde stillgelegt. Sein Status kann nicht mehr geändert werden.',
     errorErasureTransitionCleanupPending: 'Das Löschen des Kontos wartet auf die Verschlüsselungsbereinigung. Versuche erneut, das Konto zu löschen.',
     errorErasureUploadPending: 'Ein Upload läuft noch. Warte, bis er abgeschlossen ist, und versuche dann erneut, das Konto zu löschen.',
     errorErasureDeploymentCleanupRequired: 'Ein Deployment muss noch bereinigt werden oder hat gemeinsam genutzte Abhängigkeiten. Schließe den Abbau ab und löse diese Abhängigkeiten auf. Versuche dann erneut, das Konto zu löschen.',

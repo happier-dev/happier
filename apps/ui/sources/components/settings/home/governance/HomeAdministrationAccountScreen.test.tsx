@@ -291,6 +291,19 @@ describe('HomeAdministrationAccountScreen', () => {
         expect(request?.token).toBe(createAccountTokenForTests('account-admin', { currentAccount: true }));
     });
 
+    it.each([
+        { route: SIGN_OUT_PATH, button: 'home-account-sign-out-everywhere-button', body: 'homeGovernance.errorAccountSignOutInactive' },
+        { route: DISABLE_PATH, button: 'home-account-disable', body: 'homeGovernance.errorAccountRetired' },
+    ])('explains why an inactive Account refused $route without asking for another write', async ({ route, button, body }) => {
+        const home = await addAdministeredHome();
+        harness.answer(home, route, { status: 409, body: { error: 'home_account_inactive' } });
+        const screen = await renderAccount(home);
+        await screen.pressByTestIdAsync(button);
+        await waitForHomeGovernance(() => expect(modalState.alerts).toHaveLength(1));
+        expect(modalState.alerts[0]?.body).toBe(body);
+        expect(harness.requestsFor(route)).toHaveLength(1);
+    });
+
     it('does nothing when someone else signs in on this Home while the sign-out confirmation is open', async () => {
         const home = await addAdministeredHome();
         harness.answer(home, SIGN_OUT_PATH, { body: homeAccountRowFixture('ada') });

@@ -162,7 +162,7 @@ export function homeActionUnavailableReasonLabel(reason: HomeAccountActionUnavai
  */
 export function homeGovernanceFailureNotice(
     failure: HomeDomainFailure,
-    context?: Readonly<{ effect: 'read' | 'write' }>,
+    context?: Readonly<{ effect: 'read' | 'write'; accountAction?: 'signOutEverywhere' | 'disable' | 'enable' }>,
 ): Readonly<{ title: string; body: string }> {
     const effect = context?.effect ?? 'write';
     if (failure.code === 'username-changed') {
@@ -179,7 +179,7 @@ export function homeGovernanceFailureNotice(
     }
     return Object.freeze({
         title: effect === 'read' ? t('homeGovernance.unavailableTitle') : t('homeGovernance.changeFailedTitle'),
-        body: homeGovernanceFailureBody(failure, effect),
+        body: homeGovernanceFailureBody(failure, effect, context?.accountAction),
     });
 }
 
@@ -274,7 +274,11 @@ export function homeSettingsFieldFailure(failure: HomeDomainFailure): Readonly<{
     }
 }
 
-function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 'write'): string {
+function homeGovernanceFailureBody(
+    failure: HomeDomainFailure,
+    effect: 'read' | 'write',
+    accountAction?: 'signOutEverywhere' | 'disable' | 'enable',
+): string {
     if (effect === 'read' && failure.code === 'invalid_home_input') return t('homeGovernance.invalidRead');
     switch (failure.code) {
         case 'home_governance_forbidden':
@@ -286,6 +290,8 @@ function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 
         case 'home_account_not_found':
             return t('homeGovernance.errorAccountNotFound');
         case 'home_account_inactive':
+            if (accountAction === 'signOutEverywhere') return t('homeGovernance.errorAccountSignOutInactive');
+            if (accountAction === 'disable' || accountAction === 'enable') return t('homeGovernance.errorAccountRetired');
             return t('homeGovernance.errorAccountInactive');
         case 'home_policy_revision_conflict':
             return t('homeGovernance.revisionConflictBody');

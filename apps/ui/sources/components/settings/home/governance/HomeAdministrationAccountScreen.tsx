@@ -161,7 +161,9 @@ const PersonDetail = React.memo(function PersonDetail(props: Readonly<{
                 return outcome;
             }
             if (isActionApprovalDeclinedErrorCode(outcome.failure.code)) return outcome;
-            const notice = homeGovernanceFailureNotice(outcome.failure);
+            const accountAction = action.kind === 'signOutEverywhere' || action.kind === 'disable' || action.kind === 'enable'
+                ? action.kind : undefined;
+            const notice = homeGovernanceFailureNotice(outcome.failure, { effect: 'write', accountAction });
             await Modal.alertAsync(notice.title, notice.body);
             // The refusal is itself evidence this Home moved under us.
             context.refresh();

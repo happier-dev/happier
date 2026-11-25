@@ -191,6 +191,8 @@ export const en = {
     errorTeamOwnerTransferRequired: 'A Team still needs this account as its owner. Give that Team another owner first.',
     errorAccountNotFound: 'This account no longer exists on this Home.',
     errorAccountInactive: 'This account is not active, so it cannot receive this authority.',
+    errorAccountSignOutInactive: 'Only active accounts can be signed out everywhere.',
+    errorAccountRetired: 'This account was retired. Its status can no longer be changed.',
     errorErasureTransitionCleanupPending: 'Account deletion is waiting for encryption cleanup. Try deleting the account again.',
     errorErasureUploadPending: 'An upload is still in progress. Wait for the upload to finish, then try deleting the account again.',
     errorErasureDeploymentCleanupRequired: 'Ask a Home administrator to identify the deployment blocker before deleting the account.',

@@ -7741,6 +7741,8 @@ const ca: typeof en = {
     errorTeamOwnerTransferRequired: 'Un equip encara necessita aquest compte com a propietari. Dona primer un altre propietari a aquest equip.',
     errorAccountNotFound: 'Aquest compte ja no existeix en aquest Home.',
     errorAccountInactive: 'Aquest compte no està actiu, així que no pot rebre aquesta autoritat.',
+    errorAccountSignOutInactive: 'Només es poden tancar totes les sessions dels comptes actius.',
+    errorAccountRetired: 'Aquest compte s’ha retirat. Ja no se’n pot canviar l’estat.',
     errorErasureTransitionCleanupPending: 'La supressió del compte espera la neteja del xifratge. Torna a provar de suprimir el compte.',
     errorErasureUploadPending: 'Encara hi ha una pujada en curs. Espera que acabi i torna a provar de suprimir el compte.',
     errorErasureDeploymentCleanupRequired: 'Un desplegament encara necessita neteja o té dependències compartides. Completa el desmantellament i resol aquestes dependències; després, torna a provar de suprimir el compte.',

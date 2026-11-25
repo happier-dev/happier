@@ -7637,6 +7637,8 @@ const zhHant: typeof en = {
     errorTeamOwnerTransferRequired: '某個團隊仍需要這個帳戶作為擁有者。請先為該團隊指派另一位擁有者。',
     errorAccountNotFound: '這個帳戶已不在該 Home 中。',
     errorAccountInactive: '這個帳戶並非有效狀態，因此無法取得該權限。',
+    errorAccountSignOutInactive: '只有有效帳戶才能在所有裝置上登出。',
+    errorAccountRetired: '這個帳戶已停用，無法再變更其狀態。',
     errorErasureTransitionCleanupPending: '帳戶刪除正在等待加密資料清理完成。請再次嘗試刪除帳戶。',
     errorErasureUploadPending: '仍有上傳正在進行。請等待上傳完成後，再嘗試刪除帳戶。',
     errorErasureDeploymentCleanupRequired: '某個部署仍需清理或存在共用相依項目。請完成拆除並解決這些相依項目後，再嘗試刪除帳戶。',

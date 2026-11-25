@@ -7757,6 +7757,8 @@ const fr: typeof en = {
     errorTeamOwnerTransferRequired: 'Une équipe a encore besoin de ce compte comme propriétaire. Donne-lui d’abord un autre propriétaire.',
     errorAccountNotFound: 'Ce compte n’existe plus sur ce Home.',
     errorAccountInactive: 'Ce compte n’est pas actif et ne peut pas recevoir cette autorité.',
+    errorAccountSignOutInactive: 'Seuls les comptes actifs peuvent être déconnectés de partout.',
+    errorAccountRetired: 'Ce compte a été mis hors service. Son état ne peut plus être modifié.',
     errorErasureTransitionCleanupPending: 'La suppression du compte attend le nettoyage du chiffrement. Réessaie de supprimer le compte.',
     errorErasureUploadPending: 'Un téléversement est toujours en cours. Attends sa fin, puis réessaie de supprimer le compte.',
     errorErasureDeploymentCleanupRequired: 'Un déploiement nécessite encore un nettoyage ou possède des dépendances partagées. Termine le démantèlement et résous ces dépendances, puis réessaie de supprimer le compte.',

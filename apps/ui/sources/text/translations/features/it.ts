@@ -7748,6 +7748,8 @@ const it: typeof en = {
     errorTeamOwnerTransferRequired: 'Un team ha ancora bisogno di questo account come proprietario. Assegna prima un altro proprietario a quel team.',
     errorAccountNotFound: 'Questo account non esiste più su questo Home.',
     errorAccountInactive: 'Questo account non è attivo, quindi non può ricevere questa autorità.',
+    errorAccountSignOutInactive: 'Solo gli account attivi possono essere disconnessi ovunque.',
+    errorAccountRetired: 'Questo account è stato ritirato. Il suo stato non può più essere modificato.',
     errorErasureTransitionCleanupPending: 'L’eliminazione dell’account attende la pulizia della crittografia. Prova a eliminare di nuovo l’account.',
     errorErasureUploadPending: 'È ancora in corso un caricamento. Attendi che finisca, poi prova di nuovo a eliminare l’account.',
     errorErasureDeploymentCleanupRequired: 'Un deployment richiede ancora una pulizia o ha dipendenze condivise. Completa lo smantellamento e risolvi queste dipendenze, poi prova di nuovo a eliminare l’account.',

@@ -7697,6 +7697,8 @@ const ja: typeof en = {
     errorTeamOwnerTransferRequired: 'あるチームがまだこのアカウントをオーナーとして必要としています。先にそのチームに別のオーナーを設定してください。',
     errorAccountNotFound: 'このアカウントはこの Home に存在しません。',
     errorAccountInactive: 'このアカウントは有効ではないため、この権限を受け取れません。',
+    errorAccountSignOutInactive: 'すべての端末からサインアウトできるのは、有効なアカウントだけです。',
+    errorAccountRetired: 'このアカウントは廃止されています。状態は変更できません。',
     errorErasureTransitionCleanupPending: '暗号化データのクリーンアップが完了するまで、アカウントの削除は保留されます。もう一度アカウントを削除してください。',
     errorErasureUploadPending: 'アップロードがまだ進行中です。完了するまで待ってから、アカウントの削除を再試行してください。',
     errorErasureDeploymentCleanupRequired: 'デプロイにまだクリーンアップが必要か、共有の依存関係があります。撤去を完了してこれらの依存関係を解消してから、アカウントの削除を再試行してください。',

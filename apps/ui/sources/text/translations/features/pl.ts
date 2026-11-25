@@ -7764,6 +7764,8 @@ const pl: typeof en = {
     errorTeamOwnerTransferRequired: 'Zespół nadal potrzebuje tego konta jako właściciela. Najpierw wskaż innego właściciela tego zespołu.',
     errorAccountNotFound: 'To konto już nie istnieje w tym Home.',
     errorAccountInactive: 'To konto nie jest aktywne, więc nie może otrzymać tych uprawnień.',
+    errorAccountSignOutInactive: 'Tylko aktywne konta można wylogować na wszystkich urządzeniach.',
+    errorAccountRetired: 'To konto zostało wycofane. Nie można już zmienić jego stanu.',
     errorErasureTransitionCleanupPending: 'Usunięcie konta czeka na zakończenie czyszczenia danych szyfrowania. Spróbuj ponownie usunąć konto.',
     errorErasureUploadPending: 'Przesyłanie nadal trwa. Poczekaj na jego zakończenie, a następnie spróbuj ponownie usunąć konto.',
     errorErasureDeploymentCleanupRequired: 'Wdrożenie nadal wymaga uporządkowania lub ma współdzielone zależności. Zakończ demontaż i rozwiąż te zależności, a następnie spróbuj ponownie usunąć konto.',

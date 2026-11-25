@@ -7735,6 +7735,8 @@ const pt: typeof en = {
     errorTeamOwnerTransferRequired: 'Uma equipa ainda precisa desta conta como proprietária. Dá primeiro outro proprietário a essa equipa.',
     errorAccountNotFound: 'Esta conta já não existe neste Home.',
     errorAccountInactive: 'Esta conta não está ativa, por isso não pode receber esta autoridade.',
+    errorAccountSignOutInactive: 'Só é possível terminar todas as sessões de contas ativas.',
+    errorAccountRetired: 'Esta conta foi retirada. Já não é possível alterar o seu estado.',
     errorErasureTransitionCleanupPending: 'A eliminação da conta aguarda a limpeza da encriptação. Tenta eliminar a conta novamente.',
     errorErasureUploadPending: 'Ainda está em curso um carregamento. Espera que termine e tenta eliminar a conta novamente.',
     errorErasureDeploymentCleanupRequired: 'Um deployment ainda precisa de limpeza ou tem dependências partilhadas. Conclui o desmantelamento e resolve essas dependências; depois, tenta eliminar a conta novamente.',
