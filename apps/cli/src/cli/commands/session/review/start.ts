@@ -10,7 +10,7 @@ import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/json
 import { invalidCommandArguments } from '@/cli/commands/shared/argvFlags';
 import { SESSION_HELP_LINES } from '../shared/sessionCommandUsage';
 import { normalizeSessionStartActionResults } from '../shared/sessionStartActionResults';
-import { throwCliActionFailure } from '../shared/normalizeActionExecuteResult';
+import { throwCliActionFailure, projectCliActionFailure } from '../shared/normalizeActionExecuteResult';
 import { cmd, fail } from '@happier-dev/cli-common/output';
 
 function splitCsv(value: string | null): string[] {
@@ -91,19 +91,21 @@ export async function cmdSessionReviewStart(
   const normalized = normalizeSessionStartActionResults(started);
 
   if (!normalized.ok) {
+    const failure = projectCliActionFailure(normalized);
     if (json) {
       await printJsonEnvelope({
         ok: false,
         kind: 'session_review_start',
-        error: {
-          code: normalized.errorCode,
-          ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}),
-          ...(normalized.candidates ? { candidates: normalized.candidates } : {}),
-        },
+        error: failure,
       });
       return;
     }
-    console.error(fail(normalized.errorMessage ?? normalized.errorCode));
+    const diagnosticLine = [
+      ...(failure.failureCause ? [`Phase: ${failure.failureCause.phase}; cause: ${failure.failureCause.errorCode}`] : []),
+      ...(failure.requestId ? [`requestId: ${failure.requestId}`] : []),
+    ].join('; ');
+    const message = `${failure.message ?? failure.code}${diagnosticLine ? `\n${diagnosticLine}` : ''}`;
+    console.error(fail(message));
     process.exit(1);
   }
 

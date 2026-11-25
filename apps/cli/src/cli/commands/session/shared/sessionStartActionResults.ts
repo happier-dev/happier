@@ -3,6 +3,7 @@ import type { ActionExecuteResult } from '@happier-dev/protocol';
 import {
   normalizeActionExecuteResult,
   unwrapCliActionSuccessPayload,
+  type CliActionFailure,
 } from './normalizeActionExecuteResult';
 
 export type NormalizedSessionStartActionResults =
@@ -10,12 +11,7 @@ export type NormalizedSessionStartActionResults =
     ok: true;
     results: readonly unknown[];
   }>
-  | Readonly<{
-    ok: false;
-    errorCode: string;
-    errorMessage?: string;
-    candidates?: readonly string[];
-  }>;
+  | (CliActionFailure & Readonly<{ ok: false }>);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);

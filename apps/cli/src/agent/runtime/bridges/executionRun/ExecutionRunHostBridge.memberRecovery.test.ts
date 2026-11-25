@@ -173,7 +173,8 @@ it.each([
         }
         currentRoles = {};
         roleAvailable = false;
-        expect(await executeRound()).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+        // Typed Account lookup failures take precedence over missing start context.
+        expect(await executeRound()).toMatchObject({ ok: false, errorCode: 'account_role_overrides_unavailable' });
       } finally {
         restoreTransport?.();
         await custody?.dispose();

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { ExternalActionRequestEnvelopeV1Schema, type ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
 import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
@@ -25,12 +25,15 @@ describe('happier session review start (integration)', () => {
   let requests: ExternalActionRequestEnvelope[] = [];
   let includeSelectedReceipt = true;
   let boundaryError: unknown;
+  let refuseStart = false;
+  const failureCause = { phase: 'review.start', errorClass: 'Error', errorCode: 'account_role_overrides_unavailable', httpStatus: null };
 
   beforeEach(async () => {
     happyHomeDir = await createTempDir('happier-cli-session-review-start-');
     requests = [];
     includeSelectedReceipt = true;
     boundaryError = undefined;
+    refuseStart = false;
     // API-token commands use the public Action boundary. The old Session socket
     // imitation predated Review admission and did not model this live transport.
     server = createServer((request, response) => {
@@ -42,7 +45,8 @@ describe('happier session review start (integration)', () => {
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
         requests.push(envelope);
         ReviewStartInputSchema.parse(envelope.input);
-        const execution = { ok: true, result: { intent: 'review', sessionId, reviewRound,
+        const execution = refuseStart ? { ok: false, errorCode: 'target_unavailable', error: 'Role unavailable',
+          failureCause, requestId: envelope.requestId, effectAttempted: false } : { ok: true, result: { intent: 'review', sessionId, reviewRound,
           results: includeSelectedReceipt ? [selectedRun] : [] } };
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ v: 1, actionId: 'review.start', requestId: envelope.requestId, execution }));
@@ -97,6 +101,24 @@ describe('happier session review start (integration)', () => {
     includeSelectedReceipt = false;
     expect(await start()).toMatchObject({ ok: false, kind: 'session_review_start', error: { code: 'action_outcome_unknown' } });
     expect(requests).toHaveLength(1);
+  });
+
+  it('preserves the refused Action cause, request id and effect in JSON and text', async () => {
+    expect(await start()).toMatchObject({ ok: true });
+    refuseStart = true;
+    expect(await start()).toMatchObject({ ok: false, error: {
+      code: 'target_unavailable', failureCause, requestId: requests[1]!.requestId, effectAttempted: false,
+    } });
+    const output: string[] = [];
+    const stderr = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { output.push(args.join(' ')); });
+    const exit = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process exit'); });
+    try {
+      await expect(handleSessionCommand(['review', 'start', sessionId, '--engines', 'coderabbit',
+        '--instructions', 'Review.'], { readCredentialsFn: async () => credentials })).rejects.toThrow('process exit');
+      expect(output.join('\n')).toContain('account_role_overrides_unavailable');
+      expect(output.join('\n')).toContain('review.start');
+      expect(output.join('\n')).toContain(requests[2]!.requestId);
+    } finally { exit.mockRestore(); stderr.mockRestore(); }
   });
 
   it('rejects unknown engine-specific flags before dispatch', async () => {

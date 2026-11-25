@@ -11,6 +11,7 @@ import {
   resolveBackendTargetKeysFromCsv,
 } from './normalizeBackendTargetKeys';
 import { normalizeSessionStartActionResults } from './sessionStartActionResults';
+import { projectCliActionFailure } from './normalizeActionExecuteResult';
 
 /**
  * The one retained "start runs for selected Agent targets" workflow behind
@@ -113,19 +114,21 @@ export async function runBackendTargetStartWorkflow(
   const normalized = normalizeSessionStartActionResults(started);
 
   if (!normalized.ok) {
+    const failure = projectCliActionFailure(normalized);
     if (json) {
       await printJsonEnvelope({
         ok: false,
         kind: workflow.kind,
-        error: {
-          code: normalized.errorCode,
-          ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}),
-          ...(normalized.candidates ? { candidates: normalized.candidates } : {}),
-        },
+        error: failure,
       });
       return;
     }
-    console.error(chalk.red('Error:'), normalized.errorMessage ?? normalized.errorCode);
+    const diagnosticLine = [
+      ...(failure.failureCause ? [`Phase: ${failure.failureCause.phase}; cause: ${failure.failureCause.errorCode}`] : []),
+      ...(failure.requestId ? [`requestId: ${failure.requestId}`] : []),
+    ].join('; ');
+    const message = `${failure.message ?? failure.code}${diagnosticLine ? `\n${diagnosticLine}` : ''}`;
+    console.error(chalk.red('Error:'), message);
     process.exit(1);
   }
 

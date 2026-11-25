@@ -293,6 +293,11 @@ ordinary flag with the same spelling as `happier actions invoke` (for example
 for the retention policy), or the whole Action input with `--input-json`. An
 unknown option or an invalid value is refused before any credential is read.
 
+In 0.3 development builds, refused starts (including `session review start`)
+preserve the Action's `error.failureCause` (`phase` and `errorCode`),
+`error.requestId`, and `error.effectAttempted` in JSON when supplied. Text output
+includes the specific cause, phase and request id so you can trace the refusal.
+
 `delegate`, `session plan start`, and `session voice-agent start` select the
 credential-aware Action transport before any legacy Session bootstrap. They
 therefore also work with `--api-token` or `HAPPIER_TOKEN`, subject to the same
