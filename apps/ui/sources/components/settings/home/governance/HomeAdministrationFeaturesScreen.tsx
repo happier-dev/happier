@@ -51,7 +51,7 @@ import {
     type HomeFeatureSwitchRow,
 } from './homeFeatureRows';
 import { HOME_FEATURE_SETTINGS } from './homeFeatureSettings';
-import { homeGovernanceFailureNotice } from './homeGovernanceLabels';
+import { homeGovernanceFailureNotice, homeSettingsFieldFailure } from './homeGovernanceLabels';
 import { buildHomeSettingWrite, type HomeSettingDraft, type HomeSettingDraftValue } from './homeSettingDraft';
 import { HomeSettingFieldRow, type HomeSettingStage } from './HomeSettingFieldRow';
 
@@ -470,7 +470,7 @@ const FeaturesPage = React.memo(function FeaturesPage(props: Readonly<{ context:
                 home.reload();
                 return;
             }
-            const invalid = readHomeSettingsInvalidFailure(outcome.failure);
+            const invalid = homeSettingsFieldFailure(outcome.failure);
             if (invalid) {
                 setInvalidKeys(new Set([invalid.key]));
                 return;
@@ -515,7 +515,7 @@ const FeaturesPage = React.memo(function FeaturesPage(props: Readonly<{ context:
                     kind="error"
                     title={t('homeGovernance.features.loadFailed')}
                     reason={homeGovernanceFailureNotice(home.failure, { effect: 'read' }).body}
-                    action={{ testID: 'home-features-retry', label: t('homeGovernance.retry'), onPress: home.reload }}
+                    action={home.failure.retryable ? { testID: 'home-features-retry', label: t('homeGovernance.retry'), onPress: home.reload } : undefined}
                 />
             );
         }

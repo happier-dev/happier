@@ -8244,6 +8244,12 @@ const Domain_homeSettingsTranslations = (() => {
 const en = Shared_homeSettingsTranslations.en;
 
 const zhHant: typeof en = {
+    refused: {
+        unknownKey: "此 Home 無法辨識這項設定。",
+        notEditable: "無法在此處變更這項設定。",
+        secretInValues: "請在機密欄位中輸入此值。",
+        notSecret: "請在一般欄位中輸入此值。",
+    },
     page: {
         title: 'Home設定',
         description: 'Home讀取的、沒有獨立頁面的所有設定。',

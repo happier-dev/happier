@@ -26,7 +26,6 @@ import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { Modal } from '@/modal';
 import type { HomeActionFailure as HomeDomainFailure } from '@/sync/ops/home/homeActionOutcome';
 import {
-    readHomeSettingsInvalidFailure,
     runHomeRetentionDryRun,
     setHomeSettings,
 } from '@/sync/ops/home/homeGovernanceOperations';
@@ -38,7 +37,7 @@ import { HomeAdministrationSection } from './HomeAdministrationSection';
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 import { HOME_DATA_SETTINGS } from './homeDataSettings';
 import { humanizeIdentifier } from './homeFeatureLabels';
-import { homeGovernanceFailureNotice } from './homeGovernanceLabels';
+import { homeGovernanceFailureNotice, homeSettingsFieldFailure } from './homeGovernanceLabels';
 import {
     buildHomeRetentionWrite,
     homeRetentionDomainDays,
@@ -432,7 +431,7 @@ const DataPage = React.memo(function DataPage(props: Readonly<{ context: HomeAdm
                 home.reload();
                 return false;
             }
-            const invalid = readHomeSettingsInvalidFailure(outcome.failure);
+            const invalid = homeSettingsFieldFailure(outcome.failure);
             const domain = invalid
                 ? [...retention.user, ...retention.system].find((candidate) => candidate.mode.key === invalid.key || candidate.days?.key === invalid.key)
                 : undefined;
@@ -487,7 +486,7 @@ const DataPage = React.memo(function DataPage(props: Readonly<{ context: HomeAdm
                     kind="error"
                     title={t('homeGovernance.data.loadFailed')}
                     reason={homeGovernanceFailureNotice(home.failure, { effect: 'read' }).body}
-                    action={{ testID: 'home-data-retry', label: t('homeGovernance.retry'), onPress: home.reload }}
+                    action={home.failure.retryable ? { testID: 'home-data-retry', label: t('homeGovernance.retry'), onPress: home.reload } : undefined}
                 />
             );
         }

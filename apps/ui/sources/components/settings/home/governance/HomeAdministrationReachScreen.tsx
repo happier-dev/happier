@@ -34,7 +34,6 @@ import { Modal } from '@/modal';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
     getHomeReachability,
-    readHomeSettingsInvalidFailure,
     setHomeIrohMode,
     setHomeSettings,
 } from '@/sync/ops/home/homeGovernanceOperations';
@@ -47,7 +46,7 @@ import { buildHomeSettingWrite, type HomeSettingDraftValue } from './homeSetting
 import { HomeAdministrationSection } from './HomeAdministrationSection';
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 import { homeAdministrationPoliciesPath } from './homeAdministrationRoutes';
-import { homeGovernanceFailureNotice } from './homeGovernanceLabels';
+import { homeGovernanceFailureNotice, homeSettingsFieldFailure } from './homeGovernanceLabels';
 import { HOME_REACH_SETTINGS } from './homeReachSettings';
 import {
     hostAccessMethodLabel,
@@ -355,7 +354,7 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
             reads.reload();
             return t('homeGovernance.reach.conflict');
         }
-        const invalid = readHomeSettingsInvalidFailure(outcome.failure);
+        const invalid = homeSettingsFieldFailure(outcome.failure);
         if (invalid) return invalid.reason === 'out_of_bounds' ? t('homeGovernance.reach.httpsRequired') : t('homeGovernance.reach.invalidAddress');
         return homeGovernanceFailureNotice(outcome.failure).body;
     }, [context, reads]);
@@ -450,7 +449,7 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
                     kind="error"
                     title={t('homeGovernance.reach.loadFailed')}
                     reason={homeGovernanceFailureNotice(loadFailure, { effect: 'read' }).body}
-                    action={{ testID: 'home-reach-retry', label: t('homeGovernance.retry'), onPress: () => { void reads.reload(); } }}
+                    action={loadFailure.retryable ? { testID: 'home-reach-retry', label: t('homeGovernance.retry'), onPress: () => { void reads.reload(); } } : undefined}
                 />
             );
         }
@@ -496,7 +495,7 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
                     tone="warning"
                     reason={homeGovernanceFailureNotice(readFailure, { effect: 'read' }).body}
                     busy={reads.loading || reads.companionLoading}
-                    action={{ label: t('homeGovernance.retry'), onPress: () => { void reads.reload(); } }}
+                    action={readFailure.retryable ? { label: t('homeGovernance.retry'), onPress: () => { void reads.reload(); } } : undefined}
                 />
             ) : null}
             <ExposureBanner exposure={exposure} onOpenPolicies={() => router.push(homeAdministrationPoliciesPath(context.scope.serverId))} />

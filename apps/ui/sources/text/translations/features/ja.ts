@@ -8304,6 +8304,12 @@ const Domain_homeSettingsTranslations = (() => {
 const en = Shared_homeSettingsTranslations.en;
 
 const ja: typeof en = {
+    refused: {
+        unknownKey: "この Home ではこの設定が認識されません。",
+        notEditable: "この設定はここでは変更できません。",
+        secretInValues: "この値はシークレットの欄に入力してください。",
+        notSecret: "この値は通常の欄に入力してください。",
+    },
     page: {
         title: 'Home設定',
         description: '専用ページを持たない、Homeが読み取るすべての設定。',

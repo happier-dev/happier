@@ -44,7 +44,7 @@ const RuntimePage = React.memo(function RuntimePage(props: Readonly<{ context: H
                 kind={reads.failure ? 'error' : 'loading'}
                 title={reads.failure ? t('homeGovernance.overviewPage.settingsFailed') : t('homeGovernance.loading')}
                 reason={reads.failure ? homeGovernanceFailureNotice(reads.failure, { effect: 'read' }).body : undefined}
-                action={reads.failure ? { label: t('homeGovernance.retry'), onPress: reads.reload, testID: 'home-runtime-settings-retry' } : undefined}
+                action={reads.failure?.retryable ? { label: t('homeGovernance.retry'), onPress: () => { void reads.reload(); }, testID: 'home-runtime-settings-retry' } : undefined}
                 accessibilitySemantics={reads.failure ? 'alert' : 'status'}
             /> : null}
             <HomeRuntimeRestartSections

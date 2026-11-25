@@ -26,7 +26,6 @@ import { useHomeEmailSettings } from '@/hooks/home/useHomeEmailSettings';
 import { Modal } from '@/modal';
 import type { HomeActionFailure as HomeDomainFailure } from '@/sync/ops/home/homeActionOutcome';
 import {
-    readHomeSettingsInvalidFailure,
     sendHomeTestEmail,
     setHomeSettings,
 } from '@/sync/ops/home/homeGovernanceOperations';
@@ -50,7 +49,7 @@ import {
     type HomeEmailFieldError,
     type HomeEmailTextField,
 } from './homeEmailSettingsForm';
-import { homeGovernanceFailureNotice } from './homeGovernanceLabels';
+import { homeGovernanceFailureNotice, homeSettingsFieldFailure } from './homeGovernanceLabels';
 import { isHomeSettingWritable } from './homeSettingDeclaration';
 import { HomeDeploymentFixedNote } from './HomeDeploymentFixedNote';
 import { HomeSecretSettingRow, type HomeSecretDraft } from './HomeSecretSettingRow';
@@ -484,7 +483,7 @@ const EmailPage = React.memo(function EmailPage(props: Readonly<{ context: HomeA
                 mail.reload();
                 return;
             }
-            const invalid = readHomeSettingsInvalidFailure(outcome.failure);
+            const invalid = homeSettingsFieldFailure(outcome.failure);
             const field = invalid ? homeEmailFieldForKey(invalid.key) : null;
             if (field) {
                 setErrors({ [field]: homeEmailFieldError(field) });
@@ -514,7 +513,7 @@ const EmailPage = React.memo(function EmailPage(props: Readonly<{ context: HomeA
                     kind="error"
                     title={t('homeGovernance.email.loadFailed')}
                     reason={homeGovernanceFailureNotice(mail.failure, { effect: 'read' }).body}
-                    action={{ testID: 'home-email-retry', label: t('homeGovernance.retry'), onPress: mail.reload }}
+                    action={mail.failure.retryable ? { testID: 'home-email-retry', label: t('homeGovernance.retry'), onPress: mail.reload } : undefined}
                 />
             );
         }
@@ -552,7 +551,7 @@ const EmailPage = React.memo(function EmailPage(props: Readonly<{ context: HomeA
                     tone="warning"
                     busy={mail.loading}
                     reason={homeGovernanceFailureNotice(mail.failure, { effect: 'read' }).body}
-                    action={{ label: t('homeGovernance.retry'), onPress: mail.reload }}
+                    action={mail.failure.retryable ? { label: t('homeGovernance.retry'), onPress: mail.reload } : undefined}
                 />
             ) : null}
             {mail.readinessFailure && mail.readiness ? (
@@ -561,7 +560,7 @@ const EmailPage = React.memo(function EmailPage(props: Readonly<{ context: HomeA
                     tone="warning"
                     busy={mail.readinessLoading}
                     reason={homeGovernanceFailureNotice(mail.readinessFailure, { effect: 'read' }).body}
-                    action={{ label: t('homeGovernance.retry'), onPress: mail.reload }}
+                    action={mail.readinessFailure.retryable ? { label: t('homeGovernance.retry'), onPress: mail.reload } : undefined}
                 />
             ) : mail.readinessFailure ? (
                 <SurfaceStateCard
@@ -570,7 +569,7 @@ const EmailPage = React.memo(function EmailPage(props: Readonly<{ context: HomeA
                     size="line"
                     title={t('homeGovernance.email.loadFailed')}
                     reason={homeGovernanceFailureNotice(mail.readinessFailure, { effect: 'read' }).body}
-                    action={{ testID: 'home-email-readiness-retry', label: t('homeGovernance.retry'), onPress: mail.reload }}
+                    action={mail.readinessFailure.retryable ? { testID: 'home-email-readiness-retry', label: t('homeGovernance.retry'), onPress: mail.reload } : undefined}
                 />
             ) : !mail.readiness && mail.readinessLoading ? (
                 <SurfaceStateCard testID="home-email-readiness-loading" kind="loading" size="line" title={t('homeGovernance.loading')} />

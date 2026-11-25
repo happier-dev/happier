@@ -413,7 +413,7 @@ const ServerSettingsPage = React.memo(function ServerSettingsPage(props: Readonl
                     kind="error"
                     title={t('homeSettings.page.loadFailed')}
                     reason={homeGovernanceFailureNotice(home.failure, { effect: 'read' }).body}
-                    action={{ testID: 'home-server-settings-retry', label: t('homeGovernance.retry'), onPress: reload }}
+                    action={home.failure.retryable ? { testID: 'home-server-settings-retry', label: t('homeGovernance.retry'), onPress: () => { void reload(); } } : undefined}
                 />
             );
         }

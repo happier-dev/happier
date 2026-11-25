@@ -7,6 +7,7 @@ import type {
     HomeGovernancePolicyFieldV1,
     HomeIdentityNetworkPolicyV1,
     HomeRoleV1,
+    HomeSettingsInvalidReasonV1,
     TeamCreationPolicyV1,
 } from '@happier-dev/protocol/home/governance';
 
@@ -20,6 +21,7 @@ import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { readHomeSettingsInvalidFailure } from '@/sync/ops/home/homeGovernanceOperations';
 
 export const HOME_IDENTITY_NETWORK_MODE_LABEL_KEYS = {
     public_only: 'homeGovernance.signInProviders.privateEndpointsPublicOnlyShort',
@@ -255,6 +257,23 @@ function erasureDeploymentBlockerBody(blocker: NonNullable<ReturnType<typeof rea
     return reference ? `${message} (${reference})` : message;
 }
 
+type HomeSettingsFieldReason = Extract<HomeSettingsInvalidReasonV1, 'invalid_type' | 'out_of_bounds' | 'required'>;
+
+/** Only value refusals can be corrected in the field that was submitted. */
+export function homeSettingsFieldFailure(failure: HomeDomainFailure): Readonly<{ key: string; reason: HomeSettingsFieldReason }> | null {
+    const invalid = readHomeSettingsInvalidFailure(failure);
+    if (!invalid) return null;
+    const { key, reason } = invalid;
+    switch (reason) {
+        case 'invalid_type':
+        case 'out_of_bounds':
+        case 'required':
+            return { key, reason };
+        default:
+            return null;
+    }
+}
+
 function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 'write'): string {
     if (effect === 'read' && failure.code === 'invalid_home_input') return t('homeGovernance.invalidRead');
     switch (failure.code) {
@@ -270,6 +289,15 @@ function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 
             return t('homeGovernance.errorAccountInactive');
         case 'home_policy_revision_conflict':
             return t('homeGovernance.revisionConflictBody');
+        case 'home_settings_invalid': {
+            switch (readHomeSettingsInvalidFailure(failure)?.reason) {
+                case 'unknown_key': return t('homeSettings.refused.unknownKey');
+                case 'not_home_editable': return t('homeSettings.refused.notEditable');
+                case 'secret_in_values': return t('homeSettings.refused.secretInValues');
+                case 'not_secret': return t('homeSettings.refused.notSecret');
+                default: return t('homeSettings.row.invalid');
+            }
+        }
         case 'account_erasure_transition_cleanup_pending':
             return t('homeGovernance.errorErasureTransitionCleanupPending');
         case 'account_erasure_upload_pending':

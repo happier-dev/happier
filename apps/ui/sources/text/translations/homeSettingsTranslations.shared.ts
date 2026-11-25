@@ -1,6 +1,12 @@
 
 
 export const en = {
+    refused: {
+        unknownKey: "This Home doesn’t recognize this setting.",
+        notEditable: "This setting can’t be changed here.",
+        secretInValues: "Enter this value in the secret field.",
+        notSecret: "Enter this value in the regular field.",
+    },
     page: {
         title: 'Home settings',
         description: 'Every setting the Home reads that has no page of its own.',

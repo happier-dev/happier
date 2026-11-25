@@ -8342,6 +8342,12 @@ const Domain_homeSettingsTranslations = (() => {
 const en = Shared_homeSettingsTranslations.en;
 
 const pt: typeof en = {
+    refused: {
+        unknownKey: "Este Home não reconhece esta configuração.",
+        notEditable: "Esta configuração não pode ser alterada aqui.",
+        secretInValues: "Introduza este valor no campo secreto.",
+        notSecret: "Introduza este valor no campo normal.",
+    },
     page: {
         title: 'Configurações do Home',
         description: 'Cada configuração que o Home lê e que não tem página própria.',

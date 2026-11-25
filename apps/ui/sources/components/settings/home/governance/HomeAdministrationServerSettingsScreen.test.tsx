@@ -183,12 +183,14 @@ describe('HomeAdministrationServerSettingsScreen', { timeout: 180_000 }, () => {
     });
 
     it.each([
-        { status: 500, reason: 'homeGovernance.unavailableBody' },
-        { status: 200, reason: 'homeGovernance.unavailableBody' },
-        { status: 404, reason: 'homeGovernance.unsupportedBody' },
-    ])('presents a $status initial settings read failure without reporting a failed change', async ({ status, reason }) => {
+        { status: 500, error: 'unrecognized_response', reason: 'homeGovernance.unavailableBody', retry: true },
+        { status: 200, error: 'unrecognized_response', reason: 'homeGovernance.unavailableBody', retry: false },
+        { status: 404, error: 'Not Found', reason: 'homeGovernance.unsupportedBody', retry: false },
+        { status: 403, error: 'home_governance_forbidden', reason: 'homeGovernance.forbiddenBody', retry: false },
+        { status: 400, error: 'invalid_home_input', reason: 'homeGovernance.invalidRead', retry: false },
+    ])('presents a $status initial settings read failure with an action only when retryable', async ({ status, error, reason, retry }) => {
         const home = await addHome();
-        harness.answer(home, SETTINGS_GET, { status, body: { error: 'unrecognized_response' } });
+        harness.answer(home, SETTINGS_GET, { status, body: { error } });
         const { HomeAdministrationServerSettingsScreen } = await import('./HomeAdministrationServerSettingsScreen');
         const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
         const screen = await renderScreen(<HomeAdministrationServerSettingsScreen serverId={home} />);
@@ -197,9 +199,11 @@ describe('HomeAdministrationServerSettingsScreen', { timeout: 180_000 }, () => {
         });
         const errorState = screen.findAllByType(SurfaceStateCard).find((node) => node.props.testID === 'home-server-settings-error')!;
         expect(errorState.props).toMatchObject({ kind: 'error', reason });
-        harness.answer(home, SETTINGS_GET, { body: serverProjection() });
-        await act(async () => { errorState.props.action.onPress(); });
-        await waitForHomeGovernance(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-server-setting:METRICS_PORT'));
+        if (!retry) {
+            expect(errorState.props.action).toBeUndefined();
+            return;
+        }
+        expect(errorState.props.action).toMatchObject({ testID: 'home-server-settings-retry' });
     });
 
     it('explains a failed initial read and retries it through one recovery action', async () => {
@@ -355,6 +359,29 @@ describe('HomeAdministrationServerSettingsScreen', { timeout: 180_000 }, () => {
         await waitForHomeGovernance(() => {
             expect(textUnder(screen.findByTestId('home-server-setting:HAPPIER_SELF_HOST_LOG_DIR.input.error'))).toBe('homeSettings.row.invalid');
         });
+    });
+
+    it.each([
+        { reason: 'unknown_key', notice: 'homeSettings.refused.unknownKey' },
+        { reason: 'not_home_editable', notice: 'homeSettings.refused.notEditable' },
+        { reason: 'secret_in_values', notice: 'homeSettings.refused.secretInValues' },
+        { reason: 'not_secret', notice: 'homeSettings.refused.notSecret' },
+    ])('explains a structural settings refusal $reason rather than blaming the typed value', async ({ reason, notice }) => {
+        const home = await addHome();
+        harness.answer(home, SETTINGS_GET, { body: serverProjection() });
+        harness.answer(home, SETTINGS_SET, {
+            status: 400,
+            body: { error: 'home_settings_invalid', key: 'HAPPIER_SELF_HOST_LOG_DIR', reason },
+        });
+        const screen = await renderServerSettings(home);
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.alertAsync).mockClear();
+
+        await typeAndLeave(screen, 'home-server-setting:HAPPIER_SELF_HOST_LOG_DIR.input', '/var/log/happier');
+
+        await waitForHomeGovernance(() => expect(Modal.alertAsync).toHaveBeenCalledWith('homeGovernance.changeFailedTitle', notice));
+        expect(screen.findByTestId('home-server-setting:HAPPIER_SELF_HOST_LOG_DIR.input.error')).toBeNull();
+        expect(harness.requestsFor(SETTINGS_SET)).toHaveLength(1);
     });
 
     it('applies a live switch at once', async () => {

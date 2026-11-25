@@ -7,14 +7,11 @@ import type {
 
 import type { HomeSettingsRead } from '@/hooks/home/useHomeSettings';
 import { Modal } from '@/modal';
-import {
-  readHomeSettingsInvalidFailure,
-  setHomeSettings,
-} from '@/sync/ops/home/homeGovernanceOperations';
+import { setHomeSettings } from '@/sync/ops/home/homeGovernanceOperations';
 import { t } from '@/text';
 
 import type { HomeAdministrationContext } from './homeAdministrationContext';
-import { homeGovernanceFailureNotice } from './homeGovernanceLabels';
+import { homeGovernanceFailureNotice, homeSettingsFieldFailure } from './homeGovernanceLabels';
 import { homeSettingRegistryEntry } from './homeSettingDeclaration';
 
 /** A setting's registry bounds as words: "0–65535", "1 or more", "Up to 10". */
@@ -123,7 +120,7 @@ export function useHomeSettingsWrite(
           home.reload();
           return false;
         }
-        const invalid = readHomeSettingsInvalidFailure(outcome.failure);
+        const invalid = homeSettingsFieldFailure(outcome.failure);
         if (invalid) {
           const entry = current.entries.find(
             (candidate) => candidate.key === invalid.key,
