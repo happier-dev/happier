@@ -1843,15 +1843,14 @@ export function createWorkspaceSyncTargetAuthority(
     for (const endpointRole of ['alpha', 'beta'] as const) {
       const authorityKey = retainedAuthorityKey({ ...request, operationId: request.relationshipId, endpointRole });
       const entry = retained.get(authorityKey);
-      if (entry?.targetMachineId === request.targetMachineId && entry.sourceWriterTargetRouting
-        && entry.relationshipDefinition) return { authorityKey, entry, relationship: entry.relationshipDefinition };
+      if (entry?.targetMachineId === request.targetMachineId && entry.relationshipDefinition) return { authorityKey, entry, relationship: entry.relationshipDefinition };
     }
     return null;
   };
 
   const findRetainedRecoveryTarget = (request: WorkspaceSyncTargetConflictRecoverV1) => {
     const match = findRetainedTarget(request);
-    return match && !('kind' in match.entry) && match.entry.transientAuthority
+    return match && !('kind' in match.entry) && match.entry.sourceWriterTargetRouting && match.entry.transientAuthority
       ? { authorityKey: match.authorityKey, entry: match.entry } : null;
   };
 
@@ -2390,7 +2389,8 @@ export function createWorkspaceSyncTargetAuthority(
     if (routing || admittedWriterRead) {
       const match = findRetainedTarget({ relationshipId: request.relationshipId,
         targetMachineId: localMachineId, targetWorkspaceRefId: request.workspaceRefId });
-      if (!match || (routing && !isAdmittedBySourceWriter(match.entry, routing))) {
+      if (!match || (routing ? !isAdmittedBySourceWriter(match.entry, routing)
+        && !isRestoredInstalledWriter(match.entry, routing) : !match.entry.sourceWriterTargetRouting)) {
         throw authorityError('forbidden', 'Workspace Sync read does not match retained target custody');
       }
       // The worker holds the corresponding retained loan and sees its own filesystem.
@@ -2581,6 +2581,22 @@ export function createWorkspaceSyncTargetAuthority(
       && routing.target.targetMachineId === entry.targetMachineId && routing.target.targetRootPath === entry.targetRootPath;
   };
 
+  // Reloaded physical endpoints use the installed Account's committed binding.
+  // Home has already verified the installed SOURCE; READY bound the exact two roots.
+  const isRestoredInstalledWriter = (entry: RetainedBootstrap | RetainedNativeBootstrap,
+    routing: RetainedSourceWriterTargetRouting): boolean => {
+    if ('kind' in entry || entry.sourceWriterTargetRouting || entry.transientAuthority
+      || !entry.readyPublished || entry.relationshipDefinition?.committedAtMs == null
+      || routing.source.sourceContext.machineAdmission.actorAccountId !== dependencies.localAccountId
+      || routing.sourceWriter.machineId !== entry.relationshipDefinition.controllerMachineId
+      || routing.source.sourceMachineId !== entry.sourceMachineId || routing.source.sourceRootPath !== entry.sourceRootPath
+      || routing.target.targetMachineId !== entry.targetMachineId || routing.target.targetRootPath !== entry.targetRootPath
+      || routing.target.targetManaged !== undefined
+      || !relationshipStillOwnsEndpoint(readSnapshot(), entry)) return false;
+    const binding = entry.requesterCopyCustody;
+    return binding === undefined || isDeepStrictEqual(routing.sourceWriter, binding.sourceWriter);
+  };
+
   // Another person's Machine holds no requester Account custody. A signed writer's
   // Replace then finds the person's own link through the loan its signed admission made.
   const resolveAdmittedReplacementLoan = (rawRouting: unknown, request: HandoffTargetReplacementPreflightV1) => {
@@ -2656,11 +2672,11 @@ export function createWorkspaceSyncTargetAuthority(
     }
     const match = matches.length === 1 ? matches[0] : undefined;
     const entry = match?.[1];
-    const admitted = entry?.sourceWriterTargetRouting;
     if (!match || !entry || !entry.relationshipDefinition || !entry.sourceRootPath
       || (entry.requesterCopyCustody
         ? !restoredBindingMatched && !matchesBinding(entry.requesterCopyCustody, entry.targetWorkspaceRefId, entry.targetRootPath, entry.endpointRole)
-        : !admitted || !isAdmittedBySourceWriter(entry, routing)
+        : !isAdmittedBySourceWriter(entry, routing)
+          && !(phase === 'dependencies' && isRestoredInstalledWriter(entry, routing))
           || request.sourceMachineId !== undefined && request.sourceMachineId !== entry.sourceMachineId
           || request.sourceWorkspace !== undefined && (request.sourceWorkspace.refId !== entry.sourceWorkspaceRefId
             || request.sourceWorkspace.serverId !== localServerId)
