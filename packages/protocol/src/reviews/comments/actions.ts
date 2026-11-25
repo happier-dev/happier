@@ -336,6 +336,10 @@ export type ReviewPublicationSummaryInputV1 = Readonly<{
 }>;
 
 export type ReviewPublicationSummaryPartsV1 = Readonly<{
+  /** The verdict and finding count line that leads the summary. */
+  headingMarkdown: string;
+  /** The reviewed head commit, whole: each presenter formats it (a forge posts it in full). */
+  headRevision: string;
   bodyMarkdown: string;
   walkthrough: Readonly<{ title: string; markdown: string }> | null;
   footerMarkdown: string;
@@ -369,9 +373,9 @@ export function buildReviewPublicationSummaryV1(input: ReviewPublicationSummaryI
   const links = [openHref && publicationLink('Open in Happier', openHref),
     fixHref && publicationLink('Fix in Happier', fixHref)].filter(Boolean).join(' · ');
   return {
+    headingMarkdown: `**${verdictLabel} · ${findings.length} ${findings.length === 1 ? 'finding' : 'findings'}**`,
+    headRevision: input.headRevision,
     bodyMarkdown: [
-      `**${verdictLabel} · ${findings.length} ${findings.length === 1 ? 'finding' : 'findings'}**`,
-      `Head: ${publicationText(input.headRevision)}`,
       verdict.body.trim(),
       findingGroup('Blockers', blockers),
       findingGroup('Should fix', shouldFix),
@@ -386,8 +390,10 @@ export function buildReviewPublicationSummaryV1(input: ReviewPublicationSummaryI
   };
 }
 
+/** What a forge posts: the heading, the whole reviewed head, the body, the folded Walkthrough, then the footer. */
 export function serializeReviewPublicationSummaryForForgeV1(parts: ReviewPublicationSummaryPartsV1): string {
-  const { bodyMarkdown, walkthrough, footerMarkdown } = parts;
+  const { walkthrough, footerMarkdown } = parts;
+  const bodyMarkdown = [parts.headingMarkdown, `Head: ${publicationText(parts.headRevision)}`, parts.bodyMarkdown].join('\n\n');
   if (!walkthrough) return `${bodyMarkdown}\n\n${footerMarkdown}`;
   return `${bodyMarkdown}\n\n<details>\n<summary>${walkthrough.title}</summary>\n\n${walkthrough.markdown}\n\n</details>\n\n${footerMarkdown}`;
 }

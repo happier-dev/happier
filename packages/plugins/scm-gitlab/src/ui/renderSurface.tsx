@@ -1236,11 +1236,13 @@ function MergeRequestReviewHeader({ input, proposals }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   proposals: ReviewCommentProposalReadV1;
 }>): React.ReactElement {
+  // Publishing a review is one task: while its step is open, the review summary and approvals step aside.
+  const [publishing, setPublishing] = React.useState(false);
   return (
     <Stack gap="large">
-      {input.admittedReview ? <AdmittedHappierReviewSummary key={input.admittedReview.reviewId} reviewId={input.admittedReview.reviewId} /> : null}
-      <GitlabMergeRequestPublicationControls input={input} proposals={proposals} />
-      <ApprovalsSection input={input} />
+      {input.admittedReview && !publishing ? <AdmittedHappierReviewSummary key={input.admittedReview.reviewId} reviewId={input.admittedReview.reviewId} /> : null}
+      <GitlabMergeRequestPublicationControls input={input} proposals={proposals} open={publishing} onOpenChange={setPublishing} />
+      {publishing ? null : <ApprovalsSection input={input} />}
     </Stack>
   );
 }

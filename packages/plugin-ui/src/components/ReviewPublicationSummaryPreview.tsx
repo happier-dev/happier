@@ -9,8 +9,10 @@ export function ReviewPublicationSummaryPreview({ parts, testID }: Readonly<{
   parts: ReviewPublicationSummaryPartsV1;
   testID?: string;
 }>): ReactElement {
+  // Happier shows the short head (as every commit it names); the forge's post keeps the whole revision.
+  const lead = [parts.headingMarkdown, `Head: ${parts.headRevision.slice(0, 7)}`, parts.bodyMarkdown].join('\n\n');
   return <Stack gap="small" testID={testID}>
-    <Markdown value={parts.bodyMarkdown} />
+    <Markdown value={lead} />
     {parts.walkthrough && <CountedDisclosureItem title={parts.walkthrough.title}>
       <Markdown value={parts.walkthrough.markdown} />
     </CountedDisclosureItem>}

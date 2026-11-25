@@ -8,10 +8,11 @@ import {
   Button,
   Form,
   MarkdownEditor,
+  ReviewPublicationEntry,
   ReviewPublicationSheet,
+  type ReviewPublicationBlockedCause,
   reviewPublicationFindingTitle,
   reviewPublicationPublish,
-  Row,
   Stack,
   Status,
   Text,
@@ -356,12 +357,17 @@ const GITLAB_VERDICT_CHOICES = Object.freeze([
 ] as const);
 type GitlabVerdictChoice = (typeof GITLAB_VERDICT_CHOICES)[number];
 
+/** The merge request's Publish step: an entry row while closed, its sheet while open; the draft survives either way. */
 export function GitlabMergeRequestPublicationControls({
   input,
   proposals,
+  open,
+  onOpenChange,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   proposals: GitlabReviewProposalReadV1;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const completePostMutation = useTriagePostMutationCompletion();
@@ -454,20 +460,30 @@ export function GitlabMergeRequestPublicationControls({
     },
   };
 
+  // Why Publish cannot run, from the same facts the plan above is built from.
+  const blocked: ReviewPublicationBlockedCause | null = submitPayload !== null && !verdictNeedsBody && acknowledgement === null
+    ? null
+    : proposals.status === 'loading' ? 'proposalsLoading'
+    : proposals.status === 'failed' ? 'proposalsFailed'
+      : !headRevision ? 'revisionUnknown'
+        : acknowledgement !== null ? 'pendingDrafts'
+          : verdictNeedsBody ? 'summaryMissing'
+            : publish.blocked ? 'noFindingChecked'
+              : selected.length === 0 && verdict === 'none' ? 'nothingToPublish'
+                : 'planRejected';
+  if (!open) {
+    return <ReviewPublicationEntry forgeName="GitLab" proposalCount={proposals.proposals.length}
+      selectedCount={selected.length} onPress={() => onOpenChange(true)} testID="gitlab-review-publication-entry" />;
+  }
   return (
     <Stack gap="medium">
-      <Stack gap="small">
-        <Text variant="label" valueKey="plugins.gitlab.ui.publication.title" fallback="Publish review" />
-        <Text
-          variant="micro"
-          tone="neutral"
-          valueKey="plugins.gitlab.ui.publication.description"
-          fallback="Publish proposed comments linked to this merge request. GitLab’s unrelated drafts stay pending."
-        />
-      </Stack>
       <ReviewPublicationSheet
         forgeName="GitLab"
         testID="gitlab-review-publication"
+        description={text('plugins.gitlab.ui.publication.description',
+          'Publish proposed comments linked to this merge request. GitLab’s unrelated drafts stay pending.')}
+        blocked={blocked}
+        onCancel={() => onOpenChange(false)}
         verdict={{
           options: GITLAB_VERDICT_CHOICES.map((value) => ({
             value,
@@ -490,17 +506,7 @@ export function GitlabMergeRequestPublicationControls({
           value={summary}
           onChange={setSummary}
         />}
-        notices={<>
-          <ProposalReadState read={proposals} />
-          {verdictNeedsBody ? (
-            <Text
-              variant="micro"
-              tone="warning"
-              valueKey="plugins.gitlab.ui.publication.summaryRequired"
-              fallback="Add a summary before publishing this verdict."
-            />
-          ) : null}
-        </>}
+        notices={<ProposalReadState read={proposals} />}
         proposals={proposals.proposals}
         selectedIds={selectedIds}
         onSelectedIdsChange={draft.setSelectedIds}
@@ -509,17 +515,8 @@ export function GitlabMergeRequestPublicationControls({
           : null}
         preview={submitPayload?.publicationPlan.verdict && publication ? publication.summary : null}
         inlineCommentCount={submitPayload?.publicationPlan.entries.length ?? selected.length}
-        actions={<Row gap="small" wrap>
-          <Action.Control
-            title={publish.title}
-            variant="primary"
-            disabled={submitPayload === null || verdictNeedsBody || acknowledgement !== null}
-            action={{
-              pluginId: GITLAB_PLUGIN_ID,
-              localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview,
-            }}
-            controller={submitPayload === null ? { prepare: () => null, onSettled() {} } : submitControl(submitPayload)}
-          />
+        // The quieter standalone comment first, Publish last: the one filled control ends the row.
+        actions={<>
           <Action.Control
             title={text('plugins.gitlab.ui.publication.createComment', 'Publish selected comment')}
             variant="secondary"
@@ -530,7 +527,17 @@ export function GitlabMergeRequestPublicationControls({
             }}
             controller={createControl}
           />
-        </Row>}
+          <Action.Control
+            title={publish.title}
+            variant="primary"
+            disabled={blocked !== null}
+            action={{
+              pluginId: GITLAB_PLUGIN_ID,
+              localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview,
+            }}
+            controller={submitPayload === null ? { prepare: () => null, onSettled() {} } : submitControl(submitPayload)}
+          />
+        </>}
       />
       <PublicationOutcome execution={submitExecution} />
       {acknowledgedPayload === null ? null : (

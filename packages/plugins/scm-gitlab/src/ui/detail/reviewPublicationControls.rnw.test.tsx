@@ -148,7 +148,7 @@ function PagedProposalControls(props: Readonly<{ input: TriageDetailSurfaceInput
     proposals: props.pages.slice(0, loaded).flat(),
     ...(loaded < props.pages.length ? { loadMore: () => setLoaded((count) => count + 1) } : {}),
   }), [loaded, props.pages]);
-  return <GitlabMergeRequestPublicationControls input={props.input} proposals={read} />;
+  return <GitlabMergeRequestPublicationControls input={props.input} proposals={read} open onOpenChange={() => {}} />;
 }
 
 async function mountControl(kind: MountedControl, options?: Readonly<{
@@ -190,7 +190,8 @@ async function mountControl(kind: MountedControl, options?: Readonly<{
               <Tabs.Item value="reviews" title="Reviews">
                 {options?.pages
                   ? <PagedProposalControls input={options.input} pages={options.pages} />
-                  : <GitlabMergeRequestPublicationControls input={options?.input ?? INPUT} proposals={options?.proposals ?? PROPOSALS} />}
+                  : <GitlabMergeRequestPublicationControls input={options?.input ?? INPUT} proposals={options?.proposals ?? PROPOSALS}
+                    open onOpenChange={() => {}} />}
               </Tabs.Item>
             </Tabs>
             : kind === 'thread-reply'
@@ -358,6 +359,9 @@ describe('mounted GitLab Review publication controls', () => {
   it('reaches all four controls through the real GitLab MR/issue surface compositions', async () => {
     const mergeRequest = await mountRenderedDetail(INPUT);
     await act(async () => mergeRequest.press(await mergeRequest.getByRole('tab', { name: 'Reviews' })));
+    // Publishing is its own step: the Reviews panel offers it as one row, and the sheet opens from there.
+    expect(await mergeRequest.queryByRole('checkbox', { name: PROPOSAL.body })).toBeUndefined();
+    await act(async () => mergeRequest.press(await mergeRequest.findByRole('button', { name: 'Publish review' })));
     await expect(mergeRequest.findByRole('checkbox', { name: PROPOSAL.body })).resolves.toMatchObject({
       state: { checked: true },
     });
@@ -420,7 +424,8 @@ describe('mounted GitLab Review publication controls', () => {
     await expect(Promise.resolve(detail.controls.presentation('Publish 1 comment'))).resolves.toMatchObject({
       disabled: true,
     });
-    await expect(detail.getByText('Add a summary before publishing this verdict.')).resolves.toBeDefined();
+    // The reason stands beside the disabled control, with what to do.
+    await expect(detail.getByText('Write a summary to publish.')).resolves.toBeDefined();
   });
 
   it.each([false, true])('previews the verdict as Markdown with a native Walkthrough fold (walkthrough=%s)', async withWalkthrough => {
@@ -459,7 +464,9 @@ describe('mounted GitLab Review publication controls', () => {
     }
     const preview = readPreview();
     expect(preview).toContain(authored);
-    expect(preview).toContain(`Head: ${HEAD}`);
+    // Happier's preview names the short head; the posted body below keeps the whole revision.
+    expect(preview).toContain(`Head: ${HEAD.slice(0, 7)}`);
+    expect(preview).not.toContain(HEAD);
     expect(preview).toContain('Reviewed with Happier');
     expect(preview).toContain('[Open in Happier](https://cloud.happier.dev/artifacts/selected-review)');
     expect(preview).toContain('[Fix in Happier](https://cloud.happier.dev/artifacts/selected-review?thread=review-comment-1)');

@@ -37,9 +37,9 @@ describe('review comment operation contracts', () => {
       reviewId: 'review-1',
     });
     expect(summary).toEqual({
+      headingMarkdown: '**Request changes · 2 findings**',
+      headRevision: '4f2c1a9',
       bodyMarkdown: [
-        '**Request changes · 2 findings**',
-        'Head: 4f2c1a9',
         'Please address the timeout.',
         '**Blockers**\n- [Timeout can overflow](https://forge.test/pull/1#thread-7)',
         '1 nit',

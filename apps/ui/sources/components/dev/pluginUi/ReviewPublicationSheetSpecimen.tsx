@@ -2,6 +2,7 @@ import * as React from 'react';
 import {
   Button,
   MarkdownEditor,
+  ReviewPublicationEntry,
   ReviewPublicationSheet,
   reviewPublicationPublish,
   usePluginTranslation,
@@ -95,7 +96,7 @@ export function ReviewPublicationSheetSpecimen() {
       ? null
       : buildReviewPublicationSummaryV1({
           verdict: { kind: verdict, body: summary.trim() },
-          headRevision: '9c1e4b2',
+          headRevision: '9c1e4b2a7d03f5e8b6c4a1d9e2f7b0c3a5d8e6f1',
           findings: selected.flatMap((candidate) =>
             candidate.finding
               ? [{ ...candidate.finding, happierCommentId: candidate.id }]
@@ -108,10 +109,17 @@ export function ReviewPublicationSheetSpecimen() {
     proposalCount: PROPOSALS.length,
     entryCount: selected.length,
   });
+  const [open, setOpen] = React.useState(true);
+  if (!open) {
+    return <ReviewPublicationEntry forgeName="GitHub" proposalCount={PROPOSALS.length}
+      selectedCount={selected.length} onPress={() => setOpen(true)} />;
+  }
   return (
     <ReviewPublicationSheet
       forgeName="GitHub"
       testID="review-publication-sheet-specimen"
+      blocked={summary.trim() === '' ? 'summaryMissing' : publish.blocked ? 'noFindingChecked' : null}
+      onCancel={() => setOpen(false)}
       verdict={{
         options: [
           { value: 'comment', label: 'Comment' },

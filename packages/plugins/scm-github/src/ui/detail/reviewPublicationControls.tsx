@@ -1,7 +1,8 @@
 import * as React from 'react';
 import {
-  Banner, Button, Form, MarkdownEditor, ReviewPublicationSheet, reviewPublicationFindingTitle, reviewPublicationPublish, Stack, Status,
+  Banner, Button, Form, MarkdownEditor, ReviewPublicationEntry, ReviewPublicationSheet, reviewPublicationFindingTitle, reviewPublicationPublish, Stack, Status,
   useHappierReviewPublicationEvidence, usePluginTranslation, useReviewPublicationSelection, type ReviewCommentProposalReadV1,
+  type ReviewPublicationBlockedCause,
 } from '@happier-dev/plugin-ui';
 import {
   buildReviewCommentPublicationEntryV1, buildReviewPublicationSummaryV1, parseReviewCommentPublicationPlanV1,
@@ -169,18 +170,26 @@ export function SingleProposalPublicationWrite({
   );
 }
 
+/**
+ * The pull request's Publish step. Closed, it is one entry row among the pull request's changes; open, its sheet
+ * replaces them (`open` belongs to the section that hides them). It stays mounted either way, so the draft survives.
+ */
 export function PullRequestReviewPublicationWrite({
   input,
   WriteControl,
   onObserved,
   publicationProposals,
   capabilities,
+  open,
+  onOpenChange,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   WriteControl: React.ComponentType<PublicationWriteControlProps>;
   onObserved: GithubObservedEntryHandlerV1;
   publicationProposals: ReviewCommentProposalReadV1;
   capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const [verdict, setVerdict] = React.useState<GithubPullRequestReviewVerdictV1>('comment');
@@ -275,9 +284,24 @@ export function PullRequestReviewPublicationWrite({
       : buildGithubPullRequestReviewCommentCreateInputV1(input, standaloneCommentPlan),
     [input, standaloneCommentPlan],
   );
+  // Why Publish cannot run, from the same facts the plan above is built from.
+  const blocked: ReviewPublicationBlockedCause | null = proposalRead === 'loading' ? 'proposalsLoading'
+    : proposalRead === 'failed' ? 'proposalsFailed'
+      : input.observation.snapshot.reviewRevision === undefined ? 'revisionUnknown'
+        : verdictBody.trim() === '' ? 'summaryMissing'
+          : publish.blocked ? 'noFindingChecked'
+            : payload === null ? 'planRejected'
+              : null;
+  if (!open) {
+    return <ReviewPublicationEntry forgeName="GitHub" proposalCount={proposals.length} selectedCount={selected.length}
+      onPress={() => onOpenChange(true)} testID="github-review-publication-entry" />;
+  }
   return (
     <ReviewPublicationSheet
       forgeName="GitHub"
+      testID="github-review-publication"
+      blocked={blocked}
+      onCancel={() => onOpenChange(false)}
       verdict={{
         options: GITHUB_REVIEW_VERDICTS_V1.map((value) => ({
           value,
@@ -328,17 +352,8 @@ export function PullRequestReviewPublicationWrite({
         : null}
       preview={publication?.summary ?? null}
       inlineCommentCount={publication?.plan.entries.length ?? selected.length}
-      actions={<Stack gap="small">
-        <WriteControl
-          localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview}
-          payload={payload}
-          title={publish.title}
-          variant="primary"
-          parseResult={parseReviewPublicationResult}
-          onObserved={onObserved}
-          capabilities={capabilities}
-          operation="pullRequestSubmitReview"
-        />
+      // The quieter standalone comment first, Publish last: the one filled control ends the row.
+      actions={<>
         <WriteControl
           localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestReviewCommentCreate}
           payload={standaloneCommentPayload}
@@ -349,7 +364,17 @@ export function PullRequestReviewPublicationWrite({
           capabilities={capabilities}
           operation="pullRequestReviewCommentCreate"
         />
-      </Stack>}
+        <WriteControl
+          localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview}
+          payload={payload}
+          title={publish.title}
+          variant="primary"
+          parseResult={parseReviewPublicationResult}
+          onObserved={onObserved}
+          capabilities={capabilities}
+          operation="pullRequestSubmitReview"
+        />
+      </>}
     />
   );
 }

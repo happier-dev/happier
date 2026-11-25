@@ -1823,19 +1823,23 @@ function WritesSection({
     () => buildGithubPullRequestTargetInputV1(input),
     [input],
   );
+  // Publishing a review is one task: while its step is open, the pull request's other changes step aside.
+  const [publishing, setPublishing] = React.useState(false);
   if (offered.length === 0 && kindId !== 'pull-request') return null;
 
   return (
     <Stack gap="small">
       <Divider />
-      {kindId === 'pull-request' ? <GithubMergeSignature state={mergeSignature} /> : null}
+      {kindId === 'pull-request' && !publishing ? <GithubMergeSignature state={mergeSignature} /> : null}
       <>{offered.length === 0 && kindId !== 'pull-request' ? null : (
         <>
-      <Text
-        variant="label"
-        valueKey="plugins.github.ui.mutations"
-        fallback="Change this on GitHub"
-      />
+      {publishing ? null : (
+        <Text
+          variant="label"
+          valueKey="plugins.github.ui.mutations"
+          fallback="Change this on GitHub"
+        />
+      )}
       {target === null
         ? (
           <Banner
@@ -1860,6 +1864,8 @@ function WritesSection({
           )
           : (
           <Stack gap="medium">
+            {publishing ? null : (
+              <>
             <Text
               variant="micro"
               tone="neutral"
@@ -1908,6 +1914,8 @@ function WritesSection({
             <GithubNotifications input={input} overview={overview} onObserved={onObserved} capabilities={capabilities} />
             <GithubEntryProperties input={input} kindId="pull-request" overview={overview} onObserved={onObserved} capabilities={capabilities} refreshOverview={refreshOverview} />
             <GithubEntryRelationships input={input} kindId="pull-request" onObserved={onObserved} capabilities={capabilities} />
+              </>
+            )}
             {input.observation.snapshot.state.presentation === 'active'
               ? (
                 <>
@@ -1917,10 +1925,14 @@ function WritesSection({
                     onObserved={onObserved}
                     publicationProposals={publicationProposals}
                     capabilities={capabilities}
+                    open={publishing}
+                    onOpenChange={setPublishing}
                   />
                 </>
               )
               : null}
+            {publishing ? null : (
+              <>
             {offered.includes('close')
               ? (
                 <StateWrite
@@ -1952,6 +1964,8 @@ function WritesSection({
             )}
             {isGithubMergedState(input.observation.snapshot.state)
               ? <GithubPullRequestRevertWrite input={input} onObserved={onObserved} capabilities={capabilities} /> : null}
+              </>
+            )}
           </Stack>
         )}
         </>

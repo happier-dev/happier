@@ -2,7 +2,9 @@ import { useCallback, useMemo, useState, type ReactElement, type ReactNode } fro
 import type { ReviewPublicationSummaryPartsV1 } from '@happier-dev/plugin-sdk/reviews';
 
 import type { ReviewCommentProposalWithBodyV1 } from '../hostApi/reviewCommentProposals.public.js';
+import { Button } from './Button.js';
 import { Checkbox } from './Checkbox.js';
+import { Heading } from './Foundation.js';
 import { Field, Select, Toggle } from './Form.js';
 import { Item } from './List.js';
 import { Row, Stack } from './Layout.js';
@@ -47,8 +49,28 @@ export type ReviewPublicationSheetProps = Readonly<{
   notices?: ReactNode;
   /** The forge's Publish control(s), titled by {@link reviewPublicationPublish}. */
   actions: ReactNode;
+  /** Why the forge's Publish control is disabled, decided by the forge from its plan; null while it can publish. */
+  blocked: ReviewPublicationBlockedCause | null;
+  /** One line under the title about where the review goes, when the forge has more to say than its name. */
+  description?: string;
+  /** Ends the Publish step and returns to the entry's other changes; the draft stays as it is. */
+  onCancel: () => void;
   testID?: string;
 }>;
+
+/**
+ * Why Publish cannot run yet, in the order a person meets it. Each forge decides the cause from the plan it builds;
+ * the sheet says it beside the control, with what to do.
+ */
+export type ReviewPublicationBlockedCause =
+  | 'proposalsLoading'
+  | 'proposalsFailed'
+  | 'revisionUnknown'
+  | 'nothingToPublish'
+  | 'noFindingChecked'
+  | 'summaryMissing'
+  | 'pendingDrafts'
+  | 'planRejected';
 
 const KEY = 'happier.plugin-ui.reviewPublication';
 
@@ -75,6 +97,53 @@ export function reviewPublicationPublish(
           }),
     blocked: plan.entryCount === 0,
   };
+}
+
+function blockedReason(text: PluginTranslate, cause: ReviewPublicationBlockedCause, forge: string): string {
+  switch (cause) {
+    case 'proposalsLoading': return text(`${KEY}.blocked.proposalsLoading`, 'Publishing waits for the proposed findings to load.');
+    case 'proposalsFailed': return text(`${KEY}.blocked.proposalsFailed`, 'Publishing needs the proposed findings, which could not be read.');
+    case 'revisionUnknown': return text(`${KEY}.blocked.revisionUnknown`, 'Publishing waits until {forge} reports the latest commit.', { forge });
+    case 'nothingToPublish': return text(`${KEY}.blocked.nothingToPublish`, 'Choose a review type or check a finding to publish.');
+    case 'noFindingChecked': return text(`${KEY}.blocked.noFindingChecked`, 'Check at least one finding to publish.');
+    case 'summaryMissing': return text(`${KEY}.blocked.summaryMissing`, 'Write a summary to publish.');
+    case 'pendingDrafts': return text(`${KEY}.blocked.pendingDrafts`, 'Decide what happens to your existing {forge} drafts below.', { forge });
+    case 'planRejected': return text(`${KEY}.blocked.planRejected`, '{forge} cannot take these comments as they are.', { forge });
+  }
+}
+
+/**
+ * The entry's way into the Publish step: a row among the entry's other changes, saying what is ready to post.
+ * Publishing is one task, so its sheet replaces those changes rather than standing among them.
+ */
+export function ReviewPublicationEntry(props: Readonly<{
+  forgeName: string;
+  proposalCount: number;
+  selectedCount: number;
+  onPress: () => void;
+  testID?: string;
+}>): ReactElement {
+  const text = usePluginTranslation();
+  const title = text(`${KEY}.title`, 'Publish review');
+  const subtitle = props.proposalCount === 0
+    ? text(`${KEY}.entry.verdictOnly`, 'A verdict and summary on {forge}', { forge: props.forgeName })
+    : text(`${KEY}.entry.findings`, '{selected} of {total} findings to post on {forge}', {
+      selected: props.selectedCount, total: props.proposalCount, forge: props.forgeName,
+    });
+  // On its own sheet, like the entry's other change cards.
+  return (
+    <Card padding="none">
+      <Item
+        testID={props.testID}
+        title={title}
+        subtitle={subtitle}
+        accessibilityLabel={title}
+        accessibilityHint={subtitle}
+        showChevron
+        onPress={props.onPress}
+      />
+    </Card>
+  );
 }
 
 /** A proposal the person has not chosen yet starts checked unless it is a nit. */
@@ -159,6 +228,10 @@ export function ReviewPublicationSheet(
   const walkthrough = props.walkthrough;
   return (
     <Stack gap="medium" testID={props.testID}>
+      <Stack gap="small">
+        <Heading level={2} value={text(`${KEY}.title`, 'Publish review')} />
+        {props.description ? <Text variant="meta" tone="secondary" value={props.description} /> : null}
+      </Stack>
       <Field label={text(`${KEY}.reviewType`, 'Review type')}>
         <Select
           label={text(`${KEY}.reviewType`, 'Review type')}
@@ -270,7 +343,21 @@ export function ReviewPublicationSheet(
           </Card>
         </Field>
       ) : null}
-      {props.actions}
+      {/* The reason (or the confirmation to come) stands under the controls it is about. */}
+      <Stack gap="small" align="flex-end">
+        <Row gap="small" justify="flex-end" wrap>
+          <Button variant="plain" title={text('happier.plugin-ui.common.cancel', 'Cancel')} onPress={props.onCancel} />
+          {props.actions}
+        </Row>
+        <Text
+          variant="meta"
+          tone="secondary"
+          testID={props.testID === undefined ? undefined : `${props.testID}-publish-note`}
+          value={props.blocked === null
+            ? text(`${KEY}.confirmNote`, 'You confirm before anything is posted to {forge}.', { forge: props.forgeName })
+            : blockedReason(text, props.blocked, props.forgeName)}
+        />
+      </Stack>
     </Stack>
   );
 }

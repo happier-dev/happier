@@ -367,10 +367,16 @@ function typePropertySearch(property: 'assignees' | 'labels', query: string): vo
   search!.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+/** Publishing is its own step: the pull request's changes offer it as one row, and its sheet opens from there. */
+async function openPublication(detail: PluginUiTestkit): Promise<void> {
+  await act(async () => { await detail.press(await detail.findByRole('button', { name: 'Publish review' })); });
+}
+
 async function waitForPublicationProposalRead(
   detail: PluginUiTestkit,
   role: 'checkbox' | 'radio' = 'checkbox',
 ): Promise<void> {
+  if (role === 'checkbox') await openPublication(detail);
   try {
     await vi.waitFor(async () => {
       expect(await detail.queryByRole(role, {
@@ -749,6 +755,7 @@ describe('the mounted GitHub write controls', () => {
       .toBe(true);
     expect((await denied.getByRole('button', { name: 'Close pull request' })).state?.disabled)
       .toBe(true);
+    await openPublication(denied);
     expect((await denied.getByRole('button', { name: 'Publish review' })).state?.disabled)
       .toBe(true);
   });
@@ -770,7 +777,9 @@ describe('the mounted GitHub write controls', () => {
 
     const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
 
+    await openPublication(detail);
     expect(actionHost(detail).presentation('Publish review')).toBeDefined();
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Cancel' })); });
     await expect(detail.getByRole('button', { name: 'Close pull request' }))
       .resolves.toMatchObject({ role: 'button', state: { disabled: true } });
     expect(await detail.queryByText('This repository does not support this change.'))
@@ -965,7 +974,6 @@ describe('the mounted GitHub write controls', () => {
       'pull-request',
       [{ sessionId: 'session-review-1', displayTitle: 'Review this pull request' }],
     );
-    await waitForPublicationProposalRead(detail);
     await act(async () => {
       await detail.press(await detail.getByRole('button', {
         name: 'Re-read this overview from GitHub',
@@ -980,8 +988,6 @@ describe('the mounted GitHub write controls', () => {
       'Update branch',
       'Request review',
       'Withdraw review requests',
-      'Publish 1 comment',
-      'Publish selected comment',
     ]) {
       expect(actionHost(detail).presentation(name)).toBeDefined();
     }
@@ -990,8 +996,18 @@ describe('the mounted GitHub write controls', () => {
       .resolves.toMatchObject({ value: '' });
     await expect(detail.getByRole('textbox', { label: 'Reviewer team slugs' }))
       .resolves.toMatchObject({ value: '' });
+
+    // Publishing is one task: its step replaces the pull request's other changes, and Cancel gives them back.
+    await waitForPublicationProposalRead(detail);
+    for (const name of ['Publish 1 comment', 'Publish selected comment']) {
+      expect(actionHost(detail).presentation(name)).toBeDefined();
+    }
+    expect(actionHost(detail).presentation('Close pull request')).toBeUndefined();
     await expect(detail.findByRole('checkbox', { name: 'The implementation is ready to merge.' }))
       .resolves.toMatchObject({ state: { checked: true } });
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Cancel' })); });
+    expect(actionHost(detail).presentation('Close pull request')).toBeDefined();
+    expect(actionHost(detail).presentation('Publish 1 comment')).toBeUndefined();
   });
 
   it('keeps submit-review inert until its comment verdict has a user-authored summary', async () => {
@@ -1019,6 +1035,8 @@ describe('the mounted GitHub write controls', () => {
       await detail.press(await detail.findByRole('radio', { name: 'Approve' }));
     });
     expect(actionHost(detail).presentation('Publish 1 comment')?.disabled).toBe(true);
+    // The reason stands beside the disabled control, with what to do.
+    await expect(detail.getByText('Write a summary to publish.')).resolves.toBeDefined();
     await expect(act(async () => { await actionHost(detail).press('Publish 1 comment'); })).rejects.toThrow();
     expect(recorded.filter((entry) => typeof entry.action === 'object')).toHaveLength(0);
   });
@@ -1038,6 +1056,7 @@ describe('the mounted GitHub write controls', () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(box, markdown);
       box!.dispatchEvent(new Event('input', { bubbles: true }));
     });
+    await expect(detail.getByText('You confirm before anything is posted to GitHub.')).resolves.toBeDefined();
     await act(async () => { await actionHost(detail).press('Publish 1 comment'); });
     const submitted = recorded.filter((entry) => typeof entry.action === 'object').at(-1);
     expect(submitted?.action).toMatchObject({ localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview });
@@ -1072,6 +1091,7 @@ describe('the mounted GitHub write controls', () => {
         },
       },
     } as JsonValue;
+    await openPublication(detail);
     await act(async () => {
       await actionHost(detail).press('Publish selected comment');
     });
@@ -1103,6 +1123,7 @@ describe('the mounted GitHub write controls', () => {
         verdict: { kind: 'notRequested' },
       },
     } as JsonValue;
+    await openPublication(detail);
     await act(async () => {
       await actionHost(detail).press('Publish selected comment');
     });
