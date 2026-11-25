@@ -135,8 +135,7 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
         getCachedEntries,
         getCachedDirectoryMetadata,
         loadDirectoryEntries,
-        warmDirectoryEntries,
-        warmChildDirectoriesLimit: 2,
+        ...(scope.workspace ? {} : { warmDirectoryEntries, warmChildDirectoriesLimit: 2 }),
         reconciliationPaused: input.reconciliationPaused,
     });
     const fileWriteScope = input.enabled ? scope : null;

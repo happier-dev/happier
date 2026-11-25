@@ -224,14 +224,40 @@ describe('shared workspace filesystem Action admission', () => {
         } finally { disposes.forEach(dispose => dispose()); }
     });
 
-    it('routes a managed directory read through its controller without dropping the native address', async () => {
-        const workspace = { v: 2 as const, kind: 'managed' as const, serverId: target.serverId,
-            workspaceId: 'attached-checkout', managedId: 'native-guest',
-            controller: { machineId: target.machineId, installationId: 'installed-controller' }, rootPath: target.rootPath };
-        filesystem.response = { success: true, entries: [] };
-        await expect(workspaceListDirectory({ kind: 'managed', workspace }, '.')).resolves.toEqual({ success: true, entries: [] });
-        expect(filesystem.calls).toEqual([expect.objectContaining({ machineId: workspace.controller.machineId,
-            payload: { workspace, rootPath: workspace.rootPath, path: workspace.rootPath } })]);
+    it('reads the managed Project root once and one directory per Files tree expansion', async () => {
+        const { useWorkspaceRepositoryTreeBrowser } = await import('@/hooks/workspaces/files/useWorkspaceRepositoryTreeBrowser');
+        const workspace = { v: 2, kind: 'managed', serverId, workspaceId: 'tree-expansion-project', managedId: 'native-guest',
+            controller: { machineId: target.machineId, installationId: 'installed-controller' }, rootPath: target.rootPath } as const;
+        const scope = { ...target, workspace };
+        filesystem.response = (request: FilesystemBoundaryRequest) => ({
+            success: true,
+            entries: request.payload.path === workspace.rootPath
+                ? [{ name: 'docs', type: 'directory' }, { name: 'src', type: 'directory' }]
+                : [{ name: 'lib', type: 'directory' }, { name: 'index.ts', type: 'file' }],
+        });
+        const homeRequestsBeforeOpen = homes.requests.length;
+        const tree = await renderHook(() => useWorkspaceRepositoryTreeBrowser({ scope, enabled: true }));
+        try {
+            const expectDirectories = (paths: string[]) => {
+                expect(filesystem.calls).toEqual(paths.map(path => expect.objectContaining({
+                    method: RPC_METHODS.LIST_DIRECTORY,
+                    machineId: workspace.controller.machineId,
+                    payload: { workspace, rootPath: workspace.rootPath, path, includeGitIgnore: true },
+                })));
+                const actionPath = `/v1/actions/${FILESYSTEM_BROWSER_ACTION_IDS_V1.listDirectory}`;
+                // This own-Machine fixture uses the admitted Machine RPC carrier.
+                expect(homes.requests.slice(homeRequestsBeforeOpen).filter(request =>
+                    request.method === 'POST' && request.path === actionPath)).toHaveLength(0);
+            };
+            const rows = () => tree.getCurrent().nodes.map(node => node.path);
+            await vi.waitFor(() => expect(rows()).toEqual(['docs', 'src']));
+            expectDirectories([workspace.rootPath]);
+            await act(async () => { await tree.getCurrent().toggleDirectory('src'); });
+            await vi.waitFor(() => expect(rows()).toEqual(['docs', 'src', 'src/lib', 'src/index.ts']));
+            expectDirectories([workspace.rootPath, `${workspace.rootPath}/src`]);
+        } finally {
+            await tree.unmount();
+        }
     });
 
     it.each(['restart', 'reconnect'] as const)('recovers demanded managed Files and Git after controller %s', async (scenario) => {
