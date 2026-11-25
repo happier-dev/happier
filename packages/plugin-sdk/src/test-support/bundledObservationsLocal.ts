@@ -1,5 +1,5 @@
 import type { ExecService, PluginProcessResult } from '../exec.js';
-import type { MachineProvisionerObservationV1 } from '../machine-provisioners/index.js';
+import { MachineProvisionerObservationV1Schema, type MachineProvisionerObservationV1 } from '../machine-provisioners/index.js';
 import type { LimaExecutor } from '../machine-provisioners/lima/index.js';
 import { createLimaProvider } from '../../../plugins/machine-lima/src/machine/provider.js';
 import { createLumeProvider } from '../../../plugins/machine-lume/src/machine/provider.js';
@@ -8,7 +8,8 @@ import { createDockerSandboxesProvider } from '../../../plugins/machine-docker-s
 import { createCloudClient } from '../../../plugins/machine-docker-sandboxes/src/cloud/nativeClient.js';
 import { sandboxFixture } from '../../../plugins/machine-docker-sandboxes/src/cloud/fixtures.js';
 import { DOCKER_ACCOUNT_SERVICE } from '../../../plugins/machine-docker-sandboxes/src/machine/dockerAccount.js';
-import { createPluginHttpFixture } from '../testing/index.js';
+import { PLUGIN as SSH_PLUGIN, PLUGIN_MANIFEST as SSH_MANIFEST } from '../../../plugins/machine-ssh/src/manifest.js';
+import { createPluginHttpFixture, createPluginTestkit } from '../testing/index.js';
 
 export type BundledObservationCase = {
   plugin: string; provisioner: string; state: string;
@@ -39,7 +40,7 @@ export const LOCAL_OBSERVATION_CASES: BundledObservationCase[] = [
     async observe() {
       const http = createPluginHttpFixture({ async request(request) {
         const token = request.url.startsWith('https://hub.docker.com/');
-        const body = token ? { access_token: 'fixture-token' } : state === 'malformed' ? {}
+        const body = token ? { access_token: 'fixture-token' } : state === 'absent' ? { code: 'notFound' } : state === 'malformed' ? {}
           : { ...sandboxFixture, core: { ...sandboxFixture.core, status: state } };
         return { status: token ? 200 : state === 'absent' ? 404 : state === 'failure' ? 503 : 200,
           headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
@@ -104,4 +105,18 @@ export const LOCAL_OBSERVATION_CASES: BundledObservationCase[] = [
       return createDockerSandboxesProvider({ run }, { kind: 'systemTool', id: 'sbx' }, 10).inspect({ sandboxName: 'happier-test' });
     },
   })),
+  {
+    plugin: 'machine-ssh', provisioner: 'ssh', state: 'attachment without native observation',
+    expected: { availability: 'unavailable', power: 'unknown' },
+    async observe() {
+      const host = await createPluginTestkit({ manifest: SSH_MANIFEST, module: SSH_PLUGIN });
+      try {
+        return MachineProvisionerObservationV1Schema.parse(await host.invokeAction('inspect', {
+          resource: { remoteHostId: 'ssh-observation-fixture' },
+        }));
+      } finally {
+        await host.dispose();
+      }
+    },
+  },
 ];

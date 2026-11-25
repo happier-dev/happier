@@ -1035,7 +1035,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             await testkit.dispose();
         }
 
-        const actions = module.manifest.contributes.actions;
+        const actions = module.manifest.contributes.actions ?? [];
         expect(Object.fromEntries(actions.map(action => [action.id, action.surfaces]))).toEqual({
             'acme/connect': ['plugin', 'ui', 'agent'],
             'acme/check-connection': ['plugin', 'ui', 'agent'],

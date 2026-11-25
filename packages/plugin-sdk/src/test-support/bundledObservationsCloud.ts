@@ -41,9 +41,9 @@ const present = (power: MachineProvisionerObservationV1['power'], storage: Machi
 function entry(provisioner: string, state: string, expected: Partial<MachineProvisionerObservationV1>, observe: ObservationCase['observe']): ObservationCase {
     return { plugin: 'machine-' + provisioner, provisioner, state, expected, observe };
 }
-function failures(provisioner: string, inspect: (request: typeof fetch) => Promise<MachineProvisionerObservationV1>, absentValue: unknown = {}, absentStatus = 404): ObservationCase[] {
+function failures(provisioner: string, inspect: (request: typeof fetch) => Promise<MachineProvisionerObservationV1>, absentResponse = response({}, 404)): ObservationCase[] {
     return [
-        entry(provisioner, 'absent', absent, () => inspect(response(absentValue, absentStatus))),
+        entry(provisioner, 'absent', absent, () => inspect(absentResponse)),
         entry(provisioner, 'HTTP read failed', unavailable, () => inspect(response({}, 503))),
         entry(provisioner, 'transport read failed', unavailable, () => inspect(unreachable)),
         entry(provisioner, 'malformed native response', unavailable, () => inspect(response({}))),
@@ -56,7 +56,7 @@ const agent37 = [
     ...(['running', 'stopped', 'starting'] as const).map(state => entry('agent37', state,
         present(state === 'starting' ? 'unknown' : state),
         () => agent37Inspect(response({ id: agent37Resource.instanceId, status: state })))),
-    ...failures('agent37', agent37Inspect).map(test => ({ ...test,
+    ...failures('agent37', agent37Inspect, response({ error: { code: 'not_found' } }, 404)).map(test => ({ ...test,
         ...(test.state === 'HTTP read failed' ? { expectedErrorCode: 'provider_unavailable' }
             : test.state === 'malformed native response' ? { expectedErrorCode: 'agent37_invalid_response' } : {}) })),
 ];
@@ -64,12 +64,15 @@ const agent37 = [
 const maritime = (['agent-box', 'linux-computer'] as const).flatMap(kind => {
     const resource = { machineId: 'maritime-1', managedId, kind };
     const inspect = (request: typeof fetch) => createMaritimeNativeClient(request, signal(), observedAt).inspect(resource);
+    const listPath = kind === 'agent-box' ? '/api/agents' : '/api/v1/computers';
     return [
         ...(['active', 'ready', 'sleeping', 'stopped', 'creating'] as const).map(state => entry('maritime', kind + ': ' + state,
             present(state === 'active' || state === 'ready' ? 'running' : state === 'sleeping' ? 'suspended' : state === 'stopped' ? 'stopped' : 'unknown'),
             () => inspect(response({ id: resource.machineId, status: state,
                 ...(kind === 'agent-box' ? { externalId: managedId } : { externalUserId: managedId, os: 'linux' }) })))),
-        ...failures('maritime', inspect).map(test => ({ ...test, state: kind + ': ' + test.state })),
+        ...failures('maritime', inspect, async input => new URL(String(input)).pathname === listPath
+            ? json(kind === 'agent-box' ? [] : { computers: [] })
+            : json({}, 404)).map(test => ({ ...test, state: kind + ': ' + test.state })),
     ];
 });
 
@@ -80,7 +83,7 @@ const maritimeSandbox = [
         state === 'ended' ? absent : present(state === 'running' ? 'running' : state === 'paused' ? 'suspended' : 'unknown'),
         () => maritimeSandboxInspect(response({ id: maritimeSandboxResource.sandboxId, name, state, forEndUser: true,
             dataPlaneUrl: 'https://sandbox.maritime.sh', secret: null })))),
-    ...failures('maritime-sandbox', maritimeSandboxInspect),
+    ...failures('maritime-sandbox', maritimeSandboxInspect, response({ code: 'sandbox_not_found' }, 404)),
 ].map(test => ({ ...test, plugin: 'machine-maritime' }));
 
 const superserveResource = { sandboxId: 'superserve-1', name, managedId };
@@ -92,7 +95,8 @@ const superserve = [
         () => superserveInspect(response({ id: superserveResource.sandboxId, name, status: state,
             metadata: { 'happier-managed-id': managedId }, vcpu_count: 2, memory_mib: 2048, memory_current_mib: 4096,
             auto_delete_at: expiry, auto_delete_seconds: 3600 })))),
-    ...failures('superserve', superserveInspect),
+    ...failures('superserve', superserveInspect, async input => new URL(String(input)).pathname === '/sandboxes'
+        ? json([]) : json({}, 404)),
     entry('superserve', 'fixed memory allocation', { ...present('suspended'), size: { cpuCores: 1, memoryBytes: 1024 * MiB } },
         () => superserveInspect(response({ id: superserveResource.sandboxId, name, status: 'paused',
             metadata: { 'happier-managed-id': managedId }, vcpu_count: 1, memory_mib: 1024 }))),
@@ -116,7 +120,7 @@ const freestyle = [
             deletionNotices: [{ kind: 'stopped-storage', rule: { kind: 'after-stop', afterMs: 3600000 }, consequence: 'disk-deleted' }] },
         () => freestyleInspect(response({ id: freestyleResource.vmId, slug: name, state, metadata: { 'happier-managed-id': managedId },
             resources: { cpu: 4, memory: 8192, storage: 32768 }, createdAt: '2026-11-16T00:00:00Z', ttlSeconds: 86400, autoDeleteSeconds: 3600 })))),
-    ...failures('freestyle', freestyleInspect),
+    ...failures('freestyle', freestyleInspect, response({ error: { code: 'NOT_FOUND' } }, 404)),
 ];
 
 const e2bResource = { sandboxId: 'e2b-1', managedId, timeoutSeconds: 86400 };
@@ -127,7 +131,8 @@ const e2b = [
             size: { cpuCores: 2, memoryBytes: 4096 * MiB, diskBytes: 10240 * MiB } },
         () => e2bInspect(response({ sandboxID: e2bResource.sandboxId, state, endAt: expiry, cpuCount: 2, memoryMB: 4096, diskSizeMB: 10240,
             metadata: { 'happier-managed-id': managedId } })))),
-    ...failures('e2b', e2bInspect),
+    ...failures('e2b', e2bInspect, async input => new URL(String(input)).pathname === '/v2/sandboxes'
+        ? json([]) : json({}, 404)),
     entry('e2b', 'invalid expiry', unavailable, () => e2bInspect(response({ sandboxID: e2bResource.sandboxId, state: 'paused', endAt: 'invalid', metadata: { 'happier-managed-id': managedId } }))),
     entry('e2b', 'no allocated disk dimension', { ...present('running'), size: { cpuCores: 2, memoryBytes: 4096 * MiB } },
         () => e2bInspect(response({ sandboxID: e2bResource.sandboxId, state: 'running', endAt: expiry, cpuCount: 2, memoryMB: 4096, diskSizeMB: 0,
@@ -151,7 +156,7 @@ const railway = [
     ...(['RUNNING', 'CREATING', 'FAILED', 'DESTROYING', 'DESTROYED'] as const).map(state => entry('railway', state,
         state === 'DESTROYED' ? absent : present(state === 'RUNNING' ? 'running' : 'unknown', state === 'RUNNING' ? 'retained' : 'unknown'),
         () => railwayInspect(response({ data: { sandbox: { id: railwayResource.sandboxId, environmentId: railwayResource.environmentId, status: state, idleTimeoutMinutes: 0 } } })))),
-    ...failures('railway', railwayInspect, { data: { sandbox: null } }, 200),
+    ...failures('railway', railwayInspect, response({ data: { sandbox: null } })),
     entry('railway', 'GraphQL read failed over HTTP 200', unavailable, () => railwayInspect(response({ errors: [{ message: 'vendor detail' }], data: { sandbox: null } }))),
 ];
 
