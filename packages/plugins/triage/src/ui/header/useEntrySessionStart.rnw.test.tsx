@@ -510,7 +510,7 @@ describe('read-only PR Walk placement', () => {
     });
 });
 
-it('shows the typed Review Session refusal after the approval route retires the PR, and accepts a retry', async () => {
+it('keeps the detached typed Review Session refusal through a second PR remount and accepts a retry', async () => {
     reviewKey = 'example-repository:17:account-source';
     let releaseApproval!: () => void;
     const approval = new Promise<void>(resolve => { releaseApproval = resolve; });
@@ -536,6 +536,15 @@ it('shows the typed Review Session refusal after the approval route retires the 
     await settle();
     expect(phase).toMatchObject({ kind: 'settled', result: refusal });
     expect(settledNotice).toMatchObject({ failureCode: 'agent_signed_out', failureDetails: { failureCause } });
+
+    // The first PR reader reattaches the detached result. The next reader of the
+    // same PR must still show it through the exact detail refresh.
+    probeKey += 1;
+    await act(async () => { await fixture.updateSurface(fixture.context.surface); });
+    await settle();
+    expect(settledNotice).toMatchObject({ failureCode: 'agent_signed_out', failureDetails: { failureCause } });
+    expect(startInputs).toHaveLength(1);
+
     await press();
     await settle();
     expect(startInputs).toHaveLength(2);

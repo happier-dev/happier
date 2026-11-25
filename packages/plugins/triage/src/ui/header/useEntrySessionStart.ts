@@ -27,11 +27,20 @@ function createReviewStartScope(controller: ReturnType<typeof createTriageEntryS
         value,
         retainWhenIdle: true as const,
         onIdle: () => {
-            const retained = value.controller?.dispose(settlement => {
+            const owner = value.controller;
+            if (owner === undefined) return;
+            const retained = owner.dispose(settlement => {
                 delete value.controller;
                 value.settlement = settlement;
             });
-            if (!retained) retire();
+            if (retained) return;
+            // A returning PR can rebind as its detail loads. Keep the detached
+            // outcome across those readers until another action changes the phase.
+            if (value.settlement === owner.getSnapshot().phase) {
+                delete value.controller;
+            } else {
+                retire();
+            }
         },
         dispose: () => { value.controller?.dispose(); },
     };
@@ -54,10 +63,10 @@ export function useTriageEntrySessionStart(
             local.activate(host);
             return () => local.dispose();
         }
-        const owner = lease.value.controller ?? local;
-        owner.activate(host, lease.value.settlement);
+        const existing = lease.value.controller;
+        const owner = existing ?? local;
+        owner.activate(host, existing === undefined ? lease.value.settlement : undefined);
         lease.value.controller = owner;
-        delete lease.value.settlement;
         setShared({ local, owner });
         return lease.release;
     }, [scope, reviewKey, local, host]);
