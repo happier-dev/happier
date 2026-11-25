@@ -2535,7 +2535,9 @@ describe('createActionExecutor (inventory/discovery)', () => {
       { surface: 'api', actionsSettings: approvalRequiredSettings },
     )).resolves.toEqual({
       ok: true,
-      result: { actionSpec: contributedAction },
+      result: { actionSpec: { ...contributedAction, automation: {
+        before: true, after: true, workflowStep: false, subjectKinds: ['approvalProfile'],
+      } } },
     });
     expect(readContributedActionSchemas).toHaveBeenCalledWith(contributedAction.id, undefined);
     const inputOnly = await executor.execute('action.spec.get', {

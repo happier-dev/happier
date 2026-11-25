@@ -1223,10 +1223,10 @@ describe('UI Workflow Action front door', () => {
         try {
             await upsertAndActivateServer({ serverUrl: h.home.serverUrl, scope: 'device' });
             publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-            storage.setState({ profileScope: { serverId: h.account.serverId, accountId } });
-            storage.getState().applyMachines([createMachineFixture({ id: 'workflow-pending-plugin-machine', activeAt: Date.now(),
-                daemonState: { status: 'running', pid: 17, contributionRegistryProjectionRevision: 0 } })], true,
-            { sourceServerId: h.account.serverId });
+            await publishMachineInventoryForTest(h.account, [createMachineFixture({ id: 'workflow-pending-plugin-machine',
+                activeAt: Date.now(), daemonState: { status: 'running', pid: 17, contributionRegistryProjectionRevision: 0 },
+                access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+            })]);
             machineRpc.mockImplementation(async () => projectionResponse);
             const definitionId = '00000000-0000-4000-8000-000000000014';
             await expect(h.execute('workflow.definition.create', { definitionId, definition, metadata: { title: 'Saved before plugins' } }, h.context))
@@ -2073,9 +2073,10 @@ describe('UI Workflow Action front door', () => {
             // through its real device-scoped owner instead of a discarded tab id.
             await upsertAndActivateServer({ serverUrl: h.home.serverUrl, scope: 'device' });
             const machine = createMachineFixture({ id: 'workflow-plugin-machine', activeAt: Date.now(),
-                daemonState: { status: 'running', pid: 17, contributionRegistryProjectionRevision: 0 } });
-            storage.setState({ profileScope: { serverId: h.account.serverId, accountId } });
-            storage.getState().applyMachines([machine], true, { sourceServerId: h.account.serverId });
+                daemonState: { status: 'running', pid: 17, contributionRegistryProjectionRevision: 0 },
+                access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+            });
+            await publishMachineInventoryForTest(h.account, [machine]);
             machineRpc.mockResolvedValue({ protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1,
                 installedPackagesById: { 'example.recipe': { id: 'example.recipe', displayName: 'Example recipe', version: '1.2.3',
                     enabled: true, source: { kind: 'path', locator: '/plugins/example.recipe' } } },
@@ -2103,7 +2104,7 @@ describe('UI Workflow Action front door', () => {
             // refresh must not promote retained inputs to a current source.
             const replacedMachine = { ...machine, daemonStateVersion: machine.daemonStateVersion + 1,
                 daemonState: { ...machine.daemonState, pid: 18 } };
-            storage.getState().applyMachines([replacedMachine], false, { sourceServerId: h.account.serverId });
+            await publishMachineInventoryForTest(h.account, [replacedMachine]);
             machineRpc.mockRejectedValueOnce(new Error('machine_unreachable'));
             const unavailable = await h.execute('workflow.definition.list', {}, h.context);
             expect(unavailable).toMatchObject({ ok: true, result: { definitions: [expect.objectContaining({ definitionId })] } });
@@ -2112,7 +2113,7 @@ describe('UI Workflow Action front door', () => {
             const unavailableCursor = WorkflowDefinitionListResultV1Schema.parse(unavailable.result).nextCursor;
             expect(await h.execute('workflow.definition.list', { cursor: unavailableCursor }, h.context))
                 .toMatchObject({ ok: true, result: { definitions: [] } });
-            storage.getState().applyMachines([], true, { sourceServerId: h.account.serverId });
+            await publishMachineInventoryForTest(h.account, []);
             await expect(h.execute('workflow.definition.list', {}, h.context)).resolves.toMatchObject({ ok: true,
                 result: { definitions: [expect.objectContaining({ definitionId })] } });
         } finally { h.account.dispose(); storage.setState(previousState); }
