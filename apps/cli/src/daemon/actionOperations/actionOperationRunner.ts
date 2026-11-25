@@ -45,6 +45,7 @@ import { createActionOperationSetupReview } from './actionOperationSetupReview';
 import { settleReviewedIsolationPredecessors } from './settleReviewedIsolationPredecessors';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { ActionOperationStore, RetainedInvocationInput } from './actionOperationStore';
+import { ProjectOpenReceiptPersistenceError } from './projectOpenReceiptPersistence';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import type {
   ActionOperationCancellation,
@@ -358,6 +359,7 @@ export function createActionOperationRunner(deps: Readonly<{
       };
       const result = Promise.resolve().then(async (): Promise<ActionExecuteResult> => {
         try {
+          let setupAcceptanceError: ProjectOpenReceiptPersistenceError | undefined;
           const attribution = deps.store.readRequesterWorkAttribution(operationId);
           const handlerResult = await request.execute({
             ...(attribution ? { requesterWorkAttributionV1: attribution } : {}),
@@ -381,19 +383,26 @@ export function createActionOperationRunner(deps: Readonly<{
               ...(resumeActionRequest && previousRestoreSnapshot ? { previousRestoreSnapshot } : {}), accept: (result) => {
               if (isFiniteProjectCommand(action.actionId)) acceptFinite();
               else {
-                // Combined Setup keeps its public Run link while active, so a
-                // reopened surface can follow its native child. This receipt
-                // does not settle the root or retain other Actions' private output.
+                // The combined composer has started its Run. Retain the link
+                // before releasing acceptance so a replacement can reopen it.
                 if (action.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1) {
                   const receipt = MachineSetupApplyResultV1Schema.safeParse(result);
                   if (receipt.success && receipt.data.runId && receipt.data.operationId === operationId) {
-                    deps.store.updateObservation(operationId, null, receipt.data);
+                    try {
+                      deps.store.retainCombinedSetupRun(operationId, receipt.data.runId);
+                    } catch (error) {
+                      if (error instanceof ProjectOpenReceiptPersistenceError) setupAcceptanceError = error;
+                      throw error;
+                    }
                   }
                 }
                 accept({ ok: true, result });
               }
             } },
           });
+          // The nested Action executor projects thrown errors. Deliver the
+          // original receipt error through the host's receipt failure boundary.
+          if (setupAcceptanceError) throw setupAcceptanceError;
           // Only the private native owner supplies effect evidence. Valid plugin
           // JSON is not a success receipt, and native completion cannot erase a
           // failure in the handler's later admitted work.

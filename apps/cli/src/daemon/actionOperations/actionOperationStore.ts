@@ -21,7 +21,7 @@ import { DeploymentTargetLinkProvisionedResultV1Schema } from '@happier-dev/prot
 import { DeploymentBackupActionInputSchemasV1, type DeploymentBackupActionInputV1, type DeploymentBackupTargetV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { DeploymentBackupRestoreInputV1Schema, type DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { ProjectOpenReceiptPersistenceError, requiresActionOperationReceiptPersistence,
+import { ProjectOpenReceiptPersistenceError, resolveActionOperationReceiptKind,
   type ProjectOpenReceiptPersistence, type RetainedProjectOpenReceipt } from './projectOpenReceiptPersistence';
 import { MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { isDeploymentBackupEvidenceActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -164,7 +164,7 @@ export function createActionOperationStore(options?: Readonly<{
     deploymentTokenOrigin?: DeploymentTokenOperationOrigin; requesterWorkAttributionV1?: RequesterWorkAttributionV1;
     backupInput?: DeploymentBackupOperation['input']; backupTargetKey?: string; retainedTeardown?: RetainedTeardownExecution;
     creationContinuationResult?: ManagedCreationContinuationResult;
-    setupRestartResult?: RetainedProjectOpenReceipt['setupRestartResult'] }>>();
+    setupRestartResult?: RetainedProjectOpenReceipt['setupRestartResult']; setupRunId?: string }>>();
   const recoveredSetupRestarts = new Set<string>();
   // Derived from this owner's authored invocation input; imported history cannot
   // manufacture backup or restore evidence. No separate persisted receipt ledger.
@@ -177,8 +177,8 @@ export function createActionOperationStore(options?: Readonly<{
     if (ids?.size === 0) backupOperationIds.delete(key);
   };
   const removeSnapshot = (operationId: string): void => {
-    if (invocationMetadata.get(operationId)?.setupRestartResult) projectOpenReceiptPersistence?.remove(operationId, true);
-    else if (requiresActionOperationReceiptPersistence(snapshots.get(operationId)?.actionId)) projectOpenReceiptPersistence?.remove(operationId);
+    const kind = resolveActionOperationReceiptKind(snapshots.get(operationId)?.actionId, invocationMetadata.get(operationId));
+    if (kind) projectOpenReceiptPersistence?.remove(operationId, kind);
     recoveredSetupRestarts.delete(operationId);
     unindexBackup(operationId);
     snapshots.delete(operationId);
@@ -239,24 +239,48 @@ export function createActionOperationStore(options?: Readonly<{
     }
   };
 
-  const notify = (snapshot: ActionOperationSnapshotV1, previous?: ActionOperationSnapshotV1): void => {
+  const settleLostOperation = (prior: ActionOperationSnapshotV1, message: string, setupRunId?: string): ActionOperationSnapshotV1 => {
+    const { observation: _observation, setupReview: _review, result, ...remaining } = prior;
+    const settledAt = lifecycleTime(prior);
+    const setupOperation = setupRunId === undefined ? undefined : { operationId: prior.operationId, runId: setupRunId };
+    return freezeSnapshot(ActionOperationSnapshotV1Schema.parse({
+      ...remaining,
+      // Returned resource and recovery facts remain useful after the coordinator is lost.
+      ...(setupOperation ? { result: setupOperation }
+        : retainsReturnedRecoveryResult(prior.actionId) && result !== undefined ? { result } : {}),
+      revision: prior.revision + 1, state: 'failed', cancellation: 'unsupported',
+      startedAt: prior.startedAt ?? settledAt, settledAt,
+      error: { errorCode: 'action_outcome_unknown', error: message, effectAttempted: true,
+        ...(prior.error?.failureCause ? { failureCause: prior.error.failureCause } : {}) },
+    }));
+  };
+
+  const notify = (snapshot: ActionOperationSnapshotV1, previous?: ActionOperationSnapshotV1, recordSetupRunBinding = false): void => {
     const metadata = invocationMetadata.get(snapshot.operationId);
     // Recovery needs admission, returned resource facts and terminal settlement, not each progress revision.
-    const transientProgressOnly = previous !== undefined && !isTerminal(snapshot)
-      && (isDeploymentBackupEvidenceActionIdV1(snapshot.actionId)
-        || retainsReturnedRecoveryResult(snapshot.actionId) && isDeepStrictEqual(snapshot.result, previous.result));
-    if (!transientProgressOnly && metadata && (requiresActionOperationReceiptPersistence(snapshot.actionId) || metadata.setupRestartResult)
-      && projectOpenReceiptPersistence !== undefined) {
-      const refusePersistence = (phase: ProjectOpenReceiptPersistenceError['storagePhase']): never => {
+    const transientProgressOnly = !isTerminal(snapshot) && (metadata?.setupRunId !== undefined
+      ? !recordSetupRunBinding : previous !== undefined && (isDeploymentBackupEvidenceActionIdV1(snapshot.actionId)
+        || retainsReturnedRecoveryResult(snapshot.actionId) && isDeepStrictEqual(snapshot.result, previous.result)));
+    let persistenceError: ProjectOpenReceiptPersistenceError | undefined;
+    if (!transientProgressOnly && metadata && projectOpenReceiptPersistence !== undefined
+      && resolveActionOperationReceiptKind(snapshot.actionId, metadata)) {
+      const refusePersistence = (phase: ProjectOpenReceiptPersistenceError['storagePhase']): void => {
         const effectAttempted = snapshot.state !== 'accepted' && previous?.state !== 'accepted';
         if (!effectAttempted) removeSnapshot(snapshot.operationId);
-        throw new ProjectOpenReceiptPersistenceError(phase, effectAttempted);
+        const setupRunId = metadata.setupRunId;
+        if (!effectAttempted || setupRunId === undefined) throw new ProjectOpenReceiptPersistenceError(phase, effectAttempted);
+        persistenceError = new ProjectOpenReceiptPersistenceError(phase, true, { operationId: snapshot.operationId, runId: setupRunId });
+        // Keep and publish the admitted identity even when the disk failed.
+        // A replacement can still open the last successful pending write.
+        snapshot = settleLostOperation(snapshot, persistenceError.message, setupRunId);
+        snapshots.set(snapshot.operationId, snapshot);
       };
-      if (projectOpenReceiptPersistence === null) return refusePersistence('open');
-      try {
+      if (projectOpenReceiptPersistence === null) refusePersistence('open');
+      else try {
         projectOpenReceiptPersistence.save({ version: 1, snapshot, inputIdentity: metadata.inputIdentity,
           ...(metadata.preparedInput !== undefined ? { preparedInput: metadata.preparedInput } : {}),
           ...(metadata.setupRestartResult ? { setupRestartResult: metadata.setupRestartResult } : {}),
+          ...(metadata.setupRunId !== undefined ? { setupRunId: metadata.setupRunId } : {}),
           ...(metadata.deploymentChildIdentity ? { deploymentChildIdentity: metadata.deploymentChildIdentity } : {}),
           ...(metadata.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: metadata.requesterWorkAttributionV1 } : {}) });
       } catch {
@@ -277,6 +301,10 @@ export function createActionOperationStore(options?: Readonly<{
     }
     emitBackupOutcome(snapshot, previous);
     notifySubscribers(change);
+    if (persistenceError) {
+      prune();
+      throw persistenceError;
+    }
   };
 
   // Native creation identity and backup recovery evidence cannot be reconstructed
@@ -327,6 +355,7 @@ export function createActionOperationStore(options?: Readonly<{
   const mutate = (
     operationId: string,
     update: (current: ActionOperationSnapshotV1) => ActionOperationSnapshotV1,
+    recordSetupRunBinding = false,
   ): ActionOperationSnapshotV1 | null => {
     const current = snapshots.get(operationId);
     if (!current) return null;
@@ -335,7 +364,7 @@ export function createActionOperationStore(options?: Readonly<{
     if (updated === current) return current;
     const next = freezeSnapshot(updated);
     snapshots.set(operationId, next);
-    try { notify(next, current); }
+    try { notify(next, current, recordSetupRunBinding); }
     catch (error) {
       // A failed durable handoff cannot publish memory-only Setup success.
       if (invocationMetadata.get(operationId)?.setupRestartResult) snapshots.set(operationId, current);
@@ -349,21 +378,14 @@ export function createActionOperationStore(options?: Readonly<{
   // result, or settle its lost coordinator as typed uncertainty, never replay it.
   for (const receipt of projectOpenReceiptPersistence?.retained ?? []) {
     const prior = receipt.snapshot;
-    const { observation: _observation, setupReview: _review, result: _result, ...remaining } = prior;
-    const settledAt = Math.max(prior.startedAt ?? prior.createdAt, now());
     const pendingSetupRestart = receipt.setupRestartResult !== undefined && !isTerminal(prior);
-    const snapshot = isTerminal(prior) || pendingSetupRestart ? freezeSnapshot(prior) : freezeSnapshot(ActionOperationSnapshotV1Schema.parse({
-      ...remaining,
-      // Returned resource and recovery facts remain useful after the coordinator is lost.
-      ...(retainsReturnedRecoveryResult(prior.actionId) && prior.result !== undefined ? { result: prior.result } : {}),
-      revision: prior.revision + 1, state: 'failed', cancellation: 'unsupported',
-      startedAt: prior.startedAt ?? settledAt, settledAt,
-      error: { errorCode: 'action_outcome_unknown', error: 'The Machine restarted before the Action operation settled',
-        effectAttempted: true, ...(prior.error?.failureCause ? { failureCause: prior.error.failureCause } : {}) },
-    }));
+    const snapshot = isTerminal(prior) || pendingSetupRestart ? freezeSnapshot(prior)
+      // The Run address is retained. The original requester's Home transport is process-local.
+      : settleLostOperation(prior, 'The Machine restarted before the Action operation settled', receipt.setupRunId);
     snapshots.set(snapshot.operationId, snapshot);
     retainInvocation(snapshot, { inputIdentity: receipt.inputIdentity,
       ...(receipt.setupRestartResult ? { setupRestartResult: receipt.setupRestartResult } : {}),
+      ...(receipt.setupRunId !== undefined ? { setupRunId: receipt.setupRunId } : {}),
       ...(receipt.preparedInput !== undefined ? { preparedInput: receipt.preparedInput } : {}),
       ...(receipt.deploymentChildIdentity ? { deploymentChildIdentity: receipt.deploymentChildIdentity } : {}),
       ...(receipt.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: receipt.requesterWorkAttributionV1 } : {}) });
@@ -379,6 +401,16 @@ export function createActionOperationStore(options?: Readonly<{
   prune();
 
   const store = {
+    retainCombinedSetupRun(operationId: string, runId: string): void {
+      const metadata = invocationMetadata.get(operationId);
+      if (!metadata || metadata.setupRunId !== undefined) return;
+      invocationMetadata.set(operationId, { ...metadata, setupRunId: runId });
+      mutate(operationId, current => {
+        const { observation: _observation, error: _error, ...running } = current;
+        return { ...running, revision: current.revision + 1, result: { operationId, runId } };
+      }, true);
+    },
+
     canRetainSetupRestart: projectOpenReceiptPersistence != null,
     retainSetupRestart(operationId: string, result: unknown): void {
       const current = snapshots.get(operationId);

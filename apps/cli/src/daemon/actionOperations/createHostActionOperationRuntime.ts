@@ -466,8 +466,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
       },
     }).catch((error: unknown): ActionExecuteResult => {
       if (!(error instanceof ProjectOpenReceiptPersistenceError)) throw error;
-      return { ok: false, errorCode: error.effectAttempted ? 'action_outcome_unknown' : 'action_not_admitted',
-        error: error.message, effectAttempted: error.effectAttempted };
+      return error.failure;
     });
     // The keyed Session startup remains daemon-owned after its caller leaves.
     // Detach only this transport waiter; a retry can rejoin the same execution.

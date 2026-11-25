@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   MachineSetupApplyInputV1Schema, deriveWorkflowReplacementId, computeActionInputApprovalDigestV1,
   createWorkflowAccountRunActionOwner, materializeWorkflowAcceptedSnapshotV1,
@@ -10,6 +13,7 @@ import { prepareWorkflowApprovedOperationSnapshot } from '@happier-dev/protocol/
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { prepareProjectOpenReceiptPersistence } from '@/daemon/actionOperations/projectOpenReceiptPersistence';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { ActionOperationGetV1ResponseSchema as PredecessorGetSchema } from '@/daemon/actionOperations/testFixtures/predecessorActionOperationV1';
@@ -32,7 +36,7 @@ import { exercisePublicPackagePlanApply, withNativeConfirmation } from '@/testki
 
 // The opaque Home storage boundary is faked; Run admission, content opening,
 // invocation paging and setup composition all use their real owners.
-async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'running' | 'interrupted', errorCode: string, details?: Record<string, WorkflowJsonValue>, readRefusalCode?: string, waitError?: Error | ActionExecuteFailure, pendingNative = false, failureCause?: ActionFailureCauseV1, receiver = false) {
+async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'running' | 'interrupted', errorCode: string, details?: Record<string, WorkflowJsonValue>, readRefusalCode?: string, waitError?: Error | ActionExecuteFailure, pendingNative = false, failureCause?: ActionFailureCauseV1, receiver = false, beforeWait?: () => Promise<void>) {
   const accountId = 'actor', machineId = 'guest', rootId = 'setup-root';
   const selection = { ref: BACKUP_RECEIVER_RECIPE_REF_V1, inputs: {} };
   const receiverPlan = createMachineSetupEffectPlan({ basis: { kind: 'setup', machineId, desiredRevision: 0, selection }, steps: [], nativeFacts: [] });
@@ -117,7 +121,7 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
     startCombined: reader.startCombined,
     // The Action transport can refuse before the retained Run reader is reached.
     waitForRun: request => waitError && !(waitError instanceof Error) ? Promise.resolve(waitError)
-      : reader.waitCombined(request),
+      : beforeWait ? beforeWait().then(() => reader.waitCombined(request)) : reader.waitCombined(request),
     // This host port is the external Action transport boundary; a refused read
     // supplies no retained child content for the composition owner to interpret.
     readInvocations: (_request, read) => readRefusalCode
@@ -250,6 +254,82 @@ describe('Combined Machine setup child settlement', () => {
     const fixture = await retainedSetup('succeeded', 'completed', { operation },
       undefined, undefined, false, undefined, true);
     expect(await fixture.apply()).toMatchObject({ operationId: 'setup-operation', runId: fixture.runId, backupReceivers });
+  });
+
+  it.each(['settled', 'pending', 'binding-write-failed', 'settlement-write-failed'] as const)(
+    'observes the %s combined Setup receipt across Guest runtime replacement', async receiptState => {
+    const directory = await mkdtemp(join(tmpdir(), 'combined-setup-restart-'));
+    const wait = Promise.withResolvers<void>();
+    let finishDeparting: (() => Promise<unknown>) | undefined;
+    try {
+      const machineId = 'guest';
+      const accountId = 'actor';
+      const operationId = 'setup-operation';
+      const fixture = await retainedSetup('succeeded', 'completed', { operationId: 'docker-native-operation' },
+        undefined, undefined, false, undefined, false, () => wait.promise);
+      let failedWrites = 0;
+      const openRuntime = async (readerAccountId = accountId, departing = false) => {
+        const persistence = await prepareProjectOpenReceiptPersistence({
+          directory: join(directory, 'action-operations'), keyPath: join(directory, 'key.json'), accountId, machineId,
+        });
+        return createHostActionOperationRuntime({
+          machineId, resolveAccountId: async () => readerAccountId, generateOperationId: () => operationId,
+          projectOpenReceiptPersistence: departing ? { ...persistence, save: receipt => {
+            if ((receiptState === 'binding-write-failed' && receipt.snapshot.state === 'running')
+              || (receiptState === 'settlement-write-failed' && receipt.snapshot.state === 'succeeded')) {
+              failedWrites++;
+              throw Object.assign(new Error('Disk full'), { code: 'ENOSPC' });
+            }
+            persistence.save(receipt);
+          } } : persistence,
+        });
+      };
+      const departing = await openRuntime(accountId, true);
+      const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...fixture.deps,
+        runActionOperation: departing.runActionOperation });
+      const { operationAcceptance: _acceptance, ...context } = fixture.context;
+      const execute = () => executor.execute('machines.setup.apply', fixture.input, { ...context,
+        surface: 'ui', presentUserConfirmation: { actionId: 'machines.setup.apply' } });
+      const accepted = await execute();
+      const setupOperation = { operationId, runId: fixture.runId };
+      const failure = { errorCode: 'action_outcome_unknown', effectAttempted: true };
+      const unknown = { kind: 'found', operation: { operationId, state: 'failed', result: setupOperation, error: failure } };
+      const terminal = { kind: 'found', operation: { operationId, state: 'succeeded' } };
+      finishDeparting = () => departing.handlers.getV2({ operationId, waitForTerminal: true });
+      if (receiptState === 'binding-write-failed') {
+        expect(accepted).toMatchObject({ ok: false, ...failure, details: { setupOperation } });
+        expect(await finishDeparting()).toMatchObject(unknown);
+        const beforeReplay = fixture.storage.operations().length;
+        expect(await execute()).toMatchObject({ ok: false, ...failure });
+        expect(fixture.storage.operations()).toHaveLength(beforeReplay);
+        expect(failedWrites).toBe(1);
+        return;
+      }
+      expect(accepted).toMatchObject({ ok: true, result: setupOperation });
+      if (receiptState !== 'pending') {
+        wait.resolve();
+        const expected = receiptState === 'settled' ? terminal : unknown;
+        expect(await finishDeparting()).toMatchObject(expected);
+        expect(await departing.handlers.getV2({ operationId })).toMatchObject(expected);
+        expect(failedWrites).toBe(receiptState === 'settlement-write-failed' ? 1 : 0);
+      }
+      expect(fixture.storage.run().state).toBe('succeeded');
+
+      const homeReads = () => fixture.storage.operations().filter(operation => operation === 'get' || operation === 'wait').length;
+      const before = homeReads();
+      // A replacement has no original requester transport. A different
+      // Account still cannot inspect the retained operation on this Machine.
+      const replacement = await openRuntime();
+      expect(await replacement.handlers.getV2({ operationId }))
+        .toMatchObject(receiptState === 'settled' ? terminal : unknown);
+      const otherRequester = await openRuntime('another-account');
+      expect(await otherRequester.handlers.getV2({ operationId })).toEqual({ kind: 'not_found' });
+      expect(homeReads() - before).toBe(0);
+    } finally {
+      wait.resolve();
+      await finishDeparting?.();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it.each(['failed', 'running', 'cancelled'] as const)('retains root recovery links alongside native details for a %s receiver setup', async state => {

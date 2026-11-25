@@ -1639,6 +1639,16 @@ retains the receipt, records running, and observes the native terminal outcome.
 Inline Actions still return their full result. This development correction uses
 the existing receipt and frozen completion shapes, with no new wire epoch.
 
+The coordinator's combined Setup Apply operation retains its scoped Workflow
+Run address before returning acceptance and saves the terminal snapshot when
+it observes settlement. The replacement daemon opens the existing encrypted
+device-local receipt and can return a saved terminal snapshot without Home.
+If the daemon lost the observer while the receipt was pending, the operation
+reports `action_outcome_unknown` with the linked Run address. The original
+requester transport is held in process memory. Recovery leaves execution with
+the existing Run owner. A daemon that predates combined receipt support skips
+the new file prefix and can still open its existing operation history.
+
 A confirmed failed Action interrupts its Run and retains the failed invocation
 for exact retry. Interruption keeps recovery custody pending; the combined Setup
 observer returns the recorded child failure without waiting for terminal custody.
