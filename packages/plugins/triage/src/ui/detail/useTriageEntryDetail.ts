@@ -13,6 +13,7 @@ import {
   type TriageReadEntryDetailResultV1,
   TriageReadEntryDetailResultV1Schema,
 } from '../../actions/entryDetailProtocol.js';
+import { TRIAGE_SOURCE_RETIRED_CODE } from '../../corpus/configuration/configuredSourceAuthority.js';
 import { sameTriageEntryRefV1 } from '../state/surface.js';
 import { buildTriageDetailSurfaceInputV1 } from './input.js';
 
@@ -398,7 +399,9 @@ export function useTriageEntryDetail(
       readPending.current = false;
       // Ordinary source refresh retains already-loaded pages. An explicit relationship reread
       // must replace them: appending old rows would resurrect the link the user just removed.
-      if (next.kind === 'unreachable' && stateRef.current?.kind === 'ready') {
+      if (next.kind === 'unreachable'
+        && next.failure?.code !== TRIAGE_SOURCE_RETIRED_CODE
+        && stateRef.current?.kind === 'ready') {
         publish(Object.freeze({ ...stateRef.current, linkedSessionsPageState: 'failed' }));
       } else {
         publish(replaceLoadedLinkedSessionPages.current

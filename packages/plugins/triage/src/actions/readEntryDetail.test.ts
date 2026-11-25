@@ -227,7 +227,9 @@ describe('the entry detail read', () => {
             ) }, { selection: { entryRef: ENTRY_REF, sourceInstanceId: INSTANCE_A, sourceInstanceRowId }, observation: {
                 entryRef: ENTRY_REF, observedAtMs: 2_000, locator: testkitLocator(), snapshot: testkitSnapshot(), viewer: testkitViewer(),
             } });
-            expect(state).toMatchObject({ kind: mode === 'present' ? 'ready' : mode === 'denied' ? 'unreachable' : 'unavailable' });
+            expect(state).toMatchObject(mode === 'retired'
+                ? { kind: 'unreachable', failure: { code: 'triage_source_retired', data: { retryable: false } } }
+                : { kind: mode === 'present' ? 'ready' : mode === 'denied' ? 'unreachable' : 'unavailable' });
             if (state.kind === 'ready') expect(state.input.instance).toEqual(configured);
             expect(get).toHaveBeenCalledTimes(1);
             expect(query).not.toHaveBeenCalled();
@@ -424,12 +426,10 @@ describe('the entry detail read', () => {
             lifecycle: 'retired',
         })));
 
-        const result = await createTriageReadEntryDetailActionHandler()(
+        await expect(createTriageReadEntryDetailActionHandler()(
             detailInput(INSTANCE_A),
             createContext({ collections }),
-        );
-
-        expect(result).toEqual({ kind: 'unavailable' });
+        )).rejects.toMatchObject({ code: 'triage_source_retired', data: { retryable: false } });
     });
 
     it('refuses a connection that belongs to a different source than the entry', async () => {

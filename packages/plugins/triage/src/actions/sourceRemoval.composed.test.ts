@@ -19,7 +19,7 @@ import { readTriageSessionLinksPageV1 } from '../sessions/readEntrySessionLinks.
 import { openLinkedSession } from '../sessions/entrySessionOpen.js';
 import { projectTriagePinnedRow } from '../ui/marks/pinnedRows.js';
 import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1, TriageListEntriesResultV1Schema } from './listEntriesProtocol.js';
-import { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1, TriageReadEntryDetailResultV1Schema } from './entryDetailProtocol.js';
+import { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 } from './entryDetailProtocol.js';
 import { TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1, TriageReobserveEntryResultV1Schema } from './reobserveEntryProtocol.js';
 import { TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1 } from './sessionLinksProtocol.js';
 import { TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1, TRIAGE_SET_ENTRY_PINNED_ACTION_LOCAL_ID_V1, TriageListPinnedEntriesResultV1Schema } from './userMarksProtocol.js';
@@ -171,10 +171,13 @@ describe('registered configured-source Remove', () => {
                 TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1.localId, { v: 1, source }));
             expect(configured).toMatchObject({ kind: 'read', instances: [{ lifecycle: 'retired', configured: { instance: { sourceInstanceId: aa.sourceInstanceId } } }] });
             expect(configured.kind === 'read' ? configured.instances.length : -1).toBe(1);
-            expect(TriageReobserveEntryResultV1Schema.parse(await a.invoke(TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1,
-                { v: 1, entryRef: refs[0], sourceInstanceId: aa.sourceInstanceId })).kind).toBe('unavailable');
-            expect(TriageReadEntryDetailResultV1Schema.parse(await a.invoke(TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1,
-                { v: 1, entryRef: refs[2], sourceInstanceId: aa.sourceInstanceId }))).toEqual({ kind: 'unavailable' });
+            for (const [action, entryRef] of [
+                [TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1, refs[0]!],
+                [TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1, refs[2]!],
+            ] as const) {
+                await expect(a.invoke(action, { v: 1, entryRef, sourceInstanceId: aa.sourceInstanceId }))
+                    .rejects.toMatchObject({ code: 'triage_source_retired', data: { retryable: false } });
+            }
             expect(a.providerReads).toEqual(aReads);
 
             expect(await a.invoke(TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1, { v: 1, limit: 10 })).toEqual(aa.pins);

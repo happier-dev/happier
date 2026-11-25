@@ -8,8 +8,8 @@
  * different environment.
  *
  * There is deliberately no template for `error_tracking/issues/exists/`: the published
- * contract gives it no item selector and no response body, so it cannot answer an
- * item-level presence question and the source never probes it.
+ * route only reports whether the environment has any issues. Exact presence comes
+ * from the existing read addressed to the issue id.
  */
 
 export type PosthogTeamRouteId = number & { readonly __posthogTeamRouteId: unique symbol };

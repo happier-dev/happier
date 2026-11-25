@@ -1940,6 +1940,35 @@ describe('opening a row into the source detail', () => {
         } finally { releaseRead(); }
     });
 
+    it('replaces an open detail with the retired binding refusal on refresh', async () => {
+        const harness = createHarness();
+        let retired = false;
+        const entryRef = TriageEntryRefV1Schema.parse({ source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' });
+        const source = { selection: { entryRef, sourceInstanceId: INSTANCE }, observation: {
+            entryRef, observedAtMs: 4_000, locator: testkitLocator(), snapshot: testkitSnapshot(), viewer: testkitViewer(),
+        } } satisfies TriageEntryDetailInputSourceV1;
+        const surface = defineUiSurface(() => {
+            const detail = useTriageEntryDetail(source);
+            if (detail?.kind === 'ready') return <Button title="Refresh detail" onPress={detail.refreshLinkedSessions} />;
+            if (detail?.kind === 'unreachable') return <Text value={detail.failure?.code ?? 'unreachable'} />;
+            return null;
+        });
+        const shell = await createPluginUiTestkit({ identity: { instanceId: 'detail-retirement', mountNonce: 'detail-retirement' },
+            authorPlugin: { id: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, version: '0.0.0' }, surface, surfaceContext: surfaceContext(),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: harness.ephemeralSharedScope }),
+            handlers: { executeAction: request => {
+                if (retired) throw new PluginError({ code: 'triage_source_retired', retryable: false });
+                return harness.executeAction(request);
+            } },
+        });
+        mounted.push(shell);
+        await vi.waitFor(() => expect(document.body.textContent).toContain('Refresh detail'));
+        retired = true;
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Refresh detail' })); });
+        await expect(shell.getByText('triage_source_retired')).resolves.toBeDefined();
+        await expect(shell.queryByRole('button', { name: 'Refresh detail' })).resolves.toBeUndefined();
+    });
+
     it('settles a non-admissible Account list and preserves pending reads, retained rows and manual recovery', async () => {
         const harness = createHarness();
         const calls: string[] = [];
@@ -2529,6 +2558,15 @@ describe('opening a row into the source detail', () => {
         expect(document.body.textContent).toContain('machine_not_found');
         expect(document.body.textContent).toContain('target_machine_required');
         expect(document.body.textContent).toContain('detail-request-51');
+    });
+
+    it('opens Manage sources from a retired entry binding', async () => {
+        const shell = await mountShell({ detailFailure: new PluginError({ code: 'triage_source_retired', retryable: false }) });
+        await openTheRow(shell);
+        await expect(shell.getByText('This connection is no longer configured')).resolves.toBeDefined();
+        await expect(shell.queryByRole('button', { name: 'Retry' })).resolves.toBeUndefined();
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Manage sources' })); });
+        await expect(shell.getByText('Configured sources')).resolves.toBeDefined();
     });
 
     it('publishes linked Session selection commands with current public titles', async () => {

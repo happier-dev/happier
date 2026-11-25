@@ -20,8 +20,7 @@ import {
   type CorpusQualificationRejectionV1,
 } from '../corpus/fold/qualify.js';
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
-import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
-import { findConfiguredSourceInstanceRow, readExactConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
+import { admitConfiguredEntrySourceRow, readConfiguredEntrySourceRow } from '../corpus/configuration/readConfiguredSourceRows.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import type { TriageAdmittedGetExecutorV1 } from '../composer/resolveForDispatch.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
@@ -158,14 +157,9 @@ export function createTriageReobserveEntryActionHandler(): TriageDataActionHandl
     const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
     const result = await reobserveTriageEntry(input, {
       requestId: context.requestId,
-      readConfiguredInstance: async (sourceInstanceId, options) => {
-        const row = input.sourceInstanceRowId === undefined
-          ? await findConfiguredSourceInstanceRow(sourceInstances, sourceInstanceId, options)
-          : await readExactConfiguredSourceInstanceRow(sourceInstances, { sourceInstanceId, configurationRowId: input.sourceInstanceRowId }, options);
-        return row?.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.active
-          && (input.sourceInstanceRowId === undefined || row.value.configured.instance.sourceInstanceId === sourceInstanceId)
-          ? row.value.configured
-          : null;
+      readConfiguredInstance: async (_sourceInstanceId, options) => {
+        const row = await readConfiguredEntrySourceRow(sourceInstances, input, options);
+        return admitConfiguredEntrySourceRow(row, input.entryRef.source)?.value.configured ?? null;
       },
       readSourceSnapshot: async (options) => {
         const observation = context.services.targetedContributions.observeForSelf(

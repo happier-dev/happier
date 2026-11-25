@@ -1,3 +1,5 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
+import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 import { projectAccountDataSourceCatalogV1, type AccountDataSourceReadOptionsV1 } from './accountDataSources.js';
 import type { CorpusCollectionHandleV1 } from '../collections/handles.js';
 import {
@@ -6,8 +8,41 @@ import {
 } from '../collections/ids.js';
 import { fromCorpusStoredRow, type CorpusRowV1 } from '../collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../collections/rows.js';
-import { advanceConfiguredSourceCollectionCursor, readExactConfiguredSourceInstanceRow } from './administerConfiguredSourceInstance.js';
+import {
+    advanceConfiguredSourceCollectionCursor,
+    configuredSourceInstanceIsOwnedBy,
+    findConfiguredSourceInstanceRow,
+    readExactConfiguredSourceInstanceRow,
+} from './administerConfiguredSourceInstance.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
+
+import { TRIAGE_SOURCE_RETIRED_CODE } from './configuredSourceAuthority.js';
+
+/** Keep retirement visible only for an exact binding owned by the entry's source. */
+export function admitConfiguredEntrySourceRow(
+    row: CorpusRowV1<CorpusSourceInstanceRowV1> | null,
+    source: TriageEntryRefV1['source'],
+): CorpusRowV1<CorpusSourceInstanceRowV1> | null {
+    if (row === null || !configuredSourceInstanceIsOwnedBy(row.value, source)) return null;
+    if (row.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.retired) {
+        throw new PluginError({ code: TRIAGE_SOURCE_RETIRED_CODE, retryable: false });
+    }
+    return row;
+}
+
+/** Old exact links can carry the source instance id alone. */
+export function readConfiguredEntrySourceRow(
+    sourceInstances: Pick<CorpusCollectionHandleV1, 'get' | 'identityTag' | 'query'>,
+    selection: Readonly<{ sourceInstanceId: string; sourceInstanceRowId?: string }>,
+    options?: AccountDataSourceReadOptionsV1,
+): Promise<CorpusRowV1<CorpusSourceInstanceRowV1> | null> {
+    const { sourceInstanceId, sourceInstanceRowId } = selection;
+    return sourceInstanceRowId === undefined
+        ? findConfiguredSourceInstanceRow(sourceInstances, sourceInstanceId, options)
+        : readExactConfiguredSourceInstanceRow(sourceInstances, {
+            sourceInstanceId, configurationRowId: sourceInstanceRowId,
+        }, options);
+}
 
 /** The selected-detail counterpart of the active catalog read below. */
 export async function readActiveConfiguredSourceRow(

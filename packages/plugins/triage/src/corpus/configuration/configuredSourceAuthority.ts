@@ -3,6 +3,8 @@ import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../collections/ids.js';
 import type { CorpusSourceInstanceRowV1 } from '../collections/rows.js';
 
+export const TRIAGE_SOURCE_RETIRED_CODE = 'triage_source_retired';
+
 export function sameConfiguredSourceAuthority(previous: CorpusSourceInstanceRowV1, current: CorpusSourceInstanceRowV1 | null): boolean {
     if (current === null || current.lifecycle !== CORPUS_SOURCE_INSTANCE_LIFECYCLE.active
         || current.sourceQualifiedId !== previous.sourceQualifiedId) return false;

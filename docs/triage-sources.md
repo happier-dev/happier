@@ -125,6 +125,12 @@ the existing detail disclosure when no source connection can run the read.
 Native PR-status reads and their dependency observation preserve it too, before
 the existing Forge readiness projection and failure disclosure consume it.
 
+An exact entry link through a retired configured source returns
+`triage_source_retired` before the provider read. Triage shows the retired
+connection and opens Manage sources from the detail failure. Refreshed
+aggregate lists scan active connections. Retained links and pins can still
+refer to the retired connection.
+
 ## Universal Search (0.3 development source)
 
 The `entry-search` provider binds the Account-target `entries/search-v1` Action

@@ -2473,10 +2473,15 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   };
   const routedRosterFailure = routedEntry !== null && surface.selection === null && !configuredSourcesReady
     && window.snapshot.pending === 'idle' ? window.snapshot.error : undefined;
+  const manageSourcesFromDetail = () => {
+    dismissDetail();
+    executeMountedOperation({ kind: 'setSourceManagementOpen', open: true });
+  };
   const detailContent = (headerHosted: boolean, pushed: boolean): React.ReactNode => openEntry === null ? null : (
     detailRow !== null ? (
       <TriagePublishedDetail
         exactRead={exactRead}
+        manageSources={manageSourcesFromDetail}
         sourceBinding={selectedSourceSummary ?? undefined}
         admittedInstance={selectedConfiguredInstance}
         {...(readFailed ? { exactReadFailure: {
@@ -2535,7 +2540,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           />
           {absentRoute.failure === undefined ? null : <ActionFailureDetails code={absentRoute.failure.code}
             detail={absentRoute.failure.detail} requestId={absentRoute.failure.requestId} showReason={false} />}
-        </> : readFailed ? <TriageDetailReadFailure failure={selectedReadFailure} retry={completePostMutation} />
+        </> : readFailed ? <TriageDetailReadFailure failure={selectedReadFailure} retry={completePostMutation} manageSources={manageSourcesFromDetail} />
           : routedRosterFailure !== undefined ? <TriageDetailReadFailure rosterFailure={routedRosterFailure} retry={refreshPage} />
           : <LoadingState title={readTriageDetailReadingLineV1(text, routedIdentity?.kind?.displayName ?? null, routedIdentity?.sourceLabel ?? null)} />}
       </Stack>

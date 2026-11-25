@@ -174,7 +174,7 @@ describe('reobserveTriageEntry', () => {
         },
       },
     } as unknown as PluginInvocationContext;
-    const result = await createTriageReobserveEntryActionHandler()(TriageReobserveEntryInputV1Schema.parse({
+    const request = createTriageReobserveEntryActionHandler()(TriageReobserveEntryInputV1Schema.parse({
       v: 1,
       entryRef: fixture.detailInput.observation.entryRef,
       sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId,
@@ -183,6 +183,14 @@ describe('reobserveTriageEntry', () => {
       includeTaskFields: true,
       ...(reader === 'mcp' ? { includeComparisonSource: true } : {}),
     }), context);
+    if (reader === 'retiredRow') {
+      await expect(request).rejects.toMatchObject({ code: 'triage_source_retired', data: { retryable: false } });
+      expect(configuredGets).toHaveBeenCalledTimes(1);
+      expect(configuredQueries).not.toHaveBeenCalled();
+      expect(executeGet).not.toHaveBeenCalled();
+      return;
+    }
+    const result = await request;
 
     if (exact) {
       expect(configuredGets).toHaveBeenCalledTimes(1);

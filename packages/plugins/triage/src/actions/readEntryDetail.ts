@@ -7,11 +7,8 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
-import { readActiveConfiguredSourceRow } from '../corpus/configuration/readConfiguredSourceRows.js';
+import { admitConfiguredEntrySourceRow, readConfiguredEntrySourceRow } from '../corpus/configuration/readConfiguredSourceRows.js';
 import { indexTriageAdmittedSourcesV1, readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
-import {
-    CORPUS_SOURCE_INSTANCE_LIFECYCLE,
-} from '../corpus/collections/ids.js';
 import { readReviewOutcome } from '../corpus/marks/setPinned.js';
 import { createTriageSourceSessionRelations } from '../sessions/sourceSessionRelations.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
@@ -54,28 +51,18 @@ export async function readTriageEntryDetail(
     const options: PluginCancellationOptions | undefined = deps.signal
         ? { signal: deps.signal }
         : undefined;
-    const row = await deps.sourceRelations.findConfiguredInstance(input.sourceInstanceId, input.entryRef);
-    // A retired row is not a connection a detail may be read through. It is kept
-    // so an explicit reactivation stays possible, not so a mounted surface can
-    // keep opening it.
-    if (!row || row.value.lifecycle !== CORPUS_SOURCE_INSTANCE_LIFECYCLE.active) return UNAVAILABLE;
-
-    const configured = row.value.configured;
-    // The selection names the entry AND the connection, and the row must be the
-    // one that observed that entry's source. A configured instance of a
-    // different source could otherwise be handed to a renderer that would read
-    // its own provider with somebody else's routing token.
-    if (configured.instance.source.pluginId !== input.entryRef.source.pluginId
-        || configured.instance.source.localId !== input.entryRef.source.localId) {
-        return UNAVAILABLE;
-    }
+    const row = admitConfiguredEntrySourceRow(
+        await deps.sourceRelations.findConfiguredInstance(input.sourceInstanceId, input.entryRef),
+        input.entryRef.source,
+    );
+    if (row === null) return UNAVAILABLE;
 
     const sourceLinks = await deps.sourceRelations.read({ entryRef: input.entryRef, sourceInstanceId: input.sourceInstanceId,
         paged: true, ...(input.linkedSessionsCursor === undefined ? {} : { cursor: input.linkedSessionsCursor }) });
     const { admittedReview, reviewSkip } = await deps.readReviewOutcome?.(input.entryRef, options) ?? {};
     return Object.freeze({
         kind: 'read',
-        instance: configured,
+        instance: row.value.configured,
         linkedSessions: Object.freeze(sourceLinks.links.map(({ sessionId }) => Object.freeze({ sessionId }))),
         ...(admittedReview === undefined ? {} : { admittedReview }),
         ...(reviewSkip === undefined ? {} : { reviewSkip }),
@@ -102,13 +89,12 @@ export function createTriageReadEntryDetailActionHandler(): TriageDataActionHand
             requireTriageAccountStorage(context),
         );
         const sources = indexTriageAdmittedSourcesV1(resolution.callers.map(caller => caller.contribution));
-        const record = input.sourceInstanceRowId === undefined ? undefined
-            : await readActiveConfiguredSourceRow(sourceInstances, {
-                sourceInstanceId: input.sourceInstanceId, configurationRowId: input.sourceInstanceRowId,
-            }, { signal: context.signal, accountDataSources: readAccountDataSourceRecordsV1(sources) });
+        const record = await readConfiguredEntrySourceRow(sourceInstances, input, {
+            signal: context.signal, accountDataSources: readAccountDataSourceRecordsV1(sources),
+        });
         return await readTriageEntryDetail(input, {
             sourceRelations: createTriageSourceSessionRelations(context, { sourceInstances, sessionLinks }, {
-                entryRef: input.entryRef, sources, ...(record === undefined ? {} : { record }),
+                entryRef: input.entryRef, sources, record,
             }),
             readReviewOutcome: (entryRef, readOptions) => readReviewOutcome({ collections: { userMarks }, entryRef,
                 ...(readOptions?.signal ? { signal: readOptions.signal } : {}) }),
