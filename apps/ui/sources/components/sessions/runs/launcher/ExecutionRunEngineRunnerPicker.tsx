@@ -3,7 +3,7 @@ import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/execu
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { ICON_SIZE } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 import { ExecutionRunAgentModelPicker } from './ExecutionRunAgentModelPicker';
@@ -45,7 +45,9 @@ export function ExecutionRunEngineRunnerPicker(props: Readonly<{
             serverId={props.serverId} machineId={props.machineId} actionInput={props.actionInput}
             selected={props.selected} inheritedTeamCredentialModel={null} selectBackend={() => undefined}
             setActionInput={props.setActionInput} /> : null}
-        {props.onAddMember ? <Item title={t('common.add')} testID="review-runner-add-member"
+        {/* The same add row as Add a step and Add an agent: a plus mark and a noun. */}
+        {props.onAddMember ? <Item title={t('reviewWalkthrough.start.addPanelMember')} testID="review-runner-add-member"
+            icon={<Icon name="plus" size={ICON_SIZE.sm} />}
             onPress={props.onAddMember} showChevron={false} /> : null}
     </>;
 }

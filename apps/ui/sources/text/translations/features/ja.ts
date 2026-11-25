@@ -13381,6 +13381,8 @@ const ja: ReviewWalkthroughTranslations = {
         findingsOnlyChoice: '指摘のみ',
     },
     start: {
+        scopeRepositoryOnly: 'リポジトリ全体のみをレビューします。ハントから開始してください。',
+        scopeChangesOnly: '変更をレビューします。リポジトリ全体は対象外です。',
         whoReviews: 'レビュー担当',
         step: ({ n, title }) => `ステップ ${n} · ${title}`,
         kindReview: '変更をレビュー',
@@ -13392,6 +13394,7 @@ const ja: ReviewWalkthroughTranslations = {
         removeStep: 'このステップを削除',
         addStep: 'ステップを追加',
         addStepLine: ({ n }) => `ステップ ${n} の後に、その指摘または同じ変更に対して実行されます`,
+        addPanelMember: 'パネルメンバーを追加',
         focus: 'フォーカス',
         focusPlaceholder: 'レビュー担当に最初に見てほしいこと',
         focusVerifyPlaceholder: '確認の仕方（任意）',

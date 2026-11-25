@@ -180,7 +180,9 @@ export function resolveExecutionRunLauncherBackendChoices(params: ResolveBackend
                 title: item.label,
                 disabled: !item.enabled,
                 ...(item.unavailableCode === REVIEW_ENGINE_SCOPE_UNSUPPORTED
-                    ? { unavailableReason: t('reviewWalkthrough.start.scopeUnsupported') }
+                    // The engine's declared scopes say where it can be chosen instead (U8 R9 P4).
+                    ? { unavailableReason: item.reviewScopes?.includes('repository') && item.reviewScopes.every(scope => scope === 'repository')
+                        ? t('reviewWalkthrough.start.scopeRepositoryOnly') : t('reviewWalkthrough.start.scopeChangesOnly') }
                     : !item.enabled && item.readiness && isMachineAgentExecutionStateBlockingV1(item.readiness)
                         ? { unavailableReason: formatMachineAgentExecutionState(item.readiness) } : {}),
                 ...(setup ? { setup } : {}),

@@ -13321,6 +13321,8 @@ const zhHant: ReviewWalkthroughTranslations = {
         findingsOnlyChoice: '僅發現項',
     },
     start: {
+        scopeRepositoryOnly: '只審查整個儲存庫。請從巡查啟動。',
+        scopeChangesOnly: '審查變更，不審查整個儲存庫。',
         whoReviews: '審閱者',
         step: ({ n, title }) => `第 ${n} 步 · ${title}`,
         kindReview: '審閱變更',
@@ -13332,6 +13334,7 @@ const zhHant: ReviewWalkthroughTranslations = {
         removeStep: '移除此步驟',
         addStep: '新增步驟',
         addStepLine: ({ n }) => `在第 ${n} 步之後執行，根據其發現或相同的變更`,
+        addPanelMember: '新增評審成員',
         focus: '重點',
         focusPlaceholder: '希望審閱者先看的內容',
         focusVerifyPlaceholder: '如何複核（可選）',

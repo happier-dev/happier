@@ -70,7 +70,8 @@ export type ReviewWalkthroughTranslations = {
         findingsOnlyChoice: string;
     };
     start: {
-        scopeUnsupported: string;
+        scopeRepositoryOnly: string;
+        scopeChangesOnly: string;
         whoReviews: string;
         step: (params: Readonly<{ n: number; title: string }>) => string;
         kindReview: string;
@@ -82,6 +83,7 @@ export type ReviewWalkthroughTranslations = {
         removeStep: string;
         addStep: string;
         addStepLine: (params: Readonly<{ n: number }>) => string;
+        addPanelMember: string;
         focus: string;
         focusPlaceholder: string;
         focusVerifyPlaceholder: string;
@@ -368,7 +370,8 @@ export const en: ReviewWalkthroughTranslations = {
         findingsOnlyChoice: 'Findings only',
     },
     start: {
-        scopeUnsupported: 'This engine can’t review this subject.',
+        scopeRepositoryOnly: 'Whole repository only. Start it from a Hunt.',
+        scopeChangesOnly: 'Reviews changes, not the whole repository.',
         whoReviews: 'Who reviews',
         step: ({ n, title }) => `Step ${n} · ${title}`,
         kindReview: 'Review the changes',
@@ -380,6 +383,7 @@ export const en: ReviewWalkthroughTranslations = {
         removeStep: 'Remove this step',
         addStep: 'Add a step',
         addStepLine: ({ n }) => `Runs after step ${n}, on its findings or the same changes`,
+        addPanelMember: 'Add a panel member',
         focus: 'Focus',
         focusPlaceholder: 'Anything the reviewers should look at first',
         focusVerifyPlaceholder: 'How to check them (optional)',

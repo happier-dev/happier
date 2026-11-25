@@ -1315,9 +1315,9 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         onSelect: comparisonReview.fields.onSelectNarrator }), [comparisonReview.fields]);
     const sheetFooterChange = props.sheet?.onFooterChange;
     const sheetCancel = props.sheet?.onCancel;
-    // A global start chooses its Machine and folder first, above what it reviews (the changes live there); a start
-    // whose place is fixed reads it as the footer's one chip (lab `start-sheet`).
-    const machineInFooter = sheetHosted && !phoneSheet && !choosingReviewWorkspace;
+    // A start whose place is fixed reads it as the footer's one chip (lab `start-sheet`). A start that chooses its
+    // folder (a global start, a Hunt's selector) asks for it first, above what it reviews, as the phone does (U8 R9 B2).
+    const machineInFooter = sheetHosted && !phoneSheet && contextualComposer.admissible.folder === 'fixed';
     const footerStartDisabled = unavailable || !editable || !mountedComposerRef;
     const footerMachine = machineInFooter ? <ContextualStartWhere model={contextualComposer} presentation="chip" /> : null;
     React.useLayoutEffect(() => {

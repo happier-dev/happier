@@ -13457,6 +13457,8 @@ const ru: ReviewWalkthroughTranslations = {
         findingsOnlyChoice: 'Только находки',
     },
     start: {
+        scopeRepositoryOnly: 'Проверяет только весь репозиторий. Запустите его из Поиска.',
+        scopeChangesOnly: 'Проверяет изменения, а не весь репозиторий.',
         whoReviews: 'Кто проверяет',
         step: ({ n, title }) => `Шаг ${n} · ${title}`,
         kindReview: 'Проверить изменения',
@@ -13468,6 +13470,7 @@ const ru: ReviewWalkthroughTranslations = {
         removeStep: 'Удалить этот шаг',
         addStep: 'Добавить шаг',
         addStepLine: ({ n }) => `Запускается после шага ${n}, по его находкам или тем же изменениям`,
+        addPanelMember: 'Добавить участника панели',
         focus: 'Фокус',
         focusPlaceholder: 'Что проверяющим стоит посмотреть в первую очередь',
         focusVerifyPlaceholder: 'Как их проверить (необязательно)',

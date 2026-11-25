@@ -13429,6 +13429,8 @@ const ca: ReviewWalkthroughTranslations = {
         findingsOnlyChoice: 'Només troballes',
     },
     start: {
+        scopeRepositoryOnly: 'Revisa només tot el repositori. Inicia’l des d’una Cacera.',
+        scopeChangesOnly: 'Revisa canvis, no tot el repositori.',
         whoReviews: 'Qui revisa',
         step: ({ n, title }) => `Pas ${n} · ${title}`,
         kindReview: 'Revisar els canvis',
@@ -13440,6 +13442,7 @@ const ca: ReviewWalkthroughTranslations = {
         removeStep: 'Elimina aquest pas',
         addStep: 'Afegeix un pas',
         addStepLine: ({ n }) => `S’executa després del pas ${n}, sobre les seves troballes o els mateixos canvis`,
+        addPanelMember: 'Afegeix un membre del panell',
         focus: 'Enfocament',
         focusPlaceholder: 'Qualsevol cosa que els revisors haurien de mirar primer',
         focusVerifyPlaceholder: 'Com comprovar-les (opcional)',

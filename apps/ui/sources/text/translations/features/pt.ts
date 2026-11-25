@@ -13423,6 +13423,8 @@ const pt: ReviewWalkthroughTranslations = {
         findingsOnlyChoice: 'Só as constatações',
     },
     start: {
+        scopeRepositoryOnly: 'Revisa apenas o repositório inteiro. Inicie-o a partir de uma Busca.',
+        scopeChangesOnly: 'Revisa alterações, não o repositório inteiro.',
         whoReviews: 'Quem revê',
         step: ({ n, title }) => `Passo ${n} · ${title}`,
         kindReview: 'Rever as alterações',
@@ -13434,6 +13436,7 @@ const pt: ReviewWalkthroughTranslations = {
         removeStep: 'Remover este passo',
         addStep: 'Adicionar um passo',
         addStepLine: ({ n }) => `Corre depois do passo ${n}, sobre as suas constatações ou as mesmas alterações`,
+        addPanelMember: 'Adicionar um membro do painel',
         focus: 'Foco',
         focusPlaceholder: 'O que os revisores devem ver primeiro',
         focusVerifyPlaceholder: 'Como verificá-las (opcional)',

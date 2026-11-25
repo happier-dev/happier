@@ -763,6 +763,9 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await waitFor(() => expect(composer().isSendDisabled).toBe(false));
         const footerScreen = await renderScreen(<>{footer}</>);
         expect(footerScreen.findByTestId('review-start-footer-start')).toBeNull();
+        // A folder the person chooses leads the body, as on a phone; the footer holds only a fixed place.
+        expect(footerScreen.findByTestId('run-start-where-chips')).toBeNull();
+        expect(screen.findByTestId('run-start-machine-row')).not.toBeNull();
         await footerScreen.pressByTestIdAsync('review-start-footer-use-selection');
         await waitFor(() => expect(onLaunchSelection).toHaveBeenCalledWith(expect.objectContaining({
             kind: 'reviewComposition', input: expect.objectContaining({ cwd: '/repo', target: { kind: 'detached' } }),
