@@ -91,7 +91,7 @@ import { OperationUpdateRequiredV1Schema } from '@happier-dev/protocol/compat/op
 import { createUiCoachSuppressionPort } from './usageCoachSuppressions';
 import type { UsageHistoryReadState } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { UsageHistoryEntry, readUsageHistoryFailure } from './usageHistoryReadState';
-import { canRetryUsageCoverageFailure, isUsageQuotaOwnershipUnproven, needsNewerServer, usageScopeRefusalCode } from './usageReadFailure';
+import { canRetryUsageCoverageFailure, isUsageQuotaOwnershipUnproven } from './usageReadFailure';
 import type { UsageCoachSuppressionStateV1 } from '@happier-dev/protocol/usage/coach/coachActions';
 import { openUsageCompactInput, persistUsageCompactInput } from './usageCompactInput';
 
@@ -1510,8 +1510,10 @@ export async function readUiUsageQueryBatch(
         }>;
         /** Only the shared explicit Read now Action may open unconverted wide-window Sessions. */
         readUnconvertedHistory?: boolean;
-        /** Explicit Retry carries the current batch's settled dispositions into the new read. */
-        retryFailuresOnly?: boolean;
+        /** Explicit Retry preserves accounting refusals in the same batch, even after its data ages. */
+        retryAccountingFailuresOnly?: boolean;
+        /** Quota recovery consumes only the failures of a current admission. */
+        retryQuotaFailuresOnly?: boolean;
         /** A wake of another Usage input does not demand replacement allowance acquisition. */
         retainAllowance?: boolean;
         /** Undefined retains full acquisition for legacy and recovery demand. */
@@ -1569,12 +1571,12 @@ export async function readUiUsageQueryBatch(
         ...(slice.comparison ? [[getUsageQueryKey(slice.comparison.query), { value: slice.comparison.accounting,
             asOfMs: slice.comparison.source.asOfMs, readAtMs: undefined }] as const] : []),
     ]));
-    const retryStates = new Map(readOptions?.retryFailuresOnly ? previous?.results.flatMap(slice => [
+    const retryStates = new Map(readOptions?.retryAccountingFailuresOnly ? previous?.results.flatMap(slice => [
         [slice.key, slice.sources.find(source => source.source === 'accounting')] as const,
         ...(slice.comparison ? [[getUsageQueryKey(slice.comparison.query), slice.comparison.source] as const] : []),
     ]) : undefined);
     const skippedAccounting = new Set<string>();
-    const quotaFailures = readOptions?.retryFailuresOnly ? previous?.results.flatMap(slice => slice.sources.filter(source =>
+    const quotaFailures = readOptions?.retryQuotaFailuresOnly ? previous?.results.flatMap(slice => slice.sources.filter(source =>
         (source.source === 'quota' || source.source.startsWith('quota:'))
         && (canRetryUsageCoverageFailure(source) || isUsageQuotaOwnershipUnproven(source)))) ?? [] : undefined;
     // An aggregate failure without qualified causes needs the existing quota
@@ -1593,7 +1595,7 @@ export async function readUiUsageQueryBatch(
     const accounting = new Map<string, UsageAccountingSourceSnapshot>(requests.map(query => {
         const key = getUsageQueryKey(query);
         const disposition = retryStates.get(key);
-        if (disposition && (usageScopeRefusalCode(disposition) || needsNewerServer(disposition))) {
+        if (disposition?.status === 'error' && !canRetryUsageCoverageFailure(disposition)) {
             skippedAccounting.add(key);
             const { source: _source, ...state } = disposition;
             return [key, { ...state, query, period: periods.get(key) }] as const;
@@ -2594,11 +2596,12 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     return { value: retained ? decodeUsageQueryResource(retained) : undefined,
                         reproject: retained ? decodedValues.get(retained)?.reproject : undefined };
                 })();
-                // Reuse a settled disposition only on this exact, still-current
-                // admission. A changed Home, scope or Work target takes the ordinary read.
-                const retryFailuresOnly = ownPrevious !== undefined && retained.currentSnapshot !== undefined
-                    && readDemand.length > 0 && readDemand.every(demand => demand.retryFailuresOnly);
-                if (retryFailuresOnly) owner.retrySessionInputFailures(new Set(ownPrevious.results.filter(slice =>
+                // A data wake can age an accounting batch without changing
+                // its authority or operands. Retry still preserves its refusals.
+                const retryRequested = ownPrevious !== undefined && readDemand.length > 0
+                    && readDemand.every(demand => demand.retryFailuresOnly);
+                const retryCurrentFailuresOnly = retryRequested && retained.currentSnapshot !== undefined;
+                if (retryCurrentFailuresOnly) owner.retrySessionInputFailures(new Set(ownPrevious.results.filter(slice =>
                     slice.sources.some(source => (source.source === 'how_you_work' || source.source === 'work')
                         && canRetryUsageCoverageFailure(source))).map(slice => slice.key)));
                 const previousByKey = new Map(ownPrevious?.results.map(slice => [slice.key, slice]));
@@ -2835,7 +2838,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                                 return { retained, settle: source => acquiredWorkInputs.set(queryKey, { ...input, turns, source }) };
                             },
                             retainedProjection,
-                            retryFailuresOnly,
+                            retryAccountingFailuresOnly: retryRequested && admission !== undefined,
+                            retryQuotaFailuresOnly: retryCurrentFailuresOnly,
                             retainAllowance: readDemand.length > 0 && readDemand.every(demand => demand.allowance === false),
                             allowanceTargets: allowanceDemands.map(demand => demand.allowanceTargets)
                                 .reduce(joinAllowanceReadTargets, allowanceDemands[0]?.allowanceTargets),

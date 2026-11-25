@@ -54,6 +54,7 @@ vi.mock('socket.io-client', async (importOriginal) =>
 
 const { publishAppliedActiveServerRuntimeAvailability, publishAppliedActiveServerSnapshot } =
   await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
 const { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } =
   await import('@/sync/domains/scope/activeServerAccountScope');
 const { captureUiUsageQueryAccountContext, getUsageQueryResourceStore, invalidateUsageQueryResources } =
@@ -138,6 +139,7 @@ async function renderUsagePage(
     savedViewsUnread: boolean;
     viewsReads: number;
     batch: (queries: readonly UsageAnalyticsQueryRequest[]) => Response;
+    initialPeriod?: 'today';
   },
   privateEvidence?: {
     period: ReturnType<typeof normalizeUsageQuery>['period'];
@@ -198,7 +200,7 @@ async function renderUsagePage(
   await beforeRender?.(server.id);
   const chrome = (<UsageWidgetPage
     sessionId={sessionId}
-    initialFilters={{
+    initialFilters={failures?.initialPeriod === 'today' ? { layoutId, period: 'today', costMode: 'auto', focus: null } : {
       layoutId,
       period: privateEvidence ? '30days' : '7days',
       metric: layoutId === 'costs' ? 'cost' : 'tokens',
@@ -344,10 +346,13 @@ it.each([
   { label: 'refusal only', refused: true, transient: false, views: false },
   { label: 'transient only', refused: false, transient: true, views: false },
   { label: 'refusal and transient in one batch', refused: true, transient: true, views: false },
+  { label: 'one refusal and six failed operands on stock Today', refused: true, transient: true, views: false, stockToday: true },
+  { label: 'one refusal and six failed operands on stock Today with an accounting wake during the read',
+    refused: true, transient: true, views: false, stockToday: true, accountingWake: true },
   { label: 'refusal and unread Views', refused: true, transient: false, views: true },
   { label: 'transient and unread Views', refused: false, transient: true, views: true },
   { label: 'refusal, transient and unread Views', refused: true, transient: true, views: true },
-])('J-B30 Usage page keeps each outcome and one recovery for $label', async ({ refused, transient, views }) => {
+])('J-B30 Usage page keeps each outcome and one recovery for $label', async ({ refused, transient, views, stockToday, accountingWake }) => {
   Object.assign(viewport, { width: 1440, height: 900 });
   vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Macintosh)', maxTouchPoints: 0 });
   let recover = false;
@@ -356,14 +361,18 @@ it.each([
   const failures = {
     savedViewsUnread: views,
     viewsReads: 0,
+    ...(stockToday ? { initialPeriod: 'today' as const } : {}),
     batch(queries: readonly UsageAnalyticsQueryRequest[]) {
       batches.push([...queries]);
-      return Response.json({ v: 1, results: queries.map(query => isRefused(query)
+      if (accountingWake && !recover) {
+        publishHomeAccountChange(home!.homes.a!.id, [], { usageAccountingChange: { sessionId: null } });
+      }
+      return Response.json({ v: 1, results: queries.map(query => isRefused(query) && (!stockToday || !recover)
         ? { query, error: 'not_found' }
         : transient && !recover ? { query, error: 'usage_query_failed' } : { query, value: accounting }) });
     },
   };
-  const screen = await renderUsagePage('overview', accounting, undefined, undefined, ['codex-native'], failures);
+  const screen = await renderUsagePage('overview', accounting, undefined, undefined, stockToday ? undefined : ['codex-native'], failures);
   const retries = () => screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityLabel === t('common.retry'));
   const notices = () => screen.findAllByType(SurfaceFreshnessLine)
     .filter(line => line.props.testID?.startsWith('usage-page.header.')).map(line => line.props.reason);
@@ -377,8 +386,9 @@ it.each([
     expect(retries()).toHaveLength(transient || views ? 1 : 0);
   });
   if (refused && transient) expect(batches.some(batch => batch.some(isRefused) && batch.some(query => !isRefused(query)))).toBe(true);
+  if (stockToday) expect(batches.at(-1)?.map(isRefused).sort()).toEqual([false, false, false, false, false, false, true]);
   if (refused) {
-    expect(screen.findHostByTestId('usage-page.header.scopeRefused.changeScope')).not.toBeNull();
+    if (!stockToday) expect(screen.findHostByTestId('usage-page.header.scopeRefused.changeScope')).not.toBeNull();
     expect(screen.getTextContent()).not.toContain('denied');
     await expandDisclosureAsync(screen.findAllByTestId('usage-page.header.scopeRefused.technicalDetails'));
     expect(screen.getTextContent()).toContain('denied');
@@ -394,8 +404,19 @@ it.each([
     if (views) expect(failures.viewsReads).toBeGreaterThan(lastViewsReads);
     expect(retries()).toHaveLength(0);
   });
-  expect(batches.slice(lastBatch).flat().some(isRefused)).toBe(false);
+  if (stockToday) expect.soft(batches.slice(lastBatch).map(batch => [batch.filter(isRefused).length, batch.filter(query => !isRefused(query)).length])).toEqual([[0, 6]]);
+  expect.soft(batches.slice(lastBatch).flat().some(isRefused)).toBe(false);
   if (refused) expect(notices()).toContain(refusal);
+  if (accountingWake) {
+    const settledBatch = batches.length;
+    await act(async () => {
+      publishHomeAccountChange(home!.homes.a!.id, [], { usageAccountingChange: { sessionId: null } });
+    });
+    await waitForHomeGovernance(() => {
+      expect(batches.slice(settledBatch).flat().some(isRefused)).toBe(true);
+      expect(notices()).not.toContain(refusal);
+    });
+  }
 });
 
 it('J-B30 a host without a Usage header discloses a refusal and recovers a sibling', async () => {
