@@ -9,8 +9,11 @@ import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnve
   projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { sealExternalActionRequestV2, openExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { ManagedMachineEnrollmentIdentityV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineEnrollmentIdentityV1Schema, ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features';
+import credentialAxios from '@/api/client/credentialAxios';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -46,6 +49,7 @@ describe('managed controller invocation codec', () => {
     const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'company' })).toString('base64url')}.signature`, encryption: null };
     const target = { kind: 'machine' as const, machineId: 'company-controller' };
     const homeId = 'srv_managed_home';
+    const homeHttpUrl = 'https://managed-home.test';
     const actionInput: JsonValue = actionId === 'machines.managed.acquire'
       ? { enrollmentIdentity, selection: { kind: 'one-off' as const, homeId,
         controller: { machineId: target.machineId, installationId: 'company-installation' },
@@ -74,16 +78,31 @@ describe('managed controller invocation codec', () => {
     setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(rawSettings), rawSettings, settingsVersion: 1,
       loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
     const custodianSettings = getActiveAccountSettingsSnapshot();
+    const managed = ManagedMachineFullV1Schema.parse({
+      id: 'member-resource', homeId, custodianAccountId: 'company',
+      controller: { machineId: target.machineId, installationId: 'company-installation' },
+      launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+      allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+    });
+    const dispatch = vi.fn();
     const createExecutor = (token = credentials.token) => createCliActionExecutor({ credentials: { ...credentials, token }, token, mode: 'plain', ctx: null,
-      sessionId: 'cli-global', serverId: 'profile', serverIdentityId: homeId, serverHttpBaseUrl: 'https://managed-home.test',
+      sessionId: 'cli-global', serverId: 'profile', serverIdentityId: homeId, serverHttpBaseUrl: homeHttpUrl,
       externalActionMachineInstallationId: 'company-installation', externalActionMachineRequestPrivateKey: installation.secretKey,
       pluginActionExecutionOwner: 'current_process',
+      // The real review owner reads the retained controller before Inspect and Retry.
+      // Stop at the native adapter so the codec harness never contacts a provisioner.
+      managedMachineAction: async request => {
+        if (request.actionId === 'machines.managed.get') return managed;
+        dispatch(request.actionId, request.input);
+        return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      },
     });
     const executor = createExecutor();
     const run = (current: boolean, received = authorization, surface: 'ui' | 'cli' = 'ui', includeHttp = true, selectedExecutor = executor) => executeExternalAction({ actionId, envelope,
       principal: { accountId: 'member', authority: 'present_user', authentication },
       ...(surface === 'cli' ? { surface } : {}),
-      ...(includeHttp ? { currentServerHttpBaseUrl: 'https://managed-home.test' } : {}),
+      ...(includeHttp ? { currentServerHttpBaseUrl: homeHttpUrl } : {}),
       currentMachineId: target.machineId, currentAccountId: 'company', currentServerId: 'profile',
       currentInstallationId: 'company-installation', executionAuthorization: received,
       externalActionMachineRequestPrivateKey: installation.secretKey,
@@ -93,18 +112,28 @@ describe('managed controller invocation codec', () => {
       prepareRequesterAccountContext: request => prepareRequesterAccountActionContext({ authorization: request.authorization,
         purpose: { kind: 'external_action' }, machineId: target.machineId, installationId: 'company-installation',
         installationPrivateKey: installation.secretKey, serverId: 'profile', serverIdentityId: homeId,
-        serverHttpBaseUrl: 'https://managed-home.test', isCurrent: async () => current,
+        serverHttpBaseUrl: homeHttpUrl, isCurrent: async () => current,
         createExecutor: () => executor }),
     });
     const http: { method: 'GET' | 'POST'; pathname: string }[] = [];
     const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
-      http.push({ method: 'GET', pathname: new URL(String(url), 'https://managed-home.test').pathname });
+      http.push({ method: 'GET', pathname: new URL(String(url), homeHttpUrl).pathname });
       throw new Error('Unexpected Account read');
     });
     const post = vi.spyOn(axios, 'post').mockImplementation(async url => {
-      http.push({ method: 'POST', pathname: new URL(String(url), 'https://managed-home.test').pathname });
+      http.push({ method: 'POST', pathname: new URL(String(url), homeHttpUrl).pathname });
       if (url.endsWith('/verify')) return { status: 200, data: { ok: true } };
       throw new Error('Unexpected Artifact write');
+    });
+    const features = vi.spyOn(globalThis, 'fetch').mockImplementation(async url => {
+      if (String(url) !== `${homeHttpUrl}/v1/features`) throw new Error('Unexpected Home feature request');
+      return Response.json(FeaturesResponseSchema.parse({ features: { workflows: { enabled: true } } }));
+    });
+    const index = vi.spyOn(credentialAxios, 'request').mockImplementation(async request => {
+      if (request.method === 'GET' && request.url === `${homeHttpUrl}${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`) {
+        return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+      }
+      throw new Error('Unexpected Home request');
     });
     try {
       const result = await run(true);
@@ -112,9 +141,9 @@ describe('managed controller invocation codec', () => {
       if (result.kind !== 'response') throw new Error('Expected a controller Action response');
       const execution = envelope.v === 2 ? openExternalActionResponseV2({ envelope: result.response,
         request: envelope, binding, material }) : 'execution' in result.response ? result.response.execution : null;
-      // The retained real custodian executor has no native managed adapter in
-      // this harness. Reaching its typed refusal proves decryption and dispatch.
+      // The native boundary refusal and exact operand prove dispatch after opening.
       expect(execution).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+      expect(dispatch).toHaveBeenCalledExactlyOnceWith(actionId, actionInput);
       expect(await run(false)).toMatchObject({ kind: 'invalid_request',
         errorCode: envelope.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope' });
       expect(await run(true, { ...authorization, requesterAccountContext: undefined })).toMatchObject({ kind: 'invalid_request' });
@@ -125,11 +154,8 @@ describe('managed controller invocation codec', () => {
         const absent = sealManagedControllerActionCodecV1({ authorization, material,
           installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
         const otherToken = `fixture.${Buffer.from(JSON.stringify({ sub: 'other-company' })).toString('base64url')}.signature`;
-        // Signed CLI approval is supported. Acquire must still never borrow the
-        // controller Account's private Artifact custody through origin hints.
-        // The rightful requester approval path is covered at the store owner.
-        const expectedRefusalCode = actionId === 'machines.managed.acquire'
-          ? 'credential_scope_denied' : 'approval_origin_unavailable';
+        // A signed origin can reach approval creation. The foreign requester
+        // still cannot use the controller Account's private Artifact custody.
         const observed = [];
         for (const variant of [
           { name: 'cli origin', execute: () => run(true, cli, 'cli') },
@@ -148,13 +174,20 @@ describe('managed controller invocation codec', () => {
         const diagnostics = JSON.stringify(observed);
         for (const item of observed) {
           expect(item.kind, diagnostics).toBe('response');
-          expect(item.outcome, diagnostics).toMatchObject({ ok: false, errorCode: expectedRefusalCode });
+          expect(item.outcome, diagnostics).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
         }
       }
+      expect(dispatch).toHaveBeenCalledTimes(1);
       expect(get).not.toHaveBeenCalled();
       expect(post.mock.calls.every(([url]) => url.endsWith('/verify'))).toBe(true);
       expect(getActiveAccountSettingsSnapshot()).toBe(custodianSettings);
-    } finally { get.mockRestore(); post.mockRestore(); resetActiveAccountSettingsSnapshotForTests(); }
+    } finally {
+      features.mockRestore();
+      index.mockRestore();
+      get.mockRestore();
+      post.mockRestore();
+      resetActiveAccountSettingsSnapshotForTests();
+    }
   });
 
   // A member's Setup Plan Workflow leaf on another person's Machine carries only the codec.
