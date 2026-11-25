@@ -915,10 +915,11 @@ export const ProjectSessionDefaultsSection = React.memo(function ProjectSessionD
 
 /**
  * The project editor while its read is in flight: the same section with the rows every loaded editor shows (Machine,
- * Agent and Approval profile), by name, each field holding a quiet bar. Which Agents lead, how many connected-service
- * rows they open with and whether "Other agents" shows all come from the read, so those rows add below these when it
- * lands; nothing held moves whatever the read returns (TS-UI-ACCEPT-FINAL-1124: a held Agent group collapsed by
- * 342 px for a Project with no Agent set).
+ * Agent and Approval profile), by name, each field holding a quiet bar, and the closing "Other agents" row, whose
+ * mark keeps the section's leading column where the loaded rows put their titles. Which Agents lead and how many
+ * connected-service rows they open with come from the read and join between them, so the rows above never move
+ * (TS-UI-ACCEPT-FINAL-1124: a held Agent group collapsed by 342 px for a Project with no Agent set). A read-only scope
+ * with nothing set drops the last row, which moves nothing above it.
  */
 export const ProjectSessionDefaultsLoadingSection = React.memo(function ProjectSessionDefaultsLoadingSection(props: Readonly<{
   /** The shared scope: the Approval profile row carries its standing description. */
@@ -948,6 +949,8 @@ export const ProjectSessionDefaultsLoadingSection = React.memo(function ProjectS
       {fieldRow(`${props.testID}-agent`, t('projects.sessionDefaults.agent'), line)}
       {fieldRow(`${props.testID}-approvalProfile`, t('teams.settings.memberDefaults.approvalProfile'),
         props.shared ? t('teams.settings.memberDefaults.approvalProfileProject') : line)}
+      <Item testID={`${props.testID}-otherAgents`} icon={<Icon name="stack" />}
+        title={t('teams.settings.memberDefaults.otherAgents')} />
     </ItemGroup>
   );
 });

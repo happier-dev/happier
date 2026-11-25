@@ -23,9 +23,10 @@ describe('Session defaults loading shape', () => {
         row,
       ).not.toBeNull();
     }
-    // Only the rows every loaded editor shows are held: which Agents lead, their service rows and "Other agents"
-    // come from the read and add below these, so nothing held moves whatever the read returns.
-    for (const speculative of ['pending-agent:lead', 'pending-agent:lead:permission', 'pending-agent:next', 'otherAgents']) {
+    // Only the rows every loaded editor shows are held, closing with "Other agents" (its mark keeps the section's
+    // leading column); which Agents lead and their service rows come from the read and join below the held fields.
+    expect(screen.findByTestId(`${SPECIMEN}.loading-otherAgents`)).not.toBeNull();
+    for (const speculative of ['pending-agent:lead', 'pending-agent:lead:permission', 'pending-agent:next']) {
       expect(screen.findByTestId(`${SPECIMEN}.loading-${speculative}`), speculative).toBeNull();
     }
     const text = screen.getTextContent();
