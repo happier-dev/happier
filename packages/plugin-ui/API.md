@@ -1418,6 +1418,8 @@ Declaration: `dist/index.d.ts`
 - type `ReviewCommentProposalQueryV1` from `dist/index.d.ts`
 - type `ReviewCommentProposalReadV1` from `dist/index.d.ts`
 - type `ReviewCommentProposalWithBodyV1` from `dist/index.d.ts`
+- type `ReviewPublicationBlockedCause` from `dist/index.d.ts`
+- value `ReviewPublicationEntry` from `dist/index.d.ts`
 - value `ReviewPublicationSheet` from `dist/index.d.ts`
 - type `ReviewPublicationSheetProps` from `dist/index.d.ts`
 - value `ReviewPublicationSummaryPreview` from `dist/index.d.ts`
@@ -3412,6 +3414,8 @@ Declaration: `dist/components/index.d.ts`
 - type `ReturnedAnswerQuestion` from `dist/components/index.d.ts`
 - value `ReturnedAnswerQuote` from `dist/components/index.d.ts`
 - type `ReturnedAnswerQuoteProps` from `dist/components/index.d.ts`
+- type `ReviewPublicationBlockedCause` from `dist/components/index.d.ts`
+- value `ReviewPublicationEntry` from `dist/components/index.d.ts`
 - value `ReviewPublicationSheet` from `dist/components/index.d.ts`
 - type `ReviewPublicationSheetProps` from `dist/components/index.d.ts`
 - value `ReviewPublicationSummaryPreview` from `dist/components/index.d.ts`
