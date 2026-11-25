@@ -230,7 +230,11 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
     }
     // A new screen opens at the top of its body: the previous step's scroll would hide the new step's summary, which
     // sits first (PAGE-ACCEPT-176 R7-D2: Vercel's details opened past its Source / Runs on rows).
+    // Only a change of screen resets it: a body that has just mounted is already at its top, so nothing scrolls then.
+    const scrolledScreen = React.useRef(props.screenKey);
     React.useLayoutEffect(() => {
+        if (scrolledScreen.current === props.screenKey) return;
+        scrolledScreen.current = props.screenKey;
         bodyScrollRef.current?.scrollTo({ y: 0, animated: false });
     }, [props.screenKey]);
     const [frameHeight, setFrameHeight] = React.useState(0);

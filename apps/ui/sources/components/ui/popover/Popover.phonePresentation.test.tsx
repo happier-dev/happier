@@ -26,11 +26,11 @@ installPopoverCommonModuleMocks({
     },
 });
 
-// Safe-area measurements come from the device SDK; overlay policy remains real.
-vi.mock('react-native-safe-area-context', () => ({
-    useSafeAreaInsets: () => ({ top: 24, right: 0, bottom: 34, left: 0 }),
-    initialWindowMetrics: null,
-}));
+// Safe-area measurements come from the device SDK (the testkit's complete mock); overlay policy remains real.
+vi.mock('react-native-safe-area-context', async () => {
+    const { createSafeAreaContextMock } = await import('@/dev/testkit/mocks/safeAreaContext');
+    return createSafeAreaContextMock({ top: 24, right: 0, bottom: 34, left: 0 });
+});
 
 // Collect the real UI graph before the behavior deadline, as in the adjacent DOM suites.
 const { Popover } = await import('./Popover');
