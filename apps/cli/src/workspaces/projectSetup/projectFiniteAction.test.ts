@@ -1067,19 +1067,21 @@ describe('authenticated finite Project Action owner', () => {
             expect(result).not.toMatchObject({ ok: false });
             expect(ProjectCommandActionOutputV1Schema.parse(result)).toMatchObject({ operation: { actionId: 'projects.script.run' } });
             await h.firstSpawn;
-            // Acceptance, dequeue and final native admission remain separate decisions.
-            // A no-effect setup and a primary Sync no-op introduce no new decision.
+            // Acceptance and dequeue share each selected setup read across
+            // SOURCE placement and primary review for the same Project.
+            // Setup execution and final native admission keep their own reads.
             // Currentness is descriptive; each decision still reads fresh mode authority.
             // Dequeue can start its next fresh read before the accepted RPC
             // returns. Count each decision below, not that scheduling race.
             expect.soft(requests.filter(path => path.endsWith('/read'))).toHaveLength(3);
             const projectReads = h.post.mock.calls.filter(([url]) => String(url).endsWith('/v1/account/project-rows/read'));
-            expect.soft(projectReads).toHaveLength(2);
-            expect.soft(h.post.mock.calls).toHaveLength(2);
+            expect.soft(projectReads).toHaveLength(6);
+            expect.soft(h.post.mock.calls).toHaveLength(6);
             // Project row snapshot reads borrow the held Account observation (085cab5b331).
             expect.soft(h.get.mock.calls.slice(getCallsAtStart)).toEqual([]);
-            expect.soft(phaseReads['project.placement.review']).toEqual([{ config: 1, project: 0 }, { config: 1, project: 0 }]);
-            expect.soft(phaseReads['project.command.review']).toEqual([{ config: 0, project: 0 }, { config: 1, project: 0 }]);
+            expect.soft(phaseReads['project.placement.review']).toEqual([{ config: 1, project: 1 }, { config: 1, project: 1 }]);
+            expect.soft(phaseReads['project.primary.review']).toEqual([{ config: 0, project: 0 }, { config: 0, project: 0 }]);
+            expect.soft(phaseReads['project.command.review']).toEqual([{ config: 0, project: 0 }, { config: 1, project: 1 }]);
             expect.soft(phaseReads['project.sync.prepare']).toEqual([{ config: 0, project: 0 }]);
             expect(requests.filter(path => path === '/v1/account/encryption')).toHaveLength(3);
             const stages = diagnostics.mock.calls.filter(([event]) => event === '[external-action-stage]')

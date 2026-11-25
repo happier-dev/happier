@@ -11,6 +11,7 @@ import { projectRuntimeAccountRowsInput, type ProjectRuntimeAccountAccess } from
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { WorkspaceSyncPrepareBetweenResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { ProjectDefinitionInspectRead, ProjectDefinitionInspectOutput } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
+import type { ProjectSetupReadV1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { projectWorkspaceRefV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { WorkspaceSyncWorkerTargetBasis } from '@/workspaces/sync/workspaceSyncPreparation';
 import { FiniteAdmissionV1Schema } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
@@ -322,6 +323,9 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             return operation ? { operation } : failure('project_setup_review_unavailable');
         }
         const sourceAssociation = association;
+        const setupForTarget = (sourceSetup: ProjectSetupReadV1 | undefined) =>
+            sourceAssociation.project.serverId === association.project.serverId
+            && sourceAssociation.project.projectId === association.project.projectId ? sourceSetup : undefined;
         const assertReceivingPlacement = async (choice: ProjectExecutionChoiceV1) => {
             await assertProjectReceivingPlacement({ choice, sourceMachineId: sourceAssociation.workspace.machineId,
                 receivingMachineId: runtime.machineId, ...(args.executeCanonicalAction ? { readPool: async poolId => {
@@ -338,11 +342,11 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         let workerRelativeCwd: string | undefined;
         const selectedCommand = request.actionId === 'projects.script.run' && request.input.selection.kind === 'named'
             ? { usage: 'script' as const, name: request.input.selection.name } : undefined;
-        const readEffective = async (selected: typeof association) => {
+        const readEffective = async (selected: typeof association, acceptedSetup: ProjectSetupReadV1 | undefined = admittedTeardown?.acceptedSetup) => {
             const read = await readProjectEffectiveDefinition({ root: selected.workspace.rootPath,
                 account: projectRuntimeAccountRowsInput(runtime), serverHttpBaseUrl: runtime.serverHttpBaseUrl,
-                project: selected.project, signal, ...(admittedTeardown ? { acceptedSetup: admittedTeardown.acceptedSetup } : {}) });
-            return { ...read.snapshot, effectiveDefinition: read.effectiveDefinition };
+                project: selected.project, signal, acceptedSetup });
+            return { ...read.snapshot, effectiveDefinition: read.effectiveDefinition, acceptedSetup: read.acceptedSetup };
         };
         const selectedExecutionDeclaration = (definition: ProjectDefinitionInspectOutput['definition'] & Pick<ProjectDefinitionInspectOutput, 'effectiveDefinition'>) => {
             if (definition.document?.status === 'invalid') throw coded('invalid_manifest');
@@ -385,6 +389,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 request.actionId === 'projects.prepare' ? null : readExecutionPolicy(),
             ]);
             if (definitionRead.status === 'rejected') throw definitionRead.reason;
+            const localAcceptedSetup = 'acceptedSetup' in definitionRead.value ? definitionRead.value.acceptedSetup : undefined;
             const sourceDefinition: ProjectDefinitionInspectOutput['definition'] & Pick<ProjectDefinitionInspectOutput, 'commands' | 'toolchainExecutionInputs' | 'commandExecutedFiles' | 'effectiveDefinition'> = definitionRead.value;
             await assertNotCancelled();
             if (sourceDefinition.document?.status === 'invalid') throw coded('invalid_manifest');
@@ -398,7 +403,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 }
                 if (digest(current) !== digest(acceptedDeclaration)) throw coded('project_script_effect_changed', scriptChangedDetails(current));
             }
-            if (request.actionId === 'projects.prepare') return { choice: { kind: 'primary' as const }, script: undefined, sourceDefinition,
+            if (request.actionId === 'projects.prepare') return { choice: { kind: 'primary' as const }, script: undefined, sourceDefinition, localAcceptedSetup,
                 memoryDemand: sourceManifest?.workspace?.memoryDemand };
             const named = request.actionId === 'projects.script.run' && request.input.selection.kind === 'named'
                 ? sourceManifest?.scripts?.[request.input.selection.name] : undefined;
@@ -417,18 +422,20 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             await assertReceivingPlacement(placement.choice);
             const script = request.actionId === 'projects.script.run' && request.input.selection.kind === 'named' && named
                 ? { name: request.input.selection.name, source: named.source } : acceptedScript;
-            return { choice: placement.choice, script, sourceDefinition, policy, unavailable: policy.status === 'ready' ? policy.preference.unavailable : undefined,
+            return { choice: placement.choice, script, sourceDefinition, localAcceptedSetup, policy, unavailable: policy.status === 'ready' ? policy.preference.unavailable : undefined,
                 memoryDemand: maximumDemand(request.input.memoryDemand, named?.memoryDemand, sourceManifest?.workspace?.memoryDemand) };
         });
         let workerUnavailable: 'ask' | 'primary' | 'fail' | undefined;
         let acceptedDeclaration: ReturnType<typeof selectedExecutionDeclaration> | undefined;
         let initialSourceDefinition: Awaited<ReturnType<typeof reviewSourcePlacement>>['sourceDefinition'];
+        let initialSourceSetup: ProjectSetupReadV1 | undefined;
         try {
             const placement = await reviewSourcePlacement();
             acceptedChoice = placement.choice;
             acceptedMemory = placement.memoryDemand;
             acceptedScript = placement.script;
             initialSourceDefinition = placement.sourceDefinition;
+            initialSourceSetup = placement.localAcceptedSetup;
             if (request.actionId !== 'projects.prepare') acceptedDeclaration = selectedExecutionDeclaration(placement.sourceDefinition);
             workerUnavailable = 'unavailable' in placement ? placement.unavailable : undefined;
         } catch (error) { return failure(codeOf(error)); }
@@ -571,8 +578,8 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         };
         // Primary admission can retain reviewed bytes without giving a selected
         // plugin an invocation/Exec context before the finite reservation.
-        const readPrimaryAdmissionBasis = () => stage('project.primary.review', async (): Promise<string> => {
-            const snapshot = await readEffective(association);
+        const readPrimaryAdmissionBasis = (acceptedSetup: ProjectSetupReadV1 | undefined) => stage('project.primary.review', async (): Promise<string> => {
+            const snapshot = await readEffective(association, setupForTarget(acceptedSetup));
             await assertNotCancelled();
             if (snapshot.document?.status === 'invalid') throw coded('invalid_manifest');
             const manifest = snapshot.effectiveDefinition.effectiveManifest;
@@ -656,7 +663,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         });
         let acceptedPrimaryBasis: string | undefined;
         if (!workerBasis) {
-            try { acceptedPrimaryBasis = await readPrimaryAdmissionBasis(); }
+            try { acceptedPrimaryBasis = await readPrimaryAdmissionBasis(initialSourceSetup); }
             catch (error) { preserveUnconfirmedNativeProcess(error); return failure(codeOf(error)); }
         }
         let admittedSecretInputs: ReturnType<typeof resolveProjectRequesterSecretInputs> | undefined;
@@ -672,7 +679,8 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             const targetDefinition = await readProjectEffectiveDefinition({ root: association.workspace.rootPath,
                 account: projectRuntimeAccountRowsInput(runtime), serverHttpBaseUrl: runtime.serverHttpBaseUrl,
                 project: association.project, signal: nativeExecutionSignal(),
-                ...(admittedTeardown ? { acceptedSetup: admittedTeardown.acceptedSetup } : {}) });
+                // A primary dequeue uses the same Project snapshot as its SOURCE placement.
+                acceptedSetup: admittedTeardown?.acceptedSetup ?? setupForTarget(sourceReview?.localAcceptedSetup) });
             if (admittedTeardown) environmentBindings = selectProjectRequesterSecretBindings(admittedTeardown.organization?.value.environmentBindings,
                 targetDefinition.effectiveDefinition.effectiveManifest?.environmentVariables ?? []);
             if (!runtimeEnvironments.has(association.workspace.rootPath)) {
@@ -917,7 +925,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                                 || source.memoryDemand?.bytes !== acceptedMemory?.bytes) throw coded('project_script_effect_changed',
                                     scriptChangedDetails(selectedExecutionDeclaration(source.sourceDefinition)));
                             await assertSourceExecutionCurrent(source);
-                            if (acceptedPrimaryBasis !== undefined && await readPrimaryAdmissionBasis() !== acceptedPrimaryBasis) throw coded('project_script_effect_changed',
+                            if (acceptedPrimaryBasis !== undefined && await readPrimaryAdmissionBasis(source.localAcceptedSetup) !== acceptedPrimaryBasis) throw coded('project_script_effect_changed',
                                 scriptChangedDetails(selectedExecutionDeclaration(source.sourceDefinition)));
                             // Remember must compare the current copied effect before
                             // writing Trust, not discover changed SOURCE only after
@@ -949,7 +957,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                         if (!projectExecutionChoicesEqualV1(source.choice, acceptedChoice!)
                             || source.memoryDemand?.bytes !== acceptedMemory?.bytes) throw coded('project_script_effect_changed');
                         await assertSourceExecutionCurrent(source);
-                        if (acceptedPrimaryBasis !== undefined && await readPrimaryAdmissionBasis() !== acceptedPrimaryBasis) throw coded('project_script_effect_changed');
+                        if (acceptedPrimaryBasis !== undefined && await readPrimaryAdmissionBasis(source.localAcceptedSetup) !== acceptedPrimaryBasis) throw coded('project_script_effect_changed');
                         preparationPhase('copying');
                         await prepareDequeue();
                         return true;
@@ -981,7 +989,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                         if (!projectExecutionChoicesEqualV1(source.choice, acceptedChoice!)
                             || source.memoryDemand?.bytes !== acceptedMemory?.bytes) return finish(failure('project_script_effect_changed'));
                         await assertSourceExecutionCurrent(source);
-                        if (acceptedPrimaryBasis !== undefined && await readPrimaryAdmissionBasis() !== acceptedPrimaryBasis) return finish(failure('project_script_effect_changed'));
+                        if (acceptedPrimaryBasis !== undefined && await readPrimaryAdmissionBasis(source.localAcceptedSetup) !== acceptedPrimaryBasis) return finish(failure('project_script_effect_changed'));
                         preparationPhase('copying');
                         await prepareDequeue();
                         // A real Sync copy may await remote work and change policy.
