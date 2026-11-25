@@ -415,6 +415,39 @@ describe('TeamSettingsScreen', () => {
         expect(screen.findByTestId('team-settings-name')?.props.value).toBe('Maybe renamed');
     });
 
+    it.each([
+        { status: 400, code: 'invalid_team_input', label: 'teams.errors.invalidTeamDetails' },
+        { status: 403, code: 'team_forbidden', label: 'teams.errors.forbidden' },
+        { status: 403, code: 'team_forbidden', details: { reason: 'legacy_home_credential' }, label: 'teams.errors.signInOutdated', signIn: '/settings/account' },
+        { status: 403, code: 'team_authentication_required', label: 'teams.errors.authenticationRequired', signIn: 'team' },
+        { status: 404, code: 'team_not_found', label: 'teams.errors.notFound' },
+        { status: 404, code: 'teams_unavailable', label: 'teams.unavailable.disabled' },
+        { status: 409, code: 'team_archived', label: 'teams.errors.archived' },
+        { status: 503, code: 'team_authentication_unavailable', label: 'teams.credentials.externalApi.authenticationUnavailable' },
+    ])('presents the metadata refusal $code ($label) with the available recovery', async ({ status, code, details, label, signIn }) => {
+        const team = teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageSettings: true }) });
+        const serverId = await addHomeWithTeam(team);
+        harness.answer(serverId, TEAM_UPDATE_PATH, { status, body: { error: code, ...(details ? { details } : {}) } });
+        const screen = await renderSettings(serverId);
+        await waitForTestId(screen, 'team-settings-name');
+        act(() => screen.changeTextByTestId('team-settings-name', 'New name'));
+        await screen.pressByTestIdAsync('team-settings-save');
+
+        await waitForTestId(screen, 'team-settings-identity-error');
+        expect(screen.getTextContent()).toContain(label);
+        expect(screen.findByTestId('team-settings-name')?.props.value).toBe('New name');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-settings-identity-error-retry');
+        if (signIn) {
+            routerPush.mockClear();
+            await screen.pressByTestIdAsync('team-settings-identity-error-sign-in');
+            expect(routerPush).toHaveBeenCalledWith(signIn === 'team'
+                ? `/teams/team-1/sign-in?serverId=${encodeURIComponent(serverId)}`
+                : signIn);
+        } else {
+            expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-settings-identity-error-sign-in');
+        }
+    });
+
     it('renders only the controls the Home says this viewer has', async () => {
         const serverId = await addHomeWithTeam(teamSummaryFixture({
             // A Team owner by role, but the Home has withdrawn everything except

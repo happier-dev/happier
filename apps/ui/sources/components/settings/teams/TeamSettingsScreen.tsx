@@ -47,6 +47,7 @@ import { TeamLogoPicker } from './TeamLogoPicker';
 import type { TeamSectionContext } from './teamSectionContext';
 import { teamMutationFailureLabel } from './teamMutationPresentation';
 import { useEditedMetadataDraft } from './useEditedMetadataDraft';
+import { teamSignInFailureAction } from './useTeamReadFailureAction';
 import {
     externalSharingConsequence,
     externalSharingLabel,
@@ -80,8 +81,9 @@ const TeamIdentitySection = React.memo(function TeamIdentitySection(props: Reado
 }>) {
     const { context } = props;
     const navigation = useNavigation();
+    const router = useRouter();
     const [saving, setSaving] = React.useState(false);
-    const [error, setError] = React.useState<string | null>(null);
+    const [error, setError] = React.useState<HomeDomainFailure<string> | null>(null);
     const [saved, setSaved] = React.useState(false);
     const nameInputRef = React.useRef<React.ComponentRef<typeof FieldTextInput> | null>(null);
     const saveInFlightRef = React.useRef(false);
@@ -135,10 +137,10 @@ const TeamIdentitySection = React.memo(function TeamIdentitySection(props: Reado
                 setSaved(true);
                 return;
             }
-            setError(teamMutationFailureLabel(outcome.failure));
+            setError(outcome.failure);
         } catch (cause) {
             if (isTeamActionApprovalPendingError(cause)) context.requestApproval(cause.artifactId);
-            else setError(t('teams.errors.generic'));
+            else setError({ kind: 'unknown', code: null, retryable: false });
         } finally {
             saveInFlightRef.current = false;
             setSaving(false);
@@ -158,6 +160,10 @@ const TeamIdentitySection = React.memo(function TeamIdentitySection(props: Reado
 
     const editable = context.team.capabilities.manageSettings && !context.archived;
     const draftOpen = draft.isDirty || conflict;
+    const errorMessage = error ? teamMutationFailureLabel(error, 'details') : null;
+    const recovery = error && errorMessage
+        ? teamSignInFailureAction(error, context.address, (href) => router.push(href), 'team-settings-identity-error')
+        : undefined;
     return (
         <>
             {/* Somebody else changed the Team while this draft was open: the Home's answer is
@@ -240,15 +246,20 @@ const TeamIdentitySection = React.memo(function TeamIdentitySection(props: Reado
                 />
                 <TeamLogoSection context={context} />
             </ItemGroup>
-            {error || (saved && !changed) ? <ItemGroup surface="none">
+            {errorMessage || (saved && !changed) ? (
+                <ItemGroup surface="none">
                     <SectionButtonRow
-                        footnote={error ?? t('teams.settings.saved')}
-                        footnoteTone={error ? 'danger' : 'secondary'}
-                        footnoteTestID={error ? 'team-settings-identity-error' : 'team-settings-saved'}
+                        footnote={errorMessage ?? t('teams.settings.saved')}
+                        footnoteTone={errorMessage ? 'danger' : 'secondary'}
+                        footnoteTestID={errorMessage ? 'team-settings-identity-error' : 'team-settings-saved'}
+                        trailing={recovery ? (
+                            <RoundButton testID={recovery.testID} size="small" title={recovery.label} onPress={recovery.onPress} />
+                        ) : null}
                     >
                         {null}
                     </SectionButtonRow>
-            </ItemGroup> : null}
+                </ItemGroup>
+            ) : null}
         </>
     );
 });

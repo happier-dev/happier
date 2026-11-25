@@ -72,16 +72,18 @@ export function teamReadFailureAction(
     };
 }
 
-export function teamMutationFailureLabel(failure: HomeDomainFailure<string>, context?: 'authentication_policy' | 'policy'): string | null {
+type TeamMutationContext = 'authentication_policy' | 'policy' | 'details';
+
+export function teamMutationFailureLabel(failure: HomeDomainFailure<string>, context?: TeamMutationContext): string | null {
     if (isActionApprovalDeclinedErrorCode(failure.code)) return null;
     return teamFailureLabel(failure, context);
 }
 
-function teamFailureLabel(failure: HomeDomainFailure<string>, context?: 'authentication_policy' | 'policy'): string {
+function teamFailureLabel(failure: HomeDomainFailure<string>, context?: TeamMutationContext): string {
     return teamRefusalLabel(failure, context) ?? teamFailureKindLabel(failure.kind);
 }
 
-function teamRefusalLabel(failure: HomeDomainFailure<string>, context?: 'authentication_policy' | 'policy'): string | undefined {
+function teamRefusalLabel(failure: HomeDomainFailure<string>, context?: TeamMutationContext): string | undefined {
     // Team routes refuse a released 0.2 sign-in; signing in again is the fix, not the person's role.
     if (isTeamLegacyCredentialRefusalV1(failure.code, failure.details)) return t('teams.errors.signInOutdated');
     switch (failure.code) {
@@ -102,6 +104,7 @@ function teamRefusalLabel(failure: HomeDomainFailure<string>, context?: 'authent
     // the pickers cannot know it, so the Home's typed refusal says it.
     if (failure.code === 'account_ineligible') return t('teams.members.accountInactive');
     if (context === 'policy' && failure.code === 'invalid_team_input') return t('teams.errors.policySaveFailed');
+    if (context === 'details' && failure.code === 'invalid_team_input') return t('teams.errors.invalidTeamDetails');
     return undefined;
 }
 

@@ -10,6 +10,27 @@ import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 
 import { teamReadFailureAction, type TeamReadFailureRetry } from './teamMutationPresentation';
 
+/** Sign-in recovery appears on reads and writes only for the refusal that requires it. */
+export function teamSignInFailureAction(
+    failure: HomeDomainFailure<string> | ScopedSnapshotError,
+    address: TeamAddress | undefined,
+    navigate: (href: string) => void,
+    testIDPrefix?: string,
+): AttentionBannerAction | undefined {
+    const testID = testIDPrefix ? `${testIDPrefix}-sign-in` : undefined;
+    if (failure.code === 'team_authentication_required' && address) {
+        const { action } = presentTeamSignInRequired({
+            code: failure.code, teamId: address.teamId, serverId: address.serverId, accepted: [], navigate,
+        });
+        return { ...action, testID };
+    }
+    if (failure.code && isTeamLegacyCredentialRefusalV1(failure.code, failure.details)) {
+        const { action } = presentTeamSignInOutdated({ code: failure.code, navigate });
+        return { ...action, testID };
+    }
+    return undefined;
+}
+
 /** `teamReadFailureAction` bound to the page's own router, which a Team page already navigates with. */
 export function useTeamReadFailureAction(address?: TeamAddress): (
     failure: HomeDomainFailure<string> | ScopedSnapshotError,
@@ -20,17 +41,10 @@ export function useTeamReadFailureAction(address?: TeamAddress): (
     const teamId = address?.teamId;
     return React.useCallback(
         (failure, retry) => {
-            if (failure.code === 'team_authentication_required' && teamId && serverId) {
-                const { action } = presentTeamSignInRequired({
-                    code: failure.code, teamId, serverId, accepted: [], navigate: (href) => router.push(href),
-                });
-                return { ...action, testID: retry.testIDPrefix ? `${retry.testIDPrefix}-sign-in` : undefined };
-            }
-            if (failure.code && isTeamLegacyCredentialRefusalV1(failure.code, failure.details)) {
-                const { action } = presentTeamSignInOutdated({ code: failure.code, navigate: (href) => router.push(href) });
-                return { ...action, testID: retry.testIDPrefix ? `${retry.testIDPrefix}-sign-in` : undefined };
-            }
-            return teamReadFailureAction(failure, retry, () => router.push('/settings/actions'));
+            const action = teamSignInFailureAction(
+                failure, teamId && serverId ? { teamId, serverId } : undefined, (href) => router.push(href), retry.testIDPrefix,
+            );
+            return action ?? teamReadFailureAction(failure, retry, () => router.push('/settings/actions'));
         },
         [router, serverId, teamId],
     );
