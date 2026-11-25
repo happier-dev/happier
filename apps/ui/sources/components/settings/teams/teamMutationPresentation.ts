@@ -26,13 +26,19 @@ export function teamReadFailureLabel(failure: HomeDomainFailure<string> | Scoped
     // failure; the Action front door's own copy says so and where to turn it back on.
     if (isActionTurnedOffErrorCode(failure.code)) return t('actionConfirmations.turnedOffReadMessage');
     if (failure.kind === 'unreachable') return t('teams.unavailable.offline');
+    if (failure.code === 'team_authentication_required') return t('session.access.authenticationRequired');
+    if (failure.code === 'invalid_team_cursor') return t('teams.errors.listCursorExpired');
     const refusal = teamRefusalLabel({ ...failure, code: failure.code ?? null });
     if (refusal) return refusal;
     if (failure.kind === 'unknown' || failure.kind === 'invalid') return t('teams.errors.loadFailed');
     return teamFailureKindLabel(failure.kind);
 }
 
-export type TeamReadFailureRetry = Readonly<{ onPress: () => void; testIDPrefix?: string }>;
+export type TeamReadFailureRetry = Readonly<{
+    onPress: () => void;
+    testIDPrefix?: string;
+    reloadsFirstPage?: true;
+}>;
 
 /**
  * The one way forward a failed Team read offers: the repair route for an Action turned off in
@@ -49,6 +55,13 @@ export function teamReadFailureAction(
             label: t('actionConfirmations.openActionSettings'),
             onPress: openActionSettings,
             testID: retry.testIDPrefix ? `${retry.testIDPrefix}-open-actions-settings` : undefined,
+        };
+    }
+    if (failure.code === 'invalid_team_cursor' && retry.reloadsFirstPage) {
+        return {
+            label: t('common.refresh'),
+            onPress: retry.onPress,
+            testID: retry.testIDPrefix ? `${retry.testIDPrefix}-reload` : undefined,
         };
     }
     if (!failure.retryable || failure.code === 'team_authentication_unavailable') return undefined;

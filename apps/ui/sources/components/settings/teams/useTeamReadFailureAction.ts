@@ -1,20 +1,37 @@
 import * as React from 'react';
 
+import { isTeamLegacyCredentialRefusalV1 } from '@happier-dev/protocol/teams';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { presentTeamSignInOutdated, presentTeamSignInRequired } from '@/components/teams/entry/teamSignInRequirement';
 import type { AttentionBannerAction } from '@/components/ui/lists/AttentionBanner';
 import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
+import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 
 import { teamReadFailureAction, type TeamReadFailureRetry } from './teamMutationPresentation';
 
 /** `teamReadFailureAction` bound to the page's own router, which a Team page already navigates with. */
-export function useTeamReadFailureAction(): (
+export function useTeamReadFailureAction(address?: TeamAddress): (
     failure: HomeDomainFailure<string> | ScopedSnapshotError,
     retry: TeamReadFailureRetry,
 ) => AttentionBannerAction | undefined {
     const router = useRouter();
+    const serverId = address?.serverId;
+    const teamId = address?.teamId;
     return React.useCallback(
-        (failure, retry) => teamReadFailureAction(failure, retry, () => router.push('/settings/actions')),
-        [router],
+        (failure, retry) => {
+            if (failure.code === 'team_authentication_required' && teamId && serverId) {
+                const { action } = presentTeamSignInRequired({
+                    code: failure.code, teamId, serverId, accepted: [], navigate: (href) => router.push(href),
+                });
+                return { ...action, testID: retry.testIDPrefix ? `${retry.testIDPrefix}-sign-in` : undefined };
+            }
+            if (failure.code && isTeamLegacyCredentialRefusalV1(failure.code, failure.details)) {
+                const { action } = presentTeamSignInOutdated({ code: failure.code, navigate: (href) => router.push(href) });
+                return { ...action, testID: retry.testIDPrefix ? `${retry.testIDPrefix}-sign-in` : undefined };
+            }
+            return teamReadFailureAction(failure, retry, () => router.push('/settings/actions'));
+        },
+        [router, serverId, teamId],
     );
 }
