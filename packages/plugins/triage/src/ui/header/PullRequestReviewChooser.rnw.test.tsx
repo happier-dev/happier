@@ -103,13 +103,14 @@ async function mountChooser(executeAction: (
 ) => Promise<unknown>, selectActionInput: (
   request: SelectActionInputRequest,
 ) => Promise<SelectActionInputResult> = async () => ({ kind: 'reviewComposition', input: DEFAULT_REVIEW_INPUT }),
-catalog = createReviewCatalog(), notifications: string[] = []): Promise<Readonly<{
+catalog = createReviewCatalog(), notifications: string[] = [],
+executeControl?: Parameters<typeof createPluginUiActionControlTestHost>[0]): Promise<Readonly<{
   fixture: PluginUiTestkit;
   focusedLabels: readonly string[];
   controls: ReturnType<typeof createPluginUiActionControlTestHost>;
 }>> {
   const focusedLabels: string[] = [];
-  const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
+  const controls = createPluginUiActionControlTestHost(executeControl ?? (async ({ action, input }) => {
     try { return { ok: true, result: await executeAction(typeof action === 'string' ? action : action.localId, input) as import('@happier-dev/plugin-sdk').JsonValue }; }
     catch (error) {
       return isPluginError(error)
@@ -117,7 +118,7 @@ catalog = createReviewCatalog(), notifications: string[] = []): Promise<Readonly
             ...(error.details === undefined ? {} : { details: error.details }) }
         : { ok: false, errorCode: 'timeout', error: 'outcome unknown' };
     }
-  });
+  }));
   const surface = defineUiSurface(function ReviewChooserProbe(): React.ReactElement {
     const invokingAction = usePluginUiFocusTarget();
     const [visible, setVisible] = React.useState(false);
@@ -429,6 +430,31 @@ describe('the mounted selected-PR review chooser', () => {
       TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1,
       'session.open',
     ]);
+  });
+
+  it.each([false, true])('shows the typed Home refusal on the PR (effect attempted=%s)', async effectAttempted => {
+    // The admitted PR Action returned this typed signed Home read refusal on READY271.
+    const requestId = 'f2dc8ac0-2e44-4b07-bd8d-854ce1ea3e78';
+    const phase = 'home.authorization.verification_purpose';
+    const { fixture, controls } = await mountChooser(async () => {
+      throw new Error('A refused Review must leave the Session available on the PR');
+    }, undefined, undefined, undefined, async () => ({
+      ok: false,
+      errorCode: 'action_forbidden',
+      error: 'action_forbidden (verification_purpose)',
+      requestId,
+      effectAttempted,
+      failureCause: { phase, errorClass: 'HttpStatusError', errorCode: 'action_forbidden', httpStatus: 401 },
+    }));
+
+    await controls.press('Start review');
+    await settle();
+    await fixture.press(await fixture.getByRole('button', { name: 'Details' }));
+    expect(document.body.textContent).toContain('action_forbidden');
+    expect(document.body.textContent).toContain(requestId);
+    expect(document.body.textContent).toContain(phase);
+    expect(controls.presentation('Try again') !== undefined).toBe(!effectAttempted);
+    expect(await fixture.queryByRole('button', { name: 'Open session' }) !== undefined).toBe(effectAttempted);
   });
 
   it('preserves a typed review input-selection failure in the existing notification', async () => {

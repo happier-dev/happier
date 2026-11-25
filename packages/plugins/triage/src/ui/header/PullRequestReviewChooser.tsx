@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { projectNativeJsonValueForTransport, type ProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
 import type { ReviewStartInput } from '@happier-dev/plugin-sdk/reviews';
 import {
   Action,
@@ -17,13 +18,19 @@ import { projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/ho
 
 import { TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1 } from '../../actions/entrySessionProtocol.js';
 import { prepareTriagePullRequestReviewContinuationV1, settleTriagePullRequestReviewContinuationV1, type TriagePullRequestReviewContinuationOutcomeV1 } from '../../sessions/pullRequestReviewContinuation.js';
+import { ActionFailureDetails } from '../ActionFailureDetails.js';
 import { useLinkedSessionOpen } from '../detail/useLinkedSessionOpen.js';
 import { presentTriageMountedUiActionFailure } from '../mountedActions.js';
 import type { TriagePendingPullRequestReviewV1 } from './useEntrySessionStart.js';
 
+type ReviewControlFailureV1 = Readonly<{
+  code: string; message: string; details: ProtocolJsonValue;
+  requestId?: string; phase?: string; effectAttempted?: boolean;
+}>;
+
 type ReviewChooserPhaseV1 =
   | Readonly<{ kind: 'choosing' | 'starting' | 'settled' }>
-  | Readonly<{ kind: 'failed'; failure: 'reviewRefused' | 'reviewUnknown' | 'open' }>;
+  | Readonly<{ kind: 'failed'; failure: 'reviewRefused' | 'reviewUnknown' | 'open'; hostFailure?: ReviewControlFailureV1 }>;
 
 export type TriagePullRequestReviewChooserPropsV1 = Readonly<{
   pending: TriagePendingPullRequestReviewV1;
@@ -64,7 +71,7 @@ export function TriagePullRequestReviewChooser(
 
   const reviewController = (): PluginUiActionControlController => {
     let currentOperation = operation.current;
-    const settleReview = async (continuation: TriagePullRequestReviewContinuationOutcomeV1) => {
+    const settleReview = async (continuation: TriagePullRequestReviewContinuationOutcomeV1, hostFailure?: ReviewControlFailureV1) => {
       if (operation.current !== currentOperation) return;
       if (continuation.kind === 'cancelled') { setPhase({ kind: 'choosing' }); return; }
       const failure = continuation.kind === 'settled' ? continuation.result.failure : continuation.failure;
@@ -74,9 +81,9 @@ export function TriagePullRequestReviewChooser(
         ...(failure.requestId === undefined ? {} : { details: { requestId: failure.requestId } }),
       }), text, continuation.kind === 'settled' && continuation.result.status === 'accepted'
         ? text('plugins.triage.review.relationNotRecorded', 'Review started. Relation not recorded.') : undefined);
-      if (continuation.kind === 'unknown') { setPhase({ kind: 'failed', failure: 'reviewUnknown' }); return; }
+      if (continuation.kind === 'unknown') { setPhase({ kind: 'failed', failure: 'reviewUnknown', hostFailure }); return; }
       if (continuation.kind !== 'settled' || continuation.result.status === 'refused') {
-        setPhase({ kind: 'failed', failure: 'reviewRefused' }); return;
+        setPhase({ kind: 'failed', failure: 'reviewRefused', hostFailure }); return;
       }
       await openSession();
     };
@@ -93,13 +100,31 @@ export function TriagePullRequestReviewChooser(
       },
       onSettled(execution) {
         const projected = projectPluginActionControlExecutionV1(execution, text);
-        void settleReview(projected.status === 'success'
-          ? settleTriagePullRequestReviewContinuationV1(projected.result)
-          : { kind: projected.status === 'outcomeUnknown' ? 'unknown' : 'unavailable' });
+        if (projected.status === 'success') {
+          void settleReview(settleTriagePullRequestReviewContinuationV1(projected.result));
+          return;
+        }
+        const hostFailure = !execution.ok && (projected.status === 'error' || projected.status === 'outcomeUnknown') ? {
+          code: execution.errorCode, message: execution.error, requestId: projected.requestId,
+          phase: execution.failureCause?.phase, effectAttempted: execution.effectAttempted,
+          details: projectNativeJsonValueForTransport({ details: projected.details,
+            failureCause: projected.failureCause, remediation: projected.remediation }),
+        } : undefined;
+        void settleReview({ kind: projected.status === 'outcomeUnknown' ? 'unknown' : 'unavailable' }, hostFailure);
       },
     };
   };
   const canRetryReview = failed?.failure === 'reviewRefused';
+  const notice = failed === null ? null : {
+    labelKey: failed.failure === 'reviewRefused' ? 'plugins.triage.surface.reviewChooser.refused'
+      : failed.failure === 'reviewUnknown' ? 'plugins.triage.surface.reviewChooser.unknown'
+        : 'plugins.triage.surface.reviewChooser.openFailed',
+    label: failed.failure === 'reviewRefused'
+      ? 'The pull request changed or the review could not be started. The linked session is still available.'
+      : failed.failure === 'reviewUnknown'
+        ? 'Happier could not confirm whether the review started. It will not be started a second time.'
+        : 'The linked session could not be opened.',
+  };
 
   return (
     <Stack gap="small">
@@ -110,19 +135,11 @@ export function TriagePullRequestReviewChooser(
       {phase.kind === 'settled' ? (
         <Status tone="muted" labelKey="plugins.triage.surface.reviewChooser.opening" label="Opening the session…" />
       ) : null}
-      {failed !== null ? (
-        <Status
-          tone="warning"
-          labelKey={failed.failure === 'reviewRefused' ? 'plugins.triage.surface.reviewChooser.refused'
-            : failed.failure === 'reviewUnknown' ? 'plugins.triage.surface.reviewChooser.unknown'
-              : 'plugins.triage.surface.reviewChooser.openFailed'}
-          label={failed.failure === 'reviewRefused'
-            ? 'The pull request changed or the review could not be started. The linked session is still available.'
-            : failed.failure === 'reviewUnknown'
-              ? 'Happier could not confirm whether the review started. It will not be started a second time.'
-              : 'The linked session could not be opened.'}
-        />
-      ) : null}
+      {notice === null ? null : failed?.hostFailure === undefined ? (
+        <Status tone="warning" {...notice} />
+      ) : (
+        <ActionFailureDetails {...failed.hostFailure} inline={{ fallback: text(notice.labelKey, notice.label) }} />
+      )}
       <Row gap="small" align="center" wrap>
         {phase.kind === 'choosing' || phase.kind === 'starting' || canRetryReview ? (
           <Action.Control
