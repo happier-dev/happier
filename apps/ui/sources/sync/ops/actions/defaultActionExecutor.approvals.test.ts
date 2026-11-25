@@ -2369,29 +2369,24 @@ describe('createDefaultActionExecutor approvals', () => {
             serverId: homeId, defaultSessionId: 's1', actionCaller: { kind: 'session', sessionId: 's1', starterDepth: 0, turnDepth: 0 } });
         expect(result).toMatchObject({ ok: false, errorCode: 'approval_context_unavailable' });
     });
-    it('routes session.message.send through the active readiness barrier', async () => {
-        const features = createRootLayoutFeaturesResponse({ capabilities: {
-            serverIdentity: { serverIdentityId: 'srv_approval_home' },
-            session: { ...DEFAULT_SESSION_CAPABILITIES, pendingInput: { protocolVersion: PENDING_INPUT_PROTOCOL_VERSION_V4 } },
-        } });
-        homes.answer(homeId, '/v1/features', { body: features });
-        homes.answer(homeId, '/v1/features/authenticated', { body: features });
-        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
-        primeServerFeaturesSnapshot({ serverId: homeId, snapshot: { status: 'ready', features } });
-        homes.answer(homeId, 'POST /v2/sessions/s1/pending', { select: (input) => {
-            if (!input || typeof input !== 'object') throw new Error('Expected Pending enqueue request');
-            return { body: { didWrite: true, pendingCount: 1, pendingVersion: 1,
-                requestedAction: Reflect.get(input, 'requestedAction'),
-                pending: { localId: Reflect.get(input, 'localId'), content: Reflect.get(input, 'content'),
-                    status: 'queued', position: 1, createdAt: 1, updatedAt: 1,
-                    discardedAt: null, discardedReason: null, authorAccountId: 'account-a' } } };
-        } });
-        const result = await executor.execute('session.message.send', { sessionId: 's1', message: 'Hello from action', localId: 'ui-input-1' }, context());
-        expect(result.ok, result.ok ? undefined : `${result.errorCode}: ${result.error}`).toBe(true);
-        expect(result).toMatchObject({ ok: true, result: { status: 'accepted', localId: 'ui-input-1' } });
-        expect(homes.requestsFor('/v2/sessions/s1/pending')[0]?.input).toMatchObject({
-            localId: 'ui-input-1', requestedAction: { v: 1, kind: 'steer_if_active' },
+    it('routes session.message.send through the active readiness barrier to the owning Machine', async () => {
+        const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const { machine } = await answerExternalActionAccountForHome(homes, homeId, {
+            machineId: 'machine-1', actionId: 'session.message.send', tokenEpoch: 0,
+            execute(input) {
+                expect(input).toMatchObject({ sessionId: 's1', message: 'Hello from action', localId: 'ui-input-1' });
+                return { status: 'accepted', localId: 'ui-input-1' };
+            },
         });
+        homes.answer(homeId, '/v1/machines', { body: [machine] });
+        const result = await executor.execute('session.message.send', {
+            sessionId: 's1', message: 'Hello from action', localId: 'ui-input-1',
+        }, context());
+        expect(result, JSON.stringify(result)).toMatchObject({
+            ok: true, result: { status: 'accepted', localId: 'ui-input-1' },
+        });
+        expect(homes.requestsFor('/v1/actions/session.message.send').filter(request => request.method === 'POST')).toHaveLength(1);
+        expect(homes.requestsFor('/v2/sessions/s1/pending')).toHaveLength(0);
     });
     it('retains an Account approval with missing Home identity before replay', async () => {
         await expect(executor.execute('approval.request.decide', { artifactId: 'artifact-1', decision: 'approve' }, context()))

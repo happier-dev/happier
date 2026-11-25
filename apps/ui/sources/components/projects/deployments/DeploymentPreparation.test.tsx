@@ -14,8 +14,6 @@ import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/extern
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createHydratedPlainMachineFixture, createReadyMachineAgentInventoryFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contributionIdentity';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 
@@ -79,12 +77,10 @@ async function fixture() {
   } });
   const account = await captureLazyActionAccountContext(serverId);
   const inventory = createReadyMachineAgentInventoryFixture([
-    { agentId: 'happier.agent.claude/claude', title: 'Claude' },
-    { agentId: 'happier.agent.codex/codex', title: 'Codex' },
+    { agentId: 'claude', title: 'Claude' },
+    { agentId: 'codex', title: 'Codex' },
   ]);
-  scm.inventory = PluginProjectionV2Schema.parse({ ...inventory.projection,
-    agentsById: Object.fromEntries(Object.entries(inventory.projection.agentsById ?? {}).map(([id, agent]) =>
-      [id, { ...agent, identity: parseQualifiedPluginContributionKey(id) }])) });
+  scm.inventory = inventory.projection;
   scm.capabilities = inventory.capabilities;
   storage.getState().applyMachines([createHydratedPlainMachineFixture({ id: 'workspace-machine', accountId: 'owner',
     machine: { active: true, activeAt: Date.now() } })], true, { sourceServerId: serverId });
