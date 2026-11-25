@@ -177,19 +177,32 @@ const HELD_LINE = '\u00a0';
 export function UsageCostFactsReading(props: Readonly<{ testID: string }>) {
   const chartTheme = useUsagePluginTheme();
   useRegisterUsageBodyReadingPlaceholder();
+  const loadingLabel = t('usage.board.page.loading');
   return (
-    <View style={styles.body} testID={props.testID} aria-busy>
-      <HappierDataMetric theme={chartTheme} size="hero" pending label={t('usage.cost')} value={0} caption={HELD_LINE} />
+    <View
+      style={styles.body}
+      testID={props.testID}
+      accessible
+      accessibilityRole="progressbar"
+      role="progressbar"
+      accessibilityLabel={loadingLabel}
+      aria-label={loadingLabel}
+      accessibilityState={{ busy: true }}
+      aria-busy
+    >
+      <HappierDataMetric theme={chartTheme} size="hero" pending decorative label={t('usage.cost')} value={0} caption={HELD_LINE} />
       <View style={styles.grid}>
         {[0, 1, 2, 3].map((index) => (
           <View key={index} style={styles.cell}>
-            <HappierDataMetric theme={chartTheme} size="stat" pending showLabel label={HELD_LINE} value={0} caption={HELD_LINE} />
+            <HappierDataMetric theme={chartTheme} size="stat" pending decorative showLabel label={HELD_LINE} value={0} caption={HELD_LINE} />
           </View>
         ))}
       </View>
       {/* The overlap note under the figures and the prices line keep their lines. */}
-      <UsageBodyNote testID={`${props.testID}.note`}>{HELD_LINE}</UsageBodyNote>
-      <View style={styles.pricesRoom} />
+      <View aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        <UsageBodyNote testID={`${props.testID}.note`}>{HELD_LINE}</UsageBodyNote>
+      </View>
+      <View style={styles.pricesRoom} aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" />
     </View>
   );
 }

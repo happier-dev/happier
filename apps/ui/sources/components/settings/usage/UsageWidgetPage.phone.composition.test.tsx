@@ -11,7 +11,7 @@ import { resolveUsagePageAggregation, type UsageQueryBatchResult } from '@happie
 import { projectUsageQueryWorkEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 
-import { createDeferred, expandDisclosureAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, expandDisclosureAsync, findAllHostTestInstances, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createHydratedPlainMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -70,6 +70,7 @@ const { WidgetAreaLayoutBar } =
   await import('@/components/widgets/area/WidgetAreaLayoutBar');
 const { UsageFilterBar } = await import('./UsageFilterBar');
 const { UsageWidgetPage } = await import('./UsageWidgetPage');
+const { UsageCostFactsReading, UsageCostFactsWidget } = await import('./widgets/UsageCostFactsWidget');
 const { UsageScoreBody } = await import('./widgets/UsageChartStyleBodies');
 const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
 const { UsageBodyReadFailed, UsageCoverageLine, usageSourceTitle } = await import('./widgets/usageBodyKit');
@@ -308,10 +309,10 @@ it('holds the phone header to one line while the page reads', async () => {
 
 // r223 #66: Cost facts lead with figures, so their first read holds figure-shaped room (the shared pending metric),
 // never generic list rows that grow by a figure's height when the read lands.
-it('holds Cost facts first read in its figure-led shape', async () => {
-  let release = () => {};
-  const promise = new Promise<Response>(resolve => { release = () => resolve(Response.json({ error: 'unavailable' }, { status: 503 })); });
-  readHeld = { promise, release };
+it('holds the Cost facts figures during the first read and announces one named loading indicator', async () => {
+  const held = createDeferred<Response>();
+  const release = () => held.resolve(Response.json(accounting));
+  readHeld = { promise: held.promise, release };
   try {
     const phone = await renderUsagePage('costs');
     await waitForHomeGovernance(() => expect(phone.findAllByType(SurfaceFreshnessLine)
@@ -319,6 +320,22 @@ it('holds Cost facts first read in its figure-led shape', async () => {
     const pending = () => phone.findAllByType(HappierDataMetric).filter(metric => metric.props.pending === true);
     await waitForHomeGovernance(() => expect(pending().length).toBeGreaterThan(0));
     expect(pending().map(metric => metric.props.size)).toEqual(['hero', 'stat', 'stat', 'stat', 'stat']);
+    const loading = phone.findByType(UsageCostFactsReading);
+    const announcements = findAllHostTestInstances(loading, ({ props }) => {
+      const role = props.role ?? props.accessibilityRole;
+      return !props['aria-hidden'] && (role === 'progressbar' || role === 'group');
+    }).map(({ props }) => ({
+      role: props.role ?? props.accessibilityRole,
+      label: props['aria-label'] ?? props.accessibilityLabel,
+      busy: props['aria-busy'] ?? props.accessibilityState?.busy,
+    }));
+    expect(announcements).toEqual([{ role: 'progressbar', label: t('usage.board.page.loading'), busy: true }]);
+
+    await act(async () => { release(); });
+    await waitForHomeGovernance(() => expect(phone.findAllByType(UsageCostFactsWidget)).toHaveLength(1));
+    expect(phone.findAllByType(UsageCostFactsReading)).toHaveLength(0);
+    expect(findAllHostTestInstances(phone.findByType(UsageCostFactsWidget), ({ props }) =>
+      (props.role ?? props.accessibilityRole) === 'progressbar')).toHaveLength(0);
   } finally { readHeld = null; release(); }
 });
 
