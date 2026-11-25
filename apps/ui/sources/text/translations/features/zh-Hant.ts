@@ -17879,6 +17879,7 @@ const traditionalChinese: TeamsTranslationRoot = {
                 title: '\u6d3b\u52d5',
                 empty: '\u5c1a\u672a\u8a18\u9304\u4efb\u4f55\u7ba1\u7406\u8b8a\u66f4\u3002',
                 unknownActor: '\u67d0\u4eba',
+                unreadable: "此 Home 無法讀取此憑證已儲存的活動記錄。",
                 kind: {
                     resourceCreated: '\u5206\u4eab\u4e86\u6b64\u6191\u8b49',
                     resourceUpdated: '\u8b8a\u66f4\u4e86\u8a2d\u5b9a',

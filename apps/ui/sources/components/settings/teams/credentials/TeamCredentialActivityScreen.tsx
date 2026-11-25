@@ -11,6 +11,8 @@ import { t } from '@/text';
 
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
+import { presentCredentialReadFailure } from './teamCredentialPresentation';
 import { useTeamCredentialResourceView } from './useTeamCredentialResourceView';
 import {
     teamCredentialDisplayNameBinding,
@@ -54,6 +56,7 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
     resourceId: string;
 }>) {
     const { context, resourceId } = props;
+    const readFailureAction = useTeamReadFailureAction(context.address);
     const view = useTeamCredentialResourceView({ context, resourceId, failureTestIDPrefix: 'team-credential-activity-resource' });
     // The Home admits the administrative history only to a viewer who
     // administers resources, so a member's screen asks for nothing at all
@@ -64,6 +67,25 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
         resourceId,
         enabled: view.featureEnabled && view.resource !== null && managesResources,
     });
+    const activityFailure = activity.error;
+    let activityRefusal: ReturnType<typeof presentCredentialReadFailure> | null = null;
+    if (activityFailure?.code === 'invalid_resource_input' && activity.failedContinuation) {
+        activityRefusal = {
+            message: t('teams.errors.listCursorExpired'),
+            action: { label: t('common.refresh'), testID: 'team-credential-activity-reload', onPress: () => void activity.reload() },
+        };
+    } else if (activityFailure?.code === 'resource_corrupt') {
+        activityRefusal = { message: t('teams.credentials.activity.unreadable') };
+    } else if (activityFailure) {
+        activityRefusal = presentCredentialReadFailure(activityFailure, () => readFailureAction(activityFailure, {
+            testIDPrefix: 'team-credential-activity',
+            onPress: () => void (activity.failedContinuation ? activity.loadMore() : activity.reload()),
+        }));
+    }
+    if (activityRefusal && !activityRefusal.action
+        && view.refusal?.message === activityRefusal.message && !view.refusal.action) {
+        activityRefusal = null;
+    }
     const activityLabelRequests = React.useMemo(() => activity.rows.map((event, index) => (
         {
             key: `${event.createdAt}:${index}`,
@@ -193,21 +215,18 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
             ) : null}
 
             {/* Pages already read stay on screen through a failure. */}
-            {activity.error ? (
-                <ItemGroup description={t('teams.unavailable.offline')}>
-                    <Item
-                        testID="team-credential-activity-retry"
-                        title={t('teams.unavailable.retry')}
-                        // A failed continuation retains its exact cursor and
-                        // rows; retry that page rather than resetting the
-                        // administrative history to page one.
-                        onPress={() => void (activity.rows.length > 0
-                            ? activity.loadMore()
-                            : activity.reload())}
-                        showChevron={false}
-                    />
+            {activityRefusal ? (
+                <ItemGroup description={activityRefusal.message}>
+                    {activityRefusal.action ? (
+                        <Item
+                            testID={activityRefusal.action.testID}
+                            title={activityRefusal.action.label}
+                            onPress={activityRefusal.action.onPress}
+                            showChevron={false}
+                        />
+                    ) : null}
                 </ItemGroup>
-            ) : activity.hasMore && activity.rows.length > 0 ? (
+            ) : !activity.error && activity.hasMore && activity.rows.length > 0 ? (
                 <ItemGroup>
                     <Item
                         testID="team-credential-activity-load-more"

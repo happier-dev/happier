@@ -18060,6 +18060,7 @@ const french: TeamsTranslationRoot = {
                 title: 'Activit\u00e9',
                 empty: 'Aucune modification administrative enregistr\u00e9e.',
                 unknownActor: 'Quelqu\u2019un',
+                unreadable: "Ce Home n’a pas pu lire l’activité enregistrée pour cet identifiant.",
                 kind: {
                     resourceCreated: 'A partag\u00e9 cet identifiant',
                     resourceUpdated: 'A modifi\u00e9 les r\u00e9glages',

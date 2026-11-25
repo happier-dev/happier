@@ -9,10 +9,12 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const routerPush = vi.hoisted(() => vi.fn());
+
 installSettingsViewCommonModuleMocks({
     storage: 'real',
     router: async () => ({
-        useRouter: () => ({ push: vi.fn(), back: vi.fn(), replace: vi.fn() }),
+        useRouter: () => ({ push: routerPush, back: vi.fn(), replace: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),
         useLocalSearchParams: () => ({}),
     }),
@@ -64,6 +66,7 @@ async function waitForTestId(
 }
 
 beforeEach(async () => {
+    routerPush.mockReset();
     resetTeamsSnapshotsForTests();
     resetTeamsDirectoryEngineForTests();
     resetTeamActionClientForTests();
@@ -102,6 +105,56 @@ describe('TeamCredentialActivityScreen', () => {
         expect(screen.getTextContent()).toContain('Ada Lovelace');
         expect(screen.getTextContent()).toContain('Engineering');
         expect(screen.getTextContent()).not.toContain('secret');
+    });
+
+    it.each([
+        { status: 400, error: 'invalid_resource_input', message: 'teams.credentials.errors.invalidResourceRead' },
+        { status: 400, error: 'resource_corrupt', message: 'teams.credentials.activity.unreadable' },
+        { status: 404, error: 'resource_not_found', message: 'teams.credentials.detail.notFound' },
+        { status: 403, error: 'resource_forbidden', message: 'teams.credentials.forbidden' },
+        { status: 403, error: 'team_authentication_required', message: 'teams.credentials.errors.teamAuthenticationRequired', destination: 'team' },
+        { status: 403, error: 'team_forbidden', details: { reason: 'legacy_home_credential' }, message: 'teams.errors.signInOutdated', destination: 'account' },
+        { status: 503, error: 'team_authentication_policy_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable' },
+        { status: 503, error: 'feature_disabled', message: 'teams.credentials.errors.featureDisabled' },
+    ])('presents the history refusal $error with its own recovery', async ({ status, error, details, message, destination }) => {
+        const serverId = await addHome();
+        harness.answer(serverId, ACTIVITY_LIST_PATH, { status, body: { error, ...(details ? { details } : {}) } });
+        const screen = await renderActivity(serverId);
+
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.findByTestId('team-credential-activity-retry')).toBeNull();
+        if (destination) {
+            await screen.pressByTestIdAsync('team-credential-activity-sign-in');
+            expect(routerPush).toHaveBeenCalledWith(destination === 'account'
+                ? '/settings/account' : expect.stringContaining(`/teams/team-1/sign-in?serverId=${serverId}`));
+        } else {
+            expect(screen.findByTestId('team-credential-activity-sign-in')).toBeNull();
+        }
+    });
+
+    it('refreshes from page one after the Home rejects a history cursor', async () => {
+        const serverId = await addHome();
+        harness.answer(serverId, ACTIVITY_LIST_PATH, {
+            body: TeamCredentialResourceActivityPageV1Schema.parse({
+                items: [{
+                    kind: 'resource_created', actorDisplayName: null,
+                    subjectDisplayName: teamCredentialDisplayNameFixture('Acme Claude'),
+                    createdAt: '2026-09-11T12:00:00.000Z',
+                }],
+                nextCursor: 'expired-activity-page',
+            }),
+        });
+        const screen = await renderActivity(serverId);
+        await waitForTestId(screen, 'team-credential-activity-load-more');
+        harness.answer(serverId, ACTIVITY_LIST_PATH, { status: 400, body: { error: 'invalid_resource_input' } });
+        await screen.pressByTestIdAsync('team-credential-activity-load-more');
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('teams.errors.listCursorExpired'));
+        expect(screen.findByTestId('team-credential-activity-retry')).toBeNull();
+
+        harness.answer(serverId, ACTIVITY_LIST_PATH, { body: { items: [], nextCursor: null } });
+        await screen.pressByTestIdAsync('team-credential-activity-reload');
+        await waitForTestId(screen, 'team-credential-activity-empty');
+        expect(harness.requestsFor(ACTIVITY_LIST_PATH).at(-1)?.input).not.toHaveProperty('cursor');
     });
 
     it('keeps the first activity page visible and retries its exact cursor', async () => {

@@ -17879,6 +17879,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 title: '\u6d3b\u52a8',
                 empty: '\u5c1a\u672a\u8bb0\u5f55\u4efb\u4f55\u7ba1\u7406\u53d8\u66f4\u3002',
                 unknownActor: '\u67d0\u4eba',
+                unreadable: "此 Home 无法读取此凭据已保存的活动记录。",
                 kind: {
                     resourceCreated: '\u5171\u4eab\u4e86\u6b64\u51ed\u636e',
                     resourceUpdated: '\u66f4\u6539\u4e86\u8bbe\u7f6e',

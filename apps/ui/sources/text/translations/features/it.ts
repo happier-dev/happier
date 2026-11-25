@@ -18003,6 +18003,7 @@ const italian: TeamsTranslationRoot = {
                 title: 'Attivit\u00e0',
                 empty: 'Nessuna modifica amministrativa registrata.',
                 unknownActor: 'Qualcuno',
+                unreadable: "Questo Home non è riuscito a leggere l’attività salvata per questa credenziale.",
                 kind: {
                     resourceCreated: 'Ha condiviso questa credenziale',
                     resourceUpdated: 'Ha cambiato le impostazioni',

@@ -439,7 +439,11 @@ export function presentCredentialReadFailure(
         case 'invalid_resource_input':
             return { message: t('teams.credentials.errors.invalidResourceRead') };
         case 'not_found_or_not_visible':
+        case 'resource_not_found':
             return { message: t('teams.credentials.detail.notFound') };
+        case 'resource_forbidden':
+        case 'forbidden':
+            return { message: t('teams.credentials.forbidden') };
         case 'feature_disabled':
             return { message: t('teams.credentials.errors.featureDisabled') };
         case 'team_authentication_policy_unavailable':

@@ -17939,6 +17939,7 @@ const spanish: TeamsTranslationRoot = {
                 title: 'Actividad',
                 empty: 'A\u00fan no hay cambios administrativos registrados.',
                 unknownActor: 'Alguien',
+                unreadable: "Este Home no ha podido leer la actividad guardada de esta credencial.",
                 kind: {
                     resourceCreated: 'Comparti\u00f3 esta credencial',
                     resourceUpdated: 'Cambi\u00f3 los ajustes',

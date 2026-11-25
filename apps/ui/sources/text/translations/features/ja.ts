@@ -17939,6 +17939,7 @@ const japanese: TeamsTranslationRoot = {
                 title: '\u30a2\u30af\u30c6\u30a3\u30d3\u30c6\u30a3',
                 empty: '\u7ba1\u7406\u4e0a\u306e\u5909\u66f4\u306f\u307e\u3060\u8a18\u9332\u3055\u308c\u3066\u3044\u307e\u305b\u3093\u3002',
                 unknownActor: '\u4e0d\u660e\u306a\u30e6\u30fc\u30b6\u30fc',
+                unreadable: "この Home は、この認証情報の保存済みのアクティビティを読み取れませんでした。",
                 kind: {
                     resourceCreated: '\u3053\u306e\u8a8d\u8a3c\u60c5\u5831\u3092\u5171\u6709\u3057\u307e\u3057\u305f',
                     resourceUpdated: '\u8a2d\u5b9a\u3092\u5909\u66f4\u3057\u307e\u3057\u305f',

@@ -17817,6 +17817,7 @@ const german: TeamsTranslationRoot = {
                 title: 'Aktivit\u00e4t',
                 empty: 'Noch keine administrativen \u00c4nderungen erfasst.',
                 unknownActor: 'Jemand',
+                unreadable: "Dieses Home konnte den gespeicherten Verlauf für diese Zugangsdaten nicht lesen.",
                 kind: {
                     resourceCreated: 'Hat diese Zugangsdaten geteilt',
                     resourceUpdated: 'Hat Einstellungen ge\u00e4ndert',

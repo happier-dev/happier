@@ -1253,6 +1253,7 @@ export const english = {
                 title: 'Activity',
                 empty: 'No administrative changes recorded yet.',
                 unknownActor: 'Someone',
+                unreadable: "This Home couldn’t read the saved activity for this credential.",
                 kind: {
                     resourceCreated: 'Shared this credential',
                     resourceUpdated: 'Changed settings',

@@ -18031,6 +18031,7 @@ const polish: TeamsTranslationRoot = {
                 title: 'Aktywno\u015b\u0107',
                 empty: 'Brak zarejestrowanych zmian administracyjnych.',
                 unknownActor: 'Kto\u015b',
+                unreadable: "Ten Home nie mógł odczytać zapisanej aktywności dla tych poświadczeń.",
                 kind: {
                     resourceCreated: 'Udost\u0119pni\u0142(a) te po\u015bwiadczenia',
                     resourceUpdated: 'Zmieni\u0142(a) ustawienia',

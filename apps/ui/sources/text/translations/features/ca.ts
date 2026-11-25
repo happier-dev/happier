@@ -18017,6 +18017,7 @@ const catalan: TeamsTranslationRoot = {
                 title: 'Activitat',
                 empty: 'Encara no hi ha canvis administratius registrats.',
                 unknownActor: 'Alg\u00fa',
+                unreadable: "Aquest Home no ha pogut llegir l’activitat desada d’aquesta credencial.",
                 kind: {
                     resourceCreated: 'Ha compartit aquesta credencial',
                     resourceUpdated: 'Ha canviat els par\u00e0metres',
