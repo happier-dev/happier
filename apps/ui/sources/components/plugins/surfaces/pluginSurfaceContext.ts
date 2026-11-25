@@ -22,7 +22,7 @@ import {
     type AccountEncryptionModeReadinessUnavailable,
 } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { useLocalSetting, useSetting } from '@/sync/store/settingsReadHooks';
+import { useLocalSetting, usePersistedAccountSettingsValues, useSetting, useSettingsSelector } from '@/sync/store/settingsReadHooks';
 import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
 import { getAcpCatalogSnapshot } from '@/sync/store/settings/acpCatalogSnapshot';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
@@ -36,8 +36,7 @@ import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePr
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { readLastUsedBackendSelection, useLastUsedBackendSelectionForScope, type LastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
-import { readAccountSettingsForScope, readAccountSettingsPersistenceMutationToken,
-    subscribeAccountSettingsPersistenceMutations } from '@/sync/domains/state/accountSettingsPersistence';
+import { readAccountSettingsForScope } from '@/sync/domains/state/accountSettingsPersistence';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { readProjectRepositoryIdentityV1, type ProjectScmContextSnapshotV1, type ProjectSurfaceTargetV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
@@ -398,17 +397,12 @@ function readBackendEnablement(scope: ActiveServerAccountScopeLifetime['scope'])
 export function usePluginSurfacePreferredAgent(lifetime: PreferredAgentLifetime): PreferredAgent | null {
     const scope = lifetime?.isCurrent() === true ? lifetime.scope : null;
     const focusedScope = useAccountSettingsScope();
-    const focusedEnablement = useSetting('backendEnabledByTargetKey');
     const backgroundScope = areAccountSettingsScopesEqual(scope, focusedScope) ? null : scope;
-    const subscribe = React.useCallback((listener: () => void) => backgroundScope
-        ? subscribeAccountSettingsPersistenceMutations(changed => {
-            if (areAccountSettingsScopesEqual(changed, backgroundScope)) listener();
-        }) : () => {}, [backgroundScope]);
-    const read = React.useCallback(() => backgroundScope ? readAccountSettingsPersistenceMutationToken(backgroundScope) : null,
-        [backgroundScope]);
-    const backgroundVersion = React.useSyncExternalStore(subscribe, read, read);
-    const enablement = React.useMemo(() => backgroundScope ? readBackendEnablement(backgroundScope) : focusedEnablement,
-        [backgroundScope, backgroundVersion, focusedEnablement]);
+    const focused = scope !== null && backgroundScope === null;
+    const focusedEnablement = useSettingsSelector(settings => focused ? settings.backendEnabledByTargetKey : undefined,
+        focused ? ['backendEnabledByTargetKey'] : []);
+    const backgroundSettings = usePersistedAccountSettingsValues(backgroundScope, ['backendEnabledByTargetKey']);
+    const enablement = backgroundSettings?.backendEnabledByTargetKey ?? focusedEnablement;
     const { snapshot } = useAcpCatalog(scope);
     const selection = useLastUsedBackendSelectionForScope(scope, scope !== null);
     return React.useMemo(() => scope ? projectPreferredAgent(selection, enablement, snapshot?.catalog) : null,

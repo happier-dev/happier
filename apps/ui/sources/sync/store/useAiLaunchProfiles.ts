@@ -4,13 +4,13 @@ import { getStorage } from '@/sync/domains/state/storageStore';
 import { projectAiLaunchProfileForLegacyUi, readUiProfileCatalogSnapshot, readUiVisibleProfileCatalogSnapshot,
     readUiSelectedProfileCatalogProfile } from '@/sync/domains/profiles/aiLaunchProfileCollection';
 import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
-import { loadAccountSettings, readAccountSettingsPersistenceMutationToken,
-    subscribeAccountSettingsPersistenceMutations } from '@/sync/domains/state/accountSettingsPersistence';
 import { loadAuthoringMemoryProjection } from '@/sync/domains/state/authoringMemoryPersistence';
-import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { usePersistedAccountSettingsValues } from './settingsReadHooks';
 import { useProfileCatalog, useProfileCatalogSelection } from './useProfileCatalog';
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import type { ProfileCatalogSnapshot } from './settings/profileCatalogSnapshot';
+
+const PROFILE_SELECTION_SETTINGS = ['favoriteProfiles', 'profileEnabledById'] as const;
 
 /** Profile consumers subscribe only to the existing Artifact store's profile documents. */
 export function useLaunchProfileArtifacts() {
@@ -68,14 +68,8 @@ export function useHomeAiLaunchProfileCatalog(scope: AccountSettingsScope | null
     const evidenceScope = selectedProfileId ? scope : null;
     const liveEvidence = getStorage()(useShallow(state => evidenceScope && areAccountSettingsScopesEqual(state.settingsScope, evidenceScope)
         ? [state.settings.favoriteProfiles, state.settings.profileEnabledById, state.authoringMemory.lastUsedProfile] as const : null),
-        { settings: ['favoriteProfiles', 'profileEnabledById'], settingsScope: true, authoringMemory: ['lastUsedProfile'] });
-    const subscribeEvidence = React.useCallback((listener: () => void) => evidenceScope
-        ? subscribeAccountSettingsPersistenceMutations(changed => {
-            if (areAccountSettingsScopesEqual(changed, evidenceScope)) listener();
-        }) : () => {}, [evidenceScope?.serverId, evidenceScope?.accountId]);
-    const readEvidence = React.useCallback(() => evidenceScope ? readAccountSettingsPersistenceMutationToken(evidenceScope) : null,
-        [evidenceScope?.serverId, evidenceScope?.accountId]);
-    const persistedEvidence = React.useSyncExternalStore(subscribeEvidence, readEvidence, readEvidence);
+        { settings: PROFILE_SELECTION_SETTINGS, settingsScope: true, authoringMemory: ['lastUsedProfile'] });
+    const persistedEvidence = usePersistedAccountSettingsValues(liveEvidence === null ? evidenceScope : null, PROFILE_SELECTION_SETTINGS);
     const projection = React.useMemo(() => readUiProfileCatalogSnapshot({ catalog: { status: 'loading' },
         data: rows, artifactsById: artifactsById ?? new Map(), source, legacyProfiles }),
     [rows, artifactsById, source, legacyProfiles]);
@@ -87,7 +81,8 @@ export function useHomeAiLaunchProfileCatalog(scope: AccountSettingsScope | null
     const selectedProfile = React.useMemo(() => {
         if (!evidenceScope || !snapshot || !hasCompleteData) return null;
         const settings = liveEvidence ? { favoriteProfiles: liveEvidence[0], profileEnabledById: liveEvidence[1] }
-            : accountSettingsParse(loadAccountSettings(evidenceScope).settings);
+            : persistedEvidence;
+        if (!settings) return null;
         const memory = { lastUsedProfile: liveEvidence ? liveEvidence[2] : loadAuthoringMemoryProjection(evidenceScope)?.lastUsedProfile ?? null };
         return readUiSelectedProfileCatalogProfile(readUiVisibleProfileCatalogSnapshot(snapshot, settings, memory), settings, selectedProfileId);
     }, [snapshot, evidenceScope?.serverId, evidenceScope?.accountId, liveEvidence, persistedEvidence, hasCompleteData, selectedProfileId]);

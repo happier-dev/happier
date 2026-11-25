@@ -6,7 +6,7 @@ import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/plugin
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { storage } from '@/sync/domains/state/storage';
 
-import { createPluginSurfaceContext, getPluginSurfaceTargetAuthorityKey, resolvePluginSurfaceTarget, usePluginSurfaceEnvironment } from './pluginSurfaceContext';
+import { createPluginSurfaceContext, getPluginSurfaceTargetAuthorityKey, resolvePluginSurfaceTarget, usePluginSurfaceEnvironment, usePluginSurfacePreferredAgent } from './pluginSurfaceContext';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
 import { readLastUsedBackendSelection, rememberLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
@@ -80,6 +80,35 @@ describe('createPluginSurfaceContext', () => {
             accountLifetime: { scope, isCurrent: () => true },
         });
         expect(published.preferredAgent?.label).toMatch(/claude/iu);
+    });
+
+    it('updates the preferred Agent for its Home without rendering on unrelated settings writes', async () => {
+        const scope = { serverId: 'home-preferred-subscription', accountId: 'viewer-preferred-subscription' };
+        const lifetime = { scope, isCurrent: () => true };
+        const codex = resolvePreferredBackendTarget({ lastUsedAgent: 'codex' });
+        rememberLastUsedBackendSelection(scope, { lastUsedBackendTarget: codex, lastUsedAgent: 'codex' });
+        onTestFinished(() => { rememberLastUsedBackendSelection(scope, { lastUsedBackendTarget: null, lastUsedAgent: null }); });
+        saveAccountSettings(scope, settingsDefaults, 1);
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders += 1;
+            return usePluginSurfacePreferredAgent(lifetime);
+        });
+        onTestFinished(() => hook.unmount());
+        expect(hook.getCurrent()?.targetKey).toBe(buildBackendTargetKeyV2(codex));
+        const initialRenders = renders;
+        for (let version = 2; version <= 4; version += 1) {
+            await act(async () => {
+                saveAccountSettings(scope, { ...settingsDefaults, favoriteProfiles: [`profile-${version}`] }, version);
+            });
+        }
+        expect(renders - initialRenders).toBe(0);
+        await act(async () => {
+            saveAccountSettings(scope, { ...settingsDefaults, backendEnabledByTargetKey: {
+                [buildBackendTargetKeyV2(codex)]: false,
+            } }, 5);
+        });
+        expect(hook.getCurrent()?.label).toMatch(/claude/iu);
     });
 
     it('names the remembered configured ACP Agent from the admitted Account catalog', () => {

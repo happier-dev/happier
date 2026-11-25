@@ -4,7 +4,11 @@ import { shallow } from 'zustand/shallow';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 
 import type { LocalSettings } from '../domains/settings/localSettings';
-import { settingsDefaults, type Settings } from '../domains/settings/settings';
+import { settingsDefaults, settingsParse, type Settings } from '../domains/settings/settings';
+import type { AccountSettingsScope } from '../domains/settings/scope/accountSettingsScope';
+import { loadAccountSettings, readAccountSettingsPersistenceMutationToken } from '../domains/state/accountSettingsPersistence';
+import { subscribeAccountSettingsPersistenceMutations } from '../domains/state/accountSettingsPersistenceSubscriptions';
+import { retainDeep } from '../domains/state/structuralSharing';
 import { getStorage } from '../domains/state/storageStore';
 import type { StorageSubscriptionScope } from '../domains/state/storageSubscriptions';
 import type { StorageState } from './types';
@@ -99,6 +103,36 @@ export function useSettingsValues<K extends string>(keys: readonly K[]): Readonl
     stableKeys.map(key => [key, (settings as Readonly<Record<string, unknown>>)[key]]),
   ) as Readonly<Pick<Settings, Extract<K, keyof Settings>>> & Readonly<Record<string, unknown>>, [stableKeys]);
   return useSettingsSelector(select, stableKeys);
+}
+
+/** Exact-Home preference reads from the persisted copy when that Home is in the background. */
+export function usePersistedAccountSettingsValues<K extends keyof Settings>(
+  scope: AccountSettingsScope | null,
+  keys: readonly K[],
+): Readonly<Pick<Settings, K>> | null {
+  const stableScope = useShallow((value: AccountSettingsScope | null) => value)(scope);
+  const stableKeys = useShallow((value: readonly K[]) => value)(keys);
+  const source = React.useMemo(() => {
+    let token: string | null | undefined;
+    let selected: Readonly<Pick<Settings, K>> | undefined;
+    return {
+      subscribe(listener: () => void) {
+        return stableScope ? subscribeAccountSettingsPersistenceMutations(listener, { scope: stableScope, keys: stableKeys }) : () => {};
+      },
+      read() {
+        if (!stableScope) return null;
+        const nextToken = readAccountSettingsPersistenceMutationToken(stableScope);
+        if (nextToken !== token || selected === undefined) {
+          const settings = settingsParse(loadAccountSettings(stableScope).settings);
+          const next = Object.fromEntries(stableKeys.map(key => [key, settings[key]])) as Pick<Settings, K>;
+          selected = retainDeep(selected, next);
+          token = nextToken;
+        }
+        return selected;
+      },
+    };
+  }, [stableScope, stableKeys]);
+  return React.useSyncExternalStore(source.subscribe, source.read, source.read);
 }
 
 export function useSettingsVersion(): number | null {

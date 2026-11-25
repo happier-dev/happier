@@ -402,13 +402,29 @@ describe('Work admitted Profile context', () => {
         saveAccountSettings(addressed, { ...settingsDefaults, profileEnabledById: { 'gemini-api-key': true } }, 1);
         saveAuthoringMemoryProjection(addressed, { lastUsedProfile: 'azure-openai', recentMachinePaths: [], lastEngineSelectionsByScopeV1: {} });
         applyProfileCatalogSnapshot(addressed, ready, true);
-        const hook = await renderHook(() => ({
-            remembered: useHomeAiLaunchProfileCatalog(addressed, 'azure-openai'),
-            enabled: useHomeAiLaunchProfileCatalog(addressed, 'gemini-api-key'),
-        }));
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders += 1;
+            return {
+                remembered: useHomeAiLaunchProfileCatalog(addressed, 'azure-openai'),
+                enabled: useHomeAiLaunchProfileCatalog(addressed, 'gemini-api-key'),
+            };
+        });
         expect(hook.getCurrent().remembered.selectedProfile).toMatchObject({ id: 'azure-openai' });
         expect(hook.getCurrent().enabled.selectedProfile).toMatchObject({ id: 'gemini-api-key' });
         expect(hook.getCurrent().remembered.profiles).toEqual([]);
+        const initialRenders = renders;
+        for (let version = 2; version <= 4; version += 1) {
+            await React.act(async () => {
+                saveAccountSettings(addressed, { ...settingsDefaults, profileEnabledById: { 'gemini-api-key': true },
+                    pluginUpdateReviewModeV1: version % 2 === 0 ? 'autoApply' : settingsDefaults.pluginUpdateReviewModeV1 }, version);
+            });
+        }
+        expect(renders - initialRenders).toBe(0);
+        await React.act(async () => {
+            saveAccountSettings(addressed, { ...settingsDefaults, profileEnabledById: { 'gemini-api-key': false } }, 5);
+        });
+        expect(hook.getCurrent().enabled.selectedProfile).toBeNull();
         await React.act(async () => {
             if (ready.status !== 'ready') throw new Error('Expected ready fixture');
             applyProfileCatalogSnapshot(addressed, { ...ready, records: [{ revision: 1, record: {
