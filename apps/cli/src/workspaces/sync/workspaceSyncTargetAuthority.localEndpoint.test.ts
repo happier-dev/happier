@@ -163,7 +163,10 @@ it.each([false, true])('retains signed native target admission at the carrier wh
   });
 });
 
-it('reopens a committed Fresh copy on signed prepare after the target daemon restarts', async () => {
+it.each([
+  { actorAccountId: 'target-owner', restart: false },
+  { actorAccountId: 'requester', restart: true },
+])('retains a committed Fresh copy under signed authority (actor: $actorAccountId, restart: $restart)', async ({ actorAccountId, restart }) => {
   await withTempDir('workspace-sync-requester-restart-', async fixture => {
     const root = join(fixture, 'copy');
     await mkdir(root);
@@ -201,7 +204,7 @@ it('reopens a committed Fresh copy on signed prepare after the target daemon res
       return { callerAuthority: 'present_user', callerInputAuthorization, machineAdmission: admission,
         verifyMachineAdmissionCurrent: async () => true, workspaceSyncSourceWriterTargetRouting: routing };
     };
-    const targetRows: ActiveProjectAccountRowsSnapshot = { source: 'network', workspaceRefs: [], relationships: [],
+    let targetRows: ActiveProjectAccountRowsSnapshot = { source: 'network', accountMode: 'plain', workspaceRefs: [], relationships: [],
       organizations: [], rows: [], graphRevision: 'absent', loadedAtMs: 0, scopeKey: 'target-owner' };
     const createTarget = () => createWorkspaceSyncTargetAuthority({ localServerId: 'home', localMachineId: target.machineId,
       localAccountId: 'target-owner', getProjectSnapshot: () => targetRows, callMachineRpc: async () => {
@@ -215,7 +218,7 @@ it('reopens a committed Fresh copy on signed prepare after the target daemon res
     });
     const first = createTarget();
     const restarted = createTarget();
-    const context = contextFor('requester');
+    const context = contextFor(actorAccountId);
     try {
       const original = await first.prepareBootstrapHere({
         ...prepare, transientRelationship: staged, targetBootstrap: 'use_existing',
@@ -223,15 +226,42 @@ it('reopens a committed Fresh copy on signed prepare after the target daemon res
       const routing = context.workspaceSyncSourceWriterTargetRouting!;
       await expect(first.releaseBootstrapHere({ v: 1, bootstrapOperationId: relationshipId,
         targetWorkspaceRefId: 'fresh', reason: 'relationship_committed' }, undefined, {
-        callerAuthority: 'present_user', machineAdmission: { ...admissionFor('requester'), ...source, custodianAccountId: 'requester' },
+        callerAuthority: 'present_user', machineAdmission: { ...admissionFor(actorAccountId), ...source, custodianAccountId: actorAccountId },
         verifyMachineAdmissionCurrent: async () => true, workspaceSyncSourceWriterTargetRouting: {
           ...routing, target: { ...routing.target, phase: 'release' },
         },
       })).resolves.toEqual({ ok: true, released: false });
+      const committed = { ...prepare, transientRelationship: { ...staged, committedAtMs: 2, updatedAtMs: 3 } };
+      if (!restart) {
+        // READY has settled, but the target's installed Account projection is
+        // still behind the writer's committed relationship.
+        await first.reconcileRetainedBootstraps();
+        await expect(first.getPreparedBootstrapOwnership(prepare)).resolves.toMatchObject({
+          owner: { rootFingerprint: original.rootFingerprint },
+        });
+        const ingress = {
+          operationId: relationshipId, sourceMachineId: source.machineId, targetMachineId: target.machineId, actorAccountId,
+        };
+        await expect(first.authorizeWorkspaceSyncMachineAgent(ingress)).resolves.toMatchObject({ workspaceRefId: 'fresh' });
+
+        targetRows = { ...targetRows, relationships: [committed.transientRelationship], workspaceRefs: [
+          { id: 'original', serverId: 'home', machineId: source.machineId, rootPath: sourceRoot, createdAtMs: 1 },
+          { id: 'fresh', serverId: 'home', machineId: target.machineId, rootPath: root, createdAtMs: 1 },
+        ] };
+        await first.reconcileRetainedBootstraps();
+        await expect(first.authorizeWorkspaceSyncMachineAgent(ingress)).resolves.toMatchObject({ workspaceRefId: 'fresh' });
+        targetRows = { ...targetRows, relationships: [] };
+        await first.reconcileRetainedBootstraps();
+        await expect(first.getPreparedBootstrapOwnership(prepare)).rejects.toMatchObject({
+          code: 'workspace_root_ownership_lost',
+          failureCause: { phase: 'workspace_sync.target_bootstrap.ownership', errorCode: 'workspace_root_ownership_lost' },
+        });
+        await expect(first.authorizeWorkspaceSyncMachineAgent(ingress)).rejects.toMatchObject({ code: 'peer_unavailable' });
+        return;
+      }
+
       await first.releaseAllRetainedBootstraps();
       await restarted.reconcileRetainedBootstraps();
-
-      const committed = { ...prepare, transientRelationship: { ...staged, committedAtMs: 2, updatedAtMs: 3 } };
       await expect(restarted.prepareBootstrapHere(committed, undefined, {
         ...context, verifyMachineAdmissionCurrent: async () => false,
       })).rejects.toMatchObject({ code: 'workspace_sync_child_unavailable' });

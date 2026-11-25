@@ -877,7 +877,10 @@ type RetainedBootstrap = Readonly<{
   /** The same installed source writer may release this loan after child retirement. */
   sourceWriterTargetRouting?: RetainedSourceWriterTargetRouting;
   requesterCopyCustody?: WorkspaceSyncRequesterCopyCustody;
-}>;
+}> & {
+  /** Only a relationship observed in the installed Account's rows can disappear from them. */
+  observedInInstalledAccount?: true;
+};
 
 type RetainedNativeBootstrap = Readonly<{
   kind: 'native';
@@ -1495,6 +1498,14 @@ export function createWorkspaceSyncTargetAuthority(
       && resolveWorkspaceSyncExecutionMachineIdV1(target) === entry.targetMachineId
       && (source ? resolveWorkspaceSyncExecutionMachineIdV1(source) : undefined) === entry.sourceMachineId
       && relationship.contentPolicy.policyDigest === entry.result.policyDigest;
+  };
+
+  const observeInstalledWriterLoan = (entry: RetainedBootstrap, snapshot: ActiveProjectAccountRowsSnapshot | null) => {
+    if (!entry.relationshipId || !entry.sourceWriterTargetRouting || dependencies.localAccountId === undefined
+      || entry.targetRouting?.targetContext.machineAdmission.actorAccountId !== dependencies.localAccountId) return;
+    const published = (snapshot?.relationships ?? []).some(relationship => relationship.relationshipId === entry.relationshipId);
+    if (published) entry.observedInInstalledAccount = true;
+    return published;
   };
 
   /** A retained relationship fence must survive only while its durable relationship owns the endpoint. */
@@ -3244,7 +3255,12 @@ export function createWorkspaceSyncTargetAuthority(
         candidate.bootstrapOperationId === request.bootstrapOperationId
         && candidate.targetWorkspaceRefId === request.targetWorkspaceRefId
       ));
-      if (!entry) throw authorityError('workspace_root_ownership_lost', 'Workspace sync target custody was not retained');
+      if (!entry) {
+        const code = 'workspace_root_ownership_lost';
+        throw Object.assign(authorityError(code, 'Workspace sync target custody was not retained'), { failureCause: {
+          phase: 'workspace_sync.target_bootstrap.ownership', errorClass: 'Error', errorCode: code, httpStatus: null,
+        } satisfies ActionFailureCauseV1 });
+      }
       return entry.handle;
     },
     prepareBootstrapHere: async (rawRequest, signal, context, admitted) => {
@@ -3594,7 +3610,7 @@ export function createWorkspaceSyncTargetAuthority(
             created: false,
           });
           const { targetRouting: _priorTargetRouting, sourceWriterTargetRouting: _priorSourceWriterTargetRouting, ...retainedBasis } = retainedEntry;
-          physicalRetained.set(authorityKey, {
+          const rebound: RetainedBootstrap = {
             ...retainedBasis,
             bootstrapOperationId: request.bootstrapOperationId,
             definition,
@@ -3602,7 +3618,9 @@ export function createWorkspaceSyncTargetAuthority(
             transientAuthority: sourceInvocation !== undefined || retainedBasis.transientAuthority,
             ...(targetRouting ? { targetRouting } : {}),
             ...(sourceWriterTargetRouting ? { sourceWriterTargetRouting } : {}),
-          });
+          };
+          observeInstalledWriterLoan(rebound, readSnapshot());
+          physicalRetained.set(authorityKey, rebound);
           await settleNormalTargetRecovery();
           return reboundResult;
         }
@@ -3751,6 +3769,7 @@ export function createWorkspaceSyncTargetAuthority(
           ...(sourceWriterTargetRouting ? { sourceWriterTargetRouting } : {}),
           ...(requesterCopyCustody ? { requesterCopyCustody } : {}),
         };
+        observeInstalledWriterLoan(entry, readSnapshot());
         physicalRetained.set(authorityKey, entry);
         await commitPublishedMaterializationCustody(entry);
         await settleNormalTargetRecovery();
@@ -3993,19 +4012,17 @@ export function createWorkspaceSyncTargetAuthority(
         });
       };
       for (const [authorityKey, entry] of [...physicalRetained.entries()]) {
-        const snapshot = getSnapshot(entry.operationId);
-        // A committed SOURCE loan whose requester is this Machine's installed
-        // Account ends at that Account's Stop: its own rows are authoritative.
-        if (entry.relationshipId && entry.sourceWriterTargetRouting && entry.readyPublished
-          && dependencies.localAccountId !== undefined
-          && entry.targetRouting?.targetContext.machineAdmission.actorAccountId === dependencies.localAccountId
-          && !(snapshot.relationships ?? []).some(relationship => relationship.relationshipId === entry.relationshipId)) {
+        // READY can precede installed Account publication. Only removal of a
+        // previously observed relationship withdraws the committed writer loan.
+        if (observeInstalledWriterLoan(entry, snapshot) === false
+          && entry.observedInInstalledAccount && entry.readyPublished) {
           await discardRetained(authorityKey);
           continue;
         }
         // Installed Account publication cannot withdraw a signed SOURCE loan
         // lent to another Account. It ends through release, not unrelated rows.
         if (entry.relationshipId && (!entry.transientAuthority || !(entry.sourceWriterTargetRouting || entry.requesterCopyCustody))) {
+          const snapshot = getSnapshot(entry.operationId);
           const enabledOwner = relationshipStillOwnsEndpoint(snapshot, entry);
           const stagedOwner = entry.transientAuthority && relationshipOwnsEndpoint(snapshot, entry, false);
           if (!enabledOwner && !stagedOwner) {
