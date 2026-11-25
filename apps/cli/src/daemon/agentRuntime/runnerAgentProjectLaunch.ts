@@ -136,9 +136,11 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
             const runtime = await observe('runtime_resolution', () => installedAccount
                 ? input.resolveInstalledAccountRuntime?.(signal) ?? Promise.resolve(null) : input.resolveRuntime(ingress));
             await assertCurrent();
+            // The runtime builder's custody refusal (a grantee without requester custody) keeps its own code.
             if (!runtime) return installedAccount
                 ? unavailable('project_requester_credentials_unavailable', 'ingress_missing')
-                : unavailable('project_finite_execution_unavailable', 'finite_runtime_unavailable');
+                : unavailable((await import('@/workspaces/projectSetup/projectFiniteAction')).readProjectFiniteIngressRefusal(ingress)?.errorCode
+                    ?? 'project_finite_execution_unavailable', 'finite_runtime_unavailable');
             let installedSecretOperation: Promise<SavedSecretOperationContextV1> | undefined;
             if (!input.operation && input.executionRun) runSetup = retainRunSetup({ runId: input.executionRun.runId,
                 control: input.executionRun, signal: input.signal, runtime, ...(input.sessionId ? { sessionId: input.sessionId } : {}) });

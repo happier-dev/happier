@@ -265,6 +265,7 @@ import { materializeWorkflowAcceptedSnapshotFixture } from '@/testkit/workflowAc
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { ActionIdSchema, SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { PROJECT_DEFINITION_ACTION_IDS } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { createWorkflowActionExecutor } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
 import { createWorkflowDefinitionActions } from '@happier-dev/protocol/actions/executor/workflowDefinitions';
 import { createWorkflowRunActionOwner } from '../../../../../../cli/src/session/actions/workflowRunActions';
@@ -1321,6 +1322,40 @@ describe("external Action execution authorization", () => {
                 failureCause: { phase: 'execution_authorization', errorCode: 'custodian_only' } });
             const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
             expect((await mint(outsider.id, 'mcp.servers.test')).statusCode).not.toBe(200);
+        } finally { await app.close(); }
+    });
+
+    // Owner ruling 2026-11-23 ~15:10Z: a guest's own Project definitions (inspect, declare scripts,
+    // re-port) are their own work. The three specs declare requester_own_work, so Home mints the
+    // signed Action for Use; the daemon then runs it on the guest's own carried custody. The raw
+    // routes stay custodian-only (BL40-GUEST-NEGATIVE-PROOFS-1125: a raw grantee call ran on the
+    // daemon's stored credentials). Live refusal: build #149/#150 Home refused projects.manifest.update.
+    it('mints a Use guest\'s signed Project definition Actions and refuses an outsider and a withdrawn grant', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: guest.id, role: 'member' } });
+        const grant = await db.machineGrant.create({ data: { principalKind: 'team', machineId: fixture.machine.id, teamId: fixture.team.id,
+            accessLevel: 'view', createdByAccountId: fixture.account.id } });
+        const homeId = await getOrCreateServerIdentityId();
+        const workspace = { serverId: homeId, workspaceId: 'accepted', machineId: fixture.machine.id, rootPath: '/workspace/project' };
+        const { app } = await createApp(fixture.team.id);
+        const mint = async (accountId: string, actionId: typeof PROJECT_DEFINITION_ACTION_IDS[number]) => app.inject({
+            method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+            headers: { authorization: `Bearer ${await auth.createToken(accountId, undefined, { kind: 'account', authority: 'present_user' })}` },
+            payload: { v: 1, machineId: fixture.machine.id, envelope: { ...fixture.envelope, input: actionId === 'projects.manifest.update'
+                ? { workspace, expectedBasis: { kind: 'absent' }, bytes: '{"version":1}' }
+                : actionId === 'projects.inspect' ? { workspace, read: { kind: 'editor' } } : { workspace } } } });
+        try {
+            for (const actionId of PROJECT_DEFINITION_ACTION_IDS) {
+                const admitted = await mint(guest.id, actionId);
+                expect(admitted.statusCode, `${actionId}: ${admitted.body}`).toBe(200);
+                expect(admitted.json()).toMatchObject({ binding: { accountId: guest.id, custodianAccountId: fixture.account.id,
+                    machineId: fixture.machine.id, actionId } });
+            }
+            const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+            expect((await mint(outsider.id, 'projects.manifest.update')).statusCode).not.toBe(200);
+            await db.machineGrant.delete({ where: { principalKind: 'team', machineId_teamId: { machineId: grant.machineId, teamId: grant.teamId } } });
+            for (const actionId of PROJECT_DEFINITION_ACTION_IDS) expect((await mint(guest.id, actionId)).statusCode).not.toBe(200);
         } finally { await app.close(); }
     });
 

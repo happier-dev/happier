@@ -14,7 +14,6 @@ import { resourceTeamShareScopeV1, type ResourceTeamShareScopeV1 } from '@happie
 import { readProjectExecutionOutputMachineAdmissionMethodV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRequesterProjectExecutionActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import { isRequesterProjectDefinitionActionIdV1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { isProjectWorkerCopyInspectActionIdV1, PROJECT_WORKER_STATUS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectWorkersActionIdsV1';
 import { isDeploymentActionIdV1, isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { getActionSpec, SignedRootActionIdSchema, PluginPublicationActionOutputSchemas } from '@happier-dev/protocol/actions/actionSpecs';
@@ -646,10 +645,10 @@ async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts |
     const operationAction = operationActionId === undefined ? null : SignedRootActionIdSchema.safeParse(operationActionId);
     const requesterOwnWork = operationAction?.success === true
         && getActionSpec(operationAction.data).originalExecution?.machineAdmission === 'requester_own_work';
-    // Requester Project Actions, worker status and copy review use signed Account admission
-    // and native requester custody. Their raw RPCs stay custodian-only.
+    // Requester own work (Project definitions included, by their spec declaration), worker status
+    // and copy review use signed Account admission and native requester custody. Their raw RPCs
+    // stay custodian-only.
     const requesterActionIngress = requesterOwnWork || requesterCopyPreview || requesterProviderRole !== undefined
-        || isRequesterProjectDefinitionActionIdV1(input.actionId)
         || input.actionId === PROJECT_WORKER_STATUS_ACTION_ID_V1;
     if (input.actionId && !method) {
         const actionId = SignedRootActionIdSchema.safeParse(input.actionId);

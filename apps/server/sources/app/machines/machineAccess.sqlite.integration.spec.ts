@@ -42,7 +42,7 @@ import { DATABASE_ACCESS_READ_ACTION_ID_V1, DATABASE_ACTIVITY_CANCEL_ACTION_ID_V
     DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_STATS_ENABLE_ACTION_ID_V1, DATABASE_STATS_READ_ACTION_ID_V1,
     DATABASE_STRUCTURE_READ_ACTION_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { PROJECT_DEFINITION_INSPECT_ACTION_ID, PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID, PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
+import { PROJECT_DEFINITION_ACTION_IDS, PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 describe('Machine current access (real SQLite)', () => {
@@ -161,7 +161,9 @@ describe('Machine current access (real SQLite)', () => {
             .toMatchObject({ kind: 'denied', code: 'unsupported_operation' });
     });
 
-    it.each([PROJECT_DEFINITION_INSPECT_ACTION_ID, PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID])('admits requester %s while retaining private raw RPC custody', async actionId => {
+    // The signed Action is the requester's own Project work (its spec declares requester_own_work);
+    // the raw RPC carries no requester custody and stays the custodian's.
+    it.each(PROJECT_DEFINITION_ACTION_IDS)('admits requester %s while retaining private raw RPC custody', async actionId => {
         const f = await fixture();
         const requester = await account();
         const outsider = await account();
@@ -176,6 +178,10 @@ describe('Machine current access (real SQLite)', () => {
         expect(await access.resolveMachineAdmission({ ...input, actorAccountId: requester.id,
             rpcMethod: PROJECT_DEFINITION_ACTION_RPC_METHODS_V1[actionId] }))
             .toMatchObject({ kind: 'denied', code: 'custodian_only' });
+        await inTx(tx => access.removeMachineAccessGrantInTx(tx, { actorAccountId: f.owner.id, machineId: f.machine.id,
+            principal: { kind: 'account', accountId: requester.id } }));
+        expect(await access.resolveMachineAdmission({ ...input, actorAccountId: requester.id }))
+            .toEqual({ kind: 'denied', code: 'access_denied' });
     });
 
     describe('deployment roots on a granted Machine', () => {

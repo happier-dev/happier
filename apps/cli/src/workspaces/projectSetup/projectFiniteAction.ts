@@ -115,12 +115,23 @@ const failureFromError = async (error: unknown, details?: unknown): Promise<Acti
 };
 const digest = (value: unknown) => createHash('sha256').update(createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(value))).digest('hex');
 
-/** Wire-only or constrained callers without admitted private Account ports stay fail-closed. */
+/**
+ * Selects whose custody a Project runtime may use, once, before any Account read. Wire-only or
+ * constrained callers without admitted private Account ports stay fail-closed. A caller Home admitted
+ * who is not the Machine custodian runs only on the requester custody its signed Action or its own
+ * Session carries; without one it never continues on the daemon's stored (custodian) credentials.
+ */
 export function readProjectFiniteIngressRefusal(ingress: RpcHandlerContext): ActionExecuteFailure | null {
     const authorization = ingress.callerInputAuthorization;
-    return (ingress.callerInputConstraints || authorization)
-        && (!authorization?.requesterAccountProjection || !authorization.requesterHttpProjection)
-        ? { ok: false, errorCode: 'project_requester_authorization_unavailable', error: 'project_requester_authorization_unavailable' } : null;
+    const admission = ingress.machineAdmission;
+    const constrainedWithoutPorts = (ingress.callerInputConstraints || authorization)
+        && (!authorization?.requesterAccountProjection || !authorization.requesterHttpProjection);
+    if (constrainedWithoutPorts) {
+        return { ok: false, errorCode: 'project_requester_authorization_unavailable', error: 'project_requester_authorization_unavailable' };
+    }
+    const granteeWithoutCustody = !authorization && !ingress.requesterSessionBootstrap
+        && admission !== undefined && admission.actorAccountId !== admission.custodianAccountId;
+    return granteeWithoutCustody ? failure('project_requester_credentials_unavailable') : null;
 }
 
 /** Both finite execution and Service Start consume the installed admission owner, not owner credentials. */

@@ -2816,7 +2816,9 @@ export class ApiMachineClient {
             const runtime = await this.resolveProjectFiniteRuntime(ingress);
             // Placement refusals precede any effect and reach the caller as their typed code.
             const refused = (code: string) => createActionExecuteFailureError({ ok: false, errorCode: code, error: code, effectAttempted: false });
-            if (!runtime) throw refused('project_setup_runtime_unavailable');
+            // The runtime builder's custody refusal (a grantee without signed requester custody) keeps its own code.
+            if (!runtime) throw refused((await import('@/workspaces/projectSetup/projectFiniteAction'))
+                .readProjectFiniteIngressRefusal(ingress)?.errorCode ?? 'project_setup_runtime_unavailable');
             const identity = runtime.requesterIdentity;
             const isolationUnavailable = () => refused('agent_isolation_unavailable');
             if (!identity || identity.kind === 'unknown') throw isolationUnavailable();
