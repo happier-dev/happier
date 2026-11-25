@@ -11,11 +11,11 @@ import { PageHeaderPlaceholder } from './PageHeader';
 const renderFrame: NonNullable<React.ComponentProps<typeof HappierPageLoadingRows>['renderFrame']> = (input) => <PageFrame {...input} content="column" />;
 
 /** Bind core's existing page column, navigation header and loading copy to the shared presentation. */
-export const PageLoadingRows = React.memo(function PageLoadingRows(props: Readonly<{ testID: string; header?: boolean }>) {
+export const PageLoadingRows = React.memo(function PageLoadingRows(props: Readonly<{ testID: string; header?: boolean; loadingLabel?: string }>) {
     const { theme } = useUnistyles();
     const pluginTheme = usePluginUiTheme(theme);
     const reducedMotion = useReducedMotionPreference();
-    return <HappierPageLoadingRows testID={props.testID} loadingLabel={t('common.loading')}
+    return <HappierPageLoadingRows testID={props.testID} loadingLabel={props.loadingLabel ?? t('common.loading')}
         header={props.header ? <PageHeaderPlaceholder testID={`${props.testID}-header`} /> : null}
         theme={pluginTheme} color={theme.colors.surface.skeleton} reducedMotion={reducedMotion} renderFrame={renderFrame} />;
 });

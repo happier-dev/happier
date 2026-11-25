@@ -7,7 +7,7 @@ import { resolveHref } from 'expo-router/build/link/href';
 import { useOptionalWorkspaceNavigation, useWorkspaceNavigationActive, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
 import { DestinationTitlePublication, useDestinationInstanceKey, useDestinationParams } from './DestinationInstanceHost';
 import { WorkspaceRouteHostingContext } from './WorkspaceRouteHostingContext';
-import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
+import { DestinationBodyLoading } from './DestinationBodyLoading';
 import { workspaceRouteFiles, workspaceRouteHref } from './workspaceRoutes';
 import { useRootStackRouteOptions } from '@/components/navigation/root/useRootStackRouteOptions';
 import { resolveRootStackRouteOptions } from '@/components/navigation/root/rootStackRouteOptions';
@@ -43,7 +43,7 @@ export function WorkspaceRouteEntry(props: Readonly<{ Body: React.ComponentType;
     if (!hosted && ownsRoute && !workspaceActive) {
         // A temporary Expo body would lose edits when hydration admits the retained host.
         // Layout mirrors must stay mounted: Expo still owns their URL serialization.
-        return <>{props.mirror ?? props.loadingFallback ?? <PaneLoadingFallback testID="workspace-route-hydrating" />}</>;
+        return <>{props.mirror ?? props.loadingFallback ?? <DestinationBodyLoading testID="workspace-route-hydrating" holdLaunchCurtain={false} />}</>;
     }
     // Keep the mirror in its pending position: inserting title metadata before
     // it remounts nested Expo navigators and loses their parsed child route.

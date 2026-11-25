@@ -17,6 +17,7 @@ import { createComparisonReviewExecutionRunDraftDetailsTab } from '@/components/
 import { useRunAnsweringEngine } from '@/components/sessions/runs/useRunAnsweringEngine';
 import { selectScmDiffSummaryProducerModel } from '@/sync/domains/scm/diffSummary/state';
 import { useReviewComposerHandoff } from '@/components/sessions/reviews/comments/useReviewComposerHandoff';
+import { DestinationBodyLoading } from '@/components/appShell/workspace/DestinationBodyLoading';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useSession } from '@/sync/domains/state/storage';
 import { useScmReviewLimits } from '@/scm/review/useScmReviewLimits';
@@ -123,12 +124,14 @@ export function SessionCapturedScmReviewDetailsView(props: SessionScmReviewDetai
                 comparisonChrome={chrome} initialCollapsedPaths={mountedInitialReviewState.collapsedPaths}
                 onCollapsedPathsChange={onCollapsedPathsChange} initialScrollTop={mountedInitialReviewState.scrollTop}
                 onScrollTopChange={onScrollTopChange} maxFiles={maxFiles}
-                maxChangedLines={maxChangedLines} /> : <>
+                maxChangedLines={maxChangedLines} /> : captured.loading ? (
+                <DestinationBodyLoading testID="captured-comparison-loading" holdLaunchCurtain={false} />
+            ) : <>
                 {chrome.renderBar ? chrome.renderBar({ fileCount: fileCount ?? 0, added: 0, removed: 0, linesKnown: false }, null) : <ScmComparisonBar leading={chrome.renderBarLeading({ fileCount: fileCount ?? 0, added: 0, removed: 0, linesKnown: false })} trailing={chrome.barTrailing} />}
-                <SurfaceStateCard testID="captured-comparison-loading" kind={captured.loading ? 'loading' : 'error'}
-                    title={captured.loading ? t('common.loading') : scopeLabel}
+                <SurfaceStateCard testID="captured-comparison-loading" kind="error"
+                    title={scopeLabel}
                     reason={captured.error ?? t('scmComparison.scopePicker.unavailable')}
-                    action={!captured.loading ? { label: t('common.retry'), onPress: captured.retry } : undefined} />
+                    action={{ label: t('common.retry'), onPress: captured.retry }} />
             </>}
         </>}
     />;

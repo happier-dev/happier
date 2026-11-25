@@ -17,8 +17,9 @@ export function DestinationBodyLoading({
     routeServerId,
     holdLaunchCurtain = true,
     testID = 'workspace-destination-body-loading',
-}: Readonly<{ routeServerId?: string | null; holdLaunchCurtain?: boolean; testID?: string }>) {
+    loadingLabel,
+}: Readonly<{ routeServerId?: string | null; holdLaunchCurtain?: boolean; testID?: string; loadingLabel?: string }>) {
     const destinationHome = useDestinationInstance(selectDestinationHome);
     useRouteLaunchCurtainHold(holdLaunchCurtain, routeServerId === undefined ? destinationHome : routeServerId);
-    return <PageLoadingRows testID={testID} header />;
+    return <PageLoadingRows testID={testID} header loadingLabel={loadingLabel} />;
 }

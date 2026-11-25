@@ -7,7 +7,7 @@ import Animated, { FadeIn, type EntryOrExitLayoutType } from 'react-native-reani
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
-import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
+import { DestinationBodyLoading } from '@/components/appShell/workspace/DestinationBodyLoading';
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -392,8 +392,8 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                                 <RetainedPanelSurface isActive={presented} mode="flow">
                                     <DetailsTabChromeProvider value={chromeFor(tab.key)}>
                                         <HeaderActionsScope scopeKey={lendsControls && isActive ? headerActionsScopeKey : null}>
-                                            <React.Suspense fallback={<PaneLoadingFallback
-                                                title={t('detailsSurface.chrome.openingTab', { title: presentedTitles.get(tab.key) ?? tab.title })} />}>
+                                            <React.Suspense fallback={<DestinationBodyLoading holdLaunchCurtain={false}
+                                                loadingLabel={t('detailsSurface.chrome.openingTab', { title: presentedTitles.get(tab.key) ?? tab.title })} />}>
                                                 <DetailsTabBody scopeId={props.pane.scopeId} tab={tab} active={presented} renderTabContent={props.renderTabContent} />
                                             </React.Suspense>
                                         </HeaderActionsScope>

@@ -8,6 +8,7 @@ export type SessionPaneLazyLoaderProps<TProps extends object> = Readonly<{
     testID: string;
     load: () => Promise<React.ComponentType<TProps>>;
     props: TProps;
+    loadingFallback?: React.ReactElement;
 }>;
 
 type PaneFailureCode = 'pane_module_load_failed' | 'pane_render_failed';
@@ -77,7 +78,7 @@ export function SessionPaneLazyLoader<TProps extends object>(input: SessionPaneL
         setRetryNonce((value) => value + 1);
     }} />;
 
-    if (!Impl) return <PaneLoadingFallback testID={input.testID} />;
+    if (!Impl) return input.loadingFallback ?? <PaneLoadingFallback testID={input.testID} />;
 
     return <SessionPaneErrorBoundary testID={input.testID}>{React.createElement(Impl, input.props)}</SessionPaneErrorBoundary>;
 }

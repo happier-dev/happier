@@ -285,6 +285,28 @@ describe('SessionScmReviewDetailsView (exact Home)', () => {
         ]);
     });
 
+    it('draws the destination body until the first Review snapshot arrives', async () => {
+        fixture = await createSessionFilesViewFixture({ rootPath: '/tmp/repo', rpc: request =>
+            request.method === 'scm.status.snapshot' ? new Promise(() => {}) : undefined });
+        const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
+        const screen = await fixture.render(<SessionScmReviewDetailsView
+            sessionId="s1" serverId={fixture.home.id} scopeId="session:s1"
+        />);
+
+        expect(screen.findHostByTestId('session-scm-review-loading-header')).not.toBeNull();
+    });
+
+    it('draws the destination body while Review opens a captured comparison', async () => {
+        fixture = await createSessionFilesViewFixture({ rootPath: '/tmp/repo' });
+        const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
+        const screen = await fixture.render(<SessionScmReviewDetailsView
+            sessionId="s1" serverId={fixture.home.id} scopeId="session:s1"
+            target={{ comparison: { kind: 'session' }, view: 'files' }}
+        />);
+
+        expect(screen.findHostByTestId('captured-comparison-loading-header')).not.toBeNull();
+    });
+
     it('says the Machine is offline with Retry, instead of loading without end, when no snapshot can arrive', async () => {
         fixture = await createSessionFilesViewFixture({ rootPath: '/tmp/repo', rpc: request =>
             request.method === 'scm.status.snapshot' ? new Promise(() => {}) : undefined });

@@ -82,6 +82,7 @@ import {
   SourceControlStaleSnapshotNotice,
   SourceControlUnavailableState,
 } from '@/components/workspaces/scm/states';
+import { DestinationBodyLoading } from '@/components/appShell/workspace/DestinationBodyLoading';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -768,13 +769,7 @@ const SessionWorkingScmReviewDetailsView = React.memo(
         if (reviewMachineReachability.unreachable) {
           return <CheckoutUnreachableState reachability={reviewMachineReachability} testID="session-scm-review-unreachable" />;
         }
-        return (
-          <SurfaceStateCard
-            testID="session-scm-review-loading"
-            kind="loading"
-            title={t('common.loading')}
-          />
-        );
+        return <DestinationBodyLoading testID="session-scm-review-loading" holdLaunchCurtain={false} />;
       }
 
       // `F-SCM-3`: the terminal `SourceControlUnavailableState` below was the only place this view

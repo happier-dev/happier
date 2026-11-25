@@ -99,14 +99,13 @@ describe('DetailsTabGroupPanel with one tab (lab session-D)', () => {
   });
 
   it('says what is opening while a tab\'s page loads, never a bare "Loading" (DESIGN-ACCEPT-142 item 18)', async () => {
-    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
     const pending = new Promise<never>(() => {});
     function Loading(): React.ReactElement { throw pending; }
     const screen = await renderScreen(<DetailsTabGroupPanel pane={pane}
       group={group([tab('page', 'Price point')])} testIds={testIds} renderTabContent={() => <Loading />} />);
-    const card = screen.root.findByType(SurfaceStateCard);
-    expect(card.props.kind).toBe('loading');
-    expect(card.props.title).toBe('detailsSurface.chrome.openingTab');
+    expect(screen.findHostByTestId('workspace-destination-body-loading-header')).not.toBeNull();
+    expect(screen.findHostByTestId('workspace-destination-body-loading')?.props.accessibilityLabel)
+      .toBe('detailsSurface.chrome.openingTab');
     await screen.unmount();
   });
 

@@ -6,6 +6,7 @@ import PluginSettingsPageRoute from '@/app/(app)/settings/plugins/[pluginId]/[pa
 import PluginAppPageRootRoute from '@/app/(app)/plugins/[pluginId]/[localId]/index';
 import PluginAppPageDeepLinkRoute from '@/app/(app)/plugins/[pluginId]/[localId]/[...subPath]';
 import { PluginSurfaceFallback } from '@/components/sessions/panes/PluginSurfaceFallback';
+import SessionDetailsRoute from '@/app/(app)/session/[id]/details';
 import { WorkspaceRouteEntry } from './createWorkspaceRouteEntry';
 import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
 import { createWorkspaceState } from './workspaceState';
@@ -101,6 +102,14 @@ describe('WorkspaceRouteEntry', () => {
             expect(windowTitle.options).toBe(mirrorOptions);
         } finally { vi.unstubAllGlobals(); }
     });
+    it('draws the destination body while a cold Details link waits for workspace admission', async () => {
+        const screen = await renderScreen(<WorkspaceNavigationProvider value={workspace(false)}>
+            <SessionDetailsRoute />
+        </WorkspaceNavigationProvider>);
+
+        expect(screen.findHostByTestId('workspace-route-hydrating-header')).not.toBeNull();
+    });
+
     it.each([
         { route: 'Settings', RouteEntry: PluginSettingsPageRoute, testID: 'plugin-settings-page-hydrating' },
         { route: 'App root', RouteEntry: PluginAppPageRootRoute, testID: 'plugin-app-page-hydrating' },

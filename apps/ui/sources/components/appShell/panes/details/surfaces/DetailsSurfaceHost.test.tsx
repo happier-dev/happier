@@ -86,6 +86,27 @@ describe('DetailsSurfaceHost', () => {
         expect(renderCalls).toEqual(['a']);
     });
 
+    it('draws the destination body while Details is still resolving its surface', async () => {
+        const scope = { kind: 'session', sessionId: 'session-1' } as const;
+        const screen = await renderScreen(
+            <DetailsSurfaceHost paneScopeId="session:session-1"
+                tab={tab}
+                scope={scope}
+                region="details"
+                descriptor={{
+                    surfaceId: 'session:session-1:details:demo:1',
+                    resourceKey: 'demo:1',
+                    scope,
+                    region: 'details',
+                    status: 'pending',
+                }}
+                renderers={[]}
+            />,
+        );
+
+        expect(screen.findHostByTestId('details-surface-fallback-pending-header')).not.toBeNull();
+    });
+
     it('renders typed fallback states instead of blank panes for unavailable resources', async () => {
         const screen = await renderScreen(
             <DetailsSurfaceHost paneScopeId="session:session-1"
