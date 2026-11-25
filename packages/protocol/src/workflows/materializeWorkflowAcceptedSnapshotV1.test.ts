@@ -215,8 +215,8 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     const refusal = actionStartTargetUnavailableV1(undefined, 'agent_start_context', 'caller_depth_unavailable');
     const result = await materialize({ definition: { ...definition, blocks: [definition.blocks[0],
       { kind: 'action', id: 'review', actionId: 'review.start', input: {
-        instructions: { kind: 'literal', value: 'Review' }, engineIds: { kind: 'result',
-          producer: { blockId: 'work', scope: { kind: 'current' } }, path: [] },
+        instructions: { kind: 'literal', value: 'Review' },
+        reviewers: { kind: 'result', producer: { blockId: 'work', scope: { kind: 'current' } }, path: [] },
       } }] }, effects: { resolveTargetAvailability: available,
         readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) },
       admission: { kind: 'agent', admitLeaf: async leaf => leaf.blockId === 'review'

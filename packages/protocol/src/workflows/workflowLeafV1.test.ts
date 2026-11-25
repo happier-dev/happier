@@ -58,30 +58,30 @@ describe('workflow leaf seam', () => {
   it('checks required built-in child bindings and literal values without requiring optional defaults', () => {
     const check = (input: unknown) => validateWorkflowDefinition({
       inputs: [
-        { name: 'engines', valueType: 'json', required: true },
+        { name: 'reviewers', valueType: 'json', required: true },
         { name: 'reviewSession', valueType: 'json', required: true, inputType: { hostType: 'session' } },
       ],
       blocks: [{ kind: 'workflow', id: 'child', workflowRef: 'builtin:review-and-converge', input }],
     });
     const input = {
-      engines: { kind: 'input', name: 'engines' },
+      reviewers: { kind: 'input', name: 'reviewers' },
       reviewSession: { kind: 'input', name: 'reviewSession' },
     };
     expect(check(input).valid).toBe(true);
-    const { engines: _engines, ...withoutEngines } = input;
-    expect(check(withoutEngines).issues).toEqual(expect.arrayContaining([expect.objectContaining({
-      code: 'invalid_input', blockId: 'child', path: '/blocks/0/input/engines',
+    const { reviewers: _reviewers, ...withoutReviewers } = input;
+    expect(check(withoutReviewers).issues).toEqual(expect.arrayContaining([expect.objectContaining({
+      code: 'invalid_input', blockId: 'child', path: '/blocks/0/input/reviewers',
     })]));
     const { reviewSession: _reviewSession, ...withoutReviewSession } = input;
     expect(check(withoutReviewSession).issues).toEqual(expect.arrayContaining([expect.objectContaining({
       code: 'invalid_input', blockId: 'child', path: '/blocks/0/input/reviewSession',
     })]));
-    const literalInput = { ...input, engines: { kind: 'literal', value: ['engine'] } };
+    const literalInput = { ...input, reviewers: { kind: 'literal', value: [{ kind: 'engine', engineId: 'agent:happier.agent.codex/codex' }] } };
     expect(check(literalInput).valid).toBe(true);
-    expect(check({ ...literalInput, maxRounds: { kind: 'literal', value: 'three' } }).issues)
-      .toEqual(expect.arrayContaining([expect.objectContaining({ path: '/blocks/0/input/maxRounds', code: 'invalid_input' })]));
-    expect(check({ ...literalInput, apply: { kind: 'literal', value: 'other' } }).issues)
-      .toEqual(expect.arrayContaining([expect.objectContaining({ path: '/blocks/0/input/apply', code: 'invalid_input' })]));
+    expect(check({ ...literalInput, focus: { kind: 'literal', value: 3 } }).issues)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ path: '/blocks/0/input/focus', code: 'invalid_input' })]));
+    expect(check({ ...literalInput, then: { kind: 'literal', value: 'other' } }).issues)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ path: '/blocks/0/input/then', code: 'invalid_input' })]));
   });
 
   it('validates Action inputs after the canonical Workflow selection projection', () => {
@@ -117,8 +117,8 @@ describe('workflow leaf seam', () => {
     expect(check({}).issues).toEqual(expect.arrayContaining([expect.objectContaining({
       code: 'invalid_input', path: '/blocks/0/input/instructions',
     })]));
-    expect(check({ instructions: { kind: 'literal', value: 'Review the changes' }, engineIds: { kind: 'literal', value: 42 } }).issues)
-      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'invalid_input', path: '/blocks/0/input/engineIds' })]));
+    expect(check({ instructions: { kind: 'literal', value: 'Review the changes' }, reviewers: { kind: 'literal', value: 42 } }).issues)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'invalid_input', path: '/blocks/0/input/reviewers' })]));
   });
 
   it('accepts native Action targets supplied by the canonical Workflow selection', () => {
