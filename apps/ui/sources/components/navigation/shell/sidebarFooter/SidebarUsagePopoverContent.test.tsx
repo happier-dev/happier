@@ -334,6 +334,28 @@ describe('SidebarUsagePopoverContent', () => {
         expect(times).toEqual([1_000]);
     });
 
+    it('never dates the header by a reading it does not show, nor puts an expired row\'s time above fresh rows', async () => {
+        const now = Date.now();
+        // An account last read days ago that reports nothing is folded into a count, so it dates nothing.
+        state.summaries = [
+            { ...summary('claude:a', 'Work', 73), fetchedAt: now - 60_000, staleAfterMs: 3_600_000 },
+            { ...summary('claude:silent', 'Silent', 0), fetchedAt: now - 3 * 86_400_000, meters: [] },
+        ];
+        const quiet = await renderContent();
+        const { SurfaceAsOfLabel } = await import('@/components/ui/surfaces/SurfaceAsOfLabel');
+        expect(quiet.findAllByType(SurfaceAsOfLabel).map((label) => label.props.at)).toEqual([now - 60_000]);
+        await quiet.unmount();
+
+        // A shown row past its window carries its own as-of line; the header then names no time of its own.
+        state.summaries = [
+            { ...summary('claude:a', 'Work', 73), fetchedAt: now - 60_000, staleAfterMs: 3_600_000 },
+            { ...summary('claude:b', 'Old', 40), fetchedAt: now - 3 * 86_400_000, staleAfterMs: 120_000 },
+        ];
+        const expired = await renderContent();
+        expect(expired.findByTestId('sidebar-usage-account-claude:b.freshness')).toBeTruthy();
+        expect(expired.findByTestId('sidebar-usage-as-of')).toBeNull();
+    });
+
     it('explains what usage is for when no account is connected, with the one way to connect one', async () => {
         rendered.closed = 0;
         const screen = await renderContent();

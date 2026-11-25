@@ -1223,6 +1223,18 @@ per-run pointer controls. Details retains the exact rows when the plot cannot
 fit. The renderer displays caller-supplied coordinates and labels; it does not
 infer durations from point events.
 
+### OutcomeScatter
+
+`OutcomeScatter` plots caller-supplied `points` (`x`, `y`, an optional `color`,
+`annotation` and `labelled` name) against `xLabel` and `yLabel`. When the plot
+fits, it is the body at rest; the exact values sit behind the same Details
+control the other charts use, as a table with one header per column. Name the
+annotation column with `annotationLabel`, and localize the control with
+`valuesLabel` and `valuesCollapseLabel`. When the plot cannot fit (`size="tile"`
+or `"inline"`, a narrow width, or a domain with one value), the value rows are
+shown instead. `formatX` sets the x wording on the axis, rows and guides;
+`basis` is said once, as the caption above the plot.
+
 ### CapacityBar
 
 `CapacityBar` compares an exact `value` against `capacity`. `CapacityBarProps`

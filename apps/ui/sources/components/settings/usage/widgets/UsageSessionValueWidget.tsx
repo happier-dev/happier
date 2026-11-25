@@ -56,7 +56,7 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
   const rowMetrics = usePageRowMetrics('list');
   const viewerOwn = useUsageSessionRecipient(usageQuerySingleSession(props.query), props.serverId);
   const outside = <UsageOutsideSessions serverId={props.serverId} query={props.query} testID={`${props.testID}.outside`} />;
-  const { summary, format, datum, basisLabel, sessionLabel, openSession } = useUsageWork(
+  const { summary, format, datum, basisLabel, captioned, sessionLabel, openSession } = useUsageWork(
     props.slice,
     props.query,
     props.serverId,
@@ -169,8 +169,11 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
           yLabel={t('usage.board.work.yMerged')}
           unknownLabel={t('usage.board.work.noOutcome')}
           size="full"
-          formatX={value => format(value, plot.moneyBasis)}
+          formatX={value => captioned(value, plot.moneyBasis)}
           basis={basisLabel(plot.moneyBasis)}
+          annotationLabel={t('usage.board.work.linkedPrs')}
+          valuesLabel={t('usage.board.charts.showValues')}
+          valuesCollapseLabel={t('usage.board.charts.hideValues')}
           legend={[
             ...usedSlots.map((agentId) => ({
               id: agentId,
@@ -216,7 +219,7 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
             theme={theme}
             label={group.title}
             size="tile"
-            valueFormatter={value => format(value, group.moneyBasis)}
+            valueFormatter={value => captioned(value, group.moneyBasis)}
             basis={basisLabel(group.moneyBasis)}
             unknownLabel={format(null)}
             testID={`${props.testID}.${group.id}`}

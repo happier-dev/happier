@@ -99,7 +99,8 @@ describe('useUsageSummary', () => {
     it('shows the last usage this device saw, with its time, before anything is read in this launch', async () => {
         state.persisted = {
             v: 1,
-            entries: [{ key: 'claude/work', fetchedAt: 500, serviceLabel: 'Claude subscription', profileLabel: 'Work', planLabel: 'Max', meters: [] }],
+            entries: [{ key: 'claude/work', fetchedAt: 500, serviceLabel: 'Claude subscription', profileLabel: 'Work', planLabel: 'Max',
+                meters: [{ meterId: '5h', label: '5h', remainingPct: 42, resetsAt: 1_000, status: 'ok' }] }],
         };
         const { useUsageSummary } = await import('./useUsageSummary');
         const hook = await renderHook(() => useUsageSummary({ load: 'cache' }));

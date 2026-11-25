@@ -35,4 +35,13 @@ describe('usage amounts across saved summaries and provider grouping', () => {
         // No freshness window from the producer: the page never claims staleness it cannot know.
         expect(buildUsageSummary({ live: buildUsageSummaryCache([summary]), saved: null, accountsWithoutUsage: [] }).staleAt).toBeNull();
     });
+
+    it('dates only the readings it shows: an account that reports no usage does not set as-of or staleness', () => {
+        const shown = { ...summary, key: 'service/shown', fetchedAt: 9_000, staleAfterMs: 10_000 };
+        const silent = { ...summary, key: 'service/silent', fetchedAt: 1_000, staleAfterMs: 2_000, meters: [] };
+        const usage = buildUsageSummary({ live: buildUsageSummaryCache([shown, silent]), saved: null, accountsWithoutUsage: [] });
+        expect(usage.asOf).toBe(9_000);
+        expect(usage.staleAt).toBe(19_000);
+        expect(buildUsageSummary({ live: buildUsageSummaryCache([silent]), saved: null, accountsWithoutUsage: [] }).asOf).toBeNull();
+    });
 });

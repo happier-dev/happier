@@ -26,6 +26,9 @@ export function renderUsageFrame(frame: string): React.ReactNode | null {
     switch (frame) {
         case 'U1': return <UsageFrame scope="rail" phone={false} />;
         case 'U1p': return <UsageFrame scope="rail" phone />;
+        // The rail with one reading past its window and one account last read days ago that reports nothing
+        // (acceptance r227 #68): the old row dates itself, the silent one dates nothing, the header names no time.
+        case 'U1s': return <UsageFrame scope="stale" phone={false} />;
         case 'U3': return <UsageFrame scope="session" phone={false} />;
         case 'U3p': return <UsageFrame scope="session" phone />;
         default: return null;
@@ -56,7 +59,7 @@ function entry(service: Svc, serviceLabel: string, legacyServiceId: string, acco
     };
 }
 
-function useFixture(scope: 'rail' | 'session') {
+function useFixture(scope: 'rail' | 'session' | 'stale') {
     const privacy = useConnectedAccountIdentityPrivacy({ mutation: true });
     const now = React.useMemo(() => Date.now(), []);
     const usage = React.useMemo(() => buildUsageSummary({
@@ -70,6 +73,11 @@ function useFixture(scope: 'rail' | 'session') {
                     [['5h', '5-hour', 6, 23 * MIN], ['wk', 'Weekly', 71, 3 * DAY + 2 * HOUR]], now),
                 entry(CHATGPT, 'ChatGPT', 'openai-codex', 'personal', 'Personal', 'leeroy.b@gmail.com', 'Pro',
                     [['5h', '5-hour', 71, 3 * HOUR + 58 * MIN], ['wk', 'Weekly', 22, 2 * DAY + 21 * HOUR]], now),
+                ...(scope === 'stale' ? [
+                    { ...entry(CHATGPT, 'ChatGPT', 'openai-codex', 'side', 'Side', 'leeroy.side@gmail.com', 'Plus',
+                        [['wk', 'Weekly', 58, 3 * DAY]], now), fetchedAt: now - 3 * DAY, staleAfterMs: 2 * HOUR },
+                    { ...entry(CLAUDE, 'Claude', 'claude-subscription', 'api', 'API key', 'leeroy@company.com', 'API', [], now), fetchedAt: now - 3 * DAY },
+                ] : []),
             ],
         },
         saved: null,
@@ -117,7 +125,7 @@ function useFixture(scope: 'rail' | 'session') {
     return { usage, facts, privacy, session };
 }
 
-function UsageFrame(props: Readonly<{ scope: 'rail' | 'session'; phone: boolean }>) {
+function UsageFrame(props: Readonly<{ scope: 'rail' | 'session' | 'stale'; phone: boolean }>) {
     const fixture = useFixture(props.scope);
     return (
         <View style={props.phone ? styles.sheet : styles.popover} testID={`usage-frame-${props.scope}`}>

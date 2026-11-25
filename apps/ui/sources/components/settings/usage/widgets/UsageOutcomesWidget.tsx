@@ -115,7 +115,7 @@ function UsageOutcomesEmpty(props: UsageBodyProps & Readonly<{
 function UsageOutcomesFacts(props: UsageBodyProps) {
   const theme = useUsagePluginTheme();
   const { theme: appTheme } = useUnistyles();
-  const { summary: projected, format, cell, datum, basisLabel, sessionLabel, openSession } = useUsageWork(
+  const { summary: projected, format, cell, datum, basisLabel, captioned, sessionLabel, openSession } = useUsageWork(
     props.slice, props.query, props.serverId,
   );
   // The presentation owner mounted facts only after admitting this Work population.
@@ -167,7 +167,7 @@ function UsageOutcomesFacts(props: UsageBodyProps) {
       groups: moneyGroups.map((group): Extract<UsageOutcomesModel, { kind: 'work' }>['groups'][number] => ({
             id: group.key,
             label: t('usage.board.work.prLabel'),
-            valueFormatter: value => format(value, group.moneyBasis),
+            valueFormatter: value => captioned(value, group.moneyBasis),
             basis: basisLabel(group.moneyBasis),
             unknownLabel: format(null),
             testID: `${props.testID}.prs`,

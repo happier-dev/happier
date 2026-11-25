@@ -63,6 +63,25 @@ describe('neutral intervals and outcomes', () => {
       expect(query(mount.container, 'hover-time-readout')?.textContent).toContain('Weekly');
     } finally { mount.unmount(); }
   });
+  it('keeps a plotted scatter\'s values behind its Exact values toggle, every column named (acceptance r227 #71)', () => {
+    const mount = mountThroughReactNativeWeb(<OutcomeScatter theme={SURFACE_CONTEXT_THEME_FIXTURE} testID="value" label="Session value"
+      xLabel="Cost" yLabel="Merged PRs" annotationLabel="Pull request" valuesLabel="Exact values" valuesCollapseLabel="Hide values"
+      geometry={{ width: 500, height: 320 }} points={[{ id: 'a', label: 'Audit', x: 4, y: 0, annotation: '#2 · open' },
+        { id: 'b', label: 'Docs', x: 9, y: 1, annotation: '#6 · merged' }]} />);
+    try {
+      // At rest the plot is the body: no value rows repeat its points.
+      expect(query(mount.container, 'value-plot')).not.toBeNull();
+      expect(query(mount.container, 'value-values')).toBeNull();
+      const toggle = query(mount.container, 'value-values-toggle')!;
+      expect(toggle.textContent).toBe('Exact values');
+      expect(toggle.tabIndex).toBe(0);
+      act(() => toggle.click());
+      expect(query(mount.container, 'value-values-toggle')!.textContent).toBe('Hide values');
+      const headers = [...mount.container.querySelectorAll<HTMLElement>('[data-testid^="value-values-header-"]')].map(node => node.textContent);
+      expect(headers).toEqual(['Session value', 'Cost', 'Merged PRs', 'Pull request']);
+      expect(query(mount.container, 'value-values-row-0')!.getAttribute('aria-label')).toContain('Merged PRs: 0');
+    } finally { mount.unmount(); }
+  });
   it('names a caller-chosen scatter point beside its mark and draws a supplied reference value at its exact position', () => {
     const mount = mountThroughReactNativeWeb(<OutcomeScatter theme={SURFACE_CONTEXT_THEME_FIXTURE} testID="scatter" label="Runs"
       xLabel="Cost" yLabel="Merged" geometry={{ width: 500, height: 320 }}
@@ -414,6 +433,7 @@ describe('neutral intervals and outcomes', () => {
       size={size} geometry={{ width, height: 180 }} />;
     const mount = mountThroughReactNativeWeb(render(500));
     try {
+      act(() => query(mount.container, 'laboratory-values-toggle')!.click());
       expect(query(mount.container, 'laboratory-values-row-3')).not.toBeNull();
       expect(query(mount.container, 'laboratory-values-row-3')!.getAttribute('aria-label')).toContain('Charge: Unknown, Deflection: 0');
       expect(query(mount.container, 'laboratory-point-missing')).toBeNull();
@@ -451,6 +471,8 @@ describe('neutral intervals and outcomes', () => {
       points={[{ id: 'outside', label: 'Outside', x: -1, y: 0 }, { id: 'invalid', label: 'Unavailable', x: 0, y: Number.NaN }]}
       geometry={{ width: 500, height: 180 }} />);
     try {
+      // The plot is the body; the exact list, unplotted observations included, is one press away.
+      act(() => query(mount.container, 'readings-values-toggle')!.click());
       expect(query(mount.container, 'readings-values-row-0')).not.toBeNull();
       expect(query(mount.container, 'readings-values-row-0')!.getAttribute('aria-label')).toContain('Time: -1');
       expect(query(mount.container, 'readings-values-row-1')!.getAttribute('aria-label')).toContain('Pressure: Unknown');
@@ -471,6 +493,8 @@ describe('neutral intervals and outcomes', () => {
       expect(query(mount.container, 'coincident-point-second')).not.toBeNull();
       expect(query(mount.container, 'coincident-select-first')).toBeNull();
       expect(query(mount.container, 'coincident-select-second')).toBeNull();
+      expect(mount.container.querySelectorAll('[data-testid^="coincident-values-row-"]')).toHaveLength(0);
+      act(() => query(mount.container, 'coincident-values-toggle')!.click());
       expect(mount.container.querySelectorAll('[data-testid^="coincident-values-row-"]')).toHaveLength(3);
       act(() => query(mount.container, 'coincident-select-isolated')!.click());
       expect(query(mount.container, 'coincident-readout')!.textContent).toContain('Third sample');

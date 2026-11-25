@@ -6,10 +6,12 @@ import type { HappierUiTheme } from '../../environment/types.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import type { HappierLayoutChangeEvent } from '../portableTypes.js';
 import { HappierText } from '../text/Text.js';
-import { HappierDataRows } from './DataRows.js';
+import { useOptionalHappierUiLocalization } from '../../environment/context.js';
+import { HappierDataRows, HappierDataTable } from './DataRows.js';
 import { formatHappierDataValue, resolveHappierDataDomainFraction } from './dataModel.js';
 import { HAPPIER_DATA_METRICS, useHappierDataTextStyles } from './dataText.js';
 import { ChartDatum, ChartMark } from './ChartDatum.js';
+import { HappierDataValuesToggle } from './ValuesToggle.js';
 
 function finiteDomain(values: readonly (number | null)[]): readonly [number, number] | null {
   let min = Infinity;
@@ -51,6 +53,11 @@ export type OutcomeScatterProps = Readonly<{
   yDomain?: readonly [number, number];
   basis?: string;
   unknownLabel?: string;
+  /** The header of the points' annotation column in the exact values. */
+  annotationLabel?: string;
+  /** The Details control's words, closed and open; the exact values wait behind it while the plot is drawn. */
+  valuesLabel?: string;
+  valuesCollapseLabel?: string;
   size?: 'inline' | 'tile' | 'full';
   geometry?: Readonly<{ width: number; height: number }>;
   testID?: string;
@@ -61,6 +68,11 @@ export function OutcomeScatter(props: OutcomeScatterProps) {
   const nativeTarget = useHappierNativeMinimumInteractiveTargetSize();
   const [measuredWidth, setMeasuredWidth] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [valuesExpanded, setValuesExpanded] = useState(false);
+  const localization = useOptionalHappierUiLocalization();
+  const valuesLabel = props.valuesLabel ?? localization?.translate('happier.plugin-ui.state.details', 'Details') ?? 'Details';
+  const collapseLabel = props.valuesCollapseLabel ?? (props.valuesLabel === undefined
+    ? localization?.translate('happier.plugin-ui.state.collapseDetails', 'Collapse') ?? 'Collapse' : valuesLabel);
   const unknown = props.unknownLabel ?? 'Unknown';
   const format = (value: number | null) => value !== null && Number.isFinite(value) ? formatHappierDataValue(value, text.locale) : unknown;
   const formatX = (value: number | null) => value !== null && Number.isFinite(value) && props.formatX ? props.formatX(value) : format(value);
@@ -99,6 +111,10 @@ export function OutcomeScatter(props: OutcomeScatterProps) {
   const captionLine = text.caption.lineHeight ?? props.theme.typography.caption.lineHeight;
   const guides = (props.xGuides ?? []).filter((guide) => Number.isFinite(guide.value));
   const radius = HAPPIER_DATA_METRICS.lineStrokePx * 2;
+  // Every column is named, the annotations too (acceptance r227 #71: an unheaded column read as a stray number).
+  const annotated = props.points.some((point) => point.annotation);
+  const columns = [{ label: props.label }, { label: props.xLabel }, { label: props.yLabel },
+    ...(annotated ? [{ label: props.annotationLabel ?? valuesLabel }] : [])];
 
   return <View testID={props.testID} onLayout={(event: HappierLayoutChangeEvent) => setMeasuredWidth(event.nativeEvent.layout.width)}
     style={{ gap: HAPPIER_DATA_METRICS.blockGapPx }}>
@@ -169,15 +185,24 @@ export function OutcomeScatter(props: OutcomeScatterProps) {
     </View> : null}
     {selected ? <HappierText testID={props.testID ? `${props.testID}-readout` : undefined} style={text.captionStrong}
       accessibilityLiveRegion="polite" tabularNumbers>{describe(selected)}</HappierText> : null}
-    <HappierDataRows theme={props.theme} label={props.label} testID={props.testID ? `${props.testID}-values` : undefined}
+    {/* The plot is the body: its exact table waits behind Details, as in StackedSeriesChart and IntervalTimeline,
+        instead of listing every point again at rest. Without a plot the rows are the body. */}
+    {showPlot ? <HappierDataValuesToggle theme={props.theme} testID={props.testID ? `${props.testID}-values-toggle` : undefined}
+      label={valuesExpanded ? collapseLabel : valuesLabel} expanded={valuesExpanded}
+      accessibilityLabel={`${props.label} · ${valuesExpanded ? collapseLabel : valuesLabel}`}
+      onPress={() => setValuesExpanded((value) => !value)} style={{ alignSelf: 'flex-end' }} /> : null}
+    {showPlot ? (valuesExpanded ? <HappierDataTable theme={props.theme} label={props.label} testID={props.testID ? `${props.testID}-values` : undefined}
+      columns={columns}
+      rows={props.points.map((point) => [point.label, exactX(point.x), format(point.y), ...(annotated ? [point.annotation ?? ''] : [])])} /> : null)
+      : <HappierDataRows theme={props.theme} label={props.label} testID={props.testID ? `${props.testID}-values` : undefined}
       density={props.size === 'inline' || props.size === 'tile' ? 'compact' : 'comfortable'}
       rowIds={props.points.map((point) => point.id)}
-      columns={[{ label: props.label }, { label: props.xLabel }, { label: props.yLabel }, { label: '' }]}
+      columns={annotated ? columns : [...columns, { label: '' }]}
       renderRow={(_row, visual, index) => {
         const point = props.points[index]!;
         return formatX(point.x).includes(format(point.x)) ? visual
           : <ChartDatum datum={datumOf(point)} testID={props.testID ? `${props.testID}-row-datum-${point.id}` : undefined}>{visual}</ChartDatum>;
       }}
-      rows={props.points.map((point) => [point.label, formatX(point.x), format(point.y), ...(point.annotation ? [point.annotation] : [])])} />
+      rows={props.points.map((point) => [point.label, formatX(point.x), format(point.y), ...(point.annotation ? [point.annotation] : [])])} />}
   </View>;
 }

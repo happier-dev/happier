@@ -1815,6 +1815,29 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.findHostByTestId('value.open.s2')).not.toBeNull();
   });
 
+  it('says the cost basis once, by the caption, and leaves Cost per PR, Session value and scatter amounts bare (acceptance r227 #70)', async () => {
+    const phrase = usageCostKindPhrase('reported');
+    const screen = await renderScreen(<WidgetPresentationProvider value={{ size: 'full',
+      footprint: { columns: 2, columnSpan: 2, rowSpan: 2, width: 'full', height: 'tall' },
+      geometry: { width: 700, height: 500 } }}>
+      <UsageOutcomesWidget {...props} id="usage_outcomes" testID="outcomes" />
+      <UsageSessionValueWidget {...props} id="usage_session_value" testID="value" />
+    </WidgetPresentationProvider>);
+    const captioned = screen.findAllByType(RankedRows).filter(rows => rows.props.basis);
+    expect(captioned.map(rows => rows.props.testID)).toEqual(expect.arrayContaining(['outcomes.prs']));
+    for (const rows of captioned) {
+      expect.soft(String(rows.props.basis).split(phrase), String(rows.props.testID)).toHaveLength(2);
+      expect.soft(rows.props.valueFormatter(3), String(rows.props.testID)).toBe(formatUsageCost(3, 'USD'));
+    }
+    const scatter = screen.findByType(OutcomeScatter);
+    expect(String(scatter.props.basis).split(phrase)).toHaveLength(2);
+    expect(scatter.props.formatX(3)).toBe(formatUsageCost(3, 'USD'));
+    // The amount's accessible name carries the basis once: the caption's words, not the amount's.
+    const spoken = String(screen.findHostByTestId('outcomes.prs-row-0')?.props.accessibilityLabel ?? '');
+    expect(spoken).toContain(formatUsageCost(3, 'USD'));
+    expect(spoken.split(phrase)).toHaveLength(2);
+  });
+
   it('shows unlinked Sessions once when a wide scatter has no witnessed outcome axis', async () => {
     const unlinked = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions, evidence: [] }));
     const screen = await renderScreen(<WidgetPresentationProvider value={{ size: 'full',

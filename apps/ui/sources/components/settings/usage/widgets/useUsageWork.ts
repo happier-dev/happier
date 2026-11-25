@@ -97,6 +97,10 @@ export function useUsageWork(
   }, [format, query.metric, summary?.moneyBasis]);
   const basisLabel = React.useCallback((moneyBasis: UsageWorkMoneyBasis | null) => moneyBasis
     ? `${usageCostKindPhrase(moneyBasis.kind)} · ${moneyBasis.currency}` : undefined, []);
+  // An amount under `basisLabel`'s caption is bare: the caption names its basis once (acceptance r224 #47, r227 #70).
+  const captioned = React.useCallback((value: number, moneyBasis: UsageWorkMoneyBasis | null) =>
+    query.metric === 'cost' && moneyBasis ? formatUsageCost(value, moneyBasis.currency) : format(value, moneyBasis),
+    [format, query.metric]);
   const projectMachineIds = React.useMemo(() => summary?.projects.flatMap(row => row.machineIds) ?? EMPTY_MACHINE_IDS, [summary]);
   const { machineNames, machinePlace, sessionLabel, openSession } = useUsageWorkSessionNavigation(
     summary?.sessions ?? EMPTY_SESSION_IDENTITIES, query, serverId, projectMachineIds,
@@ -107,7 +111,7 @@ export function useUsageWork(
   const projectPlaces = React.useMemo(() => new Map((summary?.projects ?? []).map(row =>
     [row.projectKey, row.projectKey === null ? '' : machinePlace(row.machineIds)] as const)), [summary, machinePlace]);
   const projectPlace = React.useCallback((projectKey: string | null) => projectPlaces.get(projectKey) ?? '', [projectPlaces]);
-  return { summary, format, cell, datum, basisLabel, projectLabel: projectName, projectPlace, sessionLabel, openSession, machineNames };
+  return { summary, format, cell, datum, basisLabel, captioned, projectLabel: projectName, projectPlace, sessionLabel, openSession, machineNames };
 }
 
 /** Session controls need identity and labels even when an empty body consumes no Work amounts. */

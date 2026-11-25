@@ -91,13 +91,16 @@ export function buildUsageSummary(input: Readonly<{
     }));
     const shown = input.live ?? input.saved;
     if (!shown && pending.length === 0) return NOTHING;
+    // Only a reading a surface shows dates it: an account that reports no usage is folded into a count, so its
+    // last read (days old, perhaps) never dates the minute-old rows beside it (acceptance r227 #68).
+    const readings = (shown?.entries ?? []).filter((entry) => entry.meters.length > 0);
     return {
         entries: shown?.entries ?? [],
         accounts: [...(shown?.entries ?? []).map(toAccount), ...pending],
-        asOf: shown && shown.entries.length > 0 && shown.entries.every((entry) => entry.fetchedAt != null)
-            ? Math.min(...shown.entries.map((entry) => entry.fetchedAt!))
+        asOf: readings.length > 0 && readings.every((entry) => entry.fetchedAt != null)
+            ? Math.min(...readings.map((entry) => entry.fetchedAt!))
             : null,
-        staleAt: resolveStaleAt(shown?.entries ?? []),
+        staleAt: resolveStaleAt(readings),
         source: input.live ? 'live' : input.saved ? 'lastKnown' : 'none',
     };
 }
