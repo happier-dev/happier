@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { parseProjectAccountSnapshotV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
 
-import { createWorkspaceSyncHandoffAdapter, type PrepareWorkspaceSyncHandoffInput } from './workspaceSyncHandoffAdapter';
+import { createWorkspaceSyncHandoffAdapter, materializeWorkspaceSyncForOpen, type PrepareWorkspaceSyncHandoffInput } from './workspaceSyncHandoffAdapter';
 import { computeWorkspaceSyncPolicyDigest, type ManagedWorkspaceSync, type WorkspaceSyncStatusV1 } from './workspaceSyncTypes';
 import { createWorkspaceSyncRelationshipOwner } from './workspaceSyncRelationshipOwner';
 import { createWorkspaceRootOwnershipManager } from './workspaceSyncRootOwnership';
@@ -14,6 +14,14 @@ import { prepareWorkspaceSyncBetween } from './workspaceSyncPreparation';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { PrivateProjectNativeSync } from '@/workspaces/activation/privateProjectSyncEffect';
 import type { ActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
+import { WorkspaceSyncController } from './workspaceSyncController';
+import { createWorkspaceSyncMutagenAdapter } from './workspaceSyncMutagenAdapter';
+import { BrokerProtocolError, deriveWorkspaceSyncEndpointId } from './transport/workspaceSyncBrokerProtocol';
+import { materializeLocalWorkspaceSyncSeed } from './workspaceSyncSeedTransfer';
+import { createScmBackendRegistry } from '@/scm/registry';
+import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
+import { runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
+import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
 
 const relationshipStatus: WorkspaceSyncStatusV1 = {
   relationshipId: 'rel-1', controllerMachineId: 'machine-a', state: 'watching',
@@ -26,6 +34,91 @@ const relationshipStatus: WorkspaceSyncStatusV1 = {
 };
 
 describe('WorkspaceSyncHandoffAdapter', () => {
+  it.each(['ready', 'busy'] as const)('settles the Git-selected Return stage through its owner (%s)', async state => {
+    const dir = await mkdtemp(join(tmpdir(), 'workspace-return-seed-'));
+    const source = { id: 'copy', serverId: 'home', machineId: 'controller', rootPath: join(dir, 'copy'), createdAtMs: 1 };
+    const target = { ...source, id: 'review', rootPath: join(dir, 'review') };
+    const policy = { v: 1 as const, selection: 'git_worktree' as const, contentOnly: true as const,
+      extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const policyDigest = computeWorkspaceSyncPolicyDigest(policy);
+    const request: PrepareWorkspaceSyncHandoffInput = { operationId: 'return-prepare',
+      action: { kind: 'copy_once', contentPolicy: { ...policy, policyDigest } },
+      sourceMachineId: source.machineId, sourceWorkspaceRefId: source.id, sourceRootPath: source.rootPath,
+      targetMachineId: target.machineId, targetWorkspaceRefId: target.id, targetRootPath: target.rootPath };
+    const registration = createGitScmBackendRuntimeRegistration();
+    const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+      definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+      executableDefinition: registration.runtime!, registration,
+    })]);
+    const rootOwnershipManager = createWorkspaceRootOwnershipManager({ lockDirectory: join(dir, 'locks') });
+    const resolveWorkspaceRef = (id: string) => [source, target].find(ref => ref.id === id) ?? null;
+    const sync = new WorkspaceSyncController({ localMachineId: 'controller', localServerId: 'home',
+      rootOwnershipManager, resolveWorkspaceRef,
+      lifecycle: { start: async () => undefined, stop: async () => undefined },
+      adapter: createWorkspaceSyncMutagenAdapter({ resolveWorkspaceRef, send: async command => {
+        if (command.t === 'list') return { sessions: [], nextCursor: null };
+        if (command.t === 'terminate') return null;
+        if (command.t === 'resume') {
+          // The native manager refuses a Git-selected beta whose seed has no .git.
+          throw new BrokerProtocolError('git_selection_unavailable', 'unable to connect to beta');
+        }
+        if (command.t !== 'create') throw new Error(`Unexpected native command: ${command.t}`);
+        const endpoint = (role: 'alpha' | 'beta') => ({ protocol: 'external',
+          host: deriveWorkspaceSyncEndpointId(request.operationId, role), path: '',
+          state: { connected: false, scanned: false, scanProblemCount: 0, transitionProblemCount: 0 } });
+        return { identifier: request.operationId, name: request.operationId, labels: command.session.labels,
+          alpha: endpoint('alpha'), beta: endpoint('beta'), mode: 'one-way-safe', paused: true,
+          status: 'paused', successfulCycles: 0, conflictCount: 0 };
+      } }),
+    });
+    const adapter = createWorkspaceSyncHandoffAdapter({ sync, bootstrap: async () => {
+      const boot = await workspaceSyncTargetBootstrap({ rootPath: target.rootPath, sourceRootPath: source.rootPath,
+        relationshipId: request.operationId, endpointRole: 'beta', policyDigest, targetWorkspaceRefId: target.id,
+        contentSelection: policy.selection, contentOnly: true, createIfMissing: true,
+        materializationDirectory: join(dir, 'stage'), rootOwnershipManager, targetBootstrap: 'materialize_from_source_workspace',
+        materializeSeed: async seed => await materializeLocalWorkspaceSyncSeed({ operationId: seed.relationshipId,
+          activeServerDir: dir, sourcePath: source.rootPath, targetPath: seed.canonicalRoot, registry,
+          workspaceTransfer: { includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [], contentOnly: true },
+          materializationReceiptPath: seed.materializationReceiptPath, originalTargetExists: seed.originalTargetExists,
+          targetFence: seed.targetFence }),
+      });
+      return { targetWorkspace: target, copyOnceBaseline: boot.copyOnceBaseline, ownershipHandles: boot.ownershipHandles,
+        release: async reason => {
+          if (reason === 'commit') await boot.materializationCustody?.commit();
+          else await boot.materializationCustody?.abort();
+          await boot.release();
+        } };
+    } });
+    try {
+      await mkdir(source.rootPath);
+      runScmExecutable(source.rootPath, 'git', ['init', '-q']);
+      await writeFile(join(source.rootPath, '.gitignore'), 'ignored.txt\n');
+      await writeFile(join(source.rootPath, 'kept.txt'), 'returned edit\n');
+      await writeFile(join(source.rootPath, 'ignored.txt'), 'stays on the controller\n');
+      if (state === 'busy') {
+        const lock = await rootOwnershipManager.tryAcquire({ ownerId: 'another-operation',
+          canonicalRoot: dir, operation: 'bootstrap' });
+        if ('kind' in lock) throw new Error('Could not hold the Return stage for the refusal test');
+        try {
+          await expect(materializeWorkspaceSyncForOpen(adapter, request)).rejects.toMatchObject({
+            name: 'WorkspaceSyncPreparationRefusal', code: 'workspace_root_in_use',
+            cause: { failureCause: { phase: 'projects.open', errorCode: 'workspace_root_in_use' } },
+          });
+          await expect(lstat(target.rootPath)).rejects.toMatchObject({ code: 'ENOENT' });
+        } finally { await lock.release(); }
+      }
+      await expect(materializeWorkspaceSyncForOpen(adapter, request)).resolves.toMatchObject({
+        copyOnceBaseline: { entries: expect.arrayContaining([expect.objectContaining({ relativePath: 'kept.txt' })]) },
+      });
+      await expect(readFile(join(target.rootPath, 'kept.txt'), 'utf8')).resolves.toBe('returned edit\n');
+      await expect(lstat(join(target.rootPath, '.git'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(lstat(join(target.rootPath, 'ignored.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      try { await adapter.abort({ operationId: request.operationId }); }
+      finally { await sync.shutdown(); await rm(dir, { recursive: true, force: true }); }
+    }
+  });
+
   it('settles a bound remote Open without re-acquiring relationship custody or downgrading a later transfer', async () => {
     const adapter = handoffAdapter(managedSync());
     const input = relationshipInput();

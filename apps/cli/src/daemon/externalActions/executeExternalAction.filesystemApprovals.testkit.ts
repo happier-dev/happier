@@ -127,6 +127,10 @@ import { deriveWorkspaceSyncRelationshipId, projectWorkspaceSyncAdmissionInputV1
 import { projectAdmittedExternalActionMachineContext } from './execution';
 import { createProductionDaemonWorkspaceSyncRuntime, type ProductionDaemonWorkspaceSyncRuntime,
   type ProductionDaemonWorkspaceSyncFactories } from '@/daemon/startup/createProductionDaemonWorkspaceSyncRuntime';
+import { createScmBackendRegistry } from '@/scm/registry';
+import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
+import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
+import { materializeLocalWorkspaceSyncSeed } from '@/workspaces/sync/workspaceSyncSeedTransfer';
 import { createDaemonWorkspaceSyncRuntime } from '@/daemon/startup/createDaemonWorkspaceSyncRuntime';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { activateSessionsRoleForMachineClient } from '@/daemon/testkit/sessionsRole.testkit';
@@ -1274,9 +1278,17 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     pluginRuntime = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
       controller: pluginReloadController, runtimeOptions: { pluginIds: ['happier.scm.backend.git'],
         resolveCurrentMachineId: () => target.machineId } });
+    // Seed the review with the real Git backend and executable on this controller.
+    const registration = createGitScmBackendRuntimeRegistration();
+    const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+      definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.backend.git/git',
+      executableDefinition: registration.runtime!, registration,
+    })]);
     const composed = await createProductionDaemonWorkspaceSyncRuntime({ happyHomeDir: configuration.happyHomeDir,
       activeServerDir: configuration.activeServerDir, activeServerId: 'srv_n2', localMachineId: target.machineId,
-      releaseChannel: 'publicdev', credentials, openManagedProjectWorkspace: returnFixture.openTarget });
+      releaseChannel: 'publicdev', credentials, openManagedProjectWorkspace: returnFixture.openTarget }, {
+      materializeLocalSeed: request => materializeLocalWorkspaceSyncSeed({ ...request, registry }),
+    });
     workerWorkspaceSync = composed;
     composed.start();
     syncRuntimes.push(composed);

@@ -29,6 +29,7 @@ import {
   type HandoffTargetReplacementPreflightResultV1,
 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import { projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isDeepStrictEqual } from 'node:util';
 import type { WorkspaceSyncSourceContextV1 } from '@happier-dev/protocol/socketRpc';
 import type { RpcHandlerContext } from '@/api/rpc/types';
@@ -223,7 +224,15 @@ export interface WorkspaceSyncHandoffAdapter {
 /** One containing agent-free Open; the same adapter owns clean bytes, READY and commit custody. */
 export async function materializeWorkspaceSyncForOpen(adapter: WorkspaceSyncHandoffAdapter, request: PrepareWorkspaceSyncHandoffInput,
   context?: RpcHandlerContext, authority?: WorkspaceSyncHandoffSourcePhaseAuthority): Promise<Pick<WorkspaceSyncHandoffPrepared, 'copyOnceBaseline' | 'copyOnceExcludedPaths'>> {
-  const prepared = await adapter.prepare(request, authority, context);
+  const prepared = await adapter.prepare(request, authority, context).catch((error: unknown) => {
+    const code = readActionErrorCodeV1(error);
+    if (request.action.kind === 'copy_once' && request.action.contentPolicy.contentOnly && code === 'workspace_root_in_use') {
+      // Root admission refused the seed before transferring files. Open may have recorded the endpoints already.
+      throw new WorkspaceSyncPreparationRefusal(code, { ok: false, errorCode: code, error: code,
+        failureCause: projectActionFailureCauseV1(error, 'projects.open', { allowUnknownErrorCode: true }) });
+    }
+    throw error;
+  });
   // A retained prepare can be reused; finalization still starts forward effects.
   request.onEffectsIssued?.();
   await adapter.finalize({ operationId: request.operationId, prepared, signal: request.signal });
@@ -683,7 +692,10 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
         let traversed = prepared.traversed;
         if (prepared.action.kind === 'copy_once') {
           if (!preparedInput) throw Object.assign(new Error('Workspace sync preparation authority is unavailable'), { code: 'workspace_sync_prepare_missing' });
-          if (!sameExecutionWorkspace(preparedInput)) {
+          // The seed is the completed content-only copy. Its receiver is a file
+          // tree, so it cannot join a Git worktree sync session.
+          const seededContentOnly = prepared.action.contentPolicy.contentOnly && prepared.copyOnceBaseline !== undefined;
+          if (!seededContentOnly && !sameExecutionWorkspace(preparedInput)) {
             status = assertWorkspaceSyncStatusClean(
               await deps.sync.copyOnce(copyOnceInput(preparedInput), input.signal, operation?.fence?.ownershipHandles),
             );

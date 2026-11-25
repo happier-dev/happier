@@ -70,12 +70,14 @@ it('brings an SSH Project copy back through the UI review and owner approval to 
       await mkdir(original, { recursive: true });
       await mkdir(copy);
       await writeFile(join(original, 'tracked.txt'), 'guest baseline\n');
-      runScmExecutable(copy, 'git', ['init', '-q', '--separate-git-dir', join(h.directory, 'controller-git')]);
+      runScmExecutable(copy, 'git', ['init', '-q']);
+      await writeFile(join(copy, '.gitignore'), 'local-only.txt\n');
       await writeFile(join(copy, 'tracked.txt'), 'guest baseline\n');
-      runScmExecutable(copy, 'git', ['add', 'tracked.txt']);
+      runScmExecutable(copy, 'git', ['add', '.gitignore', 'tracked.txt']);
       runScmExecutable(copy, 'git', ['-c', 'user.name=Return Fixture', '-c', 'user.email=return@example.test', 'commit', '-qm', 'base']);
       const baseline = await scanWorkspaceManifest({ workspaceRoot: original, safeFilterPolicy: { excludeAdministrativePaths: true } });
       await writeFile(join(copy, 'tracked.txt'), 'reviewed copy edit\n');
+      await writeFile(join(copy, 'local-only.txt'), 'ignored controller file\n');
       const source: ManagedWorkspaceRefV2 = { v: 2, kind: 'managed', id: 'ssh-original', managedId: 'ssh-fixture',
         controller: { machineId: 'machine', installationId: h.installation.installationId }, rootPath: original, serverId: 'srv_n2', createdAtMs: 1 };
       const copyRef = { ...h.ref, id: 'return-copy', rootPath: copy };
@@ -136,6 +138,8 @@ it('brings an SSH Project copy back through the UI review and owner approval to 
         filePath: file.path, unifiedDiff: file.evidence.unifiedDiff ?? '',
       }))));
       expect.soft(files.map(file => file.filePath)).toContain('tracked.txt');
+      expect(files.map(file => file.filePath)).not.toContain('local-only.txt');
+      expect(files.filter(file => file.filePath === '.git' || file.filePath.startsWith('.git/'))).toEqual([]);
       expect(files.find(file => file.filePath === 'tracked.txt')?.unifiedDiff).toContain('+reviewed copy edit');
       await expect(readFile(join(original, 'tracked.txt'), 'utf8')).resolves.toBe('guest baseline\n');
       const selection = { ...target, returnId: review.returnId, paths: ['tracked.txt'] };
