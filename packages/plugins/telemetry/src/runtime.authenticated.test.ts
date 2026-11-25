@@ -7,6 +7,7 @@ import { captureMigrations } from './store/capture.js';
 import { createCaptureSqliteFixture } from './testing/sqlite.js';
 import { createTelemetryAssignments } from './telemetry/assignments.js';
 import { createCaptureSelectedSourceReaders } from './actions.js';
+import { DatabaseCaptureQueryGetResultV1Schema } from '@happier-dev/database-protocol';
 
 const partition = 'environment:production';
 const token = 'fixture-exporter-token';
@@ -132,7 +133,10 @@ describe('authenticated collector writer admission through HTTP and SQLite', () 
                 expect(row.bodyPrefix).not.toContain('super-secret-token');
                 expect(row.bodyPrefix).not.toContain('second line');
             }
-            const detail = await f.runtime.store.detail(partition, rows[0]!.id);
+            const source = { kind: 'environment', serverId: 'home', environmentId: 'production' } as const;
+            const reads = createCaptureSelectedSourceReaders({ source, partition, runtime: f.runtime });
+            const detail = DatabaseCaptureQueryGetResultV1Schema.parse(await reads.getCapturedQuery({ source, id: rows[0]!.id }));
+            expect(detail).toMatchObject({ ok: true, detail: { secretMasking: 'incomplete' } });
             expect(JSON.stringify(detail)).not.toContain('super-secret-token');
             expect(JSON.stringify(detail)).toContain('second line');
         } finally { await receiver.release(); f.close(); }
@@ -140,10 +144,11 @@ describe('authenticated collector writer admission through HTTP and SQLite', () 
 
     it('waits before reading concurrent bodies and acknowledges only committed batches', async () => {
         const f = await fixture(), requests: IncomingMessage[] = [];
+        const exporterCount = 20;
         let admitted = () => {};
         const allAdmitted = new Promise<void>(resolve => { admitted = resolve; });
         const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition }, admit: request => {
-            requests.push(request); if (requests.length === 3) admitted(); return f.assignments.admit(request);
+            requests.push(request); if (requests.length === exporterCount) admitted(); return f.assignments.admit(request);
         } });
         let held: ReturnType<typeof f.holdNextCommit> | undefined;
         const responses: Promise<Response>[] = [];
@@ -155,15 +160,15 @@ describe('authenticated collector writer admission through HTTP and SQLite', () 
             let firstAcknowledged = false;
             responses.push(post(receiver.endpoint, 2).then(response => { firstAcknowledged = true; return response; }));
             await held.entered;
-            responses.push(post(receiver.endpoint, 3), post(receiver.endpoint, 4));
+            for (let index = 3; index < exporterCount + 2; index++) responses.push(post(receiver.endpoint, index));
             await allAdmitted;
             await new Promise<void>(resolve => setImmediate(resolve));
             expect(firstAcknowledged).toBe(false);
-            expect(requests.slice(1).map(request => request.readableDidRead)).toEqual([false, false]);
+            expect(requests.slice(1).every(request => !request.readableDidRead)).toBe(true);
             expect(requests.slice(1).some(request => request.readableFlowing === true)).toBe(false);
             held.release();
             for (const response of await Promise.all(responses)) { expect(response.status).toBe(200); expect(await response.json()).toEqual({}); }
-            expect(await f.runtime.store.list({ worktree: partition, kind: 'query', limit: 10 })).toHaveLength(4);
+            expect(await f.runtime.store.list({ worktree: partition, kind: 'query', limit: exporterCount + 1 })).toHaveLength(exporterCount + 1);
             expect(f.runtime.ingest.coverage(partition)).toEqual({ lostObservations: 0, reason: null });
         } finally { held?.release(); await Promise.allSettled(responses); await receiver.release(); await f.runtime.ingest.settled(); f.close(); }
     });

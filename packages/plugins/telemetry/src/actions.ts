@@ -239,7 +239,10 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
                 traceId: input.traceId, worktree: selected.partition, kind: 'query' }), input.page.limit);
         },
         async getCapturedQuery(input: database.DatabaseCaptureQueryGetInputV1) {
-            return { ok: true as const, source: selected.source, detail: await selected.runtime.store.detail(selected.partition, input.id) };
+            const detail = await selected.runtime.store.detail(selected.partition, input.id);
+            // App log text has known patterns masked, but the producer cannot identify arbitrary app secrets.
+            return { ok: true as const, source: selected.source,
+                detail: detail?.log === undefined ? detail : { ...detail, secretMasking: 'incomplete' } };
         },
         async listCapturedTraces(input: database.DatabaseCaptureTracesListInputV1) {
             const operands = { ...input.page, since: input.since, until: input.until, worktree: selected.partition };
