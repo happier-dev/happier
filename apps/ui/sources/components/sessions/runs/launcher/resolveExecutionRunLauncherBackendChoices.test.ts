@@ -8,7 +8,7 @@ vi.mock('@/text', async () => {
     });
 });
 
-import { resolveExecutionRunLauncherBackendChoices, resolveInitialExecutionRunBackendTargetKey, reviewEngineRunnerChoices } from './resolveExecutionRunLauncherBackendChoices';
+import { resolveExecutionRunLauncherBackendChoices, resolveInitialExecutionRunBackendTargetKey } from './resolveExecutionRunLauncherBackendChoices';
 import { AcpCatalogRecordV1Schema, type AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 import { readBundledAgentPresentation } from '@happier-dev/agents/presentation';
@@ -39,14 +39,21 @@ const acpCatalogSnapshot: AcpCatalogSnapshotV1 = {
 };
 
 describe('resolveExecutionRunLauncherBackendChoices', () => {
-    it('uses declared runner identities and the existing inventory readiness, never unrelated Agents', () => {
-        const choices = resolveExecutionRunLauncherBackendChoices({ enabledAgentIds: [], intent: 'review', executionRunsBackends: {},
+    it('projects declared engine runners without standalone reviewer readiness', () => {
+        const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+        const choices = resolveExecutionRunLauncherBackendChoices({ enabledAgentIds: ['codex'], intent: 'review', executionRunsBackends: {},
             reviewEngines: [
-                { engineId: 'codex', value: 'agent:happier.agent.codex/codex', label: 'Codex', enabled: false, available: false, capabilities: { structuredNarration: false } },
-                { engineId: 'claude', value: 'agent:happier.agent.claude/claude', label: 'Claude', enabled: true, available: true, capabilities: { structuredNarration: false } },
+                { engineId: 'deepsec', value: 'agent:happier.review.deepsec/deepsec', label: 'DeepSec', enabled: true,
+                    capabilities: { structuredNarration: false }, runnerAgents: [{ agentTarget, providerProtocols: ['openai-responses'] }] },
+                { engineId: 'codex', value: 'agent:happier.agent.codex/codex', label: 'Codex', enabled: false,
+                    readiness: 'needsSignIn', capabilities: { structuredNarration: false } },
             ] });
-        expect(reviewEngineRunnerChoices([{ agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, providerProtocols: ['openai-responses'] }], choices))
-            .toEqual([expect.objectContaining({ choice: choices[0], providerProtocols: ['openai-responses'] })]);
+        expect(choices[0]).toMatchObject({ reviewRunnerChoices: [{ agentTarget, providerProtocols: ['openai-responses'],
+            choice: { backendTarget: agentTarget, title: 'Codex', disabled: false,
+                agentCatalogEntry: { identity: agentTarget.identity, connectedAccounts: expect.arrayContaining([
+                    expect.objectContaining({ purpose: 'primary' }),
+                ]) } } }] });
+        expect(choices[1]?.disabled).toBe(true);
     });
     it('projects exact ready and unavailable engines from the daemon Review Action without reading UI eligibility', () => {
         const targetKey = 'agent:acme.review/reviewer';

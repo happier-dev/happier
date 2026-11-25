@@ -2,26 +2,26 @@ import { describe, expect, it } from 'vitest';
 import { ReviewStartInputSchema, type ReviewReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { applyExecutionRunChildSelection, selectReviewLauncherRunner } from './executionRunChildChoice';
 import { compileReviewLauncherInput, updateReviewLauncherEngineConfiguration, updateReviewLauncherStepInput, updateReviewLauncherReviewerInput, appendReviewLauncherEngineMember, selectReviewLauncherEngines } from './reviewLauncherSelection';
-import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
+import { resolveExecutionRunLauncherBackendChoices } from './resolveExecutionRunLauncherBackendChoices';
 
 describe('review launcher submission', () => {
-    it('defaults a new engine to the first existing member runner when supported, otherwise the first ready runner', () => {
+    it('defaults a new engine to the first supported existing member runner, independent of standalone reviewers', () => {
         const codex = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
         const claude = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
-        const choices: readonly ExecutionRunLauncherBackendChoice[] = [
-            { backendTarget: codex, targetKey: 'agent:happier.agent.codex/codex', backendId: 'codex', agentId: 'codex', title: 'Codex', disabled: false },
-            { backendTarget: claude, targetKey: 'agent:happier.agent.claude/claude', backendId: 'claude', agentId: 'claude', title: 'Claude', disabled: false },
-            { backendTarget: { kind: 'backend', backendId: 'deepsec' }, targetKey: 'deepsec', backendId: 'deepsec', agentId: 'deepsec', title: 'DeepSec', disabled: false,
-                reviewInventoryItem: { engineId: 'deepsec', label: 'DeepSec', enabled: true, capabilities: { structuredNarration: true }, runnerAgents: [
+        const choices = resolveExecutionRunLauncherBackendChoices({ intent: 'review', enabledAgentIds: ['codex', 'claude'], executionRunsBackends: {},
+            reviewEngines: [
+                { engineId: 'codex', value: 'agent:happier.agent.codex/codex', label: 'Codex', enabled: true, capabilities: { structuredNarration: false } },
+                { engineId: 'claude', value: 'agent:happier.agent.claude/claude', label: 'Claude', enabled: true, capabilities: { structuredNarration: false } },
+                { engineId: 'deepsec', label: 'DeepSec', enabled: true, capabilities: { structuredNarration: true }, runnerAgents: [
                     { agentTarget: codex, providerProtocols: ['openai-responses'] }, { agentTarget: claude, providerProtocols: ['anthropic'] },
-                ] } },
-        ];
+                ] },
+            ] });
         const member = { kind: 'engine', engineId: 'roborev', runnerAgentTarget: claude };
         expect(selectReviewLauncherEngines({ reviewers: [member] }, ['roborev', 'deepsec'], choices).reviewers)
             .toEqual([member, { kind: 'engine', engineId: 'deepsec', runnerAgentTarget: claude }]);
         expect(selectReviewLauncherEngines({ reviewers: [] }, ['deepsec'], choices.map(choice => choice.backendId === 'codex'
             ? { ...choice, disabled: true } : choice)).reviewers)
-            .toEqual([{ kind: 'engine', engineId: 'deepsec', runnerAgentTarget: claude }]);
+            .toEqual([{ kind: 'engine', engineId: 'deepsec', runnerAgentTarget: codex }]);
         expect(selectReviewLauncherEngines({ reviewers: [] }, ['deepsec'], choices.filter(choice => choice.backendId === 'deepsec')).reviewers)
             .toEqual([{ kind: 'engine', engineId: 'deepsec', runnerAgentTarget: codex }]);
         expect(selectReviewLauncherEngines({ reviewers: [{ kind: 'engine', engineId: 'deepsec' }] }, ['deepsec'], choices).reviewers)

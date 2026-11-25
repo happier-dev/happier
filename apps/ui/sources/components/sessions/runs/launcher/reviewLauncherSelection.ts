@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { isFreshExecutionRunBackendChoice, reviewEngineRunnerChoices, type ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
+import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
 import {
     ReviewEngineReviewerSelectionV1Schema,
     ReviewReviewerSelectionV1Schema,
@@ -39,11 +39,8 @@ export function selectReviewLauncherEngines(input: Record<string, unknown>, engi
     const next = [...kept, ...added].map(reviewer => {
         if (reviewer.kind !== 'engine' || reviewer.runnerAgentTarget) return reviewer;
         const engine = choices.find(choice => (choice.reviewEngineId ?? choice.backendId) === reviewer.engineId);
-        const declared = engine?.reviewInventoryItem?.runnerAgents ?? [];
-        const runners = reviewEngineRunnerChoices(declared, choices).filter(runner => isFreshExecutionRunBackendChoice(runner.choice));
-        // An enabled engine may use a runner's native route without a ready standalone reviewer row.
-        const runner = declared.find(candidate => buildBackendTargetKeyV2(candidate.agentTarget) === firstRunnerKey)
-            ?? runners[0] ?? declared[0];
+        const runners = engine?.reviewRunnerChoices ?? [];
+        const runner = runners.find(candidate => candidate.choice.targetKey === firstRunnerKey) ?? runners[0];
         if (!runner) return reviewer;
         defaulted = true;
         return { ...reviewer, runnerAgentTarget: runner.agentTarget };

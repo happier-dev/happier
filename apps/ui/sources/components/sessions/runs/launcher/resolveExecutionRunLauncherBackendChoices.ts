@@ -8,16 +8,6 @@ import { t } from '@/text';
 import { formatMachineAgentExecutionState } from '@/components/machines/agents/machineAgentCopy';
 import { REVIEW_ENGINE_SCOPE_UNSUPPORTED, type ReviewEngineListItem } from '@happier-dev/protocol/reviews/reviewEngines';
 
-/** Declared runner targets consume the same Agent rows and readiness as ordinary reviewers. */
-export function reviewEngineRunnerChoices(runners: NonNullable<ReviewEngineListItem['runnerAgents']>,
-    choices: readonly ExecutionRunLauncherBackendChoice[]) {
-    return runners.flatMap(runner => {
-        const key = buildBackendTargetKeyV2(runner.agentTarget);
-        const choice = choices.find(candidate => candidate.targetKey === key);
-        return choice ? [{ ...runner, choice }] : [];
-    });
-}
-
 import {
     getResolvedBackendCatalogEntries,
 } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -43,6 +33,8 @@ export type ExecutionRunLauncherBackendChoice = Readonly<{
     /** Exact id admitted by the review inventory; configured engines retain their Agent target. */
     reviewEngineId?: string;
     reviewInventoryItem?: ReviewEngineListItem;
+    /** Engine-declared runners use catalog presentation, independent of standalone reviewer readiness. */
+    reviewRunnerChoices?: readonly ExecutionRunLauncherReviewRunnerChoice[];
     /** Operational Agent identity that owns this selected backend. */
     agentId: string;
     /** The Agent owner's native Account purposes and exact identity. */
@@ -56,6 +48,10 @@ export type ExecutionRunLauncherBackendChoice = Readonly<{
      * presents it placed and opening setup. It is never a fresh choice, but a saved one stays chosen.
      */
     setup?: MachineAgentSetupRow;
+}>;
+
+type ExecutionRunLauncherReviewRunnerChoice = NonNullable<ReviewEngineListItem['runnerAgents']>[number] & Readonly<{
+    choice: ExecutionRunLauncherBackendChoice;
 }>;
 
 /** A choice a person (or a default) may newly pick: run-capable here and ready on the Machine. */
@@ -167,6 +163,20 @@ export function resolveExecutionRunLauncherBackendChoices(params: ResolveBackend
             return {
                 reviewEngineId: item.engineId,
                 reviewInventoryItem: item,
+                ...(item.runnerAgents ? { reviewRunnerChoices: item.runnerAgents.map(runner => {
+                    const runnerAgentId = resolveBundledAgentIdFromContributionIdentity(runner.agentTarget.identity)
+                        ?? buildQualifiedPluginContributionKey(runner.agentTarget.identity);
+                    const catalog = resolveAgentCatalogProjection(runnerAgentId, params);
+                    return { ...runner, choice: {
+                        backendTarget: runner.agentTarget,
+                        targetKey: buildBackendTargetKeyV2(runner.agentTarget),
+                        backendId: runnerAgentId,
+                        agentId: runnerAgentId,
+                        agentCatalogEntry: catalog,
+                        title: catalog.title,
+                        disabled: !item.enabled,
+                    } };
+                }) } : {}),
                 backendTarget,
                 targetKey,
                 backendId,

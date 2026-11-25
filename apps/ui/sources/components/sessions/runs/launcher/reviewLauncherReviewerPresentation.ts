@@ -6,7 +6,7 @@ import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogPr
 import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { resolveRunNativeModelLabel } from '@/components/sessions/runs/resolveExecutionRunSelectionLabel';
 import { t } from '@/text';
-import { reviewEngineRunnerChoices, type ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
+import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
 
 export type ReviewLauncherInheritedModel = Readonly<{
     selection: NonNullable<ReviewEngineReviewerSelectionV1['modelSelection']>;
@@ -16,12 +16,12 @@ export type ReviewLauncherInheritedModel = Readonly<{
 /** The Who row and its open detail identify the same intentional invocation. */
 export function presentReviewLauncherReviewer(reviewer: ReviewEngineReviewerSelectionV1, index: number,
     reviewers: readonly ReviewReviewerSelectionV1[], choice: ExecutionRunLauncherBackendChoice,
-    choices: readonly ExecutionRunLauncherBackendChoice[], inheritedModel?: ReviewLauncherInheritedModel): Readonly<{ label: string; subtitle: string }> {
+    inheritedModel?: ReviewLauncherInheritedModel): Readonly<{ label: string; subtitle: string }> {
     const members = reviewers.flatMap((member, position) => member.kind === 'engine' && member.engineId === reviewer.engineId ? [position] : []);
     const label = members.length > 1 ? `${choice.title} ${members.indexOf(index) + 1}` : choice.title;
     const runnerKey = reviewer.runnerAgentTarget ? buildBackendTargetKeyV2(reviewer.runnerAgentTarget) : null;
-    const runner = runnerKey ? reviewEngineRunnerChoices(choice.reviewInventoryItem?.runnerAgents ?? [], choices)
-        .find(candidate => candidate.choice.targetKey === runnerKey)?.choice : null;
+    const runner = runnerKey ? choice.reviewRunnerChoices
+        ?.find(candidate => candidate.choice.targetKey === runnerKey)?.choice : null;
     const agent = runner ?? (choice.reviewInventoryItem?.runnerAgents?.length ? null : choice);
     const agentId = agent?.agentId ?? (reviewer.runnerAgentTarget
         ? resolveBundledAgentIdFromContributionIdentity(reviewer.runnerAgentTarget.identity) : null);

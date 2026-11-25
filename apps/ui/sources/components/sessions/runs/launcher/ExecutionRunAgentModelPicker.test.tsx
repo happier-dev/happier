@@ -17,11 +17,32 @@ installProviderSettingsRpcBoundary(rpc);
 const account = createProviderSettingsAccountHarness();
 await loadSyncSingletonForTests();
 const { ExecutionRunAgentModelPicker } = await import('./ExecutionRunAgentModelPicker');
+const { ExecutionRunEngineRunnerPicker } = await import('./ExecutionRunEngineRunnerPicker');
 const { resolveExecutionRunLauncherBackendChoices } = await import('./resolveExecutionRunLauncherBackendChoices');
 const { ModalProvider } = await import('@/modal');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 
 afterEach(async () => { standardCleanup(); await account.reset(); rpc.reset(); });
+
+it('keeps an engine runner account editable without a standalone reviewer installation', async () => {
+    const machineId = 'engine-only-machine';
+    rpc.state.machines.push(createMachineFixture({ id: machineId, activeAt: Date.now() }));
+    installBundledProviderDeclarationsRpcBoundary(rpc);
+    const { serverId } = await account.restore({ waivedActions: ['providers.models.refresh'] });
+    const runnerAgentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+    const choices = resolveExecutionRunLauncherBackendChoices({ intent: 'review', enabledAgentIds: ['codex'], executionRunsBackends: {},
+        reviewEngines: [{ engineId: 'deepsec', value: 'agent:happier.review.deepsec/deepsec', label: 'DeepSec', enabled: true,
+            available: true, runnerAgents: [{ agentTarget: runnerAgentTarget, providerProtocols: ['openai-responses'] }],
+            capabilities: { structuredNarration: false } }] });
+    const token = account.home.findByServerUrl('https://provider-settings-account.test')?.token;
+    if (!token) throw new Error('Expected synthetic Account credentials');
+    const screen = await renderScreen(<InjectedAuthProvider credentials={{ token }}><ModalProvider>
+        <ExecutionRunEngineRunnerPicker engine={choices[0]!} sessionId={null} serverId={serverId} machineId={machineId}
+            actionInput={{ runnerAgentTarget }} selected={null} setActionInput={() => undefined} />
+    </ModalProvider></InjectedAuthProvider>);
+    expect(screen.findByTestId('execution-run-native-account')).not.toBeNull();
+    await screen.unmount();
+});
 
 it('authors a native runner account through the same controlled account picker as an Agent reviewer', async () => {
     const machineId = '6a37defb-c9fd-46bd-8b59-5a341cf630a9';

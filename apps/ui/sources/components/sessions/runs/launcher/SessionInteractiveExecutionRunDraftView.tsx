@@ -1251,12 +1251,12 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             const profileId = choice.reviewInventoryItem?.profileId;
             const profile = parseQualifiedPluginContributionKey(profileId);
             const profileChoice = options.profileChoices.find(candidate => candidate.id === profileId);
-            const member = presentReviewLauncherReviewer(reviewer, index, reviewers, choice, options.backendChoices, reviewInheritedModel);
+            const member = presentReviewLauncherReviewer(reviewer, index, reviewers, choice, reviewInheritedModel);
             // Only a numbered panel member needs its name over the detail; a lone reviewer's row already says it.
             const renderDetail = () => <>{member.label !== choice.title ? <Text variant="label" emphasis="strong"
                 style={styles.memberTitle} testID="review-runner-member-title">{member.label}</Text> : null}
                 {choice.reviewInventoryItem?.runnerAgents?.length ? <ExecutionRunEngineRunnerPicker engine={choice}
-                choices={options.backendChoices} sessionId={props.sessionId} serverId={serverId} machineId={machineId}
+                sessionId={props.sessionId} serverId={serverId} machineId={machineId}
                 actionInput={engineInput} selected={parsed.success ? parsed.data : null} setActionInput={setEngineInput}
                 onAddMember={choice.reviewInventoryItem.runnerSelection === 'perMember'
                     ? () => setInput(previous => appendReviewLauncherEngineMember(previous, index)) : undefined} />

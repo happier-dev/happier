@@ -8,12 +8,11 @@ import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 import { ExecutionRunAgentModelPicker } from './ExecutionRunAgentModelPicker';
 import { selectReviewLauncherRunner } from './executionRunChildChoice';
-import { reviewEngineRunnerChoices, type ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
+import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
 
 /** Engine rows delegate model/account authoring to the same picker as ordinary Agent rows. */
 export function ExecutionRunEngineRunnerPicker(props: Readonly<{
     engine: ExecutionRunLauncherBackendChoice;
-    choices: readonly ExecutionRunLauncherBackendChoice[];
     sessionId: string | null;
     serverId: string | null;
     machineId: string | null;
@@ -23,7 +22,7 @@ export function ExecutionRunEngineRunnerPicker(props: Readonly<{
     onAddMember?: () => void;
 }>) {
     const [open, setOpen] = React.useState(false);
-    const runners = reviewEngineRunnerChoices(props.engine.reviewInventoryItem?.runnerAgents ?? [], props.choices);
+    const runners = props.engine.reviewRunnerChoices ?? [];
     const target = AgentExecutionTargetV1Schema.safeParse(props.actionInput.runnerAgentTarget);
     const selectedKey = target.success ? buildBackendTargetKeyV2(target.data) : null;
     const selected = runners.find(runner => runner.choice.targetKey === selectedKey);

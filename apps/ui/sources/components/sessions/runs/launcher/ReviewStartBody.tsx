@@ -144,7 +144,7 @@ function StepWho(props: Props & Readonly<{ stepIndex: number; steps: ReturnType<
                 const { openStep: _openStep, ...selection } = option;
                 const present = (position: number) => {
                     const reviewer = step.reviewers[position];
-                    return reviewer?.kind === 'engine' ? presentReviewLauncherReviewer(reviewer, position, step.reviewers, choice, props.choices, props.inheritedModel) : {};
+                    return reviewer?.kind === 'engine' ? presentReviewLauncherReviewer(reviewer, position, step.reviewers, choice, props.inheritedModel) : {};
                 };
                 if (positions.length > 1) return positions.map(position => ({ ...selection, ...present(position),
                     id: reviewReviewerIdForSelectionV1(position),

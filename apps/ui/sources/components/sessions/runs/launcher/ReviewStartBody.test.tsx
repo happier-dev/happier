@@ -4,23 +4,22 @@ import { renderScreen } from '@/dev/testkit';
 import { ReviewStartBody } from './ReviewStartBody';
 import { reviewReviewerIdForSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { SelectionList } from '@/components/ui/selectionList';
-import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
+import { t } from '@/text';
+import { resolveExecutionRunLauncherBackendChoices } from './resolveExecutionRunLauncherBackendChoices';
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
 const codexTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
 const claudeTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
-const runnerChoices: readonly ExecutionRunLauncherBackendChoice[] = [
-    { targetKey: 'agent:happier.agent.codex/codex', backendId: 'codex', agentId: 'codex', backendTarget: codexTarget,
-        title: 'Codex', disabled: false },
-    { targetKey: 'agent:happier.agent.claude/claude', backendId: 'claude', agentId: 'claude', backendTarget: claudeTarget,
-        title: 'Claude', disabled: false },
-    { targetKey: 'roborev', backendId: 'roborev', agentId: 'roborev', backendTarget: { kind: 'backend', backendId: 'roborev' },
-        title: 'roborev', disabled: false, reviewInventoryItem: { engineId: 'roborev', label: 'roborev', enabled: true,
+const runnerChoices = resolveExecutionRunLauncherBackendChoices({ intent: 'review', enabledAgentIds: ['codex', 'claude'], executionRunsBackends: {},
+    reviewEngines: [
+        { engineId: 'codex', value: 'agent:happier.agent.codex/codex', label: 'Codex', enabled: true, capabilities: { structuredNarration: false } },
+        { engineId: 'claude', value: 'agent:happier.agent.claude/claude', label: 'Claude', enabled: true, capabilities: { structuredNarration: false } },
+        { engineId: 'roborev', label: 'roborev', enabled: true,
             capabilities: { structuredNarration: true }, runnerSelection: 'perMember', runnerAgents: [
                 { agentTarget: codexTarget, providerProtocols: ['openai-responses'] },
                 { agentTarget: claudeTarget, providerProtocols: ['anthropic'] },
-            ] } },
-];
+            ] },
+    ] });
 
 it('names each panel member and its own runner and model in the Who summary', async () => {
     const reviewers = [
@@ -31,13 +30,13 @@ it('names each panel member and its own runner and model in the Who summary', as
     const props: React.ComponentProps<typeof ReviewStartBody> = { input: { reviewers },
         onChange: () => undefined, source: { enabled: true, where: null, selectedIds: new Set(['roborev']),
         sections: [{ category: 'engine', section: { kind: 'static', id: 'engines', options: [
-            { id: 'roborev', label: 'roborev', onSelect: () => undefined },
+            { id: runnerChoices[2]!.targetKey, label: 'roborev', onSelect: () => undefined },
         ] } }] }, choices: runnerChoices, transcriptAvailable: false, walkthrough: false, disabled: false };
     const screen = await renderScreen(<ReviewStartBody {...props} />);
     const options = () => screen.findAllByType(SelectionList).find(node => node.props.testID === 'contextual-start-who')!
         .props.rootStep.sections.flatMap((section: { options?: readonly unknown[] }) => section.options ?? []);
     const expected = expect.arrayContaining([
-        expect.objectContaining({ label: 'roborev 1', subtitle: 'Codex · Default model' }),
+        expect.objectContaining({ label: 'roborev 1', subtitle: `Codex · ${t('agentInput.model.useCliSettings')}` }),
         expect.objectContaining({ label: 'roborev 2', subtitle: 'Claude · review-model' }),
     ]);
     expect(options()).toEqual(expected);
@@ -68,7 +67,7 @@ it('selects a newly checked engine with its first available declared runner', as
         input = typeof update === 'function' ? update(input) : update;
     }} source={{ enabled: true, where: null, selectedIds: new Set(),
         sections: [{ category: 'engine', section: { kind: 'static', id: 'engines', options: [
-            { id: 'roborev', testID: 'select-panel', label: 'roborev', onSelect: () => undefined },
+            { id: runnerChoices[2]!.targetKey, testID: 'select-panel', label: 'roborev', onSelect: () => undefined },
         ] } }] }} choices={runnerChoices} transcriptAvailable={false} walkthrough={false} disabled={false} />);
     await screen.pressByTestIdAsync('select-panel');
     expect(input.reviewers).toEqual([{ kind: 'engine', engineId: 'roborev', runnerAgentTarget: codexTarget }]);
