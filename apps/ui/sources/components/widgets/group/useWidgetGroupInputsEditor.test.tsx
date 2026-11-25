@@ -172,7 +172,7 @@ it('shows inherited values as placeholders without setting group overrides', asy
     createNodeMock: ({ props }) => props.testID === 'edit.field.project.input' ? { focus } : null,
   });
   const project = screen.findByTestId('edit.field.project.input')!;
-  expect(screen.findByTestId('edit.field.project.trigger')?.props.accessibilityLabel).toBe('Project, widgetFrame.followingGroup');
+  expect.soft(screen.findByTestId('edit.field.project.trigger')?.props.accessibilityLabel).toBe('Project, widgetAdd.needed');
   expect(project.props.placeholder).toBe('Example project');
   expect(project.props.value).toBe('');
   const period = screen.findByTestId('edit.field.period.input')!;
@@ -186,8 +186,10 @@ it('shows inherited values as placeholders without setting group overrides', asy
     await vi.waitFor(() => expect(projectMenu().props.open).toBe(true));
   };
   await openProjectMenu();
-  expect(projectMenu().props.items.filter((item: { checked?: boolean }) => item.checked))
-    .toMatchObject([{ title: 'widgetFrame.followingGroup' }]);
+  expect(projectMenu().props.items).toMatchObject([
+    { id: 'follow', title: 'This page', checked: false },
+    { id: 'own', title: 'widgetAdd.ownValue', checked: false },
+  ]);
   await screen.pressByTestIdAsync('edit.field.project.binding.own');
   await vi.waitFor(() => expect(focus).toHaveBeenCalled());
   expect(screen.findByTestId('edit.field.project.input')?.props.value).toBe('');

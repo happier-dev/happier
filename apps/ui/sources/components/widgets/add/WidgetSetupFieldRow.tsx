@@ -30,7 +30,6 @@ import {
 } from './widgetSetupModel';
 
 const FOLLOW_ID = 'follow';
-const INHERIT_GROUP_ID = 'inherit-group';
 const OWN_ID = 'own';
 
 function formatGroupReading(reading: WidgetSetupInheritedReading, includeSource = true): string {
@@ -39,7 +38,7 @@ function formatGroupReading(reading: WidgetSetupInheritedReading, includeSource 
 }
 
 type WidgetBindingInForce =
-    | Readonly<{ kind: 'group'; source: string; inherited?: WidgetSetupInheritedReading }>
+    | Readonly<{ kind: 'group'; source: string }>
     | Readonly<{ kind: 'page'; source: string }>
     | Readonly<{ kind: 'own' }>
     | Readonly<{ kind: 'unset' }>;
@@ -50,9 +49,6 @@ function bindingInForce({ entry, row, plainValue }: React.ComponentProps<typeof 
         return { kind: entry.follow?.group ? 'group' : 'page', source };
     }
     if (plainValue !== undefined || row.kind === 'pinned' || row.kind === 'choices') return { kind: 'own' };
-    if (row.kind === 'needed' && entry.inherited) {
-        return { kind: 'group', source: t('widgetFrame.followingGroup'), inherited: entry.inherited };
-    }
     return { kind: 'unset' };
 }
 export type WidgetSetupFieldChange =
@@ -125,10 +121,7 @@ function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFiel
         ? formatGroupReading({ kind: 'single', valueLabel }) : undefined;
     const [open, setOpen] = React.useState(false);
     const { binding } = props;
-    const implicit = binding.kind === 'group' && binding.inherited !== undefined;
-    const selectedId = binding.kind === 'own' ? OWN_ID
-        : implicit ? INHERIT_GROUP_ID
-        : binding.kind === 'unset' ? null : FOLLOW_ID;
+    const selectedId = binding.kind === 'own' ? OWN_ID : binding.kind === 'unset' ? null : FOLLOW_ID;
     const trigger = describeTrigger(binding, props.row, theme.colors.text.secondary, theme.colors.state.danger.foreground, groupReading);
     const selectedReading = {
         title: trigger.detail,
@@ -143,9 +136,6 @@ function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFiel
         open={open}
         onOpenChange={next => { void commands.invoke('open', next); }}
         items={[
-            ...(implicit ? [{ id: INHERIT_GROUP_ID, ...selectedReading, checked: true,
-                testID: `${props.testID}.binding.inherit-group`,
-                icon: <Icon name="link" size={16} color={theme.colors.text.secondary} /> }] : []),
             { id: FOLLOW_ID, checked: selectedId === FOLLOW_ID,
                 ...(selectedId === FOLLOW_ID ? selectedReading : {
                     title: groupReading ?? follow.label,
@@ -258,9 +248,9 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     const picker = useHappierInputPickerPort();
     const { entry, row } = props;
     const binding = bindingInForce(props);
-    const groupReading = binding.kind === 'group' ? binding.inherited : undefined;
-    const surfaceOnly = entry.follow !== undefined
-        && (binding.kind === 'page' || (binding.kind === 'group' && groupReading === undefined));
+    // An unset group input can preview what its children read even without a binding of its own.
+    const groupReading = row.kind === 'needed' ? entry.inherited : undefined;
+    const surfaceOnly = entry.follow !== undefined && (binding.kind === 'page' || binding.kind === 'group');
     const choices = entry.field.widget === 'select' || entry.field.widget === 'multiselect';
     const value = props.plainValue ?? (row.kind === 'follows' ? entry.follow?.values[0]?.value : undefined);
     const selection = choices ? value : undefined;

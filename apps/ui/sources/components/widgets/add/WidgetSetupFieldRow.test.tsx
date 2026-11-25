@@ -47,7 +47,7 @@ const declared: ResolvedInputTypeV1 = {
 const review = { repositoryId: 'example/review-assistant' };
 
 describe('widget setup fields share the typed-field owners', () => {
-    it('names the source once on an unset inherited field and keeps the binding choices', async () => {
+    it('keeps the child preview out of the binding choices', async () => {
         const field = { path: 'note', title: 'Note', widget: 'text' as const };
         const option = { value: 'Shared note', label: 'Shared note' };
         const follow = { slot: 'note', label: 'This page', values: [option] };
@@ -57,13 +57,12 @@ describe('widget setup fields share the typed-field owners', () => {
         const needed = { kind: 'needed' } as const;
         const inherited = { kind: 'single', valueLabel: option.label } as const;
         const screen = await renderScreen(render({ entry: { field, follow, inherited }, row: needed, plainValue: undefined }));
-        expect.soft(bindingText(screen, 'setup.note')).toEqual(['widgetFrame.followingGroup']);
-        expect.soft(screen.findByTestId('setup.note.trigger')?.props.accessibilityLabel).toBe('Note, widgetFrame.followingGroup');
+        expect.soft(bindingText(screen, 'setup.note')).toEqual(['widgetAdd.needed']);
+        expect.soft(screen.findByTestId('setup.note.trigger')?.props.accessibilityLabel).toBe('Note, widgetAdd.needed');
         expect(screen.findByTestId('setup.note.input')?.props.placeholder).toBe('Shared note');
         expect(screen.findByTestId('setup.note.input')?.props.value).toBe('');
         await screen.pressByTestIdAsync('setup.note.trigger');
         expect(screen.findByType(DropdownMenu).props.items).toMatchObject([
-            { title: 'widgetFrame.followingGroup', checked: true },
             { id: 'follow', title: 'This page', checked: false },
             { id: 'own', title: 'widgetAdd.ownValue', checked: false },
         ]);
@@ -163,12 +162,12 @@ describe('widget setup fields share the typed-field owners', () => {
                 expect(colorOf(screen, severalReading)).toBe(quiet);
                 const follow = { slot: field.path, label: 'This page', values: [] };
                 await screen.update(render({ field, follow, inherited: single }, longChoices));
-                expect.soft(bindingText(screen, 'inherited')).toEqual(['widgetFrame.followingGroup']);
+                expect.soft(bindingText(screen, 'inherited')).toEqual(['widgetAdd.needed']);
                 expect.soft(colorOf(screen, single.valueLabel)).toBe(quiet);
                 expect.soft(colorOf(screen, singleReading)).toBeUndefined();
                 expect.soft(screen.findByTestId('inherited.control.trigger')?.props.accessibilityLabel).toBe(`Field: ${singleReading}`);
                 await screen.update(render({ field, follow, inherited: several }, longChoices));
-                expect.soft(bindingText(screen, 'inherited')).toEqual(['widgetFrame.followingGroup']);
+                expect.soft(bindingText(screen, 'inherited')).toEqual(['widgetAdd.needed']);
                 expect.soft(colorOf(screen, 'widgetAdd.severalValues')).toBe(quiet);
                 expect.soft(colorOf(screen, severalReading)).toBeUndefined();
                 expect.soft(screen.findByTestId('inherited.control.trigger')?.props.accessibilityLabel).toBe(`Field: ${severalReading}`);
