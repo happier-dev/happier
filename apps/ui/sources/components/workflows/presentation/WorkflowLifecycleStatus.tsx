@@ -11,6 +11,7 @@ import {
     type WorkflowRunStatePresentation,
     type WorkflowLifecycleMarker,
     type WorkflowInvocationLifecycleContext,
+    type WorkflowLifecyclePresentation,
 } from './workflowLifecyclePresentation';
 
 import type {
@@ -49,6 +50,7 @@ export function WorkflowLifecycleStatus(props: Readonly<{
     /** The authored block's kind, when known, so a held Wait-for-you step reads its own word. */
     blockKind?: string | null;
     context?: WorkflowInvocationLifecycleContext;
+    presentation?: Pick<WorkflowLifecyclePresentation, 'label' | 'variant' | 'marker'>;
     chrome?: 'pill' | 'plain';
     /**
      * Only the marker, for a place where healthy state is quiet (a finished Map node). The word stays
@@ -59,8 +61,8 @@ export function WorkflowLifecycleStatus(props: Readonly<{
     accessibilityLabel?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
-    const presentation = describeWorkflowInvocationLifecycle(props.lifecycle, { ...props.context, blockKind: props.blockKind });
-    if (props.markerOnly === true || presentation.inheritsRunStop) {
+    const presentation = { ...describeWorkflowInvocationLifecycle(props.lifecycle, { ...props.context, blockKind: props.blockKind }), ...props.presentation };
+    if (props.markerOnly === true || props.presentation === undefined && presentation.inheritsRunStop) {
         return (
             <View
                 {...(props.testID === undefined ? {} : { testID: props.testID })}

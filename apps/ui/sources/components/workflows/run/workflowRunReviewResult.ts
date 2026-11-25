@@ -1,4 +1,23 @@
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { reviewRoundReviewerOutcomeLabel, type ReviewRoundReviewer } from '@/components/reviews/reviewRoundReviewers';
+import { describeWorkflowInvocationLifecycle, type WorkflowLifecyclePresentation } from '../presentation/workflowLifecyclePresentation';
+
+export type WorkflowReviewerStatus = Pick<WorkflowLifecyclePresentation, 'label' | 'variant' | 'marker'>;
+
+/** Review settlement owns coverage; successful invocation mechanics do not imply a finished reviewer. */
+export function projectWorkflowReviewerStatuses(reviewers: readonly ReviewRoundReviewer[] | undefined): ReadonlyMap<string, WorkflowReviewerStatus> {
+  return new Map((reviewers ?? []).flatMap(reviewer => {
+    if (reviewer.outcome === null || reviewer.outcome === 'running') return [];
+    const presentation = reviewer.outcome === 'failed' || reviewer.outcome === 'partial'
+      ? { variant: 'warning', marker: { kind: 'icon', icon: 'warning-circle' } } as const
+      : describeWorkflowInvocationLifecycle(reviewer.outcome);
+    return [[reviewer.reviewerId, {
+      label: reviewRoundReviewerOutcomeLabel(reviewer.outcome),
+      variant: presentation.variant,
+      marker: presentation.marker,
+    } satisfies WorkflowReviewerStatus] as const];
+  }));
+}
 
 /**
  * Whether a Run's final output is the Review that Run produced: the output value names that Review (a Hunt's final

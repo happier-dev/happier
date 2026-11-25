@@ -56,6 +56,8 @@ import { ModalProvider, useModal } from '@/modal';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { Icon } from '@/components/ui/icons/Icon';
 import { WorkflowLifecycleStatus } from '@/components/workflows/presentation/WorkflowLifecycleStatus';
+import { StatusPill } from '@/components/ui/status/StatusPill';
+import { projectReviewRoundReviewers } from '@/components/reviews/reviewRoundReviewers';
 import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
 import { renderPaneMainColumnConsumer } from '@/dev/testkit/harness/paneMainColumnHarness';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
@@ -78,6 +80,7 @@ vi.mock('socket.io-client', async (importOriginal) =>
 installDisconnectedServerSocketBoundary();
 
 const virtualizedListState = vi.hoisted(() => ({
+  renderItemLimit: 2,
   boundary: null as
     | import('@/dev/testkit/mocks/legendList').CapturingLegendListMockState
     | null,
@@ -156,7 +159,7 @@ vi.mock('@legendapp/list/react-native', async (importOriginal) => {
     await import('@/dev/testkit/mocks/legendList');
   const boundary = createCapturingLegendListMock({
     original: await importOriginal<Record<string, unknown>>(),
-    renderItemLimit: 2,
+    get renderItemLimit() { return virtualizedListState.renderItemLimit; },
     refHandle: { scrollToOffset: virtualizedListState.scrollToOffset },
   });
   virtualizedListState.boundary = boundary.state;
@@ -175,6 +178,7 @@ afterEach(async () => {
   restorePopoverGlobals?.();
   restorePopoverGlobals = null;
   virtualizedListState.boundary?.reset();
+  virtualizedListState.renderItemLimit = 2;
   virtualizedListState.scrollToOffset.mockReset();
   viewport.window = { width: 1200, height: 800 };
   themeBoundary.freshProxy = false;
@@ -4114,6 +4118,41 @@ describe('WorkflowRunContent', () => {
     const open = screen.findAllByType(ToolbarButton).find((button) => button.props.testID === 'workflow-run-open-result');
     expect(open?.props.label).toBe('reviewWalkthrough.detail.openReview');
     expect(open?.props.tone).toBe('primary');
+  });
+
+  it('shows settled reviewer coverage in Flow, Steps and Activity when the reviewer invocation completed mechanically', async () => {
+    const reviewers = projectReviewRoundReviewers({ state: 'partial',
+      reviewerIds: ['step-1-reviewer-1', 'step-1-reviewer-2'], runs: [],
+      reviewerOutcomes: [
+        { reviewerId: 'step-1-reviewer-1', outcome: 'partial' },
+        { reviewerId: 'step-1-reviewer-2', outcome: 'failed', reason: { run: 'failed', errorCode: 'provider_model_not_found' } },
+      ],
+    }, undefined);
+    const definition = createWorkflowDefinitionFixture({ blocks: [{ kind: 'parallel', id: 'reviewers',
+      failurePolicy: 'collect_outcomes', branches: reviewers.map(reviewer => ({ id: `branch-${reviewer.reviewerId}`,
+        blocks: [{ kind: 'action', id: reviewer.reviewerId, name: reviewer.name, actionId: 'review.start', input: {} }],
+      })),
+    }] });
+    const row = (id: string, parentRecordId: string | null, memberOrdinal: string, sequence: string) =>
+      createWorkflowInvocationIndexFixture({ id, parentRecordId, memberOrdinal, sequence, lifecycle: 'completed' });
+    const screen = await renderContent({ title: 'Prepare the Review round and 4 more', definition, view: 'flow',
+      run: createWorkflowRunSummaryFixture({ state: 'succeeded', availability: { cancel: false, pause: false } }),
+      resultReview: { reviewId: 'review-49c7', isResult: true, title: 'Code review · Changes', reviewers },
+      invocations: [row('root', null, '0', '0'), row('parallel', 'root', '0', '1'),
+        row('first-frame', 'parallel', '0', '2'), row('first-reviewer', 'first-frame', '0', '3'),
+        row('second-frame', 'parallel', '1', '4'), row('second-reviewer', 'second-frame', '0', '5')],
+    });
+    const warnings = () => screen.findAllByType(StatusPill).filter(pill => pill.props.variant === 'warning')
+      .map(pill => pill.props.label);
+    expect(warnings()).toEqual(expect.arrayContaining(['reviewWalkthrough.collection.statePartial', 'reviewWalkthrough.collection.stateFailed']));
+    expect(screen.getTextContent().replace(/\s/g, ' ')).toContain('Code review · Changes');
+    await screen.update(<WorkflowRunContent {...screen.contentProps} view="steps" />);
+    expect(warnings()).toEqual(expect.arrayContaining(['reviewWalkthrough.collection.statePartial', 'reviewWalkthrough.collection.stateFailed']));
+    // Include the two reviewer rows beyond the structural rows in the recycler's measured viewport.
+    virtualizedListState.renderItemLimit = 5;
+    await screen.update(<WorkflowRunContent {...screen.contentProps} view="activity" />);
+    expect(screen.getTextContent()).toContain('reviewWalkthrough.collection.statePartial');
+    expect(screen.getTextContent()).toContain('reviewWalkthrough.collection.stateFailed');
   });
 
   it('offers the canonical Steps view when a successful Run has no final output', async () => {

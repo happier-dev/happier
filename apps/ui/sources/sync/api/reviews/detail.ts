@@ -15,7 +15,8 @@ export type ReviewDetailReadResult = Readonly<{ kind: 'completed'; value: Review
     | Readonly<{ kind: 'failed'; failure: HomeActionFailure }>;
 
 /** Metadata and person state use the existing Account-bound Action front door. */
-export async function readReviewDetail(scope: ServerAccountScope, reviewId: string, signal: AbortSignal): Promise<ReviewDetailReadResult> {
+export async function readReviewDetail(scope: ServerAccountScope, reviewId: string, signal: AbortSignal,
+    options?: Readonly<{ includeRecord: () => boolean }>): Promise<ReviewDetailReadResult> {
     const execute = scopedHomeActionExecutor(scope, {
         hostActionApprovalLifetime: { actionId: 'review.get', signal, surface: 'ui' },
     });
@@ -35,11 +36,13 @@ export async function readReviewDetail(scope: ServerAccountScope, reviewId: stri
             () => readReviewHumanResource({ readArtifactContent: readArtifact }, reviewId, signal));
         // Reviewer names and outcomes live in the opened Review body. A body the
         // Account cannot open leaves the already-admitted aggregate available.
-        const partialRound = value.review.state === 'partial' ? await readArtifact().then(row =>
-            row && openReviewArtifactV1(row).rounds.find(round => round.ordinal === value.review.currentRoundOrdinal
-                && round.state === 'partial'),
-        ).catch(() => undefined) : undefined;
-        return { kind: 'completed', value: { ...value, human, ...(partialRound ? { partialRound } : {}) } };
+        const includeRecord = options?.includeRecord() === true;
+        const record = includeRecord || value.review.state === 'partial'
+            ? await readArtifact().then(row => row ? openReviewArtifactV1(row) : null).catch(() => null) : undefined;
+        const partialRound = record?.rounds.find(round => round.ordinal === value.review.currentRoundOrdinal
+            && round.state === 'partial');
+        return { kind: 'completed', value: { ...value, human, ...(partialRound ? { partialRound } : {}),
+            ...(includeRecord ? { record } : {}) } };
     } catch (error) {
         return { kind: 'failed', failure: homeDomainFailureFromActionFailure(
             normalizeActionExecutorThrownError(error), 'review.get',

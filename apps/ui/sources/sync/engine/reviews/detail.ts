@@ -9,6 +9,8 @@ import { applyReviewDetail, applyReviewDetailFailure, beginReviewDetailLoad, get
 
 type Target = ScopedLoadTarget & Readonly<{ scope: ServerAccountScope; reviewId: string }>;
 const kinds = Object.freeze([REVIEW_ARTIFACT_KIND_V1]);
+// The Workflow page needs the opened history; ordinary summaries need only metadata and a current partial round.
+const recordConsumers = new Map<string, number>();
 function targetFor(scope: ServerAccountScope, reviewId: string): Target {
     return { key: reviewDetailKey(scope, reviewId), serverId: scope.serverId, scope, reviewId };
 }
@@ -18,12 +20,16 @@ const loader = createScopedSnapshotLoader<Target>({
     }),
     load: async (target, context) => {
         beginReviewDetailLoad(target.key);
-        const result = await readReviewDetail(target.scope, target.reviewId, context.signal);
+        const result = await readReviewDetail(target.scope, target.reviewId, context.signal,
+            { includeRecord: () => recordConsumers.has(target.key) });
         if (context.signal.aborted) return;
         if (result.kind === 'completed') applyReviewDetail(target.key, result.value, context.isCurrent());
         else applyReviewDetailFailure(target.key, result.failure);
     },
-    shouldLoadOnObserve: target => getReviewDetailSnapshot(target.key).stale,
+    shouldLoadOnObserve: target => {
+        const snapshot = getReviewDetailSnapshot(target.key);
+        return snapshot.stale || recordConsumers.has(target.key) && snapshot.data?.record === undefined;
+    },
     invalidateServer: () => {},
     invalidateTarget: target => invalidateReviewDetail(target.key),
     prepareWake: (event, target) => homeAccountChangeAffectsArtifactKinds(event, kinds)
@@ -31,8 +37,22 @@ const loader = createScopedSnapshotLoader<Target>({
     onCredentialMutation: (_event, target) => { retireReviewDetail(target.key); return true; },
 });
 
-export function observeReviewDetail(scope: ServerAccountScope, reviewId: string): () => void {
-    return loader.observe(targetFor(scope, reviewId));
+export function observeReviewDetail(scope: ServerAccountScope, reviewId: string,
+    options?: Readonly<{ includeRecord?: boolean }>): () => void {
+    const target = targetFor(scope, reviewId);
+    if (options?.includeRecord) recordConsumers.set(target.key, (recordConsumers.get(target.key) ?? 0) + 1);
+    const release = loader.observe(target);
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        if (options?.includeRecord) {
+            const count = (recordConsumers.get(target.key) ?? 1) - 1;
+            if (count > 0) recordConsumers.set(target.key, count);
+            else recordConsumers.delete(target.key);
+        }
+        release();
+    };
 }
 export function refreshReviewDetail(scope: ServerAccountScope, reviewId: string): Promise<void> {
     return loader.refresh(targetFor(scope, reviewId));

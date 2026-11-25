@@ -12,6 +12,7 @@ import { t } from '@/text';
 import type { WorkflowFlowProjection } from '../flow/workflowFlowProjection';
 import { resolveWorkflowConditionHeadline } from '../presentation/workflowConditionPresentation';
 import { formatWorkflowInvocationElapsedLabel } from '../presentation/workflowUsagePresentation';
+import type { WorkflowReviewerStatus } from './workflowRunReviewResult';
 import {
     formatWorkflowOccurrenceLabel,
     type createWorkflowInvocationStructureProjector,
@@ -19,6 +20,7 @@ import {
 } from './workflowInvocationStructure';
 
 export type WorkflowActivityPresentation = Readonly<{
+    reviewerStatuses?: ReadonlyMap<string, WorkflowReviewerStatus>;
     scope: ServerAccountScope | null;
     definition: WorkflowInvocationStructureInputs['definition'];
     projection: WorkflowFlowProjection | null;
@@ -26,6 +28,7 @@ export type WorkflowActivityPresentation = Readonly<{
 }>;
 
 export type WorkflowActivityInvocationPresentation = Readonly<{
+    statusPresentation?: WorkflowReviewerStatus;
     invocation: WorkflowRunInvocationIndexV1;
     label: string | null;
     occurrence: string | null;
@@ -80,6 +83,7 @@ function InvocationPresentation(props: Readonly<{
             : t('workflows.page.inspector.ifSentence', { condition: headline.sentence });
     }
     return props.children({ invocation, label, blockKind: node?.kind ?? null,
+        statusPresentation: entry?.blockId == null ? undefined : presentation.reviewerStatuses?.get(entry.blockId),
         occurrence: formatWorkflowOccurrenceLabel(entry?.occurrence ?? [], presentation.projection) ?? null,
         elapsed: formatWorkflowInvocationElapsedLabel(progress.get(invocation.id)?.timing),
     });

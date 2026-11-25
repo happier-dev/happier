@@ -8,13 +8,14 @@ import { observeReviewDetail, refreshReviewDetail } from '@/sync/engine/reviews/
 
 const noop = () => {};
 /** The opened Review demands metadata; its Artifact and comments retain their existing owners. */
-export function useReviewDetail(reviewId: string, options?: Readonly<{ scope?: ServerAccountScope | null; enabled?: boolean }>) {
+export function useReviewDetail(reviewId: string, options?: Readonly<{ scope?: ServerAccountScope | null; enabled?: boolean; includeRecord?: boolean }>) {
     const activeLifetime = useActiveServerAccountScopeLifetime();
     const { binding } = useServerCredentialAccountScopeBinding(options?.scope?.serverId ?? null);
     const lifetime = options?.scope === undefined ? activeLifetime
         : options.scope && binding?.accountId === options.scope.accountId ? binding : null;
     const presented = useLayoutPresentationActive();
     const enabled = options?.enabled !== false && presented && reviewId.length > 0;
+    const includeRecord = options?.includeRecord === true;
     const key = lifetime ? reviewDetailKey(lifetime.scope, reviewId) : '';
     const subscribe = React.useCallback((listener: () => void) => enabled && key
         ? subscribeReviewDetail(key, listener) : noop, [enabled, key]);
@@ -22,8 +23,8 @@ export function useReviewDetail(reviewId: string, options?: Readonly<{ scope?: S
     const snapshot = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     React.useEffect(() => {
         if (!enabled || !lifetime?.isCurrent()) return;
-        return observeReviewDetail(lifetime.scope, reviewId);
-    }, [enabled, lifetime, reviewId]);
+        return observeReviewDetail(lifetime.scope, reviewId, { includeRecord });
+    }, [enabled, includeRecord, lifetime, reviewId]);
     const refresh = React.useCallback(async () => {
         if (enabled && lifetime?.isCurrent()) await refreshReviewDetail(lifetime.scope, reviewId);
     }, [enabled, lifetime, reviewId]);

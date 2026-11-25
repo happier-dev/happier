@@ -228,7 +228,7 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
         const invocation = row.invocation;
         const selected = props.selectedInvocationId === invocation.id;
         const blockKind = row.blockKind;
-        const presentation = describeWorkflowInvocationLifecycle(invocation.lifecycle, { ...props.invocationStatusContext, blockKind });
+        const presentation = { ...describeWorkflowInvocationLifecycle(invocation.lifecycle, { ...props.invocationStatusContext, blockKind }), ...row.statusPresentation };
         const stateLabel = presentation.label;
         // Finished work is said by its glyph alone; only work that is not finished takes a word.
         const finished = invocation.lifecycle === 'completed';
@@ -243,7 +243,8 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
         const next = props.invocations[index + 1];
         const day = previous !== undefined && sameDay(Date.parse(previous.createdAt), recordedAt) ? null : formatDayLabel(recordedAt);
         // A failed step is said by its rose glyph too: the Run's outcome already says "Failed", once per surface.
-        const word = finished || invocation.lifecycle === 'failed' || workflowLifecycleAwaitsDecision(invocation.lifecycle) ? null : (
+        const word = row.statusPresentation?.variant === 'neutral'
+            || row.statusPresentation === undefined && (finished || invocation.lifecycle === 'failed' || workflowLifecycleAwaitsDecision(invocation.lifecycle)) ? null : (
             <Text testID={`${testIDPrefix}-word-${invocation.id}`} numberOfLines={1} style={[styles.word, speaks ? styles.wordSpeaking : null,
                 { color: speaks ? theme.colors.state[presentation.variant].textForeground : theme.colors.text.secondary }]}>
                 {stateLabel}
@@ -270,6 +271,7 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
                     <WorkflowLifecycleStatus
                         testID={`${testIDPrefix}-state-${invocation.id}`}
                         lifecycle={invocation.lifecycle}
+                        presentation={row.statusPresentation}
                         blockKind={blockKind}
                         context={props.invocationStatusContext}
                         markerOnly

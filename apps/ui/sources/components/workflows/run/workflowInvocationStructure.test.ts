@@ -8,6 +8,8 @@ import { summarizeWorkflowInvocationCoverage } from '@/components/workflows/pres
 
 import { formatWorkflowOccurrenceLabel, projectWorkflowInvocationStructure, projectWorkflowFlowRunStates, resolveWorkflowInvocationBlock, resolveWorkflowInvocationBlockContext } from './workflowInvocationStructure';
 import { projectWorkflowFlow } from '../flow/workflowFlowProjection';
+import { projectReviewRoundReviewers } from '@/components/reviews/reviewRoundReviewers';
+import { projectWorkflowReviewerStatuses } from './workflowRunReviewResult';
 
 /**
  * The public invocation index deliberately withholds authored block ids
@@ -38,6 +40,34 @@ function child(overrides: Readonly<{ id: string; parentRecordId: string; memberO
 }
 
 describe('projectWorkflowInvocationStructure', () => {
+    it('uses completed coverage even when invocation mechanics failed', () => {
+        const definition = definitionOf([step('step-1-reviewer-1')]);
+        const invocation = createWorkflowInvocationIndexFixture({ id: 'reviewer', parentRecordId: 'root',
+            memberOrdinal: '0', sequence: '1', lifecycle: 'failed' });
+        const invocations = [root, invocation];
+        const reviewers = projectReviewRoundReviewers({ state: 'completed', reviewerIds: ['step-1-reviewer-1'], runs: [],
+            reviewerOutcomes: [{ reviewerId: 'step-1-reviewer-1', outcome: 'completed' }],
+        }, undefined);
+        const structure = projectWorkflowInvocationStructure({ definition, invocations });
+        const state = projectWorkflowFlowRunStates({ invocations, structure, reviewerStatuses: projectWorkflowReviewerStatuses(reviewers) }).get('step-1-reviewer-1')?.[0];
+        expect(state).toMatchObject({ lifecycle: 'failed', statusPresentation: {
+            variant: 'neutral', marker: { kind: 'icon', icon: 'check-circle' },
+        } });
+    });
+    it('projects a settled reviewer warning instead of mechanical invocation success', () => {
+        const definition = definitionOf([step('step-1-reviewer-1')]);
+        const invocation = createWorkflowInvocationIndexFixture({ id: 'reviewer', parentRecordId: 'root',
+            memberOrdinal: '0', sequence: '1', lifecycle: 'completed' });
+        const invocations = [root, invocation];
+        const reviewers = projectReviewRoundReviewers({ state: 'partial', reviewerIds: ['step-1-reviewer-1'], runs: [],
+            reviewerOutcomes: [{ reviewerId: 'step-1-reviewer-1', outcome: 'failed' }],
+        }, undefined);
+        const structure = projectWorkflowInvocationStructure({ definition, invocations });
+        const state = projectWorkflowFlowRunStates({ invocations, structure, reviewerStatuses: projectWorkflowReviewerStatuses(reviewers) }).get('step-1-reviewer-1')?.[0];
+        expect(state).toMatchObject({ lifecycle: 'completed', statusPresentation: {
+            variant: 'warning', marker: { kind: 'icon', icon: 'warning-circle' },
+        } });
+    });
     it('names a recorded Agent target on the Map through the catalog', () => {
         const agentTargetKey = 'agent:happier.agent.muse/muse';
         const definition = definitionOf([{ kind: 'loop', id: 'agents', repetition: { kind: 'items',

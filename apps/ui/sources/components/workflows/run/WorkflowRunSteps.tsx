@@ -36,6 +36,7 @@ import { useActionFieldOptionsForMachine } from '@/components/sessions/actions/u
 import type { WorkflowInvocationStructureEntry } from './workflowInvocationStructure';
 import { readWorkflowLoopOccurrenceItem } from './workflowInvocationStructure';
 import { workflowRunStyles as styles } from './workflowRunStyles';
+import type { WorkflowReviewerStatus } from './workflowRunReviewResult';
 
 type StepOccurrenceFact = Readonly<{
     invocation: WorkflowRunInvocationIndexV1;
@@ -56,6 +57,7 @@ const NO_INVOCATIONS: readonly WorkflowRunInvocationIndexV1[] = [];
 const ignoreDocumentEdit = () => {};
 
 function WorkflowRunOccurrenceSelector(props: Readonly<{
+    reviewerStatus?: WorkflowReviewerStatus;
     invocationStatusContext?: WorkflowInvocationLifecycleContext;
     invocations: readonly WorkflowRunInvocationIndexV1[];
     selectedInvocationId: string | null;
@@ -74,7 +76,7 @@ function WorkflowRunOccurrenceSelector(props: Readonly<{
             title: props.label(invocation),
             checked: invocation.id === props.selectedInvocationId,
             rightElement: <>{elapsed === null ? null : <Text style={styles.provenance}>{elapsed}</Text>}
-                <WorkflowLifecycleStatus lifecycle={invocation.lifecycle} blockKind={props.blockKind} context={props.invocationStatusContext} chrome="plain" /></>,
+                <WorkflowLifecycleStatus lifecycle={invocation.lifecycle} presentation={props.reviewerStatus} blockKind={props.blockKind} context={props.invocationStatusContext} chrome="plain" /></>,
         };
     });
     return <DropdownMenu open={open} onOpenChange={setOpen} items={items}
@@ -109,6 +111,7 @@ function describeWorkflowOpenWorkLabel(input: Readonly<{
 
 /** Frozen Run document, presented by the same recursive owner as authoring. */
 export function WorkflowRunSteps(props: Readonly<{
+    reviewerStatuses?: ReadonlyMap<string, WorkflowReviewerStatus>;
     invocationStatusContext?: WorkflowInvocationLifecycleContext;
     runId: string;
     /** The Run owner's settled label for a leaf absent from complete history. */
@@ -182,7 +185,7 @@ export function WorkflowRunSteps(props: Readonly<{
         ? selectedEntry.blockId : null;
     const presentationContext = React.useMemo(() => ({}), [draft, acceptedByBlockId, props.frozenChildren,
         props.inputs, props.sessionDisplayLabelsById, presentEngine, props.invocationStatusContext,
-        props.runId, props.machineId, props.serverId, props.testIDPrefix, props.notStartedLabel, sourceKey, preferredLanguage]);
+        props.runId, props.machineId, props.serverId, props.testIDPrefix, props.notStartedLabel, props.reviewerStatuses, sourceKey, preferredLanguage]);
     const previousPresentations = React.useRef(new Map<string, StepPresentation>());
     const factsByBlock = new Map<string, StepOccurrenceFact[]>();
     for (const invocation of props.invocations) {
@@ -308,9 +311,11 @@ export function WorkflowRunSteps(props: Readonly<{
                     : <>
                     {elapsed === null ? null : <Text style={styles.provenance}>{elapsed}</Text>}
                     <WorkflowLifecycleStatus lifecycle={displayedOccurrence.lifecycle} blockKind={block?.kind ?? null} context={props.invocationStatusContext}
-                        markerOnly={workflowLifecycleAwaitsDecision(displayedOccurrence.lifecycle)} />
+                        presentation={props.reviewerStatuses?.get(blockId)}
+                        markerOnly={!props.reviewerStatuses?.has(blockId) && workflowLifecycleAwaitsDecision(displayedOccurrence.lifecycle)} />
                 </>,
                 occurrenceSelector: occurrences.length > 1 ? <WorkflowRunOccurrenceSelector
+                    reviewerStatus={props.reviewerStatuses?.get(blockId)}
                     invocations={occurrences} selectedInvocationId={props.selectedInvocationId}
                     onSelectInvocation={selectInvocation} label={label} blockKind={block?.kind ?? null} testIDPrefix={`${props.testIDPrefix}-${blockId}`}
                     progressById={props.progressById}

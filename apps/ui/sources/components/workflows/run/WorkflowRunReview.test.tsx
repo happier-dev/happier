@@ -247,7 +247,7 @@ it.each([
   } finally { await screen.unmount(); }
 });
 
-it('names the reviewer who could not start alongside findings from the partial Review', async () => {
+it('keeps reviewer outcomes on the Round card without repeating them beside the Workflow findings', async () => {
   homes.artifacts(serverId).replaceStoredRow(createPlainArtifactHttpFixture({
     id: reviewId, title: 'Security sweep', isDecrypted: true,
     header: { kind: 'review.v1', v: 1, reviewId, title: 'Security sweep' },
@@ -271,7 +271,7 @@ it('names the reviewer who could not start alongside findings from the partial R
   try {
     await waitForHomeGovernance(() => {
       expect(screen.getTextContent()).toContain('Session token written to the daemon log');
-      expect(screen.getTextContent()).toContain(t('reviewWalkthrough.detail.reviewersDidntFinish', { names: 'Unavailable reviewer', count: 1 }));
+      expect(screen.getTextContent()).not.toContain(t('reviewWalkthrough.detail.reviewersDidntFinish', { names: 'Unavailable reviewer', count: 1 }));
     });
   } finally { await screen.unmount(); }
 });
@@ -285,6 +285,47 @@ it('finds a Review by its workflowRunId when a contributed PR action produced it
   const screen = await renderScreen(<Result />);
   try {
     await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(reviewId));
+  } finally { await screen.unmount(); }
+});
+
+it('keeps the produced Review name and this Workflow round outcomes after a later retry', async () => {
+  homes.artifacts(serverId).replaceStoredRow(createPlainArtifactHttpFixture({
+    id: reviewId, title: 'Code review', isDecrypted: true,
+    header: { kind: 'review.v1', v: 1, reviewId, title: 'Code review' },
+    body: JSON.stringify({ v: 1, rounds: [
+      { ordinal: 1, state: 'partial', startedAt: 1, finishedAt: 3,
+        reviewerIds: ['step-1-reviewer-1', 'step-1-reviewer-2'], runs: [{ kind: 'workflow', runId: 'hunt-run' }],
+        reviewerOutcomes: [
+          { reviewerId: 'step-1-reviewer-1', outcome: 'partial' },
+          { reviewerId: 'step-1-reviewer-2', outcome: 'failed', reason: { run: 'failed', errorCode: 'provider_model_not_found' } },
+        ] },
+      { ordinal: 2, state: 'completed', startedAt: 4, finishedAt: 5,
+        reviewerIds: ['step-1-reviewer-2'], runs: [{ kind: 'workflow', runId: 'retry-run' }],
+        reviewerOutcomes: [{ reviewerId: 'step-1-reviewer-2', outcome: 'completed' }] },
+    ] }),
+    ownerAccountId: 'alice', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 2, seq: 2, createdAt: 1, updatedAt: 5,
+  }, 'alice'));
+  homes.answer(serverId, 'POST /v1/reviews/get', { body: {
+    review: { ...review, subjectKind: 'comparison', state: 'completed', currentRoundOrdinal: 2, finishedAt: 5 },
+    human: { reviewId, roundOrdinal: 2, requests: [], verdicts: [],
+      needsYou: { reviewId, roundOrdinal: 2, reason: 'review_needs_you', needsYou: false,
+        requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } },
+  } });
+  function Result() {
+    const result = useWorkflowRunResultReview({ runId: 'hunt-run', scope: { serverId, accountId: 'alice' },
+      result: { reviewId }, finalOutputInvocationId: undefined, enabled: true });
+    return <span>{JSON.stringify(result)}</span>;
+  }
+  const screen = await renderScreen(<Result />);
+  try {
+    await waitForHomeGovernance(() => {
+      const result = JSON.parse(screen.getTextContent());
+      expect(result.title?.replace(/\s/g, ' ')).toBe('Code review · Changes');
+      expect(result).toMatchObject({ reviewId, reviewers: [
+        { reviewerId: 'step-1-reviewer-1', outcome: 'partial' },
+        { reviewerId: 'step-1-reviewer-2', outcome: 'failed' },
+      ] });
+    });
   } finally { await screen.unmount(); }
 });
 

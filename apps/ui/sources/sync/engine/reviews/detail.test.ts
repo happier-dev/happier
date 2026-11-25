@@ -8,6 +8,7 @@ import { deriveArtifactStoredKindV1, REVIEW_ARTIFACT_KIND_V1 } from '@happier-de
 import { setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { captureServerCredentialAccountScopeLifetime, resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
+import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -25,6 +26,49 @@ function detail(reviewId: string, needsDecision = 0): ReviewGetResponseV1 {
 }
 
 describe('demanded Review detail through the real Action and Account transport', () => {
+    it('opens the Review record only while a consumer demands it, sharing metadata with the summary', async () => {
+        const serverId = await homes.addHome({ serverUrl: 'https://review-record.example', name: 'Review record', accountId: 'alice' });
+        await setActiveServerId(serverId, { scope: 'device' });
+        const scope = { serverId, accountId: 'alice' };
+        const key = reviewDetailKey(scope, 'record');
+        let reads = 0;
+        homes.answer(serverId, 'POST /v1/reviews/get', { select: () => {
+            reads += 1;
+            return { body: detail('record') };
+        } });
+        homes.artifacts(serverId).replaceStoredRow(createPlainArtifactHttpFixture({
+            id: 'record', title: 'Code review · Changes',
+            header: { kind: 'review.v1', v: 1, reviewId: 'record', title: 'Code review · Changes' },
+            body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2,
+                reviewerIds: [], runs: [{ kind: 'workflow', runId: 'original-run' }] }] }),
+            ownerAccountId: 'alice', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1,
+            seq: 1, createdAt: 1, updatedAt: 2,
+        }, 'alice'));
+        const summary = observeReviewDetail(scope, 'record');
+        await waitForHomeGovernance(() => expect(getReviewDetailSnapshot(key).status).toBe('ready'));
+        expect(getReviewDetailSnapshot(key).data).not.toHaveProperty('record');
+        const workflow = observeReviewDetail(scope, 'record', { includeRecord: true });
+        try {
+            await waitForHomeGovernance(() => expect(getReviewDetailSnapshot(key).data).toHaveProperty('record.title', 'Code review · Changes'));
+            expect(reads).toBe(2);
+            const other = observeReviewDetail(scope, 'record', { includeRecord: true });
+            other();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(reads).toBe(2);
+            const account = await resolveServerCredentialAccountScope(serverId);
+            if (account.kind !== 'bound') throw new Error('Missing captured Review Account');
+            const { createPluginReviewDetailHostReadStore } = await import('@/components/plugins/surfaces/pluginReviewDetailHostRead');
+            const store = createPluginReviewDetailHostReadStore({ lifetime: captureServerCredentialAccountScopeLifetime(account) });
+            const resource = store.getEntry({ hostRead: 'review.get', input: { reviewId: 'record' } }).select({
+                decode: (content: { bytes: Uint8Array }): unknown => JSON.parse(new TextDecoder().decode(content.bytes)),
+            }, value => value);
+            const release = resource.subscribe(() => {}, true);
+            try {
+                // The Resource's published fields stay metadata/person state; opened history belongs to native detail.
+                await waitForHomeGovernance(() => expect(resource.getSnapshot().value).toEqual(detail('record')));
+            } finally { release(); store.dispose(); }
+        } finally { workflow(); summary(); }
+    });
     it('shares the Review owner with a live plugin Resource, explicit refresh, scoped pushes and refusal', async () => {
         const { createPluginReviewDetailHostReadStore } = await import('@/components/plugins/surfaces/pluginReviewDetailHostRead');
         const serverId = await homes.addHome({ serverUrl: 'https://review-resource.example', name: 'Review Resource', accountId: 'alice' });

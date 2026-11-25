@@ -749,6 +749,7 @@ function projectWorkflowFlowRepetitions(
 export function projectWorkflowFlowRunStates(params: Readonly<{
     invocations: readonly WorkflowRunInvocationIndexV1[];
     structure: ReadonlyMap<string, WorkflowInvocationStructureEntry>;
+    reviewerStatuses?: ReadonlyMap<string, import('./workflowRunReviewResult').WorkflowReviewerStatus>;
     progressByInvocationId?: ReadonlyMap<string, WorkflowProgressEnvelopeV1>;
     projection?: WorkflowFlowProjection;
     /** Names a row's occurrence ("Item 3"); omitted where only the state is drawn. */
@@ -772,6 +773,7 @@ export function projectWorkflowFlowRunStates(params: Readonly<{
             nodeId: entry.nodeId,
             invocationId: invocation.id,
             lifecycle: invocation.lifecycle,
+            ...(entry.blockId == null || !params.reviewerStatuses?.has(entry.blockId) ? {} : { statusPresentation: params.reviewerStatuses.get(entry.blockId) }),
             attempt: invocation.attempt,
             ...(occurrenceLabel === undefined ? {} : { occurrenceLabel }),
             ...(repetitions.length === 0 ? {} : { repetitions }),

@@ -9,6 +9,8 @@ import type { HomeActionFailure } from '@/sync/ops/home/homeActionOutcome';
 export type ReviewDetailData = Omit<ReviewGetResponseV1, 'human'> & Readonly<{
     human: ReviewHumanActionStateV1;
     partialRound?: ReviewArtifactV1['rounds'][number];
+    /** The opened Review when a consumer needs its name and exact round history; null if unreadable. */
+    record?: ReviewArtifactV1 | null;
 }>;
 
 export type ReviewDetailSnapshot = Readonly<{

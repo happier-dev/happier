@@ -114,7 +114,7 @@ import {
 import { workflowRunStyles as styles } from './workflowRunStyles';
 import { WorkflowRunNeedsYouDock } from './WorkflowRunNeedsYouDock';
 import { WorkflowRunReview, type WorkflowRunResultReview } from './WorkflowRunReview';
-import { workflowStepResultShownByRunReview } from './workflowRunReviewResult';
+import { workflowStepResultShownByRunReview, projectWorkflowReviewerStatuses } from './workflowRunReviewResult';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { artifactResourceRoute } from '@/utils/url/resourceRoute';
 import { REVIEW_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -598,6 +598,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // opened from the header, and no step pane prints its raw record (U8 R4 R1, R2).
     const producedReviewId = props.resultReview?.reviewId ?? null;
     const finalOutputIsReview = props.resultReview?.isResult === true;
+    const runTitle = finalOutputIsReview ? props.resultReview?.title ?? props.title : props.title;
+    const reviewerStatuses = React.useMemo(() => projectWorkflowReviewerStatuses(props.resultReview?.reviewers), [props.resultReview?.reviewers]);
     const router = useRouter();
     const selectPage = React.useCallback((id: string) => {
         if (id === 'flow' || id === 'steps' || id === 'activity') props.onChangeView(id);
@@ -840,8 +842,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             progressByInvocationId: structureProgressById,
             projection: flowProjection,
             formatOccurrence: formatMapOccurrence,
+            reviewerStatuses,
         });
-    }, [derivedStructure, flowProjection, formatMapOccurrence, props.invocations, props.view, structureProgressById]);
+    }, [derivedStructure, flowProjection, formatMapOccurrence, props.invocations, props.view, structureProgressById, reviewerStatuses]);
 
     /**
      * The terminal primary action (UX §3.3).
@@ -913,7 +916,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         definition: props.definition,
         projection: flowProjection,
         project: structureProjector,
-    }), [navigationScope, props.definition, flowProjection, structureProjector]);
+        reviewerStatuses,
+    }), [navigationScope, props.definition, flowProjection, structureProjector, reviewerStatuses]);
     const attentionWaitsForYou = React.useCallback((invocation: WorkflowRunInvocationIndexV1) => (
         isWorkflowWaitForYouHold(invocation.lifecycle, { blockKind: invocationBlockKind(invocation) })
     ), [invocationBlockKind]);
@@ -1386,7 +1390,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 // the pane's own controls at its end, and the Run's controls on the row beneath.
                 <DetailsTabHeader
                     testID={`${testIDPrefix}-header`}
-                    title={props.title ?? t('workflows.contentUnavailable')}
+                    title={runTitle ?? t('workflows.contentUnavailable')}
                     columnMaxWidthPx={maxWidthStyle.maxWidth}
                     leading={<Icon name="tree-structure" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
                     meta={embeddedHeaderMeta}
@@ -1397,7 +1401,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 <NavigationLargeTitleProvider largeTitle={phone}>
                 <PageHeader
                     testID={`${testIDPrefix}-header`}
-                    title={props.title ?? t('workflows.contentUnavailable')}
+                    title={runTitle ?? t('workflows.contentUnavailable')}
                     alwaysShowTitle
                     // A phone gives the title the full width; the origin fact keeps the workflow glyph (lab P1).
                     leading={phone ? undefined : (
@@ -1705,12 +1709,13 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         // The state and its execution time are said once, here (DESIGN-16 D5): "Attempt 1 · Completed · 5 min".
         // The time is the opened progress's own execution timing, never the index's admission timestamps.
         const lifecycle = selectedInvocation?.lifecycle;
+        const reviewerStatus = entry?.blockId == null ? undefined : reviewerStatuses.get(entry.blockId);
         const parts = [block?.kind === 'wait' ? undefined : identity, entry === undefined ? undefined : formatOccurrence(entry.occurrence),
             block?.kind === 'wait' || attempt === undefined ? undefined : describeWorkflowInvocationAttempt(attempt).label,
             // A held result's card says its state on its own line; the header doesn't say it again.
-            lifecycle === undefined || (lifecycle === 'waiting_for_review' && block?.kind !== 'wait' && props.renderReviewCard !== undefined) ? undefined
+            reviewerStatus?.label ?? (lifecycle === undefined || (lifecycle === 'waiting_for_review' && block?.kind !== 'wait' && props.renderReviewCard !== undefined) ? undefined
                 : selectedInvocation !== null && attentionWaitsForYou(selectedInvocation) ? t('workflows.review.waitTitle')
-                    : describeWorkflowInvocationLifecycle(lifecycle, { blockKind: props.selectedInvocationProgress?.blockKind ?? block?.kind }).label,
+                    : describeWorkflowInvocationLifecycle(lifecycle, { blockKind: props.selectedInvocationProgress?.blockKind ?? block?.kind }).label),
             formatWorkflowInvocationElapsedLabel(props.selectedInvocationProgress?.timing) ?? undefined];
         return {
             subtitle: parts.filter((part): part is string => Boolean(part)).join(' \u00b7 ') || null,
@@ -1723,7 +1728,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         };
     }, [attentionWaitsForYou, derivedStructure, formatOccurrence, presentEngine, props.definition, props.frozenChildren, setupMachine,
         props.materializedLeaves, props.selectedInvocationId, props.selectedInvocationProgress?.attempt,
-        props.selectedInvocationProgress?.blockKind, props.selectedInvocationProgress?.timing, selectedInvocation]);
+        props.selectedInvocationProgress?.blockKind, props.selectedInvocationProgress?.timing, selectedInvocation, reviewerStatuses]);
     const selectedDetailSubtitle = selectedDetail.subtitle;
     // A step with no recovery choice still has a way forward on this page: the action the Run itself offers
     // (Stop while it is open, Run again once it has ended, else the workflow it came from). The card names
@@ -1997,6 +2002,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             contentContainerStyle={[styles.root, props.contentContainerStyle]}>
             {header}
             <View style={[styles.pageSection, phone ? null : styles.documentInset]}><WorkflowRunSteps runId={props.run.id} machineId={props.run.machineId} serverId={props.serverId}
+                reviewerStatuses={reviewerStatuses}
                 invocationStatusContext={invocationStatusContext}
                 notStartedLabel={notStartedLabel}
                 definition={props.definition} invocations={props.invocations} structure={derivedStructure}
@@ -2084,7 +2090,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
 
     const hideWorkflowLabel = t('panes.mainColumn.hideWorkflow');
     const showWorkflowLabel = t('panes.mainColumn.showWorkflow');
-    const runName = props.title ?? t('workflows.contentUnavailable');
+    const runName = runTitle ?? t('workflows.contentUnavailable');
     const runMarkColor = theme.colors.text.secondary;
     const runPaneState = props.run.attentionRequired === true || attentionRows.length > 0 ? 'attention'
         : props.run.state === 'running' ? 'working' : undefined;

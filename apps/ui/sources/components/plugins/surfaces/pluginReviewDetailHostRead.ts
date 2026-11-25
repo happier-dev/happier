@@ -89,7 +89,7 @@ export function createPluginReviewDetailHostReadStore(input: Readonly<{
         async readResource(resource, options) {
             const value = await readSnapshot(reviewIdFor(resource), options?.signal);
             const evidence = await readRoundEvidence(value, options?.signal);
-            const bytes = new TextEncoder().encode(JSON.stringify(evidence ? { ...value, ...evidence } : value));
+            const bytes = new TextEncoder().encode(JSON.stringify({ review: value.review, human: value.human, ...evidence }));
             return { contentType: 'application/json', bytes, digest: computePluginUiArtifactSha256DigestV1(bytes) };
         },
         async watchResource(resource, listener, options) {

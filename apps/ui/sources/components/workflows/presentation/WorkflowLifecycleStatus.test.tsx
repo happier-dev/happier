@@ -21,6 +21,13 @@ async function chromeFor(lifecycle: 'completed' | 'failed') {
 }
 
 describe('WorkflowLifecycleStatus', () => {
+    it('keeps the settled reviewer warning visible while invocation mechanics inherit Run cancellation', async () => {
+        const screen = await renderScreen(<WorkflowLifecycleStatus lifecycle="cancel_requested" context={{ runStopPending: true }}
+            presentation={{ label: "Couldn't finish", variant: 'warning', marker: { kind: 'icon', icon: 'warning-circle' } }} />);
+        const rendered = typeof StatusPill === 'object' && StatusPill !== null && 'type' in StatusPill ? (StatusPill as { type: unknown }).type : StatusPill;
+        expect(screen.tree.findAll((node: ReactTestInstance) => node.type === rendered).map(node => node.props.variant)).toContain('warning');
+        expect(screen.getTextContent()).toContain("Couldn't finish");
+    });
     // Healthy state is quiet (FIN-DESIGN-REVIEW M2, lab run-A_steps): only a state that needs the person
     // or failed speaks with a pill.
     it('says a healthy settled step as a quiet word and keeps the pill for a failure', async () => {

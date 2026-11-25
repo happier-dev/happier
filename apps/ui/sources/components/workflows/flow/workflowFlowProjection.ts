@@ -431,6 +431,7 @@ export type WorkflowFlowNodeRunState = Readonly<{
   /** Exact physical invocation row selected by Run detail. */
   invocationId: string;
   lifecycle: WorkflowInvocationLifecycleV1;
+  statusPresentation?: Pick<import('../presentation/workflowLifecyclePresentation').WorkflowLifecyclePresentation, 'label' | 'variant' | 'marker'>;
   /** Scoped occurrence identity, e.g. the current item or iteration. */
   occurrenceLabel?: string;
   /** The loops this occurrence sits in, outermost first: the coordinates the item selector groups by. */

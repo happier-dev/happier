@@ -206,7 +206,7 @@ function createNodeSlots(props: FlowNodeInputs) {
     // Managed and observed activity keep their existing lifecycle label owners.
     const stateLabel = runState === undefined
         ? (node.observedStatus === undefined ? null : formatWorkflowAgentStatusLabel(node.observedStatus))
-        : describeWorkflowInvocationLifecycle(runState.lifecycle, { ...props.invocationStatusContext, blockKind: node.kind }).label;
+        : runState.statusPresentation?.label ?? describeWorkflowInvocationLifecycle(runState.lifecycle, { ...props.invocationStatusContext, blockKind: node.kind }).label;
 
     return {
         accessibilityLabelForNode: (() => {
@@ -307,11 +307,12 @@ function createNodeSlots(props: FlowNodeInputs) {
                             {node.kind === 'parallel' && !PARALLEL_SETTLED_LIFECYCLES.has(runState.lifecycle) ? null : <WorkflowLifecycleStatus
                                 testID={`${testIDPrefix}-node-${node.nodeId}-state`}
                                 lifecycle={runState.lifecycle}
+                                presentation={runState.statusPresentation}
                                 blockKind={node.kind}
                                 context={props.invocationStatusContext}
                                 chrome="plain"
-                                markerOnly={runState.lifecycle === 'completed' || runState.lifecycle === 'failed'
-                                    || workflowLifecycleAwaitsDecision(runState.lifecycle)}
+                                markerOnly={runState.statusPresentation?.variant !== 'warning' && (runState.lifecycle === 'completed' || runState.lifecycle === 'failed'
+                                    || workflowLifecycleAwaitsDecision(runState.lifecycle))}
                             />}
                         </View>
                     ) : stateLabel === null ? (props.notStartedLabel !== undefined && props.hasRunStates && FLOW_MARKED_KINDS.has(node.kind) && !node.observed && occurrences.length === 0
@@ -348,7 +349,7 @@ function createNodeSlots(props: FlowNodeInputs) {
                     {occurrences.map((occurrence) => {
                         const occurrenceSelected = occurrence.invocationId === props.selectedInvocationId;
                         const elapsed = formatWorkflowInvocationElapsedLabel(occurrence.timing);
-                        const occurrenceState = describeWorkflowInvocationLifecycle(occurrence.lifecycle, { ...props.invocationStatusContext, blockKind: node.kind }).label;
+                        const occurrenceState = occurrence.statusPresentation?.label ?? describeWorkflowInvocationLifecycle(occurrence.lifecycle, { ...props.invocationStatusContext, blockKind: node.kind }).label;
                         // Attempts are named only where a retry exists to tell apart; otherwise the
                         // first attempt is implied and "Attempt 1" on every item is noise.
                         const attempt = occurrence.attempt ?? '0';
@@ -384,13 +385,14 @@ function createNodeSlots(props: FlowNodeInputs) {
                                         <WorkflowLifecycleStatus
                                             testID={`${testIDPrefix}-node-${node.nodeId}-occurrence-${occurrence.invocationId}-state`}
                                             lifecycle={occurrence.lifecycle}
+                                            presentation={occurrence.statusPresentation}
                                             blockKind={node.kind}
                                             context={props.invocationStatusContext}
                                             chrome="plain"
                                             // The mark alone: in a lane the state's words would take the
                                             // row from the item's own name (DESIGN-15 R2); the card above
                                             // and the row's label already say it.
-                                            markerOnly
+                                            markerOnly={occurrence.statusPresentation?.variant !== 'warning'}
                                         />
                                     </View>
                                 </HappierPressable>

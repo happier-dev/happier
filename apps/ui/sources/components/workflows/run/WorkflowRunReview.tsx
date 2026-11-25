@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { View } from 'react-native';
 
@@ -9,6 +10,9 @@ import { ReviewSummaryHost } from '@/components/reviews/summary/ReviewSummaryHos
 import type { ReviewSummaryRow } from '@/components/reviews/summary/ReviewSummary';
 import { useReviewHistory } from '@/components/reviews/useReviewHistory';
 import { useReviewList } from '@/components/reviews/useReviewList';
+import { useReviewDetail } from '@/components/reviews/useReviewDetail';
+import { projectReviewRoundReviewers, type ReviewRoundReviewer } from '@/components/reviews/reviewRoundReviewers';
+import { reviewSubjectFact } from '@/components/reviews/list/reviewSubjectLabel';
 import { readReviewFindingDecision } from '@/components/sessions/reviews/findings/reviewFindingComment';
 import { formatReviewFindingLocation } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
 import { useReviewComments } from '@/components/sessions/reviews/findings/useReviewRunComments';
@@ -36,7 +40,13 @@ export function useWorkflowRunProducedReview(runId: string, scope: ServerAccount
 }
 
 /** The Review a Run produced, and whether its final output is that Review. */
-export type WorkflowRunResultReview = Readonly<{ reviewId: string; isResult: boolean }>;
+export type WorkflowRunResultReview = Readonly<{
+    reviewId: string;
+    isResult: boolean;
+    title?: string | null;
+    /** Settled outcomes for this Run's own round, even after another Run retries the Review. */
+    reviewers?: readonly ReviewRoundReviewer[];
+}>;
 
 /**
  * The Run page's one reading of the Review its Run produced (the Review owner's `workflowRunId` link) and whether the
@@ -53,9 +63,19 @@ export function useWorkflowRunResultReview(params: Readonly<{
     const review = useWorkflowRunProducedReview(params.runId ?? '', params.scope,
         params.enabled && params.runId !== null);
     const reviewId = params.runId !== null ? review?.reviewId ?? null : null;
-    return React.useMemo(() => reviewId === null ? null
-        : { reviewId, isResult: workflowRunReviewIsResult({ reviewId, finalOutputInvocationId: params.finalOutputInvocationId,
-            result: params.result }) }, [reviewId, params.finalOutputInvocationId, params.result]);
+    const detail = useReviewDetail(reviewId ?? '', { scope: params.scope,
+        enabled: params.enabled && reviewId !== null, includeRecord: true });
+    const record = detail.data?.record;
+    return React.useMemo(() => {
+        if (reviewId === null) return null;
+        const round = record?.rounds.filter(round => round.runs.some(run => run.kind === 'workflow' && run.runId === params.runId)).at(-1);
+        const subject = detail.data?.review.subjectKind;
+        return { reviewId, title: record ? joinHappierFacts(record.title,
+            subject ? reviewSubjectFact(subject, round?.comparisonCapture?.input.source).text : null) : null,
+            reviewers: round && round.state !== 'running' ? projectReviewRoundReviewers(round, undefined) : undefined,
+            isResult: workflowRunReviewIsResult({ reviewId, finalOutputInvocationId: params.finalOutputInvocationId,
+                result: params.result }) };
+    }, [reviewId, record, detail.data?.review.subjectKind, params.runId, params.finalOutputInvocationId, params.result]);
 }
 
 /**
