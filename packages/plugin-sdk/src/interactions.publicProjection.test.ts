@@ -156,16 +156,19 @@ describe('transient interaction public projection', () => {
                 name: 'requestApproval',
                 request: 'InteractionTransientApprovalAuthorRequestV1',
                 result: 'InteractionTransientApprovalResultV1',
+                options: 'ApprovalInteractionOptions',
             },
             {
                 name: 'askQuestions',
                 request: 'InteractionTransientQuestionsAuthorRequestV1',
                 result: 'InteractionTransientQuestionsResultV1',
+                options: 'InteractionOptions',
             },
             {
                 name: 'confirm',
                 request: 'InteractionTransientConfirmationAuthorRequestV1',
                 result: 'InteractionTransientConfirmationResultV1',
+                options: 'InteractionOptions',
             },
         ] as const;
 
@@ -173,7 +176,7 @@ describe('transient interaction public projection', () => {
             const method = interactionsMethod(source, expected.name);
             expect(method.parameters).toHaveLength(2);
             expect(typeText(source, method.parameters[0]?.type)).toBe(expected.request);
-            expect(typeText(source, method.parameters[1]?.type)).toBe('InteractionOptions');
+            expect(typeText(source, method.parameters[1]?.type)).toBe(expected.options);
             expect(typeText(source, method.type)).toBe(`Promise<${expected.result}>`);
         }
     });
