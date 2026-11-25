@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { ITEM_SUBTITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
+import { Text } from '@/components/ui/text/Text';
+
 import type { SoundEffectsVolumeSliderProps } from './SoundEffectsVolumeSlider';
 
 export function SoundEffectsVolumeSlider(props: SoundEffectsVolumeSliderProps) {
@@ -19,9 +22,18 @@ export function SoundEffectsVolumeSlider(props: SoundEffectsVolumeSliderProps) {
                 onChange={(event) => props.onValueChange(event.currentTarget.valueAsNumber)}
                 style={{ flex: 1, minWidth: 0, height: '2.75rem', margin: 0, accentColor: theme.colors.button.primary.background }}
             />
-            <span aria-hidden="true" style={{ color: theme.colors.text.secondary, minWidth: '4ch', textAlign: 'end', fontVariantNumeric: 'tabular-nums' }}>
+            <Text
+                aria-hidden={true}
+                style={{
+                    ...ITEM_SUBTITLE_TEXT_METRICS.comfortable,
+                    color: theme.colors.text.secondary,
+                    minWidth: 42,
+                    textAlign: 'right',
+                    fontVariant: ['tabular-nums'],
+                }}
+            >
                 {props.value}%
-            </span>
+            </Text>
         </div>
     );
 }

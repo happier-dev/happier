@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View, type GestureResponderEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
+import { ITEM_SUBTITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { Text } from '@/components/ui/text/Text';
 
 export type SoundEffectsVolumeSliderProps = Readonly<{
@@ -81,5 +82,11 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: THUMB_SIZE / 2,
         backgroundColor: theme.colors.button.primary.background,
     },
-    value: { minWidth: 42, textAlign: 'right', color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
+    value: {
+        ...ITEM_SUBTITLE_TEXT_METRICS.comfortable,
+        minWidth: 42,
+        textAlign: 'right',
+        color: theme.colors.text.secondary,
+        fontVariant: ['tabular-nums'],
+    },
 }));
