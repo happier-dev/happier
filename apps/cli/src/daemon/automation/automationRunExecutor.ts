@@ -268,9 +268,9 @@ export async function executeClaimedRun(params: {
         });
         if (!encryption || !isCurrent()) return;
         let settlementCurrentness: AutomationAccountCurrentnessWitnessV1 = encryption.witness;
-        const fail = async (errorCode: string, errorMessage: string) => {
+        const fail = async (errorCode: string, errorMessage: string, failureCause?: ActionFailureCauseV1) => {
           if (isCurrent()) await claimClient.failRun({ ...createV3RunFailureSettlement({
-            machineId, claimed, accountEncryption: encryption, errorCode, errorMessage,
+            machineId, claimed, accountEncryption: encryption, errorCode, errorMessage, failureCause,
           }), accountCurrentness: settlementCurrentness });
         };
         const parsed = parseAutomationRunExecutionRecipeV1(claimed.run.executionInputEnvelope);
@@ -315,7 +315,7 @@ export async function executeClaimedRun(params: {
           await claimClient.succeedRun({ protocol: 'v3', runId: claimed.run.id,
             machineId, attempt, accountCurrentness: started });
         } else {
-          await fail(result.errorCode ?? 'target_unavailable', result.error);
+          await fail(result.errorCode, result.error, result.failureCause);
         }
         return;
       }

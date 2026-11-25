@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createAccountScopedCryptoMaterialSnapshotV1, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { openAutomationRunFailureDetailStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createPluginActionExecutor } from '@/session/actions/createDaemonPluginActionExecutor';
 import { executeClaimedRun } from './automationRunExecutor';
 import type { AutomationV3ClaimedRunPayload } from './automationTypes';
@@ -78,13 +80,15 @@ describe('claimed Automation Action execution', () => {
   // approval routing and the Machine Isolation automation origin read one trusted stamp.
   it.each([true, false])('settles the Run with the daemon Action outcome (available=%s)', async available => {
     // The daemon process transport is the boundary; Action routing and recipe materialization stay real.
+    const failureCause = { phase: 'action.invoke', errorClass: 'Error', errorCode: 'target_unavailable',
+      httpStatus: null, diagnostic: { reason: 'action_unavailable' } } satisfies ActionFailureCauseV1;
     const daemon = vi.fn(async () => ({ matched: true as const, result: available
       ? { ok: true as const, result: { refreshed: true } }
-      : { ok: false as const, errorCode: 'plugin_action_execution_placement_unavailable', error: 'Unavailable' } }));
+      : { ok: false as const, errorCode: 'target_unavailable', error: 'Unavailable', failureCause } }));
     const executor = createPluginActionExecutor({ base: createActionExecutor({}), requestPluginActionExecution: daemon });
     const startRun = vi.fn(async () => witness);
     const succeedRun = vi.fn(async () => {});
-    const failRun = vi.fn(async () => {});
+    const failRun = vi.fn<Parameters<typeof executeClaimedRun>[0]['claimClient']['failRun']>(async () => {});
     await executeClaimedRun({ machineId: 'machine-1', claimed: claim(), heartbeatMs: 60_000, leaseDurationMs: 120_000,
       claimClient: { heartbeatRun: vi.fn(), startRun, succeedRun, failRun }, actionExecutor: executor,
       resolveAutomationAccountEncryption: async () => ({ kind: 'available', witness }) });
@@ -98,7 +102,10 @@ describe('claimed Automation Action execution', () => {
       expect(succeedRun).toHaveBeenCalledWith(expect.objectContaining({ runId: 'run-1' }));
       expect(failRun).not.toHaveBeenCalled();
     } else {
-      expect(failRun).toHaveBeenCalledWith(expect.objectContaining({ errorCode: 'plugin_action_execution_placement_unavailable' }));
+      const failure = failRun.mock.calls[0]?.[0];
+      expect(failure).toMatchObject({ runId: 'run-1', errorCode: 'target_unavailable' });
+      expect(openAutomationRunFailureDetailStoredEnvelopeV1({ mode: 'plain',
+        envelope: JSON.parse(failure!.errorDetailEnvelope!) })).toMatchObject({ kind: 'available', failureCause });
       expect(succeedRun).not.toHaveBeenCalled();
     }
   });
