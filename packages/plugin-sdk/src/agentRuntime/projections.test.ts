@@ -339,6 +339,7 @@ function namedExportsFromSpecifier(
 // Settled canonical projections absent from the historical finalProjection fixture.
 // Direct symbol identity and private-export guards below remain authoritative.
 const SETTLED_ADDITIONAL_PROJECTION_EXPORTS = [
+  'AgentAccountSettingsContributionV1',
   'AgentSessionCompactionCapability',
   'AgentSessionCompactionIdleCapability',
   'PluginAgentSessionCompactionCapabilityV2',
