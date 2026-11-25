@@ -478,7 +478,7 @@ describe('signed Project clean preparation', () => {
   // creates from another Account's SOURCE is the PERSON's. It is written to their rows and prepared at their own
   // TARGET over the signed writer → target path, under the admitted session.handoff root and routed by the handoff's
   // operation id. On an owner TARGET, Home's admission of that root is the whole admission.
-  it.each(['own TARGET', 'another handoff root', "SOURCE owner's own handoff"] as const)(
+  it.each(['own TARGET', 'another handoff root', "SOURCE owner's own handoff", 'custody retired before finalize'] as const)(
     'creates the link a person hands off with in their own rows, signed with the handoff root (%s)', async scenario => {
     const person = scenario === "SOURCE owner's own handoff" ? 'owner' : 'target-owner';
     const token = (sub: string) => [Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
@@ -605,14 +605,16 @@ describe('signed Project clean preparation', () => {
         sourceInstallationId: 'parent-installation', targetMachineId: fixture.targetRef.machineId,
         targetInstallationId: targetInstallation.installationId } } });
     const admittedRoot = root;
+    // The Session custody the handoff borrowed; retiring it models the SOURCE runner that lent it ending.
+    let sessionCustodyLive = true;
     const requesterSessionBootstrap = { credentials: requesterCredentials, serverHttpBaseUrl: 'https://bind-child-home.invalid',
       attribution: { serverId: fixture.serverId, accountId: person, machineId: fixture.sourceRef.machineId,
-        installationId: 'parent-installation' }, isCurrent: async () => true,
+        installationId: 'parent-installation' }, isCurrent: async () => sessionCustodyLive,
       // The bootstrap's own capture facet: the real requester Account admission over the root.
       projectHandoffCaptureAccountContext: async (authorization: typeof admittedRoot) => await admitRequesterAccountActionContext({
         authorization, credentials: requesterCredentials, serverId: fixture.serverId, serverIdentityId: fixture.serverId,
-        serverHttpBaseUrl: 'https://bind-child-home.invalid', isCurrent: async () => true,
-        isRetainedCustodyCurrent: async () => true }),
+        serverHttpBaseUrl: 'https://bind-child-home.invalid', isCurrent: async () => sessionCustodyLive,
+        isRetainedCustodyCurrent: async () => sessionCustodyLive }),
     } as unknown as AdmittedRequesterSessionBootstrap;
     // The coordinator's context: its admitted root and the ingress's admission currentness ride only for
     // another person's handoff; the SOURCE owner's own handoff keeps today's context.
@@ -647,6 +649,20 @@ describe('signed Project clean preparation', () => {
       request: { bootstrapOperationId: deriveWorkspaceSyncRelationshipId(operationId),
         owner: { kind: 'relationship', relationshipId: deriveWorkspaceSyncRelationshipId(operationId) } } });
     expect(signed, evidence).toEqual([{ phase: 'prepare' }]);
+    if (scenario !== 'custody retired before finalize' || !('value' in settled)) return;
+    // The finalize transfer consumes the retained custody; once it is retired the person sees that step.
+    sessionCustodyLive = false;
+    // The link's transfer admission and the commit's row write each name their own step.
+    const transfer = await fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId })?.execution.assertTransferCurrent()
+      .then(() => undefined, (error: unknown) => error);
+    expect(transfer).toMatchObject({ code: 'project_requester_authority_unavailable',
+      failureCause: { phase: 'workspace_sync.requester_custody.transfer' } });
+    const finalized = await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () => fixture.parent.handoffAdapter.finalize({
+      operationId, prepared: settled.value })).then(() => undefined, (error: unknown) => error);
+    expect(finalized).toMatchObject({ code: 'project_requester_authority_unavailable',
+      failureCause: { phase: 'project_rows.requester_custody' } });
+    // No further TARGET effect after the refusal; only the prepared bootstrap's cleanup release.
+    expect(signed.filter(entry => entry.phase !== 'release'), evidence).toEqual([{ phase: 'prepare' }]);
   });
 
   it.each(['requester', 'owner'] as const)('keeps persistent Script preparation in its requester Account (%s)', async requesterAccountId => {

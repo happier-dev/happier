@@ -1727,10 +1727,14 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         replaceSnapshot: async next => { snapshot = next; },
         ...(input.callWorkspaceTargetPhase ? { callTargetPhase: createRequesterTargetPhaseCaller(targetContext, sourceWriter) } : {}),
         assertTransferCurrent: async () => {
-          if (!relationshipId || !await custody.isCurrent() || !await verifyWorkspaceSyncSourceMachineAdmissionCurrent({
-            credentials: requester.credentials, sessionId: relationshipId, attribution,
-            serverHttpBaseUrl: requester.serverHttpBaseUrl, boundary })) {
-            throw compositionError('project_requester_authority_unavailable', 'Requester Sync custody is unavailable');
+          // The person sees which step refused: the custody retained for this link, or Home's Machine admission.
+          const step = !relationshipId || !await custody.isCurrent() ? 'transfer'
+            : !await verifyWorkspaceSyncSourceMachineAdmissionCurrent({ credentials: requester.credentials, sessionId: relationshipId,
+              attribution, serverHttpBaseUrl: requester.serverHttpBaseUrl, boundary }) ? 'machine_admission' : null;
+          if (step) {
+            throw Object.assign(compositionError('project_requester_authority_unavailable', 'Requester Sync custody is unavailable'), {
+              failureCause: { phase: `workspace_sync.requester_custody.${step}`, errorClass: 'Error',
+                errorCode: 'project_requester_authority_unavailable', httpStatus: null } });
           }
         },
         retainRelationship: async id => {

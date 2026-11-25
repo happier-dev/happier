@@ -39,6 +39,7 @@ import { readAccountRoleOverridesFromSnapshot } from '@/settings/accountSettings
 import type { ResolveRequesterSessionRuntimeContext, RequesterSessionRuntimeContext, AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { readDefaultSessionIdFromRpcInput } from './registerActionSpecRpcHandlers';
 import { isAdmittedRequesterSessionBootstrapCurrent } from '@/daemon/sessionEncryption/requesterSessionCredentials';
+import { retainRequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/requesterSessionRuntimeContextLifetime';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -86,6 +87,9 @@ async function withRequesterSessionRuntime(input: unknown, context: RpcHandlerCo
         admission ? { serverId: owner.serverId, accountId: admission.actorAccountId,
             machineId: admission.machineId, installationId: admission.installationId } : undefined));
     if (!runtime) return refused('requester_session_custody_unavailable', readRequesterSessionCustodyRefusalCode(branch));
+    // Admitted once here, held until this handler settles: a handoff's own Stop exits the
+    // runner that lent this custody, and its later steps still consume it.
+    const releaseOperation = retainRequesterSessionRuntimeContext(runtime);
     try {
         const bootstrap = runtime.bootstrap;
         if (bootstrap.getBoundSessionId() !== sessionId || bootstrap.attribution.serverId !== owner.serverId) {
@@ -96,7 +100,7 @@ async function withRequesterSessionRuntime(input: unknown, context: RpcHandlerCo
         }
         return await handler(input, { ...context, requesterSessionBootstrap: bootstrap,
             localActionContext: { ...context.localActionContext, requesterWorkAttributionV1: bootstrap.attribution } });
-    } finally { await owner.release(runtime); }
+    } finally { releaseOperation(); await owner.release(runtime); }
 }
 
 function isHandoffPhaseBound(input: unknown, context: RpcHandlerContext | undefined): boolean {

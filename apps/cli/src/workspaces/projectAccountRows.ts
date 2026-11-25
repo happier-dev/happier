@@ -165,7 +165,9 @@ async function assertRequesterCurrent(input: ReadInput): Promise<void> {
   await input.assertCurrentAuthority?.();
   if (input.sessionCustody && (!await input.sessionCustody.isCurrent()
     || input.serverId && !await isServerProfileHomeIdentity(input.sessionCustody.serverId, input.serverId))) {
-    throw rowError('project_requester_authority_unavailable');
+    // The person sees this step: the admitted Session custody these rows are read with is no longer current.
+    throw Object.assign(rowError('project_requester_authority_unavailable'), { failureCause: { phase: 'project_rows.requester_custody',
+      errorClass: 'Error', errorCode: 'project_requester_authority_unavailable', httpStatus: null } });
   }
   input.signal?.throwIfAborted();
   if (!input.authorization) return;

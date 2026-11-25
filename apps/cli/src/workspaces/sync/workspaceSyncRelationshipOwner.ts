@@ -138,6 +138,9 @@ function withCleanupErrors(primary: unknown, cleanupErrors: readonly unknown[]):
   const code = readRpcErrorCode(primary) ?? (primary && typeof primary === 'object' && 'code' in primary
     && typeof primary.code === 'string' ? primary.code : undefined);
   if (code) Object.assign(failure, { code });
+  // The primary step's typed phase passes through unchanged; cleanup never replaces it.
+  const failureCause = primary && typeof primary === 'object' && 'failureCause' in primary ? primary.failureCause : undefined;
+  if (failureCause !== undefined) Object.assign(failure, { failureCause });
   return failure;
 }
 
