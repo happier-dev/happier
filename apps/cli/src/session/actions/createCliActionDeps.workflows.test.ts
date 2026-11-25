@@ -55,6 +55,7 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExec
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowFinalResultStoredEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowAcceptedSnapshotV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema, AutomationDefinitionReconcileRequestSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { prepareRequesterAccountActionContext, projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
@@ -1545,6 +1546,7 @@ describe('createCliActionDeps workflow boundary', () => {
     const sessionId = 'c' + '2'.repeat(24);
     const project = { machineId: 'machine-1', directory: '/machine/repo' };
     let savedRow: ReturnType<typeof AutomationDefinitionDetailSchema.parse> | undefined;
+    const credentials = { token: workflowAccountPersonToken, encryption: null };
     const baseGet = http.get.getMockImplementation()!;
     http.get.mockImplementation(async (url: string) => {
       if (url.includes(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
@@ -1552,6 +1554,12 @@ describe('createCliActionDeps workflow boundary', () => {
           path: 'relative/repo', sessionWorkspaceLocationV1: { v: 1, machineId: project.machineId,
             agentPath: 'relative/repo', machinePath: project.directory } }),
       }) } };
+      if (url.endsWith('/v1/machines/machine-1')) return { status: 200, data: { machine: {
+        id: 'machine-1', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
+        metadata: JSON.stringify({ machineId: 'machine-1' }), metadataVersion: 1,
+        daemonState: '{}', daemonStateVersion: 1,
+        access: { custodian: { accountId: 'account-1', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+      } } };
       if (url.includes('/v3/automations?')) return { status: 200, data: { automations: [], nextCursor: null } };
       return baseGet(url);
     });
@@ -1576,10 +1584,17 @@ describe('createCliActionDeps workflow boundary', () => {
       });
       return { status: 200, data: savedRow };
     });
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+    const deps = createCliActionDeps({ token: credentials.token, credentials,
       resolveServerFeaturesSnapshot: () => enabledFeatures, sessionId: 'cli-global', mode: 'plain', ctx: null });
-    const result = await createActionExecutor({
-    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"workflow.run.get": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps }).execute('workflow.trigger.add', {
+    const executor = createActionExecutor({
+      ...deps,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings,
+        approvalWaivedSurfaces: { ...context.actionsSettings?.approvalWaivedSurfaces,
+          'workflow.run.get': Object.keys(ActionSurfaceSchema.shape), 'workflow.trigger.add': ['cli'],
+        },
+      }),
+    });
+    const result = await executor.execute('workflow.trigger.add', {
       lifetimeSession: { sessionId }, project, target: { kind: 'inline', definition: { version: 1, blocks: [{ kind: 'action', id: 'notify',
         actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Ready' } } }] } },
       trigger: { kind: 'schedule', enabled: false,
@@ -1588,6 +1603,8 @@ describe('createCliActionDeps workflow boundary', () => {
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { set: { project } } });
     if (!savedRow) throw new Error('trigger_was_not_saved');
     const triggerId = savedRow.triggers[0]!.id;
+    const scheduledFor = 1;
+    const occurrenceKey = deriveAutomationOccurrenceKeyV1({ triggerId, evidence: { v: 1, kind: 'schedule', scheduledFor } });
     const runId = '11111111-1111-4111-8111-111111111111';
     const run = WorkflowRunSummaryV1Schema.parse({ id: runId, ownerAccountId: 'account-1',
       sourceArtifactId: null, visibleTeamId: null, automationScopeSessionId: sessionId,
@@ -1604,10 +1621,10 @@ describe('createCliActionDeps workflow boundary', () => {
       if (body.operation === 'get' && body.runId === runId) return { data: { run } };
       throw new Error('unexpected_cleanup_read');
     });
-    await expect(deps.workflowAction!({ actionId: 'workflow.trigger.remove',
-      input: { automationId: savedRow.id, triggerId },
-      context: { surface: 'agent', actionCaller: { kind: 'workflowRun', runId } } }))
-      .resolves.toMatchObject({ set: { automationId: savedRow.id, triggers: [] } });
+    await expect(executor.execute('workflow.trigger.remove', { automationId: savedRow.id, triggerId }, {
+      surface: 'agent', actionCaller: { kind: 'workflowRun', runId,
+        authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'read-only' } },
+    })).resolves.toMatchObject({ ok: true, result: { set: { automationId: savedRow.id, triggers: [] } } });
   });
 
   it.each(['session', 'detached', 'workflow', 'wrong_run', 'invalid_response', 'transport_failure', 'wrong_machine'] as const)(
