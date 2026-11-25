@@ -192,6 +192,7 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
         contextMode: 'normal' as 'normal' | 'denied' | 'malformed_after_commit' | 'malformed_without_commit',
         contextArchived: false,
         candidatePolicyUnavailable: false,
+        candidatePolicyFailure: null as null | Readonly<{ status: number; code: string }>,
         candidatePolicyGate: null as Promise<void> | null,
         envelopePages: sessionEncrypted ? [{ summary: { prepared: 0, pending: 0, invalid: 0, recipientKeyUnavailable: 0 }, items: [] }] as EnvelopePage[] : [],
         envelopeStatus: 200,
@@ -268,7 +269,10 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
         if (path === '/v2/sessions/access-candidates/inspect') {
             candidatePaths.push(path);
             await state.candidatePolicyGate;
-            if (state.candidatePolicyUnavailable) return Response.json({ error: 'not_found' }, { status: 404 });
+            if (state.candidatePolicyFailure) return Response.json(
+                { error: state.candidatePolicyFailure.code }, { status: state.candidatePolicyFailure.status },
+            );
+            if (state.candidatePolicyUnavailable) return Response.json({ error: 'Not Found' }, { status: 404 });
             const body = JSON.parse(String(init?.body)) as { subjects: Array<{ kind: string; teamId?: string }> };
             const team = TEAM_DIRECTORY.items.find((item) => item.id === state.primaryTeamId);
             const reason = state.contextArchived || team?.policy.externalSharingPolicy === 'disabled'
@@ -855,6 +859,33 @@ describe('useLiveSessionAccessEditorController encrypted-access preparation', ()
             .resolveCandidates!('', new AbortController().signal);
         expect(candidates.find((row) => row.principal.key === 'team:team-acme')?.addition).toEqual({ kind: 'allowed' });
         expect(candidates.find((row) => row.principal.key === 'team:team-design')?.addition.kind).toBe('blocked');
+    });
+
+    it.each([
+        { status: 403, code: 'session_access_authentication_required', message: 'session.access.authenticationRequired' },
+        { status: 503, code: 'session_access_authentication_unavailable', message: 'session.access.authenticationUnavailable' },
+        { status: 403, code: 'session_access_forbidden', message: 'errors.permissionDenied' },
+        { status: 404, code: 'not_found', presentedCode: 'session_access_sharing_unavailable', message: 'session.collaboration.accessUnavailableReason' },
+        { status: 500, code: 'Internal Server Error', presentedCode: 'session_access_request_failed', message: 'errors.operationFailed', retry: true },
+    ] as const)('keeps the $status $code candidate inspection result and its recovery under the context', async (scenario) => {
+        const home = await setupHome({ sharing: true, encrypted: false });
+        home.state.primaryTeamId = 'team-acme';
+        home.state.candidatePolicyFailure = { status: scenario.status, code: scenario.code };
+        const controller = await mountController(home.profile.id);
+        await vi.waitFor(() => expect(controller().model.context?.unavailableReason).toMatchObject({
+            code: 'presentedCode' in scenario ? scenario.presentedCode : scenario.code,
+            message: t(scenario.message),
+        }));
+        const action = controller().model.context?.unavailableReason?.action;
+        if ('retry' in scenario) {
+            expect(action?.label).toBe(t('common.retry'));
+            home.state.candidatePolicyFailure = null;
+            await act(async () => { action?.onPress(); });
+            await vi.waitFor(() => expect(controller().model.context?.unavailableReason).toBeUndefined());
+            expect(home.candidatePaths).toHaveLength(2);
+        } else {
+            expect(action?.label).not.toBe(t('common.retry'));
+        }
     });
 
     it('does not offer additions when an older Home cannot inspect the context policy', async () => {

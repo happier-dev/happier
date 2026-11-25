@@ -14141,7 +14141,7 @@ const sessionAccessTranslations = { "ja": {
         contextChangeSummary: "メインチームを設定または解除します。既存のアクセス権は維持され、選択したチームのポリシーで必須の場合は、そのチームにアクセス権が付与されます。",
         contextSet: ({ team }: { team: string }) => `現在の所属チーム：${team}`,
         contextCleared: "メインチームの設定を解除しました",
-        contextPolicyUnavailable: "このセッションの共有ポリシーを確認できませんでした。更新してもう一度お試しください。",
+        contextPolicyUnavailable: "このセッションの共有ポリシーを確認できませんでした。",
         contextTeamUnavailable: ({ team }: { team: string }) => `${team} はセッションのコンテキストとして利用できなくなりました。`,
         contextTeamArchived: ({ team }: { team: string }) => `${team} はアーカイブされています。`,
         search: "人、グループ、チームを検索",

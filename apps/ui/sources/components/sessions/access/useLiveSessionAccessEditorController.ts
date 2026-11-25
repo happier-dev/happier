@@ -557,7 +557,7 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
     const unavailablePolicyReason: SessionAccessUiReason = {
         code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable'),
     };
-    const inspectCandidatePolicy = React.useCallback(async (subjects: readonly PrincipalRefV1[], signal?: AbortSignal) => {
+    const inspectCandidatePolicy = React.useCallback(async function inspectPolicy(subjects: readonly PrincipalRefV1[], signal?: AbortSignal) {
         const primaryTeamId = stateRef.current.scopeKey === scopeKey ? stateRef.current.snapshot?.primaryTeamId : undefined;
         if (!primaryTeamId) return null;
         try {
@@ -573,11 +573,20 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
             return { result, reason: null };
         } catch (error) {
             if (!isScopeCurrent() || signal?.aborted) return null;
-            // An older Home has no inspection operation. Do not infer permission from directory policy.
-            const reason = error instanceof SessionAccessApiError && error.status === 403
-                ? presentSessionAccessFailure(error) : {
-                    code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable'),
-                };
+            const missingInspection = error instanceof SessionAccessApiError && (
+                (error.status === 404 && error.code === 'session_access_request_failed')
+                || error.code === 'session_access_context_policy_unavailable'
+            );
+            const issue = missingInspection ? {
+                code: 'session_access_context_policy_unavailable',
+                message: t('session.access.contextPolicyUnavailable'),
+                retryable: false,
+            } : presentSessionAccessFailure(error);
+            const reason: SessionAccessUiReason = issue.retryable ? {
+                code: issue.code,
+                message: issue.message,
+                action: { label: t('common.retry'), onPress: () => { void inspectPolicy([]); } },
+            } : issue;
             setCandidatePolicy((previous) => previous?.scopeKey === scopeKey && previous.primaryTeamId === primaryTeamId
                 && previous.error?.code === reason.code && previous.error.message === reason.message
                 ? previous : { scopeKey, primaryTeamId, context: null, error: reason });

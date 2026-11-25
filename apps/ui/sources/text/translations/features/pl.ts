@@ -14223,7 +14223,7 @@ const sessionAccessTranslations = { "pl": {
         contextChangeSummary: "Ustaw lub usuń główny zespół. Obecne uprawnienia pozostają w mocy, a wybrany zespół uzyska dostęp, jeśli wymagają tego jego zasady.",
         contextSet: ({ team }: { team: string }) => `Teraz w zespole ${team}`,
         contextCleared: "Anulowano przypisanie głównego zespołu",
-        contextPolicyUnavailable: "Nie udało się sprawdzić zasad udostępniania tej sesji. Odśwież, aby spróbować ponownie.",
+        contextPolicyUnavailable: "Nie udało się sprawdzić zasad udostępniania tej sesji.",
         contextTeamUnavailable: ({ team }: { team: string }) => `${team} nie jest już dostępny jako kontekst sesji.`,
         contextTeamArchived: ({ team }: { team: string }) => `${team} jest zarchiwizowany.`,
         search: "Szukaj osób, grup lub zespołów",

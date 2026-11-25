@@ -14197,7 +14197,7 @@ const sessionAccessTranslations = { "de": {
         contextChangeSummary: "Lege das primäre Team fest oder entferne es. Bestehende Zugriffe bleiben erhalten. Das ausgewählte Team erhält Zugriff, wenn seine Richtlinie dies verlangt.",
         contextSet: ({ team }: { team: string }) => `Jetzt in ${team}`,
         contextCleared: "Kein primäres Team mehr",
-        contextPolicyUnavailable: "Die Freigaberichtlinie dieser Sitzung konnte nicht geprüft werden. Aktualisiere, um es erneut zu versuchen.",
+        contextPolicyUnavailable: "Die Freigaberichtlinie dieser Sitzung konnte nicht geprüft werden.",
         contextTeamUnavailable: ({ team }: { team: string }) => `${team} ist nicht mehr als Sitzungskontext verfügbar.`,
         contextTeamArchived: ({ team }: { team: string }) => `${team} ist archiviert.`,
         search: "Personen, Gruppen oder Teams suchen",

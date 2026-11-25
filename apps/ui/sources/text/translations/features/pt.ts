@@ -14187,7 +14187,7 @@ const sessionAccessTranslations = { "pt": {
         contextChangeSummary: "Defina ou remova a equipe principal. Os acessos existentes são mantidos e a equipe selecionada recebe acesso se a política dela exigir.",
         contextSet: ({ team }: { team: string }) => `Agora em ${team}`,
         contextCleared: "Equipe principal desmarcada",
-        contextPolicyUnavailable: "Não foi possível verificar a política de partilha desta sessão. Atualize para tentar novamente.",
+        contextPolicyUnavailable: "Não foi possível verificar a política de partilha desta sessão.",
         contextTeamUnavailable: ({ team }: { team: string }) => `${team} já não está disponível como contexto da sessão.`,
         contextTeamArchived: ({ team }: { team: string }) => `${team} está arquivada.`,
         search: "Pesquisar pessoas, grupos ou equipes",

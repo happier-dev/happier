@@ -14081,7 +14081,7 @@ const sessionAccessTranslations = { "zh-Hant": {
         contextChangeSummary: "設定或清除主要團隊。現有存取權限會保留。如果所選團隊的政策要求授予存取權限，該團隊將取得存取權限。",
         contextSet: ({ team }: { team: string }) => `目前所屬團隊：${team}`,
         contextCleared: "已清除主要團隊設定",
-        contextPolicyUnavailable: "無法檢查此工作階段的分享政策。請重新整理後再試。",
+        contextPolicyUnavailable: "無法檢查此工作階段的分享政策。",
         contextTeamUnavailable: ({ team }: { team: string }) => `${team} 已無法用作工作階段情境。`,
         contextTeamArchived: ({ team }: { team: string }) => `${team} 已封存。`,
         search: "搜尋人員、群組或團隊",

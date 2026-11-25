@@ -13,7 +13,7 @@ export const sessionAccessTranslationsEnglish = { "en": {
         contextChangeSummary: "Set or clear the primary Team. Existing grants stay in place, and the selected Team gains access if its policy requires it.",
         contextSet: ({ team }: { team: string }) => `Now in ${team}`,
         contextCleared: "Team cleared",
-        contextPolicyUnavailable: "This session’s sharing policy could not be checked. Refresh to try again.",
+        contextPolicyUnavailable: "This session’s sharing policy could not be checked.",
         contextTeamUnavailable: ({ team }: { team: string }) => `${team} is no longer available as a session context.`,
         contextTeamArchived: ({ team }: { team: string }) => `${team} is archived.`,
         search: "Search people, groups, or teams",

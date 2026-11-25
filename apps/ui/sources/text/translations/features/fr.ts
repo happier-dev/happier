@@ -14212,7 +14212,7 @@ const sessionAccessTranslations = { "fr": {
         contextChangeSummary: "Définissez ou retirez l’équipe principale. Les accès existants sont conservés et l’équipe sélectionnée obtient l’accès si sa politique l’exige.",
         contextSet: ({ team }: { team: string }) => `Désormais dans ${team}`,
         contextCleared: "Équipe principale désélectionnée",
-        contextPolicyUnavailable: "La politique de partage de cette session n’a pas pu être vérifiée. Actualise pour réessayer.",
+        contextPolicyUnavailable: "La politique de partage de cette session n’a pas pu être vérifiée.",
         contextTeamUnavailable: ({ team }: { team: string }) => `${team} n’est plus disponible comme contexte de session.`,
         contextTeamArchived: ({ team }: { team: string }) => `${team} est archivée.`,
         search: "Rechercher des personnes, groupes ou équipes",

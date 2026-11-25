@@ -14224,7 +14224,7 @@ const sessionAccessTranslations = { "ru": {
         contextChangeSummary: "Назначьте или уберите основную команду. Действующие права доступа сохранятся, а выбранная команда получит доступ, если этого требует её политика.",
         contextSet: ({ team }: { team: string }) => `Теперь в команде «${team}»`,
         contextCleared: "Основная команда не назначена",
-        contextPolicyUnavailable: "Не удалось проверить правила общего доступа к этой сессии. Обновите, чтобы повторить попытку.",
+        contextPolicyUnavailable: "Не удалось проверить правила общего доступа к этой сессии.",
         contextTeamUnavailable: ({ team }: { team: string }) => `${team} больше недоступна в качестве контекста сессии.`,
         contextTeamArchived: ({ team }: { team: string }) => `${team} архивирована.`,
         search: "Поиск людей, групп или команд",
