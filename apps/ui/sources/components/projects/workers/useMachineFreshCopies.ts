@@ -86,6 +86,8 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
   }, [accountId, binding, serverId]);
   React.useEffect(() => {
     if (!binding || !rawCopies || lifetime.signal.aborted) return;
+    // Settlement requests a refresh; pending/dismissed notices do not change copy facts.
+    const scopedNotices = noticesRef.current;
     // A retired definition is absent from the graph. Keep inspecting its captured target without
     // treating lost custody as proof that its files were removed, or repeating the removal Action.
     const retainedCopies = scopedNotices?.key === key && scopedNotices.lifetime === lifetime
@@ -135,7 +137,7 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
       }
     })();
     return () => { observation.abort(); lifetime.signal.removeEventListener('abort', abort); };
-  }, [binding, key, lifetime, rawCopies, readToken, reviewCopy, scopedNotices, serverId]);
+  }, [binding, key, lifetime, rawCopies, readToken, reviewCopy, serverId]);
   const [retired, setRetired] = React.useState<Readonly<{ key: string; definitions: ReadonlySet<MachineFreshCopyRow['relationship']> }> | null>(null);
   const copies = React.useMemo(() => rawCopies?.filter(row => retired?.key !== key || !retired.definitions.has(row.relationship)).map(row => {
     const observed = facts?.key === key ? facts.values.get(row.relationship) : null;

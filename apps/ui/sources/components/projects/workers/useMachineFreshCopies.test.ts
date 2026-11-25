@@ -171,6 +171,10 @@ describe('Machine fresh-copy model', () => {
       ? { status: 'retired' } : await readFacts(input));
     const hook = await renderHook(() => useMachineFreshCopies(serverId, 'worker'));
     await waitForHomeGovernance(() => expect(hook.getCurrent().copies?.[0]?.review?.ok).toBe(true));
+    const factReads = () => rpc.machine.mock.calls.filter(([input]) =>
+      input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST
+      || input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT).length;
+    const readsBeforeConfirmation = factReads();
     let pending: Promise<void> | undefined;
     try {
       await act(async () => { pending = hook.getCurrent().remove(hook.getCurrent().copies![0]!); });
@@ -181,6 +185,7 @@ describe('Machine fresh-copy model', () => {
       expect(hook.getCurrent().busy).toBe(true);
       expect(hook.getCurrent().copies).toHaveLength(1);
       expect(rpc.machine.mock.calls.filter(([input]) => input.method === 'projects.worker.copy.retire')).toHaveLength(0);
+      expect(factReads() - readsBeforeConfirmation).toBe(0);
       await act(async () => { answer!(true); await pending; });
       expect(hook.getCurrent().copies).toEqual([]);
       expect(rpc.machine.mock.calls.filter(([input]) => input.method === 'projects.worker.copy.retire')).toHaveLength(1);
