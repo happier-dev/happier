@@ -4,8 +4,7 @@
     "noEmit": true,
     "incremental": true,
     "tsBuildInfoFile": "node_modules/.cache/tsc/sdk.tests.typecheck.tsbuildinfo",
-    "rootDir": ".",
-    "types": ["node", "vitest/globals"]
+    "rootDir": "."
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]
