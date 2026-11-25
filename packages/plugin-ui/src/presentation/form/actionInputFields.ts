@@ -79,9 +79,9 @@ export function resolveHappierChoiceControl(
     : 'list';
 }
 
-function readTextList(field: HappierActionInputField, value: unknown): readonly string[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => String(item ?? '').trim()).filter(Boolean);
+function readTextList(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || !value.every((item): item is string => typeof item === 'string')) return [];
+  return value.map((item) => item.trim()).filter(Boolean);
 }
 
 function parseNumericDraft(widget: 'number' | 'integer', text: string): number | string | undefined {
@@ -98,9 +98,11 @@ function parseNumericDraft(widget: 'number' | 'integer', text: string): number |
 /** A byte-size integer (`unit: 'bytes'`) is entered in GiB; this is the one place the value converts. */
 export const HAPPIER_BYTES_PER_GIB = 1024 ** 3;
 
-function displayBytesAsGib(value: unknown): string {
-  // Non-numbers are an in-progress or inadmissible entry, shown exactly as typed.
-  return typeof value === 'number' && Number.isFinite(value) ? String(value / HAPPIER_BYTES_PER_GIB) : String(value);
+function displayScalarDraft(field: HappierActionInputField, value: unknown): string {
+  // Numeric parsing keeps incomplete edits as text so the person can finish typing.
+  if (typeof value === 'string') return value;
+  if ((field.widget !== 'number' && field.widget !== 'integer') || typeof value !== 'number' || !Number.isFinite(value)) return '';
+  return String(field.widget === 'integer' && field.unit === 'bytes' ? value / HAPPIER_BYTES_PER_GIB : value);
 }
 
 function parseGibDraft(text: string): number | string | undefined {
@@ -147,8 +149,8 @@ export function resolveHappierActionFieldPresentation<OptionValue = unknown>(
       ? ''
       : (() => { try { return JSON.stringify(value, null, 2); } catch { return ''; } })()
     : isList
-      ? readTextList(field, value).join(newlineList ? '\n' : ', ')
-      : value === undefined || value === null ? '' : gib ? displayBytesAsGib(value) : String(value);
+      ? readTextList(value).join(newlineList ? '\n' : ', ')
+      : displayScalarDraft(field, value);
 
   return {
     kind: 'text',

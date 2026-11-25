@@ -22,6 +22,24 @@ describe('shared Action form semantics', () => {
     expect(unset.kind === 'text' && unset.parseText('')).toBe('');
     expect(resolveHappierActionFieldPresentation({ widget: 'json' }, {})).toMatchObject({ value: '{}' });
   });
+  it('leaves incompatible literal values blank without coercing objects into scalar controls', () => {
+    const opaque = { relative: '30days' };
+    Object.setPrototypeOf(opaque, null);
+    expect.soft(() => resolveHappierActionFieldPresentation({ widget: 'number' }, opaque))
+      .not.toThrow();
+    expect.soft(() => resolveHappierActionFieldPresentation({ widget: 'integer', unit: 'bytes' }, opaque))
+      .not.toThrow();
+    expect.soft(() => resolveHappierActionFieldPresentation({ widget: 'text_list' }, ['kept', opaque]))
+      .not.toThrow();
+    expect.soft(resolveHappierActionFieldPresentation({ widget: 'text' }, 2)).toMatchObject({ value: '' });
+    expect.soft(resolveHappierActionFieldPresentation({ widget: 'number' }, [1, 2])).toMatchObject({ value: '' });
+    expect.soft(resolveHappierActionFieldPresentation({ widget: 'number' }, null)).toMatchObject({ value: '' });
+
+    expect.soft(resolveHappierActionFieldPresentation({ widget: 'number' }, 2)).toMatchObject({ value: '2' });
+    expect.soft(resolveHappierActionFieldPresentation({ widget: 'number' }, '1e')).toMatchObject({ value: '1e' });
+    expect(resolveHappierActionFieldPresentation({ widget: 'json' }, opaque)).toMatchObject({ value: JSON.stringify(opaque, null, 2) });
+  });
+
   it('draws up to six short ordinal steps as one segmented control and keeps the four-choice cap otherwise', () => {
     const single = { kind: 'select', value: 'medium', multiple: false } as const;
     const levels = (names: readonly string[]) => names.map((label) => ({ label }));

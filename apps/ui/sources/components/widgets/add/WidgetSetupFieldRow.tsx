@@ -130,6 +130,10 @@ function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFiel
         : implicit ? INHERIT_GROUP_ID
         : binding.kind === 'unset' ? null : FOLLOW_ID;
     const trigger = describeTrigger(binding, props.row, theme.colors.text.secondary, theme.colors.state.danger.foreground, groupReading);
+    const selectedReading = {
+        title: trigger.detail,
+        ...(trigger.field.secondary == null ? {} : { subtitle: trigger.field.secondary }),
+    };
     const commands = useCurrentUiContextLocalCommands(follow && !props.disabled ? [{ key: 'open',
         title: [props.entry.field.prompt ?? props.entry.field.title, trigger.spoken].filter(Boolean).join(', '),
         invoke: value => setOpen(typeof value === 'boolean' ? value : !open) }] : [], { unbound: 'local' });
@@ -139,15 +143,18 @@ function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFiel
         open={open}
         onOpenChange={next => { void commands.invoke('open', next); }}
         items={[
-            ...(implicit ? [{ id: INHERIT_GROUP_ID, title: binding.source, checked: true,
+            ...(implicit ? [{ id: INHERIT_GROUP_ID, ...selectedReading, checked: true,
                 testID: `${props.testID}.binding.inherit-group`,
                 icon: <Icon name="link" size={16} color={theme.colors.text.secondary} /> }] : []),
-            { id: FOLLOW_ID, title: selectedId === FOLLOW_ID ? trigger.detail : groupReading ?? follow.label,
-                checked: selectedId === FOLLOW_ID,
+            { id: FOLLOW_ID, checked: selectedId === FOLLOW_ID,
+                ...(selectedId === FOLLOW_ID ? selectedReading : {
+                    title: groupReading ?? follow.label,
+                    ...(!groupReading && valueLabel !== undefined ? { subtitle: valueLabel } : {}),
+                }),
                 testID: `${props.testID}.binding.follow`,
-                ...(!groupReading && valueLabel !== undefined ? { subtitle: valueLabel } : {}),
                 icon: <Icon name="link" size={16} color={theme.colors.text.secondary} /> },
             { id: OWN_ID, title: t('widgetAdd.ownValue'), subtitle: t('widgetAdd.ownValueHint'), checked: selectedId === OWN_ID,
+                ...(selectedId === OWN_ID ? selectedReading : {}),
                 testID: `${props.testID}.binding.own`,
                 icon: <Icon name="pencil-simple" size={16} color={theme.colors.text.secondary} /> },
         ]}
@@ -195,17 +202,17 @@ function describeTrigger(binding: WidgetBindingInForce, row: WidgetSetupRow, sec
     spoken: string;
     field: Readonly<{ leading?: React.ReactNode; secondary?: string | null; quietValue?: boolean; invalid?: boolean }>;
 }> {
+    const warning = row.kind === 'invalid' ? t('widgetAdd.invalidValue') : null;
     if (binding.kind === 'group' || binding.kind === 'page') {
         const { source } = binding;
         const reading = row.kind === 'follows' ? groupReading : undefined;
         const value = row.kind === 'follows' && row.valueLabel !== source ? row.valueLabel : null;
-        const invalid = row.kind === 'invalid';
         const detail = reading ?? source;
-        const extra = invalid ? t('widgetAdd.invalidValue') : reading ? null : value;
+        const extra = warning ?? (reading ? null : value);
         return {
             detail,
             spoken: extra ? `${detail} ${extra}` : detail,
-            field: invalid
+            field: warning !== null
                 ? { leading: <Icon name="warning" size={15} color={danger} />, secondary: extra, invalid: true }
                 : { leading: <Icon name="link" size={15} color={secondary} />, secondary: extra, quietValue: true },
         };
@@ -213,9 +220,9 @@ function describeTrigger(binding: WidgetBindingInForce, row: WidgetSetupRow, sec
     const detail = binding.kind === 'own' ? t('widgetAdd.ownValue') : t('widgetAdd.needed');
     return {
         detail,
-        spoken: row.kind === 'invalid' ? `${detail} ${t('widgetAdd.invalidValue')}` : detail,
-        field: row.kind === 'invalid'
-            ? { leading: <Icon name="warning" size={15} color={danger} />, invalid: true }
+        spoken: warning === null ? detail : `${detail} ${warning}`,
+        field: warning !== null
+            ? { leading: <Icon name="warning" size={15} color={danger} />, secondary: warning, invalid: true }
             : binding.kind === 'own' ? { leading: <Icon name="pencil-simple" size={15} color={secondary} /> } : {},
     };
 }
@@ -304,7 +311,7 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     }, [openRequest, surfaceOnly]);
     const chooseOwn = () => {
         if (surfaceOnly) {
-            const current = entry.follow?.values[0]?.value;
+            const current = row.kind === 'follows' ? entry.follow?.values[0]?.value : undefined;
             props.onChange(current === undefined ? { kind: 'clear' } : { kind: 'pin', value: current });
         }
         requestOwnEditor();

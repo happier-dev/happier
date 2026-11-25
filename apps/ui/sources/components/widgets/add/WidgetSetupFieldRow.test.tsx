@@ -203,6 +203,73 @@ describe('widget setup fields share the typed-field owners', () => {
         });
     });
 
+    const calendarOperand = { relative: '30days' };
+    Object.setPrototypeOf(calendarOperand, null);
+
+    it.each([
+        { name: 'a calendar object', widget: 'number', schema: 'number', operand: calendarOperand, ownDisplay: '' },
+        { name: 'a calendar array', widget: 'number', schema: 'number', operand: [calendarOperand], ownDisplay: '' },
+        { name: 'null', widget: 'number', schema: 'number', operand: null, ownDisplay: '' },
+        { name: 'a numeric text draft', widget: 'number', schema: 'number', operand: '1e', ownDisplay: '1e' },
+        { name: 'a number in a text field', widget: 'text', schema: 'string', operand: 2, ownDisplay: '' },
+    ] as const)('keeps invalid follow and Own value editable for $name', async ({ widget, schema, operand, ownDisplay }) => {
+        const definition = { kind: 'builtin', id: 'fixture' } as const;
+        const candidate = {
+            key: 'fixture', title: 'Fixture', pluginName: 'Fixture', sharedPluginName: false, icon: 'squares-four',
+            homeDefault: 'available', target: 'app', definition,
+            inputs: { fields: [{ path: 'period', title: 'Numeric calendar', widget, contextMode: 'follow', required: true }] },
+            inputSchema: { type: 'object', required: ['period'], properties: { period: { type: schema } } },
+        } as const;
+        const setup = buildWidgetCandidateSetup({
+            candidate, audience: 'personal',
+            context: { slots: { period: { label: 'This page', value: { label: 'Last 30 days', value: operand } } } },
+            mode: { kind: 'edit', instance: { v: 1, id: 'fixture', definition, bindings: { period: { kind: 'context', slot: 'period' } } } },
+            submit: async () => ({ ok: true }),
+        });
+        const entry = setup.fields[0]!;
+        const onChange = vi.fn<(change: WidgetSetupFieldChange) => void>();
+        const render = (draft = setup.initial) => {
+            const binding = draft.bindings.period;
+            return <WidgetSetupFieldRow entry={entry} options={[]} optionsStatus="ready"
+                row={describeWidgetSetupRow({ entry, draft, resolution: setup.resolve(draft), options: [] })}
+                plainValue={binding?.kind === 'value' ? binding.value : undefined}
+                phone={false} onChange={onChange} testID="setup.invalidFollow" />;
+        };
+        expect(setup.resolve(setup.initial).status).not.toBe('ready');
+        const screen = await renderScreen(render());
+        expect(bindingText(screen, 'setup.invalidFollow')).toEqual(['This page', 'widgetAdd.invalidValue']);
+        expect(screen.findByTestId('setup.invalidFollow.trigger')?.props.accessibilityLabel)
+            .toBe('Numeric calendar, This page widgetAdd.invalidValue');
+        await screen.pressByTestIdAsync('setup.invalidFollow.trigger');
+        expect.soft(screen.findByType(DropdownMenu).props.items).toMatchObject([
+            { id: 'follow', checked: true, title: 'This page', subtitle: 'widgetAdd.invalidValue' },
+            { id: 'own', checked: false },
+        ]);
+        act(() => { screen.findByType(DropdownMenu).props.onSelect('own'); });
+        expect.soft(onChange).toHaveBeenCalledWith({ kind: 'clear' });
+        const change = onChange.mock.lastCall?.[0];
+        const empty = setWidgetSetupBinding(setup.initial, 'period', { kind: 'clear' });
+        expect(change).toEqual({ kind: 'clear' });
+        expect(setup.resolve(empty).status).not.toBe('ready');
+        await screen.update(render(empty));
+        expect(screen.findByTestId('setup.invalidFollow.input')?.props.value).toBe('');
+
+        // A stored pin can become invalid after the field changes type. The same typed
+        // control must still mount for repair while the binder holds Save disabled.
+        const own = setWidgetSetupBinding(setup.initial, 'period', { kind: 'pin', value: operand });
+        expect(setup.resolve(own).status).not.toBe('ready');
+        await screen.update(render(own));
+        expect(bindingText(screen, 'setup.invalidFollow')).toEqual(['widgetAdd.ownValue', 'widgetAdd.invalidValue']);
+        expect(screen.findByTestId('setup.invalidFollow.trigger')?.props.accessibilityLabel)
+            .toBe('Numeric calendar, widgetAdd.ownValue widgetAdd.invalidValue');
+        expect(screen.findByTestId('setup.invalidFollow.input')?.props.value).toBe(ownDisplay);
+        await screen.pressByTestIdAsync('setup.invalidFollow.trigger');
+        expect(screen.findByType(DropdownMenu).props.items).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'follow', checked: false }),
+            expect.objectContaining({ id: 'own', checked: true, title: 'widgetAdd.ownValue', subtitle: 'widgetAdd.invalidValue' }),
+        ]));
+    });
+
     it('keeps an invalid own pin named while the public field offers repair choices', async () => {
         const { Item } = await import('@/components/ui/lists/Item');
         const onChange = vi.fn();
