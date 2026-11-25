@@ -188,10 +188,6 @@ const stylesheet = StyleSheet.create((theme) => {
         pageHeaderNoTitle: {
             paddingTop: PAGE_LIST_METRICS.sectionGapPx,
         },
-        // Inside a section the enclosing section already set the gap above this one.
-        pageHeaderNested: {
-            paddingTop: 0,
-        },
         // U8.5 craft S2: grouped section titles (menus, pickers, sheets) are sentence case in the
         // secondary colour, medium weight — never an uppercase eyebrow.
         headerText: {
@@ -644,8 +640,9 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
     const isPage = presentation === 'page';
     // A contained scope (a column or widget body that owns its padding) adds no second inset, page or grouped.
     const contained = usePageListInsets() === 'contained';
-    // A page section inside another section (a capture view's banner) stands where that section placed it: the
-    // enclosing section already gives the column edge and the gap, so this one adds neither a second time.
+    // A page section inside another section (a capture view's banner) stands where that section placed it: it adds no
+    // second inset, and an untitled one no second gap. A titled one keeps its heading's own top spacing, because an
+    // ItemGroup's children stack flush (Variables' disclosed value under its table).
     const nested = useIsInsideItemSection() && isPage;
     // A grouped contained scope is a widget body (WidgetFrame): its rows reach the card's edges at any card width,
     // never the reading column centred inside a wide card.
@@ -802,7 +799,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                             ? <Text accessibilityRole="header" aria-level={2} style={[titleRole === 'label' ? styles.pageTitleLabel : styles.pageTitle, titleStyle]}>{input.text}</Text>
                             : renderPageDescription(input.text)}
                         // App callers pass React Native layout styles; the shared header keeps its own anatomy under them.
-                        style={[nested ? styles.pageHeaderNested : null, inspector ? styles.pageHeaderInspector : null, headerStyle] as HappierPageSectionHeaderProps['style']}
+                        style={[inspector ? styles.pageHeaderInspector : null, headerStyle] as HappierPageSectionHeaderProps['style']}
                     />
                 ) : isPage ? (
                     virtualizedSegment?.first !== false && !nested ? <View style={[styles.pageHeaderNoTitle, inspector ? styles.pageHeaderNoTitleInspector : null, headerStyle]} /> : null

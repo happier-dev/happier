@@ -305,7 +305,8 @@ describe('ItemGroup page sections render through the shared page sheet', () => {
             sheetInset: leadingInsetPx(page, 'sheet', 'sheet-body'),
         }).toEqual({ bannerAbove: 0, sheetAbove: 0, bannerInset: 0, sheetInset: 0 });
         // A titled one (Variables' disclosed value): its rows on the section's edge, its heading on theirs (optical
-        // inset only), and no second section gap above the heading.
+        // inset only). Its heading keeps its own top spacing: an ItemGroup's children stack flush, so without it the
+        // heading touches the table above it (Variables, DBW services review "M1 nested headings").
         const { presentation } = await loadModules();
         const disclosed = page.findAllByTestId('disclosed').find((node) => typeof node.type === 'string')!;
         const heading = disclosed.findAll((node) => typeof node.type === 'string'
@@ -315,7 +316,7 @@ describe('ItemGroup page sections render through the shared page sheet', () => {
             rowsInset: leadingInsetPx(page, 'disclosed', 'disclosed-body'),
             headingInset: headingStyle.paddingLeft ?? headingStyle.paddingHorizontal,
             headingGap: headingStyle.paddingTop,
-        }).toEqual({ rowsInset: 0, headingInset: presentation.HAPPIER_PAGE_METRICS.headingOpticalInsetPx, headingGap: 0 });
+        }).toEqual({ rowsInset: 0, headingInset: presentation.HAPPIER_PAGE_METRICS.headingOpticalInsetPx, headingGap: presentation.HAPPIER_PAGE_METRICS.sectionGapPx });
     });
 
     it('bleeds only the rows of a bare section in a contained scope: tiles and notes stay inside the column', async () => {

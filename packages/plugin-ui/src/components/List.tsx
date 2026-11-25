@@ -2932,9 +2932,10 @@ function ItemGroupPageColumn({ children, testID, style }: Readonly<{
 function ItemGroupPageHeading(props: Readonly<{ title?: string; description?: ReactNode; action?: ReactNode }>): ReactElement {
   const inSection = useHappierSectionContent();
   const pageInsetPx = useHappierColumnEdgeRemainder(HAPPIER_PAGE_METRICS.sheetInsetPx + HAPPIER_PAGE_METRICS.headingOpticalInsetPx);
-  // Inside a host's section the heading stands on that section's edge (its optical inset only), with no second gap.
+  // Inside a host's section the heading stands on that section's edge (its optical inset only) and keeps its own top
+  // spacing, as the app's section does.
   return inSection
-    ? <HappierPageSectionHeader {...props} insetPx={HAPPIER_PAGE_METRICS.headingOpticalInsetPx} style={{ paddingTop: 0 }} />
+    ? <HappierPageSectionHeader {...props} insetPx={HAPPIER_PAGE_METRICS.headingOpticalInsetPx} />
     : <HappierPageSectionHeader {...props} insetPx={pageInsetPx} />;
 }
 
