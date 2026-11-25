@@ -31,6 +31,7 @@ const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRu
 const profiles = await import('@/sync/domains/server/serverProfiles');
 const { RootLayoutRedirectGate, WebServerOverrideGate } = await import('./RootLayoutRedirectGate');
 const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+const TOKEN_A = 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature';
 const networkReads = vi.fn(async () => new Response('{}', { status: 404 }));
 
 describe('cold destination Home through boot and root redirect admission', () => {
@@ -85,7 +86,7 @@ describe('cold destination Home through boot and root redirect admission', () =>
             </InjectedAuthProvider>;
         }
         const screen = await renderScreen(<App credentials={credentials} />);
-        async function finishSignIn(options?: { abandon?: boolean; switchHome?: boolean; publishHomeIdentity?: string }) {
+        async function finishSignIn(options?: { abandon?: boolean; switchHome?: boolean; publishHomeIdentity?: string; signInOnSavedHome?: boolean }) {
             const redirect = screen.findByType('Redirect').props.href;
             expect(typeof redirect).toBe('string');
             const entry = new URL(redirect, 'https://app.example.test');
@@ -112,16 +113,19 @@ describe('cold destination Home through boot and root redirect admission', () =>
                 });
                 expect(profiles.getActiveServerSnapshot().serverId).toBe(options.publishHomeIdentity);
             }
-            await screen.update(<App credentials={{ token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature' }} />);
+            const signedIn = { token: TOKEN_A };
+            if (options?.signInOnSavedHome) {
+                expect(await TokenStorage.setCredentials(signedIn)).toBe(true);
+                expect(await resolveBootCredentials('web')).toEqual(signedIn);
+            }
+            await screen.update(<App credentials={signedIn} />);
             return redirect;
         }
         return { screen, credentials, protectedMount, href, finishSignIn };
     }
 
     it.each([
-        { pathname: '/session/session-a/sharing', qualified: false },
         { pathname: '/session/session-a/sharing', qualified: true },
-        { pathname: '/session/session-a', qualified: false },
         { pathname: '/settings/machines/presets/preset-a', qualified: false },
     ])('resumes $pathname after cold sign-in (Home-qualified: $qualified)', async ({ pathname, qualified }) => {
         const home = await upsertAndActivateServer({ serverUrl: 'https://resume.example.test', source: 'manual', scope: 'device' });
@@ -133,6 +137,34 @@ describe('cold destination Home through boot and root redirect admission', () =>
             expect(protectedMount).not.toHaveBeenCalled();
             expect(navigation.replace).toHaveBeenCalledExactlyOnceWith(destination);
         } finally { await screen.unmount(); }
+    });
+
+    it.each([
+        { pathname: '/session/session-a/sharing', accountId: null },
+        { pathname: '/session/session-a', accountId: null },
+        { pathname: '/session/session-a/sharing', accountId: 'account-b' },
+        { pathname: '/session/session-a', accountId: 'account-b' },
+    ])('uses a saved Home for a bare $pathname (required Account: $accountId)', async ({ pathname, accountId }) => {
+        const home = await upsertAndActivateServer({ serverUrl: 'https://saved-home.example.test', source: 'manual', scope: 'device' });
+        const { screen, credentials, protectedMount, finishSignIn } = await coldLoad(pathname, undefined, {
+            ...(accountId ? { accountId } : {}),
+            unrelated: 'discard-me',
+        });
+        try {
+            expect(credentials).toBeNull();
+            expect(profiles.getActiveServerSnapshot().serverId).toBe(home.id);
+            const redirect = await finishSignIn({ signInOnSavedHome: true });
+            const entry = new URL(redirect, 'https://app.example.test');
+            expect(JSON.parse(entry.searchParams.get('onboardingDestination')!)).toEqual([pathname, home.id, false, accountId]);
+            expect(redirect).not.toContain('discard-me');
+            expect(protectedMount).not.toHaveBeenCalled();
+            expect(profiles.getActiveServerSnapshot().serverId).toBe(home.id);
+            const destination = accountId ? '/' : `${pathname}?serverId=${encodeURIComponent(home.id)}`;
+            expect(navigation.replace).toHaveBeenCalledExactlyOnceWith(destination);
+        } finally {
+            await screen.unmount();
+            await TokenStorage.removeCredentialsForServerUrl(home.serverUrl, { serverId: home.id });
+        }
     });
 
     it('keeps a bare cold destination while the device chooses its first Home', async () => {
@@ -237,6 +269,40 @@ describe('cold destination Home through boot and root redirect admission', () =>
             expect(screen.findByTestId('protected-destination')).not.toBeNull();
             expect(screen.findAllByType('Redirect' as never)).toHaveLength(0);
             expect(window.location.href).toBe(href);
+        } finally { await screen.unmount(); }
+    });
+
+    async function arriveWithPendingDestination(destination: unknown[]) {
+        const home = await upsertAndActivateServer({ serverUrl: 'https://sec.example.test', source: 'manual', scope: 'device' });
+        navigate('/', { onboardingDestination: JSON.stringify(destination) });
+        const screen = await renderScreen(<InjectedAuthProvider credentials={{ token: TOKEN_A }}>
+            <RootLayoutRedirectGate><div /></RootLayoutRedirectGate>
+        </InjectedAuthProvider>);
+        return { screen, home };
+    }
+
+    it.each([
+        { name: 'explicit Home without an id', d: ['/session/s-1', null, true, null] },
+        { name: 'another Account', d: ['/session/s-1', null, false, 'account-b'] },
+        { name: 'protocol-relative path', d: ['//evil.example.test/x', null, false, null] },
+        { name: 'backslash authority', d: ['/\\evil.example.test/x', null, false, null] },
+        { name: 'encoded slash authority', d: ['/%2F%2Fevil.example.test', null, false, null] },
+        { name: 'javascript URL', d: ['javascript:alert(1)', null, false, null] },
+        { name: 'path with query', d: ['/session/s-1?serverId=evil', null, false, null] },
+        { name: 'another Home id', d: ['/session/s-1', 'other-home', false, null] },
+        { name: 'empty Home id', d: ['/session/s-1', '', false, null] },
+        { name: 'non-string Home id', d: ['/session/s-1', 7, false, null] },
+    ])('refuses $name in a crafted pending destination', async ({ d }) => {
+        const { screen } = await arriveWithPendingDestination(d);
+        try {
+            expect(navigation.replace).toHaveBeenCalledExactlyOnceWith('/');
+        } finally { await screen.unmount(); }
+    });
+
+    it('opens a pending null-Home destination for this Account on the active Home only', async () => {
+        const { screen, home } = await arriveWithPendingDestination(['/session/s-1', null, false, 'account-a']);
+        try {
+            expect(navigation.replace).toHaveBeenCalledExactlyOnceWith(`/session/s-1?serverId=${encodeURIComponent(home.id)}`);
         } finally { await screen.unmount(); }
     });
 });

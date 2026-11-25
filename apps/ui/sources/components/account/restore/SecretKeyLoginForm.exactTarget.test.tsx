@@ -272,6 +272,6 @@ it('says a Home is needed before the recovery key can be used on a fresh device'
     screen = await renderScreen(<AuthProvider initialCredentials={null}><SecretKeyLoginForm /></AuthProvider>);
     await act(async () => { screen!.changeTextByTestId('restore-manual-secret-input', 'A'.repeat(43)); });
     await screen.pressByTestIdAsync('restore-manual-submit');
-    expect(screen.findByTestId('restore-manual-secret-error')?.props.children).toBe(t('connect.addPhoneChooseHomeTitle'));
+    expect(screen.findByTestId('restore-manual-secret-error')?.props.children).toBe(t('connect.recoveryKeyHomeRequired'));
     expect(boundary.request.mock.calls.filter(([, path]) => path.startsWith('/v1/auth'))).toHaveLength(0);
 });

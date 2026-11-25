@@ -3429,6 +3429,7 @@ const enConnect = {
   restoreAccount: 'Restore account',
   signInWithKeySubmit: 'Sign in',
   enterSecretKey: 'Please enter a recovery key',
+  recoveryKeyHomeRequired: "Choose or add a Home to sign in with your recovery key.",
   invalidSecretKey: 'Invalid recovery key. Please check and try again.',
   enterUrlManually: 'Enter URL manually',
   usePairingLinkTitle: 'Use a pairing link',

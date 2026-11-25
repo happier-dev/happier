@@ -3137,6 +3137,7 @@ export const ru: TranslationStructure = {
     restoreAccount: "Восстановить аккаунт",
     signInWithKeySubmit: "Войти",
     enterSecretKey: "Пожалуйста, введите ключ восстановления",
+    recoveryKeyHomeRequired: "Выберите или добавьте Home, чтобы войти с ключом восстановления.",
     invalidSecretKey: "Неверный ключ восстановления. Проверьте и попробуйте снова.",
     enterUrlManually: "Ввести URL вручную",
     usePairingLinkTitle: "Использовать ссылку для связывания",

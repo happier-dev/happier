@@ -132,7 +132,7 @@ export const SecretKeyEntryForm = React.memo(function SecretKeyEntryForm(props: 
             if (result.kind === 'invalid_key') {
                 setError(t('connect.invalidSecretKey'));
             } else if (result.kind === 'home_required') {
-                setError(t('connect.addPhoneChooseHomeTitle'));
+                setError(t('connect.recoveryKeyHomeRequired'));
             } else if (result.error instanceof HappyError && result.error.kind === 'auth') {
                 setError(authenticationErrorMessage(result.error, result.home));
             } else {

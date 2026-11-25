@@ -3713,6 +3713,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         signInWithKeySubmit: '登入',
         enterSecretKey: '請輸入復原金鑰',
         secretKeyInputLabel: '復原金鑰',
+        recoveryKeyHomeRequired: "請選擇或新增一個 Home，再使用復原金鑰登入。",
         invalidSecretKey: '無效的復原金鑰，請檢查後重試。',
         enterUrlManually: '手動輸入 URL',
         usePairingLinkTitle: '使用配對連結',

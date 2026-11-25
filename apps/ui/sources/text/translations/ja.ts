@@ -3767,6 +3767,7 @@ export const ja: TranslationStructure = {
     restoreAccount: "アカウントを復元",
     signInWithKeySubmit: "サインイン",
     enterSecretKey: "復旧キーを入力してください",
+    recoveryKeyHomeRequired: "復旧キーでサインインするには、Home を選択するか追加してください。",
     invalidSecretKey:
       "復旧キーが無効です。確認して再試行してください。",
     enterUrlManually: "URLを手動で入力",

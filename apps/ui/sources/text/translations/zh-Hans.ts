@@ -3216,6 +3216,7 @@ export const zhHans: TranslationStructure = {
     restoreAccount: "恢复账户",
     signInWithKeySubmit: "登录",
     enterSecretKey: "请输入恢复密钥",
+    recoveryKeyHomeRequired: "请选择或添加一个 Home，再使用恢复密钥登录。",
     invalidSecretKey: "无效的恢复密钥，请检查后重试。",
     enterUrlManually: "手动输入 URL",
     usePairingLinkTitle: "使用配对链接",
