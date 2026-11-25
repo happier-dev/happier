@@ -225,7 +225,10 @@ hair, owner 2026-10-16): the protocol tint anchors give panel coats .55/.7/.85 a
 (default .586). Under the default glass every light floating surface, menus included, takes the .85 coat
 (`resolveGlassPanelCoatOpacity`; owner 2026-11-22, light glass veil), so its k is at most .15. Each coat is painted
 as a fixed `color-mix` coat with k ≤ 1 − α and the coat solved so a plain page lands on
-`edge.floatingFill`. Faint ink: a translucent Elements or floating `GlassSurface` with a band,
+`edge.floatingFill`. The light translucent panel publishes the section tint and strong hairline
+and lip for shared sheets within it. Page sections and table frames pick up those paints from
+the containing material. Dark and solid panels keep the page sheet paint.
+Faint ink: a translucent Elements or floating `GlassSurface` with a band,
 wallpaper or live desktop behind it redefines `--colors-text-secondary` for its subtree as
 `color-mix(in srgb, <text.primary> 70%, transparent)`, so every stylesheet consumer of secondary ink
 follows; nothing is set on ordinary pages or unbacked glass. Components that read the theme colour in

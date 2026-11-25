@@ -5,7 +5,7 @@ import type { HappierUiTheme } from '../../environment/types.js';
 import type { HappierLayoutChangeEvent } from '../portableTypes.js';
 import { HAPPIER_PAGE_METRICS, readHappierVisibleLayoutWidth } from '../layout/pageMetrics.js';
 import { HappierBodyEdgeContext } from '../layout/columnEdge.js';
-import { happierPageSheetFrameStyle, useHappierPageSection } from '../layout/PageSection.js';
+import { useHappierPageSheetFrameStyle, useHappierPageSection } from '../layout/PageSection.js';
 import { resolveHappierUiPalette, useOptionalHappierUiPalette } from '../../environment/context.js';
 import { HappierText } from '../text/Text.js';
 import { HappierProgress } from '../content/Foundation.js';
@@ -247,6 +247,7 @@ export function HappierDataTable(props: HappierDataRowsProps) {
   const enclosingSheet = useHappierPageSection();
   const enclosed = onBodyEdge || enclosingSheet !== null;
   const palette = useOptionalHappierUiPalette() ?? resolveHappierUiPalette(props.theme);
+  const sheetStyle = useHappierPageSheetFrameStyle(enclosed ? null : palette);
   const sheetInsetPx = enclosed ? 0 : HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx;
   const pending = pendingRowIndexes(props);
   const sizing = {
@@ -281,10 +282,9 @@ export function HappierDataTable(props: HappierDataRowsProps) {
       role="table"
       accessibilityLabel={props.label}
       {...(pending.length ? { 'aria-busy': true } : {})}
-      style={enclosed ? undefined : {
-        ...happierPageSheetFrameStyle(palette), overflow: 'hidden',
-        paddingHorizontal: sheetInsetPx, paddingTop: HAPPIER_DATA_METRICS.cellPaddingVerticalPx,
-      }}
+      style={sheetStyle ? [sheetStyle, {
+        overflow: 'hidden', paddingHorizontal: sheetInsetPx, paddingTop: HAPPIER_DATA_METRICS.cellPaddingVerticalPx,
+      }] : undefined}
       onLayout={(event: HappierLayoutChangeEvent) => {
         // The columns share what is inside the sheet's insets.
         const visibleWidth = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width - 2 * sheetInsetPx);

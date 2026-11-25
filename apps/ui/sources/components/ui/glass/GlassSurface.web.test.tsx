@@ -786,6 +786,72 @@ describe('web glass material', () => {
             await paint(<HappierSurface materialRole="floating" renderMaterialSurface={renderThemeMaterialSurface}><DraftInput /></HappierSurface>),
         ]) expect(menu.opacity === null || menu.opacity <= 0.07).toBe(true);
     });
+    it('keeps a light sheet hairline at least as distinct on a glass dialog as on its page, with the same dark sheet paint', async () => {
+        const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
+        const { glassPresetMaterials } = await import('./glassMaterial');
+        const { renderThemeMaterialSurface } = await import('./GlassSurface');
+        const { HappierPageSheet } = await import('@happier-dev/plugin-ui/presentation');
+        const { projectPluginUiHostPalette } = await import('@/components/plugins/surfaces/pluginUiThemeProjection');
+        const { lightTheme, darkTheme } = await import('@/theme');
+        const settings = { glassSurfaceMaterials: glassPresetMaterials('auto') };
+        const paintOver = (paint: string, backdrop: readonly [number, number, number], filter = '') => {
+            const color = Color(resolveBrowserMaterialPaint(paint));
+            return renderGlassOver({ filter, coat: [color.red(), color.green(), color.blue()], opacity: color.alpha(), backdrop });
+        };
+
+        for (const theme of [darkTheme, lightTheme]) {
+            themeMode.dark = theme.dark;
+            const colors = projectPluginUiHostPalette(theme);
+            const drawSheet = (id: string) => <HappierPageSheet testID={id} colors={colors} renderMaterialSurface={renderThemeMaterialSurface}>
+                <DraftInput />
+            </HappierPageSheet>;
+            const screen = await renderScreen(<GlassMaterialSettingsProvider value={settings}>
+                {drawSheet('page-sheet')}
+                <GlassSurface testID="glass-dialog" surfaceGroup="floating" floatingRole="panel">
+                    {drawSheet('dialog-sheet')}
+                </GlassSurface>
+                <GlassSurface surfaceGroup="floating" floatingRole="panel" enabled={false}>
+                    {drawSheet('solid-dialog-sheet')}
+                </GlassSurface>
+            </GlassMaterialSettingsProvider>);
+            try {
+                const readSheet = (id: string) => {
+                    const root = screen.findHostByTestId(id)!;
+                    const edge = flattenTestStyle(root.props.style);
+                    const backing = root.findAll((node) => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true');
+                    expect(backing).toHaveLength(1);
+                    const material = flattenTestStyle(backing[0]!.props.style);
+                    expect(Number(edge.borderWidth)).toBeGreaterThan(0);
+                    return { border: String(edge.borderColor), lip: String(edge.borderBottomColor), fill: String(material.backgroundColor) };
+                };
+                const page = readSheet('page-sheet');
+                const sheet = readSheet('dialog-sheet');
+                expect(readSheet('solid-dialog-sheet')).toEqual(page);
+
+                if (theme.dark) {
+                    expect(sheet).toEqual(page);
+                    continue;
+                }
+
+                const dialog = screen.findHostByTestId('glass-dialog')!;
+                const glassPaint = flattenTestStyle(dialog.findAll(hasBackdrop)[0]!.props.style);
+                expect(glassPaint.backdropFilter).toBeTruthy();
+                // The captured dialog sits over dimmed white page chrome. The two paints layer like
+                // the browser: the hairline on the dialog coat, the coat on the blurred page.
+                const plainPage = Color(theme.colors.surface.base);
+                const pageGround = [plainPage.red(), plainPage.green(), plainPage.blue()] as const;
+                const dialogGround = paintOver(String(glassPaint.backgroundColor), [224, 224, 224], String(glassPaint.backdropFilter));
+                expect(glassContrastRatio(paintOver(sheet.border, dialogGround), dialogGround))
+                    .toBeGreaterThanOrEqual(glassContrastRatio(paintOver(page.border, pageGround), pageGround));
+                expect(glassContrastRatio(paintOver(sheet.lip, dialogGround), dialogGround))
+                    .toBeGreaterThanOrEqual(glassContrastRatio(paintOver(page.lip, pageGround), pageGround));
+                expect(glassContrastRatio(paintOver(sheet.fill, dialogGround), dialogGround))
+                    .toBeGreaterThan(glassContrastRatio(paintOver(page.fill, pageGround), pageGround));
+            } finally {
+                await screen.unmount();
+            }
+        }
+    });
     it('gives a menu opened over a live picture the panel coat (the glass owner decides it for every floating surface there), so its ink stays legible over arbitrary pixels', async () => {
         const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
         const { glassPresetMaterials } = await import('./glassMaterial');

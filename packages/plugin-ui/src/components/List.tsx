@@ -36,7 +36,7 @@ import {
   HappierPageSheet,
   HappierPageSheetGroup,
   HappierPageSheetGroupSeparator,
-  happierPageSheetFrameStyle,
+  useHappierPageSheetFrameStyle,
   useHappierPageSection,
   withHappierPageSectionDividers,
 } from '../presentation/layout/PageSection.js';
@@ -1874,8 +1874,7 @@ function VirtualizedList<Item>(
   const flatPageSheet = pageSheet !== undefined && visibleSections === undefined && (visibleItems?.length ?? 0) > 0;
   // A table's sheet: one rounded edge around its bar, bands, rows and footer, clipping their fills to its corners.
   const tableSheet = collectionControl?.sheet;
-  const tableSheetStyle = useMemo(() => (tableSheet === undefined ? null
-    : { ...happierPageSheetFrameStyle(tableSheet), overflow: 'hidden' as const }), [tableSheet]);
+  const tableSheetStyle = useHappierPageSheetFrameStyle(tableSheet ?? null);
   const previousPageGeometryRef = useRef(pageGeometry);
   useLayoutEffect(() => {
     const previous = previousPageGeometryRef.current;
@@ -2283,7 +2282,7 @@ function VirtualizedList<Item>(
         ref={listRootRef}
         testID={props.pageLayout !== undefined && props.testID !== undefined ? `${props.testID}:stage` : undefined}
         onLayout={props.pageLayout === undefined ? undefined : onPageLayout}
-        style={[pageScroll ? pageScrollListBoxStyle : virtualizedListBoxStyle, tableSheetStyle]}
+        style={[pageScroll ? pageScrollListBoxStyle : virtualizedListBoxStyle, tableSheetStyle, tableSheetStyle && { overflow: 'hidden' }]}
       >
         {headerContent}
         {collection}

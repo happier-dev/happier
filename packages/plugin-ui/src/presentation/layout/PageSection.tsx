@@ -18,7 +18,7 @@ import type { HappierLayoutChangeEvent, HappierPortableStyle, HappierStyleProp }
 import { HappierText } from '../text/Text.js';
 import { HAPPIER_PAGE_METRICS, isHappierSectionActionStacked } from './pageMetrics.js';
 import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle } from './pageText.js';
-import { HappierMaterialSurface, type HappierMaterialSurfaceRender } from './Surface.js';
+import { HappierMaterialSurface, useContainingHappierMaterialPlane, type HappierMaterialSurfaceRender } from './Surface.js';
 import type { HappierSurfaceGradient } from './material.js';
 import { HappierBodyEdgeContext } from './columnEdge.js';
 import { HappierTextActionEdgeContext } from '../interaction/textActionEdge.js';
@@ -40,13 +40,19 @@ export function happierPageSheetShape(): Readonly<{ borderRadius: number; border
  * A page section's sheet as drawn: its shape, its ground and edge in the given colours, and the host's lip. One
  * drawing for a section's sheet and a Collection table's (owner 2026-11-19: every table sits in a rounded sheet).
  */
-export function happierPageSheetFrameStyle(colors: HappierPageSheetColors): HappierPortableStyle {
-  return {
-    ...happierPageSheetShape(),
-    borderColor: colors.sheetBorder,
-    backgroundColor: colors.sheet,
-    ...happierRaisedEdgeStyle(colors.sheetEdge),
-  };
+export function useHappierPageSheetFrameStyle(colors: HappierPageSheetColors | null): HappierPortableStyle | null {
+  const plane = useContainingHappierMaterialPlane();
+  const paint = plane?.openedOver ? null : plane?.sheetPaint;
+  return useMemo(() => {
+    if (colors === null) return null;
+    const edge = paint && colors.sheetEdge ? { ...colors.sheetEdge, color: paint.lip } : colors.sheetEdge;
+    return {
+      ...happierPageSheetShape(),
+      borderColor: paint?.border ?? colors.sheetBorder,
+      backgroundColor: paint?.fill ?? colors.sheet,
+      ...happierRaisedEdgeStyle(edge),
+    };
+  }, [colors, paint]);
 }
 
 /** The hairline between the rows of a page section's sheet. */
@@ -372,7 +378,7 @@ export type HappierPageSheetProps = Readonly<{
  * then sits between groups.
  */
 export function HappierPageSheet(props: HappierPageSheetProps) {
-  const sheetStyle: HappierPortableStyle | null = props.surface === 'none' ? null : happierPageSheetFrameStyle(props.colors);
+  const sheetStyle = useHappierPageSheetFrameStyle(props.surface === 'none' ? null : props.colors);
   const rowDividerColor = props.colors.rowDivider;
   const rowInsetPx = props.rowInsetPx ?? HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx;
   const framed = props.surface !== 'none';

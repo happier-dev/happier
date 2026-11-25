@@ -15,7 +15,7 @@ import { useReduceTransparency } from '@/hooks/ui/useReduceTransparency';
 import { drawsTintWithoutBlur, getBlurViewComponent, isNativeBlurAvailable } from './blurMaterial';
 import { getGlassViewComponent, useLiquidGlassAvailable } from './liquidGlass';
 import { resolveGlassCapability } from './resolveGlassCapability';
-import { GLASS_BLUR_INTENSITY, GLASS_BLUR_RADIUS_PX, readGlassPreset, resolveGlassSurfaceMaterial, type FloatingSurfaceRole, type GlassFloatingCoat, type GlassSurfaceGroup } from './glassMaterial';
+import { GLASS_BLUR_INTENSITY, GLASS_BLUR_RADIUS_PX, readGlassPreset, resolveGlassDialogSheetPaint, resolveGlassSurfaceMaterial, type FloatingSurfaceRole, type GlassFloatingCoat, type GlassSurfaceGroup } from './glassMaterial';
 import { useGlassMaterialSettings } from './useGlassMaterialSettings';
 import { useGlassAtmosphereScoped, useGlassRuntimeEnvironment } from './glassRuntimeEnvironment';
 import { resolveGlassSurfaceSolidPaint, resolveGlassSurfaceCoatPaint, resolveGlassSurfacePaintLayers, resolveGlassSurfacePlaneMaterial, glassSurfacePlaneBackdropStyle, type AtmosphereContentCoat } from './glassSurfacePaint';
@@ -325,11 +325,14 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
     // change never remounts the content.
     const publishedInk = useRetainedGlassBackedInk(props.noCoat ? containingInk : ownInk ?? inheritedInk);
     const withBackedInk = (children: React.ReactNode) => <GlassBackedInkContext.Provider value={publishedInk}>{children}</GlassBackedInkContext.Provider>;
+    const sheetPaint = React.useMemo(() => !theme.dark && group === 'floating' && props.floatingRole === 'panel' && translucent
+        ? resolveGlassDialogSheetPaint(theme.colors) : null, [theme, group, props.floatingRole, translucent]);
     // Keep the provider topology even without a coat. Omitted fields inherit the shared plane;
     // a plain widget must not reset its parent's ink, colour resolver or translucency.
     const materialPlane = props.noCoat ? { role: containingMaterialRole } : {
         role: group,
         finish: plane?.finish,
+        sheetPaint,
         translucentColor: props.translucentColor ?? theme.colors.surface.selected,
         resolveMaterialColor: !enabled || (Platform.OS !== 'web' && (material.opacity === 1 || (!tintsWithoutBlur && !nativeBackdrop && !inheritsTranslucentMaterial && !transparentPlane)))
             ? retainSolidColor : resolveMaterialColor,

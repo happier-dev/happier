@@ -12,7 +12,15 @@ import { HappierSurfaceGradientLayer } from './SurfaceGradientLayer.js';
 import { useOptionalHappierUiTheme, useOptionalHappierUiPlatform } from '../../environment/context.js';
 import type { HappierRaisedEdgeState } from './raisedEdge.js';
 
-type HappierMaterialPlane = Readonly<{ role?: HappierMaterialRole; finish: boolean; translucentColor?: string; resolveMaterialColor?: PluginUiPresentationHost['resolveMaterialColor']; openedOver?: true }>;
+type HappierMaterialPlane = Readonly<{
+  role?: HappierMaterialRole;
+  finish: boolean;
+  translucentColor?: string;
+  resolveMaterialColor?: PluginUiPresentationHost['resolveMaterialColor'];
+  /** Paint authored by the host material for sheets laid directly on this plane. */
+  sheetPaint?: Readonly<{ fill: string; border: string; lip: string }> | null;
+  openedOver?: true;
+}>;
 const MaterialRoleContext = createContext<HappierMaterialPlane | null>(null);
 export function useContainingHappierMaterialRole(): HappierMaterialRole | undefined {
   return useContext(MaterialRoleContext)?.role;
@@ -22,7 +30,8 @@ export function useContainingHappierMaterialRole(): HappierMaterialRole | undefi
 export function HappierMaterialRoleProvider(props: Readonly<Omit<HappierMaterialPlane, 'finish'> & { finish?: boolean; children?: ReactNode }>) {
   const parent = useContext(MaterialRoleContext);
   const { role, finish = parent?.finish ?? false, translucentColor = parent?.translucentColor, resolveMaterialColor = parent?.resolveMaterialColor } = props;
-  const plane = useMemo(() => ({ role, finish, translucentColor, resolveMaterialColor }), [role, finish, translucentColor, resolveMaterialColor]);
+  const { sheetPaint = parent?.openedOver ? null : parent?.sheetPaint } = props;
+  const plane = useMemo(() => ({ role, finish, translucentColor, resolveMaterialColor, sheetPaint }), [role, finish, translucentColor, resolveMaterialColor, sheetPaint]);
   return <MaterialRoleContext.Provider value={plane}>{props.children}</MaterialRoleContext.Provider>;
 }
 
@@ -118,8 +127,9 @@ export function HappierMaterialSurface(props: Omit<HappierSurfaceProps, 'onPress
   const plane = useMemo(() => {
     // Surfaces inside this one are in its flow again.
     const { openedOver: _openedOver, ...inFlow } = parent ?? { finish: false };
-    return { ...inFlow, role, finish: hasFinish };
-  }, [parent, role, hasFinish]);
+    const sheetPaint = props.materialRole === undefined && !parent?.openedOver ? parent?.sheetPaint : null;
+    return { ...inFlow, role, finish: hasFinish, sheetPaint };
+  }, [parent, role, hasFinish, props.materialRole]);
   return <MaterialRoleContext.Provider value={plane}>{body}</MaterialRoleContext.Provider>;
 }
 

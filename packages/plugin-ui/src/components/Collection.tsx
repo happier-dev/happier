@@ -32,7 +32,7 @@ import { HappierBodyEdgeContext, HappierColumnEdgeContext, useHappierColumnEdgeP
 import { HAPPIER_PAGE_METRICS, isHappierPageRowNarrow, readHappierVisibleLayoutWidth } from '../presentation/layout/pageMetrics.js';
 import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle, resolveHappierTextStepStyle } from '../presentation/layout/pageText.js';
 import { HAPPIER_ROW_TITLE_META_GAP_PX, resolveHappierRowTitleMetaPlacement } from '../presentation/layout/pageRowMetrics.js';
-import { happierPageSheetFrameStyle, type HappierPageSheetColors, useHappierPageSection } from '../presentation/layout/PageSection.js';
+import { useHappierPageSheetFrameStyle, type HappierPageSheetColors, useHappierPageSection } from '../presentation/layout/PageSection.js';
 import { HappierPageLargeTitleDrawnContext, useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
 import { HappierPageHeader } from '../presentation/layout/PageHeader.js';
 import {
@@ -1225,13 +1225,14 @@ export function CollectionLoadingRows(props: CollectionLoadingRowsProps): ReactE
   const textScale = useOptionalHappierUiAccessibility()?.textScale ?? 1;
   const metrics = useMemo(() => resolveRowMetrics(false, false, false, theme, typography, textScale), [textScale, theme, typography]);
   const palette = useOptionalHappierUiPalette() ?? resolveHappierUiPalette(theme);
+  const sheetStyle = useHappierPageSheetFrameStyle(list ? null : palette);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const onLayout = useCallback((event: HappierLayoutChangeEvent) => {
     const { height } = event.nativeEvent.layout;
     setViewportHeight((current) => (current === height ? current : height));
   }, []);
   return (
-    <View testID={props.testID} onLayout={onLayout} style={[list ? null : happierPageSheetFrameStyle(palette), loadingFrameStyle]}>
+    <View testID={props.testID} onLayout={onLayout} style={[sheetStyle, loadingFrameStyle]}>
       <View style={{ height: TABLE.headerHeight, borderBottomWidth: 1, borderBottomColor: theme.colors.divider }} />
       <View style={loadingRowsStyle}>
         <CollectionSkeletonRows
@@ -4012,14 +4013,14 @@ function CollectionGridScroll(props: Readonly<{
 }>): ReactElement {
   const { onViewportWidth, sheet } = props;
   // On a box around the scroller, never the scroller itself: the sheet's clip would stop it scrolling sideways.
-  const sheetStyle = useMemo(() => (sheet === null ? null : { ...happierPageSheetFrameStyle(sheet), overflow: 'hidden' as const }), [sheet]);
+  const sheetStyle = useHappierPageSheetFrameStyle(sheet);
   const onLayout = useCallback((event: HappierLayoutChangeEvent) => {
     onViewportWidth(Math.round(event.nativeEvent.layout.width));
   }, [onViewportWidth]);
   if (!props.enabled) return <>{props.children}</>;
   return (
     <>
-      <View style={[gridScrollStyle, sheetStyle]}>
+      <View style={[gridScrollStyle, sheetStyle, sheetStyle && { overflow: 'hidden' }]}>
         <ScrollView horizontal style={gridScrollStyle} contentContainerStyle={gridScrollContentStyle} onLayout={onLayout}
           showsHorizontalScrollIndicator>
           <View style={props.width > 0 ? [gridRowsStyle, { width: props.width }] : gridRowsFillStyle}>{props.children}</View>

@@ -4,6 +4,7 @@ import { deriveThemePaintResult, fixedThemePaint, type ThemePaint } from '@/them
 export { readThemeDocumentColor as readGlassDocumentColor } from '@/theme/parseThemeColor';
 import { DEFAULT_GLASS_TINT_INTENSITY, readGlassMaterials, readGlassPreset, readGlassTintedMaterials, readGlassTintIntensity, resolveGlassTintValues } from '@happier-dev/protocol/actions/settings/glassPreferenceMutations';
 import type { GlassMaterialSettings, GlassSurfaceGroup, GlassSurfaceMaterial } from '@happier-dev/protocol/actions/settings/glassPreferenceMutations';
+import type { Theme } from '@/theme';
 export { GLASS_PRESETS, GLASS_SURFACE_GROUPS, GLASS_BLUR_STEPS, GLASS_BLUR_INTENSITY, GLASS_BLUR_RADIUS_PX, glassPresetMaterials, readGlassMaterials, readGlassPreset, readGlassTintedMaterials, readGlassTintIntensity, resolveGlassPresetSettingsDelta, resolveGlassSurfaceSettingsDelta, resolveGlassIntensitySettingsDelta, resolveGlassTintSettingsDelta } from '@happier-dev/protocol/actions/settings/glassPreferenceMutations';
 export type { GlassBlurStep, GlassSurfaceGroup, GlassSurfaceMaterial, GlassSurfaceMaterials, GlassPreset, GlassMaterialChoice, GlassMaterialSettings } from '@happier-dev/protocol/actions/settings/glassPreferenceMutations';
 
@@ -109,6 +110,11 @@ export type FloatingSurfaceRole = 'menu' | 'panel';
  */
 export type GlassFloatingCoat = boolean | 'livePicture' | 'livePicturePanel';
 const GLASS_LIVE_PICTURE_PANEL_COAT = resolveGlassTintValues(100).panelCoat;
+
+/** A sheet standing on light floating glass takes the stronger ink edge and the section tint. */
+export function resolveGlassDialogSheetPaint(colors: Theme['colors']) {
+    return { fill: colors.surface.sectionTint, border: colors.border.strong, lip: colors.edge.strong };
+}
 
 /** The glass the app ships with: the Auto preset at regular blur and the default tint. Anything else is the person's choice. */
 function isDefaultGlassAppearance(settings: GlassMaterialSettings): boolean {
