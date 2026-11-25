@@ -15,7 +15,16 @@ import { PLUGIN_MANIFEST } from '../../../../packages/plugins/machine-services/s
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 
-export function createPlatformFailureNoticeFixture(_withEnrollment = false, withCreate = false, statusIntervalMs?: number) {
+/** One installed deployment-target plugin beside bundled Machine Services, which owns the receipt Events. */
+export function createInstalledDeploymentTargetContributions(loaded: LoadedPlugin) {
+    const machineServices: LoadedPlugin = { ...loaded, pluginId: PLUGIN_MANIFEST.id, manifest: normalizePluginManifestV2(PLUGIN_MANIFEST) };
+    const inputs = projectLoadedPluginContributes({ loadResult: { loadedPlugins: [loaded, machineServices], diagnosticsByPluginId: {} }, provenance: 'external' });
+    const contributes = createResolvedContributionRegistry({ ...inputs, occurrenceIdsByPluginId: Object.fromEntries([loaded.pluginId, machineServices.pluginId].map(id => [id, createPluginRuntimeOccurrenceId(id)])) });
+    return { contributes, machineServicesPluginId: machineServices.pluginId };
+}
+
+/** Installed `example.deploy` runtime target (`platform`, kind `example`); no daemon executable runs. */
+export function createExampleDeploymentTargetContributions(withCreate = false, statusIntervalMs?: number) {
     const pluginId = 'example.deploy';
     const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
     const selector = { type: 'object', properties: { kind: { type: 'string', const: 'production' } },
@@ -34,9 +43,11 @@ export function createPlatformFailureNoticeFixture(_withEnrollment = false, with
     const loaded: LoadedPlugin = { pluginId, pluginRootPath: '/plugins/example', manifestPath: '/plugins/example/plugin.json',
         daemonEntryPath: '/plugins/example/daemon.js', devDaemonEntryPath: null,
         sourceSpec: { kind: 'package', locator: pluginId, trustPolicy: 'local_trusted', installPolicy: 'copy' }, manifest };
-    const machineServices: LoadedPlugin = { ...loaded, pluginId: PLUGIN_MANIFEST.id, manifest: normalizePluginManifestV2(PLUGIN_MANIFEST) };
-    const inputs = projectLoadedPluginContributes({ loadResult: { loadedPlugins: [loaded, machineServices], diagnosticsByPluginId: {} }, provenance: 'external' });
-    const contributes = createResolvedContributionRegistry({ ...inputs, occurrenceIdsByPluginId: Object.fromEntries([pluginId, machineServices.pluginId].map(id => [id, createPluginRuntimeOccurrenceId(id)])) });
+    return { pluginId, ...createInstalledDeploymentTargetContributions(loaded) };
+}
+
+export function createPlatformFailureNoticeFixture(_withEnrollment = false, withCreate = false, statusIntervalMs?: number) {
+    const { pluginId, contributes, machineServicesPluginId } = createExampleDeploymentTargetContributions(withCreate, statusIntervalMs);
     const { credentials, rows, writes } = createPlainAccountArtifactHttpBoundary();
     const credentialPrincipal = { kind: 'account' as const, accountId: 'owner',
         purpose: { consumer: { pluginId, localId: 'selection' }, purpose: 'action-account' },
@@ -47,7 +58,7 @@ export function createPlatformFailureNoticeFixture(_withEnrollment = false, with
             state: 'provisioned', targetKind: 'example', machines: [], members: [] }),
             content: { credentialPrincipal, providerIdentity: { providerAccountId: 'native-owner', providerResourceId: 'native-project', providerEnvironment: 'production' },
                 providerEnvironment: { kind: 'native', selection: { kind: 'production' } } } }] });
-    const caller = { pluginId: machineServices.pluginId, machineId: 'controller', materializationId: 'installed' };
+    const caller = { pluginId: machineServicesPluginId, machineId: 'controller', materializationId: 'installed' };
     const definition = AutomationEventSourceDefinitionV1Schema.parse({ observationOnly: { kind: 'observationOnly' },
         automationId: '11111111-1111-4111-8111-111111111111', triggerId: 'failure', triggerRevision: 1,
         sourceSelectorId: '22222222-2222-4222-8222-222222222222', sourceInstanceId: 'platform:link', sourceContractVersion: 1,

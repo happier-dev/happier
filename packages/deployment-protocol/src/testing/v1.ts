@@ -43,13 +43,14 @@ export function createDeploymentEnvironmentHeaderV1(overrides: Partial<Deploymen
     }));
 }
 
+/** A mutable copy: scenarios stage receipt states on it, while the Protocol parse output stays frozen. */
 export function createDeploymentReceiptHeaderV1(overrides: Partial<DeploymentReceiptHeaderV1> = {}): DeploymentReceiptHeaderV1 {
-    return ProtocolDeploymentReceiptHeaderV1Schema.parse(withoutUndefined({
+    return structuredClone(ProtocolDeploymentReceiptHeaderV1Schema.parse(withoutUndefined({
         v: 1, id: 'deployment-a', environmentId: 'environment-staging', targetLinkId: 'target-link', revision: 1,
         operation: 'deploy', state: 'succeeded', requestKey: 'request-a', requestedByAccountId: 'account-owner',
         actionOperationId: 'operation-a', requestedAtMs: 1000, startedAtMs: 1001, settledAtMs: 1002,
         contentArtifactId: 'artifact-deployment', contentHeaderVersion: 1, contentBodyVersion: 1, ...overrides,
-    }));
+    })));
 }
 
 /** An override set to `undefined` removes the default from the strict JSON fixture. */

@@ -493,9 +493,9 @@ describe('own-server target at the Action host boundary', () => {
             capture: { installationId: scenario === 'adopted_installation_changed' ? 'retired-installation' : 'installation-a' },
         } };
         let receipt = createDeploymentReceiptDetailV1();
-        receipt.deployment = { ...createDeploymentReceiptHeaderV1({ ...receipt.deployment, state: 'queued', acceptedExecution: { v: 1,
+        receipt.deployment = createDeploymentReceiptHeaderV1({ ...receipt.deployment, state: 'queued', acceptedExecution: { v: 1,
             controller: { machineId: environment.environment.controllerMachineId, installationId: 'installation-a' },
-            builder: { machineId: environment.environment.buildMachineId!, installationId: 'installation-a' }} }) };
+            builder: { machineId: environment.environment.buildMachineId!, installationId: 'installation-a' }} });
         receipt.content.machineResults = [];
         receipt.content.images = [image];
         if (storedPrivatePublication) {

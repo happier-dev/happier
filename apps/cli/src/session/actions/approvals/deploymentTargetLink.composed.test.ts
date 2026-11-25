@@ -1,31 +1,33 @@
 import fastify from 'fastify';
-import nacl from 'tweetnacl';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApprovalRequestV2Schema, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, SocketRpcMachineAdmissionContextV1Schema,
+import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { ApprovalRequestV2Schema, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent,
     DeploymentTargetLinkInputV1Schema } from '@happier-dev/protocol';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
-import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { bindExternalActionExecutionAuthorizationVerifyHttpPathV1, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+    EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, ExternalActionExecutionAuthorizationRequestV1Schema,
+    ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationVerifyRequestV1Schema,
+    ExternalActionExecutionAuthorizationVerifyResponseV1Schema, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1,
+    verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { configuration } from '@/configuration';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { createExampleDeploymentTargetContributions, createInstalledDeploymentTargetContributions } from '@/deployments/platformFailureNotices.testkit';
 import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { updateSettings } from '@/persistence';
-import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
-import type { RpcHandler } from '@/api/rpc/types';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createCliActionExecutorFromCredentials } from '../createCliActionExecutorFromCredentials';
 import { createCliActionExecutorHarness } from '../createCliActionExecutorHarness';
-import { registerAccountHomeHttp, registerPlainArtifactRoutes } from '../widgetApproval.testkit';
+import { createMachineApprovalReplayPreparer, registerAccountHomeHttp, registerPlainArtifactRoutes,
+    registerMachineApprovalDecisionHomeHttp } from '../widgetApproval.testkit';
 import { PLUGIN_MANIFEST as cloudflareManifest } from '../../../../../../packages/plugins/deploy-cloudflare/src/manifest';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
-import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -69,7 +71,7 @@ it.each(['ready', 'cloudflare-existing-content', 'partial-inventory', 'invalid-i
         // The Pages fixture follows QA's r62-c4 Link input; provider calls are already completed by Inspect.
         const pages = scenario === 'cloudflare-existing-content';
         const pluginId = pages ? 'happier.deploy.cloudflare' : 'example.deploy';
-        const contribution = { pluginId, localId: pages ? 'pages' : 'runtime' };
+        const contribution = { pluginId, localId: pages ? 'pages' : 'platform' };
         const provider = { credentialPrincipal: { kind: 'account', accountId,
             purpose: { consumer: { pluginId, localId: pages ? 'targets-inspect-v1' : 'runtime' }, purpose: pages ? 'deploy.manage' : 'manage' },
             target: { kind: 'account', account: { service: { pluginId, localId: pages ? 'cloudflare' : 'service' }, accountId: 'credential' } } },
@@ -77,7 +79,7 @@ it.each(['ready', 'cloudflare-existing-content', 'partial-inventory', 'invalid-i
             providerEnvironment: { kind: 'native', selection: { kind: 'production' } } };
         const input = { serverId: homeId, environmentId: environment.environment.id,
             expectedRevision: environment.environment.revision, requestKey: 'link-provider', role: 'runtime',
-            targetId: 'runtime', targetKind: pages ? 'cloudflare-pages' : 'platform', machines: [],
+            targetId: 'runtime', targetKind: pages ? 'cloudflare-pages' : 'example', machines: [],
             source: { kind: 'plugin', contribution }, provider };
         const existingLink = createDeploymentTargetLinkHeaderV1({ id: 'existing-pages-link', environmentId: 'sibling-environment',
             role: 'runtime', source: input.source, targetKind: input.targetKind, machines: [], members: [],
@@ -113,8 +115,10 @@ it.each(['ready', 'cloudflare-existing-content', 'partial-inventory', 'invalid-i
             return { ok: true, environmentId: input.environmentId, revision: input.expectedRevision + 1,
                 targetLinkId: 'linked-runtime', targetLinkRevision: 1 };
         });
-        const installationKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(35));
-        const machine = { id: machineId, kind: 'persistent', active: true, installationId: 'controller-installation',
+        const installation = await readOrCreateInstallationIdentity();
+        const installationKeys = { publicKey: decodeBase64(installation.publicKey, 'base64url'),
+            secretKey: decodeBase64(installation.privateKey, 'base64url') };
+        const machine = { id: machineId, kind: 'persistent', active: true, installationId: installation.installationId,
             installationPublicKey: Buffer.from(installationKeys.publicKey).toString('base64'),
             revokedAt: null, replacedByMachineId: null,
             access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
@@ -140,38 +144,59 @@ it.each(['ready', 'cloudflare-existing-content', 'partial-inventory', 'invalid-i
                 }
             }
         });
-        const manifest = normalizePluginManifestV2(cloudflareManifest);
-        const contributes = pages ? createResolvedContributionRegistry({ ...projectLoadedPluginContributes({ provenance: 'external',
-            loadResult: { diagnosticsByPluginId: {}, loadedPlugins: [{ pluginId, pluginRootPath: '/plugins/cloudflare',
-                manifestPath: '/plugins/cloudflare/plugin.json', daemonEntryPath: '/plugins/cloudflare/daemon.js', devDaemonEntryPath: null,
-                sourceSpec: { kind: 'package', locator: pluginId, trustPolicy: 'local_trusted', installPolicy: 'copy' }, manifest }] } }),
-            occurrenceIdsByPluginId: { [pluginId]: createPluginRuntimeOccurrenceId(pluginId) } }) : undefined;
+        const { contributes } = pages ? createInstalledDeploymentTargetContributions({ pluginId, pluginRootPath: '/plugins/cloudflare',
+            manifestPath: '/plugins/cloudflare/plugin.json', daemonEntryPath: '/plugins/cloudflare/daemon.js', devDaemonEntryPath: null,
+            sourceSpec: { kind: 'package', locator: pluginId, trustPolicy: 'local_trusted', installPolicy: 'copy' },
+            manifest: normalizePluginManifestV2(cloudflareManifest) }) : createExampleDeploymentTargetContributions();
         const native = createDaemonDeploymentActionDeps({ credentials, serverId: homeId, serverHttpBaseUrl: endpoint, machineId,
-            ...(contributes ? { async acquirePluginRuntimeRegistryLease() {
+            async acquirePluginRuntimeRegistryLease() {
                 // Installed registry boundary: real manifest projection, no provider executable before the refused read.
                 return { registry: { contributes }, source: 'active', durableRevision: 1, release: async () => {} } as PluginRuntimeRegistryLease;
-            } } : {}),
+            },
             resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
             runtime: { async acquire() { throw new Error('Link preparation has no deployment runtime effect'); } } });
+        let receiving: ReturnType<typeof createCliActionExecutorHarness>['executor'] | undefined;
+        const prepareApprovalExecutionAuthorization = createMachineApprovalReplayPreparer({ credentials, machineId,
+            serverId, serverIdentityId: homeId, serverHttpBaseUrl: endpoint, installation, executor: () => receiving! });
         const { executor: daemon } = createCliActionExecutorHarness({ credentials, token: credentials.token,
             sessionId: 'cli-global', mode: 'plain', ctx: null, serverId, serverIdentityId: homeId,
-            serverHttpBaseUrl: endpoint, actionsSettingsProvider: policy }, {
-            deploymentAction: native.deploymentAction,
+            serverHttpBaseUrl: endpoint, actionsSettingsProvider: policy,
+            externalActionMachineInstallationId: machine.installationId,
+            externalActionMachineRequestPrivateKey: installationKeys.secretKey,
+        }, {
+            deploymentAction: native.deploymentAction, prepareApprovalExecutionAuthorization,
             isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
                 credentials, machineId, serverId, serverApiUrl: endpoint }),
         });
-        const handlers = new Map<string, RpcHandler>();
-        registerApprovalRpcHandlers({ rpcHandlerManager: { registerHandler: (method, handler) => handlers.set(method, handler) }, actionExecutor: daemon });
+        receiving = daemon;
+        const receiver = await registerMachineApprovalDecisionHomeHttp(app, { credentials, accountId, machineId,
+            serverId, serverIdentityId: homeId, serverHttpBaseUrl: endpoint, installation, executor: daemon });
         const originalDispatches: unknown[] = [];
+        let admittedLink: ExternalActionExecutionAuthorizationV1 | undefined;
         app.post('/v1/actions/deployments.targets.link/execution-authorization', async request => {
             const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.body);
-            return ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-proof', binding: {
+            admittedLink = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-proof', binding: {
                 accountId, authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
                 serverIdentityId: homeId, custodianAccountId: accountId, machineId, installationId: machine.installationId,
                 actionId: 'deployments.targets.link', requestId: envelope.requestId, target: envelope.target,
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
                 deploymentLinkAdmission: { environmentId: environment.environment.id, owner: environment.environment.owner },
             } });
+            return admittedLink;
+        });
+        const verifyLinkPath = bindExternalActionExecutionAuthorizationVerifyHttpPathV1('deployments.targets.link');
+        app.post(verifyLinkPath, async request => {
+            if (!admittedLink) throw new Error('Missing retained Link root');
+            expect(request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe(admittedLink.token);
+            const body = ExternalActionExecutionAuthorizationVerifyRequestV1Schema.parse(request.body);
+            expect(body.binding).toEqual(admittedLink.binding);
+            expect(verifyExternalActionMachineRequestV1({
+                authorizationToken: admittedLink.token, effectActionId: admittedLink.binding.actionId,
+                target: admittedLink.binding.target, installationId: machine.installationId,
+                requestId: admittedLink.binding.requestId, method: 'POST', path: verifyLinkPath, body,
+                publicKey: installationKeys.publicKey, signature: String(request.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]),
+            })).toBe(true);
+            return ExternalActionExecutionAuthorizationVerifyResponseV1Schema.parse({ ok: true });
         });
         app.post('/v1/actions/deployments.targets.link', async request => {
             const incoming = ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.body);
@@ -202,12 +227,8 @@ it.each(['ready', 'cloudflare-existing-content', 'partial-inventory', 'invalid-i
         // construction/CAS, registered replay and native content preparation stay real.
         const rpc = vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => {
             expect(request.machineId).toBe(machineId);
-            const handler = handlers.get(request.method);
-            if (!handler) throw new Error(`Unexpected RPC ${request.method}`);
-            return await handler(request.request, { signal: new AbortController().signal, callerAuthority: 'present_user',
-                machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: accountId, custodianAccountId: accountId,
-                    machineId, installationId: machine.installationId, role: 'manage', encryptionMode: 'plain' }),
-                verifyMachineAdmissionCurrent: async () => true });
+            return await receiver.handleRequest({ method: `${machineId}:${request.method}`,
+                params: request.request, callerAuthority: 'present_user' });
         });
         const caller = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
             serverId, serverIdentityId: homeId, serverApiUrl: endpoint, actionsSettingsProvider: policy });
@@ -227,6 +248,8 @@ it.each(['ready', 'cloudflare-existing-content', 'partial-inventory', 'invalid-i
             };
             expect(readRequest()).toMatchObject({ status: 'open', executionOriginV1: { target: { kind: 'machine', machineId } } });
             expect(associations).toEqual([]);
+            // The proposal reaches its Machine once through Home; the replay never dispatches it again.
+            expect(originalDispatches).toHaveLength(1);
             replaying = true;
             const result = await caller.execute('approval.request.decide', { artifactId, decision: 'approve' }, {
                 surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } });
@@ -238,7 +261,9 @@ it.each(['ready', 'cloudflare-existing-content', 'partial-inventory', 'invalid-i
                     : scenario === 'partial-inventory' ? 'content_unavailable'
                         : scenario === 'validation-inventory' || scenario === 'validation-environment' ? 'dependency_failed' : 'invalid_payload';
                 const errorCode = scenario === 'content-publish-refused' ? 'action_forbidden'
-                    : scenario === 'validation-inventory' || scenario === 'validation-environment' ? 'deployment_invalid' : 'deployment_content_unavailable';
+                    : scenario === 'validation-inventory' || scenario === 'validation-environment' ? 'deployment_invalid'
+                        // Malformed Home JSON projects through the deployment Zod owner (38cddb70537).
+                        : scenario === 'invalid-inventory' ? 'invalid_action_output' : 'deployment_content_unavailable';
                 const expectedError = scenario === 'validation-environment' ? errorCode
                     : `${errorCode}${scenario === 'content-publish-refused' ? ' (home_deployment_http_forbidden)' : ''} (target_link.${step}: ${reason})`;
                 expect(result).toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false,
@@ -249,7 +274,7 @@ it.each(['ready', 'cloudflare-existing-content', 'partial-inventory', 'invalid-i
                 } } });
                 expect(associations).toHaveLength(scenario === 'association-refused' ? 1 : 0);
                 expect(artifactCreates).toHaveLength(scenario === 'association-refused' || scenario === 'content-publish-refused' ? 2 : 1);
-                expect(originalDispatches).toEqual([]);
+                expect(originalDispatches).toHaveLength(1);
                 expect(readRequest()).toMatchObject({ status: 'failed', execution: { ok: false,
                     errorCode, error: expectedError } });
                 return;
@@ -259,15 +284,17 @@ it.each(['ready', 'cloudflare-existing-content', 'partial-inventory', 'invalid-i
             expect(associations).toEqual([expect.objectContaining({ contentArtifactId: expect.any(String) })]);
             expect(associations[0]).not.toHaveProperty('provider');
             expect(artifactCreates).toHaveLength(2); // One approval and one provider-content Artifact, with no second Ask.
-            expect(originalDispatches).toEqual([]);
+            expect(originalDispatches).toHaveLength(1);
             expect(readRequest().status).toBe('executed');
             expect(persistedLink).toMatchObject({ id: 'linked-runtime', environmentId: input.environmentId });
             expect(environment.environment).toMatchObject({ revision: input.expectedRevision + 1, runtimeTargetLinkId: 'linked-runtime' });
-            expect(postPersistArtifactReads).toBe(pages ? 1 : 0);
+            // Both installed targets enroll the bundled receipt observer; its refused read leaves the Link persisted.
+            expect(postPersistArtifactReads).toBe(1);
             if (pages) expect(http).toContain(`GET /v1/artifacts/${existingLink.contentArtifactId}`);
-            if (pages) expect(result).toMatchObject({ result: { execution: { result: {
+            expect(result).toMatchObject({ result: { execution: { result: {
                 ok: true, targetLinkId: 'linked-runtime', failureObserver: { status: 'unavailable',
-                    failureCause: { phase: 'target_link.failure_observer.environment_read', httpStatus: 401 } },
+                    // The signed Home transport owns the typed 401 cause; the observer carries it unchanged.
+                    failureCause: { phase: 'home.authorization.signed_request', httpStatus: 401 } },
             } } } });
         } finally { restore(); await app.close(); }
     });

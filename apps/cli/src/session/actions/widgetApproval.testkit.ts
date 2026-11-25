@@ -1,3 +1,28 @@
+import { onTestFinished, expect } from 'vitest';
+import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/rpc';
+import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { ExternalActionServerPrincipalV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema,
+    ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationVerifyRequestV1Schema,
+    ExternalActionExecutionAuthorizationVerifyResponseV1Schema, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+    EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
+    bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1,
+    projectExternalActionApprovalDecisionEnvelopeAdmissionV1, parseExternalActionDaemonDispatchResult } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
+import { decodeJwtPayload, readAccountIdFromToken, readCredentialEpochFromToken } from '@/cloud/decodeJwtPayload';
+import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import type { PrepareExternalActionRequesterAccountContext, VerifyExternalActionExecutionAuthorization } from '@/daemon/externalActions/executeExternalAction';
+import { createDaemonApprovalExecutionAuthorizationPreparer } from '@/daemon/externalActions/approvalExecutionAuthorization';
+import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
+import type { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
+import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import type { StoredCredentials } from '@/persistence';
+import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
+import { registerExternalActionRpcHandler } from '@/rpc/handlers/externalAction';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import type { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountCredentialMutationSupersededV4Schema, type QualifiedConnectedAccountCredentialSnapshotV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -131,6 +156,139 @@ export function registerAccountHomeHttp(app: FastifyInstance, input: Readonly<{ 
     });
     return FeaturesResponseSchema.parse({ features: { sessions: { enabled: true, board: { enabled: true } } },
         capabilities: { serverIdentity: { serverIdentityId: input.serverId } } });
+}
+
+type MachineReceiverFixtureInput = Readonly<{
+    machineId: string; serverId: string; serverIdentityId: string; serverHttpBaseUrl: string;
+    credentials: StoredCredentials;
+    installation: Awaited<ReturnType<typeof readOrCreateInstallationIdentity>>;
+}>;
+type MachineReceiverExecutor = ReturnType<typeof createCliActionExecutorHarness>['executor'];
+
+function createFixtureExecutionAuthorizationVerifier(input: MachineReceiverFixtureInput): VerifyExternalActionExecutionAuthorization {
+    const privateKey = decodeBase64(input.installation.privateKey, 'base64url');
+    return request => verifyExternalActionExecutionAuthorizationCurrent({ ...request, privateKey,
+        installationId: input.installation.installationId, serverHttpBaseUrl: input.serverHttpBaseUrl });
+}
+
+/** The receiver's own private custody owner, as the daemon composes it for this installation. */
+function createFixtureRequesterAccountContextPreparer(input: MachineReceiverFixtureInput,
+    executor: () => MachineReceiverExecutor, custody: AbortSignal): PrepareExternalActionRequesterAccountContext {
+    const verifyExecutionAuthorization = createFixtureExecutionAuthorizationVerifier(input);
+    const installationPrivateKey = decodeBase64(input.installation.privateKey, 'base64url');
+    return request => prepareRequesterAccountActionContext({ ...request,
+        purpose: request.purpose ?? { kind: 'external_action' }, machineId: input.machineId,
+        installationId: input.installation.installationId, installationPrivateKey,
+        ownCredentials: input.credentials, serverId: input.serverId, serverIdentityId: input.serverIdentityId,
+        serverHttpBaseUrl: input.serverHttpBaseUrl,
+        isCurrent: () => verifyExecutionAuthorization({ authorization: request.authorization,
+            effectActionId: request.authorization.binding.actionId, target: request.authorization.binding.target,
+            ...(request.signal ? { signal: request.signal } : {}) }),
+        isCustodyCurrent: async () => !custody.aborted, createExecutor: executor,
+    });
+}
+
+/**
+ * The replay preparer production composes into the receiving daemon executor:
+ * stored approvals drop private ports, and replay rebuilds them for this Machine.
+ * `executor` is read lazily because the receiving executor is built with this preparer.
+ */
+export function createMachineApprovalReplayPreparer(input: MachineReceiverFixtureInput & Readonly<{
+    executor: () => MachineReceiverExecutor;
+}>) {
+    const daemonWork = new AbortController();
+    onTestFinished(() => daemonWork.abort());
+    return createDaemonApprovalExecutionAuthorizationPreparer({
+        machineId: input.machineId, serverId: input.serverId, serverBaseUrl: input.serverHttpBaseUrl,
+        daemonWorkSignal: daemonWork.signal,
+        resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
+            serverUrl: input.serverHttpBaseUrl, resolveCurrentMachineId: () => input.machineId }),
+        prepareRequesterAccountContext: createFixtureRequesterAccountContextPreparer(input, input.executor, daemonWork.signal),
+    });
+}
+
+/** Home HTTP/socket substitutions from remoteDecider; registered receiver and private custody stay real. */
+export async function registerMachineApprovalDecisionHomeHttp(app: FastifyInstance, input: Readonly<{
+    accountId: string; machineId: string; serverId: string; serverIdentityId: string; serverHttpBaseUrl: string;
+    credentials: StoredCredentials;
+    installation: Awaited<ReturnType<typeof readOrCreateInstallationIdentity>>;
+    executor: ReturnType<typeof createCliActionExecutorHarness>['executor'];
+}>) {
+    const provenance = readAuthTokenProvenance(decodeJwtPayload(input.credentials.token), { allowLegacyHome: false });
+    if (provenance?.provenance.kind !== 'account') throw new Error('Expected the fixture Account credential');
+    const principal = ExternalActionServerPrincipalV1Schema.parse({
+        accountId: readAccountIdFromToken(input.credentials.token), authority: provenance.provenance.authority,
+        authentication: { kind: provenance.provenance.kind, tokenEpoch: readCredentialEpochFromToken(input.credentials.token) },
+    });
+    expect(principal.accountId).toBe(input.accountId);
+    const privateKey = decodeBase64(input.installation.privateKey, 'base64url');
+    const publicKey = decodeBase64(input.installation.publicKey, 'base64url');
+    const lifetime = new AbortController();
+    const currentnessChannel = await createRequesterCurrentnessSocketHarness();
+    onTestFinished(async () => { lifetime.abort(); await currentnessChannel.close(); });
+    const rpc = new RpcHandlerManager({ scopePrefix: input.machineId, encryptionMode: 'plain', logger: () => {} });
+    registerApprovalRpcHandlers({ rpcHandlerManager: rpc, actionExecutor: input.executor });
+    const verifyExecutionAuthorization = createFixtureExecutionAuthorizationVerifier(input);
+    registerExternalActionRpcHandler(rpc, {
+        machineId: input.machineId, currentServerId: input.serverId, currentServerHttpBaseUrl: input.serverHttpBaseUrl,
+        resolveAccountId: async () => input.accountId, resolveInstallationId: () => input.installation.installationId,
+        externalActionMachineRequestPrivateKey: privateKey, verifyExecutionAuthorization,
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials: input.credentials, serverApiUrl: input.serverHttpBaseUrl }),
+        executor: input.executor,
+        prepareRequesterAccountContext: createFixtureRequesterAccountContextPreparer(input, () => input.executor, lifetime.signal),
+    });
+    const actionId = 'approval.request.decide';
+    const issued = new Map<string, ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>>();
+    const mintPath = bindExternalActionExecutionAuthorizationHttpPathV1(actionId);
+    const verifyPath = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
+    // This network fixture accepts only its existing bearer; caller input cannot select another principal.
+    app.post(mintPath, async request => {
+        expect(request.headers.authorization === `Bearer ${input.credentials.token}`, 'Unexpected fixture authorization bearer').toBe(true);
+        const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.body);
+        expect(body.machineId).toBe(input.machineId);
+        expect(body.envelope.target).toEqual({ kind: 'machine', machineId: input.machineId });
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1,
+            token: `fixture-decision-admission-${computeExternalActionRequestEnvelopeDigestV1(body.envelope)}`, binding: {
+                serverIdentityId: input.serverIdentityId, accountId: principal.accountId, custodianAccountId: input.accountId,
+                authentication: principal.authentication, accountEncryptionMode: 'plain',
+                machineId: input.machineId, installationId: input.installation.installationId,
+                actionId, requestId: body.envelope.requestId, target: body.envelope.target,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope),
+                approvalDecisionAdmission: projectExternalActionApprovalDecisionEnvelopeAdmissionV1({ actionId, envelope: body.envelope }),
+            } });
+        issued.set(authorization.token, authorization);
+        return authorization;
+    });
+    app.post(verifyPath, async request => {
+        const authorization = issued.get(String(request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]));
+        if (!authorization) throw new Error('Unknown decision admission');
+        const body = ExternalActionExecutionAuthorizationVerifyRequestV1Schema.parse(request.body);
+        expect(body.binding).toEqual(authorization.binding);
+        expect(verifyExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+            effectActionId: authorization.binding.actionId, target: authorization.binding.target,
+            installationId: input.installation.installationId, requestId: authorization.binding.requestId,
+            method: 'POST', path: verifyPath, body, publicKey,
+            signature: String(request.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]),
+        })).toBe(true);
+        return ExternalActionExecutionAuthorizationVerifyResponseV1Schema.parse({ ok: true });
+    });
+    app.post(`/v1/actions/${actionId}`, async request => {
+        expect(request.headers.authorization === `Bearer ${input.credentials.token}`, 'Unexpected fixture authorization bearer').toBe(true);
+        const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.body);
+        expect(body.machineId).toBe(input.machineId);
+        const authorization = body.executionAuthorization;
+        if (!authorization) throw new Error('Missing decision admission');
+        expect(issued.get(authorization.token)?.binding).toEqual(authorization.binding);
+        const relayed = parseExternalActionDaemonDispatchResult(await rpc.handleRequest({
+            method: `${input.machineId}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
+            authorization: ACTION_API_SERVER_ORIGIN,
+            params: { actionId, envelope: body.envelope, executionAuthorization: authorization, principal,
+                placement: { machineId: input.machineId, target: { kind: 'machine', machineId: input.machineId } } },
+        }, undefined, 'authenticated_home_socket'));
+        if (!relayed || relayed.kind !== 'response') throw new Error('Invalid daemon dispatch response kind');
+        return relayed.prepared.response;
+    });
+    return rpc;
 }
 
 type ArtifactRow<Mode extends 'plain' | 'e2ee'> = {
