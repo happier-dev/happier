@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useUnistyles } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ITEM_SUBTITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { Text } from '@/components/ui/text/Text';
@@ -22,18 +22,20 @@ export function SoundEffectsVolumeSlider(props: SoundEffectsVolumeSliderProps) {
                 onChange={(event) => props.onValueChange(event.currentTarget.valueAsNumber)}
                 style={{ flex: 1, minWidth: 0, height: '2.75rem', margin: 0, accentColor: theme.colors.button.primary.background }}
             />
-            <Text
-                aria-hidden={true}
-                style={{
-                    ...ITEM_SUBTITLE_TEXT_METRICS.comfortable,
-                    color: theme.colors.text.secondary,
-                    minWidth: 42,
-                    textAlign: 'right',
-                    fontVariant: ['tabular-nums'],
-                }}
-            >
+            {/* The web font-scale stylesheet already scales this Unistyles text style. */}
+            <Text aria-hidden={true} disableUiFontScaling style={styles.value}>
                 {props.value}%
             </Text>
         </div>
     );
 }
+
+const styles = StyleSheet.create((theme) => ({
+    value: {
+        ...ITEM_SUBTITLE_TEXT_METRICS.comfortable,
+        color: theme.colors.text.secondary,
+        minWidth: 42,
+        textAlign: 'right',
+        fontVariant: ['tabular-nums'],
+    },
+}));
