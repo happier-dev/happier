@@ -136,6 +136,7 @@ import { DeploymentDataCard } from './DeploymentDataCard';
 import { showDeploymentAddSheet, showDeploymentTemplateUpdateSheet,
   showDeploymentAppSourcesSheet } from './DeploymentDatabasePage';
 import { describeRegistrySourceFailure } from '@/registries/describeRegistrySourceStatus';
+import { useRegistryAppUpdate } from '@/registries/useRegistryUpdateCheck';
 import { showDeploymentDispositionSheet } from './DeploymentDispositionSheet';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { showDeploymentLinkMachineSheet } from './DeploymentLinkMachineSheet';
@@ -390,6 +391,9 @@ export const DeploymentEnvironmentDetail = React.memo(
       React.useState<DeploymentEnvironmentDestinationV1>(OVERVIEW);
     const { tab, section: settingsSection } =
       props.destination ?? ownDestination;
+    const overview = tab === 'overview';
+    const catalogUpdate = useRegistryAppUpdate(detail,
+      overview && props.demand.mounted && props.demand.visible && props.demand.focused);
     const onNavigate = props.onNavigate ?? setOwnDestination;
     // Automations sit under the Settings panel; a link to them (Project defaults) scrolls there (D16, F8).
     const automationsReveal = useSettingReveal(tab === ENVIRONMENT_AUTOMATIONS_DESTINATION.tab
@@ -913,10 +917,9 @@ export const DeploymentEnvironmentDetail = React.memo(
     const recentReceipts = receipts.slice(0, RECENT_COUNT);
     const openServingReceipt = () => { if (activeReceipt) props.onOpenReceipt(activeReceipt.deployment.id); };
     // Overview owns the whole precedence; other tabs keep only what blocks their own presses.
-    const overview = tab === 'overview';
     const latest = overview ? history.result.items[0] ?? null : null;
-    const catalogUpdatePending = environment.catalogUpdate.loading
-      && !environment.catalogUpdate.upstream && !environment.catalogUpdate.error;
+    const catalogUpdatePending = catalogUpdate.loading
+      && !catalogUpdate.upstream && !catalogUpdate.error;
     // Between settlement and refresh the held read can still describe the retired link.
     const settledReinstall = disposition.outcome?.kind === 'reinstalled'
       && disposition.outcome.replacedTargetLinkId === detail.environment.runtimeTargetLinkId;
@@ -950,8 +953,8 @@ export const DeploymentEnvironmentDetail = React.memo(
       reviewPending,
       latest,
       health: overview ? detail.healthAggregate ?? null : null,
-      catalogUpdate: overview && Boolean(templateRef && (catalogUpdatePending || environment.catalogUpdate.upstream
-        && environment.catalogUpdate.upstream.state !== 'current' || environment.catalogUpdate.error)),
+      catalogUpdate: overview && Boolean(templateRef && (catalogUpdatePending || catalogUpdate.upstream
+        && catalogUpdate.upstream.state !== 'current' || catalogUpdate.error)),
     });
     // "Deploy when finished" runs the repository's newest commit after the running one; a stored definition has no newer
     // source to wait for, so it is offered only where a repository can move ahead (R16-D2).
@@ -1092,7 +1095,7 @@ export const DeploymentEnvironmentDetail = React.memo(
             <SurfaceStateCard testID="project-deployments.environment.attention.catalogUpdate.loading"
               size="line" kind="loading" title={t('projects.deployments.loading')} />
           );
-          const upstream = environment.catalogUpdate.upstream;
+          const upstream = catalogUpdate.upstream;
           const updateAvailable = upstream?.state === 'update_available';
           return (
             <AttentionBanner
@@ -1102,13 +1105,13 @@ export const DeploymentEnvironmentDetail = React.memo(
                 : 'projects.deployments.overviewStatus.catalogSourceUnavailableTitle')}
               description={updateAvailable ? t('projects.deployments.overviewStatus.catalogUpdateBody')
                 : upstream?.state === 'removed_from_source' ? t('projects.deployments.overviewStatus.catalogSourceRemovedBody')
-                  : describeRegistrySourceFailure(upstream?.state === 'unchecked' ? upstream.reason : environment.catalogUpdate.status,
-                    environment.catalogUpdate.sourceTitle)}
+                  : describeRegistrySourceFailure(upstream?.state === 'unchecked' ? upstream.reason : catalogUpdate.status,
+                    catalogUpdate.sourceTitle)}
               {...(updateAvailable ? openTemplateUpdate ? { action: {
                 label: t('projects.deployments.overviewStatus.catalogUpdateReview'), onPress: openTemplateUpdate,
               } } : {} : templateRef ? { action: { label: t('capabilities.registries.select.manage'),
                 onPress: () => showDeploymentAppSourcesSheet(templateRef.sourceId) },
-                secondaryAction: { label: t('common.retry'), onPress: () => { void environment.catalogUpdate.refresh(); } } } : {})}
+                secondaryAction: { label: t('common.retry'), onPress: () => { void catalogUpdate.refresh(); } } } : {})}
             />
           );
         }

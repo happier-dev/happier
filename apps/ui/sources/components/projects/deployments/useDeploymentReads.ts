@@ -1,7 +1,6 @@
 import * as React from 'react';
 import type { DeploymentUiRollbackInput } from './deploymentActions';
 import type { DeploymentEnvironmentCollectionV1, DeploymentPreMigrationBackupV1 } from '@happier-dev/deployments/contracts/v1';
-import { useRegistryAppUpdate } from '@/registries/useRegistryUpdateCheck';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { selectDeploymentReceiptRetainedHistoryV1 } from '@happier-dev/deployments';
 import type {
@@ -262,8 +261,7 @@ export function useDeploymentEnvironmentBackups(controller: DeploymentReadContro
 
 export function useDeploymentEnvironment(controller: DeploymentReadControllerV1 | null, environmentId: string | null, demand: DeploymentReadDemandV1) {
     const read = useEnvironmentRead(controller, environmentId, demand, true);
-    const catalogUpdate = useRegistryAppUpdate(read.snapshot.value, demand.mounted && demand.visible && demand.focused);
-    return { ...read, catalogUpdate, healthFeed: read.snapshot.value?.healthFeed ?? null };
+    return { ...read, healthFeed: read.snapshot.value?.healthFeed ?? null };
 }
 
 const NO_HISTORY_QUERY: DeploymentHistoryQueryV1 = Object.freeze({});

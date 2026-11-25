@@ -402,7 +402,7 @@ it.each(['opened', 'refused', 'unsupported-forge', 'declined'] as const)('prepar
   } finally { account.dispose(); await act(async () => { controller.retire(); }); }
 });
 
-it.each(['update_available', 'removed_from_source', 'unchecked', 'cold'] as const)(
+it.each(['update_available', 'removed_from_source', 'unchecked', 'cold', 'settings_first'] as const)(
   'opens the owning review or source repair from the Environment catalog notice (%s)', async state => {
     const serverId = scope.serverId;
     await homes.switchAccount(serverId, scope.accountId, { currentAccount: true });
@@ -484,11 +484,22 @@ it.each(['update_available', 'removed_from_source', 'unchecked', 'cold'] as cons
     } else await publishMachine();
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     const { controller } = controllerFor({ detail });
-    const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
-      environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={serverId}
-      phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={account.accountLifetime} /></ModalProvider>);
+    function CatalogPage() {
+      const [tab, setTab] = React.useState<DeploymentEnvironmentTabV1>(state === 'settings_first' ? 'settings' : 'overview');
+      return <ModalProvider><DeploymentEnvironmentDetail controller={controller}
+        environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={serverId}
+        phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={account.accountLifetime}
+        destination={{ tab, section: null }} onNavigate={destination => setTab(destination.tab)} /></ModalProvider>;
+    }
+    const screen = await renderScreen(<CatalogPage />);
     try {
       const banner = 'project-deployments.environment.attention.catalogUpdate';
+      if (state === 'settings_first') {
+        await waitForContent(screen, 'project-deployments.environment.settings.lead');
+        await act(async () => {});
+        expect(observedChecks).toEqual([]);
+        await selectEnvironmentTab(screen, 'overview');
+      }
       if (state === 'cold') {
         await waitForContent(screen, 'project-deployments.environment.header');
         expect(screen.findByTestId(`${banner}.loading`), JSON.stringify({
@@ -504,10 +515,10 @@ it.each(['update_available', 'removed_from_source', 'unchecked', 'cold'] as cons
       }
       await waitForHomeGovernance(() => expect(observedChecks, JSON.stringify({ boundaryTrace,
         requests: [...new Set(homes.requests.map(request => `${request.method} ${request.path.split('?')[0]}`))] }))
-        .toContain(state === 'unchecked' ? 'unchecked:auth_failed' : state === 'cold' ? 'update_available' : state));
+        .toContain(state === 'unchecked' ? 'unchecked:auth_failed' : state === 'cold' || state === 'settings_first' ? 'update_available' : state));
       await waitForContent(screen, `${banner}.action`);
       await screen.pressByTestIdAsync(`${banner}.action`);
-      await waitForContent(screen, state === 'update_available' || state === 'cold' ? 'project-deployments.add.review' : 'project-deployments.template.sources.view');
+      await waitForContent(screen, state === 'update_available' || state === 'cold' || state === 'settings_first' ? 'project-deployments.add.review' : 'project-deployments.template.sources.view');
       expect(homes.artifacts(serverId).list()).toEqual([]);
     } finally {
       releaseMachineList();
