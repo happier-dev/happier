@@ -430,7 +430,8 @@ describe('canonical Run page occurrence target', () => {
         const row = privateDetail().cause;
         const screen = await respond(run({ triggerId: AutomationTriggerIdSchema.parse('trigger-1'), cause: row }));
         expect(screen.getTextContent()).toContain('Failed');
-        expect(screen.getTextContent()).toContain('Error: executor_unavailable');
+        expect(screen.getTextContent()).toContain('errors.operationFailed');
+        expect(screen.getTextContent()).not.toContain('executor_unavailable');
         // The exact trigger and source wait under Technical details, not at rest (DESIGN-ACCEPT-5 NF-10).
         expect(screen.getTextContent()).not.toContain('trigger-1 · revision 3');
         const technical = screen.findByProps({ testID: 'automation-run-cause-technical' }).props.lines as readonly { label: string; value: string }[];
@@ -479,11 +480,11 @@ describe('canonical Run page occurrence target', () => {
     });
 
     it('keeps fresher direct status when Account currentness is unavailable and never paints retained bytes', async () => {
-        const sealed = privateDetail(run({ updatedAt: 12, errorCode: 'direct-status-error' }));
+        const sealed = privateDetail(run({ updatedAt: 12, errorCode: 'workspace_unavailable' }));
         harness.answer(serverId, DETAIL_PATH, { body: sealed });
         harness.answer(serverId, '/v1/account/encryption/currentness', { status: 503, body: { error: 'unavailable' } });
         const screen = await open();
-        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Error: direct-status-error'));
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('workflows.problem.workspaceUnavailable'));
         expect(screen.getTextContent()).toContain('Private Run detail is temporarily unavailable while account encryption changes.');
         expect(screen.getTextContent()).not.toContain('The admitted issue private');
         expect(JSON.stringify(screen.tree.toJSON())).not.toContain(sealed.executionInputEnvelope);
@@ -556,6 +557,7 @@ describe('canonical Run page occurrence target', () => {
             executionInputEnvelope: 'invalid-recipe', resultEnvelope: JSON.stringify({ t: 'encrypted', c: 'sealed-private-result' }),
         });
         expect(screen.getTextContent()).toContain('The admitted template was invalid. This Run will not dispatch or retry.');
+        expect(screen.getTextContent()).not.toContain('invalid_template');
         expect(screen.getTextContent()).toContain('Dispatch outcome is unknown. Happier will not dispatch the frozen target again.');
         expect(screen.getTextContent()).toContain('Retained private detail is invalid.');
         expect(screen.getTextContent()).toContain('Retained private detail uses a different Account encryption mode.');

@@ -359,11 +359,15 @@ export function resolveWorkflowRunProblemPresentation(
                 : 'workflows.triggers.once.missed',
         repair: 'none', accessibilitySemantics: 'status',
     });
-    if (run.state !== 'failed' && run.state !== 'interrupted') return null;
+    if (code === null || (run.state !== 'failed' && run.state !== 'interrupted' && run.state !== 'dispatch_failed')) return null;
     if (code === 'workspace_unavailable') return describeWorkflowTargetUnavailableProblem({ reason: code });
     if (isWorkflowOperationErrorCode(code)) return describeWorkflowOperationProblem(code);
+    const problem = present(null, {
+        messageKey: code === 'invalid_template' ? 'automations.detail.runDetail.invalidTemplate' : 'errors.operationFailed',
+        repair: 'none', accessibilitySemantics: 'alert',
+    });
     const startupCause = presentSessionStartupFailureCause(code);
-    return startupCause ? { ...present(null, { ...GENERIC_SHAPE, repair: 'none' }), message: startupCause } : null;
+    return startupCause ? { ...problem, message: startupCause } : problem;
 }
 
 /**

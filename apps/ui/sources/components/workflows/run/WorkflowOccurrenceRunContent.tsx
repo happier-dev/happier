@@ -482,6 +482,7 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
     const { accountLifetime, scopeUnavailable, run, runProblem, privateContent, currentDetail, loading, loadFailed, cancelling, refresh, handleCancel } = detail;
     const preExecutionFailure = privateContent?.failureDetail.kind === 'available'
         ? formatWorkflowPreExecutionFailure(privateContent.failureDetail.failureCause) : null;
+    const problemMessage = preExecutionFailure ?? runProblem?.message;
     const unknownDate = t('automations.detail.unknownDate');
     const title = runId ? t('runs.runLabel', { runId }) : t('runs.title');
     const canCancel = run?.state === 'queued' || run?.state === 'claimed' || run?.state === 'running';
@@ -574,20 +575,8 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
                             description={t('automationPages.run.statusDescription')}
                         >
                             <Item title={formatAutomationRunStateLabel(run)} showChevron={false} mode="info" />
-                            {runProblem !== null || run.errorCode ? (
-                                <Item
-                                    title={preExecutionFailure ?? runProblem?.message ?? t('automations.detail.runMeta.error', { message: run.errorCode ?? '' })}
-                                    subtitleLines={0}
-                                    showChevron={false}
-                                    mode="info"
-                                />
-                            ) : null}
-                            {run.errorCode === 'invalid_template' ? (
-                                <Item
-                                    title={t('automations.detail.runDetail.invalidTemplate')}
-                                    showChevron={false}
-                                    mode="info"
-                                />
+                            {problemMessage ? (
+                                <Item title={problemMessage} subtitleLines={0} showChevron={false} mode="info" />
                             ) : null}
                             {run.executionDispatchState === 'outcomeUnknown' ? (
                                 <Item
@@ -895,7 +884,7 @@ function WorkflowOccurrenceCauseAndHistory({ run, events: runHistory, includeAdm
                                                 : resolveWorkflowRunProblemPresentation({
                                                     state: run.workflowRunState === 'missed' ? 'missed' : 'failed',
                                                     errorCode: event.errorCode,
-                                                })?.message ?? t('errors.operationFailed'),
+                                                })?.message ?? null,
                                             event.executionAttempt === null
                                                 ? null
                                                 : t('automations.detail.runMeta.dispatchAttempt', {

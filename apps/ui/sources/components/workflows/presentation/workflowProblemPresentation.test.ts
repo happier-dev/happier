@@ -38,6 +38,15 @@ describe('workflowProblemPresentation', () => {
         expect(resolveWorkflowRunProblemPresentation({ state: 'failed', errorCode })).toMatchObject({ message });
     });
 
+    it('explains retained occurrence failures without using their diagnostic codes as prose', () => {
+        expect(resolveWorkflowRunProblemPresentation({ state: 'failed', errorCode: 'invalid_template' })).toMatchObject({
+            message: 'automations.detail.runDetail.invalidTemplate', repair: 'none',
+        });
+        expect(resolveWorkflowRunProblemPresentation({ state: 'failed', errorCode: 'private-unknown-server-error' })).toMatchObject({
+            message: 'errors.operationFailed', repair: 'none',
+        });
+    });
+
     it('names the selected Machine only for a target refusal', () => {
         const context = { machineName: 'Build computer' };
         expect(resolveWorkflowProblemPresentation(actionError('target_unavailable'), undefined, context).message)
