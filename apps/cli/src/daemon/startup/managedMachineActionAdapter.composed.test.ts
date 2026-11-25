@@ -1163,6 +1163,7 @@ describe('daemon managed Machine Action factory', () => {
         const nativeDetails = { kind: 'managedNative', nativeCause: { httpStatusClass: '4xx', code: 'forbidden' } } as const;
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
         const diagnostics = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);
+        const traceDiagnostics = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => undefined);
         const controllerDiagnostics = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account', tokenEpoch: 0,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
@@ -1495,7 +1496,7 @@ describe('daemon managed Machine Action factory', () => {
                 expect(asked.actionArgs).toEqual({ homeId: machine.homeId, managedId: machine.id, intent: 'start', when: 'now', expectedRevision: 1 });
                 expect(resolveApprovalRequestExecutionInput(asked)).toEqual({ ok: true, input: asked.actionArgs });
                 expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(artifact.id)).toBe(1);
-                expect(diagnostics).toHaveBeenCalledWith('[web-latency]', expect.objectContaining({
+                expect(traceDiagnostics).toHaveBeenCalledWith('[web-latency]', expect.objectContaining({
                     phase: 'approval.wait', status: 'started', artifactId: artifact.id,
                     operationId: 'cleanup-operation', executionRequestId: asked.v === 2 ? asked.executionOriginV1.requestId : undefined,
                     signalMatchesHostLifetime: true,
