@@ -279,9 +279,16 @@ describe('portable targeted contribution admission', () => {
         const seed = { plugin: { id: self.manifest.id }, occurrenceId: account.occurrenceId };
         expect(requireAdmittedTargetedOperationExecutionBinding(mounted.operation, seed, merge(machine)).contributorOccurrenceId)
             .toBe(account.occurrenceId);
-        expect(() => requireAdmittedTargetedOperationExecutionBinding(mounted.operation, seed, merge({ ...machine,
+        const replacementMachine = merge({ ...machine,
             sourceCustody: { ...machine.sourceCustody, registeredRootId: 'replacement-machine-root' },
-        }))).toThrowError(expect.objectContaining({ code: 'plugin_action_generation_retired' }));
+        });
+        expect(requireAdmittedTargetedOperationExecutionBinding(mounted.operation, seed, replacementMachine).contributorOccurrenceId)
+            .toBe(account.occurrenceId);
+        const replacementAccount = replacementMachine.map(row => row.occurrenceId === account.occurrenceId
+            ? { ...row, sourceCustody: machine.sourceCustody }
+            : row);
+        expect(() => requireAdmittedTargetedOperationExecutionBinding(mounted.operation, seed, replacementAccount))
+            .toThrowError(expect.objectContaining({ code: 'plugin_action_generation_retired' }));
     });
 
     it('carries current Machine target custody from an Account declaration through selection and one-shot input reconstruction', async () => {
