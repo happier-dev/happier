@@ -14,6 +14,7 @@ import { PLUGIN_SDK_AUTHORED_TEST_INCLUDE } from './vitest.config.ts';
 
 const packageRoot = fileURLToPath(new URL('.', import.meta.url));
 const requireSdkDependency = createRequire(import.meta.url);
+const requirePluginUiDependency = createRequire(new URL('../plugin-ui/package.json', import.meta.url));
 const workspacePackages: readonly WorkspacePackageSpec[] = [
     {
         packageName: '@happier-dev/plugin-sdk',
@@ -83,7 +84,7 @@ export default defineConfig({
         // Hosted examples use the same web implementations as the Plugin UI tests.
         alias: [
             { find: /^react-native$/u, replacement: requireSdkDependency.resolve('react-native-web/dist/index.js') },
-            { find: /^react-native-svg$/u, replacement: requireSdkDependency.resolve('react-native-svg/lib/module/elements.web.js') },
+            { find: /^react-native-svg$/u, replacement: requirePluginUiDependency.resolve('react-native-svg/lib/module/elements.web.js') },
         ],
     },
     test: {
