@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { upsertServerProfile, setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
@@ -13,6 +14,30 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 }));
 
 describe('session handoff UI request client', () => {
+    it.each(['returned', 'thrown'] as const)('keeps the handoff refusal cause and opaque details without adding absent details (%s)', async mode => {
+        const details: ActionExecuteFailure['details'] = {
+            diagnostics: [{ code: 'transcript_missing', details: { pathKind: 'transcript_file' } }],
+        };
+        for (const carriedDetails of [details, undefined]) {
+            const refusal = {
+                ok: false,
+                errorCode: 'source_export_failed',
+                error: 'Source export failed',
+                failureCause: { phase: 'session_handoff.source_export', errorClass: 'Error', errorCode: 'handoff_failed', httpStatus: null },
+                ...(carriedDetails === undefined ? {} : { details: carriedDetails }),
+            } satisfies ActionExecuteFailure;
+            if (mode === 'returned') machineRpc.mockResolvedValueOnce(refusal);
+            else machineRpc.mockRejectedValueOnce(Object.assign(new Error(refusal.error), refusal, { rpcErrorCode: refusal.errorCode }));
+            const { startSessionHandoff } = await import('./sessionHandoffs');
+            const result = await startSessionHandoff({ sourceMachineId: 'source-1', sessionId: 'session-1',
+                targetMachineId: 'target-1', serverId: 'srv_fx14_owned' });
+            expect(result).toEqual({ ok: false, errorCode: refusal.errorCode, errorMessage: refusal.error,
+                failureCause: refusal.failureCause, ...(carriedDetails === undefined ? {} : { details: carriedDetails }) });
+            if (carriedDetails === undefined) expect(result).not.toHaveProperty('details');
+            else expect(result).toHaveProperty('details', carriedDetails);
+        }
+    });
+
     it.each([undefined, 'owned-handoff-request'])('admits an uncancelled handoff with its transport operation identity (%s)', async actionRequestId => {
         // The remote coordinator requires a transport request id as its operation id;
         // a same-named semantic payload field does not populate RPC context.

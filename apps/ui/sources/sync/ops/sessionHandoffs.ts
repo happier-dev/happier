@@ -1,4 +1,4 @@
-import { readActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureCauseV1, type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SessionHandoffStartResponseSchema, SessionHandoffActionResultV1Schema, SessionHandoffStatusSchema, type SessionHandoffStartResponse, type SessionHandoffActionResultV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
 import { HandoffTargetReplacementPreflightResultV1Schema, type HandoffWorkspaceActionV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { SessionHandoffStatus } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
@@ -17,7 +17,7 @@ import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAc
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
 
 /** UI-side request/status adapter. The daemon owns all handoff phases, retries and recovery. */
-type HandoffErrorResult = Readonly<{ ok: false; errorCode: string; errorMessage: string; failureCause?: ActionFailureCauseV1; handoffId?: string; status?: SessionHandoffStatus; recovery?: unknown }>;
+type HandoffErrorResult = Readonly<{ ok: false; errorCode: string; errorMessage: string; failureCause?: ActionFailureCauseV1; details?: ActionExecuteFailure['details']; handoffId?: string; status?: SessionHandoffStatus; recovery?: unknown }>;
 
 /**
  * Source transcript storage is deliberately absent: the source daemon derives it
@@ -60,10 +60,13 @@ function normalizeId(value: unknown): string { return typeof value === 'string' 
 function readError(raw: unknown): HandoffErrorResult | null {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
     const record = raw as Record<string, unknown>;
-    const cause = record.failureCause === undefined ? {} : { failureCause: readActionFailureCauseV1(record.failureCause) };
+    const carriedFailure = {
+        ...(record.failureCause === undefined ? {} : { failureCause: readActionFailureCauseV1(record.failureCause) }),
+        ...(record.details === undefined ? {} : { details: record.details }),
+    };
     if (raw instanceof Error) {
         const errorCode = readRpcErrorCode(raw);
-        if (errorCode) return { ok: false, errorCode, errorMessage: raw.message, ...cause };
+        if (errorCode) return { ok: false, errorCode, errorMessage: raw.message, ...carriedFailure };
     }
     if (record.ok !== false && typeof record.error !== 'string') return null;
     const status = SessionHandoffStatusSchema.safeParse(record.status);
@@ -72,7 +75,7 @@ function readError(raw: unknown): HandoffErrorResult | null {
         || normalizeId(record.code)
         || (normalizeId(record.error).includes('workspace_sync_update_required') ? 'workspace_sync_update_required' : '')
         || 'UNEXPECTED';
-    return { ok: false, ...cause, errorCode, errorMessage: normalizeId(record.error) || normalizeId(record.errorMessage) || errorCode, ...(handoffId ? { handoffId } : {}), ...(status.success ? { status: status.data } : {}), ...(record.recovery !== undefined ? { recovery: record.recovery } : {}) };
+    return { ok: false, ...carriedFailure, errorCode, errorMessage: normalizeId(record.error) || normalizeId(record.errorMessage) || errorCode, ...(handoffId ? { handoffId } : {}), ...(status.success ? { status: status.data } : {}), ...(record.recovery !== undefined ? { recovery: record.recovery } : {}) };
 }
 
 function resolveSourceMachineId(options: Pick<StartSessionHandoffOptions, 'sessionId' | 'sourceMachineId' | 'serverId'>): string | null {
@@ -142,7 +145,7 @@ async function requestCoordinator(options: StartSessionHandoffOptions): Promise<
                 error: 'Workspace sync requires a newer daemon',
             };
         }
-        return readError(error) ?? { ok: false, errorCode: 'UNEXPECTED', error: error instanceof Error ? error.message : 'Failed to start session handoff' };
+        throw error;
     }
 }
 
@@ -211,7 +214,13 @@ export async function preflightWorkspaceDestinationReplacement(
 }
 
 export async function startSessionHandoff(options: StartSessionHandoffOptions): Promise<StartSessionHandoffResult> {
-    const raw = unwrap(await requestCoordinator(options));
+    let response: unknown;
+    try {
+        response = await requestCoordinator(options);
+    } catch (error) {
+        return readError(error) ?? { ok: false, errorCode: 'UNEXPECTED', errorMessage: error instanceof Error ? error.message : 'Failed to start session handoff' };
+    }
+    const raw = unwrap(response);
     const error = readError(raw); if (error) return error;
     const record = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
     const status = SessionHandoffStatusSchema.safeParse(record?.status);
