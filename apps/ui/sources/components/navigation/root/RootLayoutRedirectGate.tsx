@@ -19,7 +19,7 @@ import {
     resolveWebServerEntrySignInRoute,
 } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
 import { KnownHomeGate } from '@/components/sessions/access/KnownHomeGate';
-import { resolveUniqueServerProfileByUrl } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, resolveUniqueServerProfileByUrl } from '@/sync/domains/server/serverProfiles';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { connectHomeAtAddress } from '@/sync/ops/home/connectHomeAtAddress';
 import { confirmCanonicalHomeUrl, confirmInsecureHomeHttp, homeConnectFailureMessage } from '@/components/homes/add/homeConnectPresentation';
@@ -153,7 +153,7 @@ export function RootLayoutRedirectGate({ children }: { children: React.ReactNode
     const finishSignIn = isAuthenticated && Boolean(pending) && !suppliedHomeNavigation?.draftHref;
     React.useLayoutEffect(() => {
         if (!finishSignIn) return;
-        if (!destination || destination.homeId !== activeServerSnapshot.serverId
+        if (!destination || !areServerProfileIdentifiersEquivalent(destination.homeId, activeServerSnapshot.serverId)
             || !matchesSignedInAccount(destination.accountId, auth.credentials?.token)) {
             router.replace('/');
             return;

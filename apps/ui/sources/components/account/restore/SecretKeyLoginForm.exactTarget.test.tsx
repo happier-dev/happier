@@ -11,6 +11,8 @@ import { adoptHomeProfile, getActiveServerId, setActiveServerId } from '@/sync/d
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { AuthProvider, getCurrentAuth } from '@/auth/context/AuthContext';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { SecretKeyLoginEmbedded } from '@/components/onboarding/restore/SecretKeyLoginEmbedded';
+import { WizardAuthReturnRouteContext } from '@/components/onboarding/state/wizardResume';
 import { SecretKeyLoginForm } from './SecretKeyLoginForm';
 import { t } from '@/text';
 
@@ -221,7 +223,10 @@ it.each([
     expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: fixture.home.homeServerIdentityId })).toEqual(previous);
 });
 
-it('returns to the admitted destination after recovery-key sign-in', async () => {
+it.each([
+    { label: 'standalone', wizard: false },
+    { label: 'root-owned onboarding', wizard: true },
+])('hands off $label recovery-key sign-in to the navigation owner', async ({ wizard }) => {
     const fixture = createDirectoryHttpFixture();
     const home = await adoptHomeProfile({
         descriptor: fixture.home.connectionDescriptor,
@@ -238,10 +243,18 @@ it('returns to the admitted destination after recovery-key sign-in', async () =>
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
         throw new Error(`Unexpected request: ${path}`);
     });
-    screen = await renderScreen(<AuthProvider initialCredentials={null}>
-        <SecretKeyLoginForm returnTo="/settings/account" />
-    </AuthProvider>);
+    const form = wizard ? (
+        <WizardAuthReturnRouteContext.Provider value={{
+            returnTo: '/?onboardingDestination=admitted-at-root',
+            abandon: vi.fn(),
+        }}>
+            <SecretKeyLoginEmbedded />
+        </WizardAuthReturnRouteContext.Provider>
+    ) : <SecretKeyLoginForm returnTo="/settings/account" />;
+    screen = await renderScreen(<AuthProvider initialCredentials={null}>{form}</AuthProvider>);
     await act(async () => { screen!.changeTextByTestId('restore-manual-secret-input', 'A'.repeat(43)); });
     await screen.pressByTestIdAsync('restore-manual-submit');
-    await vi.waitFor(() => expect(router.dismissTo).toHaveBeenCalledWith('/settings/account'));
+    await vi.waitFor(() => expect(getCurrentAuth()?.credentials?.token).toBe(fixture.token));
+    if (wizard) expect(router.dismissTo).not.toHaveBeenCalled();
+    else expect(router.dismissTo).toHaveBeenCalledWith('/settings/account');
 });

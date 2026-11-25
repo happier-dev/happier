@@ -84,7 +84,7 @@ describe('cold destination Home through boot and root redirect admission', () =>
             </InjectedAuthProvider>;
         }
         const screen = await renderScreen(<App credentials={credentials} />);
-        async function finishSignIn(options?: { abandon?: boolean; switchHome?: boolean }) {
+        async function finishSignIn(options?: { abandon?: boolean; switchHome?: boolean; publishHomeIdentity?: string }) {
             const redirect = screen.findByType('Redirect').props.href;
             expect(typeof redirect).toBe('string');
             const entry = new URL(redirect, 'https://app.example.test');
@@ -101,6 +101,15 @@ describe('cold destination Home through boot and root redirect admission', () =>
             }
             if (options?.switchHome) {
                 await upsertAndActivateServer({ serverUrl: 'https://other-selected.example.test', source: 'manual', scope: 'device' });
+            }
+            if (options?.publishHomeIdentity) {
+                const { serverUrl } = profiles.getActiveServerSnapshot();
+                await profiles.adoptHomeProfile({
+                    descriptor: { homeServerIdentityId: options.publishHomeIdentity, canonicalServerUrl: serverUrl, serverUrl },
+                    source: 'manual',
+                    descriptorAuthority: 'current_connection_observation',
+                });
+                expect(profiles.getActiveServerSnapshot().serverId).toBe(options.publishHomeIdentity);
             }
             await screen.update(<App credentials={{ token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature' }} />);
             return redirect;
@@ -122,6 +131,17 @@ describe('cold destination Home through boot and root redirect admission', () =>
             expect(entry).not.toContain('discard-me');
             expect(protectedMount).not.toHaveBeenCalled();
             expect(navigation.replace).toHaveBeenCalledExactlyOnceWith(destination);
+        } finally { await screen.unmount(); }
+    });
+
+    it('resumes the destination when the same Home publishes its stable identity during sign-in', async () => {
+        const home = await upsertAndActivateServer({ serverUrl: 'https://first-identity.example.test', source: 'manual', scope: 'device' });
+        const { screen, protectedMount, finishSignIn } = await coldLoad('/session/session-a/sharing');
+        try {
+            const entry = await finishSignIn({ publishHomeIdentity: 'srv_resume_adopted' });
+            expect(entry).toContain(home.id);
+            expect(protectedMount).not.toHaveBeenCalled();
+            expect(navigation.replace).toHaveBeenCalledExactlyOnceWith('/session/session-a/sharing');
         } finally { await screen.unmount(); }
     });
 
