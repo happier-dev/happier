@@ -135,6 +135,43 @@ describe('DirectorySyncSettingsScreen through real Home governance', () => {
         expect(screen.findByTestId('team-directory-setup-option:github_organization:installation-1')).not.toBeNull();
         expect(requestsAt(setupPath)[1]?.path).toContain('cursor=cursor-1');
     });
+    it('reloads the first page after a WorkOS setup cursor is invalidated', async () => {
+        const cursor = 'workos-continuation';
+        const priorOption = 'team-directory-setup-option:workos_directory:directory-1';
+        harness.answer(serverId, setupPath, { body: TeamDirectorySourceSetupOptionsV1Schema.parse({
+            v: 1,
+            items: [{ kind: 'workos_directory', displayName: 'WorkOS directory', teamIdentityConnectionId: 'connection-1', workosDirectoryId: 'directory-1' }],
+            nextCursor: cursor,
+            complete: false,
+        }) });
+        const screen = await renderDirectory();
+        await openSetup(screen);
+        await waitForHomeGovernance(() => expect(screen.findByTestId(priorOption)).not.toBeNull());
+        harness.answer(serverId, setupPath, { select: (_input, request) => new URL(request.url).searchParams.get('cursor') === cursor
+            ? { status: 400, body: { error: 'invalid_team_cursor' } }
+            : { body: setup(['installation-current']) } });
+
+        await screen.pressByTestIdAsync('team-directory-setup-load-more');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-setup-retry')).not.toBeNull());
+        const recoveryText = screen.getTextContent();
+        await screen.pressByTestIdAsync('team-directory-setup-retry');
+
+        expect(requestsAt(setupPath).map(request => new URL(request.path, request.serverUrl).searchParams.get('cursor'))).toEqual([null, cursor, null]);
+        expect(recoveryText).toContain('common.refresh');
+        expect(recoveryText).toContain('teams.errors.listCursorExpired');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-setup-option:github_organization:installation-current')).not.toBeNull());
+        expect(screen.findByTestId(priorOption)).toBeNull();
+    });
+    it.each([
+        { status: 403, code: 'team_forbidden', message: 'identityAdministration.errorForbidden' },
+        { status: 503, code: 'team_authentication_unavailable', message: 'identityAdministration.errorPolicyUnavailable' },
+    ])('shows $code for the setup read without a futile Retry', async ({ status, code, message }) => {
+        harness.answer(serverId, setupPath, { status, body: { error: code } });
+        const screen = await renderDirectory();
+        await openSetup(screen);
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.findByTestId('team-directory-setup-retry')).toBeNull();
+    });
     it('refreshes visible setup candidates only for the matching Home Team change', async () => {
         const screen = await renderDirectory();
         await openSetup(screen);
@@ -150,6 +187,7 @@ describe('DirectorySyncSettingsScreen through real Home governance', () => {
         harness.answer(serverId, setupPath, { status: 503, body: { error: 'home_unreachable' } });
         await screen.pressByTestIdAsync('team-directory-source-add');
         await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-setup-retry')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('common.retry');
         expect(screen.findByTestId('team-directory-setup-option:github_organization:installation-1')).not.toBeNull();
     });
     it('presents recovery when the native browser cannot open the WorkOS portal', async () => {

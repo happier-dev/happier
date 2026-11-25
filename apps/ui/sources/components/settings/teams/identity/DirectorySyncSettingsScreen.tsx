@@ -12,7 +12,7 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SettingAnchor, SettingSection } from '@/components/settings/shell/SettingRow';
 import { DIRECTORY_SETTINGS } from './directorySettings';
-import { identityAdministrationFailureMessage } from '@/components/settings/identity/identityAdministrationFailure';
+import { identityAdministrationFailure, identityAdministrationFailureMessage } from '@/components/settings/identity/identityAdministrationFailure';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { t } from '@/text';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
@@ -70,8 +70,8 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
         nextCursor: string | null;
         complete: boolean;
         failure: string | null;
-        retryCursor: string | null;
-    }>>({ kind: 'hidden', items: [], nextCursor: null, complete: false, failure: null, retryCursor: null });
+        recovery: Readonly<{ label: 'common.refresh' | 'common.retry'; cursor: string | null }> | null;
+    }>>({ kind: 'hidden', items: [], nextCursor: null, complete: false, failure: null, recovery: null });
     const [pendingSetup, setPendingSetup] = React.useState<string | null>(null);
     const setupRequestGenerationRef = React.useRef(0);
     const setupRequestControllerRef = React.useRef<AbortController | null>(null);
@@ -85,7 +85,7 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
     const recoveryViewer = useEligibleProviderRecoveryViewer(props.scope);
     const reportSetupFailure = React.useCallback((code: string) => {
         setWorkosPlatformMissing(code.trim().toLowerCase() === 'workos_platform_unavailable');
-        const message = identityAdministrationFailureMessage(code);
+        const message = code === 'invalid_team_cursor' ? t('teams.errors.listCursorExpired') : identityAdministrationFailureMessage(code);
         announceAccessibilityMessage(message);
         return message;
     }, []);
@@ -100,7 +100,7 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
             nextCursor: null,
             complete: false,
             failure: null,
-            retryCursor: null,
+            recovery: null,
         });
         setPendingSetup(null);
         return () => setupRequestControllerRef.current?.abort();
@@ -114,7 +114,7 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
         const controller = new AbortController();
         setupRequestControllerRef.current = controller;
         setupVisibleRef.current = true;
-        setSetup((current) => ({ ...current, kind: 'loading', failure: null, retryCursor: null }));
+        setSetup((current) => ({ ...current, kind: 'loading', failure: null, recovery: null }));
         const result = await executeIdentityAdministrationRead<TeamDirectorySourceSetupOptionsV1>(
             (options) => client.executeDirectory('teams.directory.sourceSetup.list', {
                 v: 1,
@@ -127,11 +127,16 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
         const failureMessage = result.ok ? null : reportSetupFailure(result.failure.code);
         setSetup((current) => {
             if (!result.ok) {
+                const { code, retryable } = result.failure;
                 return {
                     ...current,
                     kind: 'unavailable',
                     failure: failureMessage,
-                    retryCursor: cursor,
+                    recovery: code === 'invalid_team_cursor'
+                        ? { label: 'common.refresh', cursor: null }
+                        : retryable && identityAdministrationFailure(code).kind !== 'policy_unavailable'
+                            ? { label: 'common.retry', cursor }
+                            : null,
                 };
             }
             const combined = cursor === null ? result.value.items : [...current.items, ...result.value.items];
@@ -148,7 +153,7 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
                 nextCursor: result.value.nextCursor,
                 complete: result.value.complete,
                 failure: null,
-                retryCursor: null,
+                recovery: null,
             };
         });
     }, [client, projectionCurrent, props.address.teamId, props.mutationsAvailable, reportSetupFailure]);
@@ -187,7 +192,7 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
                 ...current,
                 items: current.items.filter((candidate) => directorySetupOptionKey(candidate) !== createdOptionKey),
                 failure: null,
-                retryCursor: null,
+                recovery: null,
             }));
             refresh();
             router.push(teamDirectorySourcePath(props.address, value.id));
@@ -299,7 +304,9 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
                     size="line"
                     title={identityAdministrationFailureMessage(state.failure.code)}
                     diagnosticCode={state.failure.code}
-                    action={state.failure.retryable ? { label: t('common.retry'), onPress: refresh } : undefined}
+                    action={state.failure.retryable && identityAdministrationFailure(state.failure.code).kind !== 'policy_unavailable'
+                        ? { label: t('common.retry'), onPress: refresh }
+                        : undefined}
                     accessibilitySemantics="alert"
                 />
             </ItemGroup>
@@ -463,8 +470,12 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
                             kind="error"
                             size="line"
                             title={setup.failure ?? t('identityAdministration.error')}
-                            action={setup.kind === 'unavailable'
-                                ? { testID: 'team-directory-setup-retry', label: t('common.retry'), onPress: () => void loadSetup(setup.retryCursor) }
+                            action={setup.recovery
+                                ? {
+                                    testID: 'team-directory-setup-retry',
+                                    label: t(setup.recovery.label),
+                                    onPress: () => void loadSetup(setup.recovery?.cursor),
+                                }
                                 : undefined}
                         />
                     ) : null}
