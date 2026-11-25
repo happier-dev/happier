@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
+import { identityAdministrationFailureMessage } from '@/components/settings/identity/identityAdministrationFailure';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -15,6 +16,7 @@ import { teamDirectoryPeoplePages } from '@/sync/store/teams/teamsSnapshots';
 import { t } from '@/text';
 
 import { teamMemberDetailPath } from '../teamsRoutes';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 import { teamReadFailureLabel } from '../teamMutationPresentation';
 import { createIdentityAdministrationClient, executeIdentityAdministrationRead } from './identityAdministrationClient';
 
@@ -58,21 +60,23 @@ export function useDirectoryPeopleList(props: Readonly<{
 export function DirectoryListFailure(props: Readonly<{
     testID: string;
     failure: HomeDomainFailure;
+    address: TeamAddress;
     retry: () => Promise<void>;
 }>) {
-    // The one shared inline notice (OWNER-UI-1115B A2): what failed, with Retry inline when asking again can help.
+    const recovery = useTeamReadFailureAction(props.address);
+    const message = props.failure.code === 'directory_source_not_found'
+        ? identityAdministrationFailureMessage(props.failure.code)
+        : teamReadFailureLabel(props.failure);
     return (
         <SurfaceStateCard
             testID={`${props.testID}-error`}
             size="line"
             kind="error"
-            title={teamReadFailureLabel(props.failure)}
+            title={message}
             accessibilitySemantics="alert"
-            {...(props.failure.retryable ? { action: {
-                label: t('common.retry'),
-                onPress: () => props.retry(),
-                testID: `${props.testID}-retry`,
-            } } : {})}
+            action={recovery(props.failure, {
+                onPress: props.retry, testIDPrefix: props.testID, reloadsFirstPage: true,
+            })}
         />
     );
 }
@@ -120,7 +124,7 @@ export const DirectoryPeopleList = React.memo(function DirectoryPeopleList(props
             </ItemGroup>
             {people.error ? (
                 <ItemGroup>
-                    <DirectoryListFailure testID="directory-people" failure={people.error} retry={people.reload} />
+                    <DirectoryListFailure testID="directory-people" failure={people.error} address={props.address} retry={people.reload} />
                 </ItemGroup>
             ) : null}
             {people.hasMore && people.status !== 'loading' && !people.error ? (

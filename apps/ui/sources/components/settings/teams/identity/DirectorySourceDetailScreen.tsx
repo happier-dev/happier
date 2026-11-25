@@ -27,6 +27,7 @@ import { getPreferredLanguage, t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { teamDirectoryGroupObservationKey, teamDirectoryGroupPages } from '@/sync/store/teams/teamsSnapshots';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
@@ -66,6 +67,14 @@ function formatTimestamp(value: string | null): string {
     });
 }
 
+/** A shared authority refusal can cover adjacent lists. Each expired or temporary page keeps its own recovery. */
+function sameDirectoryReadRefusal(failure: HomeDomainFailure | null, preceding: HomeDomainFailure | null): boolean {
+    if (!failure?.code || failure.code !== preceding?.code || failure.code === 'invalid_team_cursor') return false;
+    if (failure.retryable && failure.code !== 'team_authentication_unavailable') return false;
+    return isTeamLegacyCredentialRefusalV1(failure.code, failure.details)
+        === isTeamLegacyCredentialRefusalV1(preceding.code, preceding.details);
+}
+
 const DirectoryGroupMappings = React.memo(function DirectoryGroupMappings(props: Readonly<{
     scope: Parameters<typeof createIdentityAdministrationClient>[0];
     address: TeamAddress;
@@ -74,6 +83,8 @@ const DirectoryGroupMappings = React.memo(function DirectoryGroupMappings(props:
     mutationsAvailable: boolean;
     requestApproval: (registration: ActionApprovalRegistration) => void;
     beforeRows: readonly DirectoryDetailVirtualRow[];
+    sourceReadFailure?: HomeDomainFailure | null;
+    peopleReadFailure?: HomeDomainFailure | null;
     /** Rows that close the page after the mappings, such as the source's removal button row. */
     afterRows?: readonly DirectoryDetailVirtualRow[];
     header: React.ReactElement;
@@ -216,6 +227,13 @@ const DirectoryGroupMappings = React.memo(function DirectoryGroupMappings(props:
     const rows = React.useMemo(() => {
         const result: DirectoryDetailVirtualRow[] = [...props.beforeRows];
         if (!props.groupMappingsAvailable) return [...result, ...(props.afterRows ?? [])];
+        const sourceReadFailure = props.sourceReadFailure ?? null;
+        const peopleReadFailure = props.peopleReadFailure ?? null;
+        const groupReadFailureCovered = sameDirectoryReadRefusal(directoryGroups.error, sourceReadFailure)
+            || sameDirectoryReadRefusal(directoryGroups.error, peopleReadFailure);
+        const nativeReadFailureCovered = sameDirectoryReadRefusal(nativeGroups.error, sourceReadFailure)
+            || sameDirectoryReadRefusal(nativeGroups.error, peopleReadFailure)
+            || sameDirectoryReadRefusal(nativeGroups.error, directoryGroups.error);
         result.push({
             key: 'groups-search',
             element: <SettingSection section={DIRECTORY_SOURCE_SETTINGS.sectionRefs.groups}>
@@ -241,7 +259,7 @@ const DirectoryGroupMappings = React.memo(function DirectoryGroupMappings(props:
                     {nativeGroups.status === 'loading' && nativeGroups.rows.length === 0 ? <Item title={t('common.loading')} loading showChevron={false} /> : null}
                     {nativeGroups.isCurrent && nativeGroups.rows.length === 0 ? <Item testID="directory-native-groups-empty" title={t('teams.groups.emptyTitle')} showChevron={false} /> : null}
                     {nativeGroups.rows.map((group) => <Item key={group.id} testID={`directory-group-native-target:${group.id}`} onKeyDown={onChooserKeyDown} title={openedGroupDisplayNames.get(group.id) ?? t('common.unavailable')} subtitle={t('teams.groups.memberCount', { count: group.memberCount })} disabled={pendingGroupId !== null || !mappingAvailable || !nativeGroups.isCurrent} onPress={() => void changeMapping(selectedGroup, { kind: 'native_target', teamGroupId: group.id })} showChevron={false} />)}
-                    {nativeGroups.error ? <DirectoryListFailure testID="directory-native-groups" failure={nativeGroups.error} retry={nativeGroups.reload} /> : null}
+                    {nativeGroups.error && !nativeReadFailureCovered ? <DirectoryListFailure testID="directory-native-groups" failure={nativeGroups.error} address={props.address} retry={nativeGroups.reload} /> : null}
                     {nativeGroups.hasMore && nativeGroups.status !== 'loading' && !nativeGroups.error ? <Item onKeyDown={onChooserKeyDown} title={t('identityAdministration.loadMore')} loading={nativeGroups.status === 'loading_more'} disabled={nativeGroups.status === 'loading_more'} onPress={() => void nativeGroups.loadMore()} showChevron={false} /> : null}
                     {selectedGroup.mapping.state === 'bound' ? <Item testID="directory-group-remove-mapping" onKeyDown={onChooserKeyDown} title={t('identityAdministration.removeMapping')} destructive disabled={pendingGroupId !== null || !mappingAvailable} onPress={() => void changeMapping(selectedGroup, null)} showChevron={false} /> : null}
                     <Item testID="directory-group-chooser-cancel" onKeyDown={onChooserKeyDown} title={t('common.cancel')} onPress={closeChooser} showChevron={false} />
@@ -280,11 +298,11 @@ const DirectoryGroupMappings = React.memo(function DirectoryGroupMappings(props:
                 }
             });
         }
-        if (directoryGroups.error) result.push({ key: 'groups-error', element: <ItemGroup><DirectoryListFailure testID="directory-groups" failure={directoryGroups.error} retry={directoryGroups.reload} /></ItemGroup> });
+        if (directoryGroups.error && !groupReadFailureCovered) result.push({ key: 'groups-error', element: <ItemGroup><DirectoryListFailure testID="directory-groups" failure={directoryGroups.error} address={props.address} retry={directoryGroups.reload} /></ItemGroup> });
         if (directoryGroups.hasMore && directoryGroups.status !== 'loading' && !directoryGroups.error) result.push({ key: 'groups-more', element: <ItemGroup><Item testID="directory-groups-load-more" title={t('identityAdministration.loadMore')} loading={directoryGroups.status === 'loading_more'} disabled={directoryGroups.status === 'loading_more'} onPress={() => void directoryGroups.loadMore()} showChevron={false} /></ItemGroup> });
         if (failure) result.push({ key: 'groups-failure', element: <ItemGroup><SurfaceStateCard testID="directory-group-mapping-failure" kind="error" size="line" title={failure} accessibilitySemantics="alert" /></ItemGroup> });
         return [...result, ...(props.afterRows ?? [])];
-    }, [props.afterRows, changeMapping, choosingFor, closeChooser, focusChooser, onChooserKeyDown, directoryGroups.error, directoryGroups.hasMore, directoryGroups.loadMore, directoryGroups.reload, directoryGroups.rows, directoryGroups.status, failure, mappingAvailable, nativeGroups.error, nativeGroups.hasMore, nativeGroups.isCurrent, nativeGroups.loadMore, nativeGroups.reload, nativeGroups.rows, nativeGroups.status, openedGroupDisplayNames, pendingGroupId, props.beforeRows, props.groupMappingsAvailable, query, selectedGroup]);
+    }, [props.afterRows, changeMapping, choosingFor, closeChooser, focusChooser, onChooserKeyDown, directoryGroups.error, directoryGroups.hasMore, directoryGroups.loadMore, directoryGroups.reload, directoryGroups.rows, directoryGroups.status, failure, mappingAvailable, nativeGroups.error, nativeGroups.hasMore, nativeGroups.isCurrent, nativeGroups.loadMore, nativeGroups.reload, nativeGroups.rows, nativeGroups.status, openedGroupDisplayNames, pendingGroupId, props.address, props.beforeRows, props.groupMappingsAvailable, props.peopleReadFailure, props.sourceReadFailure, query, selectedGroup]);
 
     const chooserIndex = rows.findIndex((row) => row.key === `groups-choice:${choosingFor}`);
     React.useEffect(() => {
@@ -523,6 +541,7 @@ const AuthorizedDirectorySourceDetail = React.memo(function AuthorizedDirectoryS
         />;
     }
     const projectionCurrent = !state.refreshing && !state.stale;
+    const sourceReadFailure = state.stale ? failedDomain ?? null : null;
     const beforeRows: DirectoryDetailVirtualRow[] = [];
     const peopleSegments = buildVirtualizedSegments(people.rows, DIRECTORY_DETAIL_SEGMENT_SIZE);
     if (people.status === 'loading' && people.rows.length === 0) {
@@ -550,7 +569,7 @@ const AuthorizedDirectorySourceDetail = React.memo(function AuthorizedDirectoryS
             </ItemGroup>,
         }));
     }
-    if (people.error) beforeRows.push({ key: 'people-error', element: <ItemGroup><DirectoryListFailure testID="directory-people" failure={people.error} retry={people.reload} /></ItemGroup> });
+    if (people.error && !sameDirectoryReadRefusal(people.error, sourceReadFailure)) beforeRows.push({ key: 'people-error', element: <ItemGroup><DirectoryListFailure testID="directory-people" failure={people.error} address={props.address} retry={people.reload} /></ItemGroup> });
     if (people.hasMore && people.status !== 'loading' && !people.error) beforeRows.push({ key: 'people-more', element: <ItemGroup><Item testID="directory-people-load-more" title={t('teams.authentication.directory.people.loadMore')} loading={people.status === 'loading_more'} disabled={people.status === 'loading_more'} onPress={() => void people.loadMore()} showChevron={false} /></ItemGroup> });
     if (revealGroupSearch && !props.groupMappingsAvailable) beforeRows.push({
         key: 'groups-search',
@@ -720,6 +739,8 @@ const AuthorizedDirectorySourceDetail = React.memo(function AuthorizedDirectoryS
         mutationsAvailable={props.mutationsAvailable && projectionCurrent}
         requestApproval={props.requestApproval}
         beforeRows={beforeRows}
+        sourceReadFailure={sourceReadFailure}
+        peopleReadFailure={people.error}
         afterRows={afterRows}
         header={header}
     />;

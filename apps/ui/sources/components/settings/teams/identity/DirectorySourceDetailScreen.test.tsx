@@ -137,6 +137,64 @@ describe('DirectorySourceDetailScreen through real Home governance', () => {
         }
     });
 
+    it.each([false, true])('shows one sign-in action for the same directory refusal (source refused: %s)', async (sourceRefused) => {
+        const screen = await renderDetail('directory-group:external-group-1');
+        const refusal = { status: 403, body: { error: 'team_authentication_required' } };
+        harness.answer(serverId, `${sourcePath}/people`, refusal);
+        harness.answer(serverId, groupsPath, refusal);
+        if (sourceRefused) harness.answer(serverId, sourcePath, refusal);
+        await wakeTeams();
+        await waitForHomeGovernance(() => {
+            expect(requestsAt(`${sourcePath}/people`).length).toBeGreaterThan(1);
+            expect(requestsAt(groupsPath).length).toBeGreaterThan(1);
+            expect(screen.findByTestId('directory-group:external-group-1')).toBeNull();
+        });
+        const signIn = collectRenderedTestIds(screen.tree.toJSON()).filter(id => [
+            'team-directory-source-sign-in', 'directory-people-sign-in', 'directory-groups-sign-in',
+        ].includes(id));
+        expect(signIn).toEqual([sourceRefused ? 'team-directory-source-sign-in' : 'directory-people-sign-in']);
+    });
+
+    describe.each([
+        { name: 'People', path: `${sourcePath}/people`, id: 'directory-people' },
+        { name: 'Groups', path: groupsPath, id: 'directory-groups' },
+    ])('$name reads', ({ path, id }) => {
+        it.each([
+            { status: 403, code: 'team_authentication_required', message: 'session.access.authenticationRequired', action: 'sign-in' },
+            { status: 503, code: 'team_authentication_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable', action: null },
+            { status: 403, code: 'team_forbidden', message: 'teams.errors.forbidden', action: null },
+            { status: 404, code: 'team_not_found', message: 'teams.errors.notFound', action: null },
+            { status: 404, code: 'directory_source_not_found', message: 'identityAdministration.errorMissing', action: null },
+            { status: 404, code: 'teams_unavailable', message: 'teams.unavailable.disabled', action: null },
+        ])('presents $code with the available recovery', async ({ status, code, message, action }) => {
+            harness.answer(serverId, path, { status, body: { error: code } });
+            const screen = await renderDetail(`${id}-error`);
+            expect(screen.getTextContent()).toContain(message);
+            expect(collectRenderedTestIds(screen.tree.toJSON()).filter((testID) => testID === `${id}-error`)).toHaveLength(1);
+            expect(screen.findByTestId(`${id}-retry`)).toBeNull();
+            expect(screen.findByTestId(`${id}-sign-in`) !== null).toBe(action === 'sign-in');
+            if (action === 'sign-in') {
+                await screen.pressByTestIdAsync(`${id}-sign-in`);
+                const destination = new URL(routerPush.mock.lastCall?.[0] ?? '', 'https://app.example');
+                expect(destination.pathname).toBe('/teams/team-1/sign-in');
+                expect(destination.searchParams.get('serverId')).toBe(serverId);
+            }
+        });
+
+        it('refreshes an expired continuation by asking for the first page', async () => {
+            harness.answer(serverId, path, { body: { items: [], nextCursor: 'expired' } });
+            const screen = await renderDetail(`${id}-load-more`);
+            harness.answer(serverId, path, { status: 400, body: { error: 'invalid_team_cursor' } });
+            await screen.pressByTestIdAsync(`${id}-load-more`);
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('teams.errors.listCursorExpired'));
+            expect(screen.findByTestId(`${id}-retry`)).toBeNull();
+            harness.answer(serverId, path, { body: { items: [], nextCursor: null } });
+            await screen.pressByTestIdAsync(`${id}-reload`);
+            await waitForHomeGovernance(() => expect(screen.findByTestId(`${id}-error`)).toBeNull());
+            expect(new URL(requestsAt(path).at(-1)!.path, 'https://home.example').searchParams.has('cursor')).toBe(false);
+        });
+    });
+
     it.each([
         ['remove', 'team-directory-source-remove'],
         ['searchGroups', 'directory-groups-search'],
