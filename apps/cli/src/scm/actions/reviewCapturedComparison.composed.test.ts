@@ -17,10 +17,97 @@ import { resolveReviewScmScope } from '@/agent/reviews/scope/resolve';
 import { gitCheckpointAdapter, resolveGitCheckpointBackendContext } from '@/scm/checkpoints/gitCheckpointAdapter';
 import { buildRepositoryCheckpointRefs } from '@/scm/checkpoints/refs';
 import { retainRepositoryCheckpointTurnEvidence } from '@/scm/checkpoints/sessionEvidence';
+import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
+import { getGithubTriageEntry } from '../../../../../packages/plugins/scm-github/src/triage/operations.js';
+import { listGithubChangedFiles } from '../../../../../packages/plugins/scm-github/src/triage/detailOperations.js';
+import { encodeGithubTriageConfiguration } from '../../../../../packages/plugins/scm-github/src/triage/configuration.js';
+import { GITHUB_CONNECTED_ACCOUNT_PURPOSE, GITHUB_PLUGIN_ID } from '../../../../../packages/plugins/scm-github/src/observations/githubProviderContracts.js';
+import { createStubGithubTransport, GITHUB_TEST_ACCOUNT } from '../../../../../packages/plugins/scm-github/src/triage/testkit/githubTriage.test-support.js';
+import { GITHUB_FIXTURE_OWNER, GITHUB_FIXTURE_REPOSITORY, GITHUB_FIXTURE_REPOSITORY_ID, GITHUB_PULL_REQUEST_RESPONSE, githubChangedFile } from '../../../../../packages/plugins/scm-github/src/triage/__fixtures__/githubResponses.js';
 
 const reviewer = { kind: 'engine' as const, engineId: 'codex' };
 
 describe('Review captured comparison transport', () => {
+  it('retains the real forge producer PR endpoints through Review admission instead of ambient Git', async () => runWithScmAccountScope('review-capture-pr-test', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-forge-pr-' });
+    const repository = `${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}`.toLowerCase();
+    const mergeBase = 'c'.repeat(40);
+    const records = createInMemoryReviewRecordPortV1();
+    const captures = new Set<string>();
+    const bindings: { reviewId: string; roundOrdinal: number }[] = [];
+    // Only GitHub HTTP/credential materialization, Machine transport and native
+    // Run are substituted. The forge admission and changed-files producer run.
+    const http = createStubGithubTransport({ respond: request => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/pulls/1284/files')) return { status: 200, body: [{
+        ...githubChangedFile({ filename: 'selected.ts', additions: 1, deletions: 1 }),
+        patch: '@@ -1 +1 @@\n-before\n+after\n',
+      }] };
+      if (path.endsWith('/pulls/1284')) return { status: 200, body: { ...GITHUB_PULL_REQUEST_RESPONSE, changed_files: 1 } };
+      return undefined;
+    } });
+    const baseInstance = createTriageSourceV1Fixture().configuredInstance;
+    const token = encodeGithubTriageConfiguration({ v: 1, scope: { kind: 'repository', repositoryKey: repository } });
+    const instance = { ...baseInstance,
+      instance: { ...baseInstance.instance, source: { pluginId: GITHUB_PLUGIN_ID, localId: 'github-forge' } },
+      binding: { purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE, account: GITHUB_TEST_ACCOUNT },
+      localInstanceKey: 'github.com', configuration: { v: 1, token },
+    };
+    try {
+      await writeFile(join(fixture.rootPath, 'unrelated.txt'), 'unrelated ambient change\n');
+      runScmExecutable(fixture.rootPath, 'git', ['add', '--', 'unrelated.txt']);
+      runScmExecutable(fixture.rootPath, 'git', ['commit', '-m', 'unrelated ambient head']);
+      const entry = await getGithubTriageEntry({ v: 1, instance,
+        localRef: { kindId: 'pull-request', collisionScope: `github:${GITHUB_FIXTURE_REPOSITORY_ID}`, entryId: '1284' },
+        lastKnownLocator: { v: 1, webUrl: GITHUB_PULL_REQUEST_RESPONSE.html_url, displayPath: 'PR #1284', routingToken: repository },
+      }, http.context);
+      if (entry.kind !== 'present' || entry.comparisonSource?.kind !== 'pullRequest') throw new Error('Expected the real forge comparison producer');
+      const source = entry.comparisonSource;
+      expect(source.locator.sourceAction).toBeDefined();
+      expect(runScmExecutable(fixture.rootPath, 'git', ['rev-parse', 'HEAD'])).not.toBe(source.locator.headOid);
+      const executor = createActionExecutor({ reviewRecords: () => records,
+        resolveApiTokenGrantSessionMachineId: async () => 'capture-machine',
+        scmActionExecute: async request => {
+          const result = ScmComparisonCaptureOutputSchema.parse(await executeScmActionOperation({
+            actionId: request.actionId, workingDirectory: fixture.rootPath, input: request.input,
+            authorizeSession: async id => id === 'capture-session',
+            readPullRequestComparisonPage: async ({ sourceAction, continuation }) => listGithubChangedFiles({
+              ...sourceAction.input, ...(continuation ? { continuation } : {}),
+            }, http.context),
+          }));
+          if (result.success) captures.add(result.comparison.id);
+          return result;
+        },
+        reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+        executionRunStart: async (_sessionId, input) => {
+          bindings.push(ReviewPreparedRoundV1Schema.shape.reviewRound.parse(input.intentInput?.reviewRound));
+          return { runId: 'forge-pr-run', callId: 'call', sidechainId: 'sidechain' };
+        },
+      });
+      const reviewInput = { sessionId: 'capture-session', cwd: fixture.rootPath, source,
+        instructions: 'Review the selected pull request.', reviewers: [reviewer] };
+      expect(await executor.execute('review.start', reviewInput, { surface: 'ui' })).toMatchObject({ ok: true });
+      const binding = bindings[0]!;
+      const capture = (await records.read(binding.reviewId))?.rounds[0]?.comparisonCapture?.input;
+      expect(capture?.source).toEqual(source);
+      const prepared = await executor.execute('review.prepare_round', { reviewRound: binding,
+        reviewInput: { ...reviewInput, comparisonId: capture?.comparisonId }, comparisonCapture: capture,
+        previousRoundContext: null }, { surface: 'ui' });
+      expect(prepared, JSON.stringify(prepared)).toMatchObject({ ok: true });
+      if (!prepared.ok) throw new Error(prepared.error);
+      const comparison = ReviewPreparedRoundV1Schema.parse(prepared.result).comparison;
+      expect(comparison, JSON.stringify(comparison)).toMatchObject({ endpoints: { before: mergeBase, after: source.locator.headOid },
+        pullRequest: { baseOid: source.locator.baseOid }, inventory: { state: 'complete', files: [{ path: 'selected.ts' }] } });
+      expect(await resolveReviewScmScope({ cwd: fixture.rootPath, intentInput: { comparisonId: comparison!.id, comparison,
+        selectedPaths: ['selected.ts'] } })).toMatchObject({ status: 'supported', selectedPaths: ['selected.ts'] });
+      expect(await resolveReviewScmScope({ cwd: fixture.rootPath, intentInput: { comparisonId: comparison!.id, comparison,
+        selectedPaths: ['unrelated.txt'] } })).toMatchObject({ status: 'unsupported', diagnostics: [{ code: 'invalid_path' }] });
+    } finally {
+      for (const comparisonId of captures) await deleteCapturedScmComparison({ cwd: fixture.rootPath, sessionId: 'capture-session', comparisonId });
+      await rm(fixture.rootPath, { recursive: true, force: true });
+    }
+  }));
+
   it('admits the selected real turn checkpoints without later worktree changes', async () => runWithScmAccountScope('review-capture-turn-test', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-selected-turn-' });
     const sessionId = globalThis.crypto.randomUUID();
