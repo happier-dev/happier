@@ -1,4 +1,5 @@
 import { PluginError, isPluginError, type DeploymentTargetPreparationBaseV1 } from '@happier-dev/plugin-sdk';
+import { isDeploymentCredentialRefusalV1 } from '@happier-dev/deployment-protocol/v1';
 import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import type { HttpMethod, HttpService } from '@happier-dev/plugin-sdk/http';
 import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
@@ -42,11 +43,6 @@ function httpStatus(error: unknown, status: number) {
 }
 const segment = encodeURIComponent;
 const projectPath = (id: string) => `/projects/${segment(id)}`;
-// Positively pre-target refusals from the host purpose/materialization owners.
-// Other HTTP PluginErrors (redirect refusal, response-size failure) may follow a write.
-const beforeSendCredentialCodes = new Set(['plugin_connected_account_binding_out_of_scope',
-  'plugin_connected_account_purpose_undeclared', 'plugin_host_access_operation_denied', 'credential_unavailable',
-  'plugin_fetch_credential_binding_unavailable']);
 function unknownCode(error: unknown) {
   if (!isPluginError(error)) return 'outcome_unknown';
   const details = error.details;
@@ -70,7 +66,7 @@ export async function request(context: Context, path: string, method: HttpMethod
       ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify(body)) }) },
     { signal: context.signal });
   } catch (error) {
-    if (isPluginError(error) && beforeSendCredentialCodes.has(error.code)) throw error;
+    if (isDeploymentCredentialRefusalV1(error)) throw error;
     if (method === 'GET') context.signal.throwIfAborted();
     if (method === 'GET' && isPluginError(error)) throw error;
     throw new PluginError({ code: method === 'GET' ? 'provider_request_failed' : 'outcome_unknown',

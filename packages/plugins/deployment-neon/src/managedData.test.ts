@@ -85,6 +85,16 @@ async function host(respond: (request: HttpRequest) => unknown | Promise<unknown
 }
 
 describe('activated Neon managed data target', () => {
+  it('carries a missing account selection through project deletion', async () => {
+    const refusal = new PluginError({ code: 'plugin_host_access_resource_not_selected',
+      message: 'Choose a Connected Account for this purpose.' });
+    const h = await host(() => { throw refusal; });
+    try {
+      await expect(h.kit.invokeAction('projects-delete', linked)).rejects.toMatchObject({ code: refusal.code, message: refusal.message });
+      expect(h.requests.map(request => request.method)).toEqual(['DELETE']);
+    } finally { await h.kit.dispose(); }
+  });
+
   it.each([404, 200, 403, 503, 'timeout'] as const)('observes exact project absence without replaying deletion after HTTP %s', async status => {
     const h = await host(() => {
       if (status === 'timeout') throw new PluginError({ code: 'timeout', message: 'private token' });

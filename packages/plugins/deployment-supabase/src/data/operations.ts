@@ -1,5 +1,6 @@
 import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { isDeploymentCredentialRefusalV1 } from '@happier-dev/deployment-protocol/v1';
 import { projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
@@ -19,10 +20,6 @@ function failure(code: string, phase = 'deployment.supabase.provider', caught?: 
   throw code === 'deployment_unavailable' ? withActionFailureDiagnostic(result, { phase,
     causeKind: caught ? 'native_failure' : 'not_found', error: caught?.error }) : result;
 }
-// These credential/security refusals are raised before the provider request.
-// Other typed HTTP failures (including response-body failures) prove no phase.
-const beforeRequestRefusals = new Set(['plugin_connected_account_binding_out_of_scope', 'plugin_connected_account_purpose_undeclared',
-  'plugin_host_access_operation_denied', 'credential_unavailable', 'plugin_fetch_credential_binding_unavailable']);
 function unknownCause(error: unknown): Record<string, JsonValue> {
   if (!isPluginError(error)) return {};
   const code = error.code === 'outcome_unknown'
@@ -62,7 +59,7 @@ export async function request(context: Pick<Context, 'signal'> & Readonly<{ serv
   } catch (error) {
     const code = isPluginError(error) ? error.code : undefined;
     if (readOnlyRequest) return projectMachineProvisionerActionFailure(error, () => failure(context.signal.aborted ? 'operation_cancelled' : 'deployment_unavailable', 'deployment.supabase.provider', { error }));
-    if (code && beforeRequestRefusals.has(code)) throw error;
+    if (isDeploymentCredentialRefusalV1(error)) throw error;
     throw new PluginError({ code: 'outcome_unknown', message: 'outcome_unknown', ...(code ? { details: { code } } : {}),
       failureCause: projectActionFailureCauseV1(error, 'deployment.supabase.provider') });
   }

@@ -1,5 +1,6 @@
 export * from './artifacts.js';
 export * from './correlations.js';
+export { isDeploymentCredentialRefusalV1 } from './credentialRefusals.js';
 export * from './review.js';
 export * from './semanticInput.js';
 export * from './telemetry.js';
