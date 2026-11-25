@@ -1,4 +1,6 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import { readPresentationNotices, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 
 import { act, renderHook, standardCleanup } from '@/dev/testkit';
 import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
@@ -47,7 +49,6 @@ afterEach(async () => {
 });
 
 it('names a skipped Workflow once when several of its checks share a reason', async () => {
-  const { Alert } = await import('react-native');
   const { presentActionAutomationSkipNotice } = await import('@/sync/ops/actions/actionAutomationSkipNotice');
   const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
   const { t } = await import('@/text');
@@ -57,7 +58,6 @@ it('names a skipped Workflow once when several of its checks share a reason', as
     metadata: { title: 'Review deployment' } });
   const notice = { code: 'action_automation_skipped', reason: 'machineRequired',
     automationId: 'check', workflowId } as const;
-  const alert = vi.spyOn(Alert, 'alert').mockImplementation(() => {});
   try {
     const result = { automationNotices: ['first', 'second'].map(triggerId => ({ ...notice, triggerId })) };
     const lifetime = captureActiveServerAccountScopeLifetime();
@@ -68,10 +68,12 @@ it('names a skipped Workflow once when several of its checks share a reason', as
     expect(requests.filter(request => request.path === '/v1/artifacts/read').map(request => request.input),
       JSON.stringify(requests.map(({ path, method }) => ({ path, method }))))
       .toEqual([{ artifactIds: [workflowId], projection: 'headers' }]);
-    expect(alert.mock.calls.map(([, message]) => message))
-      .toEqual([t('workflows.triggers.checks.skippedNeedsMachine', { workflow: 'Review deployment' })]);
+    expect(readPresentationNotices()).toEqual([expect.objectContaining({
+      message: t('workflows.triggers.checks.skippedNeedsMachine', { workflow: 'Review deployment' }),
+      severity: 'info',
+    })]);
   } finally {
-    alert.mockRestore();
+    retirePresentationNotice();
   }
 });
 
