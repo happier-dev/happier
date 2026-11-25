@@ -5,6 +5,7 @@ import { encodeBase64 } from 'privacy-kit';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, computeContentPublicKeyFingerprint, sealEncryptedDataKeyEnvelopeV1, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
+import { resolveSessionAccessForOperation } from '@/app/session/access/sessionAccess';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
@@ -1013,6 +1014,23 @@ describe('Machine current access (real SQLite)', () => {
             .toEqual({ kind: 'denied', code: 'daemon_upgrade_required' });
         expect(await access.resolveMachineAdmission({ ...actor, rpcMethod: RPC_METHODS.CAPABILITIES_DESCRIBE }))
             .toMatchObject({ kind: 'admitted' });
+    });
+
+    // Admission of a signed own-work Fork never opens its operands; the parent's Session
+    // authority is what keeps another person's Session out of reach.
+    it('keeps the owner\'s Session out of a Use guest\'s admitted signed Fork', async () => {
+        const f = await fixture();
+        const guest = await account();
+        await grant(f.owner.id, f.machine.id, guest.id, 'view');
+        expect(await access.resolveMachineAdmission({ machineId: f.machine.id, actorAccountId: guest.id, actionId: 'session.fork' }))
+            .toMatchObject({ kind: 'admitted', role: 'use' });
+        const ownerSession = await db.session.create({ data: { accountId: f.owner.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain', active: false } });
+        const guestSession = await db.session.create({ data: { accountId: guest.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain', active: false } });
+        const authentication = { env: process.env, authority: 'present_user' as const, authenticationEvidence: undefined };
+        expect(await resolveSessionAccessForOperation(db, { accountId: guest.id, sessionId: ownerSession.id, authentication }))
+            .not.toMatchObject({ status: 'allowed' });
+        expect(await resolveSessionAccessForOperation(db, { accountId: guest.id, sessionId: guestSession.id, authentication }))
+            .toMatchObject({ status: 'allowed' });
     });
 
     it.each([

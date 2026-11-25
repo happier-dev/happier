@@ -231,6 +231,28 @@ describe('createForkSessionLifecycleActionHandler', () => {
     expect(mocks.createReplayForkSession).toHaveBeenCalledOnce();
   });
 
+  // Home admits a Use guest's signed Fork as own work without opening its operands; the parent
+  // read under the guest's credentials is where another person's Session is refused (Home 404 → null).
+  it('refuses a Fork of a Session its requester cannot read before any fork or spawn effect', async () => {
+    mocks.fetchSessionByIdCompat.mockResolvedValue(null);
+    const spawnSession = vi.fn();
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: createConfiguredAcpBridge(),
+      handlers: { spawnSession, stopSession: vi.fn() },
+    });
+
+    await expect(handler({
+      v: 1,
+      parentSessionId: 'owner-session',
+      forkPoint: { type: 'latest' },
+      strategy: 'auto',
+    })).resolves.toMatchObject({ ok: false, errorCode: 'INVALID_REQUEST' });
+    expect(mocks.attemptProviderNativeFork).not.toHaveBeenCalled();
+    expect(mocks.attemptAcpLatestFork).not.toHaveBeenCalled();
+    expect(mocks.createReplayForkSession).not.toHaveBeenCalled();
+    expect(spawnSession).not.toHaveBeenCalled();
+  });
+
   it('returns a typed refusal for an explicit configured ACP latest fork', async () => {
     const handler = createForkSessionLifecycleActionHandler({
       sessionHostBridge: createConfiguredAcpBridge(),
