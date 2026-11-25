@@ -108,10 +108,15 @@ it('does not offer to turn alerts off while Add check waits for its read-only pr
     calls.push(request);
     return pending;
   });
+  await type('Endpoint', 'https://app.example.test');
+  expect((await addButton(page)).state?.disabled).toBe(true);
   expect(await page.queryByRole('button', { name: 'Turn alerts off' })).toBeUndefined();
+  await expect(page.getByText('Loading alert defaults…')).resolves.toBeDefined();
   await act(async () => { finishPreview({ mode: 'preview', destinationSelectionContext,
     sourceConfig: { v: 1, subject, alerts: { channels: [], phases: ['open', 'recovered'] } } }); });
   await expect(page.getByText('Off')).resolves.toBeDefined();
+  expect((await addButton(page)).state?.disabled).not.toBe(true);
+  expect(await page.queryByText('Loading alert defaults…')).toBeUndefined();
   expect(calls).toEqual([expect.objectContaining({ input: expect.objectContaining({ mode: 'preview' }) })]);
   expect(settled).toEqual([]);
 });

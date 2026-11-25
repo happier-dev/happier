@@ -269,6 +269,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "machineServices.healthSetup.alerts.changeDestination": "送信先を変更",
   "machineServices.healthSetup.alerts.default": "この対象のアラート送信先は設定されていません。",
   "machineServices.healthSetup.alerts.failure": "障害のみ",
+  "machineServices.healthSetup.alerts.loadingDefaults": "アラートの既定値を読み込み中…",
   "machineServices.healthSetup.alerts.off": "オフ",
   "machineServices.healthSetup.alerts.phases": "アラートを送信するタイミング",
   "machineServices.healthSetup.alerts.recovery": "復旧のみ",

@@ -597,7 +597,10 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
                 previewRefusal.requestId ? h(Text, { value: previewRefusal.requestId }) : null,
                 h(Button, { title: t(`${K}.previewRetry`, 'Retry alert defaults'), variant: 'secondary',
                     onPress: () => setPreviewAttempt(value => value + 1) })) : null,
-        h(SavedHealthAlertControls, { alerts, onChange: setAlerts, testContext: preparedSource, destinationSelectionContext }),
+        h(SavedHealthAlertControls, {
+            alerts, defaultsPending: alerts === undefined && (previewRefusal === null || previewRefusal.status === 'pending'),
+            onChange: setAlerts, testContext: preparedSource, destinationSelectionContext,
+        }),
         h(SelectionTiles<'inbox' | 'auto_start'>, { accessibilityLabel: t(`${K}.investigation`, 'When a check needs attention'),
             value: investigationMode, onChange: mode => changeInvestigation({ mode, configuredActionId }), maximumColumns: 2,
             options: [

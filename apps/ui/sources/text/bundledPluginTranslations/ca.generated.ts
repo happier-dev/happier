@@ -269,6 +269,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "machineServices.healthSetup.alerts.changeDestination": "Canvia la destinació",
   "machineServices.healthSetup.alerts.default": "No s’han configurat destinacions d’alertes per a aquest element.",
   "machineServices.healthSetup.alerts.failure": "Només fallades",
+  "machineServices.healthSetup.alerts.loadingDefaults": "S’estan carregant els valors predeterminats de les alertes…",
   "machineServices.healthSetup.alerts.off": "Desactivades",
   "machineServices.healthSetup.alerts.phases": "Envia alertes per",
   "machineServices.healthSetup.alerts.recovery": "Només recuperacions",

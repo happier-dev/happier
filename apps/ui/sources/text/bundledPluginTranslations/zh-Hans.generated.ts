@@ -269,6 +269,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "machineServices.healthSetup.alerts.changeDestination": "更改接收目标",
   "machineServices.healthSetup.alerts.default": "尚未为此对象配置警报接收目标。",
   "machineServices.healthSetup.alerts.failure": "仅故障",
+  "machineServices.healthSetup.alerts.loadingDefaults": "正在加载提醒的默认设置…",
   "machineServices.healthSetup.alerts.off": "已关闭",
   "machineServices.healthSetup.alerts.phases": "发送警报的时机",
   "machineServices.healthSetup.alerts.recovery": "仅恢复",

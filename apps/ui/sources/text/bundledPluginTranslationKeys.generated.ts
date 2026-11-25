@@ -268,6 +268,7 @@ export const BUNDLED_PLUGIN_TRANSLATION_KEYS: readonly BundledPluginTranslationK
   "machineServices.healthSetup.alerts.changeDestination",
   "machineServices.healthSetup.alerts.default",
   "machineServices.healthSetup.alerts.failure",
+  "machineServices.healthSetup.alerts.loadingDefaults",
   "machineServices.healthSetup.alerts.off",
   "machineServices.healthSetup.alerts.phases",
   "machineServices.healthSetup.alerts.recovery",

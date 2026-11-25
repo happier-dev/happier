@@ -269,6 +269,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "machineServices.healthSetup.alerts.changeDestination": "Zmień miejsce docelowe",
   "machineServices.healthSetup.alerts.default": "Nie skonfigurowano miejsc docelowych alertów dla tego elementu.",
   "machineServices.healthSetup.alerts.failure": "Tylko awarii",
+  "machineServices.healthSetup.alerts.loadingDefaults": "Wczytywanie domyślnych ustawień alertów…",
   "machineServices.healthSetup.alerts.off": "Wyłączone",
   "machineServices.healthSetup.alerts.phases": "Wysyłaj alerty przy",
   "machineServices.healthSetup.alerts.recovery": "Tylko przywróceniu działania",

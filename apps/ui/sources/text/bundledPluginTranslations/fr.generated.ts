@@ -269,6 +269,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "machineServices.healthSetup.alerts.changeDestination": "Changer de destination",
   "machineServices.healthSetup.alerts.default": "Aucune destination d’alerte n’est configurée pour cet élément.",
   "machineServices.healthSetup.alerts.failure": "Panne uniquement",
+  "machineServices.healthSetup.alerts.loadingDefaults": "Chargement des paramètres d’alerte par défaut…",
   "machineServices.healthSetup.alerts.off": "Désactivées",
   "machineServices.healthSetup.alerts.phases": "Envoyer des alertes en cas de",
   "machineServices.healthSetup.alerts.recovery": "Rétablissement uniquement",

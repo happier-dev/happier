@@ -277,6 +277,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineServices.healthSetup.alerts.changeDestination": "Canvia la destinació",
     "machineServices.healthSetup.alerts.default": "No s’han configurat destinacions d’alertes per a aquest element.",
     "machineServices.healthSetup.alerts.failure": "Només fallades",
+    "machineServices.healthSetup.alerts.loadingDefaults": "S’estan carregant els valors predeterminats de les alertes…",
     "machineServices.healthSetup.alerts.off": "Desactivades",
     "machineServices.healthSetup.alerts.phases": "Envia alertes per",
     "machineServices.healthSetup.alerts.recovery": "Només recuperacions",
@@ -5003,6 +5004,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineServices.healthSetup.alerts.changeDestination": "Ziel ändern",
     "machineServices.healthSetup.alerts.default": "Für dieses Element sind keine Ziele für Warnmeldungen eingerichtet.",
     "machineServices.healthSetup.alerts.failure": "Nur Ausfall",
+    "machineServices.healthSetup.alerts.loadingDefaults": "Standardeinstellungen für Benachrichtigungen werden geladen …",
     "machineServices.healthSetup.alerts.off": "Aus",
     "machineServices.healthSetup.alerts.phases": "Warnmeldungen senden bei",
     "machineServices.healthSetup.alerts.recovery": "Nur Wiederherstellung",
@@ -9729,6 +9731,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineServices.healthSetup.alerts.changeDestination": "Change destination",
     "machineServices.healthSetup.alerts.default": "Alert destinations have not been configured for this subject.",
     "machineServices.healthSetup.alerts.failure": "Failure only",
+    "machineServices.healthSetup.alerts.loadingDefaults": "Loading alert defaults…",
     "machineServices.healthSetup.alerts.off": "Off",
     "machineServices.healthSetup.alerts.phases": "Send alerts for",
     "machineServices.healthSetup.alerts.recovery": "Recovery only",
@@ -14456,6 +14459,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineServices.healthSetup.alerts.changeDestination": "Cambiar destino",
     "machineServices.healthSetup.alerts.default": "No se han configurado destinos de alertas para este elemento.",
     "machineServices.healthSetup.alerts.failure": "Solo fallos",
+    "machineServices.healthSetup.alerts.loadingDefaults": "Cargando los valores predeterminados de las alertas…",
     "machineServices.healthSetup.alerts.off": "Desactivadas",
     "machineServices.healthSetup.alerts.phases": "Enviar alertas por",
     "machineServices.healthSetup.alerts.recovery": "Solo recuperaciones",
@@ -19182,6 +19186,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineServices.healthSetup.alerts.changeDestination": "Changer de destination",
     "machineServices.healthSetup.alerts.default": "Aucune destination d’alerte n’est configurée pour cet élément.",
     "machineServices.healthSetup.alerts.failure": "Panne uniquement",
+    "machineServices.healthSetup.alerts.loadingDefaults": "Chargement des paramètres d’alerte par défaut…",
     "machineServices.healthSetup.alerts.off": "Désactivées",
     "machineServices.healthSetup.alerts.phases": "Envoyer des alertes en cas de",
     "machineServices.healthSetup.alerts.recovery": "Rétablissement uniquement",
@@ -23908,6 +23913,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineServices.healthSetup.alerts.changeDestination": "Cambia destinazione",
     "machineServices.healthSetup.alerts.default": "Non sono state configurate destinazioni degli avvisi per questo elemento.",
     "machineServices.healthSetup.alerts.failure": "Solo errori",
+    "machineServices.healthSetup.alerts.loadingDefaults": "Caricamento delle impostazioni predefinite degli avvisi…",
     "machineServices.healthSetup.alerts.off": "Disattivati",
     "machineServices.healthSetup.alerts.phases": "Invia avvisi per",
     "machineServices.healthSetup.alerts.recovery": "Solo ripristini",
@@ -28634,6 +28640,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineServices.healthSetup.alerts.changeDestination": "送信先を変更",
     "machineServices.healthSetup.alerts.default": "この対象のアラート送信先は設定されていません。",
     "machineServices.healthSetup.alerts.failure": "障害のみ",
+    "machineServices.healthSetup.alerts.loadingDefaults": "アラートの既定値を読み込み中…",
     "machineServices.healthSetup.alerts.off": "オフ",
     "machineServices.healthSetup.alerts.phases": "アラートを送信するタイミング",
     "machineServices.healthSetup.alerts.recovery": "復旧のみ",
@@ -33360,6 +33367,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineServices.healthSetup.alerts.changeDestination": "Zmień miejsce docelowe",
     "machineServices.healthSetup.alerts.default": "Nie skonfigurowano miejsc docelowych alertów dla tego elementu.",
     "machineServices.healthSetup.alerts.failure": "Tylko awarii",
+    "machineServices.healthSetup.alerts.loadingDefaults": "Wczytywanie domyślnych ustawień alertów…",
     "machineServices.healthSetup.alerts.off": "Wyłączone",
     "machineServices.healthSetup.alerts.phases": "Wysyłaj alerty przy",
     "machineServices.healthSetup.alerts.recovery": "Tylko przywróceniu działania",
@@ -38086,6 +38094,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineServices.healthSetup.alerts.changeDestination": "Alterar destino",
     "machineServices.healthSetup.alerts.default": "Não foram configurados destinos de alertas para este item.",
     "machineServices.healthSetup.alerts.failure": "Apenas falhas",
+    "machineServices.healthSetup.alerts.loadingDefaults": "A carregar as predefinições dos alertas…",
     "machineServices.healthSetup.alerts.off": "Desativados",
     "machineServices.healthSetup.alerts.phases": "Enviar alertas em caso de",
     "machineServices.healthSetup.alerts.recovery": "Apenas recuperações",
@@ -42812,6 +42821,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineServices.healthSetup.alerts.changeDestination": "Изменить получателя",
     "machineServices.healthSetup.alerts.default": "Для этого объекта не настроены получатели оповещений.",
     "machineServices.healthSetup.alerts.failure": "Только при сбое",
+    "machineServices.healthSetup.alerts.loadingDefaults": "Загружаются настройки оповещений по умолчанию…",
     "machineServices.healthSetup.alerts.off": "Выключены",
     "machineServices.healthSetup.alerts.phases": "Отправлять оповещения при",
     "machineServices.healthSetup.alerts.recovery": "Только при восстановлении",
@@ -47538,6 +47548,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineServices.healthSetup.alerts.changeDestination": "更改接收目标",
     "machineServices.healthSetup.alerts.default": "尚未为此对象配置警报接收目标。",
     "machineServices.healthSetup.alerts.failure": "仅故障",
+    "machineServices.healthSetup.alerts.loadingDefaults": "正在加载提醒的默认设置…",
     "machineServices.healthSetup.alerts.off": "已关闭",
     "machineServices.healthSetup.alerts.phases": "发送警报的时机",
     "machineServices.healthSetup.alerts.recovery": "仅恢复",
@@ -52264,6 +52275,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineServices.healthSetup.alerts.changeDestination": "變更接收目標",
     "machineServices.healthSetup.alerts.default": "尚未為此對象設定警報接收目標。",
     "machineServices.healthSetup.alerts.failure": "僅故障",
+    "machineServices.healthSetup.alerts.loadingDefaults": "正在載入提醒的預設設定…",
     "machineServices.healthSetup.alerts.off": "已關閉",
     "machineServices.healthSetup.alerts.phases": "傳送警報的時機",
     "machineServices.healthSetup.alerts.recovery": "僅恢復",
@@ -56992,6 +57004,7 @@ export type BundledPluginTranslationKey =
     | 'machineServices.healthSetup.alerts.changeDestination'
     | 'machineServices.healthSetup.alerts.default'
     | 'machineServices.healthSetup.alerts.failure'
+    | 'machineServices.healthSetup.alerts.loadingDefaults'
     | 'machineServices.healthSetup.alerts.off'
     | 'machineServices.healthSetup.alerts.phases'
     | 'machineServices.healthSetup.alerts.recovery'

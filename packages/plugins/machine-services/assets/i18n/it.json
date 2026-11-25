@@ -56,6 +56,7 @@
   "machineServices.healthSetup.monitor.gatusTemplate": "In Gatus, use the custom POST body: {\"endpointGroup\":\"[ENDPOINT_GROUP]\",\"endpointName\":\"[ENDPOINT_NAME]\",\"status\":\"[ALERT_TRIGGERED_OR_RESOLVED]\"}. Set Content-Type to application/json.",
   "machineServices.healthSetup.alerts": "Avvisi",
   "machineServices.healthSetup.alerts.default": "Non sono state configurate destinazioni degli avvisi per questo elemento.",
+  "machineServices.healthSetup.alerts.loadingDefaults": "Caricamento delle impostazioni predefinite degli avvisi…",
   "machineServices.healthSetup.alerts.off": "Disattivati",
   "machineServices.healthSetup.alerts.saved": "Le destinazioni salvate vengono mantenute quando aggiungi un controllo.",
   "machineServices.healthSetup.alerts.test": "Prova",

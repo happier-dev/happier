@@ -269,6 +269,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "machineServices.healthSetup.alerts.changeDestination": "Изменить получателя",
   "machineServices.healthSetup.alerts.default": "Для этого объекта не настроены получатели оповещений.",
   "machineServices.healthSetup.alerts.failure": "Только при сбое",
+  "machineServices.healthSetup.alerts.loadingDefaults": "Загружаются настройки оповещений по умолчанию…",
   "machineServices.healthSetup.alerts.off": "Выключены",
   "machineServices.healthSetup.alerts.phases": "Отправлять оповещения при",
   "machineServices.healthSetup.alerts.recovery": "Только при восстановлении",

@@ -269,6 +269,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "machineServices.healthSetup.alerts.changeDestination": "Ziel ändern",
   "machineServices.healthSetup.alerts.default": "Für dieses Element sind keine Ziele für Warnmeldungen eingerichtet.",
   "machineServices.healthSetup.alerts.failure": "Nur Ausfall",
+  "machineServices.healthSetup.alerts.loadingDefaults": "Standardeinstellungen für Benachrichtigungen werden geladen …",
   "machineServices.healthSetup.alerts.off": "Aus",
   "machineServices.healthSetup.alerts.phases": "Warnmeldungen senden bei",
   "machineServices.healthSetup.alerts.recovery": "Nur Wiederherstellung",

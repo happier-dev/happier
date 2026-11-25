@@ -56,6 +56,7 @@
   "machineServices.healthSetup.monitor.gatusTemplate": "In Gatus, use the custom POST body: {\"endpointGroup\":\"[ENDPOINT_GROUP]\",\"endpointName\":\"[ENDPOINT_NAME]\",\"status\":\"[ALERT_TRIGGERED_OR_RESOLVED]\"}. Set Content-Type to application/json.",
   "machineServices.healthSetup.alerts": "警报",
   "machineServices.healthSetup.alerts.default": "尚未为此对象配置警报接收目标。",
+  "machineServices.healthSetup.alerts.loadingDefaults": "正在加载提醒的默认设置…",
   "machineServices.healthSetup.alerts.off": "已关闭",
   "machineServices.healthSetup.alerts.saved": "添加检查时会保留已保存的接收目标。",
   "machineServices.healthSetup.alerts.test": "测试",
