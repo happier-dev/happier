@@ -2407,8 +2407,11 @@ apply. Selected Provider environment delivery remains owned by the target-launch
 materializer and its private stdin file publisher, rather than command arguments.
 
 The runner keeps its own loopback access endpoint across daemon replacement.
-Each new request re-admits the captured binding before obtaining fresh access;
-transport failure does not replay inference or substitute another source.
+Each new request re-admits the captured binding before obtaining fresh access.
+On reconnect, the replacement daemon attests the exact installed Provider source
+and opens a fresh private broker route for the retained Session. The claim keeps
+its original occurrence ID across daemon-local activations. Transport failure
+never replays inference or substitutes another source.
 When the runner's managed Gateway proxy returns `broker_unavailable`, the
 affected turn reports `provider_endpoint_unavailable` and preserves the broker
 code in its failure cause.

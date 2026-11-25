@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
@@ -33,6 +34,7 @@ import { resolvePluginContributes } from '@/plugins/projection/registry/resolveP
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { createSavedSecretsCliHttpFixture } from '@/cli/actions/adapters/savedSecretsCliHttpFixture';
+import { createRunnerManagedProviderHttpBindingRequest } from '@/agent/runtime/session/process/runnerManagedProviderConsumerAccess';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { executeContributedAction } from './invocation/actions/executeContributedAction';
@@ -272,26 +274,24 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     managedRuntime: {
                         kind: 'managed',
                         endpointTemplateIds: ['api', 'api-chat'],
-                        ...(id === 'external-gateway'
-                            ? {
-                                sharing: 'connectionMachine',
-                                connectedAccounts: [{
-                                    purpose: 'upstream',
-                                    service: 'accounts',
-                                    required: false,
-                                    materializationKinds: ['httpHeaders'],
-                                }],
-                                requestAuthUses: [{
-                                    purpose: 'upstream',
-                                    materialization: {
-                                        kind: 'httpHeaders',
-                                        origin: 'https://api.example.test',
-                                        headerNames: ['authorization'],
-                                    },
-                                }],
-                            }
-                            : {}),
+                        ...(id === 'external-gateway' ? { sharing: 'connectionMachine' } : {}),
                     },
+                    ...(id === 'external-gateway' ? {
+                        connectedAccounts: [{
+                            purpose: 'upstream',
+                            service: 'accounts',
+                            required: false,
+                            materializationKinds: ['httpHeaders'],
+                        }],
+                        requestAuthUses: [{
+                            purpose: 'upstream',
+                            materialization: {
+                                kind: 'httpHeaders',
+                                origin: 'https://api.example.test',
+                                headerNames: ['authorization'],
+                            },
+                        }],
+                    } : {}),
                 }
                 : {}),
         });
@@ -927,7 +927,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     sessionId: 'remote-bootstrap-session',
                     runtimeBindingBasis: sessionRuntimeBindingBasis,
                     ...remoteBootstrap!,
-                    occurrenceId: 'foreign-source-occurrence',
+                    sourceCustody: { kind: 'managed', immutableGenerationId: 'different-generation', installSource: 'localPath' },
                 },
                 signal: new AbortController().signal,
                 isCurrent: () => true,
@@ -949,6 +949,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     connectionRole: 'named', connectionDisplayNameMode: 'custom' },
             });
             let hubPolicyCurrent = true;
+            let carrierPort = 43123;
             let closeConsumer: (() => Promise<void>) | null = null;
             let carrierClosed = false;
             const selectedHubMachines: string[] = [];
@@ -975,12 +976,12 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                         }, signature: { alg: 'Ed25519', keyId: 'home-key', valueBase64Url: Buffer.alloc(64).toString('base64url') } },
                         target: { custodianAccountId: 'account-1', brokerMachineId: openedRequest.targetMachineId,
                             endpointId: 'b'.repeat(64), endpointRevision: 1, endpoint: { endpointId: 'b'.repeat(64) } } }),
-                        openTunnel: async () => ({ localPort: 43123, localCapability: 'c'.repeat(64), observedPath: 'relay',
+                        openTunnel: async () => ({ localPort: carrierPort, localCapability: 'c'.repeat(64), observedPath: 'relay',
                             retire: async () => undefined, close: async () => { carrierClosed = true; } }),
                         // The carrier is the network boundary; serve the real
                         // broker endpoint projection through that same fixture.
                         fetchImpl: async (url, init) => {
-                            expect(String(url)).toBe(`http://127.0.0.1:43123${PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH}`);
+                            expect(String(url)).toBe(`http://127.0.0.1:${carrierPort}${PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH}`);
                             expect(init?.method).toBe('GET');
                             const endpoint = projectProviderBrokerEndpointMetadata('http://127.0.0.1:45123/v1');
                             if (!endpoint) throw new Error('Expected canonical broker endpoint metadata');
@@ -1004,6 +1005,58 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             await expect(hubProjection.readSharedGatewayAccess()).rejects.toMatchObject({ code: 'plugin_services_managed_provider_authority_unavailable' });
             expect(carrierClosed).toBe(true);
             expect(selectedHubMachines).toEqual(['hub-exact']);
+
+            // A replacement daemon allocates a different activation occurrence
+            // for the same installed source. The runner still holds its old claim.
+            const replacement = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir, contributes, generationAuthority });
+            const inference: string[] = [];
+            const carrier = createServer((request, response) => {
+                inference.push(request.url ?? '');
+                response.end('inference response');
+            });
+            try {
+                await new Promise<void>(resolve => carrier.listen(0, '127.0.0.1', resolve));
+                const address = carrier.address();
+                if (!address || typeof address === 'string') throw new Error('Expected local carrier address');
+                carrierPort = address.port;
+                const current = await replacement.acquireManagedProviderRuntime?.(sessionDeployment.implementationIdentity);
+                expect(current?.sourceCustody).toEqual(hubProjection.bootstrap.scope.sourceCustody);
+                expect(current?.activationOccurrenceId).not.toBe(hubProjection.bootstrap.scope.occurrenceId);
+                const retainedScope = {
+                    ...hubProjection.bootstrap.scope,
+                    identity: sessionDeployment.implementationIdentity,
+                };
+                const reconnect = () => createRemoteManagedProviderSessionProjection({
+                    ...hubProjectionInput, registry: replacement, retainedScope,
+                    isCurrent: async () => current?.isCurrent() === true,
+                    revalidateAdmission: async () => hubPolicyCurrent,
+                });
+                hubPolicyCurrent = true;
+                const rebound = await reconnect();
+                expect(rebound.bootstrap.scope).toEqual(hubProjection.bootstrap.scope);
+                const turn = async (projection: typeof rebound) => {
+                    const request = createRunnerManagedProviderHttpBindingRequest(
+                        ({ signal }) => projection.readSharedGatewayAccess(signal),
+                    );
+                    return await request({ method: 'POST', pathAndQuery: '/v1/responses', headers: {} });
+                };
+                const first = await turn(rebound);
+                expect(first).toMatchObject({ ok: true, response: { status: 200 } });
+                if (first.ok) await first.response.body?.cancel();
+                expect(selectedHubMachines).toEqual(['hub-exact', 'hub-exact']);
+                expect(inference).toEqual(['/v1/responses']);
+                await hubProjectionInput.cleanup();
+
+                hubPolicyCurrent = false;
+                const revoked = await reconnect();
+                await expect(turn(revoked)).resolves.toEqual({ ok: false, reasonCode: 'broker_unavailable' });
+                expect(selectedHubMachines).toEqual(['hub-exact', 'hub-exact']);
+                expect(inference).toEqual(['/v1/responses']);
+            } finally {
+                await hubProjectionInput.cleanup();
+                await replacement.dispose();
+                await new Promise<void>(resolve => carrier.close(() => resolve()));
+            }
 
             // Shared custody cannot borrow the authorization basis of another
             // connection or Session. The normal registry/admission path is real;

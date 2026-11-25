@@ -6240,11 +6240,12 @@ export async function resolveExecutablePluginRuntimeRegistry(
         let retainedAvailable: (() => Promise<void>) | undefined;
         if (input.retainedScope) {
             const scope = input.retainedScope;
+            // A replacement daemon has its own activation occurrence. Keep the
+            // runner's claim and attest its exact source in this registry.
             if (scope.sessionId !== input.sessionId
                 || !isDeepStrictEqual(scope.runtimeBindingBasis, basis)
                 || buildQualifiedPluginContributionKey(scope.identity)
                     !== buildQualifiedPluginContributionKey(deployment.implementationIdentity)
-                || scope.occurrenceId !== current.activationOccurrenceId
                 || !isDeepStrictEqual(scope.sourceCustody, current.sourceCustody)) return null;
             const attested = await attestRetainedManagedProvider({
                 paths: resolvePluginStorePaths({ happyHomeDir: params?.happyHomeDir }),
