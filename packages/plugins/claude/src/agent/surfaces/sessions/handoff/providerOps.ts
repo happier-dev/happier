@@ -10,7 +10,7 @@ import {
     importClaudeSessionBundle,
 } from './bundle.js';
 import { ClaudeSessionBundleSchema } from './types.js';
-import { resolveClaudeProjectId } from './path.js';
+import { readClaudeRuntimeConfigDir, resolveClaudeProjectId } from './path.js';
 import { readClaudeProviderIdentityValue } from '../../../../protocol/providerIdentity.js';
 import { resolveClaudeJsonlSessionFile } from '../external/files.js';
 import { resolveCanonicalConfiguredClaudeConfigDir } from '../external/source.js';
@@ -24,8 +24,7 @@ function readNonEmptyString(value: unknown): string | null {
 export const claudeHandoffSurface = {
     resolveNativeTranscriptPathCandidate: async ({ identity, runtimeDescriptorV1 }, context) => {
         const remoteSessionId = readClaudeProviderIdentityValue(identity.vendorResumeId);
-        const configDir = runtimeDescriptorV1.agentId === 'claude'
-            ? readNonEmptyString(runtimeDescriptorV1.agent.configDir) : null;
+        const configDir = readClaudeRuntimeConfigDir(runtimeDescriptorV1);
         if (!remoteSessionId || !configDir) return null;
         const file = await resolveClaudeJsonlSessionFile({
             source: { kind: 'claudeConfig', configDir }, env: process.env, remoteSessionId,
@@ -42,7 +41,7 @@ export const claudeHandoffSurface = {
             identity.transcriptStorage !== 'direct'
             || runtimeDescriptorV1.agentId !== 'claude'
         ) return null;
-        const configDir = readNonEmptyString(runtimeDescriptorV1.agent.configDir);
+        const configDir = readClaudeRuntimeConfigDir(runtimeDescriptorV1);
         const workingDirectory = readNonEmptyString(identity.workingDirectory);
         if (!configDir && !workingDirectory) return null;
         return {

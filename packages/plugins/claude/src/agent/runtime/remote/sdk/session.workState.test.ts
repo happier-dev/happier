@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -25,6 +25,8 @@ import {
   expectRuntimeEnvelope,
 } from '../../engine.testkit.js';
 import { getClaudeProjectPath } from '../../../surfaces/sessions/handoff/path.js';
+import { claudeHandoffSurface } from '../../../surfaces/sessions/handoff/providerOps.js';
+import { createClaudeExternalSessionsContribution } from '../../../surfaces/sessions/external/contribution.js';
 import { createClaudeNativeSessionRuntimeFromOperations } from '../../nativeRuntime.js';
 import { createClaudeTodoWriteObserver } from '../../nativeServices.js';
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -485,21 +487,34 @@ describe('Claude agent-SDK session work-state ingress', () => {
 
 
 describe('SDK workflow hook resumption', () => {
-  it('completes a successful SDK turn when accepted-prompt history admission fails', async () => {
+  it('exports the SDK Session transcript after accepted-prompt follow identity admission fails', async () => {
     const root = await mkdtemp(join(tmpdir(), 'claude-follow-acquire-'));
     const providerSessionId = 'claude-follow-acquire';
-    const transcriptPath = join(root, `${providerSessionId}.jsonl`);
+    const configDir = join(root, 'session-config');
+    const otherConfigDir = join(root, 'daemon-config');
+    const transcriptPath = join(getClaudeProjectPath(root, configDir), `${providerSessionId}.jsonl`);
+    const otherTranscriptPath = join(getClaudeProjectPath(root, otherConfigDir), `${providerSessionId}.jsonl`);
+    await mkdir(dirname(transcriptPath), { recursive: true });
+    await mkdir(dirname(otherTranscriptPath), { recursive: true });
     await writeFile(transcriptPath, '');
     const terminalHost = createTerminalHostFixture();
     const exec = createSdkExecFixture();
     const sessionHooks = createSessionHooksFixture();
     const baseCtx = createPluginContextFixture(terminalHost.service, createEventsFixture().service);
+    const signal = new AbortController().signal;
+    const externalSessions = createClaudeExternalSessionsContribution();
     let sourceAvailable = false;
     const followSource = vi.fn(async () => {
-      if (!sourceAvailable) {
-        throw Object.assign(new Error('Terminal transcript follow admission failed (bind): plugin_external_follow_acquisition_failed'), {
+      const linked = await externalSessions.resolveLinkIdentity({
+        source: { kind: 'claudeConfig', configDir: sourceAvailable ? configDir : otherConfigDir },
+        remoteSessionId: providerSessionId,
+        signal, maxSerializedBytes: 1024 * 1024, deadlineAtMs: Date.now() + 30_000,
+      });
+      if (!linked.ok) {
+        expect(linked.code).toBe('candidate_not_found');
+        throw Object.assign(new Error('Terminal transcript follow admission failed (bind): plugin_external_follow_identity_unavailable'), {
           code: 'native_agent_terminal_transcript_follow_admission_failed',
-          followCode: 'plugin_external_follow_acquisition_failed', phase: 'bind', retryable: true,
+          followCode: 'plugin_external_follow_identity_unavailable', phase: 'bind', retryable: true,
         });
       }
       return { dispose: async () => {} };
@@ -509,18 +524,26 @@ describe('SDK workflow hook resumption', () => {
       transcripts: { ...baseCtx.agentRuntime.transcripts, followSource },
     });
     const operations = createClaudeAgentSdkProviderOperations({
-      ctx, directory: root, happierSessionId: 'happy-follow-acquire', launchEnv: {},
+      ctx, directory: root, happierSessionId: 'happy-follow-acquire', launchEnv: { CLAUDE_CONFIG_DIR: configDir },
       permissionMode: 'default', enableSessionWorkState: true, enableSessionResumability: true,
     });
-    const context = { session: { services: {
-      activeInput: { bind: () => ({ dispose() {} }) },
-      models: { bind: () => ({ dispose() {} }) },
-    } } } as unknown as AgentSessionRuntimeContext;
+    const context = {
+      services: { exec: exec.service },
+      session: { services: {
+        activeInput: { bind: () => ({ dispose() {} }) },
+        models: { bind: () => ({ dispose() {} }) },
+      } },
+    } as unknown as AgentSessionRuntimeContext;
     const session = createClaudeNativeSessionRuntimeFromOperations(operations, {
       kind: 'create', sessionId: 'happy-follow-acquire', cwd: root,
+      launchEnvironment: { values: { CLAUDE_CONFIG_DIR: configDir }, unset: [] },
+      runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: { backendMode: 'agentSdk' } },
     }, context);
     const events: AgentSessionRuntimeEvent[] = [];
     const subscription = session.watch(event => events.push(event));
+    vi.stubEnv('CLAUDE_CONFIG_DIR', otherConfigDir);
+    vi.stubEnv('HAPPIER_E2E_FAKE_CLAUDE_LOG', '');
+    vi.stubEnv('HAPPY_E2E_FAKE_CLAUDE_LOG', '');
     try {
       operations.beginProviderTurn('follow-acquire-turn');
       await operations.sendProviderTurnPrompt('reply OK only');
@@ -534,6 +557,9 @@ describe('SDK workflow hook resumption', () => {
       await appendFile(transcriptPath, JSON.stringify({ type: 'user', sessionId: providerSessionId,
         message: { content: 'reply OK only' } }) + '\n');
       await vi.waitFor(() => expect(followSource).toHaveBeenCalledOnce());
+      await expect(followSource.mock.results[0]?.value).rejects.toMatchObject({
+        phase: 'bind', followCode: 'plugin_external_follow_identity_unavailable',
+      });
       await exec.emit({ type: 'assistant', session_id: providerSessionId,
         message: { role: 'assistant', content: [{ type: 'text', text: 'OK.' }] } });
       await exec.emit({ type: 'result', subtype: 'success', is_error: false, result: 'OK.',
@@ -543,18 +569,34 @@ describe('SDK workflow hook resumption', () => {
         .toMatchObject({ state: 'unknown', activeCount: 0 });
       expect(followSource).toHaveBeenCalledOnce();
       expect(events.some(event => event.kind === 'runtime-ended')).toBe(false);
+      const exportInput = {
+        sessionId: providerSessionId,
+        metadata: { path: root, runtimeDescriptorV1: session.runtimeDescriptorV1 },
+        directory: root,
+      };
+      const exportContext = { signal, maxSerializedBytes: 1024 * 1024, deadlineAtMs: Date.now() + 30_000 };
+      expect(await claudeHandoffSurface.exportBundle(exportInput, exportContext)).toMatchObject({
+        ok: true, value: { bundle: { remoteSessionId: providerSessionId, transcriptFile: { filePath: await realpath(transcriptPath) } } },
+      });
       sourceAvailable = true;
       operations.beginProviderTurn('follow-acquire-next-turn');
       await operations.sendProviderTurnPrompt('reply OK again');
       // The same process takes the next prompt (no new SessionStart); the prompt retries the baseline.
       expect(exec.spawnClient).toHaveBeenCalledOnce();
       await vi.waitFor(() => expect(followSource).toHaveBeenCalledTimes(2));
+      await expect(followSource.mock.results[1]?.value).resolves.toMatchObject({ dispose: expect.any(Function) });
       await exec.emit({ type: 'result', subtype: 'success', is_error: false, result: 'OK.',
         session_id: providerSessionId, num_turns: 1, total_cost_usd: 0, duration_ms: 10, duration_api_ms: 8 });
       await expect(operations.waitForProviderTurnCompletion()).resolves.toBeUndefined();
-      expect(events.filter(event => event.kind === 'runtime-activity-snapshot').at(-1))
-        .toMatchObject({ state: 'idle', activeCount: 0 });
+      await vi.waitFor(() => expect(events.filter(event => event.kind === 'runtime-activity-snapshot').at(-1))
+        .toMatchObject({ state: 'idle', activeCount: 0 }));
+      await rm(transcriptPath);
+      await writeFile(otherTranscriptPath, '{}\n');
+      expect(await claudeHandoffSurface.exportBundle(exportInput, exportContext)).toMatchObject({
+        ok: false, code: 'handoff_failed', diagnostics: [{ code: 'transcript_missing', details: { pathKind: 'transcript_file' } }],
+      });
     } finally {
+      vi.unstubAllEnvs();
       subscription.dispose();
       await session.dispose();
       await rm(root, { recursive: true, force: true });

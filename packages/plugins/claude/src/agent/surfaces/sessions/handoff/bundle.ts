@@ -14,7 +14,7 @@ import {
     type ClaudeTranscriptLookupFailure,
 } from '../external/files.js';
 import type { ClaudeExternalSessionSource } from '../external/source.js';
-import { getClaudeProjectPath, resolveClaudeProjectId } from './path.js';
+import { getClaudeProjectPath, readClaudeRuntimeConfigDir, resolveClaudeProjectId } from './path.js';
 import {
     ClaudeSessionBundleSchema,
     type ClaudeHandoffBundleFile,
@@ -186,12 +186,16 @@ async function resolveReadableTranscriptPath(params: Readonly<{
         );
     }
 
-    const fakeTranscriptLog = [
-        params.env.HAPPIER_E2E_FAKE_CLAUDE_LOG,
-        params.env.HAPPY_E2E_FAKE_CLAUDE_LOG,
-    ].find((value) => typeof value === 'string' && value.trim().length > 0);
-    if (typeof fakeTranscriptLog === 'string' && (await fileExists(fakeTranscriptLog))) {
-        return fakeTranscriptLog;
+    // The runtime records its effective launch root independently of follow admission.
+    const runtimeConfigDir = readClaudeRuntimeConfigDir(params.metadata.runtimeDescriptorV1);
+    if (!runtimeConfigDir) {
+        const fakeTranscriptLog = [
+            params.env.HAPPIER_E2E_FAKE_CLAUDE_LOG,
+            params.env.HAPPY_E2E_FAKE_CLAUDE_LOG,
+        ].find((value) => typeof value === 'string' && value.trim().length > 0);
+        if (typeof fakeTranscriptLog === 'string' && (await fileExists(fakeTranscriptLog))) {
+            return fakeTranscriptLog;
+        }
     }
 
     const workingDirectory = typeof params.metadata.path === 'string' ? params.metadata.path.trim() : '';
@@ -201,7 +205,7 @@ async function resolveReadableTranscriptPath(params: Readonly<{
     const derived = await lookupClaudeJsonlSessionFile({
         source: {
             kind: 'claudeConfig',
-            configDir: resolveClaudeConfigDir(params.env),
+            configDir: runtimeConfigDir ?? resolveClaudeConfigDir(params.env),
             projectId: resolveClaudeProjectId(workingDirectory),
         },
         env: params.env,

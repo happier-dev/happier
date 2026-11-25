@@ -3741,6 +3741,10 @@ checks, and `permission_denied` means the filesystem refused access. A path kind
 identifies the linked source root, Claude projects directory, Session directory,
 or transcript file. These diagnostics contain fixed codes and omit paths,
 Session identifiers, and transcript content. A linked source remains exclusive.
+For a Session without a linked source, Claude export uses the admitted native
+Session ID, the Session working directory, and the config root recorded at
+runtime launch. This lookup works independently of transcript follow. Older
+metadata without a recorded Claude root uses the daemon's configured root.
 
 `SessionHandle.watch` follows committed retained transcript rows through the shared socket source and delivers complete text before advancing its reconnect frontier. Provisional stream deltas do not become retained message events. Cancellation ends the watcher; credential and plugin-occurrence checks prevent further delivery after retirement.
 

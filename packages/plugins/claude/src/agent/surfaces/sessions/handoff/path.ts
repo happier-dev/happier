@@ -1,11 +1,18 @@
 import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import type { RuntimeDescriptorV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { resolveClaudeConfigDir } from '../../../environment.js';
 
 // Claude Code 2.1.296 keeps 200 sanitized UTF-16 units and suffixes longer
 // physical cwd spellings with its absolute signed 32-bit string hash in base 36.
 const CLAUDE_PROJECT_ID_MAX_LENGTH = 200;
+
+export function readClaudeRuntimeConfigDir(descriptor: RuntimeDescriptorV1 | undefined): string | null {
+    if (descriptor?.agentId !== 'claude') return null;
+    const configDir = descriptor.agent.configDir;
+    return typeof configDir === 'string' ? configDir.trim() || null : null;
+}
 
 function resolveWorkingDirectoryForClaudeProjectId(workingDirectory: string): string {
     const resolvedWorkingDirectory = resolve(workingDirectory);
