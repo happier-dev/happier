@@ -2409,6 +2409,9 @@ materializer and its private stdin file publisher, rather than command arguments
 The runner keeps its own loopback access endpoint across daemon replacement.
 Each new request re-admits the captured binding before obtaining fresh access;
 transport failure does not replay inference or substitute another source.
+When the runner's managed Gateway proxy returns `broker_unavailable`, the
+affected turn reports `provider_endpoint_unavailable` and preserves the broker
+code in its failure cause.
 The native Agent can independently retry a broken response stream within its
 existing turn. Codex reports that decision with `willRetry: true`; its codec
 supersedes unfinished assistant text without resubmitting the host input or

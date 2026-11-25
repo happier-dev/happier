@@ -63,6 +63,9 @@ import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
 import { createConfiguredPluginExternalSessionsAdapter } from '@/session/external/configuredSourceMaterializer';
 import { createServer, type Server } from 'node:http';
 import { createRunnerManagedProviderConsumerAccess } from '@/agent/runtime/session/process/runnerManagedProviderConsumerAccess';
+import { createSessionBrokerApplicationEvidence } from '@/providers/broker/sessionBrokerApplicationEvidence';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import type { RuntimeSessionTurnMutationV1 } from '@/api/session/client/transport/mutations/createRuntimeSessionClientDurableMutationOutbox';
 import { AgentRuntimeDaemonServiceRequestV1Schema, AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { dispatchCurrentRunnerDaemonPluginService } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient';
 import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemonServiceAuthority } from './sessionBridgeAuthorization';
@@ -913,6 +916,25 @@ describe('runner daemon PluginServices host', () => {
         let materializations = 0;
         let effects = 0;
         let failUpstream = false;
+        let upstreamStatus = 200;
+        let activeTurnId: string | null = null;
+        const evidence = createSessionBrokerApplicationEvidence({
+            sessionId: direct.sessionId, pid: process.pid,
+            readActiveTurnId: () => activeTurnId, isCurrent: () => !lifetime.signal.aborted,
+        });
+        const mutations: RuntimeSessionTurnMutationV1[] = [];
+        const turnLifecycle = createSessionTurnLifecycle({
+            session: { sessionId: direct.sessionId, enqueueSessionTurnMutation: mutation => { mutations.push(mutation); } },
+            agentId: 'claude', readTeamCredentialFailureEvidence: turnId => evidence.readFailureEvidence(turnId),
+        });
+        let sequence = 0;
+        const observeTurn = (turnId: string, failed: boolean) => {
+            turnLifecycle.observeRuntimeEvent({
+                sessionId: direct.sessionId, turnId, emittedAtMs: ++sequence, sequence,
+                ...(failed ? { kind: 'turn-failed', diagnostic: { code: 'claude_server_error', severity: 'error' } }
+                    : { kind: 'turn-start', startedBy: 'host' }),
+            });
+        };
         const upstreams: Server[] = [];
         const ports: number[] = [];
         for (const upstreamGeneration of [1, 2]) {
@@ -921,6 +943,7 @@ describe('runner daemon PluginServices host', () => {
                 expect(request.headers.authorization).toBe(`Bearer daemon-${upstreamGeneration}`);
                 expect(request.headers['x-api-key']).toBeUndefined();
                 if (failUpstream) { request.socket.destroy(); return; }
+                response.statusCode = upstreamStatus;
                 response.end(`daemon-${upstreamGeneration}:${request.url}`);
             });
             await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
@@ -993,6 +1016,7 @@ describe('runner daemon PluginServices host', () => {
                         signal: lifetime.signal,
                         credentialTransport: { id: 'bearer', protocols: ['anthropic'], uses: ['runtime'], destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } },
                         readAccess: readSharedGatewayAccess, materialize,
+                        beginRequest: evidence.beginManagedGatewayRequest,
                     });
                 },
                 local: unavailable,
@@ -1015,11 +1039,40 @@ describe('runner daemon PluginServices host', () => {
             expect(await upstreamUnavailable.json()).toMatchObject({ error: { code: 'broker_unavailable' } });
             expect(effects).toBe(3);
             current = false;
+            activeTurnId = 'binding-unavailable';
+            observeTurn(activeTurnId, false);
             const retiredAuthority = await agentRequest();
             expect(retiredAuthority.status, JSON.stringify(daemonFailures)).toBe(503);
             expect(await retiredAuthority.json()).toMatchObject({ error: { code: 'broker_unavailable' } });
             expect(effects).toBe(3);
+            observeTurn(activeTurnId, true);
+            activeTurnId = null;
+            await turnLifecycle.drainAcceptedLifecycle();
+            expect(mutations.at(-1)).toMatchObject({
+                action: 'fail', turnId: 'binding-unavailable', issue: {
+                    code: 'provider_endpoint_unavailable', failureCause: { phase: 'turn', code: 'broker_unavailable' },
+                },
+            });
+
+            current = true;
+            failUpstream = false;
+            upstreamStatus = 503;
+            activeTurnId = 'upstream-unavailable';
+            observeTurn(activeTurnId, false);
+            const upstream503 = await agentRequest();
+            expect(upstream503.status).toBe(503);
+            expect(await upstream503.text()).toBe('daemon-2:/v1/messages');
+            expect(effects).toBe(4);
+            observeTurn(activeTurnId, true);
+            activeTurnId = null;
+            await turnLifecycle.drainAcceptedLifecycle();
+            expect(mutations.at(-1)).toMatchObject({
+                action: 'fail', turnId: 'upstream-unavailable', issue: {
+                    code: 'claude_server_error', failureCause: { failureReason: 'unclassified_provider_error' },
+                },
+            });
         } finally {
+            turnLifecycle.dispose();
             lifetime.abort();
             await (consumer as Awaited<ReturnType<typeof createRunnerManagedProviderConsumerAccess>> | null)?.cleanup();
             await Promise.all(hosts.map((owner) => owner.dispose()));

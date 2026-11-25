@@ -7,6 +7,7 @@ import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protoco
 import { openPinnedHttpStream } from '@/network/pinnedHttp';
 import { resolveUrlConnectionIdentity } from '@/network/urlConnectionIdentity';
 import { startManagedProviderConsumerApplication } from '@/providers/broker/managedProviderConsumerApplication';
+import type { SessionBrokerApplicationEvidence } from '@/providers/broker/sessionBrokerApplicationEvidence';
 import { renderProviderProbeCredential } from '@/providers/spawn/runtimeCredential';
 import { RunnerDaemonSharedGatewayHttpBindingV1Schema, type RunnerDaemonSharedGatewayHttpBindingV1 } from './agentRuntimeDaemonPluginServicesProtocol';
 import { createRunnerManagedProviderBindingLaunchEnvironmentTransformer } from './runnerManagedProviderBindingMaterialization';
@@ -118,6 +119,7 @@ export function createRunnerManagedProviderHttpBindingRequest(
 export async function createRunnerManagedProviderConsumerAccess(input: Readonly<{
     signal: AbortSignal;
     credentialTransport: ProviderCredentialTransportV1 | null;
+    beginRequest?: SessionBrokerApplicationEvidence['beginManagedGatewayRequest'];
     readAccess(options?: Readonly<{ signal?: AbortSignal }>): Promise<RunnerDaemonSharedGatewayHttpBindingV1>;
     materialize(input: Readonly<{ endpointUrl: string; credentialPlaceholder: string | null }>): Promise<unknown>;
 }>) {
@@ -129,9 +131,15 @@ export async function createRunnerManagedProviderConsumerAccess(input: Readonly<
     const initial = RunnerDaemonSharedGatewayHttpBindingV1Schema.parse(await input.readAccess({ signal: input.signal }));
     const placeholder = `happier_consumer_${randomBytes(32).toString('hex')}`;
     const renderedPlaceholder = renderProviderProbeCredential(placeholder, transport).value;
+    const forward = createRunnerManagedProviderHttpBindingRequest(options => input.readAccess(options));
     const consumer = await startManagedProviderConsumerApplication({
         signal: input.signal, endpointUrl: initial.endpointUrl, credentialTransport: transport,
-        request: createRunnerManagedProviderHttpBindingRequest(options => input.readAccess(options)),
+        request: async request => {
+            const record = input.beginRequest?.();
+            const result = await forward(request);
+            record?.(!result.ok && result.reasonCode === 'broker_unavailable' ? result.reasonCode : null);
+            return result;
+        },
     });
     try {
         input.signal.throwIfAborted();

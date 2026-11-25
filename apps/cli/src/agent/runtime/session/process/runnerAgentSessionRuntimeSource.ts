@@ -100,6 +100,7 @@ import {
     prepareRunnerDaemonPluginServices,
 } from './runnerDaemonPluginServices';
 import { createRunnerManagedProviderConsumerAccess } from './runnerManagedProviderConsumerAccess';
+import { createSessionBrokerApplicationEvidence, type SessionBrokerApplicationEvidence } from '@/providers/broker/sessionBrokerApplicationEvidence';
 import {
     composeProviderBindingMaterialization,
     type ProviderBindingNativeHomeContext,
@@ -1192,6 +1193,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
         void retireSource().catch(() => undefined);
     };
     let hasSessionTeamCredentialBinding = false;
+    let managedGatewayEvidence: SessionBrokerApplicationEvidence | undefined;
     const daemonTurnContributionsBridge:
         DaemonAgentRuntimeTurnContributionsBridge =
             Object.freeze({
@@ -1215,6 +1217,10 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                 pluginMcp: pluginMcp.port,
                 mcpRequestAuth,
                 async readTeamCredentialFailureEvidence(params) {
+                    if (params.sessionId === expectedAuthority.sessionId && managedGatewayEvidence) {
+                        const evidence = await managedGatewayEvidence.readFailureEvidence(params.turnId);
+                        if (evidence.managedGatewayFailure || !hasSessionTeamCredentialBinding) return evidence;
+                    }
                     if (!hasSessionTeamCredentialBinding || params.sessionId !== expectedAuthority.sessionId) {
                         recordRunnerTeamCredentialRefusalRead({ authority: expectedAuthority,
                             turnId: params.turnId, outcome: 'miss', reason: 'unsupported' });
@@ -1644,12 +1650,20 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                                 'Managed Provider binding metadata is unavailable',
                             );
                         }
-                        const hostMaterialization = bootstrap.custody === 'daemonShared'
+                        const brokerEvidence = bootstrap.custody === 'daemonShared'
+                            ? createSessionBrokerApplicationEvidence({
+                                sessionId: params.sessionId,
+                                pid: process.pid,
+                                readActiveTurnId: () => params.readActiveTurnAdmissionWitness?.()?.turnId ?? null,
+                                isCurrent: () => !params.signal.aborted && !lifetime.signal.aborted,
+                            }) : undefined;
+                        const hostMaterialization = brokerEvidence
                             ? await createRunnerManagedProviderConsumerAccess({
                                 signal: params.signal,
                                 credentialTransport: bootstrap.scope.runtimeBindingBasis.runtimeCredentialTransport,
                                 readAccess: readSharedGatewayAccess,
                                 materialize,
+                                beginRequest: brokerEvidence.beginManagedGatewayRequest,
                             })
                             : await managedServicesCustodyOwner
                                 .materializeAdoptedProviderAgentBinding({
@@ -1728,6 +1742,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                                     };
                                 })(),
                             });
+                            managedGatewayEvidence = brokerEvidence;
                         } catch (error) {
                             await cleanupHostMaterialization?.();
                             throw error;

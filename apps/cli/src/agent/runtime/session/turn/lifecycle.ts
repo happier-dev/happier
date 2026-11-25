@@ -182,11 +182,19 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                         occurredAt: mutation.issue.occurredAt, agentTurnId: mutation.issue.agentTurnId,
                         teamCredentialDenial: denial,
                     }) };
+                    else if (evidence?.managedGatewayFailure) mutation = { ...mutation, issue: classifyPrimarySessionRuntimeIssue({
+                        provider: params.agentId, cause: 'session_error',
+                        error: {
+                            code: 'provider_endpoint_unavailable',
+                            failureCause: { code: evidence.managedGatewayFailure, phase: 'turn', failureReason: 'unknown' },
+                        },
+                        occurredAt: mutation.issue.occurredAt, agentTurnId: mutation.issue.agentTurnId,
+                    }) };
                     if (evidence?.carrierFailure) mutation = { ...mutation, issue: { ...mutation.issue,
                         failureCause: { phase: 'turn', failureReason: 'unknown', ...mutation.issue.failureCause,
                             carrierFailure: evidence.carrierFailure },
                     } };
-                    const applied = !!denial || !!evidence?.carrierFailure;
+                    const applied = !!denial || !!evidence?.managedGatewayFailure || !!evidence?.carrierFailure;
                     recordEnrichment(applied ? 'applied' : 'skipped', applied ? undefined : 'evidence_absent');
                 } catch {
                     // A failed evidence read cannot suppress the native terminal outcome.
