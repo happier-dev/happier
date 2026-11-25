@@ -34,7 +34,6 @@ import { resolveCliFeatureDecisionForServer } from '@/features/featureDecisionSe
 import { prepareDirectProviderLaunch, type DirectProviderLaunchResult } from '@/providers/lifecycle/prepareDirectLaunch';
 import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 import { projectChildEnvironmentLaunchError } from '../spawn/projectChildEnvironmentFailure';
-import { readSettledMachineIsolationPolicy } from '../agentIsolation/sessionPreparation';
 import { createRuntimeProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
 import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
 import {
@@ -562,12 +561,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
     return refusal(createProviderErrorV1('provider_authorization_changed', { machineId: request.machineId }));
   }
   if (!request.existingSessionId && !request.vendorResumeId && dependencies.readMachineMetadataSnapshot) {
-    const snapshot = await readSettledMachineIsolationPolicy({
-      read: dependencies.readMachineMetadataSnapshot,
-      isUnread: snapshot => snapshot.status !== 'ready',
-      awaitReadable: dependencies.agentIsolation?.awaitReadable,
-      signal: dependencies.signal,
-    });
+    const snapshot = dependencies.readMachineMetadataSnapshot();
     if (snapshot.status !== 'ready') {
       return refuseUnreadMachineIsolationPolicy(
         'Machine isolation policy is unavailable. Wait for the Machine to reconnect and try again. If it still fails, ask the Machine manager to check the daemon.',

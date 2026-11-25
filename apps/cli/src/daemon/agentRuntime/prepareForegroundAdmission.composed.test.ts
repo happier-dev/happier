@@ -29,6 +29,9 @@ import { ForegroundAgentRuntimeAdmissionResponseV1Schema } from './foregroundAdm
 import { createForegroundAdmissionError } from '@/cli/foregroundAdmissionFailure';
 import { presentProviderCliRefusal } from '@/providers/lifecycle/presentProviderCliRefusal';
 import { resolveReleaseRingScopedBasename } from '@/cli/runtime/publicReleaseChannel';
+import { createForegroundAgentRuntimeAdmissionOwner } from './foregroundAdmission';
+import { createDaemonControlApp } from '../controlServer';
+import { admitDaemonForegroundAgentRuntime } from '../controlClient';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -102,41 +105,71 @@ describe('foreground admission composed real Provider authorization seam', () =>
       expect(await fixture.bootstrapFiles()).toEqual([]);
     });
   });
-  it.each(['ready', 'unavailable'] as const)('admits a cold foreground Codex start only after Machine binding settles %s', async status => {
+  it.each(['setup_pending', 'off', 'unread'] as const)('answers a fresh foreground Codex start with %s Machine policy while binding is pending', async state => {
     await withForegroundProviderFixture({}, async fixture => {
-      const firstRead = Promise.withResolvers<void>();
       const binding = Promise.withResolvers<void>();
-      let published = false;
-      const result = fixture.prepare({ profileId: undefined, selection: undefined }, {
-        agentIsolation: { read: () => undefined, awaitReadable: () => binding.promise },
-        readMachineMetadataSnapshot: () => {
-          firstRead.resolve();
-          if (!published || status === 'unavailable') return { status: 'unavailable' };
-          return { status: 'ready', metadataVersion: 1, metadata: {
-            isolationPolicyV1: { configuredSandboxes: { local: {
-              provisioner: { pluginId: 'acme.sandbox', localId: 'sandbox' }, presetId: 'preset',
-            } }, workKinds: {
-              sessions: { kind: 'sandbox', configuredSandboxId: 'local', lifecycle: 'fresh' },
-              botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' },
-            } },
-          } };
-        },
+      const { machineId, ...request } = fixture.request({ profileId: undefined, selection: undefined });
+      const owner = createForegroundAgentRuntimeAdmissionOwner({
+        prepare: (admitted, signal) => fixture.prepare(admitted, {
+          signal,
+          readMachineMetadataSnapshot: () => state === 'unread' ? { status: 'unavailable' } : {
+            status: 'ready', metadataVersion: 1, metadata: state === 'off' ? { agentIsolation: { enabled: false } } : {
+              agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' },
+              isolationPolicyV1: { configuredSandboxes: {}, workKinds: {
+                sessions: { kind: 'directly' }, botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' },
+              } },
+            },
+          },
+          agentIsolation: {
+            read: () => state === 'unread'
+              ? { enabled: true, status: { kind: 'unavailable', code: 'metadata_unavailable' }, workspaceRoots: [] }
+              : state === 'setup_pending'
+                ? { enabled: true, memberProvisioning: 'linuxUsersV1',
+                  status: { kind: 'unavailable', code: 'provisioning_unavailable' }, workspaceRoots: [] }
+                : { enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] },
+            awaitReadable: () => binding.promise,
+          },
+        }),
       });
-      await firstRead.promise;
-      published = true;
-      binding.resolve();
-
-      const response = ForegroundAgentRuntimeAdmissionResponseV1Schema.parse(await result);
-      if (status === 'ready') {
-        expect(response).toMatchObject({ ok: false, sessionSpawnRequired: { machineId: 'machine-1' } });
-      } else {
-        expect(response).toMatchObject({ ok: false, error: {
-          kind: 'launch_error', code: 'target_unavailable',
-          agentIsolationRefusal: { reason: 'metadata_unavailable', phase: 'native_execution_preparation' },
-        } });
-        expect(response).not.toHaveProperty('sessionSpawnRequired');
+      const controlToken = 'control-token';
+      const app = createDaemonControlApp({
+        machineId, controlToken, foregroundAgentRuntimeAdmission: owner,
+        getChildren: () => [], stopSession: async () => ({ status: 'not_found' }),
+        spawnSession: async () => { throw new Error('Foreground control must not spawn a Session'); },
+        requestShutdown: () => undefined, onHappySessionWebhook: () => undefined,
+      });
+      const originalTimeout = process.env.HAPPIER_DAEMON_HTTP_TIMEOUT;
+      delete process.env.HAPPIER_DAEMON_HTTP_TIMEOUT;
+      try {
+        await app.listen({ host: '127.0.0.1', port: 0 });
+        const address = app.server.address();
+        if (!address || typeof address === 'string') throw new Error('Expected a TCP control address');
+        const response = await admitDaemonForegroundAgentRuntime(request, {
+          target: { pid: process.pid, httpPort: address.port, controlToken },
+        });
+        if (state === 'off') {
+          expect(response).toMatchObject({ ok: true });
+        } else if (state === 'setup_pending') {
+          expect(response).toMatchObject({ ok: false, sessionSpawnRequired: { machineId } });
+          expect(await fixture.bootstrapFiles()).toEqual([]);
+        } else {
+          expect(response).toMatchObject({ ok: false, error: {
+            kind: 'launch_error', code: 'target_unavailable',
+            agentIsolationRefusal: { reason: 'metadata_unavailable', phase: 'native_execution_preparation' },
+          } });
+          if (response.ok || !('kind' in response.error)) throw new Error('Expected a foreground launch refusal');
+          expect(response).not.toHaveProperty('sessionSpawnRequired');
+          expect(response.error.message).toContain('try again');
+          expect(createForegroundAdmissionError(response.error).message).toBe(
+            `target_unavailable: ${response.error.message}`,
+          );
+          expect(await fixture.bootstrapFiles()).toEqual([]);
+        }
+      } finally {
+        if (originalTimeout !== undefined) process.env.HAPPIER_DAEMON_HTTP_TIMEOUT = originalTimeout;
+        await owner.dispose();
+        await app.close();
       }
-      expect(await fixture.bootstrapFiles()).toEqual([]);
     });
   });
   it('keeps the missing native CLI cause at the strict foreground admission sink', async () => {

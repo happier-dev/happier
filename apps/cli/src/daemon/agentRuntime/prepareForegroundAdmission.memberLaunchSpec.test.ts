@@ -24,7 +24,7 @@ vi.mock('@/daemon/agentIsolation/runMemberNativeOperation', async importOriginal
 
 describe('foreground Agent CLI launch admission', () => {
   it.skipIf(process.platform !== 'linux').each(['owner', 'cold separated member'] as const)(
-    'hands a fresh %s Codex terminal to the admitted isolated Session launch', async entry => {
+    'hands a fresh %s Codex terminal to the isolated Session launch once the policy is readable', async entry => {
     await withRealForegroundAdmissionFixture({}, async fixture => {
       const machineId = 'machine-1';
       const accountId = entry === 'owner' ? 'fixture-owner' : 'fixture-member';
@@ -57,7 +57,7 @@ describe('foreground Agent CLI launch admission', () => {
       } : undefined);
 
       // Plain `happier codex` has Happier sign-in and no daemon-spawned runtime descriptor.
-      const admission = fixture.prepare({}, {
+      const prepare = () => fixture.prepare({}, {
         readMachineMetadataSnapshot: () => {
           firstMetadataRead.resolve();
           return published ? { status: 'ready', metadataVersion: 1, metadata: {} } : { status: 'unavailable' };
@@ -65,10 +65,19 @@ describe('foreground Agent CLI launch admission', () => {
         agentIsolation,
         prepareAgentIsolationMember,
       });
-      await firstMetadataRead.promise;
-      published = true;
-      binding.resolve();
-      const result = ForegroundAgentRuntimeAdmissionResponseV1Schema.parse(await admission);
+      if (entry === 'cold separated member') {
+        const firstAdmission = prepare();
+        await firstMetadataRead.promise;
+        published = true;
+        binding.resolve();
+        const response = ForegroundAgentRuntimeAdmissionResponseV1Schema.parse(await firstAdmission);
+        expect(response).toMatchObject({ ok: false, error: {
+          code: 'target_unavailable',
+          agentIsolationRefusal: { reason: 'metadata_unavailable', phase: 'native_execution_preparation' },
+        } });
+        expect(response).not.toHaveProperty('sessionSpawnRequired');
+      }
+      const result = ForegroundAgentRuntimeAdmissionResponseV1Schema.parse(await prepare());
       expect(result).toMatchObject({
         ok: false,
         error: { failureCause: { phase: 'foreground.member_runtime_descriptor' } },
