@@ -40,7 +40,7 @@ import { resolveTranscriptBodySessionMessageRole as protocolResolveTranscriptBod
 import { readTranscriptPeerSenderV1 as protocolReadTranscriptPeerSenderV1 } from '@happier-dev/protocol/sessions/messages/transcriptPeerSenderV1';
 import { SessionIdSchema as protocolSessionIdSchema, SessionIndexedIdentifierMaxLengthV1 as protocolSessionIndexedIdentifierMaxLengthV1 } from '@happier-dev/protocol/sessions/idsV1';
 import { SessionMessageProvenanceV1Schema as protocolSessionMessageProvenanceV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
-import { SessionRuntimeIssueV1Schema as protocolSessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { SessionRuntimeIssueV1Schema as protocolSessionRuntimeIssueV1Schema } from '../sessions/runtimeIssue.js';
 import { SESSION_CAPABILITY_NOTICE_SIDECAR_KEY as protocolSessionCapabilityNoticeSidecarKey,
     SessionCapabilityNoticeV1Schema as protocolSessionCapabilityNoticeV1Schema } from '@happier-dev/protocol/sessions/messages/sessionCapabilityNoticeV1';
 import { SessionUsageLimitRecoveryV1Schema as protocolSessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
@@ -710,5 +710,5 @@ export interface SessionsService {
 }
 
 
-export { projectSessionRuntimeFailureCause, SessionRuntimeFailureCauseV1Schema, readAgentStartupFailureDetails, readSessionStartupFailurePreview, sanitizeSessionRuntimeIssueV1, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, readSessionRuntimeIssueCode, RunnerDaemonPluginServicesPreparationCauseV1Schema, readSessionRuntimeFailureCause, readSessionPreparationFailureCode, projectProviderSessionFailureCause, readProviderErrorDiagnosticFacts } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-export type { AgentStartupFailureDetails } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+export { projectSessionRuntimeFailureCause, SessionRuntimeFailureCauseV1Schema, readAgentStartupFailureDetails, readSessionStartupFailurePreview, sanitizeSessionRuntimeIssueV1, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, readSessionRuntimeIssueCode, RunnerDaemonPluginServicesPreparationCauseV1Schema, readSessionRuntimeFailureCause, readSessionPreparationFailureCode, projectProviderSessionFailureCause, readProviderErrorDiagnosticFacts } from '../sessions/runtimeIssue.js';
+export type { AgentStartupFailureDetails } from '../sessions/runtimeIssue.js';
