@@ -17,11 +17,14 @@ import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/meth
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { createOpenCodeAgentRuntime } from '../../../../../../../packages/plugins/opencode/src/agent/runtime/nativeRuntime';
 import { OPEN_CODE_CONNECTED_ACCOUNT_DECLARATIONS } from '../../../../../../../packages/plugins/opencode/src/agent/auth/services/purposes';
 import { createUnboundConnectedAccountsFixture } from '@/agent/runtime/registry/engineRegistry/connectedAccounts.testkit';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { MemoryDocBodyV1Schema } from '@happier-dev/protocol/prompts/library/memoryDocV1';
 import type { AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
 import { VoiceRunActionDispatchRequestV1Schema, voiceRunActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
@@ -40,7 +43,9 @@ import { resolveCliVoicePromptPreparation } from '@/agent/prompts/library/resolv
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
+import { createHappierMcpServer } from '@/mcp/createHappierMcpServer';
 import { sessionMcpAgentTransport } from '@/mcp/runtime/sessionMcpClient.testkit';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createSessionDaemonAuthorityFixture } from '@/mcp/runtime/sessionDaemonAuthority.testkit';
 import { createDaemonSessionAccountActionExecutor } from '@/daemon/agentRuntime/createDaemonSessionAccountActionExecutor';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
@@ -92,6 +97,7 @@ const { DaemonVoiceAgentClient } = await import('../../../../../../../apps/ui/so
 const { createVoiceRunActionReverseHandler } = await import('../../../../../../../apps/ui/sources/voice/agent/voiceRunActionReverseHandler');
 const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('../../../../../../../apps/ui/sources/voice/session/voiceSessionStore');
 const { storage } = await import('../../../../../../../apps/ui/sources/sync/domains/state/storage');
+const { voiceSessionBindingStore } = await import('../../../../../../../apps/ui/sources/voice/binding/voiceConversationBindingStore');
 
 /** Recorded OpenCode 1.19 vendor peer; the SDK ACP decoder and tool binding stay real. */
 async function openCodePeer(prompt: (text: string) => Promise<string>) {
@@ -140,6 +146,119 @@ async function openCodePeer(prompt: (text: string) => Promise<string>) {
 
 afterEach(async () => { resetVoiceSessionStoreForTests(); await homes.reset(); vi.restoreAllMocks(); vi.unstubAllEnvs();
   reloadConfiguration(); resetActiveAccountSettingsSnapshotForTests(); });
+
+it('uses the bound Voice Session for native Memory discovery and ask-first Save', async () => {
+  const serverId = await homes.addHome({ name: 'Voice Memory', serverUrl: 'https://voice-memory.test',
+    accountId: 'alice', currentAccount: true });
+  const actionId = 'memory.remember';
+  const actionsSettingsV1 = { v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['voice'] } } };
+  homes.answer(serverId, 'GET /v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
+    actionsSettingsV1, voice: { ...settingsDefaults.voice, canApproveRequests: false },
+  } } } });
+  homes.answer(serverId, 'GET /v1/public-shares', { body: { publicShares: [] } });
+  const carrier = 'cmwec73r300gbmcvijq3b0p9z';
+  const targetId = 'cmwec73r300gcmcvijq3b0p9z';
+  const turnId = 'memory-turn';
+  const run = { runId: 'run_memory', occurrenceId: 'memory-occurrence', sidechainId: 'memory-sidechain' };
+  const controller = new AbortController();
+  const actionInvocation = { surface: 'voice', caller: { kind: 'host' }, authority: 'account_automation' } as const;
+  const account = await captureLazyActionAccountContext(serverId);
+  const ref = { kind: 'doc' as const, artifactId: 'memory-doc', serverId };
+  const text = 'Remember Jade Umbrella.';
+  const saveInput = { ref, expectedRevision: { headerVersion: 1, bodyVersion: 1 }, text };
+  const target = createSessionFixture({ id: targetId, serverId, metadata: { ...createTestMetadata(),
+    workspaceId: 'project-workspace', work: { memoryEnabled: true, promptStack: [
+      { id: 'project.memory', ref, enabled: true, placement: 'system_append' },
+    ] } } });
+  const setMemory = (memoryEnabled: boolean) => storage.getState().applySessions([{
+    ...target, metadata: { ...target.metadata!, work: { ...target.metadata!.work, memoryEnabled } },
+  }]);
+  const artifacts = homes.artifacts(serverId);
+  const doc = await artifacts.handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({
+    id: ref.artifactId, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+    header: encodePlainArtifactStoredContent({ v: 1, kind: 'memory_doc.v1', title: 'Project Memory' }),
+    body: encodePlainArtifactStoredContent({ body: JSON.stringify(MemoryDocBodyV1Schema.parse({ v: 1, index: [], topics: [] })) }),
+  }) });
+  expect(doc?.ok).toBe(true);
+  let noteApproval!: () => void;
+  const approvedRequestCreated = new Promise<void>(resolve => { noteApproval = resolve; });
+  artifacts.afterNextCreate(async () => { noteApproval(); });
+  storage.getState().applySessions([createSessionFixture({ id: carrier, serverId })]);
+  setMemory(true);
+  voiceSessionBindingStore.getState().bind({ adapterId: 'local_conversation', controlSessionId: 'memory-call',
+    conversationSessionId: carrier, conversationSessionAddress: { serverId, sessionId: carrier },
+    targetSessionAddress: { serverId, sessionId: targetId }, transcriptMode: 'native_session', updatedAt: 1 });
+  setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'memory-call', status: 'connected', mode: 'listening', canStop: true });
+  const receive = createVoiceRunActionReverseHandler({ accountLifetime: account.accountLifetime,
+    client: new DaemonVoiceAgentClient(account.accountLifetime.scope, controller.signal),
+    voiceAgentId: run.runId, rpcSessionId: carrier, transcriptEpoch: 0, metadataSessionId: null,
+    backend: 'daemon', agentBackendId: 'codex', signal: controller.signal, actionInvocation,
+    toolTurnContext: { current: { turnOrigin: 'person' } },
+  }, 'memory-call');
+  const execute = createDaemonSessionAccountActionExecutor({ serverId, serverHttpBaseUrl: account.endpointUrl,
+    token: credentials.token, createExecutor: () => { throw new Error('The selected App owns Voice Actions'); },
+    getMachineClient: () => ({
+      hasConnectedClientRpcHandler: () => true,
+      callConnectedClientRpc: async (method, value, options) => {
+        expect(method).toBe(voiceRunActionClientRpcMethod(run.runId));
+        options.onIssued();
+        return { ok: true, result: await receive(value, { signal: controller.signal }) };
+      },
+    }),
+  });
+  const daemon = await createSessionDaemonAuthorityFixture({ sessionId: carrier,
+    execute: operation => execute(operation, { sessionId: carrier, isCurrent: async () => true,
+      actionInvocation, signal: controller.signal }),
+  });
+  const mcp = createHappierMcpServer({
+    sessionId: carrier, getServerBinding: () => ({ serverId, serverUrl: account.endpointUrl }),
+    rpcHandlerManager: new RpcHandlerManager({ scopePrefix: carrier, encryptionMode: 'plain' }), updateMetadata() {},
+    getMetadataSnapshot: () => createTestMetadata({ work: { memoryEnabled: false } }),
+    getRunActionInvocation: () => actionInvocation,
+    getSessionActionConfirmationBinding: () => ({ turnId, run, isCurrent: () => true, lifetimeSignal: controller.signal }),
+    getActiveTurnAdmissionWitness: () => ({ turnId, inputId: 'memory-input', userMessageSeq: 1, userMessageSeqs: [1] }),
+  }, { actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({ actionsSettingsV1 }) }) });
+  const [agentTransport, hostTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'native-voice-memory', version: '1' });
+  const call = async (actionId: string, input: Record<string, unknown>) => {
+    const reply = await client.callTool({ name: 'action_execute', arguments: { actionId, input } });
+    const block = Array.isArray(reply.content) ? reply.content.find(item => item.type === 'text') : undefined;
+    if (block?.type !== 'text') throw new Error('Missing Action result');
+    return { isError: reply.isError, payload: JSON.parse(block.text) };
+  };
+  try {
+    await mcp.mcp.connect(hostTransport);
+    await client.connect(agentTransport);
+    const discover = () => call('action.spec.get', { id: actionId });
+    const search = () => call('action.spec.search', { query: 'memory save remember phrase project' });
+    const save = () => call(actionId, saveInput);
+    expect(await discover()).toMatchObject({ payload: { actionSpec: { id: actionId, inputSchema: expect.any(Object) } } });
+    expect(await search()).toMatchObject({ payload: { actionSpecs: expect.arrayContaining([expect.objectContaining({ id: actionId })]) } });
+    const saving = save();
+    const first = await Promise.race([saving.then(result => ({ result })), approvedRequestCreated.then(() => 'approval')]);
+    expect(first).toBe('approval');
+    const approvals = artifacts.list().filter(row => row.id !== ref.artifactId);
+    expect(approvals).toHaveLength(1);
+    expect(artifacts.readPlainBody(ref.artifactId)).not.toContain(text);
+    expect(await createDefaultActionExecutor().execute('approval.request.decide', { artifactId: approvals[0]!.id, decision: 'approve' },
+      { surface: 'ui', serverId, actionCaller: { kind: 'host' } })).toMatchObject({ ok: true });
+    expect((await saving).isError ?? false).toBe(false);
+    expect(artifacts.readPlainBody(ref.artifactId)).toContain(text);
+    setMemory(false);
+    expect(await search()).toMatchObject({ payload: { actionSpecs: expect.arrayContaining([expect.objectContaining({ id: actionId })]) } });
+    const memoryOff = { isError: true, payload: { errorCode: 'action_disabled', details: { reason: 'session_memory_off' } } };
+    expect(await discover()).toMatchObject(memoryOff);
+    expect(await save()).toMatchObject(memoryOff);
+    expect(artifacts.list().filter(row => row.id !== ref.artifactId)).toHaveLength(1);
+  } finally {
+    controller.abort();
+    voiceSessionBindingStore.getState().unbind(carrier);
+    await client.close();
+    await mcp.mcp.close();
+    await daemon.close();
+    account.dispose();
+  }
+});
 
 describe('OpenCode Voice authority through shared MCP', () => {
   it.skipIf(process.platform === 'win32').each([true, false])('retains signed Voice admission and settings approval policy (canApprove=%s)', async canApprove => {

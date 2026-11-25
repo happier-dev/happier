@@ -77,7 +77,8 @@ export function createMcpActionEnablementWithServerFeatureAvailability(params: R
     surface: params.surface,
   });
   return (id) => {
-    if (!isActionEnabledWithSessionMemory(id, params.readSessionMemoryEnabled?.())) return false;
+    // A Voice Run's host Session is its carrier. The App owns the working Session's Memory choice.
+    if (params.surface !== 'voice' && !isActionEnabledWithSessionMemory(id, params.readSessionMemoryEnabled?.())) return false;
     if (!isEnabledByPolicy(id)) return false;
     const featureId = getActionRequiredServerFeatureId(id);
     if (featureId === null) return true;

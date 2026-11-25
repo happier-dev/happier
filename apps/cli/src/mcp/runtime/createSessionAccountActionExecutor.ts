@@ -64,10 +64,10 @@ export function createSessionAccountActionExecutor(params: Readonly<{
       const path = sessionProcessEnvironment()[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY];
       const useDaemonDescriptor = Boolean(path && actionId === 'action.spec.get' && input
         && typeof input === 'object' && 'id' in input && parseQualifiedPluginActionId(input.id));
-      // These reads describe the bound host's admitted catalog, not Account data.
-      // Keep its live Session policy (including memory choice) at the existing
-      // executor rather than replacing it with the daemon's Account catalog.
-      if (!routingDescriptorRead && !useDaemonDescriptor && (actionId === 'action.spec.search' || actionId === 'action.spec.get')) {
+      // Session hosts describe their own catalog. Voice uses its existing App route
+      // to describe and act on the working Session.
+      if (!voiceRun && !routingDescriptorRead && !useDaemonDescriptor
+        && (actionId === 'action.spec.search' || actionId === 'action.spec.get')) {
         return await params.base.execute(actionId, input, context);
       }
       // Restricted child reads use the bound Session's admitted corpus reader.
