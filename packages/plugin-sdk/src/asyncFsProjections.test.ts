@@ -16,6 +16,7 @@ import type {
 import { mergeAbortSignals as sourceMergeAbortSignals } from './abortSignals.js';
 import type { CoalescedScheduler as SourceCoalescedScheduler } from './runtime/coalescedScheduler.js';
 import { createCoalescedScheduler as sourceCreateCoalescedScheduler } from './runtime/coalescedScheduler.js';
+import { scheduleSearchQuery as sourceScheduleSearchQuery } from './runtime/searchQueryDebounce.js';
 import type { RaceWithTimeoutResult as SourceRaceWithTimeoutResult } from './timeout.js';
 import * as timeoutSource from './timeout.js';
 
@@ -60,6 +61,7 @@ describe('EU-3 async and filesystem package-local projections', () => {
             'createCoalescedScheduler',
             'mergeAbortSignals',
             'raceWithTimeout',
+            'scheduleSearchQuery',
             'sleep',
             'sleepWithSignal',
             'throwIfAborted',
@@ -67,6 +69,7 @@ describe('EU-3 async and filesystem package-local projections', () => {
         expect(asyncProjection.createCoalescedScheduler).toBe(sourceCreateCoalescedScheduler);
         expect(asyncProjection.mergeAbortSignals).toBe(sourceMergeAbortSignals);
         expect(asyncProjection.raceWithTimeout).toBe(timeoutSource.raceWithTimeout);
+        expect(asyncProjection.scheduleSearchQuery).toBe(sourceScheduleSearchQuery);
         expect(asyncProjection.sleep).toBe(timeoutSource.sleep);
         expect(asyncProjection.sleepWithSignal).toBe(timeoutSource.sleepWithSignal);
         expect(asyncProjection.throwIfAborted).toBe(timeoutSource.throwIfAborted);
