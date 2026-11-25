@@ -169,6 +169,9 @@ describe('Machine Execution Run owner account snapshot', () => {
                 scopeKey: resolveAccountSettingsScopeKey(f.bootstrap.credentials) });
             await expect(read({ mcpServerCatalog: true })).rejects.toMatchObject({ code: 'agent_isolation_unavailable',
                 details: { reason: 'requester_authority_unavailable' } });
+            // Raw admission is only a negative fixture for detached capture.
+            await expect(read.captureForDetachedRun?.()).rejects.toMatchObject({ code: 'provider_authorization_changed',
+                failureCause: { phase: 'account_snapshot.requester_not_current' } });
             const prepare = () => prepareExecutionRunRuntimeProviderLaunch({ scope: 'detached',
                 runId: 'detached-run', agentId: 'codex', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
                 selection: { modelId: 'fixture-native-model', agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null },
