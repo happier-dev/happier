@@ -26,7 +26,7 @@ import { decodeBase64 } from "privacy-kit";
 import { createAutomation } from "@/app/automations/automationCrudService";
 import nacl from "tweetnacl";
 import { signMachineInstallationProof } from "@happier-dev/protocol/machines/identity/installationIdentity";
-import { buildManagedSessionBirthProofPayloadV1, MANAGED_SESSION_BIRTH_HEADER_V1 } from "@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1";
+import { buildManagedSessionBirthProofPayloadV1, MANAGED_SESSION_BIRTH_HEADER_V1, SESSION_LAUNCH_HEADER_V1 } from "@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1";
 import { projectAutomationSessionLifecycleLaunchProfileId } from "@happier-dev/protocol/automations/automationSessionLifecycle";
 import { registerSessionCreateOrLoadRoute } from "@/app/api/routes/session/registerSessionCreateOrLoadRoute";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
@@ -34,6 +34,8 @@ import { applySessionTurnMutation, updateSessionMetadataEnvelopeTuple } from "@/
 import { transitionSessionArchiveStateInTx } from "@/app/session/archive/transitionSessionArchiveStateInTx";
 
 const authentication = createPresentUserSessionAccessAuthentication({ env: {} });
+// Server identity is cached for the process, so all launch cases share it.
+const sessionStartServerId = "srv_sessionstartscope";
 
 function initialTrigger(machineId: string): SessionInitialTriggerAdmissionV1 {
     const automationId = randomUUID();
@@ -48,6 +50,18 @@ function initialTrigger(machineId: string): SessionInitialTriggerAdmissionV1 {
         triggers: [{ triggerId: AutomationTriggerIdSchema.parse(`${automationId}-start`),
             trigger: { kind: "sessionLifecycle", enabled: true, events: ["sessionStarted"], policy: { kind: "everyMatch" } } }],
     };
+}
+
+async function createSessionStartMachine(accountId: string) {
+    const keys = nacl.sign.keyPair();
+    const installationId = randomUUID();
+    const machine = await db.machine.create({ data: {
+        id: randomUUID(), accountId, installationId, installationPublicKey: Buffer.from(keys.publicKey),
+        metadata: encodePlainMachineStoredContent({ host: "session-start", platform: "linux", happyCliVersion: "test",
+            homeDir: "/home/test", happyHomeDir: "/home/test/.happier" }),
+        dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+    } });
+    return { machine, installationId, privateKey: keys.secretKey };
 }
 
 async function credentialFixture(accountId: string, teamId: string) {
@@ -90,24 +104,14 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("t
     afterAll(async () => { await db.$disconnect(); });
 
     it.each(["CLI", "Home", "unplaced"] as const)("commits the eligible Session-start Runs for a %s birth", async launch => {
-        // Server identity is cached for the process, so all launch cases share it.
-        const serverId = "srv_sessionstartscope";
-        vi.stubEnv("HAPPIER_SERVER_IDENTITY_ID", serverId);
+        vi.stubEnv("HAPPIER_SERVER_IDENTITY_ID", sessionStartServerId);
         vi.stubEnv("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
-        const keys = nacl.sign.keyPair();
-        const installationId = randomUUID();
-        const machine = await db.machine.create({ data: {
-            id: randomUUID(), accountId: account.id, installationId,
-            installationPublicKey: Buffer.from(keys.publicKey),
-            metadata: encodePlainMachineStoredContent({ host: "session-start", platform: "linux", happyCliVersion: "test",
-                homeDir: "/home/test", happyHomeDir: "/home/test/.happier" }),
-            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
-        } });
         try {
+            const { machine, installationId, privateKey } = await createSessionStartMachine(account.id);
             const profileId = "draft-parity-qa";
             const template = initialTrigger(machine.id).triggers[0]!.trigger;
-            const subject = { kind: "machine", serverId, machineId: machine.id } as const;
+            const subject = { kind: "machine", serverId: sessionStartServerId, machineId: machine.id } as const;
             const filter = { v: 1, all: [{ op: "eq", field: "/launchProfileId", value: profileId }] } as const;
             const triggers = [template, { ...template, subject }, { ...template, filter }, { ...template, subject, filter },
                 { ...template, filter, events: ["sessionArchived"] },
@@ -126,10 +130,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("t
                 const body = { tag: randomUUID(), metadataLayoutVersion: 1, encryptionMode: "plain",
                     sharedMetadata: { ciphertext: JSON.stringify({ v: 1 }) },
                     ownerMetadata: { t: "plain" as const, v: { v: 1 as const } }, dataEncryptionKey: null };
-                const proof = signMachineInstallationProof({ privateKey: keys.secretKey,
+                const proof = signMachineInstallationProof({ privateKey,
                     payload: buildManagedSessionBirthProofPayloadV1({ accountId: account.id, machineId: machine.id, installationId, body }) });
                 const headers = { "x-test-user-id": account.id, "x-happier-account-stored-content-protocol": "4",
-                    "x-happier-session-launch-v1": JSON.stringify({
+                    [SESSION_LAUNCH_HEADER_V1]: JSON.stringify({
                         ...(launch === "Home" ? { machineId: machine.id } : {}),
                         profileDigest: projectAutomationSessionLifecycleLaunchProfileId(profileId),
                     }),
@@ -177,6 +181,65 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("t
             vi.unstubAllEnvs();
         }
     });
+
+    it.each(["foreign Machine header without a grant", "revoked Machine signature", "replaced Machine signature"] as const)(
+        "admits only the unscoped Session-start Run for a %s", async placement => {
+            vi.stubEnv("HAPPIER_SERVER_IDENTITY_ID", sessionStartServerId);
+            vi.stubEnv("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
+            try {
+                const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+                const isForeign = placement === "foreign Machine header without a grant";
+                const owner = isForeign
+                    ? await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } })
+                    : account;
+                const { machine, installationId, privateKey } = await createSessionStartMachine(owner.id);
+                // Keep the workflow's execution Machine independent of the launch subject.
+                const { machine: executionMachine } = await createSessionStartMachine(account.id);
+                const definition = initialTrigger(executionMachine.id);
+                const unscoped = definition.triggers[0]!;
+                const scoped = {
+                    triggerId: AutomationTriggerIdSchema.parse(`${definition.automationId}-scoped-start`),
+                    trigger: { ...unscoped.trigger,
+                        subject: { kind: "machine", serverId: sessionStartServerId, machineId: machine.id } },
+                };
+                await createAutomation({ accountId: account.id, input: AutomationDefinitionCreateRequestSchema.parse({
+                    ...definition, triggers: [unscoped, scoped],
+                }) });
+                const body = { tag: randomUUID(), metadataLayoutVersion: 1, encryptionMode: "plain",
+                    sharedMetadata: { ciphertext: JSON.stringify({ v: 1 }) },
+                    ownerMetadata: { t: "plain" as const, v: { v: 1 as const } }, dataEncryptionKey: null };
+                const profileDigest = projectAutomationSessionLifecycleLaunchProfileId("draft-parity-qa");
+                const headers = { "x-test-user-id": account.id, "x-happier-account-stored-content-protocol": "4",
+                    [SESSION_LAUNCH_HEADER_V1]: JSON.stringify({ ...(isForeign ? { machineId: machine.id } : {}), profileDigest }),
+                    ...(!isForeign ? { [MANAGED_SESSION_BIRTH_HEADER_V1]: JSON.stringify({ machineId: machine.id,
+                        proof: signMachineInstallationProof({ privateKey, payload: buildManagedSessionBirthProofPayloadV1({
+                            accountId: account.id, machineId: machine.id, installationId, body,
+                        }) }),
+                    }) } : {}),
+                };
+                if (placement === "revoked Machine signature") {
+                    await expect(inTx(tx => revokeMachineInTx(tx, { accountId: account.id, machineId: machine.id })))
+                        .resolves.toMatchObject({ ok: true });
+                } else if (placement === "replaced Machine signature") {
+                    await inTx(tx => applyMachineReplacement({ tx, accountId: account.id, oldMachineId: machine.id,
+                        replacementMachineId: executionMachine.id, reason: "Session birth proof", source: "manual",
+                        actorUserId: account.id, confirmActiveOldMachine: true }));
+                }
+                await withAuthenticatedTestApp(registerSessionCreateOrLoadRoute, async app => {
+                    const response = await app.inject({ method: "POST", url: "/v1/sessions", headers, payload: body });
+                    expect(response.statusCode, response.body).toBe(200);
+                    const sessionId: string = response.json().session.id;
+                    const runs = await db.automationRun.findMany({ where: { causeSourceSessionId: sessionId,
+                        causeSessionLifecycleEvent: "sessionStarted" }, select: { triggerId: true } });
+                    expect.soft(runs.map(run => run.triggerId)).toEqual([unscoped.triggerId]);
+                    const session = await db.session.findUniqueOrThrow({ where: { id: sessionId }, select: { launchProfileDigest: true } });
+                    expect(session.launchProfileDigest).toBeNull();
+                });
+            } finally {
+                vi.unstubAllEnvs();
+            }
+        },
+    );
 
     it.each(["grant", "primary-team", "credential-binding", "initial-trigger"] as const)("creates with %s admission while an independent publisher advances the Account cursor on every attempt", async admission => {
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
