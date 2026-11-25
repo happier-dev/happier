@@ -307,15 +307,20 @@ async function crashLatestHost(harness: Awaited<ReturnType<typeof createHarness>
 const HOST_COMMAND = '/runtime/bin/happier session-host';
 
 describe('session host launch', () => {
-  it('retains the socket reset when an idle prestarted host retires during admission', { timeout: 120_000 }, async () => {
+  it.each([
+    { scenario: 'admits Add when its prestart hold closes during admission', resetTransport: false },
+    { scenario: 'preserves a transport reset during Add as a typed failure', resetTransport: true },
+  ])('$scenario', { timeout: 120_000 }, async ({ resetTransport }) => {
     const preloadsBefore = census.runnerPreloads;
     let beginAdd!: () => void;
     const addReachedHost = new Promise<void>(resolve => { beginAdd = resolve; });
     let finishAdd!: () => void;
     const peerRead = new Promise<void>(resolve => { finishAdd = resolve; });
     let holdAdmitted = false;
+    let addRequests = 0;
     const harness = await createHarness(undefined, async () => {
       if (holdAdmitted) {
+        addRequests += 1;
         beginAdd();
         await peerRead;
       }
@@ -326,24 +331,50 @@ describe('session host launch', () => {
     try {
       await vi.waitFor(() => expect(census.runnerPreloads).toBe(preloadsBefore + 1));
       holdAdmitted = true;
-      const admission = harness.sessionHost.addSession({ trackingKey: 'reset-during-admission',
+      const [holdSocket] = hostSockets;
+      const trackingKey = 'session-during-prestart-release';
+      const admission = harness.sessionHost.addSession({ trackingKey,
         argv: ['codex'], env: {}, cwd: testHome });
       await addReachedHost;
-      intent.abort();
-      await harness.hosts[0]!.host.whenEnded;
+      if (resetTransport) {
+        for (const socket of hostSockets) if (socket !== holdSocket) socket.destroy();
+      } else {
+        const holdClosed = once(holdSocket!, 'close');
+        intent.abort();
+        await holdClosed;
+        finishAdd();
+      }
       const added = await admission;
-      if (added.status !== 'failed' || added.result.type !== 'error') throw new Error('Expected admission reset');
-      expect(projectSessionSpawnFailure(added.result)).toMatchObject({ type: 'error', code: 'spawn_failed',
-        launchError: { code: 'ECONNRESET', failureCause: { phase: 'client_start',
-          carrierFailure: { closingSide: 'peer_or_transport', closingStage: 'local_http_head' },
-          actionCause: { phase: 'session_host.admission', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null },
-        } },
-      });
-      expect(harness.hostedEnvironments).toEqual([]);
+      if (resetTransport) {
+        expect(added).toMatchObject({ status: 'failed' });
+        if (added.status !== 'failed' || added.result.type !== 'error') throw new Error('Expected admission reset');
+        expect(projectSessionSpawnFailure(added.result)).toMatchObject({ type: 'error', code: 'spawn_failed',
+          launchError: { code: 'ECONNRESET', failureCause: { phase: 'client_start',
+            carrierFailure: { closingSide: 'peer_or_transport', closingStage: 'local_http_head' },
+            actionCause: { phase: 'session_host.admission', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null },
+          } },
+        });
+        expect(harness.hostedEnvironments).toEqual([]);
+      } else {
+        expect(added).toMatchObject({ status: 'added' });
+        if (added.status !== 'added') throw new Error('Expected Session admission');
+        expect(harness.hosts).toHaveLength(1);
+        expect(addRequests).toBe(1);
+        expect(harness.hosts[0]!.host.watchSession(trackingKey)).not.toBeNull();
+        expect(harness.hostedEnvironments).toHaveLength(1);
+        harness.releaseAll();
+        await expect(added.session.ended).resolves.toMatchObject({ exitCode: 0, hostLost: false });
+        await harness.hosts[0]!.host.whenEnded;
+      }
     } finally {
       intent.abort();
       finishAdd();
       await held;
+      harness.releaseAll();
+      for (const { process, host } of harness.hosts) {
+        process.emit('SIGTERM');
+        await host.whenEnded;
+      }
     }
   });
   it('retains a host admission refusal in the public spawn failure without starting a Session', { timeout: 120_000 }, async () => {

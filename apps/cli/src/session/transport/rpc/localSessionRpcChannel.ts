@@ -811,6 +811,17 @@ async function handleSessionHostRequest(current: Ingress, request: IncomingMessa
     reply(response, 404, { error: 'No session host on this endpoint', errorCode: 'local_session_unavailable' });
     return;
   }
+  if (request.url === HOST_ADD_PATH) {
+    // Count the Add before reading its body or checking the daemon's birth: the last intent
+    // hold can close while either is pending. Response close covers completion and disconnect.
+    try {
+      response.once('close', host.hold(false));
+    } catch (error) {
+      if (!(error instanceof SessionHostClosingError)) throw error;
+      reply(response, 503, { error: error.message, errorCode: SESSION_HOST_CLOSING });
+      return;
+    }
+  }
   let body: unknown;
   try { body = JSON.parse(await readBody(request)); } catch {
     reply(response, 400, { error: 'Invalid session host request', errorCode: 'RPC_FORBIDDEN' });
