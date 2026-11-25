@@ -146,10 +146,12 @@ it('mounts the registered page area, changes followed context and reloads config
           adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { readResource },
         });
         try {
-          await vi.waitFor(async () => { expect(await body.getByText(String(count))).toEqual({ content: String(count) }); });
-          await body.getByText(`${filter === 'files' ? 'Files' : 'Folders'} · ${directory}`);
+          const label = filter === 'files' ? 'Files' : 'Folders';
+          const metric = { name: `${label}: ${count}` };
+          await vi.waitFor(async () => { await body.getByRole('group', metric); });
+          await body.getByText(`${label} · ${directory}`);
           await body.press(await body.getByRole('button', { name: 'Refresh count' }));
-          await vi.waitFor(async () => { expect(await body.getByText(String(count))).toEqual({ content: String(count) }); });
+          await vi.waitFor(async () => { await body.getByRole('group', metric); });
         } finally { await body.dispose(); }
       }
     } finally { await pageMount.dispose(); }
