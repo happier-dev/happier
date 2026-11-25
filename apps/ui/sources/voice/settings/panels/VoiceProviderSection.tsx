@@ -937,8 +937,9 @@ export function useVoiceConversationsReadinessModel(props: {
     }));
   };
 
-  const checkProviderReadiness = (agentOnly = false): void => {
+  const checkProviderReadiness = (mode: 'provider' | 'localAgent' | 'manual'): void => {
     if (isCheckingPassiveSetup || !voice.providerId || !selectedReadinessCheckKey) return;
+    const agentOnly = mode === 'localAgent';
     const revision = ++checkedReadinessRevision.current;
     const accountScopeLifetime = activeAccountScopeLifetime;
     const machineId = typeof props.executionMachineId === 'string'
@@ -953,7 +954,7 @@ export function useVoiceConversationsReadinessModel(props: {
       && executionMachineTarget.isOnline,
     );
     const localAgentProbe = localAgentReadinessTarget && machineId && executionMachineTarget.isOnline && accountScopeLifetime
-      ? { serverId: accountScopeLifetime.scope.serverId, machineId, accountLifetime: accountScopeLifetime, target: localAgentReadinessTarget, force: true }
+      ? { serverId: accountScopeLifetime.scope.serverId, machineId, accountLifetime: accountScopeLifetime, target: localAgentReadinessTarget, force: mode === 'manual' }
       : null;
     if (agentOnly && !localAgentProbe) return;
     const canInspectRawSpeech = !agentOnly && voice.providerId === 'local_conversation'
@@ -1029,7 +1030,7 @@ export function useVoiceConversationsReadinessModel(props: {
   checkProviderReadinessRef.current = checkProviderReadiness;
   React.useEffect(() => {
     if (selectedReadinessCheckKey && props.autoCheckReadiness) {
-      checkProviderReadinessRef.current(props.autoCheckReadiness === 'localAgent');
+      checkProviderReadinessRef.current(props.autoCheckReadiness);
     }
   }, [props.autoCheckReadiness, selectedReadinessCheckKey]);
 
@@ -1122,7 +1123,7 @@ export function useVoiceConversationsReadinessModel(props: {
     serviceTiles, isOff, select, selectService, voice, visibleRows, selectedServiceBillingRows,
     selectedProviderReadiness: effectiveSelectedProviderReadiness,
     selectedProviderCredentialResolving: selectedProviderRow?.credentialResolving === true,
-    isCheckingPassiveSetup, checkProviderReadiness: () => checkProviderReadiness(), showCheckedReadiness, checkedReadinessRecoveryHandler,
+    isCheckingPassiveSetup, checkProviderReadiness: () => checkProviderReadiness('manual'), showCheckedReadiness, checkedReadinessRecoveryHandler,
     checkedProviderResult, checkedReadinessRecoveryAction, checkedReadinessRevision, checkedReadiness,
     selectedExternalRow, selectedExternalDeclaration, selectedExternalCredentials, selectedExternalContribution,
     selectedExternalHasSavedSecret, selectedExternalHasConnectedAccount, selectedExternalCredentialAccessIsRaw,

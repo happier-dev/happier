@@ -2149,10 +2149,12 @@ describe('VoiceProviderSection', () => {
         const { resolveRuntimeFeatureDecision } = await import('@/sync/domains/features/featureDecisionInputs');
         expect(await resolveRuntimeFeatureDecision({ featureId: 'voice.agent' })).toMatchObject({ state: 'enabled' });
         expect(getAcpCatalogSnapshot(accountFixture.scope)).toBeNull();
-        function ColdHome({ machineId = 'machine-1', selectedVoice = voice }: { machineId?: string; selectedVoice?: typeof voice }) {
+        function ColdHome({ machineId = 'machine-1', selectedVoice = voice, open }: {
+            machineId?: string; selectedVoice?: typeof voice; open?: 'provider' | 'localAgent';
+        }) {
             const model = useVoiceConversationsReadinessModel({ voice: selectedVoice, setVoice: vi.fn(), happierVoiceSupported: true,
                 platformOs: 'web', executionMachineId: machineId,
-                executionMachineSelectedId: machineId, executionMachineSelectionKind: 'resolved',
+                executionMachineSelectedId: machineId, executionMachineSelectionKind: 'resolved', autoCheckReadiness: open,
                 localAvailability: { browserSpeech: { support: 'cloud_only', onDevice: 'unsupported' }, daemon: {
                     featureEnabled: true, route: 'direct', modelState: 'ready', runtimeState: 'available', pcmCapture: 'available',
                 }, nativeDevice: { requested: false } },
@@ -2214,6 +2216,20 @@ describe('VoiceProviderSection', () => {
         await act(async () => { await refreshMachineAgents({ serverId: lifetime.scope.serverId, machineId: 'machine-1', accountLifetime: lifetime, force: true }); });
         expect(readMachineAgentsForScope(lifetime, 'machine-1').agents.find(agent => agent.agentId === 'claude'))
             .toMatchObject({ state: 'needsSignIn', stale: false });
+        const countDetects = () => machineRequests.filter(request =>
+            request.method === `machine-1:${RPC_METHODS.CAPABILITIES_DETECT}`).length;
+        const initialDetects = countDetects();
+        // The legacy full inventory response lacks an authStatus projection. The
+        // selected readiness demand settles once and is shared across both panels.
+        await screen.update(<ColdHome open="provider" />);
+        await screen.update(<ColdHome />);
+        expect(countDetects() - initialDetects).toBe(1);
+        const afterFirstOpen = countDetects();
+        for (const open of ['localAgent', 'provider'] as const) {
+            await screen.update(<ColdHome open={open} />);
+            await screen.update(<ColdHome />);
+        }
+        expect(countDetects() - afterFirstOpen).toBe(0);
         const requestsBefore = machineRequests.length;
         await act(async () => {
             const preparation = beginVoiceSessionRuntimePreparation({ adapterId: 'local_conversation', sessionId: 'voice-home',
@@ -2238,6 +2254,7 @@ describe('VoiceProviderSection', () => {
             .toMatchObject({ readiness: { code: 'ready' }, canTry: true }));
         expect(readMachineAgentsForScope(lifetime, 'machine-1').agents.find(agent => agent.agentId === 'claude'))
             .toMatchObject({ state: 'ready', stale: false });
+        expect(countDetects() - afterFirstOpen).toBe(1);
         expect(getVoiceSessionFailedAttempt('local_conversation', accountFixture.scope)).toMatchObject({ errorMessage: 'agent_signed_out' });
         expect(screen.tree.root.findByType('ColdHome').props).toMatchObject({ readiness: { status: 'ready', code: 'ready' }, canTry: true });
         await screen.update(<ColdHome machineId="machine-2" />);
