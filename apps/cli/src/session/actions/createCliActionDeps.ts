@@ -592,8 +592,11 @@ export function createCliActionDeps(params: CliActionDepsParams,
     // caller/target authority; the Session identifies the binding, not a new principal.
     const context: ActionExecutorContext = { ...caller, defaultSessionId: input.sessionId };
     let response: unknown;
-    if (params.invokeContributedAction) {
-      const result = await params.invokeContributedAction({ action, input, context, ...(caller?.signal ? { signal: caller.signal } : {}) });
+    // The standalone CLI composes its placement-aware dispatcher in the final
+    // executor. Reuse it here so approval replay takes the ordinary Action route.
+    const invokeContributedAction = readEffectiveDeps?.().invokeContributedAction ?? params.invokeContributedAction;
+    if (invokeContributedAction) {
+      const result = await invokeContributedAction({ action, input, context, ...(caller?.signal ? { signal: caller.signal } : {}) });
       if (!result.ok) throw createActionExecuteFailureError(result);
       response = result.result;
     } else {

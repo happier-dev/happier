@@ -10890,7 +10890,10 @@ the optional `postWriteFailure` Action failure envelope on that receipt.
 A projection failure can leave the set's private details unavailable. A failed
 Channels binding change leaves the saved trigger revision available for recovery.
 The receipt carries the binding Action’s typed refusal when available. An
-unclassified binding exception returns a generic Action failure.
+unclassified binding exception returns a generic Action failure. The CLI's
+Account executor uses its contributed Action dispatcher for automatic PR
+attachment. An uncoded attachment exception records the request ID, redacted
+message and top frame in the executing CLI or daemon's local file log.
 Older strict 0.3 readers require matching source for this result field.
 
 Development FIN placement: `workflow.trigger.*` Actions own Account trigger data,

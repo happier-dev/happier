@@ -1,4 +1,5 @@
-import { readActionFailureCauseV1, createActionRefusalDetailsV1, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureCauseV1, createActionRefusalDetailsV1, projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import type { CliActionDepsParams, ResolvedSessionTransport } from './cliActionDeps/types';
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import type { logger } from '@/ui/logger';
@@ -232,8 +233,23 @@ export function createCliWorkflowFamily(
           return [...result.pullRequestLinks];
         },
         attach: async ({ sessionId, pullRequest, ...target }, caller) => {
-          const result = await invokeSessionPullRequestBinding({ kind: 'attach', sessionId, pullRequest, target }, caller);
-          if (result.kind !== 'attached') throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable', details: createActionRefusalDetailsV1('target_unavailable', 'channels_operation_mismatch') });
+          try {
+            const result = await invokeSessionPullRequestBinding({ kind: 'attach', sessionId, pullRequest, target }, caller);
+            if (result.kind !== 'attached') throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable', details: createActionRefusalDetailsV1('target_unavailable', 'channels_operation_mismatch') });
+          } catch (error) {
+            try {
+              if (error instanceof Error && !caller?.signal?.aborted && !readActionErrorCodeV1(error)) {
+                const { logger } = await import('@/ui/logger');
+                const topFrame = error.stack?.split('\n').find(line => /^\s+at /u.test(line))?.trim();
+                logger.warnLocalFile('Workflow PR binding attachment exception', {
+                  requestId: caller?.actionRequestId,
+                  message: redactBugReportSensitiveText(error.message),
+                  ...(topFrame ? { topFrame: redactBugReportSensitiveText(topFrame) } : {}),
+                });
+              }
+            } catch { /* Diagnostics cannot replace the committed write's follow-up result. */ }
+            throw error;
+          }
         },
         removeTrigger: async (input, caller) => {
           const result = await invokeSessionPullRequestBinding({ kind: 'removeTrigger', ...input }, caller);

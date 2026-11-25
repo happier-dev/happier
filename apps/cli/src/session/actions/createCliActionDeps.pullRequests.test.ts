@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCliActionDeps } from './createCliActionDeps';
+import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { AutomationConversationActionInputSchemasV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
@@ -27,10 +28,11 @@ import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots'
 import { createTargetActionInvocationRegistry } from '@/plugins/runtime/invocation/targetActionRegistry';
 import { createTargetActionHostBindingResolver } from '@/plugins/runtime/hostAccess/resolve';
 import { createPluginInvocationServiceBinding, createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
-import { readConversationConnectionUpdateRow, withConversationConnectionPayload } from '../../../../../packages/plugins/channels/src/accountLocalBindingPolicy';
+import { readConversationBindingUpdateRow, readConversationConnectionUpdateRow, withConversationConnectionPayload } from '../../../../../packages/plugins/channels/src/accountLocalBindingPolicy';
 import { CHANNEL_STATE_COLLECTION, CHANNEL_STATE_FIELD, CHANNEL_STATE_RECORD_KIND } from '../../../../../packages/plugins/channels/src/collections';
 import { runConversationCheckpointedPollForInvocation } from '../../../../../packages/plugins/channels/src/ingress';
 import { MemoryCollection } from '../../../../../packages/plugins/channels/src/testkit/memoryCollection';
+import { logger } from '@/ui/logger';
 
 const boundary = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), request: vi.fn(), rpc: vi.fn() }));
 // Only authenticated HTTP and Machine RPC are replaced; Session routing and Actions stay real.
@@ -182,9 +184,10 @@ describe('CLI session pull request binding', () => {
       effect: { kind: 'pull_request', number: 42, url: pullRequest.url }, message: expect.stringContaining('denied') } });
   });
 
-  it.each(['current', 'first poll settles', 'provider retired', 'connection changed', 'comments permission denied', 'connected workflow trigger', 'unconnected workflow trigger'] as const)(
+  it.each(['current', 'first poll settles', 'provider retired', 'connection changed', 'comments permission denied', 'connected workflow trigger', 'unconnected workflow trigger', 'workflow attachment transport exception'] as const)(
     'composes PR attachment in a Team Session with a fresh repository (%s)', async (authority) => {
-    const workflowTrigger = authority === 'connected workflow trigger' || authority === 'unconnected workflow trigger';
+    const unexpectedAttachmentFailure = authority === 'workflow attachment transport exception';
+    const workflowTrigger = authority === 'connected workflow trigger' || authority === 'unconnected workflow trigger' || unexpectedAttachmentFailure;
     const accountId = 'original-account';
     const token = workflowTrigger ? `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature` : 'token';
     const ordinaryRead = boundary.get.getMockImplementation()!;
@@ -409,6 +412,7 @@ describe('CLI session pull request binding', () => {
     boundary.rpc.mockImplementation(async ({ machineId, method, request }: { machineId: string; method: string; request: unknown }) => {
       if (method === 'scm.pullRequest.openOrReuse') return nativeResponse;
       if (method !== 'action.invoke') throw new Error(`Unexpected Machine RPC ${method}`);
+      if (workflowTrigger) throw new Error('Machine RPC unavailable in the Account executor fixture');
       expect(machineId).toBe('session-machine');
       const transport = TargetedActionRpcRequestV1Schema.parse(request);
       expect(transport.defaultSessionId).toBe(sessionId);
@@ -420,19 +424,26 @@ describe('CLI session pull request binding', () => {
       attaches++;
       return invokeCore('session-pull-request-binding-v1', input);
     });
-    const deps = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId, mode: 'plain', ctx: null,
+    const hostParams = { token, credentials: { token, encryption: null }, sessionId, mode: 'plain', ctx: null,
       resolveServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated', features: FeaturesResponseSchema.parse({ features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {} }) }),
-      ...(workflowTrigger ? { invokeContributedAction: async ({ action, input, context }) => {
+    } satisfies Parameters<typeof createCliActionDeps>[0];
+    const diagnostic = vi.spyOn(logger, 'warnLocalFile');
+    const deps = workflowTrigger ? createCliActionExecutorHarness(hostParams, {
+      invokeContributedAction: async function dispatchAfterCommittedSave({ action, input, context }) {
         expect(action).toEqual({ pluginId: CHANNELS_MANIFEST.id, localId: SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1 });
-        expect(context).toMatchObject({ surface: 'cli', actionCaller: { kind: 'host' }, defaultSessionId: sessionId });
+        expect(context).toMatchObject({ surface: 'cli', actionCaller: { kind: 'host' }, defaultSessionId: sessionId, actionRequestId: linkRequestId });
         const binding = SessionPullRequestBindingInputV1Schema.parse(input);
-        expect(binding).toMatchObject({ kind: 'attach', target: { triggerKind: 'prComment' } });
+        expect(binding).toMatchObject({ kind: 'attach', target: {
+          automationId: savedRow?.id, triggerId: savedRow?.triggers[0]?.id, triggerRevision: 0, triggerKind: 'prComment',
+        } });
+        expect(savedRow).toBeDefined();
         expect(binding).not.toHaveProperty('credentialRef');
+        if (unexpectedAttachmentFailure) throw new Error('Attachment transport failed with Bearer fixture-secret_123+/=');
         attaches++;
         const result = await invokeCore(action.localId, binding);
         return parseActionExecuteFailure(result) ?? { ok: true as const, result };
-      } } : {}),
-    });
+      },
+    }).deps : createCliActionDeps(hostParams);
     const open = () => deps.scmActionExecute!({ actionId: 'scm.pullRequest.openOrReuse', input: { cwd: '/repo', base: { kind: 'branch', name: 'main' } },
       context: { surface: 'cli', actionCaller: { kind: 'host' }, defaultSessionId: sessionId,
         externalActionTarget: { kind: 'machine', machineId: 'scm-machine' } },
@@ -470,14 +481,14 @@ describe('CLI session pull request binding', () => {
           });
           return { status: 200, data: structuredClone(savedRow) };
         });
-        credentialConnected = authority === 'connected workflow trigger';
+        credentialConnected = authority !== 'unconnected workflow trigger';
         const receipt = await deps.workflowAction!({
           actionId: 'workflow.trigger.add',
           input: { lifetimeSession: { sessionId }, project: { machineId: 'session-machine', directory: '/repo' },
             target: { kind: 'inline', definition: { version: 1, blocks: [{ kind: 'action', id: 'notify',
               actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Ready' } } }] } },
             trigger: { kind: 'prComment', enabled: true, pullRequest: qualified.pullRequest } },
-          context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } },
+          context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId: linkRequestId },
         });
         expect(receipt).toMatchObject({ set: { revision: 1 }, triggerRevision: 0 });
         if (!savedRow) throw new Error('Expected a committed Automation');
@@ -486,7 +497,26 @@ describe('CLI session pull request binding', () => {
         expect(saved?.triggers).toHaveLength(1);
         expect(receipt).toMatchObject({ set: { automationId: savedRow.id, revision: 1 },
           triggerId: saved?.triggers[0]?.id, triggerRevision: 0 });
-        if (credentialConnected) {
+        const scopedBindings = [...state.rows.values()].flatMap(row => {
+          const bindingId = row.value[CHANNEL_STATE_FIELD.bindingId];
+          if (row.value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.binding || typeof bindingId !== 'string') return [];
+          const { binding } = readConversationBindingUpdateRow({ row, bindingId });
+          return binding.target.kind === 'automation' ? [binding.target] : [];
+        });
+        expect(scopedBindings).toEqual(credentialConnected && !unexpectedAttachmentFailure
+          ? [expect.objectContaining({ automationId: savedRow.id, scopedTrigger: expect.objectContaining({
+            sessionId, triggerId: saved?.triggers[0]?.id, triggerRevision: 0,
+          }) })] : []);
+        if (unexpectedAttachmentFailure) {
+          expect(receipt).toMatchObject({ postWriteFailure: { ok: false, errorCode: 'action_failed', error: 'action_failed',
+            failureCause: { phase: 'workflow.trigger.pr_binding', errorClass: 'Error', errorCode: null, httpStatus: null } } });
+          expect(JSON.stringify(receipt)).not.toContain('Attachment transport failed');
+          expect(diagnostic).toHaveBeenCalledWith('Workflow PR binding attachment exception', expect.objectContaining({
+            requestId: linkRequestId, message: 'Attachment transport failed with Bearer [REDACTED]',
+            topFrame: expect.stringContaining('dispatchAfterCommittedSave'),
+          }));
+          expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('fixture-secret');
+        } else if (credentialConnected) {
           expect(receipt).not.toHaveProperty('postWriteFailure');
           expect(attaches).toBe(1);
         } else {
@@ -533,6 +563,6 @@ describe('CLI session pull request binding', () => {
       nativeResponse = ScmPullRequestOpenOrReuseResponseSchema.parse({ success: false, errorCode: 'COMMAND_FAILED', error: 'Native open refused' });
       expect(await open()).toBe(nativeResponse);
       expect(adds).toBe(2); expect(attaches).toBe(3);
-    } finally { controller.abort(); registry.dispose(); await core.dispose(); await triage.dispose(); await provider.dispose(); }
+    } finally { diagnostic.mockRestore(); controller.abort(); registry.dispose(); await core.dispose(); await triage.dispose(); await provider.dispose(); }
   });
 });
