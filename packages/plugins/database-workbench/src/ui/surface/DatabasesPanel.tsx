@@ -114,7 +114,8 @@ function DatabaseRows(
     [instance, props.context.hostApi],
   );
   if (connecting && scope.kind === 'worktree') {
-    return <DatabaseConnection scope={scope} onCancel={() => { setConnecting(false); refresh(); }} onConnected={() => {
+    return <DatabaseConnection scope={scope} onFileOpened={() => setConnecting(false)}
+      onCancel={() => { setConnecting(false); refresh(); }} onConnected={() => {
       setConnecting(false);
       refresh();
     }} />;

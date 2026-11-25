@@ -191,7 +191,8 @@ function RailTab(
     [current, instance, props.context, props.launch.scope],
   );
   if (connecting && scope.kind === 'worktree') {
-    return <DatabaseConnection scope={scope} onCancel={() => { setConnecting(false); picker.refresh(); }} onConnected={descriptor => {
+    return <DatabaseConnection scope={scope} onFileOpened={() => setConnecting(false)}
+      onCancel={() => { setConnecting(false); picker.refresh(); }} onConnected={descriptor => {
       picker.select(databaseTargetKey(descriptor));
       setOpenedKey(null);
       setConnecting(false);

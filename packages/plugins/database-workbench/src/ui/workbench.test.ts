@@ -3,6 +3,7 @@ import type { DatabaseOperationResultV1, DatabaseRelationStructureV1 } from '@ha
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import { DATABASE_EDITS_APPLY_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
+import { describeDatabaseConnection } from '../connection.js';
 import type { WorkbenchClient, WorkbenchLocation } from './models.js';
 import { workbenchTargetKey, createWorkbenchInstance } from './workbench.js';
 
@@ -172,7 +173,6 @@ it('keeps typed filters, full FK Back state and loaded-only export on the same c
 });
 
 it('projects target facts from the connection and Machine owners without inventing a catalogue count', async () => {
-    const { describeDatabaseConnection } = await import('../connection.js');
     let known = true;
     const machineReads: { serverId: string; machineId: string }[] = [];
     const selected = { ...descriptor, ...describeDatabaseConnection('postgresql://alice:private@localhost:5432/billing?token=private') ,

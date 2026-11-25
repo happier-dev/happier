@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     DATABASE_ACCESS_READ_ACTION_ID_V1,
     DATABASE_ACCESS_SET_ACTION_ID_V1,
+    DATABASE_DESCRIBE_ACTION_ID_V1,
     DATABASE_RELATIONS_LIST_ACTION_ID_V1,
     DATABASE_ROWS_READ_ACTION_ID_V1,
     DATABASE_SCHEMAS_LIST_ACTION_ID_V1,
@@ -1497,23 +1498,20 @@ describe('Database workbench surfaces', () => {
     const installed = { ...descriptor, target: { ...placement, kind: 'manual' as const, savedSecretId: 'saved-url' } };
     let targets: DatabaseDescriptorV1[] = [];
     let ready = false;
-    const operate = vi.fn(async (request: PluginUiTestkitExecuteActionInput) => {
-      const { action, input } = request;
-      if (action === connect) {
-        expect(input).toMatchObject({ scope, savedSecretRef: 'saved-url' });
+    const operate = vi.fn((request: PluginUiTestkitExecuteActionInput) => daemonAnswers(targets)(request));
+    const write = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async request => {
+      if (request.action === connect) {
+        expect(request.input).toMatchObject({ scope, savedSecretRef: 'saved-url' });
         targets = [installed];
-        if (!ready) throw new PluginError({ code: 'database_target_unavailable', message: 'Database is offline.' });
-        return projectNativeJsonValueForTransport(installed);
+        if (!ready) return { ok: false, errorCode: 'database_target_unavailable', error: 'Database is offline.' };
+        return { ok: true, result: projectNativeJsonValueForTransport(installed) };
       }
-      return daemonAnswers(targets)(request);
-    });
-    const unlink = vi.fn(async (request: Parameters<Parameters<typeof createPluginUiActionControlTestHost>[0]>[0]) => {
       expect(request).toMatchObject({ action: forget, input: { target: installed.target } });
       expect(request.input).toEqual({ target: installed.target });
       targets = [];
-      return { ok: true as const, result: { ok: true } };
+      return { ok: true, result: { ok: true } };
     });
-    const control = createPluginUiActionControlTestHost(unlink);
+    const control = createPluginUiActionControlTestHost(write);
     const render = container === 'servicesPanel' ? renderPanel : renderRail;
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: container, mountNonce: 'connect-empty' },
@@ -1542,19 +1540,63 @@ describe('Database workbench surfaces', () => {
       await act(async () => { await fixture.press(start); });
       const secret = await fixture.findByRole('button', { name: 'Saved database URL' });
       await act(async () => { await fixture.press(secret); });
-      const connectButton = await fixture.findByRole('button', { name: 'Test and connect' });
-      await act(async () => { await fixture.press(connectButton); });
-      const retry = await fixture.findByRole('button', { name: 'Try again' });
+      await act(async () => control.press('Test and connect'));
+      expect(control.presentation('Try again')).toBeDefined();
       expect(control.presentation('Forget database')).toBeDefined();
       ready = true;
-      await act(async () => { await fixture.press(retry); });
-      await act(async () => { await Promise.resolve(); });
-      expect(control.presentation('Forget database')).toBeDefined();
-      expect(unlink).not.toHaveBeenCalled();
+      await act(async () => control.press('Try again'));
+      await settle();
+      expect(await fixture.getByText(installed.label)).toBeTruthy();
+      expect(write.mock.calls.map(([request]) => request.action)).toEqual([connect, connect]);
       await act(async () => control.press('Forget database'));
-      await fixture.findByRole('button', { name: 'Connect a database' });
-      expect(unlink).toHaveBeenCalledTimes(1);
-      expect(operate.mock.calls.filter(([request]) => request.action === connect)).toHaveLength(2);
+      await settle();
+      expect(await fixture.getByText(container === 'servicesPanel'
+        ? 'No databases found in this checkout’s services'
+        : 'No database for this project yet')).toBeTruthy();
+      expect(write.mock.calls.map(([request]) => request.action)).toEqual([connect, connect, forget]);
+      expect(operate.mock.calls.some(([request]) => request.action === connect || request.action === forget)).toBe(false);
+    } finally { await fixture.dispose(); }
+  });
+
+  it.each(['servicesPanel', 'rightSidebarTab'] as const)('opens an existing SQLite file from %s', async container => {
+    const path = 'data/selected file.sqlite';
+    const target = { ...scope, source: { kind: 'sqlite_file' as const, path } };
+    const selected: DatabaseDescriptorV1 = { ...descriptor, target, engine: 'sqlite', label: path, origin: { label: path } };
+    const describe = databaseActionLocalIdV1(DATABASE_DESCRIBE_ACTION_ID_V1);
+    const dispatch = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async request => {
+      expect(request).toMatchObject({ action: describe, input: { operation: 'describe', target } });
+      return { ok: true, result: projectNativeJsonValueForTransport({ ok: true, operation: 'describe', descriptor: selected }) };
+    });
+    const control = createPluginUiActionControlTestHost(dispatch);
+    const openSurface = vi.fn<NonNullable<PluginUiTestkitHostHandlers['openSurface']>>(async () => {});
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: container, mountNonce: 'selected-sqlite-file' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: container === 'servicesPanel' ? renderPanel : renderRail,
+      launchInput: projectNativeJsonValueForTransport({ scope }),
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
+        pluginId: 'happier.database', localId: container === 'servicesPanel' ? 'databases-panel' : 'database-session-rail',
+      }, container },
+      target: container === 'servicesPanel' ? { kind: 'services' } : { kind: 'session', sessionId: 'session' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { executeAction: daemonAnswers([]), actionControl: control.handler, openSurface },
+    });
+    try {
+      await fixture.press(await fixture.findByRole('button', { name: 'Connect a database' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Use a SQLite file' }));
+      const field = document.querySelector<HTMLInputElement>('input[aria-label="SQLite file path"]')!;
+      expect(field).toBeTruthy();
+      expect(control.presentation('Open SQLite file')?.disabled).toBe(true);
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, path);
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await act(async () => control.press('Open SQLite file'));
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(openSurface).toHaveBeenCalledWith(expect.objectContaining({
+        view: expect.objectContaining({ localId: WORKBENCH_PAGE_VIEW_ID }),
+        subPath: expect.stringContaining(encodeWorkbenchRootSubPath(target)),
+      }));
     } finally { await fixture.dispose(); }
   });
 

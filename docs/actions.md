@@ -2372,6 +2372,11 @@ history stay under the editor's device scope, and staged edits remain in
 the mounted Workbench until the reviewed Apply. The Open Action returns
 a location outcome and carries no Console content.
 
+The mounted Connect form submits Saved Secret associations through host
+`Action.Control`. To open an existing SQLite file, the form describes the
+selected Worktree file target through the existing daemon Action, then opens
+the returned descriptor in the shared Workbench.
+
 Navigate and Draft Read address an existing Database Workbench on the selected
 answering client with its published `mountId`. Navigate uses the same location
 owner as the page controls. Draft Read admits Access Read for the selected
