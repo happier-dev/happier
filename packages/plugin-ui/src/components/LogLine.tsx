@@ -34,8 +34,11 @@ const LOG_LINE_GUTTER_CHAR_PX = HAPPIER_SPACE_STEPS.s8;
  */
 const LOG_LINE_LEAD: HappierStyleProp = Object.freeze({ flexShrink: 1, minWidth: 0 });
 const LOG_LINE_MESSAGE: HappierStyleProp = Object.freeze({ flexBasis: '50%', minWidth: 0 });
-/** A message moved under its lead stays with it: one small step, not the column gap. */
-const LOG_LINE_WRAPPED: HappierStyleProp = Object.freeze({ rowGap: HAPPIER_SPACE_STEPS.s2 });
+/**
+ * A message moved under its lead stays with it, line against line: the row's own rhythm (above and below each entry) is
+ * what parts one entry from the next, so a phone's two-line entries read as pairs (DBW review R6 P2).
+ */
+const LOG_LINE_WRAPPED: HappierStyleProp = Object.freeze({ rowGap: 0 });
 
 /**
  * One log row, the same in every log: a muted tabular gutter, the source's own columns, then the message,

@@ -128,12 +128,22 @@ const databaseActionDeclarations = {
     [database.DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1]: { ...read, title: 'List captured logs' },
     [database.DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1]: { ...read, title: 'List captured endpoints' },
     [database.DATABASE_CAPTURE_CLEAR_ACTION_ID_V1]: {
-        ...write, dangerLevel: 'destructive', title: 'Clear database capture', placementBindings: ['contextMenu'], approvalScope: 'environment',
-        confirmation: { title: 'Delete the captured database activity?' },
+        ...write, dangerLevel: 'destructive', title: 'Clear capture', placementBindings: ['contextMenu'], approvalScope: 'environment',
+        // One wording for the act everywhere it is offered (menu "Clear capture…"); the body says its consequence once.
+        confirmation: {
+            title: 'Clear capture?',
+            body: 'Removes recorded requests, traces and logs for this checkout. Capture stays on.',
+            confirmLabel: 'Clear capture',
+        },
     },
     [database.DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1]: {
-        ...write, dangerLevel: 'writesLocal', title: 'Configure database capture', placementBindings: ['secondary'],
-        confirmation: { title: 'Change database capture for this project?' },
+        ...write, dangerLevel: 'writesLocal', title: 'Change capture', placementBindings: ['secondary'],
+        // Turning capture on, off and retrying it are this one Action: the confirmation names the change and its cost.
+        confirmation: {
+            title: 'Change capture for this project?',
+            body: 'Turning capture on or off restarts this checkout’s dev servers once.',
+            confirmLabel: 'Change capture',
+        },
     },
     [database.TELEMETRY_METRICS_READ_ACTION_ID_V1]: { ...read, title: 'Read selected telemetry metrics' },
     [database.TELEMETRY_COSTS_READ_ACTION_ID_V1]: { ...read, title: 'Read selected app LLM cost operands' },

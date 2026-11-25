@@ -18,6 +18,7 @@ import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { usePluginUiSurfaceBridge } from './surfaceBridge.js';
 import { useCollectionDetailHeadingBindingInternal } from './Focus.js';
 import { HappierColumnEdgeContext, useHappierColumnEdgePx } from '../presentation/layout/columnEdge.js';
+import { HappierTextActionEdgeContext } from '../presentation/interaction/textActionEdge.js';
 import { useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
 
 export type DetailsPaneProps = Readonly<{
@@ -344,19 +345,20 @@ export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title
   const latestClose = useRef(props.onClose);
   latestClose.current = props.onClose;
   const backLabel = props.backLabel;
+  const columnEdgePx = useHappierColumnEdgePx();
   useEffect(() => {
     if (publishBack === undefined) return undefined;
     publishBack(() => { latestClose.current(); }, backLabel);
     return () => publishBack(null);
   }, [backLabel, publishBack]);
   const backTestID = props.testID === undefined ? {} : { testID: `${props.testID}:back` };
-  const back = (style?: HappierStyleProp, trailing?: ReactNode) => <View style={style}>{backLabel === undefined ? <IconButton
+  const back = (style?: HappierStyleProp, trailing?: ReactNode, textEdge: 'start' | null = null) => <View style={style}><HappierTextActionEdgeContext.Provider value={textEdge}>{backLabel === undefined ? <IconButton
     icon={<Icon name="back" tone="secondary" />}
     accessibilityLabel={translate('happier.plugin-ui.detailsPane.back', 'Back')}
     onPress={props.onClose}
     {...backTestID}
   /> : <Button variant="plain" size="small" singleLine icon={<Icon name="back" tone="secondary" />} title={backLabel}
-    onPress={props.onClose} {...backTestID} />}{trailing}</View>;
+    onPress={props.onClose} {...backTestID} />}</HappierTextActionEdgeContext.Provider>{trailing}</View>;
   const backInBand = hostBack || publishBack !== undefined;
   // While the story carries the title the band is the way back alone: the title is said once, in the story that
   // scrolls (lab merged-detail-pr phone, "‹ PRs & Issues" above the large title; DESIGN-LIVE-225).
@@ -366,9 +368,11 @@ export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title
       flexDirection: 'row',
       alignItems: 'center',
       gap: HAPPIER_PAGE_METRICS.rowLeadingGapPx,
-      paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx - HAPPIER_PAGE_METRICS.headingOpticalInsetPx,
+      // The way back starts on the story's text edge: the column already brings its own edge (phone page),
+      // and the plain label sits on that edge rather than its own padding (review P1, ~30 px in on 390).
+      paddingHorizontal: Math.max(0, HAPPIER_PAGE_METRICS.pageTextInsetPx - HAPPIER_PAGE_METRICS.headingOpticalInsetPx - columnEdgePx),
       paddingTop: HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx,
-    });
+    }, undefined, 'start');
   }
   return (
     <HappierPageHeadingBindingContext.Provider value={headingRef}>
