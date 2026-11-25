@@ -32,8 +32,9 @@ import {
 } from './statements.js';
 import { StatementsView } from './StatementsView.js';
 import { TablesView } from './TablesView.js';
+import { WorktreeCaptureQueries } from './WorktreeCaptureQueries.js';
 
-type InsightsTab = 'statements' | 'tables' | 'activity' | 'sources' | 'findings';
+type InsightsTab = 'statements' | 'tables' | 'activity' | 'sources' | 'findings' | 'queries';
 const NO_KEYS: readonly string[] = Object.freeze([]);
 
 /** Statements read once per open; the comparison is the host's device-local last look (R13). */
@@ -130,7 +131,9 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
   const descriptor = instance.target(props.targetKey);
   const [selectedTab, setTab] = React.useState<InsightsTab>('statements');
   const sources = useInsightSources(descriptor);
-  const tab = selectedTab === 'sources' && sources.length === 0 ? 'statements' : selectedTab;
+  const worktree = descriptor.target.kind === 'worktree' ? descriptor.target : null;
+  const tab = (selectedTab === 'sources' && sources.length === 0) || (selectedTab === 'queries' && !worktree)
+    ? 'statements' : selectedTab;
   const statements = useInsightsStatements(props.targetKey);
   const presented = usePluginSurfaceActivity().active;
   const activity = useDatabaseActivity(props.targetKey, ACTIVITY_READ, tab === 'activity' && presented);
@@ -167,7 +170,7 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
         title={translate('plugins.database.insights.title', 'Insights')}
         meta={facts}
         actions={
-          tab === 'sources' || tab === 'findings' || (tab === 'activity' && !activity.supported) ? null : (
+          tab === 'sources' || tab === 'findings' || tab === 'queries' || (tab === 'activity' && !activity.supported) ? null : (
             <IconButton
               accessibilityLabel={translate(
                 'plugins.database.refresh',
@@ -187,7 +190,7 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
         value={tab}
         onValueChange={(value) =>
           setTab(
-            value === 'tables' || value === 'activity' || value === 'sources' || value === 'findings' ? value : 'statements',
+            value === 'tables' || value === 'activity' || value === 'sources' || value === 'findings' || value === 'queries' ? value : 'statements',
           )
         }
         ariaLabel={translate('plugins.database.insights.title', 'Insights')}
@@ -230,6 +233,9 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
         <Tabs.Item value="findings" title={translate('plugins.database.insights.findings', 'Findings')}>
           <NativeFindings key={props.targetKey} target={descriptor.target} targetKey={props.targetKey} />
         </Tabs.Item>
+        {worktree ? <Tabs.Item value="queries" title={translate('plugins.database.capture.queries', 'Queries')}>
+          {tab === 'queries' && presented ? <WorktreeCaptureQueries key={props.targetKey} target={worktree} /> : null}
+        </Tabs.Item> : null}
         {sources.length > 0 ? <Tabs.Item value="sources"
           title={translate('plugins.database.insights.sources', 'Insight sources')}>
           <InsightSources key={props.targetKey} sources={sources} target={descriptor.target} />

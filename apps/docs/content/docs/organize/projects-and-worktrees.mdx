@@ -167,6 +167,11 @@ statistics where the engine shares them. Expand a schema to see its tables.
 When the database has an **Automations** section, it shows automations for that
 target.
 
+For a Worktree database with local capture, open **Insights → Queries** to see
+statements captured for the selected database. Open a statement for its masked
+detail. If it belongs to a captured request, choose **Inspect request** to see
+any likely N+1 findings for that request.
+
 To change how often **Activity** refreshes, go to **Settings → Plugins →
 Database Workbench** and edit **Activity refresh interval (ms)**. The default
 is 5,000 ms while Activity is open. Enter 0 to refresh manually.

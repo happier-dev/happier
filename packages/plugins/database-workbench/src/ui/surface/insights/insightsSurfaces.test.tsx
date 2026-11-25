@@ -3,6 +3,10 @@
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
+    DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
+    DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1,
+    DATABASE_CAPTURE_RESOURCE_REF_V1,
+    DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1,
     DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1,
     DATABASE_INSIGHTS_FINDINGS_DISMISS_ACTION_ID_V1,
     DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
@@ -194,6 +198,75 @@ function pageContext() {
 }
 
 describe('Database Insights surfaces', () => {
+  it('reads the selected Worktree database captures and likely N+1 on demand', async () => {
+    const target = descriptor.target;
+    if (target.kind !== 'worktree' || target.workspace.kind === 'managed') {
+      throw new Error('Expected a local Worktree database');
+    }
+    const source = {
+      kind: 'worktree', serverId: target.workspace.serverId, machineId: target.workspace.machineId,
+      workspaceId: target.workspace.workspaceId, projectId: target.projectKey,
+    } as const;
+    const selected = {
+      id: 'captured-lines', traceId: 'captured-request', worktree: 'selected-partition',
+      kind: 'query', source: 'wire', shape: LINES, at: 1, durationMs: 3,
+    } as const;
+    const capture = vi.fn(async (request: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
+      expect(request.input).toMatchObject({ source, databaseTarget: target });
+      const action = typeof request.action === 'string' ? request.action : request.action.localId;
+      switch (action) {
+        case databaseActionLocalIdV1(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1):
+          return { ok: true, source, items: [selected] };
+        case databaseActionLocalIdV1(DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1):
+          expect(request.input).toMatchObject({ id: selected.id });
+          return { ok: true, source, detail: { sql: 'Masked statement detail' } };
+        case databaseActionLocalIdV1(DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1):
+          expect(request.input).toMatchObject({ traceId: selected.traceId });
+          return { ok: true, source, traceId: selected.traceId, summaries: [selected], slowChildSpans: [], logCorrelations: [],
+            repeatedQueries: [{ traceId: selected.traceId, requestSpanId: 'request', shape: LINES,
+              kind: 'suspected_n_plus_one', repetitionCount: 3, totalDatabaseTimeMs: 9,
+              observationIds: [selected.id], callsites: [], explanation: 'Different parameter values within one request' }],
+          };
+        default:
+          throw new Error(`Unexpected Capture Action ${action}`);
+      }
+    });
+    const nativeRead = daemon(statements);
+    const page = await createPluginUiTestkit({
+      identity: { instanceId: 'insights-capture', mountNonce: 'insights-capture' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }),
+      subPath: 'insights',
+      surfaceContext: pageContext(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        ...resourceHandlers(),
+        executeAction: request => typeof request.action !== 'string'
+          && request.action.pluginId === DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId ? capture(request) : nativeRead(request),
+        replacePageLocation: async ({ subPath }) => subPath,
+      },
+    });
+    try {
+      await settle();
+      expect(capture).not.toHaveBeenCalled();
+      await page.press(await page.getByRole('tab', { name: 'Queries' }));
+      await settle();
+      expect(capture).toHaveBeenCalledTimes(1);
+      await page.press(await page.getByRole('button', { name: LINES }));
+      await settle();
+      expect(await page.queryByText('Masked statement detail')).toBeTruthy();
+      expect(capture).toHaveBeenCalledTimes(2);
+      await page.press(await page.getByRole('button', { name: 'Inspect request' }));
+      await settle();
+      expect(await page.queryByText('Likely N+1')).toBeTruthy();
+      expect(await page.queryByText('Different parameter values within one request')).toBeTruthy();
+      expect(capture).toHaveBeenCalledTimes(3);
+    } finally {
+      await page.dispose();
+    }
+  });
+
   it('refreshes the selected Activity and shows its sample time in manual mode', async () => {
     const activityReads = vi.fn((): DatabaseStatsObservationV1 => ({
       v: 1, engineId: 'postgresql', observedAtMs: Date.parse('2026-11-17T14:05:00Z'),
