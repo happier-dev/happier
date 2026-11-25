@@ -774,8 +774,10 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
             : current.filter(value => value !== choice.sourceId)); setResult(null); }} />} />)}
       </ItemGroup> : <Item title={t('projects.deployments.settingsSections.setupNoDatabaseTitle')}
         subtitle={t('projects.deployments.settingsSections.setupNoDatabaseBody')} mode="info" />}
-    <ItemGroup title={t('projects.deployments.settingsSections.keepTitle')} description={sourceWord(props.defaults?.sources.backupRetention)}>
-      {retention?.kind === 'keepEverything' ? <Item title={t('projects.deployments.backupKeepEverything')} mode="info" /> : null}
+    {/* What the counts mean at 0 is said once, above them, rather than as a row beside four zeros (R16-D7). */}
+    <ItemGroup title={t('projects.deployments.settingsSections.keepTitle')} description={[
+      retention?.kind === 'keepEverything' ? t('projects.deployments.settingsSections.keepEverythingNote') : null,
+      sourceWord(props.defaults?.sources.backupRetention)].filter(Boolean).join(' · ') || undefined}>
       {KEEP_FIELDS.map(field => <FieldValueItem key={field} testID={`${id}.keep.${field}`} fieldTestID={`${id}.keep.${field}.input`}
         title={t(`projects.deployments.settingsSections.${KEEP_LABEL[field]}`)} kind="integer" allowEmpty placeholder="0" value={keep[field]}
         stepper={{ min: 0, max: Number.MAX_SAFE_INTEGER, step: 1 }} compactStepper disabled={locked}

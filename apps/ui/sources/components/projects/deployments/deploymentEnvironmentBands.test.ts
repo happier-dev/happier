@@ -102,7 +102,7 @@ describe('deploymentEnvironmentRowLeadState (DESIGN "Phones recompose")', () => 
 });
 
 describe('deploymentEnvironmentBands sentences (lab band lines)', () => {
-  it('names the one Environment that needs the person and its state; several read as a count', async () => {
+  it('leaves one Environment that needs the person to its own row; several read as a count (R16-D10)', async () => {
     const { deploymentEnvironmentBands } = await import('./DeploymentEnvironmentRows');
     const other = { projectSourceId: 'docs', projectName: 'docs', title: 'Production', state: null };
     const one = deploymentEnvironmentBands([
@@ -110,15 +110,16 @@ describe('deploymentEnvironmentBands sentences (lab band lines)', () => {
       { projectSourceId: 'shop', projectName: 'billing-api', title: 'Staging', state: { tone: 'danger' as const, text: 'Failed' } },
       other,
     ]);
-    const band = one.axis.find((group) => group.key === 'shop') as { description?: string };
-    expect(band.description).toContain('Staging');
-    expect(band.description).toContain('Failed');
+    // The Failed row right beneath already says "Staging · Failed": the band repeating it says it twice.
+    expect(one.axis.find((group) => group.key === 'shop')).not.toHaveProperty('description');
     const several = deploymentEnvironmentBands([
       { projectSourceId: 'shop', projectName: 'billing-api', title: 'Production', state: { tone: 'warning' as const, text: 'Running, not verified' } },
       { projectSourceId: 'shop', projectName: 'billing-api', title: 'Staging', state: { tone: 'danger' as const, text: 'Failed' } },
       other,
     ]);
-    expect((several.axis.find((group) => group.key === 'shop') as { description?: string }).description).not.toContain('Staging');
+    const severalBand = several.axis.find((group) => group.key === 'shop') as { description?: string };
+    expect(severalBand.description).toBeDefined();
+    expect(severalBand.description).not.toContain('Staging');
   });
 });
 

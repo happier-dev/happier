@@ -12530,7 +12530,7 @@ settingsSession: {
         deleteAccount: "刪除帳戶",
         deleteAccountSubtitle: "從此Home永久刪除此帳戶及其資料",
         deleteAccountConfirmTitle: "刪除此帳戶？",
-        deleteAccountConfirmBody: "這會永久刪除此Home上儲存的帳戶資料，且無法復原。請輸入 DELETE 以繼續。",
+        deleteAccountConfirmBody: "這會永久刪除此Home上儲存的帳戶資料。請輸入 DELETE 以繼續。",
         deleteAccountInvalidTitle: "確認內容不相符",
         deleteAccountInvalidBody: "請輸入完全一致的 DELETE 以繼續。",
         deleteAccountFailedTitle: "未確認刪除",

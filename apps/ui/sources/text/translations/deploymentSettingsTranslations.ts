@@ -264,6 +264,7 @@ export type DeploymentSettingsTranslations = Readonly<{
   setupReceiverMachine: string;
   setupLocalWarning: string;
   setupLocalGrowth: string;
+  keepEverythingNote: string;
   setupCapacityKnown: string;
   setupCapacityUnknown: string;
   setupCapacityAtBackupMachine: string;
@@ -455,11 +456,12 @@ export const deploymentSettingsTranslations = {
     setupNeedsSource: "Choose what to back up first.",
     setupNeedsDestination: "Fill in where backups go first.",
     setupNeedsCredential: ({ credential }: { credential: string }) => `${credential}: choose a saved secret first.`,
-    setupInitializeAndSave: "Initialize repository and save",
+    setupInitializeAndSave: "Create repository and save",
     setupAnotherMachine: "Another Machine",
     setupReceiverMachine: "Destination Machine",
     setupLocalWarning: "On this Machine · not an off-site copy",
-    setupLocalGrowth: "Keep everything never deletes backups automatically. This disk can fill up.",
+    setupLocalGrowth: "Every backup is kept, so this disk can fill up.",
+    keepEverythingNote: "With every count at 0, all backups are kept.",
     setupCapacityKnown: "Free space",
     setupCapacityUnknown: "Free space unavailable",
     setupCapacityAtBackupMachine: "Review free space on the Machine that owns this backup path.",

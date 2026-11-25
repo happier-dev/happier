@@ -64,19 +64,15 @@ type BandRow = Pick<Row, 'projectSourceId' | 'projectName' | 'title' | 'state'>;
 export function deploymentEnvironmentBands<T extends BandRow>(rows: readonly T[]) {
   const { banded, groups, groupOf } = deploymentProjectBands(rows, t('projects.deployments.allOtherProject'));
   const axis = groups.map((group) => {
-    // The band's line (lab "Staging deploy failed"): the one Environment that needs the person and its state, or how many.
-    // A one-Environment band says nothing: its row already says that state (one message per state).
+    // The band's line says how many of its Environments need the person when that is more than one. One is said by its
+    // own row right beneath ("Staging · Failed"), so the band naming it again says it twice (R16-D10).
     const speaking = banded && group.rows.length > 1 ? group.rows.filter(deploymentEnvironmentRowNeedsYou) : [];
-    const only = speaking.length === 1 ? speaking[0]! : null;
     return {
       key: group.key,
       title: group.title,
       section: SERVICES_ONE_SHEET,
-      ...(speaking.length > 0
-        ? { description: only && only.state
-            ? t('projects.deployments.services.bandOne', { environment: only.title, state: only.state.text })
-            : t('projects.deployments.services.needYou', { count: speaking.length }),
-          tone: 'danger' as const }
+      ...(speaking.length > 1
+        ? { description: t('projects.deployments.services.needYou', { count: speaking.length }), tone: 'danger' as const }
         : {}),
     };
   });

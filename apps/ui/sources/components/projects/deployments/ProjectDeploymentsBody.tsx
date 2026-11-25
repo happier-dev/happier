@@ -50,6 +50,8 @@ import { useNavigateToProjectOpen } from '../activation/projectOpenPresentation'
 import { DeploymentEnvironmentCollection, environmentAfterDelete } from './DeploymentEnvironmentCollection';
 import { ProjectDeploymentDefaultsSettings } from './ProjectDeploymentDefaultsSettings';
 import { DeploymentPreparationEntry } from './DeploymentPreparation';
+import { Button } from '@happier-dev/plugin-ui/components';
+import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import { DeploymentEnvironmentDetail, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { DeploymentEnvironmentDraft } from './DeploymentEnvironmentDraft';
 import { DeploymentReceiptDetail } from './DeploymentReceiptDetail';
@@ -223,7 +225,10 @@ const ProjectDeploymentsPage = React.memo(
     />;
     // Only a refusal is "no longer available to you"; a Home that isn't answering is said once, by the list (R2-D3).
     const sourceRefused = sourceRead.issue === 'source_unavailable' || sourceRead.issue === 'source_access_denied';
-    const preparation = !sourceAvailable && sourceRead.issue ? (sourceRefused ? sourceUnavailable('line', sourceRead.issue) : null) : newWorkEnabled && sourceAvailable && props.lifetime ? <>
+    // The identity the Prepare sheet needs before it can open a pull request. Both agent ways open one, so without a
+    // repository neither is offered anywhere on the page (R16-D4); the Project page's agent row leads to its Source.
+    const preparable = readProjectSourceRepositoryIdentityV1(sourceRead.source?.source.repository) !== null;
+    const preparation = !sourceAvailable && sourceRead.issue ? (sourceRefused ? sourceUnavailable('line', sourceRead.issue) : null) : newWorkEnabled && preparable && props.lifetime ? <>
       <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="prepare" />
       <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="import" />
     </> : null;
@@ -636,8 +641,6 @@ const ProjectDeploymentsPage = React.memo(
     // ways as one row.
     if (props.workspaceRef == null && !hasDetail) {
       const repository = sourceRead.source?.source.repository?.repository.nameWithOwner ?? null;
-      // The same identity the Prepare sheet needs before it can open a pull request.
-      const preparable = readProjectSourceRepositoryIdentityV1(sourceRead.source?.source.repository) !== null;
       const projectEnvironments = items.filter(item => item.environment.purpose !== 'preview');
       const projectPreviews = items.filter(item => item.environment.purpose === 'preview');
       return (
@@ -677,13 +680,20 @@ const ProjectDeploymentsPage = React.memo(
               <ItemGroup>
                 <Item testID="project-deployments.project.agents" title={t('projects.deployments.preparation.askAgent')}
                   // An agent proposes its files as a pull request: without a repository, the row says what it needs (R14-D9).
-                  subtitle={t(preparable ? 'projects.deployments.preparation.askAgentBody' : 'projects.deployments.preparation.noRepository')}
+                  subtitle={t(preparable ? 'projects.deployments.preparation.askAgentBody' : 'projects.deployments.preparation.askAgentNeedsRepository')}
                   subtitleLines={0} showChevron={false} accessoryLayout={phone ? 'stacked' : 'adaptive'}
-                  // Both ways open a pull request: without a repository they cannot succeed, so the row only says why (R15-D8).
+                  // Both ways open a pull request: without a repository they cannot succeed, so the row leads to the
+                  // Source, where its repository is added (R16-D4).
                   rightElement={preparable ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 }}>
                     <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="prepare" emphasis="secondary" />
                     <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="import" emphasis="plain" />
-                  </View> : undefined} />
+                  </View> : (
+                    <CorePluginUiPresentationScope>
+                      <Button testID="project-deployments.project.addRepository" variant="secondary" size="small"
+                        title={t('projects.deployments.preparation.addRepository')}
+                        onPress={() => router.push(projectSourceRoute(props.sourceId))} />
+                    </CorePluginUiPresentationScope>
+                  )} />
               </ItemGroup>
             ) : preparation ? (
               <ItemGroup header="none" surface="none">

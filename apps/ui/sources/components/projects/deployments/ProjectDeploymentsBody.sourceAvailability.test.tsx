@@ -85,6 +85,15 @@ describe('Source availability at Environment creation', () => {
           // The Project page's one New environment (PAGE-ACCEPT-176 R11-D6).
           ? 'project-deployments.project.add' : 'project-deployments.empty.deployApp'), node => node !== null);
         expect(screen.findByTestId('project-deployments.sourceUnavailable')).toBeNull();
+        // This Source has no repository: both agent ways open a pull request, so neither is offered (R16-D4), and the
+        // Project page's agent row leads to the Source where its repository is added.
+        expect(screen.findByTestId('project-deployments.prepare.open')).toBeNull();
+        expect(screen.findByTestId('project-deployments.import.open')).toBeNull();
+        if (populated) {
+          await screen.pressByTestIdAsync('project-deployments.project.addRepository');
+          const { projectSourceRoute } = await import('@/components/projects/sources/projectSourceNavigation');
+          expect(routerMock.spies.push).toHaveBeenCalledWith(projectSourceRoute('source-app'));
+        }
         if (!populated) {
           await screen.update(body('compose'));
           expect(screen.findByTestId('project-deployments.draft.composeDocument')).not.toBeNull();

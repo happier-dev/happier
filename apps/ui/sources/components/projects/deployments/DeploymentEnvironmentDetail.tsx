@@ -951,7 +951,9 @@ export const DeploymentEnvironmentDetail = React.memo(
       catalogUpdate: overview && Boolean(templateRef && (catalogUpdatePending || environment.catalogUpdate.upstream
         && environment.catalogUpdate.upstream.state !== 'current' || environment.catalogUpdate.error)),
     });
-    const deployWhenFinished = ready && deploy && availability.kind === 'ready' ? () => {
+    // "Deploy when finished" runs the repository's newest commit after the running one; a stored definition has no newer
+    // source to wait for, so it is offered only where a repository can move ahead (R16-D2).
+    const deployWhenFinished = ready && deploy && availability.kind === 'ready' && detail.content.definition.kind === 'repository' ? () => {
       void press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(onFailure ? { onFailure } : {}), whenBusy: 'supersede', ...(sourceMethod ? { sourceMethod } : {}) }));
     } : null;
     const liveDomain = liveAddress?.attention ? liveAddress.domain : null;
@@ -1057,11 +1059,13 @@ export const DeploymentEnvironmentDetail = React.memo(
         }
         case 'deploying': {
           const runningId = attention.deploymentId;
+          // What runs, to which version ("Rolling back to 5a2b720", "Deploying d3cccd4"): History's own title for it.
           return (
             <AttentionBanner
               testID="project-deployments.environment.attention.deploying"
               tone="neutral"
-              title={t('projects.deployments.overviewStatus.deployingTitle')}
+              title={latest?.source ? deploymentReceiptTitle(latest, deploymentRevisionLabel(latest.source))
+                : t('projects.deployments.overviewStatus.deployingTitle')}
               description={deployWhenFinished ? t('projects.deployments.overviewStatus.deployingBody') : undefined}
               action={{ label: t('projects.deployments.overviewStatus.openReceipt'), onPress: () => props.onOpenReceipt(runningId) }}
               {...(deployWhenFinished ? { secondaryAction: {

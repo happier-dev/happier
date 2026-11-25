@@ -29,7 +29,7 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SegmentedChoiceItem, type SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { Switch } from '@/components/ui/forms/Switch';
-import { StatusPill } from '@/components/ui/status/StatusPill';
+import { Status } from '@happier-dev/plugin-ui';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { REVEAL_DELAY_MS, useSettingReveal } from '@/components/settings/shell/SettingRow';
@@ -645,7 +645,8 @@ function ChecksRows(props: SectionProps) {
               : t('projects.deployments.checksNoServices')}
             subtitle={t('projects.deployments.checksOnMachine', { summary, machine: props.machineName(member.machineId) })}
             rightElement={failing.length > 0
-              ? <StatusPill variant="danger" label={t('projects.deployments.healthUnhealthy')} />
+              // The same dot State every Environment list uses, not a pill of its own (R16-D3).
+              ? <Status tone="danger" label={t('projects.deployments.healthUnhealthy')} presentation="inline" />
               : undefined}
             // The checks are the Machine's own services (lab r7 `Health checks` →): they are set up there.
             {...(props.onOpenMachineServices

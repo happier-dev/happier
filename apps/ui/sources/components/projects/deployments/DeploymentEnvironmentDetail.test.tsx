@@ -3882,6 +3882,31 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
     } finally { controller.retire(); }
   });
 
+  it.each([
+    { definition: 'repository', operation: 'deploy', title: 'Deploying', offersQueued: true },
+    { definition: 'stored', operation: 'rollback', title: 'Rolling back to', offersQueued: false },
+  ] as const)('names a running $operation and its version, and offers Deploy when finished only for a repository ($definition)',
+    async ({ definition, operation, title, offersQueued }) => {
+    const base = environmentDetailForHome();
+    const detail = definition === 'stored' ? { ...base, content: { ...base.content, definition: { kind: 'stored' as const,
+      document: 'services:\n  app:\n    image: nginx:1\n', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`,
+      profiles: [], services: ['app'] } } } : base;
+    const running = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'running-now', state: 'running', operation }) });
+    const { controller } = controllerFor({ detail, receipt: running, history: [running] });
+    try {
+      const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+        demand={shown} accountId="account-owner" serverId={scope.serverId} phone={false} deploy={vi.fn()}
+        review={noReview} onOpenReceipt={() => {}} />);
+      const banner = 'project-deployments.environment.attention.deploying';
+      await waitForHomeGovernance(() => expect(screen.findByTestId(banner)).not.toBeNull());
+      const text = screen.findByTestId(banner)!.findAll(node => typeof node.props?.children === 'string')
+        .map(node => node.props.children as string).join(' ');
+      expect(text).toMatch(new RegExp(`${title} [0-9a-f]{7}`));
+      expect(text).not.toContain('A deploy is running');
+      expect(screen.findByTestId(`${banner}.secondaryAction`) !== null).toBe(offersQueued);
+    } finally { controller.retire(); }
+  });
+
   it('says jobs and alerts are paused while the controller is offline, and nothing when its presence is unknown', async () => {
     const base = environmentDetailForHome();
     for (const [state, shownNotice] of [['paused', true], ['unknown', false]] as const) {
