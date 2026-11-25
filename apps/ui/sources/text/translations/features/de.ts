@@ -7823,6 +7823,7 @@ const de: typeof en = {
     policyEditingUnavailable: 'Richtlinien können von diesem Gerät noch nicht geändert werden.',
     revisionConflictTitle: 'Diese Richtlinie wurde anderswo geändert',
     revisionConflictBody: 'Jemand anderes hat gespeichert, während du bearbeitet hast. Deine Auswahl bleibt erhalten — lade dieses Home neu und wende sie erneut an.',
+    sessionDefaultsChanged: "Die Sitzungsvorgaben dieses Homes haben sich geändert. Lade die Seite neu, um die aktuellen Einstellungen zu sehen, bevor du sie weiter bearbeitest.",
     reload: 'Neu laden',
     person: {
         you: 'du',

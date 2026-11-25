@@ -7828,6 +7828,7 @@ const fr: typeof en = {
     policyEditingUnavailable: 'La modification des politiques n’est pas encore possible depuis cet appareil.',
     revisionConflictTitle: 'Cette politique a changé ailleurs',
     revisionConflictBody: 'Quelqu’un d’autre a enregistré une modification pendant ton édition. Ton choix est conservé — recharge ce Home et applique-le à nouveau.',
+    sessionDefaultsChanged: "Les réglages de session par défaut de ce Home ont changé. Recharge la page pour voir les réglages actuels avant de les modifier à nouveau.",
     reload: 'Recharger',
     person: {
         you: 'toi',

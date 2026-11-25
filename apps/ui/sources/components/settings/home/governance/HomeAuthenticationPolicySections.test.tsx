@@ -29,6 +29,9 @@ installSettingsViewCommonModuleMocks({
     storage: 'real',
     modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module,
 });
+// This renderer has no native anchor measurement. Keep the real menu and selection inline.
+vi.mock('@/components/ui/popover', async importOriginal =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 // The generated bundled-artifact inventory is an unrelated build product and
 // is deliberately absent from remote source mirrors. Keep this policy suite on
 // the real Action path while supplying the inventory boundary's valid empty
@@ -65,6 +68,49 @@ afterEach(() => {
 });
 
 describe('HomeAuthenticationPolicySections', () => {
+    it.each([
+        { status: 409, code: 'home_policy_revision_conflict', message: 'homeGovernance.sessionDefaultsChanged', refresh: true },
+        { status: 403, code: 'home_governance_forbidden', message: 'homeGovernance.errorForbidden', refresh: false },
+    ])('explains $code when saving Home Session defaults', async ({ status, code, message, refresh }) => {
+        const { HomeSessionDefaultsSection } = await import('./HomeTeamsPolicySections');
+        const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'owner' });
+        const projection = homeGovernanceProjectionFixture();
+        projection.policy = {
+            ...projection.policy,
+            revision: 5,
+            sessionDefaults: { placement: { kind: 'machine', target: { serverId, machineId: 'previous-machine' } } },
+        };
+        harness.answer(serverId, '/v1/home/policy/set', { status, body: { error: code } });
+        const reloadPolicy = vi.fn();
+        const screen = await renderScreen(<HomeSessionDefaultsSection context={{
+            scope: { serverId, accountId: 'owner' },
+            homeName: 'Home A',
+            projection,
+            mutationsAvailable: true,
+            approvalPending: false,
+            refresh: reloadPolicy,
+        }} />);
+
+        await screen.pressByTestIdAsync('home-session-defaults-machine');
+        const clearChoice = 'home-session-defaults-machine-list:machine-root:option:__none__';
+        await waitForHomeGovernance(() => expect(screen.findAll(node => typeof node.props.testID === 'string')
+            .map(node => node.props.testID)).toContain(clearChoice));
+        await screen.pressByTestIdAsync(clearChoice);
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.getTextContent()).not.toContain('common.retry');
+        const refreshId = 'home-session-defaults-refresh';
+        if (refresh) {
+            await screen.pressByTestIdAsync(refreshId);
+            expect(reloadPolicy).toHaveBeenCalledOnce();
+        } else {
+            expect(screen.findByTestId(refreshId)).toBeNull();
+            expect(reloadPolicy).not.toHaveBeenCalled();
+        }
+        expect(harness.requestsFor('/v1/home/policy/set').map(({ input }) => input)).toEqual([
+            { expectedRevision: 5, sessionDefaults: null },
+        ]);
+    });
+
     it('edits Team provider kinds through the Home policy revision owner', async () => {
         const { HomeTeamSignInRulesSection } = await import('../signInProviders/HomeSignInProviderPolicySections');
         const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'owner' });

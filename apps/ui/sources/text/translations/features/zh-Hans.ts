@@ -7708,6 +7708,7 @@ const zhHans: typeof en = {
     policyEditingUnavailable: '尚无法从此设备更改策略。',
     revisionConflictTitle: '此策略已在别处更改',
     revisionConflictBody: '你编辑时有其他人保存了更改。你的选择已保留——请重新加载此 Home 后再次应用。',
+    sessionDefaultsChanged: "此 Home 的会话默认设置已更改。请刷新页面查看当前设置，再继续编辑。",
     reload: '重新加载',
     person: {
         you: '你',

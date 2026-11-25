@@ -7812,6 +7812,7 @@ const ca: typeof en = {
     policyEditingUnavailable: 'Encara no es poden canviar les polítiques des d’aquest dispositiu.',
     revisionConflictTitle: 'Aquesta política ha canviat en un altre lloc',
     revisionConflictBody: 'Algú altre ha desat un canvi mentre editaves. La teva tria es manté: torna a carregar aquest Home i aplica-la de nou.',
+    sessionDefaultsChanged: "Els valors predeterminats de sessió d’aquest Home han canviat. Actualitza la pàgina per veure la configuració actual abans de tornar-la a editar.",
     reload: 'Torna a carregar',
     person: {
         you: 'tu',

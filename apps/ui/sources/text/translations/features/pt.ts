@@ -7806,6 +7806,7 @@ const pt: typeof en = {
     policyEditingUnavailable: 'Ainda não é possível alterar políticas a partir deste dispositivo.',
     revisionConflictTitle: 'Esta política mudou noutro sítio',
     revisionConflictBody: 'Outra pessoa guardou uma alteração enquanto editavas. A tua escolha foi mantida — recarrega este Home e aplica-a novamente.',
+    sessionDefaultsChanged: "As predefinições de sessão deste Home mudaram. Recarrega a página para ver as definições atuais antes de voltares a editá-las.",
     reload: 'Recarregar',
     person: {
         you: 'você',

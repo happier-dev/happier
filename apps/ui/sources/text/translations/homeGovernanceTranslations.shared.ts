@@ -283,6 +283,7 @@ export const en = {
     policyEditingUnavailable: 'Changing policy is not available from this device yet.',
     revisionConflictTitle: 'This policy changed elsewhere',
     revisionConflictBody: 'Someone else saved a change while you were editing. Your choice is kept — reload this Home and apply it again.',
+    sessionDefaultsChanged: "The Home’s Session defaults changed. Refresh to see the current choices before editing again.",
     reload: 'Reload',
     person: {
         you: 'you',

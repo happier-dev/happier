@@ -7839,6 +7839,7 @@ const pl: typeof en = {
     policyEditingUnavailable: 'Zmiana zasad nie jest jeszcze możliwa z tego urządzenia.',
     revisionConflictTitle: 'Te zasady zmieniono w innym miejscu',
     revisionConflictBody: 'Ktoś inny zapisał zmianę, gdy edytowałeś. Twój wybór został zachowany — odśwież ten Home i zastosuj go ponownie.',
+    sessionDefaultsChanged: "Domyślne ustawienia sesji tego Home uległy zmianie. Odśwież stronę, aby zobaczyć aktualne ustawienia przed ponowną edycją.",
     reload: 'Odśwież',
     person: {
         you: 'ty',

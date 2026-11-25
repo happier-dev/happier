@@ -22,6 +22,7 @@ import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dro
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { Icon } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { homeGovernanceFailureNotice } from '@/components/settings/home/governance/homeGovernanceLabels';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -61,6 +62,7 @@ import {
 const NONE_ID = '__none__';
 
 type SaveDefaults = (next: ManagedSessionDefaultsV1) => void;
+type DefaultsAttention = Readonly<Pick<React.ComponentProps<typeof AttentionBanner>, 'title' | 'description' | 'action' | 'accessibilityLiveRegion'>>;
 
 type RowState = Readonly<{
   serverId: string;
@@ -130,7 +132,7 @@ function TeamScopeDefaults(props: TeamScopeDefaultsProps) {
     const { context, scope, access } = props;
     const home = 'home' in props && props.home;
     const [busy, setBusy] = React.useState(false);
-    const [error, setError] = React.useState<string | null>(null);
+    const [error, setError] = React.useState<DefaultsAttention | null>(null);
     const inFlightRef = React.useRef(false);
     React.useEffect(
       () => () => {
@@ -166,20 +168,32 @@ function TeamScopeDefaults(props: TeamScopeDefaultsProps) {
                   address: context.address,
                   ...buildMemberDefaultsPatch(stored, scope, next),
                 });
-            if (outcome.kind === 'failed')
-              setError(teamMutationFailureLabel(outcome.failure));
-            else if (outcome.kind === 'approval_pending') context.requestApproval?.(outcome.artifactId);
+            if (outcome.kind === 'failed') {
+              if ('projection' in context && outcome.failure.code !== 'managed_default_machine_not_member_usable') {
+                const notice = homeGovernanceFailureNotice(outcome.failure);
+                const stale = outcome.failure.code === 'home_policy_revision_conflict';
+                setError({
+                  title: notice.title,
+                  description: stale ? t('homeGovernance.sessionDefaultsChanged') : notice.body,
+                  accessibilityLiveRegion: 'assertive',
+                  action: stale ? { label: t('common.refresh'), onPress: context.refresh, testID: `${props.testID}-refresh` } : undefined,
+                });
+              } else {
+                const description = teamMutationFailureLabel(outcome.failure);
+                if (description) setError({ title: t('homeGovernance.changeFailedTitle'), description, accessibilityLiveRegion: 'assertive' });
+              }
+            } else if (outcome.kind === 'approval_pending') context.requestApproval?.(outcome.artifactId);
           } catch (cause) {
             if (isTeamActionApprovalPendingError(cause))
               context.requestApproval?.(cause.registration);
-            else setError(t('teams.errors.generic'));
+            else setError({ title: t('homeGovernance.changeFailedTitle'), description: t('teams.errors.generic'), accessibilityLiveRegion: 'assertive' });
           } finally {
             inFlightRef.current = false;
             setBusy(false);
           }
         })();
       },
-      [context, home, scope, stored],
+      [context, scope, stored, props.testID],
     );
 
     const sessionConflicts = home ? NO_CONFLICTS : memberDefaultsConflicts(stored, scope, '', policy?.homeDefaults);
@@ -224,11 +238,7 @@ function TeamScopeDefaults(props: TeamScopeDefaultsProps) {
       <DefaultsEditor
         testID={props.testID}
         row={row}
-        attention={error || repairRequired ? {
-          title: error ? t('homeGovernance.changeFailedTitle') : t('teams.settings.memberDefaults.repairRequired'),
-          description: error ?? undefined,
-          accessibilityLiveRegion: error ? 'assertive' : undefined,
-        } : null}
+        attention={error ?? (repairRequired ? { title: t('teams.settings.memberDefaults.repairRequired') } : null)}
         // The Home's defaults are a page of their own whose header already names and explains them.
         title={home ? undefined : t('teams.settings.memberDefaults.title')}
         description={home ? undefined : description}
@@ -308,7 +318,7 @@ function ProjectScopeDefaults(props: ProjectScopeDefaultsProps) {
 function DefaultsEditor(props: Readonly<{
   testID: string;
   row: RowState;
-  attention: Readonly<Pick<React.ComponentProps<typeof AttentionBanner>, 'title' | 'description' | 'action' | 'accessibilityLiveRegion'>> | null;
+  attention: DefaultsAttention | null;
   title?: string;
   description?: string;
   placementConflict: boolean;

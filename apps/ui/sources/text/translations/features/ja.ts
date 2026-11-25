@@ -7768,6 +7768,7 @@ const ja: typeof en = {
     policyEditingUnavailable: 'この端末からはまだポリシーを変更できません。',
     revisionConflictTitle: 'このポリシーは別の場所で変更されました',
     revisionConflictBody: '編集中に他の人が保存しました。選択内容は保持されています。この Home を再読み込みして、もう一度適用してください。',
+    sessionDefaultsChanged: "この Home のセッションの既定値が変わりました。編集を再開する前に、ページを再読み込みして現在の設定を確認してください。",
     reload: '再読み込み',
     person: {
         you: 'あなた',
