@@ -3,6 +3,7 @@ import { AutomationRunCauseSchema } from '@happier-dev/protocol/automations/run-
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
+import { projectAutomationSessionLifecycleStructuralTrigger, type AutomationSessionLifecycleTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { sealAutomationRunFailureDetailStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
 import { serializeAutomationRunExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
@@ -15,7 +16,10 @@ import {
     matchAutomationAccountEncryptionMigrationPostStateInTx,
     migrateAutomationAccountEncryptionInTx,
 } from "./automationCrudService";
+import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
+
 import { encodeAutomationRunCause } from "./automationRunCauseCodec";
+import { encodeAutomationSessionLifecycleConfiguration } from "./automationSessionLifecycleConfigurationCodec";
 
 const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse(
     "8a2e26d2-5b2b-4e9b-a57f-68ca5e575dc7",
@@ -250,6 +254,23 @@ async function seedAllCauseRuns(onAccountCreated?: (accountId: string) => void) 
     });
     onAccountCreated?.(account.id);
     const eventAutomationId = "automation-account-encryption-migration-event";
+    const lifecycleDefinition = {
+        kind: "sessionLifecycle",
+        subject: {
+            kind: "session",
+            serverId: await getOrCreateServerIdentityId(),
+            sessionId: "session-account-encryption-migration",
+        },
+        events: ["userActionRequired"],
+        policy: { kind: "nextMatches", count: 2 },
+    } satisfies AutomationSessionLifecycleTrigger;
+    const lifecycleBinding = {
+        v: 1,
+        automationId: eventAutomationId,
+        triggerId: AutomationTriggerIdSchema.parse("trigger-account-encryption-migration-lifecycle"),
+        triggerRevision: 0,
+        triggerKind: "sessionLifecycle",
+    } as const;
     const eventAutomation = await db.automation.create({
         data: {
             id: eventAutomationId,
@@ -279,13 +300,15 @@ async function seedAllCauseRuns(onAccountCreated?: (accountId: string) => void) 
                         everyMs: 60_000,
                     },
                     {
-                        id: "trigger-account-encryption-migration-lifecycle",
+                        id: lifecycleBinding.triggerId,
                         kind: "sessionLifecycle",
-                        sessionLifecycleEventsJson: JSON.stringify(["userActionRequired"]),
-                        sessionLifecyclePolicyKind: "nextMatches",
-                        sessionLifecycleMatchCount: 2,
+                        ...encodeAutomationSessionLifecycleConfiguration(projectAutomationSessionLifecycleStructuralTrigger(lifecycleDefinition)),
                         remainingOccurrences: 1,
-                        sourceSessionId: "session-account-encryption-migration",
+                        definitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                            mode: "plain",
+                            binding: lifecycleBinding,
+                            definition: lifecycleDefinition,
+                        })),
                     },
                 ],
             },
@@ -481,7 +504,7 @@ async function seedAllCauseRuns(onAccountCreated?: (accountId: string) => void) 
         v: 1 as const,
         kind: "sessionLifecycle" as const,
         event: "userActionRequired" as const,
-        sourceSessionId: "session-account-encryption-migration",
+        sourceSessionId: lifecycleDefinition.subject.sessionId,
         sourceTurnId: "turn-account-encryption-migration",
         requestId: "request-account-encryption-migration",
         requestKind: "permission" as const,
@@ -553,6 +576,8 @@ async function seedAllCauseRuns(onAccountCreated?: (accountId: string) => void) 
         account,
         eventAutomation,
         eventTrigger,
+        lifecycleBinding,
+        lifecycleDefinition,
         conversationAutomation,
         eventRun,
         conversationRun,
@@ -670,6 +695,16 @@ function buildDirective(seeded: Awaited<ReturnType<typeof seedAllCauseRuns>>) {
                         randomBytes: (length) => new Uint8Array(length).fill(6),
                     }),
                     ),
+                }, {
+                    triggerId: seeded.lifecycleBinding.triggerId,
+                    triggerRevision: seeded.lifecycleBinding.triggerRevision,
+                    envelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                        mode: "e2ee",
+                        binding: seeded.lifecycleBinding,
+                        definition: seeded.lifecycleDefinition,
+                        material: triggerDefinitionMaterial,
+                        randomBytes: (length) => new Uint8Array(length).fill(8),
+                    })),
                 }],
             },
             {
@@ -782,10 +817,6 @@ export async function assertAllCauseAutomationRunMigrationToE2ee(params?: Readon
     );
     const eventTemplate = templatesByAutomationId.get(seeded.eventAutomation.id)!;
     const conversationTemplate = templatesByAutomationId.get(seeded.conversationAutomation.id)!;
-    const eventTriggerTarget = (eventTemplate.triggerDefinitionEnvelopes ?? []).find(
-        (target) => target.triggerId === seeded.eventTrigger.id,
-    )!;
-
     await expect(inTx(async (tx) =>
         await migrateAutomationAccountEncryptionInTx({
             tx,
@@ -824,14 +855,19 @@ export async function assertAllCauseAutomationRunMigrationToE2ee(params?: Readon
             templateCiphertext: true,
             templateVersion: true,
             triggers: {
-                where: { kind: "pluginEvent" },
-                select: { definitionEnvelope: true },
+                orderBy: { id: "asc" },
+                select: { id: true, definitionEnvelope: true },
             },
         },
     })).resolves.toEqual({
         templateCiphertext: eventTemplate.templateCiphertext,
         templateVersion: seeded.eventAutomation.templateVersion + 1,
-        triggers: [{ definitionEnvelope: eventTriggerTarget.envelope }],
+        triggers: [
+            ...(eventTemplate.triggerDefinitionEnvelopes ?? []).map(({ triggerId, envelope }) => ({
+                id: triggerId, definitionEnvelope: envelope,
+            })),
+            { id: "trigger-account-encryption-migration-schedule", definitionEnvelope: null },
+        ],
     });
     await expect(db.automation.findUniqueOrThrow({
         where: { id: seeded.conversationAutomation.id },

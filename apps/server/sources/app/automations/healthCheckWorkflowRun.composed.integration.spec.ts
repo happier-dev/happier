@@ -150,7 +150,8 @@ it("admits failed and recovered health transitions as ordinary Workflow runs and
     const probesBeforeRestart = probes;
     adapter = createHealthCheckSourceAdapter(() => now);
     await cycle();
-    expect(probes).toBe(probesBeforeRestart);
+    // Restart refreshes current health while retrying the retained occurrence.
+    expect(probes).toBe(probesBeforeRestart + 1);
     expect(await db.automationRun.count({ where: { automationId: automation.id } })).toBe(1);
     expect(admissions).toHaveLength(2);
     expect(admissions[1]?.results[0]).toMatchObject({ kind: "rejoined", runId: failed.id, checkpointSafe: true });

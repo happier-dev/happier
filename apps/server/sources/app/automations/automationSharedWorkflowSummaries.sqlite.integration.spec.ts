@@ -215,8 +215,10 @@ describe('Team workflow schedule summaries', () => {
             const publication = await inTx(tx => getWorkflowPublicationAudienceInTx(tx, {
                 accountId: owner.id, automationIds: [shared.id],
             }));
-            expect(publication.accountIds).toContain(viewer.id);
-            expect(publication.accountIds).not.toContain(personal.id);
+            // The publication fence admits all Artifact readers. The schedule
+            // query and its invalidation below still use the selected Team.
+            const artifactReaders = [owner.id, viewer.id, personal.id].sort();
+            expect(publication.accountIds).toEqual(artifactReaders);
             for (const id of [privateSchedule.id, randomUUID()]) {
                 const prospective = await inTx(tx => getWorkflowPublicationAudienceInTx(tx, {
                     accountId: owner.id, automationIds: [id], automationDefinitionWrite: { id, accountId: owner.id,
@@ -225,8 +227,7 @@ describe('Team workflow schedule summaries', () => {
                                 executionTarget: { kind: 'session' }, visibleTeamId: team.id } }, visibleTeamId: team.id, triggerEvidence: null,
                         }) },
                 }));
-                expect(prospective.accountIds).toContain(viewer.id);
-                expect(prospective.accountIds).not.toContain(personal.id);
+                expect(prospective.accountIds).toEqual(artifactReaders);
             }
             await inTx(tx => markAutomationChangedTx(tx, { accountId: owner.id, automationId: privateSchedule.id }));
             expect(await db.accountChange.count({ where: { accountId: viewer.id, kind: 'artifact', entityId: artifact.id } })).toBe(0);
