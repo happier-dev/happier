@@ -240,6 +240,34 @@ describe('HomeAdministrationActivityScreen', () => {
         expect(harness.requestsFor(AUDIT_PATH).map((request) => request.input)).toEqual([{}, { cursor: 'cur-2' }]);
     });
 
+    it.each([
+        { status: 403, code: 'home_governance_forbidden', message: 'homeGovernance.forbiddenBody' },
+        { status: 400, code: 'invalid_home_input', message: 'homeGovernance.invalidRead' },
+    ])('shows $code on the Activity read without Retry', async ({ status, code, message }) => {
+        const home = await addHome();
+        harness.answer(home, AUDIT_PATH, { status, body: { error: code } });
+        const screen = await renderActivity(home);
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.findByTestId('home-activity-retry')).toBeNull();
+    });
+
+    it('offers Refresh after an expired Activity page and sends a fresh read without its cursor', async () => {
+        const home = await addHome();
+        const first = homeAdministrationEventFixture({ id: 'evt-new', action: 'home.owner.claim', summary: {} });
+        harness.answer(home, AUDIT_PATH, { body: { items: [first], nextCursor: 'cur-2' } });
+        const screen = await renderActivity(home);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-activity-show-older')).not.toBeNull());
+        harness.answer(home, AUDIT_PATH, { status: 400, body: { error: 'invalid_home_cursor' } });
+        await screen.pressByTestIdAsync('home-activity-show-older');
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('homeGovernance.peopleCursorExpired'));
+        expect(screen.findByTestId('home-activity-retry')).toBeNull();
+        expect(screen.findByTestId('home-activity-row:evt-new')).not.toBeNull();
+        harness.answer(home, AUDIT_PATH, { body: { items: [], nextCursor: null } });
+        await screen.pressByTestIdAsync('home-activity-reload');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-activity-empty')).not.toBeNull());
+        expect(harness.requestsFor(AUDIT_PATH).map(({ input }) => input)).toEqual([{}, { cursor: 'cur-2' }, {}]);
+    });
+
     it('keeps loaded events visible while reopening Activity rereads the Home', async () => {
         const home = await addHome();
         const event = homeAdministrationEventFixture({ id: 'evt-retained', action: 'home.owner.claim', summary: {} });

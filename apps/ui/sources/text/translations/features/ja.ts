@@ -7653,6 +7653,8 @@ const ja: typeof en = {
     searchUnsupported: 'この Home では検索を利用できません',
     searchUnsupportedBody: 'この Home はアカウント検索を提供していません。古いバージョンの可能性があります。',
     searchFailed: '検索を完了できませんでした',
+    peopleCursorExpired: "このページは利用できなくなりました。更新して一覧の先頭に戻ってください。",
+    invalidRead: "この Home ではリクエストを認識できませんでした。",
 
     statusActive: '有効',
     statusDisabled: '無効',

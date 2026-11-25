@@ -7697,6 +7697,8 @@ const ca: typeof en = {
     searchUnsupported: 'La cerca no està disponible en aquest Home',
     searchUnsupportedBody: 'Aquest Home no ofereix cerca de comptes. Pot ser que faci servir una versió anterior.',
     searchFailed: 'No s’ha pogut completar la cerca',
+    peopleCursorExpired: "Aquesta pàgina ja no està disponible. Actualitza la llista per tornar al principi.",
+    invalidRead: "Aquest Home no ha reconegut la sol·licitud.",
 
     statusActive: 'Actiu',
     statusDisabled: 'Desactivat',

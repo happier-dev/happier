@@ -26,7 +26,8 @@ import { homeInvitePeopleAction } from './HomeInvitePeopleDialog';
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 import { homeAdministrationAccountPath } from './homeAdministrationRoutes';
 import { HomeAccountStatusPill } from './HomeAccountStatusPill';
-import { homeRoleLabel } from './homeGovernanceLabels';
+import { homePagedReadFailureLabel, homeRoleLabel } from './homeGovernanceLabels';
+import { HomePagedReadFailure } from './HomePagedReadFailure';
 import { segmentHomeAdministrationRows } from './homeAdministrationVirtualizedSegments';
 
 /**
@@ -161,6 +162,8 @@ const PeopleRoster = React.memo(function PeopleRoster(
                     // Read now: the row renders later, where the narrowing no longer holds.
                     const unsupported = search.failure.kind === 'unsupported';
                     const retry = search.failure.retryable ? search.retry : undefined;
+                    const failureReason = homePagedReadFailureLabel(search.failure, t('homeGovernance.searchFailed'));
+                    const unreachable = search.failure.kind === 'unreachable';
                     return [{
                         key: 'search-failure',
                         render: () => (
@@ -178,9 +181,9 @@ const PeopleRoster = React.memo(function PeopleRoster(
                                         testID="home-people-search-failed"
                                         state={{
                                             kind: 'failed',
-                                            reason: t('homeGovernance.searchFailed'),
+                                            reason: failureReason,
                                             onRetry: retry,
-                                            homeServerIds: [context.scope.serverId],
+                                            homeServerIds: unreachable ? [context.scope.serverId] : undefined,
                                         }}
                                     />
                                 )}
@@ -278,20 +281,18 @@ const PeopleRoster = React.memo(function PeopleRoster(
             });
         }
 
-        if (roster.error) {
-            // The pages already read stay; what could not be read is said once, with its Retry.
+        const rosterFailure = roster.error;
+        if (rosterFailure) {
             result.push({
                 key: 'retry',
                 render: () => (
                     <ItemGroup surface="none">
-                        <ItemLoadStateRows
+                        <HomePagedReadFailure
                             testID="home-people"
-                            state={{
-                                kind: 'failed',
-                                reason: t('homeGovernance.overviewPage.peopleFailed'),
-                                onRetry: roster.reload,
-                                homeServerIds: [context.scope.serverId],
-                            }}
+                            failure={rosterFailure}
+                            fallback={t('homeGovernance.overviewPage.peopleFailed')}
+                            reload={roster.reload}
+                            serverId={context.scope.serverId}
                         />
                     </ItemGroup>
                 ),

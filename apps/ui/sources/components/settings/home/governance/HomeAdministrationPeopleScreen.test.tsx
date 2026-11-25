@@ -337,6 +337,53 @@ describe('HomeAdministrationPeopleScreen', () => {
         });
     });
 
+    it.each([
+        { surface: 'page', search: false, code: 'home_governance_forbidden', status: 403, reason: 'homeGovernance.forbiddenBody' },
+        { surface: 'rail', search: false, code: 'home_governance_forbidden', status: 403, reason: 'homeGovernance.forbiddenBody' },
+        { surface: 'page', search: true, code: 'home_governance_forbidden', status: 403, reason: 'homeGovernance.forbiddenBody' },
+        { surface: 'rail', search: true, code: 'home_governance_forbidden', status: 403, reason: 'homeGovernance.forbiddenBody' },
+        { surface: 'page', search: false, code: 'invalid_home_input', status: 400, reason: 'homeGovernance.invalidRead' },
+        { surface: 'page', search: true, code: 'invalid_home_input', status: 400, reason: 'homeGovernance.invalidRead' },
+    ])('names $code in People $surface search=$search without offering Retry', async ({ surface, search, code, status, reason }) => {
+        const home = await addAdministeredHome();
+        if (search) {
+            harness.answer(home, LIST_PATH, { body: { items: [homeAccountRowFixture('ada')], nextCursor: null } });
+        }
+        harness.answer(home, search ? SEARCH_PATH : LIST_PATH, { status, body: { error: code } });
+        const { HomePeopleCollectionRail } = await import('./HomePeopleCollectionRail');
+        const { ItemLoadStateRows } = await import('@/components/ui/lists/ItemLoadStateRows');
+        const screen = surface === 'page' ? await renderPeople(home)
+            : await renderScreen(<HomePeopleCollectionRail serverId={home} selectedAccountId={null} />);
+        const prefix = surface === 'page' ? 'home-people' : 'home-people-rail';
+        if (search) {
+            await waitForHomeGovernance(() => expect(screen.findByTestId(prefix + '-search')).toBeTruthy());
+            await act(async () => { screen.changeTextByTestId(prefix + '-search', 'Ada'); });
+        }
+        const statusId = search ? prefix + '-search-failed' : prefix;
+        const failures = () => screen.tree.findAllByType(ItemLoadStateRows)
+            .filter(node => node.props.testID === statusId && node.props.state.kind === 'failed');
+        await waitForHomeGovernance(() => expect(failures()).toHaveLength(1));
+        expect(failures()[0]!.props.state).toMatchObject({ kind: 'failed', reason });
+        expect(failures()[0]!.props.state.onRetry).toBeUndefined();
+    });
+
+    it('explains an invalid continuation and reloads People from the first page', async () => {
+        const home = await addAdministeredHome();
+        harness.answer(home, LIST_PATH, {
+            body: { items: [homeAccountRowFixture('ada')], nextCursor: 'cursor-2' },
+        });
+        const screen = await renderPeople(home);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-people-load-more')).toBeTruthy());
+        harness.answer(home, LIST_PATH, { status: 400, body: { error: 'invalid_home_cursor' } });
+        await screen.pressByTestIdAsync('home-people-load-more');
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('homeGovernance.peopleCursorExpired'));
+        expect(screen.findByTestId('home-people-retry')).toBeNull();
+        harness.answer(home, LIST_PATH, { body: { items: [homeAccountRowFixture('grace')], nextCursor: null } });
+        await screen.pressByTestIdAsync('home-people-reload');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-people-row:grace')).toBeTruthy());
+        expect(harness.requestsFor(LIST_PATH).map(({ input }) => input)).toEqual([{}, { cursor: 'cursor-2' }, {}]);
+    });
+
     it('offers no search box to a viewer who may not read the Home roster', async () => {
         const home = await harness.addHome({
             name: 'Home A',

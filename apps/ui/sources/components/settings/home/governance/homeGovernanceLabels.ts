@@ -181,6 +181,14 @@ export function homeGovernanceFailureNotice(
     });
 }
 
+export function homePagedReadFailureLabel(failure: HomeDomainFailure, fallback: string): string {
+    switch (failure.code) {
+        case 'invalid_home_cursor': return t('homeGovernance.peopleCursorExpired');
+        case null: return fallback;
+        default: return homeGovernanceFailureNotice(failure, { effect: 'read' }).body;
+    }
+}
+
 export function accountErasureDeploymentRecovery(error: unknown) {
     if (!(error instanceof HappyError) || error.code !== 'account_erasure_deployment_cleanup_required') return null;
     const blocker = readErasureDeploymentBlocker(error.details);
@@ -248,9 +256,10 @@ function erasureDeploymentBlockerBody(blocker: NonNullable<ReturnType<typeof rea
 }
 
 function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 'write'): string {
+    if (effect === 'read' && failure.code === 'invalid_home_input') return t('homeGovernance.invalidRead');
     switch (failure.code) {
         case 'home_governance_forbidden':
-            return t('homeGovernance.errorForbidden');
+            return effect === 'read' ? t('homeGovernance.forbiddenBody') : t('homeGovernance.errorForbidden');
         case 'home_owner_transfer_required':
             return t('homeGovernance.errorOwnerTransferRequired');
         case 'team_owner_transfer_required':
@@ -285,7 +294,7 @@ function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 
             return t('homeGovernance.reasonHomeUnreachable');
         case 'unauthorized':
         case 'forbidden':
-            return t('homeGovernance.errorForbidden');
+            return effect === 'read' ? t('homeGovernance.forbiddenBody') : t('homeGovernance.errorForbidden');
         case 'unsupported':
             return t('homeGovernance.unsupportedBody');
         case 'conflict':

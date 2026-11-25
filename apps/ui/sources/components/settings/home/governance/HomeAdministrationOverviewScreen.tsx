@@ -51,6 +51,7 @@ import {
 } from './homeAdministrationRoutes';
 import { resolveHomeConsoleDestinations } from './homeConsoleDestinations';
 import { homeRoleLabel } from './homeGovernanceLabels';
+import { HomePagedReadFailure } from './HomePagedReadFailure';
 import { homeAdmitsStrangers, publicAddressCaption, reachAddressHost } from './homeReachPresentation';
 import { homeServerSettingTitle, homeSettingIgnoredReasonLabel } from './homeServerSettingLabels';
 import { homeSettingTitle } from './homeServerSettingsRows';
@@ -370,24 +371,23 @@ const HomeOverviewOwnership = React.memo(function HomeOverviewOwnership(props: R
     const settled = roster.status === 'ready' || roster.rows.length > 0;
     return (
         <ItemGroup title={t('homeGovernance.overviewPage.ownership')}>
-            {!settled && roster.error ? (
-                <ItemLoadStateRows
+            {roster.error && (!settled || ownersMissing) ? (
+                <HomePagedReadFailure
                     testID="home-overview-ownership-failed"
-                    state={{
-                        kind: 'failed',
-                        reason: t('homeGovernance.overviewPage.peopleFailed'),
-                        onRetry: roster.reload,
-                        homeServerIds: [context.scope.serverId],
-                    }}
+                    failure={roster.error}
+                    fallback={t('homeGovernance.overviewPage.peopleFailed')}
+                    reload={roster.reload}
+                    serverId={context.scope.serverId}
                 />
-            ) : !settled ? (
+            ) : null}
+            {!settled && !roster.error ? (
                 <ItemLoadStateRows
                     testID="home-overview-ownership-loading"
                     state={{ kind: 'loading' }}
                     rows={Math.max(2, context.projection.activeOwnerCount + 1)}
                     accessibilityLabel={t('homeGovernance.overviewPage.ownership')}
                 />
-            ) : (
+            ) : settled ? (
                 <>
                     {owners.map((row) => {
                         const person = resolveAccountDisplayName({
@@ -428,7 +428,7 @@ const HomeOverviewOwnership = React.memo(function HomeOverviewOwnership(props: R
                         onPress={() => router.push(homeAdministrationPeoplePath(context.scope.serverId) as never)}
                     />
                 </>
-            )}
+            ) : null}
         </ItemGroup>
     );
 });

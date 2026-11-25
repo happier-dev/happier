@@ -7721,6 +7721,8 @@ const ru: typeof en = {
     searchUnsupported: 'Поиск недоступен в этом Home',
     searchUnsupportedBody: 'Этот Home не предоставляет поиск учётных записей. Возможно, на нём более старая версия.',
     searchFailed: 'Не удалось выполнить поиск',
+    peopleCursorExpired: "Эта страница больше недоступна. Обновите список, чтобы вернуться к его началу.",
+    invalidRead: "Этот Home не распознал запрос.",
 
     statusActive: 'Активна',
     statusDisabled: 'Отключена',

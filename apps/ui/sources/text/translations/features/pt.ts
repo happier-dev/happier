@@ -7691,6 +7691,8 @@ const pt: typeof en = {
     searchUnsupported: 'A pesquisa não está disponível neste Home',
     searchUnsupportedBody: 'Este Home não oferece pesquisa de contas. Pode estar a usar uma versão mais antiga.',
     searchFailed: 'Não foi possível concluir a pesquisa',
+    peopleCursorExpired: "Esta página já não está disponível. Atualize a lista para voltar ao início.",
+    invalidRead: "Este Home não reconheceu a solicitação.",
 
     statusActive: 'Ativa',
     statusDisabled: 'Desativada',

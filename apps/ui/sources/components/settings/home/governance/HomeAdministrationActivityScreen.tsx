@@ -18,6 +18,7 @@ import { useHomePagedList } from '@/hooks/home/useHomePagedList';
 import { t } from '@/text';
 
 import { HomeAdministrationSection } from './HomeAdministrationSection';
+import { HomePagedReadFailure } from './HomePagedReadFailure';
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 import { presentHomeAuditEvent, type HomeAuditNames } from './homeAuditPresentation';
 
@@ -84,6 +85,19 @@ const ActivityList = React.memo(function ActivityList(props: Readonly<{
         );
     }
 
+    const readFailure = audit.error ? (
+        <ItemGroup>
+            <HomePagedReadFailure
+                testID="home-activity"
+                failure={audit.error}
+                fallback={t('homeGovernance.activity.loadFailed')}
+                reload={audit.reload}
+                retry={audit.hasMore ? audit.loadMore : audit.reload}
+                serverId={context.scope.serverId}
+            />
+        </ItemGroup>
+    ) : null;
+
     if (audit.rows.length === 0) {
         // The first page's rows hold their place while it is read.
         if (audit.status === 'loading') {
@@ -99,19 +113,7 @@ const ActivityList = React.memo(function ActivityList(props: Readonly<{
             );
         }
         if (audit.error) {
-            return (
-                <ItemGroup>
-                    <ItemLoadStateRows
-                        testID="home-activity"
-                        state={{
-                            kind: 'failed',
-                            reason: t('homeGovernance.activity.loadFailed'),
-                            onRetry: audit.reload,
-                            homeServerIds: [context.scope.serverId],
-                        }}
-                    />
-                </ItemGroup>
-            );
+            return readFailure;
         }
         return (
             <ItemGroup>
@@ -133,19 +135,7 @@ const ActivityList = React.memo(function ActivityList(props: Readonly<{
                     {audit.rows.map((event) => <HomeActivityRow key={event.id} event={event} now={now} viewerAccountId={context.scope.accountId} names={names} />)}
                 </CollectionRows>
             </ItemGroup>
-            {audit.error ? (
-                <ItemGroup>
-                    <ItemLoadStateRows
-                        testID="home-activity"
-                        state={{
-                            kind: 'failed',
-                            reason: t('homeGovernance.activity.loadFailed'),
-                            onRetry: audit.loadMore,
-                            homeServerIds: [context.scope.serverId],
-                        }}
-                    />
-                </ItemGroup>
-            ) : audit.hasMore ? (
+            {readFailure ?? (audit.hasMore ? (
                 // A quiet button under the list (lab `hcActivity-A`), the control Groups and Teams use.
                 <ItemGroup surface="none">
                     <SectionButtonRow>
@@ -160,7 +150,7 @@ const ActivityList = React.memo(function ActivityList(props: Readonly<{
                         />
                     </SectionButtonRow>
                 </ItemGroup>
-            ) : null}
+            ) : null)}
         </>
     );
 });

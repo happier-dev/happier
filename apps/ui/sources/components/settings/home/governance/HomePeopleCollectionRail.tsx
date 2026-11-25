@@ -26,7 +26,8 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { HomeAccountStatusGlyph } from './HomeAccountStatusPill';
 import { homeAdministrationAccountPath } from './homeAdministrationRoutes';
-import { homeRoleLabel } from './homeGovernanceLabels';
+import { homePagedReadFailureLabel, homeRoleLabel } from './homeGovernanceLabels';
+import { HomePagedReadFailure } from './HomePagedReadFailure';
 
 /** Fits the rail's mark box, so names align with the rest of the rail. */
 const PERSON_RAIL_AVATAR_SIZE = 28;
@@ -107,9 +108,9 @@ export const HomePeopleCollectionRail = React.memo(function HomePeopleCollection
                     testID="home-people-rail-search-failed"
                     state={{
                         kind: 'failed',
-                        reason: t('homeGovernance.searchFailed'),
+                        reason: homePagedReadFailureLabel(search.failure, t('homeGovernance.searchFailed')),
                         onRetry: search.failure.retryable ? search.retry : undefined,
-                        homeServerIds: [props.serverId],
+                        homeServerIds: search.failure.kind === 'unreachable' ? [props.serverId] : undefined,
                     }}
                 />
             ) : (
@@ -146,16 +147,15 @@ export const HomePeopleCollectionRail = React.memo(function HomePeopleCollection
                     selected={props.selectedAccountId === row.accountId} onOpen={open} locale={locale} />
             ), HAPPIER_COLLECTION_LIST_METRICS.describedRowMinHeight);
         }
-        if (roster.error) {
+        const rosterFailure = roster.error;
+        if (rosterFailure) {
             add('retry', () => (
-                <ItemLoadStateRows
+                <HomePagedReadFailure
                     testID="home-people-rail"
-                    state={{
-                        kind: 'failed',
-                        reason: t('homeGovernance.overviewPage.peopleFailed'),
-                        onRetry: roster.reload,
-                        homeServerIds: [props.serverId],
-                    }}
+                    failure={rosterFailure}
+                    fallback={t('homeGovernance.overviewPage.peopleFailed')}
+                    reload={roster.reload}
+                    serverId={props.serverId}
                 />
             ));
         } else if (roster.hasMore) {

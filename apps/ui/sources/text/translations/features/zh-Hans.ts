@@ -7593,6 +7593,8 @@ const zhHans: typeof en = {
     searchUnsupported: '此 Home 不支持搜索',
     searchUnsupportedBody: '此 Home 未提供账户搜索，可能运行着较旧的版本。',
     searchFailed: '搜索未能完成',
+    peopleCursorExpired: "此页已无法查看。刷新列表可返回开头。",
+    invalidRead: "此 Home 无法识别该请求。",
 
     statusActive: '活跃',
     statusDisabled: '已停用',

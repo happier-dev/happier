@@ -7593,6 +7593,8 @@ const zhHant: typeof en = {
     searchUnsupported: '這個 Home 不支援搜尋',
     searchUnsupportedBody: '這個 Home 未提供帳戶搜尋，可能執行的是較舊的版本。',
     searchFailed: '搜尋未能完成',
+    peopleCursorExpired: "此頁面已無法查看。重新整理清單即可返回開頭。",
+    invalidRead: "此 Home 無法辨識該請求。",
 
     statusActive: '有效',
     statusDisabled: '已停用',

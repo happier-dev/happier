@@ -7713,6 +7713,8 @@ const fr: typeof en = {
     searchUnsupported: 'La recherche n’est pas disponible sur ce Home',
     searchUnsupportedBody: 'Ce Home ne propose pas de recherche de comptes. Il utilise peut-être une version plus ancienne.',
     searchFailed: 'La recherche n’a pas pu aboutir',
+    peopleCursorExpired: "Cette page n’est plus disponible. Actualisez la liste pour revenir au début.",
+    invalidRead: "Ce Home n’a pas reconnu la demande.",
 
     statusActive: 'Actif',
     statusDisabled: 'Désactivé',

@@ -7720,6 +7720,8 @@ const pl: typeof en = {
     searchUnsupported: 'Wyszukiwanie nie jest dostępne w tym Home',
     searchUnsupportedBody: 'Ten Home nie udostępnia wyszukiwania kont. Może działać na starszej wersji.',
     searchFailed: 'Nie udało się ukończyć wyszukiwania',
+    peopleCursorExpired: "Ta strona nie jest już dostępna. Odśwież listę, aby wrócić na początek.",
+    invalidRead: "Ten Home nie rozpoznał żądania.",
 
     statusActive: 'Aktywne',
     statusDisabled: 'Wyłączone',

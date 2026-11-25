@@ -147,6 +147,8 @@ export const en = {
     searchUnsupported: 'Search is not available on this Home',
     searchUnsupportedBody: 'This Home does not offer account search. It may be running an older version.',
     searchFailed: 'The search could not be completed',
+    peopleCursorExpired: "This page is no longer available. Refresh to start at the beginning of the list.",
+    invalidRead: "This Home didn’t recognize the request.",
 
     statusActive: 'Active',
     statusDisabled: 'Disabled',
