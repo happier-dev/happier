@@ -23,6 +23,19 @@ describe('AE approved trigger publication', () => {
     const machine = await running.enrollDaemon(actor, { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
     await running.assertKnownGoodMachineControl(actor, machine);
     const recipient = await running.createAccount('trigger-recipient');
+    const actorId = readAccountIdFromToken(actor.credentials.token);
+    const recipientId = readAccountIdFromToken(recipient.credentials.token);
+    for (const [account, id] of [[actor, actorId], [recipient, recipientId]] as const) {
+      expect(await account.executeAsPerson('account.username.set', {
+        username: `ae${id.replaceAll('-', '').slice(0, 12)}`,
+      })).toMatchObject({ ok: true });
+    }
+    expect(await actor.executeAsPerson('friends.add', { uid: recipientId })).toMatchObject({
+      ok: true, result: { user: { id: recipientId, status: 'requested' } },
+    });
+    expect(await recipient.executeAsPerson('friends.add', { uid: actorId })).toMatchObject({
+      ok: true, result: { user: { id: actorId, status: 'friend' } },
+    });
     const created = await actor.executeAsPerson('workflow.definition.create', {
       definitionId: randomUUID(), metadata: { title: 'Approval-gated trigger' },
       definition: { version: 1,
@@ -33,7 +46,7 @@ describe('AE approved trigger publication', () => {
     if (!created.ok) throw new Error(created.errorCode);
     const workflow = WorkflowDefinitionCreateResultV1Schema.parse(created.result);
     const granted = await actor.executeAsPerson('artifact.access.grants.set', { artifactId: workflow.definitionId,
-      principal: { kind: 'account', accountId: readAccountIdFromToken(recipient.credentials.token) }, accessLevel: 'view' });
+      principal: { kind: 'account', accountId: recipientId }, accessLevel: 'view' });
     expect(granted, JSON.stringify(granted)).toMatchObject({ ok: true });
     const input = {
       workflow: workflow.definitionId,
@@ -46,7 +59,9 @@ describe('AE approved trigger publication', () => {
     let artifactId: string | undefined;
     const saved = await actor.executeWithApproval('workflow.trigger.add', input, async requestedArtifactId => {
       artifactId = requestedArtifactId;
-      return actor.executeAsPerson('approval.request.decide', { artifactId: requestedArtifactId, decision: 'approve' });
+      const decision = await actor.executeAsPerson('approval.request.decide', { artifactId: requestedArtifactId, decision: 'approve' });
+      expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
+      return decision;
     }, { actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
       actions: { 'workflow.trigger.add': { approvalRequiredSurfaces: ['cli'] } } }) });
     expect(saved, JSON.stringify(saved)).toMatchObject({ ok: true });
