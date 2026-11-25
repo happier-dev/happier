@@ -109,6 +109,10 @@ function enableAccountPetsForTest(petId = 'milo') {
 }
 
 const initialStorageState = storage.getState();
+let visibilityState: DocumentVisibilityState = 'visible';
+const browserDocument = Object.defineProperty(new EventTarget(), 'visibilityState', {
+    get: () => visibilityState,
+});
 
 function applyFixtureState() {
     const source = activitySourceState.source;
@@ -216,6 +220,7 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
 
 describe('PetAppShellCompanionMount', () => {
     beforeEach(async () => {
+        vi.stubGlobal('document', browserDocument);
         await homes.reset();
         homeA = await homes.addHome({ name: 'Home A', serverUrl: 'https://home-a.example.test', accountId: 'owner-a', currentAccount: true });
         homeB = await homes.addHome({ name: 'Home B', serverUrl: 'https://home-b.example.test', accountId: 'owner-b', active: false });
@@ -232,6 +237,8 @@ describe('PetAppShellCompanionMount', () => {
 
     afterEach(async () => {
         await standardCleanup();
+        visibilityState = 'visible';
+        browserDocument.dispatchEvent(new Event('visibilitychange'));
         vi.useRealTimers();
         stopConcurrentSessionCacheSync();
         await connection?.dispose();
@@ -567,15 +574,13 @@ describe('PetAppShellCompanionMount', () => {
         vi.useFakeTimers();
         vi.setSystemTime(0);
         const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
-        vi.stubGlobal('document', {
-            visibilityState: 'hidden',
-            addEventListener: () => {},
-            removeEventListener: () => {},
-        });
         const { PetAppShellCompanionMount } = await import('./PetAppShellCompanionMount');
 
         const screen = await renderScreen(<PetAppShellCompanionMount />);
-
+        await act(async () => {
+            visibilityState = 'hidden';
+            browserDocument.dispatchEvent(new Event('visibilitychange'));
+        });
         await act(async () => {
             vi.advanceTimersByTime(20_000);
         });

@@ -14,10 +14,6 @@ type DocumentLike = Readonly<{
     addEventListener?: (event: string, listener: () => void) => void;
 }>;
 
-type ViewLike = Readonly<{
-    addEventListener?: (event: string, listener: () => void) => void;
-}>;
-
 /**
  * Whether the app is genuinely being looked at right now.
  *
@@ -47,6 +43,7 @@ type ViewLike = Readonly<{
 let hostActivelyViewed = true;
 let hostActivelyFocused = true;
 let watchStarted = false;
+let documentDiscarded = false;
 const listeners = new Set<() => void>();
 
 function readHostActivelyViewedNow(): boolean {
@@ -58,6 +55,7 @@ function readHostActivelyFocusedNow(): boolean {
 }
 
 function publishHostActivelyViewed(): void {
+    if (documentDiscarded) return;
     const nextViewed = readHostActivelyViewedNow();
     const nextFocused = readHostActivelyFocusedNow();
     if (hostActivelyViewed === nextViewed && hostActivelyFocused === nextFocused) return;
@@ -84,7 +82,12 @@ function startHostActivelyViewedWatch(): void {
     const doc = (globalThis as { document?: DocumentLike }).document;
     doc?.addEventListener?.('visibilitychange', publishHostActivelyViewed);
 
-    const view = globalThis as ViewLike;
+    const view = globalThis as Partial<Window>;
+    // The browser sends hidden visibility after terminal pagehide. There is no
+    // next frame to present, so keep the last published visibility for this document.
+    view.addEventListener?.('pagehide', (event) => {
+        if (!event.persisted) documentDiscarded = true;
+    });
     view.addEventListener?.('focus', publishHostActivelyViewed);
     view.addEventListener?.('blur', publishHostActivelyViewed);
     // A desktop shell's native window focus can change without a document focus event.

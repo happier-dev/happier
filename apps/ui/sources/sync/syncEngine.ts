@@ -1961,12 +1961,16 @@ class Sync {
 
           if (!isEmbedWindowContext() && webDocument) {
               const doc = webDocument;
-              const pauseForWebHardBoundary = (tag: string) => {
+              const pauseForWebHardBoundary = (tag: string, discardingDocument = false) => {
                   this.isForeground = false;
                   this.markNativeCryptoWorkerBackgroundQuiescent();
                   this.pauseController.pause();
                   this.flushBackgroundSyncCheckpointsNow();
                   this.userRequestLeaseOwner.crossHardBoundary(() => {
+                      // The browser closes document-owned transports on discard, and
+                      // the Iroh worker has its own pagehide release. A reconnectable
+                      // disconnect here would publish state to the departing UI.
+                      if (discardingDocument) return;
                       setServerReachabilityNetworkAllowed(false);
                       try {
                           this.disconnectSocketIntentionally();
@@ -1989,8 +1993,8 @@ class Sync {
                       this.flushBackgroundSyncCheckpointsNow();
                   }
               };
-              const onPageHide = () => {
-                  pauseForWebHardBoundary('Sync.stopServerReachabilitySupervisors.pagehide');
+              const onPageHide = (event: PageTransitionEvent) => {
+                  pauseForWebHardBoundary('Sync.stopServerReachabilitySupervisors.pagehide', !event.persisted);
               };
               const onPageShow = () => {
                   resumeForWebForeground('Sync.resumeSync.pageshow');
@@ -2006,9 +2010,7 @@ class Sync {
               } catch {
                   // ignore
               }
-              const eventTarget = globalThis as unknown as {
-                  addEventListener?: (event: string, listener: () => void) => void;
-              };
+              const eventTarget = globalThis as Partial<Window>;
               try {
                   eventTarget.addEventListener?.('pagehide', onPageHide);
                   eventTarget.addEventListener?.('pageshow', onPageShow);

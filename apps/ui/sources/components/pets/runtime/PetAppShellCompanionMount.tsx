@@ -17,7 +17,7 @@ import {
 } from '@/components/pets/activity';
 import { PetCompanionSurface } from '@/components/pets/render/PetCompanionSurface';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { useRuntimeActive } from '@/hooks/runtime/useRuntimeActive';
+import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import {
     resolvePetCompanionOverlayMetrics,
     type PetCompanionOverlayMetrics,
@@ -123,7 +123,7 @@ function PetAppShellCompanionRuntime({
     // already resolved both facts; without them here the web/desktop pet ran its frame ticker and
     // its ambient action chain through an OS reduced-motion preference and behind a hidden tab.
     const reducedMotion = useReducedMotionPreference();
-    const runtimeActive = useRuntimeActive();
+    const hostActivelyViewed = useHostActivelyViewed();
     const actionExecutor = React.useMemo(() => createDefaultActionExecutor(), []);
     const hasTrayItems = activity.trayItems.length > 0;
     const dimensions = useWindowDimensions();
@@ -190,7 +190,7 @@ function PetAppShellCompanionRuntime({
         >
             <PetCompanionSurface
                 reducedMotion={reducedMotion}
-                active={runtimeActive}
+                active={hostActivelyViewed}
                 state={drag.dragState ?? petActivityPose[activity.state]}
                 stateStyle={[
                     styles.pet,

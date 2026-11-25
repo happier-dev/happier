@@ -683,12 +683,30 @@ describe('sync AppState pause/resume', () => {
         }
     });
 
-    it.each(['pagehide', 'freeze'] as const)('%s remains an immediate hard boundary during pre-accept', async (eventName) => {
+    it('does not publish a connectivity teardown when the browser discards the document', async () => {
         const browser = await installBrowserRuntimeForTests({ url: 'http://localhost/' });
-        const lifecycleHandlers = new Map<string, (event?: unknown) => void>();
-        vi.stubGlobal('addEventListener', (event: string, listener: (event?: unknown) => void) => {
-            lifecycleHandlers.set(event, listener);
-        });
+        const visibility = vi.spyOn(browser.document, 'visibilityState', 'get').mockReturnValue('visible');
+        vi.stubGlobal('addEventListener', browser.window.addEventListener.bind(browser.window));
+
+        try {
+            await loadSyncSingletonForTests();
+            const { isServerReachabilityNetworkAllowed } = await import('./runtime/connectivity/serverReachabilitySupervisorPool');
+
+            browser.window.dispatchEvent(new browser.window.PageTransitionEvent('pagehide', { persisted: false }));
+            visibility.mockReturnValue('hidden');
+            browser.document.dispatchEvent(new browser.window.Event('visibilitychange'));
+
+            expect(apiSocketDisconnect).not.toHaveBeenCalled();
+            expect(isServerReachabilityNetworkAllowed()).toBe(true);
+        } finally {
+            browser.restore();
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it.each(['pagehide', 'freeze'] as const)('%s can suspend a retained page immediately during pre-accept', async (eventName) => {
+        const browser = await installBrowserRuntimeForTests({ url: 'http://localhost/' });
+        vi.stubGlobal('addEventListener', browser.window.addEventListener.bind(browser.window));
 
         try {
             await loadSyncSingletonForTests();
@@ -696,7 +714,9 @@ describe('sync AppState pause/resume', () => {
             const { isServerReachabilityNetworkAllowed } = await import('./runtime/connectivity/serverReachabilitySupervisorPool');
             sync.acquireUserRequestLease();
 
-            lifecycleHandlers.get(eventName)?.();
+            browser.window.dispatchEvent(eventName === 'pagehide'
+                ? new browser.window.PageTransitionEvent(eventName, { persisted: true })
+                : new browser.window.Event(eventName));
 
             expect(apiSocketDisconnect).toHaveBeenCalledTimes(1);
             expect(isServerReachabilityNetworkAllowed()).toBe(false);

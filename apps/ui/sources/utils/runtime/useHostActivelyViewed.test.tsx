@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -130,6 +131,50 @@ describe('useHostActivelyViewed', () => {
         host.appStateListeners.clear();
         host.appState = 'active';
         host.platformOS = 'web';
+    });
+
+    it.each([
+        { persisted: false, expectedCommits: 0 },
+        { persisted: true, expectedCommits: 1 },
+    ])('commits $expectedCommits times when a hidden document has persisted=$persisted', async ({ persisted, expectedCommits }) => {
+        const browser = await installBrowserRuntimeForTests({ url: 'http://localhost/' });
+        const visibility = vi.spyOn(browser.document, 'visibilityState', 'get').mockReturnValue('visible');
+        vi.stubGlobal('addEventListener', browser.window.addEventListener.bind(browser.window));
+        try {
+            const { useHostActivelyViewed } = await import('./useHostActivelyViewed');
+            function Shell() {
+                useHostActivelyViewed();
+                return null;
+            }
+
+            const onCommit = vi.fn();
+            const screen = await renderScreen(
+                <React.Profiler id="app-shell" onRender={onCommit}>
+                    <Shell />
+                </React.Profiler>,
+            );
+            try {
+                expect(onCommit).toHaveBeenCalledTimes(1);
+                onCommit.mockClear();
+
+                await act(async () => {
+                    browser.window.dispatchEvent(new browser.window.PageTransitionEvent('pagehide', { persisted }));
+                });
+                expect(onCommit).toHaveBeenCalledTimes(0);
+
+                await act(async () => {
+                    visibility.mockReturnValue('hidden');
+                    browser.document.dispatchEvent(new browser.window.Event('visibilitychange'));
+                });
+
+                expect(onCommit).toHaveBeenCalledTimes(expectedCommits);
+            } finally {
+                await screen.unmount();
+            }
+        } finally {
+            browser.restore();
+            vi.unstubAllGlobals();
+        }
     });
 
     it('reports a hidden Tauri window as inactive', async () => {
