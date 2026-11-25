@@ -181,9 +181,11 @@ describe('session → Follow WorkerUpdate acceptance', () => {
                 },
             },
         };
+        type SourceMaterialController = import('../../../../../cli/src/agent/runtime/session/follow/sessionFollowSourceMaterialResolver').SessionFollowSourceMaterialController;
+        type RunnerHydratorDeps = import('../../../../../cli/src/agent/runtime/session/follow/sessionFollowSourceHydrator').SessionFollowHydratorDeps;
         type HydratedUpdate = SessionFollowUpdateEnvelopeV1 & { workerUpdate?: WorkerUpdateV1 };
         const { createSessionFollowSourceHydrator } = await vi.importActual<{
-            createSessionFollowSourceHydrator: (options: Omit<typeof hydrateOptions, 'deps'> & { deps?: typeof hydrateOptions.deps }) => (input: {
+            createSessionFollowSourceHydrator: (options: Omit<typeof hydrateOptions, 'deps'> & { deps?: RunnerHydratorDeps; sourceMaterialResolver?: SourceMaterialController }) => (input: {
                 observation: SessionFollowPendingObservationV1; signal: AbortSignal;
             }) => Promise<HydratedUpdate | null>;
         }>('../../../../../cli/src/agent/runtime/session/follow/sessionFollowSourceHydrator');
@@ -201,11 +203,12 @@ describe('session → Follow WorkerUpdate acceptance', () => {
         const { createSessionFollowContextReconciler } = await vi.importActual<{
             createSessionFollowContextReconciler: (options: {
                 session: typeof session; hydrateObservation: typeof hydrateObservation; maxFollowContextUtf8Bytes: number;
+                sourceMaterialController?: SourceMaterialController;
             }) => (input: { signal: AbortSignal; deliveryIntent: 'wake' | 'natural'; maxFollowContextUtf8Bytes?: number;
                 followDeliveries?: readonly { delivery: SessionFollowInputV1; localInputId: string; userMessageSeq: number | null }[] }) => Promise<PreparedContext | null>;
         }>('../../../../../cli/src/agent/runtime/session/follow/sessionFollowContextReconciler');
-        const makeReconciler = () => createSessionFollowContextReconciler({
-            session, hydrateObservation, maxFollowContextUtf8Bytes: 8192,
+        const makeReconciler = (sourceMaterialController?: SourceMaterialController) => createSessionFollowContextReconciler({
+            session, hydrateObservation, maxFollowContextUtf8Bytes: 8192, sourceMaterialController,
         });
         const reconcile = makeReconciler();
         const wake = (owner = reconcile) => owner({ signal: new AbortController().signal, deliveryIntent: 'wake' });
@@ -257,7 +260,8 @@ describe('session → Follow WorkerUpdate acceptance', () => {
                     machineId: machine.id, installationId: machine.installationId! } } });
             return { homeId, machine };
         };
-        const originals = async (usePublisherSocket = false, entry: 'receiver' | 'source' = 'receiver') => {
+        const originals = async (usePublisherSocket = false, entry: 'receiver' | 'source' = 'receiver',
+            runnerSourceDataKey?: Uint8Array) => {
             const { homeId, machine } = await placeDestination();
             if (entry === 'source') {
                 await db.accessKey.create({ data: { accountId: account.id, sessionId: source.id, machineId: machine.id, data: 'opaque' } });
@@ -394,7 +398,40 @@ describe('session → Follow WorkerUpdate acceptance', () => {
             session.runSessionFollowSourceRequest = ({ request }) => runWithServerHttpBaseUrl('http://original-follow.test', request);
             // Original hydration uses the same real authenticated source reads
             // as the dispatcher. Only the HTTP carrier is adapted to Fastify.
-            hydrateObservation = createSessionFollowSourceHydrator({ session, credentials: { token, encryption: null } });
+            let sourceMaterialController: SourceMaterialController | undefined;
+            if (runnerSourceDataKey) {
+                const { createSessionFollowSourceMaterialResolver } = await vi.importActual<
+                    typeof import('../../../../../cli/src/agent/runtime/session/follow/sessionFollowSourceMaterialResolver')
+                >('../../../../../cli/src/agent/runtime/session/follow/sessionFollowSourceMaterialResolver');
+                const { encryptSessionPayload } = await vi.importActual<
+                    typeof import('../../../../../cli/src/session/transport/encryption/sessionStoredContentCodec')
+                >('../../../../../cli/src/session/transport/encryption/sessionStoredContentCodec');
+                const { fetchSessionFollowSourceProjection } = await vi.importActual<
+                    typeof import('../../../../../cli/src/session/transport/http/sessionFollowSourceProjectionHttp')
+                >('../../../../../cli/src/session/transport/http/sessionFollowSourceProjectionHttp');
+                sourceMaterialController = createSessionFollowSourceMaterialResolver();
+                sourceMaterialController.installPreparedDataKey({ sourceSessionId: source.id, dataKey: runnerSourceDataKey });
+                cleanups.push(sourceMaterialController.dispose);
+                const ctx = { encryptionKey: runnerSourceDataKey, encryptionVariant: 'dataKey' as const };
+                const encrypt = (payload: unknown) => encryptSessionPayload({ ctx, payload });
+                hydrateObservation = createSessionFollowSourceHydrator({ session, credentials: { token, encryption: null },
+                    sourceMaterialResolver: sourceMaterialController, deps: {
+                        fetchRunnerSourceProjection: async request => {
+                            // Keep the real Home's grant, route and transcript selection. The
+                            // external Runner read returns those bytes as E2EE source content.
+                            const projection = await fetchSessionFollowSourceProjection(request);
+                            if (!projection) return null;
+                            return { ...projection,
+                                source: { ...projection.source, encryptionMode: 'e2ee',
+                                    metadata: projection.source.metadata === null ? null : encrypt(JSON.parse(projection.source.metadata)) },
+                                messages: projection.messages.map(row => ({ ...row, content: row.content.t === 'plain'
+                                    ? { t: 'encrypted', c: encrypt(row.content.v) } : row.content })),
+                            };
+                        },
+                    } });
+            } else {
+                hydrateObservation = createSessionFollowSourceHydrator({ session, credentials: { token, encryption: null } });
+            }
             const { createSessionFollowOccurrenceDispatcher } = await vi.importActual<
                 typeof import('../../../../../cli/src/agent/runtime/session/follow/sessionFollowOccurrenceDispatcher')
             >('../../../../../cli/src/agent/runtime/session/follow/sessionFollowOccurrenceDispatcher');
@@ -426,8 +463,8 @@ describe('session → Follow WorkerUpdate acceptance', () => {
             // Match the real host's request-lifetime owner. Tests which replace
             // that host must explicitly restart it instead of dropping custody
             // at every preparation boundary.
-            let originalReconcile = makeReconciler();
-            const restart = () => { originalReconcile = makeReconciler(); };
+            let originalReconcile = makeReconciler(sourceMaterialController);
+            const restart = () => { originalReconcile = makeReconciler(sourceMaterialController); };
             const dispatchReceiverPending = async (observations?: SessionFollowPendingObservationV1[]) => dispatcher.dispatchReceiverRange({
                 observations: (observations ?? (await observe()).observations).filter(row => 'sourceSessionId' in row),
                 destinationSessionId: destination.id,
@@ -574,6 +611,7 @@ describe('session → Follow WorkerUpdate acceptance', () => {
             };
             return { prepare, accept, acceptNative, settleAcceptance, replacePublisher, stopPublisher, deliveries, restart, dispatchPending, machine,
                 dispatchReceiverPending, admissionFault, admissionOutcomes, routeReadBarrier, heartbeatSourcePublisher,
+                sourceMaterialController,
                 requests, rulesCache, sourceChanged, recoveries, dispatchOccurrence: dispatcher.dispatch,
                 dispatchReceiverRange: dispatcher.dispatchReceiverRange, credentials: { token, encryption: null } };
         };
@@ -2171,6 +2209,60 @@ describe('session → Follow WorkerUpdate acceptance', () => {
         expect(f.acceptedPrompts.map(prompt => prompt.split('Identical original text').length - 1)).toEqual([1, 1]);
         expect(await db.sessionMessage.count({ where: { sessionId: f.destination.id, acceptedTurnId: 'receiver-turn' } })).toBe(2);
         expect(await original.prepare('natural')).toBeNull();
+    });
+
+    it('retains the same encrypted original when its grant and manager attachment change before retry', async () => {
+        const f = await fixture();
+        await f.follow({ preset: 'important' });
+        const dataKey = new Uint8Array(32).fill(107);
+        const original = await f.originals(true, 'receiver', dataKey);
+        await f.appendReport('Prepared encrypted report');
+        const prepared = await original.prepare('natural');
+        const localId = original.deliveries[0]!.localInputId;
+        expect(prepared?.representedFollowLocalInputIds).toEqual([localId]);
+        expect(await prepared!.recheckAdmission(new AbortController().signal)).toBe(true);
+        const pendingRow = await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: {
+            sessionId: f.destination.id, localId,
+        } }, select: { localId: true, status: true } });
+        expect(pendingRow.status).toBe('queued');
+
+        const previousManager = await inTx(tx => readSessionManagerInTx(tx, f.source.id));
+        await db.sessionFollowEdge.delete({ where: { destinationSessionId_sourceSessionId_relation: {
+            destinationSessionId: f.destination.id, sourceSessionId: f.source.id, relation: 'follower',
+        } } });
+        await f.detachManager();
+        expect(await prepared!.recheckAdmission(new AbortController().signal)).toBe(false);
+        expect((await f.observe({ inputLocalIds: [localId] })).currentSourceSessionIds).not.toContain(f.source.id);
+        expect(await setSessionManager({ accountId: f.account.id, sessionId: f.source.id,
+            managerSessionId: f.destination.id, expectedManagerSessionId: null, authentication: f.authentication }))
+            .toMatchObject({ ok: true });
+        const replacementAttachment = new Date(previousManager!.attachedAt.getTime() + 1);
+        const replacement = await db.sessionFollowEdge.update({ where: { managerSourceSessionId: f.source.id },
+            data: { attachedAt: replacementAttachment } });
+        await f.follow({ preset: 'important' });
+        expect((await f.observe({ inputLocalIds: [localId] })).observations)
+            .toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'admitted_input', localInputId: localId })]));
+        await original.replacePublisher();
+        original.restart();
+
+        const waiting = await original.prepare('natural', undefined, false, 'admitted');
+        expect(waiting?.updates).toMatchObject([{ reason: 'source_unavailable', recentMessages: [] }]);
+        expect(waiting?.representedFollowLocalInputIds ?? []).toEqual([]);
+        expect(await db.sessionPendingMessage.findMany({ where: { sessionId: f.destination.id, localId },
+            select: { localId: true, status: true } })).toEqual([pendingRow]);
+        expect(f.acceptedPrompts).toEqual([]);
+
+        original.sourceMaterialController!.installPreparedDataKey({ sourceSessionId: f.source.id, dataKey });
+        const recovered = await original.prepare('natural', undefined, false, 'admitted');
+        expect(recovered?.representedFollowLocalInputIds).toEqual([localId]);
+        await original.accept(recovered!);
+        expect(f.acceptedPrompts).toHaveLength(1);
+        expect(await db.sessionMessage.findMany({ where: { sessionId: f.destination.id, localId },
+            select: { localId: true, acceptedTurnId: true } }))
+            .toEqual([{ localId, acceptedTurnId: 'receiver-turn' }]);
+        expect(await inTx(tx => readSessionManagerInTx(tx, f.source.id))).toMatchObject({
+            attachedAt: replacementAttachment, deliveredTranscriptSeq: replacement.deliveredTranscriptSeq,
+        });
     });
 
     it('retains an overlapping preparation while a route survives and withdraws it after the last route is removed', async () => {
