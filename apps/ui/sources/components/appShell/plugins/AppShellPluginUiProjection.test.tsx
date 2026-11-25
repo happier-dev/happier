@@ -1111,6 +1111,52 @@ function pluginUiProjectionWithClientAction(input: Readonly<{
 }
 
 describe('AppShellPluginUiProjectionProvider', () => {
+    it('keeps large boot Machine report-only publications from committing the App Shell', async () => {
+        const machineIds = Array.from({ length: 370 }, (_, index) => `machine-census-${index}`);
+        storageState.machines = machineIds.map(createLiveMachine);
+        storageState.voiceExecutionMachine = { mode: 'fixed', machineId: machineIds[0]! };
+        const factory = vi.spyOn(appShellProjectionPublication, 'createAppShellPluginUiProjectionPublication');
+        onTestFinished(() => factory.mockRestore());
+        const { AppShellPluginUiProjectionProvider } = await import('./AppShellPluginUiProjection');
+        const { EMPTY_PLUGIN_BROWSER_PROJECTION } = await import('@/sync/domains/plugins/browser/targets');
+        const browserProjection = { ...EMPTY_PLUGIN_BROWSER_PROJECTION, generation: 123 };
+        let commits = 0;
+        const screen = await renderScreen(
+            <React.Profiler id="machine-census" onRender={() => { commits++; }}>
+                <AppShellPluginUiProjectionProvider><ProjectionProbe /></AppShellPluginUiProjectionProvider>
+            </React.Profiler>
+        );
+        onTestFinished(() => screen.unmount());
+        await flushHookEffects({ cycles: 8 });
+
+        const publication = factory.mock.results.find(result => result.type === 'return')!.value;
+        const before = publication.getSnapshot();
+        const peers = machineIds.slice(1);
+        expect(before.projectionTargets).toHaveLength(machineIds.length);
+        expect(before.projectionUnion.machineId).toBeNull();
+        const baseline = commits;
+        await act(async () => {
+            for (const peer of peers) {
+                const report = before.currentnessForActiveAccountByMachineId.get(peer)!;
+                expect(report.machineId).toBe(peer);
+                publication.publishMachineCurrentness(peer, before.accountLifetime, { ...report, pluginBrowserProjection: browserProjection });
+            }
+        });
+        const after = publication.getSnapshot();
+        expect(after.currentnessForActiveAccountByMachineId).not.toBe(before.currentnessForActiveAccountByMachineId);
+        expect(after.projectionUnion).toBe(before.projectionUnion);
+        expect(commits - baseline).toBe(0);
+
+        const selectedMachineId = machineIds[0]!;
+        const selectedReport = before.currentnessForActiveAccountByMachineId.get(selectedMachineId)!;
+        await act(async () => {
+            publication.publishMachineCurrentness(selectedMachineId, before.accountLifetime, {
+                ...selectedReport, pluginBrowserProjection: browserProjection,
+            });
+        });
+        expect(commits).toBeGreaterThan(baseline);
+    });
+
     it('publishes selected Account authentication metadata without a Machine descriptor', async () => {
         const pluginId = 'acme.account-auth-metadata';
         installSelectedAppScopePluginFixture({ machineId: 'removed-machine', pluginId,

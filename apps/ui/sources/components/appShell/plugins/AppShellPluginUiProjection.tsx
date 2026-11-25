@@ -7,6 +7,7 @@ import {
     createAppShellPluginUiProjectionPublication,
     EMPTY_APP_SHELL_PLUGIN_UI_PROJECTION_SNAPSHOT,
     type AppShellPluginUiProjectionPublication,
+    type AppShellPluginUiProjectionSnapshot,
 } from './appShellPluginUiProjectionPublication';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { createPluginSkillSourceIdentityPublication, EMPTY_PLUGIN_SKILL_SOURCE_IDENTITY,
@@ -456,6 +457,34 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
     );
 }
 
+function selectAppShellPluginUiPresentation(snapshot: AppShellPluginUiProjectionSnapshot, voiceMachineId: string | null) {
+    const { currentnessForActiveAccountByMachineId, projectionUnion } = snapshot;
+    return {
+        published: snapshot !== EMPTY_APP_SHELL_PLUGIN_UI_PROJECTION_SNAPSHOT,
+        accountLifetime: snapshot.accountLifetime,
+        activeServerId: snapshot.activeServerId,
+        accountUiProjection: snapshot.accountUiProjection,
+        accountCensusPending: snapshot.accountCensusPending,
+        projectionTargets: snapshot.projectionTargets,
+        projectionUnion,
+        pluginUiProjection: snapshot.pluginUiProjection,
+        mountedActionProjections: snapshot.mountedActionProjections,
+        candidateFactsByPluginId: snapshot.candidateFactsByPluginId,
+        connectedAccountResolution: snapshot.connectedAccountResolution,
+        destinationSurfacePlacements: snapshot.destinationSurfacePlacements,
+        settingsPages: snapshot.settingsPages,
+        registrySourcesPending: snapshot.registrySourcesPending,
+        registrySourcesPendingTargets: snapshot.registrySourcesPendingTargets,
+        // Browser targets belong to a single Machine and cannot be merged.
+        pluginBrowserProjection: projectionUnion.machineId
+            ? currentnessForActiveAccountByMachineId.get(projectionUnion.machineId)?.pluginBrowserProjection ?? null
+            : null,
+        voiceCurrentness: voiceMachineId ? currentnessForActiveAccountByMachineId.get(voiceMachineId) : undefined,
+    };
+}
+
+const EMPTY_APP_SHELL_PLUGIN_UI_PRESENTATION = selectAppShellPluginUiPresentation(EMPTY_APP_SHELL_PLUGIN_UI_PROJECTION_SNAPSHOT, null);
+
 export function AppShellPluginUiProjectionProvider(props: Readonly<{
     children: React.ReactNode;
 }>): React.ReactElement {
@@ -472,16 +501,19 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     const hostBundledUiEnabled = useFeatureEnabled('plugins.ui.reactNativeBundles', {
         scopeKind: 'spawn', serverId: accountLifetime?.scope.serverId ?? activeServer.serverId,
     });
+    const voiceExecutionMachineId = useVoiceExecutionMachineId();
     const [projectionPublication] = React.useState(createAppShellPluginUiProjectionPublication);
-    const publishedProjection = React.useSyncExternalStore(
-        projectionPublication.subscribe, projectionPublication.getSnapshot, projectionPublication.getSnapshot,
-    );
+    // Reports from other Machines only affect the shell when a derived fact changes.
+    const selectPresentation = useShallow((snapshot: AppShellPluginUiProjectionSnapshot) =>
+        selectAppShellPluginUiPresentation(snapshot, voiceExecutionMachineId));
+    const getPresentation = () => selectPresentation(projectionPublication.getSnapshot());
+    const publishedProjection = React.useSyncExternalStore(projectionPublication.subscribe, getPresentation, getPresentation);
     // Child layout effects run before their parent's. Do not mount a new
     // Home/Account reporter until its exact source basis has been published.
-    const declarationReady = publishedProjection !== EMPTY_APP_SHELL_PLUGIN_UI_PROJECTION_SNAPSHOT
+    const declarationReady = publishedProjection.published
         && publishedProjection.accountLifetime === accountLifetime
         && publishedProjection.activeServerId === activeServer.serverId;
-    const derived = declarationReady ? publishedProjection : EMPTY_APP_SHELL_PLUGIN_UI_PROJECTION_SNAPSHOT;
+    const derived = declarationReady ? publishedProjection : EMPTY_APP_SHELL_PLUGIN_UI_PRESENTATION;
     React.useLayoutEffect(() => {
         projectionPublication.publishSources({
             accountLifetime, availabilityInputs, hostBundledUiEnabled,
@@ -493,9 +525,9 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     React.useEffect(() => () => projectionPublication.dispose(), [projectionPublication]);
     const {
         accountUiProjection, accountCensusPending, projectionTargets,
-        currentnessForActiveAccountByMachineId, projectionUnion, pluginUiProjection, mountedActionProjections,
-        candidateFactsByPluginId, connectedAccountResolution, destinationSurfacePlacements, settingsPages,
-        registrySourcesPending, registrySourcesPendingTargets,
+        projectionUnion, pluginUiProjection, mountedActionProjections, candidateFactsByPluginId,
+        connectedAccountResolution, destinationSurfacePlacements, settingsPages,
+        registrySourcesPending, registrySourcesPendingTargets, pluginBrowserProjection, voiceCurrentness,
     } = derived;
     const publishMachineProjectionCurrentness = projectionPublication.publishMachineCurrentness;
     const publishPluginExecutionOrigin = React.useCallback((
@@ -546,13 +578,6 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     }, [phase, pluginUiProjection]);
     const platform = resolvePluginUiProjectionPlatform();
     const clientExecutablePlatform = resolvePluginUiClientExecutablePlatform();
-    // §3.2 keeps the browser projection machine-scoped: it describes ONE
-    // machine's browser targets, so it is published only when the union has a
-    // single member — never merged into a machine-less bag.
-    const pluginBrowserProjection = projectionUnion.machineId
-        ? currentnessForActiveAccountByMachineId.get(projectionUnion.machineId)?.pluginBrowserProjection ?? null
-        : null;
-    const voiceExecutionMachineId = useVoiceExecutionMachineId();
     const voiceProviderIds = useVoiceProviderRuntimeDemand();
     const selectedVoiceProviderId = useSettingsSelector(settings => resolveStoredVoiceProviderId(settings.voiceSettingsV1.providerId), ['voiceSettingsV1']);
     // Selection needs declarations for discovery and Start admission, even while
@@ -567,9 +592,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     const voiceMachineIsUnionMember = Boolean(voiceExecutionMachineId) && projectionTargets.some(
         (projectionTarget) => projectionTarget.machineId === voiceExecutionMachineId,
     );
-    const voiceUnionMember = voiceMachineIsUnionMember && voiceExecutionMachineId
-        ? currentnessForActiveAccountByMachineId.get(voiceExecutionMachineId)
-        : undefined;
+    const voiceUnionMember = voiceMachineIsUnionMember ? voiceCurrentness : undefined;
     // Target membership, not currentness settlement: a member whose observer has
     // not published yet does not need a second subscription. The
     // disabled dedicated hook is exactly the inert placeholder for that gap.
