@@ -35,7 +35,7 @@ describe('Workflow reviewed data-role child custody', () => {
       expectedRevision: 1, targetLinkId: 'data-link', expectedTargetLinkRevision: 1, credentialRef,
       credentialPrincipal: { kind: 'account', accountId, purpose: { consumer: action, purpose: 'deploy-manage' },
         target: { kind: 'account', account: credentialRef } }, providerAccountId: 'organization',
-      providerEnvironment: { kind: 'custom', id: 'parent-branch' }, providerIdentity: {
+      providerEnvironment: { kind: 'native', selection: { branchId: 'parent-branch' } }, providerIdentity: {
         providerAccountId: 'organization', providerResourceId: 'database-project', providerEnvironment: 'parent-branch' } });
     const input = { ...custody, ...(provider === 'neon' ? { id: 'database', purpose: 'data.connection', database: 'neondb', role: 'owner',
       labels: { DATABASE_URL: 'Application database', DIRECT_URL: 'Migration database' }, audience: { accountGrants: [accountId] },

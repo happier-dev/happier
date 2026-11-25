@@ -2,6 +2,7 @@ import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-acco
 import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/plugin-sdk';
+import { ProtocolDeploymentEnvironmentHeaderV1Schema } from '@happier-dev/plugin-sdk/protocol';
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE, GITHUB_PLUGIN_ID } from '../../observations/githubProviderContracts.js';
 import { GITHUB_FIXTURE_OWNER, GITHUB_FIXTURE_REPOSITORY, GITHUB_PULL_REQUEST_RESPONSE } from '../__fixtures__/githubResponses.js';
 import { encodeGithubTriageConfiguration } from '../configuration.js';
@@ -77,16 +78,16 @@ export function previewStatusTransport(options: Readonly<{
   const childId = options.childId ?? 'preview-child';
   const repository = { kind: 'github', deployment: 'https://github.com', repository: REPOSITORY_KEY };
   const reference = (id: string) => ({ contentArtifactId: `${id}-content`, contentHeaderVersion: 1, contentBodyVersion: 1 });
-  const environment = (id: string, purpose: 'preview' | 'standard') => ({ v: 1, id, serverId: 'srv_preview',
+  const environment = (id: string, purpose: 'preview' | 'standard') => ProtocolDeploymentEnvironmentHeaderV1Schema.parse({ v: 1, id, serverId: 'srv_preview',
     projectSourceId: options.foreignSource && purpose === 'preview' ? 'foreign-source' : 'preview-source', revision: 1,
     owner: { kind: 'account', accountId: 'preview-owner' }, protection: 'nonProduction', purpose,
-    deployerMode: 'managers', controllerMachineId: 'preview-controller',
+    deployerMode: 'managers', dataEditorMode: 'off', dataAgentAccess: 'none', controllerMachineId: 'preview-controller',
     runtimeTargetLinkId: purpose === 'preview' ? 'preview-runtime' : 'template-runtime',
     ...(purpose === 'preview' ? { previewTemplateEnvironmentId: 'preview-template', previewRepositoryId: 'preview-source',
       previewPullRequestId: '1284', previewTargetLinkId: 'template-runtime' } : {}),
     ...reference(id), createdByAccountId: 'preview-owner', createdAtMs: 1, updatedAtMs: 1,
     ...(purpose === 'preview' ? id === childId && (options.deletedChild || options.tombstoned) ? { deletedAtMs: 2 } : {} : options.deletedTemplate ? { deletedAtMs: 2 } : {}),
-    capabilities: { role: 'manager', read: true, deploy: true, manage: true, manageBindings: true, manageTargets: true, delete: true } });
+    capabilities: { editData: false, role: 'manager', read: true, deploy: true, manage: true, manageBindings: true, manageTargets: true, delete: true } });
   const runtimeLink = (id: string, environmentId: string) => ({ v: 1, id, environmentId, revision: 1, role: 'runtime',
     ...(environmentId === childId && options.operation === 'deploy' && !options.receiptState
       ? { activeDeploymentId: options.inactiveReceipt ? 'other-active-deployment' : 'preview-teardown' } : {}),
