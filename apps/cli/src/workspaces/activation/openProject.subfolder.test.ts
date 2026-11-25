@@ -1,8 +1,16 @@
 import axios from 'axios';
-import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import tweetnacl from 'tweetnacl';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
+import type { ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
+import { access, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dirname, join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 import {
@@ -10,7 +18,7 @@ import {
   MACHINE_PLAIN_DATA_KEY_MARKER,
 } from '@happier-dev/protocol/machines/machineStoredContent';
 import {
-  OpenProjectResultV1Schema,
+  OpenProjectInputV1Schema, OpenProjectResultV1Schema,
   type OpenProjectInputV1,
 } from '@happier-dev/protocol/projects/openProjectV1';
 
@@ -29,8 +37,18 @@ import {
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
 import { createScmBackendRegistry } from '@/scm/registry';
+import { resolveWorkspaceReplicationSourceInputsWithScmWorkspace } from '@/scm/workspace/workspaceTransferResolution';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
-import { createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
+import { createExternalActionMachineRpcExecution, projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
+import { WorkspaceSyncController } from '@/workspaces/sync/workspaceSyncController';
+import { createWorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
+import { createWorkspaceSyncMutagenAdapter } from '@/workspaces/sync/workspaceSyncMutagenAdapter';
+import { deriveWorkspaceSyncRelationshipId } from '@/workspaces/sync/workspaceSyncRelationshipIdentity';
+import { createWorkspaceRootOwnershipManager } from '@/workspaces/sync/workspaceSyncRootOwnership';
+import { resolveWorkspaceSyncSeedTransfer } from '@/workspaces/sync/workspaceSyncSeedTransfer';
+import { createWorkspaceSyncTargetAuthority } from '@/workspaces/sync/workspaceSyncTargetAuthority';
+import { createPlainProjectAccountRefRow, createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
 import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
 import { reviewProjectSetupEffect } from '@/workspaces/projectSetup/projectSetupPreparation';
 import { createProjectSetupSuccessStore } from '@/workspaces/projectSetup/projectSetupSuccess';
@@ -85,6 +103,170 @@ describe('openProject with a subfolder the repository lacks', () => {
     );
   });
 
+
+  it.each(['copied', 'wrong Machine at preflight', 'wrong Machine at prepare'] as const)(
+    'settles an admitted plain-folder Copy to a fresh path (%s)', async outcome => {
+      const fixture = await realpath(await mkdtemp(join(tmpdir(), 'happier-remote-open-copy-')));
+      temporaryRoots.push(fixture);
+      const sourceRoot = join(fixture, 'source');
+      const targetRoot = join(fixture, 'target');
+      await mkdir(join(sourceRoot, 'secrets'), { recursive: true });
+      await writeFile(join(sourceRoot, 'payload.txt'), 'visible bytes');
+      await writeFile(join(sourceRoot, 'secrets', 'ignored.txt'), 'ignored fixture');
+      const serverId = 'srv_test_home';
+      const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`, encryption: null };
+      const rows: ProjectAccountRowV1[] = [];
+      const http = createProjectAccountRowsHttpBoundary(rows);
+      vi.spyOn(axios, 'get').mockImplementation(plainAccountRead);
+      vi.spyOn(axios, 'post').mockImplementation(http);
+      const registry = createScmBackendRegistry([]);
+      const accountRows = { credentials, serverId };
+      const rootOwnershipManager = createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'locks') });
+      const machineAdmission = (machineId: string) => ({
+        machineId, installationId: 'installation', actorAccountId: 'account', custodianAccountId: 'account',
+        role: 'manage' as const, encryptionMode: 'plain' as const,
+      });
+      const context = { signal: new AbortController().signal, callerAuthority: 'present_user' as const,
+        machineAdmission: machineAdmission('source'), verifyMachineAdmissionCurrent: async () => true };
+      const runtime = { serverId, machineId: 'source', serverHttpBaseUrl: 'https://home.example',
+        accountId: 'account', registry, readCredentials: async () => credentials };
+      const attached = await openProject({ serverId, machineId: 'source', source: { kind: 'folder', path: sourceRoot },
+        materialization: { kind: 'attach' } }, runtime, context);
+      if (attached.kind !== 'opened') throw new Error(`Plain folder Attach did not open: ${attached.kind}`);
+      const checkout = attached.workspace;
+      const fields = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: ['secrets/**'], extraIncludePatterns: [] };
+      const contentPolicy = { ...fields, policyDigest: computeWorkspaceSyncPolicyDigest(fields) };
+      const request = OpenProjectInputV1Schema.parse({ serverId, machineId: 'target',
+        source: { kind: 'workspace', workspaceId: checkout.workspaceId, checkout },
+        materialization: { kind: 'sync', targetPath: targetRoot, workspaceAction: { kind: 'copy_once', contentPolicy } } });
+      const operationId = 'admitted-fresh-copy';
+      const envelope = { v: 1 as const, requestId: operationId,
+        target: { kind: 'machine' as const, machineId: 'target' }, input: request };
+      const admitted = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-test-root', binding: {
+        accountId: 'account', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+        serverIdentityId: serverId, actionId: 'projects.open', machineId: 'target', installationId: 'installation',
+        custodianAccountId: 'account', requestId: operationId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        target: envelope.target, workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(operationId),
+          sourceWorkspaceRefId: checkout.workspaceId, source: machineAdmission('source') },
+      } });
+      const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: size => new Uint8Array(size) });
+      Object.defineProperty(admitted, 'requesterAccountProjection', { value: {
+        accountId: 'account', serverId, accountEncryptionMode: 'plain', projectAccountRowCipher: cipher,
+        resolveMachineContentEncryptionContext: () => ({ encryptionMode: 'plain' }), isCurrent: async () => true,
+      } });
+      const keyPair = tweetnacl.sign.keyPair();
+      const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: admitted, serverId,
+        serverIdentityId: serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, target: envelope.target,
+        installationId: 'installation', privateKey: keyPair.secretKey, rootAdmitted: true, isCurrent: async () => true });
+      if (!authorization) throw new Error('The admitted Copy HTTP projection was unavailable');
+      const sourceRouting = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare', operationId, accountServerId: serverId,
+        sourceMachineId: 'source', sourceRootPath: sourceRoot, originalActionEnvelope: envelope,
+        sourceContext: { machineAdmission: context.machineAdmission, callerAuthority: 'present_user', workspaceWrites: 'allow' } });
+      const method = `source:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`;
+      const sourceExecution = WorkspaceSyncSourceExecutionV1Schema.parse({ method, requestId: 'admitted-source-call', params: request,
+        externalActionExecution: createExternalActionMachineRpcExecution({ context: { externalActionExecutionAuthorization: admitted,
+          externalActionTarget: envelope.target }, effectActionId: 'projects.open', installationId: 'installation',
+          method, requestId: 'admitted-source-call', params: request, workspaceSyncSourceRouting: sourceRouting, privateKey: keyPair.secretKey }) });
+      const targetContext = { ...context, machineAdmission: machineAdmission('target'), callerInputAuthorization: authorization,
+        workspaceSyncSourceExecution: sourceExecution };
+      const routingFor = (phase: 'preflight' | 'prepare' | 'release') => WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({
+        v: 1, sourceWriter: { machineId: 'source', installationId: 'installation' }, source: sourceRouting,
+        target: { v: 1, phase, operationId, accountServerId: serverId, targetMachineId: 'target', targetRootPath: targetRoot },
+      });
+      const existingTarget = { id: 'existing-target', serverId, machineId: 'target', rootPath: targetRoot, createdAtMs: 1 };
+      if (outcome === 'wrong Machine at prepare') rows.push(createPlainProjectAccountRefRow(existingTarget));
+      const readRows = () => readProjectAccountRows({ ...accountRows, selection: { kinds: ['workspace-ref', 'relationship-graph'] } });
+      const initial = await readRows();
+      expect(initial.workspaceRefs).toMatchObject([{ id: checkout.workspaceId },
+        ...(outcome === 'wrong Machine at prepare' ? [existingTarget] : [])]);
+      const wrongMachine = { id: 'other-checkout', serverId, machineId: 'other', rootPath: targetRoot, createdAtMs: 1 };
+      const misplacedRefs = initial.workspaceRefs.filter(ref => ref.id !== existingTarget.id).concat(wrongMachine);
+      let installed = initial;
+      let wrongPlacement = outcome === 'wrong Machine at preflight';
+      const target = createWorkspaceSyncTargetAuthority({
+        localServerId: serverId, localMachineId: 'target', localAccountId: 'account',
+        getProjectSnapshot: () => installed,
+        refreshProjectSnapshot: async () => {
+          const snapshot = await readRows();
+          installed = wrongPlacement ? { ...snapshot, workspaceRefs: misplacedRefs } : snapshot;
+          return installed;
+        },
+        callMachineRpc: async () => { throw new Error('Unexpected nested Machine RPC'); },
+        bootstrap: { rootOwnershipManager, materializationDirectory: join(fixture, 'materialization') },
+      });
+      onTestFinished(() => target.releaseAllRetainedBootstraps());
+      const sync = new WorkspaceSyncController({ localServerId: serverId, localMachineId: 'target', rootOwnershipManager,
+        resolveWorkspaceRef: async () => null,
+        adapter: createWorkspaceSyncMutagenAdapter({ resolveWorkspaceRef: async () => null,
+          send: async () => { throw new Error('A remote finite Copy must not start local Mutagen'); } }),
+        lifecycle: { start: async () => undefined, stop: async () => undefined } });
+      onTestFinished(() => sync.shutdown());
+      let qualifiedId: string | undefined;
+      let publishedBeforeDispatch = false;
+      const opened = await openProject(request, { ...runtime, machineId: 'target',
+        workspaceSyncAdapter: createWorkspaceSyncHandoffAdapter({ sync }),
+        callWorkspaceSource: async ({ machineId, operationId: sentOperation, request: sentRequest }) => {
+          expect(machineId).toBe('source');
+          expect(sentOperation).toBe(operationId);
+          publishedBeforeDispatch = (await readRows()).workspaceRefs.some(ref =>
+            ref.machineId === 'target' && ref.rootPath === targetRoot);
+          try {
+            const preflight = await target.preflightHandoffTargetReplacementHere({ v: 1, serverId,
+              machineId: 'target', operationId, targetPath: targetRoot, destinationIntent: 'materialize_from_source_workspace',
+            }, context.signal, { ...targetContext, workspaceSyncSourceWriterTargetRouting: routingFor('preflight') });
+            qualifiedId = preflight.targetWorkspace?.id;
+            if (!qualifiedId) throw new Error('The target preflight did not qualify a row');
+            if (outcome === 'wrong Machine at prepare') {
+              wrongPlacement = true;
+              installed = { ...installed, workspaceRefs: misplacedRefs };
+            }
+            await target.prepareBootstrapHere({ v: 1, bootstrapOperationId: operationId, targetWorkspaceRefId: qualifiedId,
+              endpointRole: 'beta', policyDigest: contentPolicy.policyDigest, createIfMissing: true,
+              targetBootstrap: 'materialize_from_source_workspace',
+              owner: { kind: 'copy_once', operation: { v: 1, operationId, controllerMachineId: 'source',
+                alphaWorkspaceRefId: checkout.workspaceId, betaWorkspaceRefId: qualifiedId, contentPolicy } },
+            }, context.signal, { ...targetContext, workspaceSyncSourceWriterTargetRouting: routingFor('prepare') });
+            // The Source's external transfer process is the boundary in this
+            // fixture. Use production plain-folder selection and write the
+            // selected bytes into the bootstrapped root without replacing it.
+            const sent = sentRequest.materialization;
+            if (sent.kind !== 'sync' || sent.workspaceAction.kind !== 'copy_once') throw new Error('Unexpected Source operation');
+            const { entries } = await resolveWorkspaceReplicationSourceInputsWithScmWorkspace({
+              sourcePath: sourceRoot, workspaceTransfer: resolveWorkspaceSyncSeedTransfer(sent.workspaceAction.contentPolicy), registry,
+            });
+            for (const entry of entries) {
+              const destination = join(targetRoot, entry.relativePath);
+              await mkdir(dirname(destination), { recursive: true });
+              await copyFile(entry.sourcePath, destination);
+            }
+            await target.releaseBootstrapHere({ v: 1, bootstrapOperationId: operationId,
+              targetWorkspaceRefId: qualifiedId, reason: 'copy_committed',
+            }, context.signal, { ...context, workspaceSyncSourceWriterTargetRouting: routingFor('release') });
+            return { kind: 'materialized' };
+          } catch (error) {
+            // This is a finite Source RPC boundary. Carry the actual receiver
+            // cause the same way the Source's wire settlement does.
+            if (!(error instanceof Error) || !('code' in error)) throw error;
+            return { kind: 'refused', code: error.code, ...('failureCause' in error ? { failureCause: error.failureCause } : {}) };
+          }
+        },
+      }, targetContext);
+      const final = await readRows();
+      if (outcome === 'copied') {
+        expect(opened).toMatchObject({ kind: 'opened', workspace: { workspaceId: qualifiedId, machineId: 'target', rootPath: targetRoot } });
+        expect(await readFile(join(targetRoot, 'payload.txt'), 'utf8')).toBe('visible bytes');
+        await expect(access(join(targetRoot, 'secrets', 'ignored.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(final.workspaceRefs).toMatchObject([{ id: checkout.workspaceId }, { id: qualifiedId, machineId: 'target' }]);
+      } else {
+        expect(opened).toMatchObject({ kind: 'refused', code: 'workspace_sync_child_unavailable', failureCause: {
+          phase: outcome === 'wrong Machine at preflight' ? 'workspace_sync.target.preflight.qualification' : 'workspace_sync.target.prepare.qualification',
+          errorCode: 'workspace_sync_child_unavailable',
+        } });
+        expect(final.workspaceRefs).toMatchObject(initial.workspaceRefs);
+        await expect(access(targetRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+      expect(publishedBeforeDispatch).toBe(true);
+    });
 
   it.each(['named', 'detached', 'no-remote', 'credentialed'] as const)('projects credential-free clone facts from the admitted source folder: %s', async state => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-open-clone-source-'));

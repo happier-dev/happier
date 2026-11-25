@@ -518,6 +518,13 @@ function endpointMachineUnavailable(message: string): Error {
   } satisfies ActionFailureCauseV1 });
 }
 
+function projectTargetQualificationUnavailable(phase: 'preflight' | 'prepare', message: string): Error {
+  const code = 'workspace_sync_child_unavailable';
+  return Object.assign(authorityError(code, message), { failureCause: {
+    phase: `workspace_sync.target.${phase}.qualification`, errorClass: 'Error', errorCode: code, httpStatus: null,
+  } satisfies ActionFailureCauseV1 });
+}
+
 function authorityError(code: string, message: string, workspaceSyncIngressRefusal?:
   | 'workspace_placement_mismatch' | 'endpoint_unavailable' | 'authority_closing'
   | 'ingress_active' | 'agent_aborted' | 'authorization_expired' | 'identity_incomplete'
@@ -2889,22 +2896,32 @@ export function createWorkspaceSyncTargetAuthority(
         if (jointRouting) {
           const { targetContext: _targetContext, ...targetRouting } = jointRouting;
           if (!isDeepStrictEqual(writerTarget.target, targetRouting)) {
-            throw authorityError('workspace_sync_child_unavailable', 'The qualified Project target placement is unavailable');
+            throw projectTargetQualificationUnavailable('preflight', 'The qualified Project target placement is unavailable');
           }
         }
-        const own = jointRouting ? null : resolveWorkspaceRefV1(getSnapshot().workspaceRefs, {
-          serverId: localServerId, machineId: localMachineId, rootPath: target.rootPath,
-        });
-        const qualified = jointRouting ? target.endpoint : own?.kind === 'resolved' ? own.ref : null;
+        const binding = context.callerInputAuthorization.binding;
         if (writerTarget.target.phase !== 'preflight' || writerTarget.target.operationId !== request.operationId
           || writerTarget.target.accountServerId !== localServerId || writerTarget.target.targetMachineId !== request.machineId
           || writerTarget.target.targetRootPath !== request.targetPath
           || !jointRouting && (request.machineId !== localMachineId
-            || context.machineAdmission?.machineId !== localMachineId
-            || context.machineAdmission.installationId !== context.callerInputAuthorization.binding.installationId)
-          || !qualified || qualified.serverId.trim() !== localServerId
+            || context.machineAdmission?.machineId !== localMachineId || context.machineAdmission.installationId !== binding.installationId)) {
+          throw projectTargetQualificationUnavailable('preflight', 'The qualified Project target placement is unavailable');
+        }
+        let qualified = target.endpoint;
+        if (!jointRouting) {
+          const address = { serverId: localServerId, machineId: localMachineId, rootPath: target.rootPath };
+          let own = resolveWorkspaceRefV1(getSnapshot().workspaceRefs, address);
+          // A signed Open's Home write can return before the installed Account
+          // receives its row update. Read from that same Account on a miss.
+          if (own.kind === 'missing' && binding.accountId === dependencies.localAccountId && dependencies.refreshProjectSnapshot) {
+            const snapshot = await dependencies.refreshProjectSnapshot(signal);
+            own = resolveWorkspaceRefV1(snapshot.workspaceRefs, address);
+          }
+          qualified = own.kind === 'resolved' ? own.ref : null;
+        }
+        if (!qualified || qualified.serverId.trim() !== localServerId
           || resolveWorkspaceSyncExecutionMachineIdV1(qualified) !== localMachineId || qualified.rootPath !== target.rootPath) {
-          throw authorityError('workspace_sync_child_unavailable', 'The qualified Project target Workspace is unavailable');
+          throw projectTargetQualificationUnavailable('preflight', 'The qualified Project target Workspace is unavailable');
         }
         // The bound writer or independent D returns its own existing row.
         // Neither materializes a row in the SOURCE graph.
@@ -3307,7 +3324,7 @@ export function createWorkspaceSyncTargetAuthority(
             serverId: localServerId, machineId: localMachineId, rootPath: targetRouting.targetRootPath,
           });
           if (own.kind !== 'resolved') {
-            throw authorityError('workspace_sync_child_unavailable', 'The qualified Project target Workspace is unavailable');
+            throw projectTargetQualificationUnavailable('prepare', 'The qualified Project target Workspace is unavailable');
           }
           independentTarget = own.ref;
           const binding = admittedTarget;
@@ -3317,7 +3334,7 @@ export function createWorkspaceSyncTargetAuthority(
               serverId: localServerId, machineId: localMachineId, rootPath: targetRouting.targetRootPath,
             });
             if (current.kind !== 'resolved' || !isDeepStrictEqual(current.ref, own.ref)) {
-              throw authorityError('workspace_sync_child_unavailable', 'The qualified Project target Workspace changed before preparation');
+              throw projectTargetQualificationUnavailable('prepare', 'The qualified Project target Workspace changed before preparation');
             }
           } };
         }

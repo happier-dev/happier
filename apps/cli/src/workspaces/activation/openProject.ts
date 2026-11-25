@@ -4,6 +4,7 @@ import { readRequesterAccountActionContext, type RetainedRequesterAccountCustody
 import { configuration } from '@/configuration';
 import type { preparePrivateProjectOpenCheckout, PrivateProjectCheckoutOpenRuntime } from './privateProjectOpenCheckout';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { posix } from 'node:path';
 import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema, type ProjectOpenSyncMaterializationResultV1, type OpenProjectInputV1, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
@@ -24,6 +25,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readProjectAccountRows, createProjectAccountSnapshotMutation, mutateProjectAccountOrganization, type ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { materializeWorkspaceRefForMachineRoot, materializeWorkspaceRefForManagedRoot, resolveWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
+import { resolveProjectAccountWorkspaceRefRemovalV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
 import { readAcceptedManagedWorkspaceRefFromRows } from '@/workspaces/acceptedManagedWorkspace';
 import { registerManagedWorkspaceTarget } from '@/daemon/sessions/sessionTargetWorkspaces';
 import { openSessionHolderWorkspaceChannel } from '@/subprocess/supervision/sessionHolder';
@@ -506,26 +508,70 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
           },
         });
       }
-      context.signal.throwIfAborted();
-      if (remoteSyncSource && privateSync && privateCheckout) {
-        // The remote SOURCE names TARGET by its root in these Account rows. Publish
-        // this host's private checkout identity first so it adopts it rather than
-        // minting another; an unconfirmed attempt's retry adopts the same row.
-        const prepared = privateCheckout.prepared;
+      const mutateProjectRows = createProjectAccountSnapshotMutation(requester.rows);
+      const acceptDestination = async (rootPath: string, parentRootPath?: string) => {
+        context.signal.throwIfAborted();
+        const prepared = privateCheckout?.prepared;
+        let acceptedId: string | undefined;
+        let created = false;
+        // Once submitted, row transport ambiguity or cancellation cannot be described as no effect.
         effectsIssued = true;
-        const published = await createProjectAccountSnapshotMutation(requester.rows)(async current => {
-          privateCheckout!.validateCurrentRows(current.workspaceRefs);
-          return { ...current, workspaceRefs: materializeWorkspaceRefForMachineRoot(current.workspaceRefs, {
-            serverId: runtime.serverId, machineId: runtime.machineId, rootPath: prepared.rootPath, ...facts,
-            nowMs: Date.now(), createId: () => prepared.workspaceRefId }).workspaceRefs };
+        const accepted = await mutateProjectRows(async current => {
+          context.signal.throwIfAborted();
+          privateCheckout?.validateCurrentRows(current.workspaceRefs);
+          const materialized = materializeWorkspaceRefForMachineRoot(current.workspaceRefs, {
+            serverId: runtime.serverId, machineId: runtime.machineId, rootPath,
+            ...facts, ...(parentWorkspace ? { parentWorkspace } : {}), ...(parentRootPath ? { parentRootPath } : {}),
+            nowMs: Date.now(), createId: prepared ? () => prepared.workspaceRefId : randomUUID,
+          });
+          if (prepared && materialized.workspaceRef.id !== prepared.workspaceRefId)
+            throw Object.assign(new Error('Private checkout identity changed'), { code: 'workspace_private_checkout_required',
+              details: { reason: 'workspace_private_checkout_required', phase: 'native_execution_admission' } });
+          acceptedId = materialized.workspaceRef.id;
+          created = materialized.created;
+          return { ...current, workspaceRefs: materialized.workspaceRefs };
         }, context.signal);
-        if (published.status !== 'applied' && published.status !== 'unchanged') return outcomeUnknown(`Private target row returned ${published.status}`);
-      }
+        if (accepted.status !== 'applied' && accepted.status !== 'unchanged')
+          return { kind: 'unconfirmed' as const, reason: `Account row acceptance returned ${accepted.status}` };
+        const resolved = acceptedId ? resolveWorkspaceRefV1(accepted.snapshot.workspaceRefs, {
+          serverId: runtime.serverId, workspaceId: acceptedId, machineId: runtime.machineId, rootPath,
+        }) : { kind: 'missing' as const };
+        if (resolved.kind !== 'resolved')
+          return { kind: 'unconfirmed' as const, reason: `Accepted Workspace row readback was ${resolved.kind}` };
+        return { kind: 'accepted' as const, ref: resolved.ref, created };
+      };
+      let publishedOrdinaryCopy: WorkspaceRefV1 | undefined;
+      context.signal.throwIfAborted();
       if (remoteSyncSource) {
         if (requester.rows.authorization && (!runtime.callWorkspaceSource || !admittedSyncSource || !sync)) {
           return refused('workspace_sync_update_required');
         }
         if (!requester.rows.authorization && !credentials) return refused('requester_account_unavailable');
+        const copy = input.materialization.kind === 'sync' && input.materialization.workspaceAction.kind === 'copy_once'
+          ? input.materialization : undefined;
+        let createdCopyTarget: WorkspaceRefV1 | undefined;
+        if (input.materialization.kind === 'sync' && (copy || privateSync && privateCheckout)) {
+          // The receiving preflight resolves the selected root in its own rows.
+          // Publish this host's identity before the Source asks it to qualify.
+          const published = await acceptDestination(privateCheckout?.prepared.rootPath ?? input.materialization.targetPath);
+          if (published.kind === 'unconfirmed') return outcomeUnknown(published.reason);
+          if (copy && published.created) createdCopyTarget = published.ref;
+          if (copy && !privateCheckout) publishedOrdinaryCopy = published.ref;
+        }
+        const discardRefusedCopyTarget = async () => {
+          const row = createdCopyTarget;
+          if (!row) return;
+          const removed = await mutateProjectRows(async current => {
+            const selected = resolveWorkspaceRefV1(current.workspaceRefs, { serverId: row.serverId, id: row.id });
+            if (selected.kind === 'missing') return current;
+            if (selected.kind !== 'resolved' || !isDeepStrictEqual(selected.ref, row))
+              throw new Error('Copy target Workspace changed before cleanup');
+            return { ...current, workspaceRefs: resolveProjectAccountWorkspaceRefRemovalV1(current,
+              { serverId: row.serverId, workspaceRefId: row.id }) };
+          }, context.signal);
+          if (removed.status !== 'applied' && removed.status !== 'unchanged')
+            throw new Error(`Copy target cleanup returned ${removed.status}`);
+        };
         const effectsBeforeSource = effectsIssued;
         effectsIssued = true;
         const sourceMaterialization = await (requester.rows.authorization
@@ -537,15 +583,22 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
           // Physical custody routing never erases the reviewed Source or actual child namespace.
           method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN, request: input,
           requireCurrentMachine: true, timeoutMs: null, signal: context.signal,
-        })).catch(error => {
-          if (readRpcRequestDisposition(error) === 'notSent') effectsIssued = effectsBeforeSource;
+        })).catch(async error => {
+          if (readRpcRequestDisposition(error) === 'notSent') {
+            effectsIssued = effectsBeforeSource;
+            await discardRefusedCopyTarget();
+          }
           throw error;
         });
         const materialized = ProjectOpenSyncMaterializationResultV1Schema.safeParse(sourceMaterialization);
         if (!materialized.success || materialized.data.kind === 'outcomeUnknown') return outcomeUnknown('Source Sync did not confirm materialization');
-        // The SOURCE owner's typed cause reaches the person unchanged.
-        if (materialized.data.kind === 'refused') return refused(materialized.data.code,
-          materialized.data.failureCause ? { failureCause: materialized.data.failureCause } : undefined);
+        // A definite refusal can retire this Open's new row. An unconfirmed
+        // transfer may still be using it, so a retry adopts that same identity.
+        if (materialized.data.kind === 'refused') {
+          await discardRefusedCopyTarget();
+          return refused(materialized.data.code, materialized.data.failureCause
+            ? { failureCause: materialized.data.failureCause } : undefined);
+        }
         copyOnceBaseline = materialized.data.copyOnceBaseline;
         copyOnceExcludedPaths = materialized.data.copyOnceExcludedPaths;
       }
@@ -600,30 +653,13 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         }
       }
       context.signal.throwIfAborted();
-      let acceptedId: string | undefined;
-      // Once submitted, row transport ambiguity or cancellation cannot be described as no effect.
-      effectsIssued = true;
-      const accepted = await createProjectAccountSnapshotMutation(requester.rows)(async current => {
-        context.signal.throwIfAborted();
-        privateCheckout?.validateCurrentRows(current.workspaceRefs);
-        const materialized = materializeWorkspaceRefForMachineRoot(current.workspaceRefs, {
-          serverId: runtime.serverId, machineId: runtime.machineId, rootPath: checkout.rootPath,
-          ...facts, ...(parentWorkspace ? { parentWorkspace } : {}), ...(parentRootPath ? { parentRootPath } : {}),
-          nowMs: Date.now(), createId: privateCheckout ? () => privateCheckout!.prepared.workspaceRefId : randomUUID,
-        });
-        if (privateCheckout && materialized.workspaceRef.id !== privateCheckout.prepared.workspaceRefId)
-          throw Object.assign(new Error('Private checkout identity changed'), { code: 'workspace_private_checkout_required',
-            details: { reason: 'workspace_private_checkout_required', phase: 'native_execution_admission' } });
-        acceptedId = materialized.workspaceRef.id;
-        return { ...current, workspaceRefs: materialized.workspaceRefs };
-      }, context.signal);
-      if (accepted.status !== 'applied' && accepted.status !== 'unchanged') return outcomeUnknown(`Account row acceptance returned ${accepted.status}`);
-      const acceptedRef = acceptedId ? resolveWorkspaceRefV1(accepted.snapshot.workspaceRefs, {
-        serverId: runtime.serverId, workspaceId: acceptedId, machineId: runtime.machineId, rootPath: checkout.rootPath,
-      }) : { kind: 'missing' as const };
-      if (acceptedRef.kind !== 'resolved') return outcomeUnknown(`Accepted Workspace row readback was ${acceptedRef.kind}`);
-      const workspace = workspaceAddressFromRefV1(acceptedRef.ref);
-      await listOpenedProject(requester, acceptedRef.ref, context.signal);
+      const accepted = publishedOrdinaryCopy
+        ? { kind: 'accepted' as const, ref: publishedOrdinaryCopy }
+        : await acceptDestination(checkout.rootPath, parentRootPath);
+      if (accepted.kind === 'unconfirmed') return outcomeUnknown(accepted.reason);
+      const acceptedRef = accepted.ref;
+      const workspace = workspaceAddressFromRefV1(acceptedRef);
+      await listOpenedProject(requester, acceptedRef, context.signal);
       let setup: Opened['setup'];
       try {
         const association = await resolveProjectSetupAcceptedWorkspace({ address: workspace, ...requester.rows,
@@ -659,9 +695,9 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         ...(cloneSource ? { cloneSource } : {}),
         ...((copyOnceBaseline ?? checkout.copyOnceBaseline) ? { copyOnceBaseline: copyOnceBaseline ?? checkout.copyOnceBaseline } : {}),
         ...((copyOnceExcludedPaths ?? checkout.copyOnceExcludedPaths) ? { copyOnceExcludedPaths: copyOnceExcludedPaths ?? checkout.copyOnceExcludedPaths } : {}),
-        facts: { projectKey: acceptedRef.ref.projectKey ?? acceptedRef.ref.id,
-          ...(acceptedRef.ref.repositoryIdentity ? { repositoryIdentity: acceptedRef.ref.repositoryIdentity } : {}),
-          ...(acceptedRef.ref.source ? { source: acceptedRef.ref.source } : {}) } };
+        facts: { projectKey: acceptedRef.projectKey ?? acceptedRef.id,
+          ...(acceptedRef.repositoryIdentity ? { repositoryIdentity: acceptedRef.repositoryIdentity } : {}),
+          ...(acceptedRef.source ? { source: acceptedRef.source } : {}) } };
     });
   } catch (error) {
     logger.warnLocalFile('[Project Open] Settlement failed', { effectsIssued, code: codeOf(error),
