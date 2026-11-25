@@ -8,7 +8,7 @@ import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployment
 import type { AutomationActionConsentTrigger, AutomationActionTrigger } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { findActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { AutomationPluginEventTrigger } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
-import type { AutomationPluginEventDefinitionTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import { readOfflineAutomationEventName, type AutomationPluginEventDefinitionTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 
 import { getPreferredLanguage, t } from '@/text';
 import { readCachedDaemonMergedProjectionCacheEntry, type DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
@@ -280,15 +280,6 @@ function readBuiltInEventClause(event: Extract<TriggerSummarySource, { kind: 'pl
     }
 }
 
-function readOfflineEventName(event: Extract<TriggerSummarySource, { kind: 'pluginEvent' }>['eventRef']): string | null {
-    // Older rows can retain only the declaration identity. Read descriptive identifiers without
-    // showing their namespace or contract version. Opaque names keep the generic label.
-    const label = event.localId.split('/').at(-1)?.replace(/[-_.]v[0-9]+$/iu, '');
-    if (!label || !/^\p{L}+(?:[-_.]\p{L}+)+$/u.test(label)) return null;
-    const words = label.replace(/[-_.]/gu, ' ');
-    return words[0]!.toLocaleUpperCase(getPreferredLanguage()) + words.slice(1);
-}
-
 /**
  * Where a session event is listened for, from the trigger's stored subject: the Source field's resting value and
  * the Sentence's scope chip ("When a turn ends in any session", "on this Machine") read this one owner.
@@ -369,7 +360,7 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
             // Older plugin triggers can carry a whole title in displayLabel. Keep it when the
             // declaration is unavailable and we have no localized title for this event.
             if (context?.form !== 'detail' && !clause && !declaredTitle && label) return label;
-            const title = declaredTitle ?? readOfflineEventName(trigger.eventRef);
+            const title = declaredTitle ?? readOfflineAutomationEventName(trigger.eventRef, getPreferredLanguage());
             const event = clause ?? (title === null ? t('workflows.triggers.kind.pluginEvent')
                 : context?.form === 'name' ? title : t('workflows.triggers.summary.event', { event: title }));
             const check = health && trigger.sourceConfig !== undefined

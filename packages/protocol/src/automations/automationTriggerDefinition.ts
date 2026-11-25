@@ -143,6 +143,14 @@ export type AutomationPluginEventDefinitionTrigger = z.infer<
   typeof AutomationPluginEventDefinitionTriggerSchema
 >;
 
+/** Retained Events can have a descriptive declaration name even when the catalog is unavailable. */
+export function readOfflineAutomationEventName(event: AutomationPluginEventDefinitionTrigger['eventRef'], locale?: string): string | null {
+  const label = event.localId.split('/').at(-1)?.replace(/[-_.]v[0-9]+$/iu, '');
+  if (!label || !/^\p{L}+(?:[-_.]\p{L}+)+$/u.test(label)) return null;
+  const words = label.replace(/[-_.]/gu, ' ');
+  return words[0]!.toLocaleUpperCase(locale) + words.slice(1);
+}
+
 export const AutomationEncryptedTriggerDefinitionEnvelopeV1Schema =
   ENCRYPTED_STORED_CONTENT_SCHEMA.check(z.superRefine((value, context) => {
     addAutomationStoredEnvelopeUtf8LimitIssue(

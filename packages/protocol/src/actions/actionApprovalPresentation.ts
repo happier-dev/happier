@@ -2,6 +2,10 @@ export { readTeamMemberApprovalPresentation } from './specs/teamMemberApproval.j
 
 import { StructuredQuestionAnswersV1Schema } from '../tools/structuredQuestionAnswersV1.js';
 import { ActionInvokeInputSchema } from './actionInvokeInput.js';
+import { WORKFLOW_TRIGGER_ADD_ACTION_ID, WORKFLOW_TRIGGER_UPDATE_ACTION_ID } from './workflowTriggerActionIds.js';
+import { readOfflineAutomationEventName } from '../automations/automationTriggerDefinition.js';
+import { WorkflowTriggerAddRequestV1Schema, WorkflowTriggerUpdateRequestV1Schema } from '../workflows/triggers/workflowTriggerActionsV1.js';
+import { ApprovalRequestGetResultV1Schema } from '../approvals/approvalRequestPublicRead.js';
 import { readContributedActionReviewV1 } from './contributedActionReviewV1.js';
 import { NativePermissionChoiceAnswerV1Schema, NativePermissionChoiceV1Schema, NativePermissionChoicesV1Schema } from '../sessions/permissions/respondRpcParamsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -1149,6 +1153,122 @@ function readApprovalSelectedOptions(field: ActionInputFieldHint, values: readon
   return undefined;
 }
 
+export type WorkflowTriggerApprovalInput = Readonly<{ actionId?: string | null; actionArgs?: unknown }>;
+
+export function readWorkflowTriggerApproval(input: WorkflowTriggerApprovalInput) {
+  const add = input.actionId === WORKFLOW_TRIGGER_ADD_ACTION_ID ? WorkflowTriggerAddRequestV1Schema.safeParse(input.actionArgs) : null;
+  const update = input.actionId === WORKFLOW_TRIGGER_UPDATE_ACTION_ID ? WorkflowTriggerUpdateRequestV1Schema.safeParse(input.actionArgs) : null;
+  const added = add?.success ? add.data : null;
+  const updated = update?.success ? update.data : null;
+  const trigger = added?.trigger ?? updated?.patch.trigger;
+  if (!added && !updated) return null;
+  return { added, updated, trigger: trigger && (trigger.kind !== 'sessionLifecycle' || 'events' in trigger) ? trigger : null };
+}
+
+type WorkflowTriggerApproval = NonNullable<ReturnType<typeof readWorkflowTriggerApproval>>;
+type ReviewedWorkflowTrigger = NonNullable<WorkflowTriggerApproval['trigger']>;
+export type WorkflowTriggerApprovalLabels = Readonly<{
+  when: string; folder: string; disabled: string;
+  summarize: (trigger: ReviewedWorkflowTrigger) => string;
+}>;
+
+function formatReviewedTrigger(trigger: ReviewedWorkflowTrigger): string {
+  switch (trigger.kind) {
+    case 'schedule': {
+      const { schedule } = trigger;
+      if (schedule.kind === 'once') {
+        const date = new Date(schedule.scheduledAt);
+        return Number.isFinite(date.getTime()) ? `Once at ${date.toISOString()}` : 'Once at the selected time';
+      }
+      if (schedule.kind === 'interval' && schedule.everyMs !== null) return `Every ${schedule.everyMs / 1000} seconds`;
+      return ['On a schedule', schedule.scheduleExpr, schedule.timezone].filter(Boolean).join(' · ');
+    }
+    case 'pluginEvent': {
+      const event = readOfflineAutomationEventName(trigger.eventRef, 'en') ?? 'Plugin Event';
+      const source = 'displayLabel' in trigger ? trigger.displayLabel : null;
+      return source && source !== event ? `${event} · ${source}` : event;
+    }
+    case 'action':
+      if (!('phase' in trigger)) return 'Action approval';
+      return `${trigger.phase === 'before' ? 'Before' : 'After'} ${trigger.actionIds.map(id => {
+        const action = ActionIdSchema.safeParse(id);
+        return action.success ? getActionSpec(action.data).title : 'a plugin Action';
+      }).join(', ')}`;
+    case 'sessionLifecycle':
+      return trigger.events.map(event => humanizeApprovalKey(event.replace(/^parent/, ''))).join(' · ');
+    case 'runLifecycle':
+      return trigger.condition === 'terminal' ? 'When the Run ends' : 'When the Run needs you';
+    case 'prComment':
+      return 'When a pull request has a comment';
+    case 'ciFailed':
+      return 'When a CI check fails';
+  }
+}
+
+const defaultWorkflowTriggerApprovalLabels: WorkflowTriggerApprovalLabels = {
+  when: 'When', folder: 'Folder', disabled: 'Disabled', summarize: formatReviewedTrigger,
+};
+
+export function formatWorkflowTriggerApprovalSummary(change: WorkflowTriggerApproval,
+  labels = defaultWorkflowTriggerApprovalLabels): string | null {
+  if (!change.trigger) return null;
+  const summary = labels.summarize(change.trigger);
+  return change.added?.trigger.enabled === false ? `${summary} · ${labels.disabled}` : summary;
+}
+
+/** One disclosure of admitted trigger operands, used by review cards and text readers. */
+function presentWorkflowTriggerApproval(
+  input: WorkflowTriggerApprovalInput,
+  presentation: ApprovalActionFieldsPresentation,
+  labels = defaultWorkflowTriggerApprovalLabels,
+): ApprovalActionFieldsPresentation {
+  if (presentation.unrepresentable) return presentation;
+  const change = readWorkflowTriggerApproval(input);
+  if (!change) return presentation;
+  const { added, updated } = change;
+  const value = formatWorkflowTriggerApprovalSummary(change, labels);
+  return { ...presentation, rows: [
+    ...(value ? [{ kind: 'value' as const, path: 'trigger.summary', title: labels.when, value }] : []),
+    ...presentation.rows.flatMap((row): typeof presentation.rows => {
+      if (row.kind !== 'value') return [row];
+      if (row.path === 'project' && added?.project) {
+        return [{ ...row, technical: true }, { kind: 'value', path: 'project.directory',
+          title: labels.folder, value: added.project.directory }];
+      }
+      if (row.path === 'observationOnly' && added?.observationOnly
+        && Object.keys(added.observationOnly).length === 1) return [];
+      if (row.path === 'patch' && updated && value) {
+        const { trigger: _summarized, ...otherChanges } = updated.patch;
+        if (Object.keys(otherChanges).length === 0) return [{ ...row, technical: true }];
+        const remaining = describeActionResultFields({ result: { patch: otherChanges } })?.rows[0];
+        return remaining?.kind === 'value' ? [{ ...remaining, title: row.title }] : [{ ...row, technical: true }];
+      }
+      return [row.path === 'trigger' || row.path === 'automationId' || row.path === 'triggerId' || row.path === 'observationOnly'
+        ? { ...row, technical: true } : row];
+    }),
+  ] };
+}
+
+/** Read only the authorized receipt's review fields. The structured Action result keeps its original contract. */
+export function describeWorkflowApprovalReadText(result: unknown): string | null {
+  const receipt = ApprovalRequestGetResultV1Schema.safeParse(result);
+  if (!receipt.success || !('actionId' in receipt.data.request)) return null;
+  return describeWorkflowApprovalRequestText(receipt.data.request);
+}
+
+export function describeWorkflowApprovalRequestText(
+  request: Pick<ApprovalRequest, 'actionId' | 'actionArgs' | 'preview' | 'status'>,
+): string | null {
+  if (request.actionId !== WORKFLOW_TRIGGER_ADD_ACTION_ID && request.actionId !== WORKFLOW_TRIGGER_UPDATE_ACTION_ID) return null;
+  const { rows, unrepresentable } = describeApprovalRequestFields(request);
+  if (unrepresentable) return null;
+  const fields = rows.flatMap(row => row.kind === 'value' && !row.technical && !row.reference
+    ? [`${row.title}: ${row.entries ? row.entries.filter(entry => !entry.technical && !entry.reference && entry.value !== null)
+      .map(entry => `${entry.label}: ${entry.value}`).join(', ') : row.value}`] : []);
+  if (fields.length === 0) return null;
+  return [getActionSpec(request.actionId).title, ...fields.map(field => field.replace(/[\r\n]+/gu, ' '))].join('\n');
+}
+
 export function describeApprovalActionFields(input: Readonly<{
   actionId: string;
   actionArgs: unknown;
@@ -1467,8 +1587,11 @@ export function describeApprovalActionFields(input: Readonly<{
     rows.splice(at < 0 ? rows.length : at + 1, 0, network);
   }
   // A structured row with nothing readable left is read in Details, never as a bare title.
-  return { rows: rows.map((row) => row.kind === 'value' && row.entries && !row.technical
-    && !row.entries.some((entry) => entry.value !== null && !entry.technical) ? { ...row, technical: true as const } : row), unrepresentable };
+  return presentWorkflowTriggerApproval({ actionId: input.actionId, actionArgs: presentationInput }, {
+    rows: rows.map(row => row.kind === 'value' && row.entries && !row.technical
+      && !row.entries.some(entry => entry.value !== null && !entry.technical) ? { ...row, technical: true as const } : row),
+    unrepresentable,
+  }, input.context?.workflowTriggerLabels);
 }
 
 /**
@@ -1742,13 +1865,13 @@ export function describeApprovalRequestFields(
  * button cannot advertise an effect that the decision owner will reject.
  */
 export function resolveApprovalRequestApproveAdmission(
-  request: ApprovalRequest,
+  request: ApprovalRequest, context?: ApprovalPresentationContext,
 ): ApprovalRequestApproveAdmission;
 export function resolveApprovalRequestApproveAdmission(
-  request: ApprovalRequest | TargetActionApprovalRequestV1,
+  request: ApprovalRequest | TargetActionApprovalRequestV1, context?: ApprovalPresentationContext,
 ): TargetActionApprovalApproveAdmission;
 export function resolveApprovalRequestApproveAdmission(
-  request: ApprovalRequest | TargetActionApprovalRequestV1,
+  request: ApprovalRequest | TargetActionApprovalRequestV1, context?: ApprovalPresentationContext,
 ): TargetActionApprovalApproveAdmission {
   if (!('actionId' in request)) {
     const presentation = describeApprovalRequestFields(request);
@@ -1785,7 +1908,7 @@ export function resolveApprovalRequestApproveAdmission(
       }
     }
   }
-  const presentation = describeApprovalRequestFields(request);
+  const presentation = describeApprovalRequestFields(request, context);
   if (request.v === 1 || !ActionIdSchema.safeParse(request.actionId).success) {
     return { status: 'unavailable', reason: 'legacy_request', presentation };
   }

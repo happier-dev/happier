@@ -2,9 +2,11 @@ import { showHelp } from '../actions/discoveryHelp';
 import { isDeploymentCiStepCommand } from '../actions/discoveryRouting';
 import { randomUUID } from 'node:crypto';
 import { createCliActionApprovalPresenter } from '@/cli/actions/approvalPrompt';
+import { describeWorkflowApprovalReadText } from '@happier-dev/protocol/actions';
+import { stripVTControlCharacters } from 'node:util';
 import { definitionList, fail, renderHelpPage, sectionTitle } from '@happier-dev/cli-common/output';
 import { actionSpecToActionDefinitionV1, readCompleteActionSpecV1 } from '@happier-dev/protocol/actions/actionCatalog';
-import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, APPROVAL_REQUEST_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
@@ -603,8 +605,14 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
     executionPlacement: localInvocation ? resolveActionExecutionPlacementForInput(
       getActionSpec(localInvocation.actionId), resolvedInput, undefined, sessionMcp ? 'agent' : 'cli') : contributedExecutionPlacement,
   })) return;
-  if (json) await printJsonEnvelope({ ok: true, kind: 'actions_invoke', data, ...operationReceipt,
-    ...(automationNotices ? { automationNotices } : {}) }); else await writeJsonStdout(data, { pretty: true });
+  if (json) {
+    await printJsonEnvelope({ ok: true, kind: 'actions_invoke', data, ...operationReceipt,
+      ...(automationNotices ? { automationNotices } : {}) });
+    return;
+  }
+  const reviewText = invocation.actionId === APPROVAL_REQUEST_GET_ACTION_ID_V1 ? describeWorkflowApprovalReadText(data) : null;
+  if (reviewText === null) await writeJsonStdout(data, { pretty: true });
+  else console.log(stripVTControlCharacters(reviewText).replace(/[\p{Cc}&&[^\n]]/gv, ' '));
 }
 
 export async function handleActionsCommand(

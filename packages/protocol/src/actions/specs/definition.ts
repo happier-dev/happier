@@ -1,4 +1,4 @@
-import type { ApprovalActionReference } from '../actionApprovalPresentation.js';
+import type { ApprovalActionReference, WorkflowTriggerApprovalLabels } from '../actionApprovalPresentation.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ApprovalInputCustodySchema } from '../../approvals/approvalInputCustody.js';
 import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
@@ -67,6 +67,8 @@ export type ApprovalPresentationContext = Readonly<{
   widgetPresentation?: Readonly<{ widgetName?: string; pageName?: string; areaName?: string }>;
   /** The presenting client's canonical quantity formatter; never changes executable input. */
   formatDataBytes?: (bytes: number, options: Readonly<{ kind: 'memory' | 'storage' }>) => string;
+  /** A localized view of the admitted Workflow trigger. */
+  workflowTriggerLabels?: WorkflowTriggerApprovalLabels;
   /** Available RAM from the resource-summary owner, scoped to the reviewed Machine. */
   machineMemory?: Readonly<{ machineId: string; availableBytes: number | null; totalBytes: number | null }>;
   /** Channels' readable destination for this exact reply; display only, never executable routing. */

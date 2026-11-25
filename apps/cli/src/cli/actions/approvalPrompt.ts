@@ -4,6 +4,7 @@ import { AccountErasureReviewV1Schema } from '@happier-dev/protocol/auth/account
 import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentApprovalReviewV1Schema, type DeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
+import { WORKFLOW_TRIGGER_ADD_ACTION_ID, WORKFLOW_TRIGGER_UPDATE_ACTION_ID } from '@happier-dev/protocol/actions/workflowTriggerActionIds';
 import type { CliApprovalRequestedHandler } from '@/session/actions/approvals/deferredResult';
 import type { SessionControlJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
@@ -40,6 +41,11 @@ async function describeApprovalPrompt(actionId: string, signal: AbortSignal, rea
   if (actionId === DEPLOYMENT_ROLLBACK_ACTION_ID_V1) return describeRollbackReview(await readPreview?.());
   const prompt = 'Approve this Action?';
   if (!readPreview) return prompt;
+  if (actionId === WORKFLOW_TRIGGER_ADD_ACTION_ID || actionId === WORKFLOW_TRIGGER_UPDATE_ACTION_ID) {
+    const { workflowTriggerReview } = readRecord(await readPreview());
+    return typeof workflowTriggerReview === 'string'
+      ? [...workflowTriggerReview.split('\n').map(terminalText), '', prompt].join('\n') : undefined;
+  }
   const { resolvePartialMachineReferenceReviewReaderV1 } = await import('@happier-dev/protocol/machines/machineReferenceCensusV1');
   const readReview = resolvePartialMachineReferenceReviewReaderV1(actionId);
   if (!readReview) return prompt;

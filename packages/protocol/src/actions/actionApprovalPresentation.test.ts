@@ -12,8 +12,9 @@ import { MACHINE_POOL_ACTION_IDS_V1 } from '../machines/pools/actionsV1.js';
 import { readBuiltInSettingDeclarationV1 } from './settings/settingsDeclarations.js';
 import { skillFileFromBytesV1 } from '../prompts/library/skills/skillZipV1.js';
 import type { ActionId } from './actionIds.js';
+import { WORKFLOW_TRIGGER_UPDATE_ACTION_ID } from './workflowTriggerActionIds.js';
 import { decideApprovalRequestTransition, settleApprovalRequestActionArgs } from '../approvals/approvalRequestTransition.js';
-import { describeApprovalRequestFields } from './actionApprovalPresentation.js';
+import { describeApprovalRequestFields, describeWorkflowApprovalReadText } from './actionApprovalPresentation.js';
 import { createPluginInstallationReviewFixture } from '../testing/pluginInstallationReviewFixture.js';
 import { TargetActionApprovalRequestV1Schema } from '../approvals/targetActionApprovalRequestV1.js';
 import { TriageStartEntrySessionInputV1Schema } from '../../../plugins/triage/src/actions/entrySessionProtocol.js';
@@ -23,6 +24,26 @@ import { computeWorkspaceSyncPolicyDigest } from '../sessions/control/handoff/wo
 import { readBuiltinWidgetDescriptorV1 } from '../widgets/builtinWidgetDescriptorV1.js';
 
 describe('approval field presentation', () => {
+  it('reads the accepted trigger change as a When field and keeps record addresses technical', () => {
+    const request = ApprovalRequestV1Schema.parse({
+      v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'cli' },
+      actionId: WORKFLOW_TRIGGER_UPDATE_ACTION_ID, summary: 'Review the schedule change', actionArgs: {
+        automationId: 'raw-automation-id', triggerId: 'raw-trigger-id', expectedRevision: 1,
+        patch: { trigger: { kind: 'schedule', schedule: { kind: 'once', scheduledAt: 1795166538066 } } },
+      },
+    });
+    const { rows } = describeApprovalRequestFields(request);
+    const main = rows.filter(row => row.kind === 'value' && !row.technical);
+    expect(main).toContainEqual(expect.objectContaining({ path: 'trigger.summary', title: 'When',
+      value: expect.stringMatching(/once.*2026/i) }));
+    expect(JSON.stringify(main)).not.toMatch(/raw-automation-id|raw-trigger-id/);
+    const text = describeWorkflowApprovalReadText({
+      artifactId: 'approval', request: projectApprovalRequestForPublicRead(request), canAllow: true,
+      queryPlan: { kind: 'approval_artifact_id_lookup', backingStore: 'ArtifactStore', boundedBy: 'artifactId', hydratedTranscripts: false },
+    });
+    expect(text).toMatch(/When: Once at 2026/);
+    expect(text).not.toMatch(/raw-automation-id|raw-trigger-id/);
+  });
   it('admits review of the captured named profile creation without an unrelated Action id', () => {
     // QA-C r14b's actual request failed approval with path=actionId even
     // though the public policy schema admits this independent union branch.

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { describeWorkflowApprovalRequestText } from '@happier-dev/protocol/actions';
 import type { ActionExecuteResult, ActionExecutorContext } from '@happier-dev/protocol';
 import { buildActionExecuteResultFromRecordedApprovalExecution, type createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema,
@@ -22,7 +23,10 @@ async function readCliApprovalReceipt(execute: ReturnType<typeof createActionExe
 }
 
 function previewFromReceipt(receipt: Awaited<ReturnType<typeof readCliApprovalReceipt>>) {
-  return receipt.ok && 'preview' in receipt.request ? receipt.request.preview : undefined;
+  if (!receipt.ok) return undefined;
+  if (!('actionId' in receipt.request)) return 'preview' in receipt.request ? receipt.request.preview : undefined;
+  const review = describeWorkflowApprovalRequestText(receipt.request);
+  return review === null ? receipt.request.preview : { workflowTriggerReview: review };
 }
 
 /** Progress can prompt for Ask while the original transport retains private output. */

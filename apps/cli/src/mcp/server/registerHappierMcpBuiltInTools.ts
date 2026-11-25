@@ -6,6 +6,8 @@ import { createHappierToolInventory, type HappierToolInventory, type BuiltInHapp
 import { dispatchBuiltInHappierTool } from '@/agent/tools/happierTools/dispatchBuiltInHappierTool';
 import type { ActionId, ActionsSettingsV1, ApprovalRequestOriginV1, BrowserScreenshotMediaReferenceV1 } from '@happier-dev/protocol';
 import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { APPROVAL_REQUEST_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { describeWorkflowApprovalReadText } from '@happier-dev/protocol/actions';
 import { BrowserScreenshotMediaReferenceV1Schema } from '@happier-dev/protocol/browser/context/v1';
 import { SessionImageMediaReferenceV1Schema } from '@happier-dev/protocol/sessions/media/imageReferenceV1';
 import type { HappierBuiltInToolDefinition, HappierBuiltInToolDispatchResult } from '@/agent/tools/happierTools/types';
@@ -343,12 +345,14 @@ export function registerHappierMcpBuiltInTools(
                                 images.push({ type: 'image', data: verified.bytes.toString('base64'), mimeType: verified.mimeType });
                             }
                         }
+                        const reviewText = requestedActionId === APPROVAL_REQUEST_GET_ACTION_ID_V1
+                            ? describeWorkflowApprovalReadText(result.result) : null;
                         return {
-                            content: [{ type: 'text' as const, text: stringifyMcpToolTextPayload(result.result) },
+                            content: [{ type: 'text' as const, text: reviewText ?? stringifyMcpToolTextPayload(result.result) },
                                 ...(result.automationNotices?.length ? [{ type: 'text' as const,
                                     text: stringifyMcpToolTextPayload({ automationNotices: result.automationNotices }) }] : []),
                                 ...images],
-                            ...(tool.outputSchema === undefined ? {} : {
+                            ...(tool.outputSchema === undefined && reviewText === null ? {} : {
                                 // The MCP wire contract requires an object even though
                                 // Action dispatch can return arbitrary JSON values.
                                 structuredContent: CallToolResultSchema.shape.structuredContent.unwrap().parse(result.result),
