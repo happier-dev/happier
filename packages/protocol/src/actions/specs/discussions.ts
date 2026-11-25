@@ -28,7 +28,7 @@ function createDiscussionActionSpecsV1() {
     { path: 'content.parts.[].participant', title: 'Mention', widget: 'json', visibleWhen: contentIsMessage },
     { path: 'content.parts.[].reference', title: 'Reference', widget: 'json', visibleWhen: contentIsMessage },
     { path: 'content.parts.[].attachment', title: 'Attachment', widget: 'json', visibleWhen: contentIsMessage },
-    { path: 'content', title, widget: 'json', required: true, visibleWhen: contentIsDocProposal },
+    { path: 'content.proposal', title, widget: 'json', required: true, visibleWhen: contentIsDocProposal },
   ] as const;
   return Object.freeze(defineActionSpecs([
   {
