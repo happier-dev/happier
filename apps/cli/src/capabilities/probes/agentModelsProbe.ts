@@ -661,7 +661,7 @@ async function probeAgentModels(params: {
       }
 
       // No contributed discovery hook is an unsupported catalog, not a failed read.
-      return fallback;
+      return { ...fallback, refreshError: false };
     } catch (error) {
       if (error instanceof AcpCatalogUnavailableError) throw error;
       observeFailure(error);

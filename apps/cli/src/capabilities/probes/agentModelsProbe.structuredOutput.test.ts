@@ -24,6 +24,20 @@ describe('model probe structured output evidence', () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
+  it('publishes the declared static catalog without a refresh failure when the Agent has no model discovery hook', async () => {
+    const catalogEntry = readAgentCatalogSnapshot().catalogEntriesById.claude;
+    if (!catalogEntry) throw new Error('Bundled Claude catalog fixture is unavailable');
+    vi.stubEnv('HAPPIER_CLAUDE_PATH', process.execPath);
+    const observation = await probeAgentModelsBestEffort({
+      agentId: 'claude', catalogEntry, cwd: '/declared-static-model-catalog',
+      accountSettings: { claudeDynamicModelProbeEnabled: true }, bypassCache: true,
+    });
+    expect(observation).toMatchObject({ source: 'static', refreshError: false });
+    expect(observation.availableModels.length).toBeGreaterThan(0);
+    expect(observation).not.toHaveProperty('failureCause');
+    expect(observation).not.toHaveProperty('spawnFailure');
+  });
+
   it('keeps schema hints optional for an external Agent without a model catalog', async () => {
     const entry = readAgentCatalogSnapshot().catalogEntriesById.codex;
     if (!entry) throw new Error('Bundled Codex catalog fixture is unavailable');
