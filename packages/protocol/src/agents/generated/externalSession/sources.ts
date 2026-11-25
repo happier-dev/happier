@@ -699,6 +699,44 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
       "segments": [
         {
           "kind": "literal",
+          "value": "cursorApp"
+        },
+        {
+          "field": "dataDir",
+          "kind": "field"
+        }
+      ]
+    },
+    "schema": {
+      "fields": [
+        {
+          "kind": "literal",
+          "name": "kind",
+          "value": "cursorApp"
+        },
+        {
+          "kind": "string",
+          "max": 10000,
+          "min": 1,
+          "name": "dataDir",
+          "nullish": true
+        }
+      ]
+    },
+    "sourceKind": "cursorApp"
+  },
+  {
+    "agentId": "cursor",
+    "instances": [
+      {
+        "constants": {},
+        "kind": "default"
+      }
+    ],
+    "key": {
+      "segments": [
+        {
+          "kind": "literal",
           "value": "cursorHome"
         },
         {

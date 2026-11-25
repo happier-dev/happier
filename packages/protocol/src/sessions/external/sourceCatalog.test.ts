@@ -94,11 +94,13 @@ describe('sourceCatalog', () => {
       droidFactoryDir: ['droid'],
       codebuddyHome: ['codebuddy'],
       grokHome: ['grok'],
+      cursorApp: ['cursor'],
       cursorHome: ['cursor'],
       kiroChatStore: ['kiro'],
       kiloStorage: ['kilo'],
       auggieHome: ['auggie'],
       devinHome: ['devin'],
+      museNative: ['muse'],
     });
   });
 
@@ -123,6 +125,7 @@ describe('sourceCatalog', () => {
       'kilo',
       'auggie',
       'devin',
+      'muse',
     ]));
   });
 
@@ -179,6 +182,14 @@ describe('sourceCatalog', () => {
       baseUrl: ' http://127.0.0.1:4096/ ',
       directory: ' /tmp/repo ',
     })).toBe('opencodeServer:http%3A//127.0.0.1%3A4096/:/tmp/repo');
+    expect(resolveExternalSessionsSourceKey({
+      kind: 'cursorApp',
+      dataDir: '/tmp/cursor-app',
+    })).toBe('cursorApp:/tmp/cursor-app');
+    expect(resolveExternalSessionsSourceKey({
+      kind: 'cursorHome',
+      homeDir: '/tmp/cursor-cli',
+    })).toBe('cursorHome:/tmp/cursor-cli');
     expect(resolveExternalSessionsSourceKey({
       kind: 'ohMyPiAgentDir',
       agentDir: 'C:\\Users\\alice\\repo%name',
