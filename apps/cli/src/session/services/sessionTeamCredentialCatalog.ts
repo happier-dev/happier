@@ -4,6 +4,9 @@ import { TeamCredentialResourceEntitledPageV1Schema, TeamCredentialResourcePageV
   type TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { mergeTeamCredentialCatalogResourcesV1 } from '@happier-dev/protocol/teams/credentials/teamCredentialModelCatalogV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readHomeDomainActionErrorV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { SessionTeamCredentialBindingRejectedError } from '@/api/session/sessionCreationInitialAccess';
 import { projectTeamCredentialLaunchFailure, readTeamCredentialLaunchFailureCode,
   SessionTeamCredentialLaunchUnavailableError, type TeamCredentialLaunchFailurePhase } from './sessionTeamCredentialLaunchError';
 
@@ -11,6 +14,7 @@ async function readCatalogPage(input: Readonly<{
   homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']>;
   request: Parameters<NonNullable<ActionExecutorDeps['homeDomainAction']>>[0];
   phase: TeamCredentialLaunchFailurePhase;
+  resourceId?: string;
   signal?: AbortSignal;
 }>): Promise<unknown> {
   let raw: unknown;
@@ -20,6 +24,12 @@ async function readCatalogPage(input: Readonly<{
     throw projectTeamCredentialLaunchFailure(error, input.phase, 'provider_catalog_unavailable');
   }
   if (raw && typeof raw === 'object' && (('ok' in raw && raw.ok === false) || 'error' in raw)) {
+    const homeCode = parseActionExecuteFailure(raw)?.errorCode ?? readHomeDomainActionErrorV1(raw)?.code;
+    // A caller-supplied selection cannot distinguish a missing Team from a
+    // lost grant. Both refuse acquisition with the same closed reason.
+    if (input.resourceId && homeCode === 'not_found_or_not_visible') {
+      throw new SessionTeamCredentialBindingRejectedError('access_removed');
+    }
     throw new SessionTeamCredentialLaunchUnavailableError(
       readTeamCredentialLaunchFailureCode(raw) ?? 'provider_catalog_unavailable', input.phase,
     );

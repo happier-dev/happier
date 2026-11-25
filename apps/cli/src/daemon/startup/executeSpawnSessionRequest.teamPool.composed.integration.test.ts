@@ -929,14 +929,15 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
           readAcceptedBindingLogs = () => acceptedBindingLogs;
           const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
             sessionSpawnDirectTargetTransport: createMachineSessionDirectTargetTransport({ machineId: worker.machineId, spawnLifecycleHandler: handler }) });
-          const authoredSpawn = uiAuthoring === 'profile' ? {
+          const savedProfileStart = {
             creationKey: 'team-pool-profile',
             executionTarget: { serverId: configuration.activeServerId, machineId: worker.machineId },
             directory: { kind: 'path', path: directory },
             agentTarget: { kind: 'agent', identity: { pluginId: 'acme.managed-run', localId: 'agent' } },
             profileId,
             initialInput: { text: 'TEAM_POOL_NATIVE_PROMPT' },
-          } : uiAuthoring ? await (async () => {
+          };
+          const authoredSpawn = uiAuthoring === 'profile' ? savedProfileStart : uiAuthoring ? await (async () => {
             let authoring: Parameters<typeof useNewSessionAuthoringState>[0] = {
               automationDraft: DEFAULT_NEW_SESSION_AUTOMATION_DRAFT, automationFeatureEnabled: false,
               selectedMachineId: null, selectedMachine: null, targetServerId: null, selectedPath: directory, directoryKind: 'path',
@@ -1278,6 +1279,21 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
               { model: 'gpt-5.6-luna', input: 'TEAM_POOL_NATIVE_PROMPT' },
             ]);
           }
+          if (uiAuthoring === 'profile') {
+            phase = 'profile:team-access-removed';
+            await db.teamMembership.delete({ where: { id: membership.id } });
+            const processesBefore = os.observed.length;
+            const refused = await createActionExecutor(deps).execute('session.spawn_new', {
+              ...savedProfileStart,
+              creationKey: 'team-pool-profile-after-team-removal',
+            }, { surface, authority: 'present_user', actionCaller: { kind: 'host' } });
+            expect(refused, JSON.stringify(refused)).toMatchObject({
+              ok: false, errorCode: 'session_team_credential_binding_rejected',
+              details: { type: 'error', code: 'session_team_credential_binding_rejected', reason: 'access_removed' },
+            });
+            expect(os.observed).toHaveLength(processesBefore);
+            expect(await db.session.count({ where: { accountId: recipient.id } })).toBe(1);
+          }
           completedIngresses.push(surface);
         } finally { lifetime.abort(); for (const timer of timeouts.values()) clearTimeout(timer); await control.close(); await closePublisher?.(); await closeControlledRunner(); await Promise.all(exitTasks); }
         }
@@ -1307,6 +1323,6 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
     ({ onTestFailed }) => runJourney(false, onTestFailed, true, false, undefined, true));
   it('preserves a UI-authored Team source through submit, daemon spawn, persisted binding and brokered inference',
     ({ onTestFailed }) => runJourney(false, onTestFailed, false, true));
-  it('starts from a saved Profile through the persisted binding and brokered inference',
+  it('starts from a saved Profile while entitled and refuses a fresh Start after Team access is removed',
     ({ onTestFailed }) => runJourney(false, onTestFailed, false, 'profile'));
 });

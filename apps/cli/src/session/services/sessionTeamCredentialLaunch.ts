@@ -12,6 +12,7 @@ import { projectAgentProviderBrokerApplications, resolveManagedProviderBrokerPur
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isSameTeamCredentialBrokerApplication } from '@/providers/broker/teamCredentialModelCatalog';
 import { SessionTeamCredentialLaunchUnavailableError, projectTeamCredentialLaunchFailure } from './sessionTeamCredentialLaunchError';
+import { SessionTeamCredentialBindingRejectedError } from '@/api/session/sessionCreationInitialAccess';
 import { selectSessionTeamCredentialProviderModel } from '@/providers/broker/sessionTeamCredentialProviderBinding';
 import { readSessionModelSelectionProviderConnectionId, sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
 
@@ -76,6 +77,7 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
     : undefined;
   const catalogApplications = exactApplication ? [exactApplication] : input.applications;
   const resources = await input.readCatalog({ ...exactResource, applications: catalogApplications }).catch(error => {
+    if (error instanceof SessionTeamCredentialBindingRejectedError) throw error;
     throw projectTeamCredentialLaunchFailure(error, 'resource_catalog', 'provider_catalog_unavailable');
   });
   const fresh = !options.existingSessionId && !options.resume;
