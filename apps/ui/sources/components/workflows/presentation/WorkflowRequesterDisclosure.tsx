@@ -6,7 +6,6 @@ import {
 import { useActiveServerAccountScope, useServerScopedMachine, useServerScopedMachineLabel } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { t } from '@/text';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 
 type WorkflowRequesterDisclosureProps = Readonly<{
@@ -31,7 +30,7 @@ export function useWorkflowRequesterDisclosure(props: WorkflowRequesterDisclosur
     const custodian = useServerScopedMachine(serverId, props.machineId, selectCustodian);
     const machineLabel = useServerScopedMachineLabel(serverId, props.machineId);
     return React.useMemo<RequesterDisclosureModel | null>(() => scope && custodian && custodian.accountId !== scope.accountId && props.machineId
-        ? { owner: custodian.displayName || t('shareSheet.person'), machine: machineLabel || props.machineId,
+        ? { owner: custodian.displayName || null, machine: machineLabel || props.machineId,
             signIn: 'full', retention: props.retention }
         : null, [custodian, machineLabel, props.machineId, props.retention, scope]);
 }

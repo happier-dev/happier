@@ -29,3 +29,15 @@ describe('RequesterDisclosureContent', () => {
     expect(openExternalUrlMock).toHaveBeenCalledWith('https://docs.happier.dev/accounts/session-sharing');
   });
 });
+
+describe('formatRequesterDisclosureCopy', () => {
+  it('names the owner when known and says someone else’s Machine when the owner has no display name', async () => {
+    const { formatRequesterDisclosureCopy } = await import('./requesterDisclosureNotice');
+    const { t } = await import('@/text');
+    expect(formatRequesterDisclosureCopy({ owner: 'Alice', machine: 'devbox', signIn: 'full' }).title)
+      .toBe(t('machineRequester.runsOn', { owner: 'Alice', machine: 'devbox' }));
+    const unnamed = formatRequesterDisclosureCopy({ owner: null, machine: 'NLDW4-5-40-40', signIn: 'full' });
+    expect(unnamed.title).toBe(t('machineRequester.runsOnSomeoneElses', { machine: 'NLDW4-5-40-40' }));
+    expect(`${unnamed.title} ${unnamed.description}`).not.toContain(t('shareSheet.person'));
+  });
+});

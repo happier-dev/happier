@@ -4531,7 +4531,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             agentStartBlock: teamCredentialModelRequirement.ready ? agentStartBlock : null,
             requesterDisclosure: targetAccountScopeResolution.kind === 'bound' && selectedMachine?.access
                 && selectedMachine.access.custodian.accountId !== targetAccountScopeResolution.scope.accountId
-                ? { owner: selectedMachine.access.custodian.displayName || t('shareSheet.person'),
+                ? { owner: selectedMachine.access.custodian.displayName || null,
                     machine: selectedMachineSentenceName ?? selectedMachine.id, signIn: 'full', signInPurposes: requesterSignInPurposes }
                 : undefined }),
         [isCreating, temporaryComputerLaunchActive, launchPresentation, createAdmission.disabledReason, agentStartBlock, teamCredentialModelRequirement.ready, selectedMachine, selectedMachineSentenceName, targetAccountScopeResolution, requesterSignInPurposes],

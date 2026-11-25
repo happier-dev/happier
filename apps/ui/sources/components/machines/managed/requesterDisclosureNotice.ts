@@ -14,7 +14,8 @@ export const openSharedMachinesHelp = () => {
 };
 
 export type RequesterDisclosureModel = Readonly<{
-  owner: string;
+  /** The Machine owner's display name; null when they have none, and the copy says "someone else's". */
+  owner: string | null;
   machine: string;
   /** `scoped` only when the scoped sign-in route was proven; `full` is the documented fallback. */
   signIn: 'scoped' | 'full';
@@ -22,6 +23,11 @@ export type RequesterDisclosureModel = Readonly<{
   /** Safe names from the resolved launch purpose projection, never credentials or Account ids. */
   signInPurposes?: readonly string[];
 }>;
+
+/** "Runs on Alice's devbox", or "someone else's devbox" when the owner has no display name: the badge, card and notice. */
+export function formatRequesterRunsOn(owner: string | null, machine: string): string {
+  return owner ? t('machineRequester.runsOn', { owner, machine }) : t('machineRequester.runsOnSomeoneElses', { machine });
+}
 
 /** The one wording of "whose Machine, how the sign-in lands, who can see it", for the card and the notice. */
 export function formatRequesterDisclosureCopy(
@@ -34,18 +40,14 @@ export function formatRequesterDisclosureCopy(
           machine: model.machine,
           ...(model.retention ? { retention: model.retention } : {}),
         });
-  const visibility = t('machineRequester.osVisibility', {
-    owner: model.owner,
-    machine: model.machine,
-  });
+  const visibility = model.owner
+    ? t('machineRequester.osVisibility', { owner: model.owner, machine: model.machine })
+    : t('machineRequester.osVisibilityUnnamed', { machine: model.machine });
   const purposes = model.signInPurposes?.length
     ? ` ${t('machineRequester.signInPurposes', { purposes: model.signInPurposes.join(', ') })}`
     : '';
   return {
-    title: t('machineRequester.runsOn', {
-      owner: model.owner,
-      machine: model.machine,
-    }),
+    title: formatRequesterRunsOn(model.owner, model.machine),
     description: `${signIn} ${visibility}${purposes}`,
   };
 }
@@ -82,10 +84,7 @@ export function tellRequesterMachineUseOnce(
   );
   // The glance, not the badge popover's full account: whose Machine (the badge's own "Runs on" words), then what
   // that means in two sentences. It is told when the Machine is first used, before any one Session runs.
-  const title = t('machineRequester.runsOn', {
-    owner: params.owner.displayName || t('shareSheet.person'),
-    machine,
-  });
+  const title = formatRequesterRunsOn(params.owner.displayName || null, machine);
   publishPresentationNotice({
     key,
     severity: 'info',

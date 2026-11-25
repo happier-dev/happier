@@ -937,9 +937,11 @@ export const managedMachinesEn = {
     },
     machineRequester: {
         runsOn: ({ owner, machine }: { owner: string; machine: string }) => `Runs on ${owner}’s ${machine}`,
+        runsOnSomeoneElses: ({ machine }: { machine: string }) => `Runs on someone else’s ${machine}`,
         scopedSignIn: ({ machine }: { machine: string }) => `Happier gives ${machine} a sign-in that works only for this session.`,
         fullSignIn: ({ machine, retention }: { machine: string; retention?: 'run' | 'trigger' }) => `Your Happier sign-in is stored on ${machine} ${retention === 'trigger' ? 'while the trigger exists' : retention === 'run' ? 'while this workflow runs' : 'while this session runs'}. People with terminal or agent access there may use it to access your Happier account.`,
         osVisibility: ({ owner, machine }: { owner: string; machine: string }) => `${owner} and anyone who can sign in to ${machine} can see this session’s files and output there.`,
+        osVisibilityUnnamed: ({ machine }: { machine: string }) => `Its owner and anyone who can sign in to ${machine} can see this session’s files and output there.`,
         signInPurposes: ({ purposes }: { purposes: string }) => `They can also read the sign-ins used for this session: ${purposes}, and this session’s Happier access.`,
         nativeSignInPurpose: ({ service }: { service: string }) => `${service} (native sign-in)`,
         howShared: "How shared machines work",
