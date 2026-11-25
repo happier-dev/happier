@@ -9,7 +9,7 @@ import { MachineDaemonPublicReleaseChannelLabelSchema, MachineDaemonStartupSourc
 import { IrohEndpointDescriptorV1Schema } from '../connectivity/iroh/endpointDescriptorV1.js';
 import { LocalServiceMachineSummaryV1Schema } from '../local/services/inventory/v1.js';
 import { WindowsRemoteSessionLaunchModeSchema } from '../sessions/metadata/windowsRemoteSessionLaunchMode.js';
-import { WorkspaceSyncRuntimeEventV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
+import { WorkspaceSyncRuntimeEventV1Schema as MachinePublishedWorkspaceSyncV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 import { PeerLoopbackEndpointCandidateV1Schema } from './peer/mediation/loopbackEndpointV1.js';
 import { MachineFinitePolicyV1Schema } from './machineFinitePolicyV1.js';
 import { MachineAgentIsolationPolicyV1Schema, MachineAgentIsolationStatusV1Schema } from './agentIsolationV1.js';
@@ -97,7 +97,7 @@ export const MachinePublishedTransferRuntimeV1Schema = lazyZodSchema(() => z.str
   lifecycle: z.strictObject({ mode: z.literal('lazy_idle_shutdown'), version: z.literal(1) }),
 }));
 
-export const MachinePublishedWorkspaceSyncV1Schema = WorkspaceSyncRuntimeEventV1Schema;
+export { MachinePublishedWorkspaceSyncV1Schema };
 
 const PeerFlowSchema = lazyZodSchema(() => z.strictObject({ active: z.boolean() }));
 
