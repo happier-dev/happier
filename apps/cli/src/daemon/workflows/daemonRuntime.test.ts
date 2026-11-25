@@ -2770,7 +2770,7 @@ describe('production daemon Workflow bootstrap', () => {
       },
     })).resolves.toEqual({ kind: 'completed', result: 'done' });
     expect(observeSession).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'session-1', localId: 'input-1', deadlineMs: 123,
+      sessionId: 'session-1', localId: 'input-1', snapshotAtMs: 123,
     }));
     expect(execute).not.toHaveBeenCalled();
   });

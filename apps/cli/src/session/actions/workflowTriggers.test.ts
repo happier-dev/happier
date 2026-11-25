@@ -43,7 +43,7 @@ describe('CLI workflow trigger Account codec', () => {
     network.get.mockImplementation(async () => stored);
     network.list.mockResolvedValue({ automations: [], nextCursor: null });
   });
-  it('pauses retained encrypted rows before disclosure and requires explicit device Save for a plain Workflow', async () => {
+  it('preserves retained encrypted rows before disclosure and converts only on explicit device Save', async () => {
     network.currentness.mockResolvedValue({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
     stored = { id: 'automation-old', name: 'Old', description: null, enabled: true, targetType: 'existingSession',
       existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
@@ -62,8 +62,9 @@ describe('CLI workflow trigger Account codec', () => {
       resolveWorkflow: async () => ({ definition }),
       resolveSession: async () => ({ project: { machineId: 'machine', directory: '/repo' }, nativeGoalOwner: false,
         executionSelection: { agentTarget: definition.defaults!.agentTarget! } }) });
-    expect((await actions.list({ scope: 'account_all' })).sets[0]).toMatchObject({ enabled: false, health: 'source_unavailable',
+    expect((await actions.list({ scope: 'account_all' })).sets[0]).toMatchObject({ enabled: true, revision: 1, health: 'source_unavailable',
       legacy: { lockedReason: 'review_required' } });
+    expect(network.reconcile).not.toHaveBeenCalled();
     expect(stored.executionRecipe).toBeUndefined();
     expect(network.session).not.toHaveBeenCalled();
     expect(stored.templateCiphertext).toBe(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED);
@@ -95,9 +96,13 @@ describe('CLI workflow trigger Account codec', () => {
     });
     const { createCliWorkflowTriggerActions } = await import('./workflowTriggers');
     const actions = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: null }, resolveWorkflow: async () => ({ definition }) });
-    expect((await actions.list({ scope: 'account_all' })).sets[0]).toMatchObject({ automationId: 'automation-old',
-      revision: 2, health: 'available', context: { workspace: { directory: '/repo' } } });
-    expect(stored.id).toBe('automation-old');
+    const [listed] = (await actions.list({ scope: 'account_all' })).sets;
+    expect(listed).toMatchObject({ automationId: 'automation-old', revision: 1, health: 'available',
+      context: { workspace: { directory: '/repo' } } });
+    expect(network.reconcile).not.toHaveBeenCalled();
+    if (!listed) throw new Error('predecessor_row_not_listed');
+    await actions.update({ automationId: listed.automationId, expectedRevision: listed.revision, patch: { enabled: false } });
+    expect(stored).toMatchObject({ id: 'automation-old', templateVersion: 2, enabled: false });
     expect(stored.executionRecipe).toMatchObject({ v: 2 });
   });
   it('writes a keyless plain Account inline payload through the Automation owner', async () => {

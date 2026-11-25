@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { createWorkflowActionExecutor } from './executor/workflowAccountActions.js';
+import { createActionAutomationHttpPortV1, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from './executor/actionAutomationAdmission.js';
 import { createWorkflowDefinitionActions } from './executor/workflowDefinitions.js';
 import { createWorkflowAccountRunActionOwner } from './executor/workflowRunActions.js';
 import { resolveWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionResolverV1.js';
@@ -239,6 +240,13 @@ describe('createActionExecutor (Workflow family)', () => {
     const workflowAction = workflowWithIngressBoundary(readIngress);
     const executor = createActionExecutor({
       workflowAction,
+      actionAutomations: createActionAutomationHttpPortV1({
+        accountId: 'account-1',
+        request: async (path, { method }) => {
+          if (path !== AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 || method !== 'GET') throw new Error('Unexpected Automation request');
+          return { v: 1, rows: [] };
+        },
+      }),
     } as unknown as ActionExecutorDeps);
 
     await executor.execute('workflow.run.start', {

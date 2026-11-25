@@ -80,7 +80,7 @@ describe('workflow authoring starters through Actions', () => {
       ] });
       expect(example.definition.inputs.map(input => input.name)).toEqual(['readinessScope', 'backupAutomationIds']);
     } else if (key === 'restore-drill') {
-      expect(example.definition.blocks[0]).toMatchObject({ kind: 'parallel', failurePolicy: 'collect_outcomes' });
+      expect(example.definition.blocks[0]).toMatchObject({ kind: 'parallel', failurePolicy: 'fail_stop' });
       expect(example.definition.blocks.at(-1)).toMatchObject({ kind: 'loop', runWhen: 'always',
         body: [{ kind: 'action', actionId: 'machines.services.control', input: { operation: { kind: 'literal', value: 'stop' } } }] });
       expect(example.definition.inputs.map(field => field.name)).toEqual(expect.arrayContaining([

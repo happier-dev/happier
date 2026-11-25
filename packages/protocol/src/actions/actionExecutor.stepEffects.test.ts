@@ -212,14 +212,16 @@ describe('workflow effect Actions', () => {
       requestId: envelope.requestId, target: envelope.target,
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
     } });
-    const executor = createActionExecutor({ actionAutomations: {
-      select: async () => ({ status: 'unavailable' as const, subjects: [], before: [], after: [], notices: [] }),
-      settle: async () => {},
-    }, machineCommandRun: async () => { effects++; return { exitCode: 0, stdout: 'bypassed', stderr: '' }; } });
+    const executor = createActionExecutor({ actionAutomations: createActionAutomationPortV1({
+      accountId: 'owner',
+      seed: async () => { throw new Error('Home unavailable'); },
+      settle: async () => { throw new Error('A refused check cannot settle'); },
+    }), machineCommandRun: async () => { effects++; return { exitCode: 0, stdout: 'bypassed', stderr: '' }; } });
     const result = await executor.execute(actionId, input, { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
       bypassApprovals: true, actionRequestId: envelope.requestId, runtimeAccountId: 'owner', serverId: 'home',
       serverIdentityId: 'home', externalActionTarget: envelope.target, externalActionExecutionAuthorization: authorization });
-    expect(result).toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', requestId: envelope.requestId });
+    expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable', requestId: envelope.requestId, effectAttempted: false,
+      failureCause: { phase: 'action.automations.admission', nativeErrorReason: 'action_automation_selection_unavailable' } });
     expect(effects).toBe(0);
   });
 });

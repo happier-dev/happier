@@ -7,6 +7,8 @@ import {
   StrictJsonValueSchema,
   type ActionExecutorContext,
 } from '@happier-dev/protocol';
+import { createActionAutomationHttpPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import {
   fingerprintPluginAccountActionConfirmation,
   formatQualifiedPluginActionId,
@@ -176,6 +178,13 @@ async function pressCreate(
   const executor = createActionExecutor({
     ...createUnavailableActionTransportDeps(),
     invokeContributedAction: invoke,
+    actionAutomations: createActionAutomationHttpPortV1({
+      accountId: 'owner',
+      request: async (path, { method }) => {
+        if (path !== AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) throw new Error(`Unexpected Automation ${method} ${path}`);
+        return { v: 1, rows: [] };
+      },
+    }),
     internalTaskAction: async ({ actionId, input }) => {
       taskWrites.push(actionId);
       return executeInternalTaskAction({
