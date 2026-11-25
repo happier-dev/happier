@@ -1630,7 +1630,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
   },
   approvals: {
-    publicLinkFields: { audience: "存取對象", anonymous: "擁有連結的任何人", signedIn: "已登入的檢視者", consent: "要求同意", networkOff: "停用網路存取", preserveExisting: "保留現有發佈" },
+    publicLinkFields: { document: "文件", audience: "存取對象", anonymous: "擁有連結的任何人", signedIn: "已登入的檢視者", consent: "要求同意", networkOff: "停用網路存取", preserveExisting: "保留現有發佈" },
     requesterRunsAs: "執行身分",
     requesterWritesWith: "寫入憑證",
     requesterAction: "操作",

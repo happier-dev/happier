@@ -1701,7 +1701,7 @@ const enInbox = {
 };
 
 const enApprovals = {
-    publicLinkFields: { audience: "Audience", anonymous: "Anyone with the link", signedIn: "Signed-in viewers", consent: "Require consent", networkOff: "Disable network access", preserveExisting: "Keep existing publication" },
+    publicLinkFields: { document: "Document", audience: "Audience", anonymous: "Anyone with the link", signedIn: "Signed-in viewers", consent: "Require consent", networkOff: "Disable network access", preserveExisting: "Keep existing publication" },
     requesterRunsAs: "Runs as",
     requesterWritesWith: "Writes with",
     requesterAction: "Action",

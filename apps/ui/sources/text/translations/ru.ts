@@ -2128,7 +2128,7 @@ export const ru: TranslationStructure = {
   },
 
   approvals: {
-    publicLinkFields: { audience: "Аудитория", anonymous: "Все, у кого есть ссылка", signedIn: "Вошедшие пользователи", consent: "Запрашивать согласие", networkOff: "Отключить доступ к сети", preserveExisting: "Сохранить существующую публикацию" },
+    publicLinkFields: { document: "Документ", audience: "Аудитория", anonymous: "Все, у кого есть ссылка", signedIn: "Вошедшие пользователи", consent: "Запрашивать согласие", networkOff: "Отключить доступ к сети", preserveExisting: "Сохранить существующую публикацию" },
     requesterRunsAs: "Выполняется от имени",
     requesterWritesWith: "Запись с помощью",
     requesterAction: "Действие",

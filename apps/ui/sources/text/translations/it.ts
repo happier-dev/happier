@@ -2113,7 +2113,7 @@ export const it: TranslationStructure = {
   },
 
   approvals: {
-    publicLinkFields: { audience: "Pubblico", anonymous: "Chiunque abbia il link", signedIn: "Persone con accesso effettuato", consent: "Richiedi consenso", networkOff: "Disattiva accesso alla rete", preserveExisting: "Mantieni pubblicazione esistente" },
+    publicLinkFields: { document: "Documento", audience: "Pubblico", anonymous: "Chiunque abbia il link", signedIn: "Persone con accesso effettuato", consent: "Richiedi consenso", networkOff: "Disattiva accesso alla rete", preserveExisting: "Mantieni pubblicazione esistente" },
     requesterRunsAs: "Eseguita come",
     requesterWritesWith: "Scrive con",
     requesterAction: "Azione",

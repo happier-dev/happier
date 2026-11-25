@@ -2127,7 +2127,7 @@ export const pl: TranslationStructure = {
   },
 
   approvals: {
-    publicLinkFields: { audience: "Odbiorcy", anonymous: "Każdy z linkiem", signedIn: "Zalogowane osoby", consent: "Wymagaj zgody", networkOff: "Wyłącz dostęp do sieci", preserveExisting: "Zachowaj istniejącą publikację" },
+    publicLinkFields: { document: "Dokument", audience: "Odbiorcy", anonymous: "Każdy z linkiem", signedIn: "Zalogowane osoby", consent: "Wymagaj zgody", networkOff: "Wyłącz dostęp do sieci", preserveExisting: "Zachowaj istniejącą publikację" },
     requesterRunsAs: "Wykonuje jako",
     requesterWritesWith: "Zapisuje przy użyciu",
     requesterAction: "Akcja",
