@@ -6,7 +6,8 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { useAnnouncedCheckoutMachine, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
-import { MANAGED_POWER_REQUIRED, ManagedWorkspaceStoppedState } from '@/components/workspaces/reachability/ManagedWorkspaceStoppedState';
+import { MANAGED_POWER_REQUIRED } from '@happier-dev/protocol/machines/managed/managedRefusalCodeV1';
+import { ManagedWorkspaceStoppedState } from '@/components/workspaces/reachability/ManagedWorkspaceStoppedState';
 import { useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
 import { useManagedWorkspaceStart } from '@/components/settings/machines/managed/useManagedWorkspaceStart';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';

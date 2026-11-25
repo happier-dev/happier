@@ -38,7 +38,7 @@ describe('SourceControlUnavailableState for a stopped attached workspace (remote
         expect(screen.findAllByTestId('git-action')).toHaveLength(0);
     });
 
-    it('offers the same Start as Files, says Starting, then reads source control again', async () => {
+    it('keeps the stopped row and offers recovery after Start is refused, then reads again after a successful retry', async () => {
         const homeId = 'srv_stopped_git';
         const serverId = await home.addHome({ name: 'Compute', serverUrl: 'https://stopped-git.test',
             serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
@@ -57,10 +57,13 @@ describe('SourceControlUnavailableState for a stopped attached workspace (remote
         });
         home.answer(serverId, '/v1/machines/managed/actions/get', { body: machine });
         const held = createDeferred<void>();
+        let refuseStart = true;
         const accepted = await answerExternalActionAccountForHome(home, serverId, { ...controller,
             actionId: 'machines.managed.power.set', tokenEpoch: 0, requesterInvocation: 'optional', execute: async () => {
                 await held.promise;
-                return { kind: 'accepted', managedId: machine.id, intentRevision: 4 };
+                return refuseStart
+                    ? { kind: 'refused', code: 'controller_unavailable' }
+                    : { kind: 'accepted', managedId: machine.id, intentRevision: 4 };
             } });
         home.answer(serverId, '/v1/machines', { body: [accepted.machine] });
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' },
@@ -75,7 +78,14 @@ describe('SourceControlUnavailableState for a stopped attached workspace (remote
             expect(home.requestsFor('/v1/actions/machines.managed.power.set')).toHaveLength(1);
             expect(retry).not.toHaveBeenCalled();
             await act(async () => held.resolve());
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('managedMachines.controller.requiredUnnamed')));
+            expect(screen.getTextContent()).toContain(t('files.pane.managedStoppedTitle', { workspace: 'api-dev' }));
+            expect(screen.getTextContent()).not.toContain(t('files.pane.managedStartingTitle', { workspace: 'api-dev' }));
+            expect(retry).not.toHaveBeenCalled();
+            refuseStart = false;
+            await screen.pressByTestIdAsync('git-stopped-action');
             await waitForHomeGovernance(() => expect(retry).toHaveBeenCalledOnce());
+            expect(screen.getTextContent()).not.toContain(t('managedMachines.controller.requiredUnnamed'));
         } finally {
             held.resolve();
         }

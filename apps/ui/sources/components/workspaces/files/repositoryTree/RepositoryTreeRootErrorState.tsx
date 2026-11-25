@@ -1,7 +1,8 @@
 import { isFilesystemErrorRetryable, resolveFilesystemErrorReason } from '@/components/ui/filesystemBrowser/filesystemErrorReason';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { CheckoutUnreachableState, resolveCheckoutReadPresence, useAnnouncedCheckoutMachine, useCheckoutReachability, type CheckoutMachineScope } from '@/components/workspaces/reachability/checkoutReachability';
-import { MANAGED_POWER_REQUIRED, ManagedWorkspaceStoppedState } from '@/components/workspaces/reachability/ManagedWorkspaceStoppedState';
+import { MANAGED_POWER_REQUIRED } from '@happier-dev/protocol/machines/managed/managedRefusalCodeV1';
+import { ManagedWorkspaceStoppedState } from '@/components/workspaces/reachability/ManagedWorkspaceStoppedState';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { t } from '@/text';
 

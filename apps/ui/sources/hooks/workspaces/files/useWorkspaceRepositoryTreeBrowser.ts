@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { MANAGED_POWER_REQUIRED } from '@happier-dev/protocol/machines/managed/managedRefusalCodeV1';
 
 import { useLazyDirectoryTree } from '@/hooks/ui/filesystem/useLazyDirectoryTree';
 import type { LazyDirectoryTreeEntry, LazyDirectoryTreeLoadResult } from '@/hooks/ui/filesystem/lazyDirectoryTreeTypes';
@@ -48,7 +49,7 @@ function toLazyEntries(directoryPath: string, entries: readonly RepositoryDirect
 function toLazyLoadResult(directoryPath: string, result: ListRepositoryDirectoryEntriesResult): LazyDirectoryTreeLoadResult {
     if (!result.ok) {
         // A stopped attached workspace keeps its typed refusal so the root state can name it and offer Start (remote workspaces F7).
-        return result.errorCode === 'managed_power_required' ? { ...result, error: result.errorCode } : result;
+        return result.errorCode === MANAGED_POWER_REQUIRED ? { ...result, error: result.errorCode } : result;
     }
     return {
         ok: true,

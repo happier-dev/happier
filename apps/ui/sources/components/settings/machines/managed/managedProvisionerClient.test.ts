@@ -128,7 +128,8 @@ describe('managed configurator uses the exact Home Action front door', () => {
         expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1);
     });
 
-    it('starts the stopped attached workspace once and clears pending on settle', async () => {
+    it.each(['accepted', 'action_refused', 'effect_refused'] as const)(
+        'settles Start on a stopped attached workspace (%s)', async outcome => {
         const homeId = 'srv_start_workspace';
         const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://start-workspace.test',
             serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
@@ -154,8 +155,13 @@ describe('managed configurator uses the exact Home Action front door', () => {
                 reachedController = true;
                 expect(input).toEqual({ homeId, managedId: machine.id, intent: 'start', when: 'now', expectedRevision: 3 });
                 await held.promise;
-                return { kind: 'accepted', managedId: machine.id, intentRevision: 4 };
-            } });
+                return outcome === 'effect_refused'
+                    ? { kind: 'refused', code: 'controller_unavailable' }
+                    : { kind: 'accepted', managedId: machine.id, intentRevision: 4 };
+            }, failure: () => outcome === 'action_refused' ? {
+                errorCode: 'controller_unavailable', error: 'Controller unavailable',
+                details: { name: 'PluginError', code: 'controller_unavailable', message: 'Reconnect the controller.', remediation: { kind: 'retry' } },
+            } : null });
         harness.answer(serverId, '/v1/machines', { body: [accepted.machine] });
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' },
             [createManagedControllerMachineFixture({ id: controller.machineId, installationId: controller.installationId })]);
@@ -177,6 +183,14 @@ describe('managed configurator uses the exact Home Action front door', () => {
             expect(hook.getCurrent()?.pending).toBe(true);
             await act(async () => held.resolve());
             await waitForHomeGovernance(() => expect(hook.getCurrent()?.pending).toBe(false));
+            expect(hook.getCurrent()).toMatchObject({
+                pending: false,
+                start: expect.any(Function),
+                failure: outcome === 'accepted' ? null : {
+                    kind: outcome === 'effect_refused' ? 'refused' : 'failed', code: 'controller_unavailable',
+                    ...(outcome === 'action_refused' ? { message: 'Reconnect the controller.', remediation: { kind: 'retry' } } : {}),
+                },
+            });
             await hook.rerender({ installationId: 'replaced-installation' });
             expect(hook.getCurrent()).toBeNull();
             await act(async () => current.start());

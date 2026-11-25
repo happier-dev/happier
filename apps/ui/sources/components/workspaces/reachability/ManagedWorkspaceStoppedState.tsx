@@ -3,10 +3,8 @@ import * as React from 'react';
 import { SurfaceStateCard, type SurfaceStateSize } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useManagedWorkspaceStart } from '@/components/settings/machines/managed/useManagedWorkspaceStart';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
-
-/** The managed refusal code a stopped provider resource returns (protocol `managedRefusalCodeV1`). */
-export const MANAGED_POWER_REQUIRED = 'managed_power_required';
 
 const StartOfferedBeside = React.createContext(false);
 
@@ -58,14 +56,15 @@ function StartableWorkspaceStoppedState(
   const start = useManagedWorkspaceStart(props.workspaceScope);
   const offeredBeside = React.useContext(StartOfferedBeside);
   const pending = start?.pending === true;
+  const failure = start?.failure ?? null;
   const wasPending = React.useRef(pending);
   const onStarted = React.useRef(props.onStarted);
   onStarted.current = props.onStarted;
   React.useEffect(() => {
-    // The power operation settled: read again rather than guessing the workspace's state.
-    if (wasPending.current && !pending) onStarted.current?.();
+    // Re-read after a completed wake. A refusal stays in this stopped row.
+    if (wasPending.current && !pending && !failure) onStarted.current?.();
     wasPending.current = pending;
-  }, [pending]);
+  }, [pending, failure]);
   if (pending && props.workspaceName) {
     return (
       <SurfaceStateCard
@@ -82,6 +81,7 @@ function StartableWorkspaceStoppedState(
     <WorkspaceStoppedState
       workspaceName={props.workspaceName}
       reason={props.reason}
+      failure={failure}
       size={props.size}
       testID={props.testID}
       action={
@@ -91,7 +91,7 @@ function StartableWorkspaceStoppedState(
           ? { label: t('approvals.details'), onPress: start.reviewApproval }
           : start && !pending
             ? {
-                label: t('managedMachines.actions.start'),
+                label: t(failure ? 'common.retry' : 'managedMachines.actions.start'),
                 onPress: start.start,
               }
             : null
@@ -107,8 +107,13 @@ function WorkspaceStoppedState(
     size?: SurfaceStateSize;
     testID: string;
     action: Readonly<{ label: string; onPress: () => void }> | null;
+    failure?: NonNullable<ReturnType<typeof useManagedWorkspaceStart>>['failure'];
   }>,
 ) {
+  const { failure } = props;
+  const failureReason = failure
+    ? resolveActionExecutionFailureMessage({ ...failure, ok: false, errorCode: failure.code }, t('common.requestFailed'))
+    : null;
   return (
     <SurfaceStateCard
       testID={props.testID}
@@ -121,7 +126,8 @@ function WorkspaceStoppedState(
             })
           : t('files.pane.rootErrorTitleUnnamed')
       }
-      reason={props.size === 'line' ? undefined : props.reason}
+      reason={failureReason ?? (props.size === 'line' ? undefined : props.reason)}
+      diagnosticCode={failure?.code}
       size={props.size}
       action={props.action ?? undefined}
     />

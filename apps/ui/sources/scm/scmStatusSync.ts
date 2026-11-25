@@ -4,6 +4,7 @@
  */
 
 import { storage } from '@/sync/domains/state/storage';
+import { MANAGED_POWER_REQUIRED } from '@happier-dev/protocol/machines/managed/managedRefusalCodeV1';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
@@ -293,7 +294,7 @@ export class ScmStatusSync {
 
     private projectWorkspaceFailure(scope: WorkspaceScopeBase, reason: ScmWorkspaceWatchUnavailable,
         actionErrorCode = reason.code): ProjectScmSnapshotError {
-        const stopped = scope.workspace !== undefined && actionErrorCode === 'managed_power_required';
+        const stopped = scope.workspace !== undefined && actionErrorCode === MANAGED_POWER_REQUIRED;
         const controllerUnavailable = scope.workspace !== undefined && actionErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE;
         return {
             message: reason.message, at: Date.now(),

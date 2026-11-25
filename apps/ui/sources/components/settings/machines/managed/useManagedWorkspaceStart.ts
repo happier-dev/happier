@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ManagedIntentResult } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 
 import { awaitActionApprovalResult } from '@/components/approvals/actionApprovalContinuation';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
@@ -8,7 +10,7 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 
 import { resolveManagedMachinePendingPowerIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { canPresentManagedMachineControl, managedReceiptPowerIntents } from './managedCreationPresentation';
-import { createManagedProvisionerClient } from './managedProvisionerClient';
+import { createManagedProvisionerClient, projectManagedProvisionerFailure, type ManagedProvisionerFailure } from './managedProvisionerClient';
 import { useManagedMachineInventory } from './useManagedMachineInventory';
 import { useManagedProvisionerPresentation } from './useManagedProvisionerPresentation';
 
@@ -34,10 +36,19 @@ export function useManagedWorkspaceControlTarget(scope: WorkspaceScopeBase) {
     return { target, binding, profileId };
 }
 
+type ManagedWorkspaceStartFailure = ManagedProvisionerFailure | Extract<ManagedIntentResult, { kind: 'refused' }>;
+
+function readStartFailure(result: ManagedIntentResult): ManagedWorkspaceStartFailure | null {
+    if (result.kind === 'accepted') return null;
+    if (result.kind === 'refused') return result;
+    return projectManagedProvisionerFailure('intent_changed');
+}
+
 /** The stopped Project uses the same power admission and wake verb as Machines. */
 export function useManagedWorkspaceStart(scope: WorkspaceScopeBase): Readonly<{
     start(): void;
     pending: boolean;
+    failure: ManagedWorkspaceStartFailure | null;
     reviewApproval: (() => void) | null;
 }> | null {
     const { serverId, workspace } = scope;
@@ -59,7 +70,9 @@ export function useManagedWorkspaceStart(scope: WorkspaceScopeBase): Readonly<{
         workspace?.controller.machineId, workspace?.controller.installationId]);
     const approval = useActionApprovalContinuation({ serverId, scopeKey, onExecuted() {} });
     const inFlight = React.useRef<AbortController | null>(null);
-    const [pending, setPending] = React.useState<Readonly<{ scopeKey: string; request: AbortController }> | null>(null);
+    const [attempt, setAttempt] = React.useState<Readonly<{ scopeKey: string; request: AbortController } & (
+        { kind: 'pending' } | { kind: 'settled'; failure: ManagedWorkspaceStartFailure | null }
+    )> | null>(null);
     const currentTarget = React.useRef<Readonly<{ scopeKey: string; target: typeof target; intent: typeof intent }> | null>(null);
     React.useLayoutEffect(() => {
         currentTarget.current = { scopeKey, target, intent };
@@ -71,8 +84,10 @@ export function useManagedWorkspaceStart(scope: WorkspaceScopeBase): Readonly<{
     }, [binding, scopeKey]);
 
     if (!target || !binding || (!intent && !wakeSubmitted)) return null;
+    const currentAttempt = attempt?.scopeKey === scopeKey && !attempt.request.signal.aborted ? attempt : null;
     return {
-        pending: wakeSubmitted || (pending?.scopeKey === scopeKey && !pending.request.signal.aborted),
+        pending: wakeSubmitted || currentAttempt?.kind === 'pending',
+        failure: currentAttempt?.kind === 'settled' ? currentAttempt.failure : null,
         reviewApproval: approval.approvalPending ? approval.openApproval : null,
         start() {
             const current = currentTarget.current;
@@ -81,23 +96,32 @@ export function useManagedWorkspaceStart(scope: WorkspaceScopeBase): Readonly<{
             const request = new AbortController();
             inFlight.current = request;
             const retirement = binding.onRetire(() => request.abort());
-            setPending({ scopeKey, request });
+            setAttempt({ scopeKey, request, kind: 'pending' });
             const client = createManagedProvisionerClient(binding.scope, target.homeId);
-            const settle = () => ({ settled: true });
-            void awaitActionApprovalResult({
-                signal: request.signal, succeeded: settle, failed: settle, aborted: settle,
+            const settle = (failure: ManagedWorkspaceStartFailure | null) => {
+                retirement.dispose();
+                if (inFlight.current === request) inFlight.current = null;
+                if (currentTarget.current) {
+                    setAttempt(value => value?.request === request ? { ...value, kind: 'settled', failure } : value);
+                }
+            };
+            void awaitActionApprovalResult<ManagedIntentResult, ManagedWorkspaceStartFailure | null>({
+                signal: request.signal,
+                succeeded: readStartFailure,
+                failed: (code, failure) => projectManagedProvisionerFailure(code, failure?.details, failure?.requestId, failure?.failureCause),
+                aborted: () => null,
                 execute: async callbacks => {
                     const result = await client.execute('machines.managed.power.set', {
                         homeId: target.homeId, managedId: target.id, intent, when: 'now',
                         expectedRevision: target.intentRevision,
                     }, { ...callbacks, onApprovalPending: approval.requestApproval });
-                    return result.kind === 'approval_pending' ? { approvalPending: true } : settle();
+                    if (result.kind === 'approval_pending') return { approvalPending: true };
+                    if (result.kind === 'succeeded') return readStartFailure(result.value);
+                    return result.kind === 'failed' ? result : projectManagedProvisionerFailure('invalid_action_output');
                 },
-            }).then(settle, settle).finally(() => {
-                retirement.dispose();
-                if (inFlight.current === request) inFlight.current = null;
-                if (currentTarget.current) setPending(value => value?.request === request ? null : value);
-            });
+            }).then(settle, error => settle(projectManagedProvisionerFailure(
+                readActionErrorCodeV1(error) ?? 'action_failed', undefined, undefined, projectActionFailureCauseV1(error),
+            )));
         },
     };
 }

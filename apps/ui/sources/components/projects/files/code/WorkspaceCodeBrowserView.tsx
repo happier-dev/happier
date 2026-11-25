@@ -25,7 +25,7 @@ import { useWorkspaceRepositoryDirectoryRevision } from '@/hooks/workspaces/file
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { CheckoutReachabilityLine, CheckoutReachabilityScope, CheckoutUnreachableState, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
-import { MANAGED_POWER_REQUIRED } from '@/components/workspaces/reachability/ManagedWorkspaceStoppedState';
+import { MANAGED_POWER_REQUIRED } from '@happier-dev/protocol/machines/managed/managedRefusalCodeV1';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
