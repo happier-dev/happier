@@ -258,7 +258,7 @@ process.exit(0);
   return join(cliBinDir, 'happier.mjs');
 }
 
-async function spawnDaemonLikeProcess({ cliHomeDir, stackCliHomeDir = cliHomeDir, internalServerUrl, stackName = '', processKind = 'daemon' }) {
+async function spawnDaemonLikeProcess({ cliHomeDir, stackCliHomeDir = cliHomeDir, internalServerUrl, stackName = '', processKind = 'daemon', envPath = process.env.HAPPIER_STACK_ENV_FILE }) {
   const logDir = join(cliHomeDir, 'logs');
   await mkdir(logDir, { recursive: true });
   const ownedLogPath = join(logDir, 'daemon-owned.log');
@@ -275,6 +275,7 @@ async function spawnDaemonLikeProcess({ cliHomeDir, stackCliHomeDir = cliHomeDir
       env: {
         ...process.env,
         DAEMON_OWNED_LOG_PATH: ownedLogPath,
+        HAPPIER_STACK_ENV_FILE: envPath,
         HAPPIER_HOME_DIR: cliHomeDir,
         HAPPIER_STACK_CLI_HOME_DIR: stackCliHomeDir,
         ...(stackName ? { HAPPIER_STACK_STACK: stackName } : {}),
@@ -469,4 +470,124 @@ test('stopLocalDaemon delegates legacy POSIX state without persisted identity to
     }
     await rm(tmp, { recursive: true, force: true });
   }
+});
+
+
+// A recycled numeric PID is constructed at the publication boundary; both
+// incarnations are real processes. No OS PID allocator or shared process is changed.
+for (const scenario of ['same-stack-no-fingerprint', 'other-stack-no-fingerprint', 'same-stack-old-fingerprint']) {
+  test(`identity stop skips a stale recorded foreign PID (${scenario})`, async (t) => {
+    const tmp = await mkdtemp(join(tmpdir(), 'hstack-stop-foreign-1125-'));
+    const live = new Map();
+    const spawnOwned = async (options) => {
+      const pid = await spawnDaemonLikeProcess({ ...options, envPath: join(tmp, 'shared.env') });
+      const birth = readProcessInstanceFingerprintSync(pid);
+      assert.ok(birth);
+      live.set(pid, birth);
+      return pid;
+    };
+    try {
+      const cliHomeDir = join(tmp, 'identity-a');
+      const internalServerUrl = 'http://127.0.0.1:3005';
+      const stackName = 'stop-foreign-1125';
+      const envPath = join(tmp, 'shared.env');
+      // All fixture processes inherit the same stack env-file marker.
+
+      const old = await spawnOwned({ cliHomeDir, internalServerUrl, stackName });
+      const oldBirth = live.get(old);
+      assert.equal(readProcessInstanceFingerprintSync(old), oldBirth);
+      process.kill(old, 'SIGTERM');
+      // wait for the actual old child to be reaped before constructing the stale publication
+      while (readProcessInstanceFingerprintSync(old) === oldBirth) await new Promise(r => setTimeout(r, 10));
+      live.delete(old);
+      const foreign = await spawnOwned({ cliHomeDir: join(tmp, 'identity-b'), internalServerUrl,
+        stackName: scenario.startsWith('other-stack') ? 'other-stack' : stackName });
+      const { statePath, lockPath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl: internalServerUrl, env: {} });
+      await mkdir(dirname(statePath), { recursive: true });
+      await writeFile(statePath, JSON.stringify({ pid: foreign, httpPort: 0 }));
+      await writeFile(lockPath, scenario.endsWith('old-fingerprint') ? JSON.stringify({
+        t: 'happier_daemon_lock_v2', pid: foreign, ownerToken: '11111111-1111-1111-1111-111111111111',
+        processStartedAtMs: 1, createdAtMs: 1, processInstanceFingerprint: oldBirth,
+      }) : String(foreign));
+      const logs = [];
+      t.mock.method(console, 'log', (...args) => logs.push(args.join(' ')));
+      await stopLocalDaemon({ cliBin: join(tmp, 'missing.mjs'), cliHomeDir, internalServerUrl,
+        stackName, cliIdentity: 'identity-a', env: { ...process.env, HAPPIER_STACK_REPO_DIR: '',
+          HAPPIER_STACK_STACK: stackName, HAPPIER_STACK_ENV_FILE: envPath } });
+      assert.equal(readProcessInstanceFingerprintSync(foreign), live.get(foreign), 'foreign incarnation must survive identity stop');
+      if (!scenario.endsWith('old-fingerprint')) {
+        assert.ok(logs.some(line => line.includes(`skipped pid ${foreign}`) && line.includes('sources=state,lock;')),
+          'skip must identify the retained PID sources');
+      }
+    } finally {
+      t.mock.restoreAll();
+      for (const [pid, birth] of live) {
+        if (readProcessInstanceFingerprintSync(pid) === birth) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+      }
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+}
+
+test('identity stop discovers a live inherited child before CLI stop changes its effective home', { skip: process.platform === 'win32' }, async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-stop-child-1125-'));
+  const births = new Map();
+  try {
+    const cliHomeDir = join(tmp, 'identity-a');
+    const stackName = 'stop-child-1125';
+    const internalServerUrl = 'http://127.0.0.1:3005';
+    const release = join(tmp, 'release');
+    const changed = join(tmp, 'changed');
+    const childScript = `const fs = require('node:fs'); process.send('ready'); process.disconnect();
+      const timer = setInterval(() => { if (!fs.existsSync(${JSON.stringify(release)})) return;
+      clearInterval(timer); process.execve(process.execPath, [process.execPath, '-e',
+        ${JSON.stringify(`require('node:fs').writeFileSync(${JSON.stringify(changed)}, 'ready'); setInterval(() => {}, 1000);`)}],
+        { ...process.env, HAPPIER_HOME_DIR: ${JSON.stringify(join(tmp, 'identity-b'))}, HAPPIER_STACK_STACK: 'other-stack' }); }, 10);`;
+    const parent = spawnDetachedTestProcess(process.execPath, ['-e', `
+      const { fork } = require('node:child_process');
+      const child = fork('-e', [${JSON.stringify(childScript)}], { detached: true, stdio: ['ignore','ignore','ignore','ipc'] });
+      child.once('message', () => { process.send(child.pid); process.disconnect(); });
+      setInterval(() => {}, 1000);`], {
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      env: { ...process.env, HAPPIER_HOME_DIR: cliHomeDir, HAPPIER_STACK_STACK: stackName, HAPPIER_STACK_PROCESS_KIND: 'daemon' },
+    });
+    const [childPid] = await once(parent, 'message');
+    for (const pid of [parent.pid, childPid]) {
+      const birth = readProcessInstanceFingerprintSync(pid); assert.ok(birth); births.set(pid, birth);
+    }
+    const cliEntrypoint = join(tmp, 'stop.mjs');
+    await writeFile(cliEntrypoint, `import { writeFileSync, existsSync } from 'node:fs';
+      import { setTimeout } from 'node:timers/promises';
+      writeFileSync(${JSON.stringify(release)}, 'go');
+      while (!existsSync(${JSON.stringify(changed)})) await setTimeout(10);`);
+    const logs = [];
+    t.mock.method(console, 'log', (...args) => logs.push(args.join(' ')));
+    await stopLocalDaemon({ cliBin: cliEntrypoint, cliEntrypoint, cliHomeDir, internalServerUrl,
+      stackName, cliIdentity: 'identity-a', env: { ...process.env, HAPPIER_STACK_REPO_DIR: '', HAPPIER_STACK_STACK: stackName } });
+    assert.equal(readProcessInstanceFingerprintSync(childPid), births.get(childPid), 'exec child survives with changed identity');
+    assert.ok(logs.some(line => line.includes(`skipped pid ${childPid}`) && line.includes('sources=env-discovery;')));
+    assert.throws(() => process.kill(parent.pid, 0), { code: 'ESRCH' });
+  } finally {
+    t.mock.restoreAll();
+    for (const [pid, birth] of births) {
+      if (readProcessInstanceFingerprintSync(pid) === birth) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    }
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('identity stop ownership cannot use a Windows birth fingerprint as effective-home proof', async () => {
+  const { killPidOwnedByStack, resolvePidStackOwnership } = await import('./utils/proc/ownership.mjs');
+  let signalled = false;
+  const result = await killPidOwnedByStack(424242, {
+    stackName: 'stack', cliHomeDir: 'C:\\identity-a', platform: 'win32', json: true,
+    processInstanceFingerprint: 'birth',
+    observePidLivenessImpl: () => ({ status: 'alive' }),
+    readProcessInstanceFingerprintSyncImpl: () => 'birth',
+    // OS environment observation is unsupported on Windows, so identity cannot be proved.
+    resolvePidStackOwnershipImpl: (pid, context) => resolvePidStackOwnership(pid, context, { platform: 'win32' }),
+    terminateProcessPidImpl: async () => { signalled = true; return { ok: true }; },
+  });
+  assert.equal(signalled, false);
+  assert.equal(result.killed, false);
 });

@@ -512,7 +512,9 @@ async function resolveOwnedProcessIncarnation(pid, {
     return { owned: false, alreadyExited: true, reason: 'already_exited' };
   }
 
-  if (platform === 'win32') {
+  // A home-scoped caller requires effective-home evidence as well as birth.
+  // Stack-wide Windows cleanup may still consume its recorded incarnation.
+  if (platform === 'win32' && (!cliHomeDir || envPath)) {
     if (!beforeFingerprint) {
       const liveness = observePidLivenessImpl(pid);
       return liveness?.status === 'dead'
@@ -588,7 +590,7 @@ export async function killPidOwnedByStack(pid, {
       // eslint-disable-next-line no-console
       console.warn(`[stack] refusing to kill ${label} pid=${pid} (cannot prove it belongs to stack ${stackName ?? ''})`);
     }
-    return { killed: false, reason: admission.reason };
+    return { killed: false, owned: false, reason: admission.reason };
   }
   const terminated = await terminateProcessPidImpl(pid, {
     graceMs,

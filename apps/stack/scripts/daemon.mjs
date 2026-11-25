@@ -1719,7 +1719,7 @@ async function killDaemonPidSafely({
   }
   const terminated = await killPidOwnedByStack(pid, {
     stackName: String(env?.HAPPIER_STACK_STACK ?? '').trim(),
-    envPath: String(env?.HAPPIER_STACK_ENV_FILE ?? '').trim(),
+    // The shared env file proves stack ownership, never this identity's home.
     cliHomeDir,
     label: `daemon from ${sourceLabel}`,
     json: true,
@@ -1727,9 +1727,13 @@ async function killDaemonPidSafely({
     graceMs: 500,
     processInstanceFingerprint,
   });
+  if (terminated.owned === false) {
+    console.log(`[local] skipped pid ${pid} (sources=${sources.join(',')}; identity=${cliIdentity}; home=${cliHomeDir}; reason=${terminated.reason})`);
+    return false;
+  }
   if (!terminated.killed) {
     throw Object.assign(new Error(
-      `[local] refusing to kill pid ${pid} from ${sourceLabel} (${terminated.reason ?? 'ownership or termination was not proven'})`,
+      `[local] refusing to kill pid ${pid} from ${sourceLabel} (sources=${sources.join(',')}; identity=${cliIdentity}; ${terminated.reason ?? 'ownership or termination was not proven'})`,
     ), { code: 'daemon_stop_incomplete', reason: terminated.reason ?? 'process_identity_unverified' });
   }
   if (terminated.reason === 'already_exited') return false;
@@ -1953,11 +1957,12 @@ export async function stopLocalDaemon({
     const liveness = observePidLiveness(pid);
     if (liveness.status === 'dead') continue;
     if (liveness.status === 'alive') {
-      await killDaemonPidSafely({ pid, cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv,
+      const killed = await killDaemonPidSafely({ pid, cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv,
         sources: retainedPidSources.get(pid),
         cliIdentity: String(cliIdentity ?? '').trim() || String(daemonEnv.HAPPIER_STACK_CLI_IDENTITY ?? '').trim() || 'default',
         sourceLabel: 'retained daemon owner',
         processInstanceFingerprint: recordedIdentity.processInstanceFingerprint });
+      if (!killed) continue;
     }
     if (!isRecordedStackProcessRetired(pid, recordedIdentity)) {
       const error = new Error(`[local] daemon retirement is incomplete (pid=${pid}); refusing to replace the retained daemon.`);
