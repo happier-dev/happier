@@ -26,7 +26,9 @@ describe('spoken Action owner outcomes', () => {
     ) }).execution;
     const spoken = resolveSpokenActionOutcome({ ...entry, result: refusal });
     expect(spoken).toMatch(/memory is off for this session.*turn it on/i);
-    expect(projected).toEqual({ ...refusal, error: spoken });
+    expect(projected).toEqual({ ...refusal,
+      error: expect.stringMatching(/memory is off.*tell the person.*turn it on.*memory settings.*do not retry/i),
+    });
     expect(resolveSpokenActionOutcome({ ...entry,
       result: { ok: true, result: { kind: 'approval_request_created', actionId: 'memory.remember',
         artifactId: 'request-1', voiceApprovalGuidance: 'tap_required' } } })).toBeNull();

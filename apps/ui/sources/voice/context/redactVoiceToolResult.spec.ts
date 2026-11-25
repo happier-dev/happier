@@ -92,6 +92,17 @@ describe('redactVoiceToolResultValue', () => {
       .toMatchObject({ errorCode: 'invalid_input', errorMessage: expect.stringMatching(/reviewers.*ask the person.*wait.*before.*tool call/i) });
   });
 
+  it('tells the model how to proceed when the bound Session has Memory turned off', () => {
+    const action = getActionSpec('memory.remember');
+    const receipt = { ok: false, errorCode: 'action_disabled', error: 'action_disabled',
+      details: { reason: 'session_memory_off' } };
+    const execution = redactVoiceActionExecutionResultForProvider(action.bindings!.voiceClientToolName!, receipt, SHARE_ALL);
+    expect(execution).toMatchObject({
+      ...receipt,
+      error: expect.stringMatching(/Memory is off.*tell the person.*do not retry/i),
+    });
+  });
+
   it('delivers only closed approval guidance in the provider Action result', () => {
     const result = { request: { status: 'open', summary: 'Setting change', actionArgs: { private: 'raw input' } } };
     const redact = (voiceApprovalGuidance: unknown, sharePermissionRequests = true) =>

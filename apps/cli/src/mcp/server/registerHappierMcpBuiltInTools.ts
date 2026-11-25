@@ -142,8 +142,9 @@ function stringifyMcpToolTextPayload(value: unknown): string {
     return typeof text === 'string' ? text : 'null';
 }
 
-export function formatHappierMcpToolFailure(result: Extract<HappierBuiltInToolDispatchResult, { ok: false }>): CallToolResult {
-    const { ok: _ok, ...failure } = projectActionFailureForAgentV1(projectActionExecuteFailure(result));
+export function formatHappierMcpToolFailure(result: Extract<HappierBuiltInToolDispatchResult, { ok: false }>,
+    voice?: Readonly<{ actionId?: unknown }>): CallToolResult {
+    const { ok: _ok, ...failure } = projectActionFailureForAgentV1(projectActionExecuteFailure(result), voice);
     return {
         content: [{ type: 'text', text: JSON.stringify({
             ...failure,
@@ -308,9 +309,9 @@ export function registerHappierMcpBuiltInTools(
                         deps: params.deps,
                     });
 
+                    const requestedActionId = tool.name === 'action_execute' && args && typeof args === 'object'
+                        ? (args as Record<string, unknown>).actionId : actionId;
                     if (result.ok) {
-                        const requestedActionId = tool.name === 'action_execute' && args && typeof args === 'object'
-                            ? (args as Record<string, unknown>).actionId : actionId;
                         const images: { type: 'image'; data: string; mimeType: string }[] = [];
                         // Browser Action dispatch owns consent/redaction. Only its authorized result
                         // is projected; arbitrary plugin or non-browser results are not file claims.
@@ -356,7 +357,7 @@ export function registerHappierMcpBuiltInTools(
                         };
                     }
 
-                    return formatHappierMcpToolFailure(result);
+                    return formatHappierMcpToolFailure(result, params.surface === 'voice' ? { actionId: requestedActionId } : undefined);
                 } catch (error) {
                     // A thrown message is unclassified text (paths, validator or vendor prose):
                     // the Agent gets only the closed code, as projected failures do.

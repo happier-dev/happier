@@ -8,9 +8,8 @@ import { SETTINGS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/settin
 import { SESSION_AWARENESS_OPERATIONAL_PRIMARY_PRECEDENCE_V1, SessionAwarenessProjectionV1Schema, type SessionOperationalReasonV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import { SessionActivityCompatibilityResultV1Schema } from '@happier-dev/protocol/sessions/awareness/action';
 import { PluginUiHostApiErrorCodeV1Schema } from '@happier-dev/protocol/plugins/ui';
-import { ActionAutomationNoticeV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionAutomationNoticeV1Schema, projectActionFailureForAgentV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { VoiceAttemptFailureKindSchema, VoiceAttemptRecoveryActionSchema } from '@happier-dev/protocol/voice/attemptPresentation';
-import { WorkflowValidationIssueV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { ConnectedServiceCredentialHealthStatusV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
 import {
@@ -479,7 +478,21 @@ export function redactVoiceToolResultForProvider(
   if (ACTION_RESULT_TOOL_NAMES.has(toolName)) {
     return projectActionResultForProvider(value);
   }
-  const resultRecord = readResultRecord(value);
+  let resultRecord = readResultRecord(value);
+  const workflowStart = toolName === WORKFLOW_RUN_START_TOOL_NAME || toolName === WORKFLOW_RUN_START_ACTION_ID_V1;
+  if (resultRecord.ok === false && (resultRecord.errorCode === 'action_disabled'
+    || workflowStart && resultRecord.errorCode === 'invalid_input')) {
+    const key = typeof resultRecord.error === 'string' ? 'error' : 'errorMessage';
+    const error = resultRecord[key];
+    const projected = projectActionFailureForAgentV1({
+      ok: false, errorCode: resultRecord.errorCode,
+      error: typeof error === 'string' ? error : resultRecord.errorCode, details: resultRecord.details,
+    }, { actionId: workflowStart ? WORKFLOW_RUN_START_ACTION_ID_V1 : undefined });
+    if (projected.error !== error) {
+      resultRecord = { ...resultRecord, [key]: projected.error };
+      value = resultRecord;
+    }
+  }
   if (Object.hasOwn(resultRecord, 'voiceApprovalGuidance')) {
     const { voiceApprovalGuidance, ...body } = resultRecord;
     const guidance = readVoiceApprovalGuidance(voiceApprovalGuidance);
@@ -533,19 +546,6 @@ export function redactVoiceToolResultForProvider(
   }
   if (toolName === MODEL_LIST_TOOL_NAME || toolName === MODEL_LIST_ACTION_ID) {
     return projectModelList(value, prefs);
-  }
-  if (toolName === WORKFLOW_RUN_START_TOOL_NAME || toolName === WORKFLOW_RUN_START_ACTION_ID_V1) {
-    const result = readResultRecord(value);
-    const { issues } = readResultRecord(result.details);
-    if (result.ok === false && result.errorCode === 'invalid_input' && Array.isArray(issues)) {
-      for (const issue of issues) {
-        const parsed = WorkflowValidationIssueV1Schema.safeParse(issue);
-        if (!parsed.success || parsed.data.code !== 'missing_reference' || !parsed.data.path.startsWith('/inputs/')) continue;
-        const message = `${parsed.data.message} Ask the person to choose it and wait for their answer before making another tool call for this request.`;
-        value = typeof result.error === 'string' ? { ...result, error: message } : { ...result, errorMessage: message };
-        break;
-      }
-    }
   }
   return redactVoiceToolResultValueWithClassification(
     ACCOUNT_REQUEST_READ_TOOL_NAMES.has(toolName) ? projectAccountRequestForProvider(value) : projectVoiceAttemptForProvider(value),

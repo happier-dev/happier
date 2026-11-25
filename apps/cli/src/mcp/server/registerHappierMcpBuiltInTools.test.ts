@@ -21,6 +21,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { workflowInputErrorV1 } from '@happier-dev/protocol/workflows/workflowStartPreparationV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
@@ -39,6 +41,19 @@ describe('registerHappierMcpBuiltInTools', () => {
     expect(payload.error).toContain('untrusted');
     expect(JSON.stringify(result)).not.toContain('PRIVATE');
     expect(result.isError).toBe(true);
+  });
+
+  it('asks the person for a replacement when the Workflow refuses the submitted choice', () => {
+    const failure = workflowInputErrorV1('reviewers', 'invalid_input');
+    const result = formatHappierMcpToolFailure({ ok: false, errorCode: failure.code, error: failure.message,
+      details: failure.details }, { actionId: WORKFLOW_RUN_START_ACTION_ID_V1 });
+    const block = result.content[0];
+    if (block?.type !== 'text') throw new Error('Missing Workflow refusal');
+    expect(JSON.parse(block.text)).toMatchObject({
+      errorCode: 'invalid_input',
+      error: expect.stringMatching(/selected input is unavailable or invalid.*ask the person.*wait.*before.*tool call/i),
+      details: { issues: [{ code: 'invalid_input', path: '/inputs/reviewers' }] },
+    });
   });
 
   it('delivers the typed native MCP result after a separate person approves its pending Ask', async () => {
