@@ -448,6 +448,13 @@ describe('canonical Run page occurrence target', () => {
         expect(harness.requestsFor(DETAIL_PATH)).toHaveLength(1);
     });
 
+    it('explains when the contributed Action cannot run at the selected placement', async () => {
+        const screen = await respond(run({ errorCode: 'plugin_action_execution_placement_unavailable' }));
+
+        expect(screen.getTextContent()).toContain('workflows.problem.preExecution.actionUnavailable');
+        expect(screen.getTextContent()).not.toContain('plugin_action_execution_placement_unavailable');
+    });
+
     it('renders retired exact-turn history from the immutable cause', async () => {
         const triggerId = AutomationTriggerIdSchema.parse('turn-trigger-retired');
         const screen = await respond(run({ triggerId, triggerRetired: true, cause: {

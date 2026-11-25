@@ -361,6 +361,9 @@ export function resolveWorkflowRunProblemPresentation(
     });
     if (code === null || (run.state !== 'failed' && run.state !== 'interrupted' && run.state !== 'dispatch_failed')) return null;
     if (code === 'workspace_unavailable') return describeWorkflowTargetUnavailableProblem({ reason: code });
+    if (code === 'plugin_action_execution_placement_unavailable') {
+        return describeWorkflowTargetUnavailableProblem({ reason: 'action_unavailable' });
+    }
     if (isWorkflowOperationErrorCode(code)) return describeWorkflowOperationProblem(code);
     const problem = present(null, {
         messageKey: code === 'invalid_template' ? 'automations.detail.runDetail.invalidTemplate' : 'errors.operationFailed',
