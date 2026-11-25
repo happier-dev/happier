@@ -175,17 +175,17 @@ const stylesheet = StyleSheet.create({
 /**
  * The title strip's trailing Voice node in Top bar mode: the preferred scope when idle, the running
  * attempt mirrored otherwise. Renders nothing when this device chose the Island or the Orb, or when
- * Voice is off.
+ * Voice is off and no admitted reading is active.
  */
 export function VoiceTopBarPresenceMount(): React.ReactElement | null {
     const voiceEnabled = useFeatureEnabled('voice');
     const container = useVoicePresenceContainer();
-    if (voiceEnabled !== true || container !== 'top_bar') return null;
-    return <VoiceTopBarPresenceRuntime />;
+    const readAloud = useVoiceReadAloud();
+    if ((voiceEnabled !== true && readAloud.phase === 'idle') || container !== 'top_bar') return null;
+    return <VoiceTopBarPresenceRuntime readAloud={readAloud} />;
 }
 
-function VoiceTopBarPresenceRuntime(): React.ReactElement | null {
+function VoiceTopBarPresenceRuntime(props: Readonly<{ readAloud: VoiceReadAloud }>): React.ReactElement | null {
     const voice = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_DEFAULT);
-    const readAloud = useVoiceReadAloud();
-    return <VoiceTopBarPresence voice={voice} readAloud={readAloud} />;
+    return <VoiceTopBarPresence voice={voice} readAloud={props.readAloud} />;
 }

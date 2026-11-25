@@ -26,7 +26,7 @@ import { VoiceGlancePopover } from './VoiceGlancePopover';
 import { VoiceIsland, VOICE_ISLAND_DESKTOP, VOICE_ISLAND_PHONE } from './VoiceIsland';
 import { VoiceOrb, VOICE_ORB_BODY_SIZE } from './VoiceOrb';
 import { VoicePresenceFloat } from './VoicePresenceFloat';
-import { useVoiceReadAloud } from './VoiceReadAloud';
+import { useVoiceReadAloud, type VoiceReadAloud } from './VoiceReadAloud';
 import {
     isVoiceCompanionSectionOnScreen,
     registerVoiceGlancePresentation,
@@ -62,15 +62,16 @@ const FLOAT_MIN_TOP = 56;
 export function VoicePresenceAppShellMount(): React.ReactElement | null {
     const voiceEnabled = useFeatureEnabled('voice');
     const container = useVoicePresenceContainer();
-    if (voiceEnabled !== true || container === 'top_bar') return null;
+    const readAloud = useVoiceReadAloud();
+    if ((voiceEnabled !== true && readAloud.phase === 'idle') || container === 'top_bar') return null;
     // Measurement custody follows the container; admitted Voice state outlives its presentation.
-    return <VoiceFloatingPresenceRuntime key={container} container={container} />;
+    return <VoiceFloatingPresenceRuntime key={container} container={container} readAloud={readAloud} />;
 }
 
-function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'orb' }>): React.ReactElement | null {
+function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'orb'; readAloud: VoiceReadAloud }>): React.ReactElement | null {
     // Idle starts honor the shared scope preference; a running attempt retains its admitted binding.
     const voice = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_DEFAULT);
-    const readAloud = useVoiceReadAloud();
+    const readAloud = props.readAloud;
     const phone = useDeviceType() === 'phone';
     const insets = useChromeSafeAreaInsets();
     const bottomChromeHeight = useSessionCockpitBottomChromeHeight();
