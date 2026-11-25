@@ -903,6 +903,17 @@ function rollingBase(repo, recorded, head) {
   return ancestor ? recorded : gitAt(repo)(['rev-parse', `${head}^`]).trim();
 }
 
+/** Older app passes could store a checkpoint even when neither tree was judged. */
+function isUnjudgedAppCheckpoint(state, scope, commit) {
+  if (!commit || !isAppScope(scope)) return false;
+  let verdicts;
+  try { verdicts = readFileSync(join(state, 'verdicts.log'), 'utf8'); }
+  catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  const match = verdicts.split('\n').findLast(line =>
+    line.includes(` scope=${scope} `) && line.includes(` head=${commit} `) && !line.includes(' ROLLING-ATTRIBUTED '));
+  return / (?:incomplete|unavailable)=apps\/(?:server|cli|ui)(?:[, ]|$)/u.test(match ?? '');
+}
+
 /**
  * One pass of the rolling HEAD typecheck (owner ruling 2026-11-15; replaces the per-commit warn-only
  * checks). It typechecks the newest HEAD against the last HEAD it checked, so every commit in between
@@ -922,7 +933,9 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
   const recordedPath = rollingHeadPath(state, scope);
   const recorded = pending ? pending.base : existsSync(recordedPath) ? readFileSync(recordedPath, 'utf8').trim() : '';
   const result = { scope, base: recorded, head, attributions: [], incomplete: [], unavailable: [], packages: [], failures: [] };
-  if (recorded === head) return result;
+  const invalidatedBaseline = !pending && isUnjudgedAppCheckpoint(state, scope, recorded) ? recorded : '';
+  const needsBaseline = !recorded || !!invalidatedBaseline;
+  if (recorded === head && !needsBaseline) return result;
   const base = pending ? pending.base : rollingBase(repo, recorded, head);
   result.base = base;
   const record = verdict => {
@@ -933,10 +946,11 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
     }
     const gaps = verdict === 'ok' ? '' : ` incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'}`;
     const failures = result.failures.length ? ` failure=${result.failures.map(({ side, dir, code }) => `${side}:${dir}:${code}`).join(',')}` : '';
+    const invalidated = invalidatedBaseline ? ` invalidatedBaseline=${invalidatedBaseline}` : '';
     const evidence = result.headTree ? ` headTree=${result.headTree} diagnostics=${result.diagnostics}` : '';
-    appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} ROLLING-${verdict} scope=${scope} base=${base} head=${head} packages=${result.packages.join(',') || '-'} new=${result.fresh ?? result.attributions.reduce((sum, entry) => sum + entry.rows.length, 0)}${gaps}${failures}${evidence} ${((Date.now() - started) / 1000).toFixed(1)}s${result.attributions.map(entry => ` | ${entry.commit.slice(0, 11)}: ${entry.rows.length}`).join('')}\n`);
+    appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} ROLLING-${verdict} scope=${scope} base=${base} head=${head} packages=${result.packages.join(',') || '-'} new=${result.fresh ?? result.attributions.reduce((sum, entry) => sum + entry.rows.length, 0)}${gaps}${failures}${invalidated}${evidence} ${((Date.now() - started) / 1000).toFixed(1)}s${result.attributions.map(entry => ` | ${entry.commit.slice(0, 11)}: ${entry.rows.length}`).join('')}\n`);
   };
-  const packages = rollingScopeDirs({ repo, base, head, scope, baseline: !recorded });
+  const packages = rollingScopeDirs({ repo, base, head, scope, baseline: needsBaseline });
   result.packages = packages;
   if (!packages.length) { record('skipped'); return result; }
   const treeOf = commit => git(['rev-parse', `${commit}^{tree}`]).trim();
@@ -968,17 +982,17 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
     result.headTree = headTree;
     result.diagnostics = headRows.get(scope).length;
   }
-  // No recorded baseline: HEAD's own diagnostics become it. Comparing against HEAD^ would cost a second
-  // full compile (apps/cli: 66 min) for a one-commit range nobody has asked about.
-  if (!recorded) {
-    result.incomplete = packages.filter(dir => !headRows.get(dir));
-    record(result.incomplete.length ? 'INCOMPLETE' : 'BASELINE');
-    return result;
-  }
-  if (isAppScope(scope) && !headRows.get(scope)) {
+  if (isAppScope(scope) && recorded && !headRows.get(scope)) {
     // A historical compiler cannot recover missing HEAD rows. Keep the last checked checkpoint.
     result.unavailable = [scope];
     record('INCOMPLETE');
+    return result;
+  }
+  // A new baseline needs one exact compile. Log any legacy gap rather than
+  // treating a false green as a checked base.
+  if (needsBaseline) {
+    result.incomplete = packages.filter(dir => !headRows.get(dir));
+    record(result.incomplete.length ? 'INCOMPLETE' : 'BASELINE');
     return result;
   }
   const baseTree = treeOf(base);

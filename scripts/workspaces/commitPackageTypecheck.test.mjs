@@ -322,6 +322,34 @@ test('an unavailable rolling app comparison preserves its last checked checkpoin
   assert.doesNotMatch(verdict, /unavailable=/u);
 });
 
+test('a legacy false green is replaced only by an exact compiler baseline', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-rolling-typecheck-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  const scope = 'apps/cli';
+  const checkpoint = join(state, 'rolling-head-apps__cli');
+  const base = await commit('apps/cli/src/index.ts', 'export const value = 2;');
+  await writeFile(checkpoint, base);
+  const log = join(state, 'verdicts.log');
+  await writeFile(log, `2026-11-23T10:47:28.490Z ROLLING-ok scope=${scope} base=- head=${base} packages=${scope} new=0 incomplete=- unavailable=${scope} 13742.2s\n`);
+  const head = await commit('apps/cli/src/index.ts', 'export const value = 3;');
+  const dirs = [];
+  let available = false;
+  const row = { file: 'apps/cli/src/index.ts', line: 1, column: 1, code: 2322, text: 'worker diagnostic' };
+  const options = { repo, env: { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state }, scope, log: () => {},
+    remote: (_tree, _dirs, side) => {
+      dirs.push(side);
+      return new Map([[scope, available && side === 'head' ? [row] : null]]);
+    } };
+  await rollingHeadTypecheckPass(options);
+  assert.equal(readFileSync(checkpoint, 'utf8'), base, 'a second unavailable attempt does not replace the old pointer');
+  available = true;
+  await rollingHeadTypecheckPass(options);
+  assert.deepEqual(dirs, ['head', 'head'], 'the unjudged historical tree cannot be used as a baseline');
+  assert.equal(readFileSync(checkpoint, 'utf8'), head);
+  assert.match(readFileSync(log, 'utf8'), new RegExp(`ROLLING-BASELINE .*invalidatedBaseline=${base} headTree=[0-9a-f]+ diagnostics=1`, 'u'));
+});
+
 test('a missing package baseline cannot produce a green verdict for a judged HEAD', async t => {
   const { repo, commit } = await workspace(t);
   const state = await mkdtemp(join(tmpdir(), 'happier-rolling-typecheck-'));
