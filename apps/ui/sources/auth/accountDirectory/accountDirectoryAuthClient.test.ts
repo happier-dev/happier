@@ -312,6 +312,24 @@ describe('accountDirectoryAuthClient', () => {
         expect(storedDirectoryKeys()).toEqual([]);
     });
 
+    it.each([
+        { code: 'not_account_service', kind: 'not_account_service' },
+        { code: 'authentication_policy_unavailable', kind: 'authentication_unavailable' },
+        { code: 'client_update_required', kind: 'authentication_unavailable' },
+    ])('keeps the exact service refusal $code after an earlier positive feature read', async ({ code, kind }) => {
+        serveAuthEntry({
+            v: 1,
+            state: code === 'client_update_required' ? 'update_required' : 'unavailable',
+            scope: { kind: 'home' },
+            reason: code,
+            autoRedirect: null,
+        });
+        const result = await accountDirectoryAuthClient.discoverAuthenticationMethods({
+            endpointUrl: 'https://accounts.example.test',
+        });
+        expect(result).toMatchObject(kind === 'not_account_service' ? { kind } : { kind, refusal: { reason: code } });
+    });
+
     it('uses the Account Service auth-entry projection for dynamic methods', async () => {
         serveAuthEntry({
             v: 1,

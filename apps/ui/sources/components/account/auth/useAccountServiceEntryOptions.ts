@@ -5,6 +5,7 @@ import {
     type AccountDirectoryAuthTransport,
     type AccountDirectoryAuthMethodDiscovery,
 } from '@/auth/accountDirectory/accountDirectoryAuthClient';
+import type { HomeAuthEntryRefusal } from '@/auth/entry/authEntryClient';
 import {
     resolveEffectiveSignInService,
     type EffectiveSignInService,
@@ -31,6 +32,7 @@ export type AccountServiceEntryOptions = Readonly<{
     status: 'not_offered' | 'loading' | 'ready' | 'unavailable' | 'unsupported';
     /** The service's own advertised methods. Non-null only while `status` is `ready`. */
     discovery: AccountDirectoryAuthMethodDiscovery | null;
+    refusal?: HomeAuthEntryRefusal;
     /** Ephemeral transport for this exact verified operation; never persisted or placed in navigation. */
     transport: AccountDirectoryAuthTransport;
     /** Re-runs discovery against this exact selected endpoint. */
@@ -159,6 +161,7 @@ export function useAccountServiceEntryOptions(
         key: string;
         status: 'not_offered' | 'loading' | 'ready' | 'unavailable' | 'unsupported';
         discovery: AccountDirectoryAuthMethodDiscovery | null;
+        refusal?: HomeAuthEntryRefusal;
     }>>({ key: probe?.key ?? 'not_offered', status: probe ? 'loading' : 'not_offered', discovery: null });
     const [retryGeneration, setRetryGeneration] = React.useState(0);
 
@@ -183,7 +186,12 @@ export function useAccountServiceEntryOptions(
                     ? { key: observationKey, status: 'ready', discovery }
                     : discovery.kind === 'not_account_service'
                         ? { key: observationKey, status: 'unsupported', discovery: null }
-                        : { key: observationKey, status: 'unavailable', discovery: null });
+                        : {
+                            key: observationKey,
+                            status: 'unavailable',
+                            discovery: null,
+                            refusal: discovery.kind === 'authentication_unavailable' ? discovery.refusal : undefined,
+                        });
             } catch {
                 if (!controller.signal.aborted) setResolved({ key: observationKey, status: 'unavailable', discovery: null });
             }
@@ -198,13 +206,14 @@ export function useAccountServiceEntryOptions(
     const currentKey = probe?.key ?? 'not_offered';
     const currentResolved = resolved.key === currentKey
         ? resolved
-        : { key: currentKey, status: probe ? 'loading' as const : 'not_offered' as const, discovery: null };
+        : { key: currentKey, status: probe ? 'loading' as const : 'not_offered' as const, discovery: null, refusal: undefined };
 
     return React.useMemo(() => ({
         effectiveSignInService,
         endpoint,
         status: currentResolved.status,
         discovery: currentResolved.discovery,
+        refusal: currentResolved.refusal,
         transport: probe?.transport ?? {},
         retry,
     }), [effectiveSignInService, endpoint, currentResolved, probe?.transport, retry]);

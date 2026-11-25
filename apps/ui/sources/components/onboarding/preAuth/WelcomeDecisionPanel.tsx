@@ -198,13 +198,14 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
         returningGreeting,
         hasHome,
         serviceName,
+        serviceRefusal: accountServiceEntry?.refusal,
         canRetryService: accountServiceEntry != null,
         policy: props.restoreWays ? undefined : policyLock ? {
             kind: 'managed',
             field: policyField,
             display: { organization: policyLock.organization, hasSupport: Boolean(policyLock.supportUrl) },
         } : readOrganizationPolicy().status === 'invalid' ? { kind: 'invalid' } : undefined,
-        canChooseService: props.onChooseAccountService != null,
+        canChooseService: props.onChooseAccountService != null && (props.restoreWays === true || !servicePolicy.disabled),
     }) : frozenView;
     React.useLayoutEffect(() => {
         if (props.restoreWays && !approving) heldRestoreView.current = viewModel;

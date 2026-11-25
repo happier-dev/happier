@@ -1,5 +1,6 @@
 import type { IconName } from '@/components/ui/icons/Icon';
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
+import type { HomeAuthEntryRefusal } from '@/auth/entry/authEntryClient';
 import type { OrganizationPolicyField } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { describeHomeAuthenticationAction, describeHomeAuthEntryRefusal } from '@/components/account/auth/homeAuthenticationActionPresentation';
@@ -149,6 +150,7 @@ export function projectWelcomeEntryViewModel(
         place?: WelcomeEntryViewModel['context'];
         hasHome: boolean;
         serviceName: string | null;
+        serviceRefusal?: HomeAuthEntryRefusal;
         canRetryService: boolean;
         policy?: WelcomeEntryViewModel['policy'];
         /** A different sign-in service can be chosen (the way on when this one cannot sign in here). */
@@ -215,17 +217,18 @@ export function projectWelcomeEntryViewModel(
     } else if (notice) {
         const unavailable = notice.kind === 'service_unavailable';
         const methodless = notice.kind === 'service_methodless';
+        const refusal = unavailable && input.serviceRefusal ? describeHomeAuthEntryRefusal(input.serviceRefusal) : undefined;
         notices.push({
             slot: 'service',
             testID: 'welcome-account-service-recovery', kind: 'unavailable',
-            title: unavailable
+            title: refusal?.title ?? (unavailable
                 ? `${t('welcome.signInServiceUnavailableTitle')}${notice.serviceName ? ` · ${notice.serviceName}` : ''}`
-                : t(methodless ? 'welcome.signInServiceMethodlessTitle' : 'welcome.signInServiceUnsupportedTitle'),
-            reason: unavailable
+                : t(methodless ? 'welcome.signInServiceMethodlessTitle' : 'welcome.signInServiceUnsupportedTitle')),
+            reason: refusal ? refusal.reason : unavailable
                 ? notice.hasUsableHomeMethods ? t('welcome.signInServiceUnavailableHomeBody')
                     : t('welcome.signInServiceUnavailableBody', { service: notice.serviceName ?? service })
                 : t(methodless ? 'welcome.signInServiceMethodlessBody' : 'welcome.signInServiceUnsupportedBody'),
-            action: unavailable || methodless
+            action: !refusal && (unavailable || methodless)
                 ? input.canRetryService ? retry('welcome-account-service-retry') : undefined
                 : input.canChooseService
                     ? { testID: CHOOSE_ANOTHER_SERVICE_TEST_ID, label: t('welcome.chooseAnotherSignInService'), glyph: 'forward' as const }

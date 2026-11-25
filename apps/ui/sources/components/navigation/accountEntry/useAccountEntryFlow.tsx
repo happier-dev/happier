@@ -1,11 +1,13 @@
 import { OrganizationPolicyDiagnostic, OrganizationPolicyFieldNotice } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import * as React from 'react';
-import { accountDirectoryAuthClient, createVerifiedAccountServiceAuthority, type AccountDirectoryAuthMethodDiscovery, type AccountDirectoryAuthTransport } from '@/auth/accountDirectory/accountDirectoryAuthClient';
+import { accountDirectoryAuthClient, createVerifiedAccountServiceAuthority, type AccountDirectoryAuthMethodDiscovery, type AccountDirectoryAuthMethodDiscoveryResult, type AccountDirectoryAuthTransport } from '@/auth/accountDirectory/accountDirectoryAuthClient';
+import type { HomeAuthEntryRefusal } from '@/auth/entry/authEntryClient';
 import { AccountServiceAuthenticationFlow } from '@/components/account/auth/AccountServiceAuthenticationFlow';
 import type { AccountDirectoryKeyLoginOutcome } from '@/components/account/auth/AccountDirectoryKeyLoginForm';
 import { AccountServiceContinuation } from '@/components/account/auth/AccountServiceContinuation';
 import { useAccountServiceDisplayName } from '@/components/account/auth/accountServiceDisplayName';
 import { AccountServiceHomeAuthenticationAdapter } from '@/components/account/auth/AccountServiceHomeAuthenticationAdapter';
+import { describeHomeAuthEntryRefusal } from '@/components/account/auth/homeAuthenticationActionPresentation';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { consumeAccountServiceOAuthReturn } from '@/sync/ops/accountDirectory/consumeAccountServiceOAuthReturn';
@@ -16,7 +18,7 @@ import { moveAccountCredentialJourneyToMain } from '@/auth/flows/accountCredenti
 
 type State =
     | Readonly<{ kind: 'loading' }>
-    | Readonly<{ kind: 'unavailable' }>
+    | Readonly<{ kind: 'unavailable'; refusal?: HomeAuthEntryRefusal; unsupported?: true }>
     | Readonly<{ kind: 'organization_policy_locked' }>
     | Readonly<{ kind: 'organization_policy_invalid' }>
     | Readonly<{ kind: 'methods'; discovery: AccountDirectoryAuthMethodDiscovery; intent: AccountPostAuthInput['intent'] }>
@@ -37,6 +39,22 @@ export type AccountEntryFlow = Readonly<{
 type RouteParams = Readonly<Record<string, string | string[] | undefined>>;
 
 const NO_ROUTE_PARAMS: RouteParams = Object.freeze({});
+
+function accountServiceDiscoveryFailure(
+    result: Exclude<AccountDirectoryAuthMethodDiscoveryResult, { kind: 'supported_account_service' }>,
+): State {
+    switch (result.kind) {
+        case 'organization_policy_locked':
+        case 'organization_policy_invalid':
+            return { kind: result.kind };
+        case 'not_account_service':
+            return { kind: 'unavailable', unsupported: true };
+        case 'authentication_unavailable':
+            return { kind: 'unavailable', refusal: result.refusal };
+        default:
+            return { kind: 'unavailable' };
+    }
+}
 
 // The key-login form reports its own non-authenticated outcomes alongside the
 // post-auth results; only the shared dismissal rule exits immediately.
@@ -134,8 +152,7 @@ export function useAccountEntryFlow(props: Readonly<{
             });
             if (controller.signal.aborted || operation !== activeOperationRef.current) return;
             if (discovery.kind !== 'supported_account_service') {
-                setState({ kind: discovery.kind === 'organization_policy_locked' || discovery.kind === 'organization_policy_invalid'
-                    ? discovery.kind : 'unavailable' });
+                setState(accountServiceDiscoveryFailure(discovery));
                 return;
             }
             setState({ kind: 'methods', discovery, intent: props.request.intent });
@@ -164,8 +181,7 @@ export function useAccountEntryFlow(props: Readonly<{
             });
             if (controller.signal.aborted || operation !== activeOperationRef.current) return;
             if (discovery.kind !== 'supported_account_service') {
-                setState({ kind: discovery.kind === 'organization_policy_locked' || discovery.kind === 'organization_policy_invalid'
-                    ? discovery.kind : 'unavailable' });
+                setState(accountServiceDiscoveryFailure(discovery));
                 return;
             }
             setState({ kind: 'methods', discovery, intent: input.intent });
@@ -193,9 +209,15 @@ export function useAccountEntryFlow(props: Readonly<{
             ? <OrganizationPolicyFieldNotice field="accountService" />
             : <OrganizationPolicyDiagnostic />;
     } else if (state.kind === 'unavailable') {
-        content = <SurfaceStateCard testID="authenticated-account-entry-unavailable" kind="error" title={t('welcome.signInServiceUnavailableTitle')}
-            reason={t('settingsAccount.accountServiceDiscoveryUnavailableDescription')} accessibilitySemantics="alert"
-            action={{ label: t('common.retry'), onPress: () => setRetryGeneration((value) => value + 1) }} />;
+        const refusal = state.refusal ? describeHomeAuthEntryRefusal(state.refusal)
+            : state.unsupported ? {
+                title: t('welcome.signInServiceUnsupportedTitle'), reason: t('welcome.signInServiceUnsupportedBody'),
+            } : undefined;
+        content = <SurfaceStateCard testID="authenticated-account-entry-unavailable" kind="error"
+            title={refusal?.title ?? t('welcome.signInServiceUnavailableTitle')}
+            reason={refusal ? refusal.reason : t('settingsAccount.accountServiceDiscoveryUnavailableDescription')}
+            accessibilitySemantics="alert"
+            action={refusal ? undefined : { label: t('common.retry'), onPress: () => setRetryGeneration((value) => value + 1) }} />;
     } else if (state.kind === 'home_auth') {
         content = <AccountServiceHomeAuthenticationAdapter
             input={state.input}

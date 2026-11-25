@@ -36,7 +36,7 @@ import {
     type ProjectedAuthenticationCatalog,
     type ProjectedAuthenticationMethod,
 } from '@happier-dev/cli-common/authentication/authMethodCatalog';
-import { fetchHomeAuthEntry } from '@/auth/entry/authEntryClient';
+import { fetchHomeAuthEntry, readHomeAuthEntryRefusal, type HomeAuthEntryRefusal } from '@/auth/entry/authEntryClient';
 import {
     projectAuthEntryMethodCapabilities,
     projectAuthenticationMethodCapabilities,
@@ -239,6 +239,7 @@ export type AccountDirectoryAuthMethodDiscoveryResult =
         endpointUrl: string;
         serverIdentityId: string;
         reason: 'unavailable' | 'incompatible';
+        refusal?: HomeAuthEntryRefusal;
         snapshot: ServerFeaturesSnapshot & { status: 'ready' };
     }>
     | (Readonly<{ kind: 'supported_account_service' }> & AccountDirectoryAuthMethodDiscovery)
@@ -511,11 +512,16 @@ export const accountDirectoryAuthClient = {
         let discovery: AccountDirectoryAuthMethodDiscovery | null;
         if (authEntry.kind === 'ready') {
             if (authEntry.projection.state !== 'ready') {
+                const refusal = readHomeAuthEntryRefusal(authEntry);
+                if (refusal?.reason === 'not_account_service') {
+                    return { kind: 'not_account_service', endpointUrl, serverIdentityId, snapshot };
+                }
                 return {
                     kind: 'authentication_unavailable',
                     endpointUrl,
                     serverIdentityId,
                     reason: 'unavailable',
+                    ...(refusal ? { refusal } : {}),
                     snapshot,
                 };
             }

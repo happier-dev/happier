@@ -25,6 +25,7 @@ import { stopAllEndpointSupervisorsForTests } from '@/sync/runtime/connectivity/
 import { useOnboardingWizardController } from '@/components/onboarding/surfaces/useOnboardingWizardController';
 import { useAuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
 import { useAccountServiceEntryOptions } from '@/components/account/auth/useAccountServiceEntryOptions';
+import { WelcomeDecisionPanel } from '@/components/onboarding/preAuth/WelcomeDecisionPanel';
 import { WizardModalShell } from '@/components/onboarding/ui/WizardModalShell';
 import { AuthenticatedAccountEntryRouteSurface } from './AuthenticatedAccountEntryRouteSurface';
 import { HomeRecoveryAuthenticationFlow } from '@/components/account/auth/HomeRecoveryAuthenticationFlow';
@@ -33,6 +34,7 @@ import { SecretKeyLoginForm, type SecretKeyLoginTarget } from '@/components/acco
 import { EmailPasswordAuthPanel } from '@/components/account/auth/emailPassword/EmailPasswordAuthPanel';
 import { AccountServiceAuthenticationFlow } from '@/components/account/auth/AccountServiceAuthenticationFlow';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { t } from '@/text';
 
 // The connection singleton spans this file; reset fixture storage without
 // moving its owning Home generation lifetime backwards between cases.
@@ -340,6 +342,59 @@ it('reports Back before authentication as an exit without a completion', async (
 
     expect(onExit).toHaveBeenCalledExactlyOnceWith('/');
     expect(getActiveServerId()).toBe(focusAtEntry);
+});
+
+const serviceEntryRefusals = [
+    ['authentication_policy_unavailable', 'welcome.homeSignInPolicyUnavailableTitle'],
+    ['entry_not_available', 'welcome.homeSignInRefusedTitle'],
+    ['client_update_required', 'welcome.homeSignInClientUpdateTitle'],
+    ['not_account_service', 'welcome.signInServiceUnsupportedTitle'],
+] as const;
+
+async function serveSelectedServiceRefusal(reason: typeof serviceEntryRefusals[number][0]) {
+    await installStorageGlobals();
+    const fixture = createDirectoryHttpFixture();
+    const { homeA, homeB } = await adoptHomes(fixture);
+    boundary.request.mockImplementation(async (endpoint: string, path: string, init?: RequestInit) => {
+        if (endpoint === fixture.service.endpointUrl && path === '/v1/auth/entry') {
+            return json({ v: 1, state: reason === 'client_update_required' ? 'update_required' : 'unavailable',
+                scope: { kind: 'home' }, reason, autoRedirect: null });
+        }
+        return answerCommonEndpointRequest(fixture, homeA, homeB.serverUrl, endpoint, path) ?? fixture.request(endpoint, path, init);
+    });
+    return fixture;
+}
+
+it.each(serviceEntryRefusals)('reports the selected sign-in service refusal %s once and offers Back', async (reason, title) => {
+    const fixture = await serveSelectedServiceRefusal(reason);
+    const onExit = vi.fn();
+    screen = await renderScreen(<AuthProvider initialCredentials={null}><AuthenticatedAccountEntryRouteSurface
+        request={{ service: fixture.service, intent: { kind: 'enter', target: { kind: 'automatic' } }, returnTo: '/settings/account' }}
+        routeParams={{}} onExit={onExit} /></AuthProvider>);
+    await vi.waitFor(() => expect(screen?.findByTestId('authenticated-account-entry-unavailable')).not.toBeNull());
+    const visible = screen.getTextContent();
+    expect(visible.split(t(title))).toHaveLength(2);
+    expect(visible).not.toContain(t('common.retry'));
+    await act(async () => screen!.findByType(WizardModalShell as never).props.onBack());
+    expect(onExit).toHaveBeenCalledExactlyOnceWith('/settings/account');
+});
+
+it.each(serviceEntryRefusals)('reports the selected sign-in service refusal %s once at Welcome', async (reason, title) => {
+    await serveSelectedServiceRefusal(reason);
+    const chooseAnotherService = vi.fn();
+    function WelcomeWithSelectedService() {
+        const authEntryOptions = useAuthEntryOptions();
+        const accountServiceEntry = useAccountServiceEntryOptions();
+        return <WelcomeDecisionPanel authEntryOptions={authEntryOptions} accountServiceEntry={accountServiceEntry}
+            onChooseAccountService={chooseAnotherService} onContinueWithHomeAuthentication={vi.fn()}
+            onOpenRestore={vi.fn()} onChangeRelay={vi.fn()} />;
+    }
+    screen = await renderScreen(<AuthProvider initialCredentials={null}><WelcomeWithSelectedService /></AuthProvider>);
+    await vi.waitFor(() => expect(screen?.findByTestId('welcome-account-service-recovery')).not.toBeNull());
+    expect(screen.getTextContent().split(t(title))).toHaveLength(2);
+    expect(screen.findByTestId('welcome-account-service-retry')).toBeNull();
+    await screen.pressByTestIdAsync('welcome-account-service-choose-another');
+    expect(chooseAnotherService).toHaveBeenCalledOnce();
 });
 
 it.each(['route', 'wizard', 'cancel'])('%s retains service-key continuation until exact Home authentication and material are ready', async (surface) => {
