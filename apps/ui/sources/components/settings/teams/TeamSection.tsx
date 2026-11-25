@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -167,7 +167,6 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
      */
     children: (context: TeamSectionContext, header: React.ReactNode | undefined, renderHeader: TeamSectionRenderHeader) => React.ReactNode;
 }>) {
-    const navigation = useNavigation();
     const router = useRouter();
     const readFailureAction = useTeamReadFailureAction();
     const binding = useTeamBinding(props.serverId, props.teamId);
@@ -209,11 +208,9 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     // collection layout leaves the phone header untitled for it, as every Settings page. Its
     // condition states keep the page title for the same reason.
     const headsItself = props.renderHeader !== undefined || props.childRendersHeader === true;
+    // The phone bar above the page is the settings registry's (Back alone): the page names itself, so it hands the
+    // navigator no title of its own, however the page was entered.
     const embedded = props.presentation === 'embedded';
-    React.useEffect(() => {
-        if (embedded) return;
-        navigation.setOptions({ title: resolvedTitle });
-    }, [embedded, navigation, resolvedTitle]);
 
     const renderPlainHeader = (actions?: React.ReactNode, reading = false) => (
         <TeamSectionPageHeader

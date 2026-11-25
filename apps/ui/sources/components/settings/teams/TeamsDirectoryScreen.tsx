@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Redirect, useLocalSearchParams, useNavigation, useRouter, type Href } from '@/components/appShell/workspace/destinationRoute';
+import { Redirect, useLocalSearchParams, useRouter, type Href } from '@/components/appShell/workspace/destinationRoute';
 import { DestinationBodyLoading } from '@/components/appShell/workspace/DestinationBodyLoading';
 import { useRouteLaunchCurtainHold } from '@/components/appShell/workspace/useRouteLaunchCurtainHold';
 
@@ -156,13 +156,8 @@ const TeamsEmptyState = React.memo(function TeamsEmptyState(props: Readonly<{
  */
 export const TeamsDirectoryScreen = React.memo(function TeamsDirectoryScreen() {
     const view = useHappierCollectionIndexView();
-    const navigation = useNavigation();
     const params = useLocalSearchParams();
     const sourceHint = React.useMemo(() => readTeamCredentialSourceHint(params), [params]);
-
-    React.useEffect(() => {
-        navigation.setOptions({ title: t('teams.title') });
-    }, [navigation]);
 
     if (view === 'pending') return <DestinationBodyLoading routeServerId={sourceHint?.serverId} />;
     if (view === 'land') return <TeamsCollectionLanding sourceHint={sourceHint} />;

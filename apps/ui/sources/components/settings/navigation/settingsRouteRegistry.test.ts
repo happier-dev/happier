@@ -448,4 +448,11 @@ describe('resolveSettingsRouteTitleKey', () => {
         expect(resolveSettingsRouteTitleKey('/settings/teams/new')).toBe('teams.create.title');
         expect(resolveSettingsRouteTitleKey('/settings/nope/nothing')).toBeNull();
     });
+
+    it('names one Team\'s own page by its kind, so a sub-page\'s Back says "Team" while the page under it names the Team once', async () => {
+        const { resolveSettingsRouteTitleKey, resolveSettingsRouteParentPathname } = await import('./settingsRouteRegistry');
+        const parent = resolveSettingsRouteParentPathname('/settings/teams/home-a/team-1/members');
+        expect(parent).toBe('/settings/teams/home-a/team-1');
+        expect(resolveSettingsRouteTitleKey(parent)).toBe('teams.overview.teamSection');
+    });
 });

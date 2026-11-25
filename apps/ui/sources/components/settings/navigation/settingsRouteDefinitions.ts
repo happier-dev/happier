@@ -235,7 +235,8 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: 'teams', titleKey: 'teams.title' },
     { name: 'index', navigator: 'teams', titleKey: 'teams.title' },
     { name: 'new', navigator: 'teams', titleKey: 'teams.create.title' },
-    { name: '[serverId]/[teamId]/index', navigator: 'teams', titleKey: 'teams.title' },
+    // One Team's own page goes by its kind: its header names the Team, so a sub-page's Back says "Team".
+    { name: '[serverId]/[teamId]/index', navigator: 'teams', titleKey: 'teams.overview.teamSection' },
     { name: '[serverId]/[teamId]/members/index', navigator: 'teams', titleKey: 'teams.tabs.members' },
     { name: '[serverId]/[teamId]/members/add', navigator: 'teams', titleKey: 'teams.tabs.members' },
     { name: '[serverId]/[teamId]/members/[membershipId]', navigator: 'teams', titleKey: 'teams.tabs.members' },

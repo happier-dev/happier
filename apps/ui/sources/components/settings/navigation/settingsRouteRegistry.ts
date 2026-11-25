@@ -13,7 +13,6 @@ import { memoryDocumentHref } from '@/components/memory/memoryDocumentRoutes';
 import { readMachineAddRoutePath } from '@/components/machines/add/machineAddPaths';
 import { hasNewSessionPickerContinuation } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { useNavigationLeavesLargeTitle } from '@/components/ui/layout/navigationTitleChrome';
-import { useTeamRouteTitle } from '@/components/settings/teams/useTeamRouteTitle';
 
 type Translate = (key: TranslationKeyNoParams) => string;
 
@@ -239,14 +238,13 @@ export function useSettingsParentBack(tag: string, presentation?: SettingsParent
 }
 
 /**
- * The name a settings page's Back gives the page it returns to: one Team's own page by that Team's name, as its
- * header names it; any other page by its registry title. Every settings Back (the phone bar's and the floating
+ * The name a settings page's Back gives the page it returns to: its registry title (one Team's own page is "Team",
+ * since the page under the Back already names the Team). Every settings Back (the phone bar's and the floating
  * one) takes it from here.
  */
 export function useSettingsParentTitle(parentPathname: string | null, translate: Translate = t): string | undefined {
-    const teamTitle = useTeamRouteTitle(parentPathname);
     const parentTitleKey = resolveSettingsRouteTitleKey(parentPathname);
-    return teamTitle ?? (parentTitleKey ? translate(parentTitleKey) : undefined);
+    return parentTitleKey ? translate(parentTitleKey) : undefined;
 }
 
 function SettingsParentBackButton({
