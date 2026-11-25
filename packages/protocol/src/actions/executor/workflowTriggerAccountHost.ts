@@ -524,10 +524,10 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
   // A declaration's localId must not give it a competing source configuration.
   const sameSourcePlugin = (left: ConfiguredEvent['eventRef'], right: ConfiguredEvent['eventRef']) =>
     left.pluginId === right.pluginId;
-  const assertSourceConfigurations = async (automationId: string, name: string, candidates: readonly ConfiguredEvent[],
+  const assertSourceConfigurations = async (automationId: string, candidates: readonly ConfiguredEvent[],
     current: AvailableAutomationAccountEncryptionV1, reuse?: (row: AutomationDefinitionDetail) => boolean) => {
     if (!candidates.length) return [];
-    const retained: Array<ConfiguredEvent & Readonly<{ automationId: string; name: string }>> = [];
+    const retained: ConfiguredEvent[] = [];
     const retainedDefinitions: AutomationDefinitionDetail[] = [];
     let cursor: string | undefined;
     do {
@@ -548,7 +548,7 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
         for (const trigger of row.triggers) {
           if (trigger.kind !== 'pluginEvent' || !candidates.some(candidate => sameSourcePlugin(candidate.eventRef, trigger.eventRef))) continue;
           const { definition } = readAccountStoredPluginEventTriggerV1(row, trigger.id, current);
-          retained.push({ ...definition, eventRef: trigger.eventRef, watcher: retainedWatcher(trigger), automationId: row.id, name: row.name });
+          retained.push({ ...definition, eventRef: trigger.eventRef, watcher: retainedWatcher(trigger) });
         }
       }
       cursor = page.nextCursor ?? undefined;
@@ -557,17 +557,23 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
     // Explicit source edits still pass the shared configuration consistency owner.
     if (reuse && retainedDefinitions.some(reuse)) return retainedDefinitions;
     for (const candidate of candidates) {
-      const conflict = retained.find(existing => sameSourcePlugin(existing.eventRef, candidate.eventRef)
-        && existing.sourceInstanceId === candidate.sourceInstanceId
-        && (!pluginJsonValuesEqual(existing.sourceConfig, candidate.sourceConfig)
-          || (existing.watcher !== null && candidate.watcher !== null
-            && !arePluginMachineMaterializationRefsEqual(existing.watcher, candidate.watcher))));
-      if (conflict) throw Object.assign(new Error(
-        `Source configuration conflicts with existing definition "${conflict.name}" (${conflict.automationId}).`,
-      ), { code: 'invalid_input' });
+      for (const existing of retained) {
+        if (!sameSourcePlugin(existing.eventRef, candidate.eventRef)
+          || existing.sourceInstanceId !== candidate.sourceInstanceId) continue;
+        const path = !pluginJsonValuesEqual(existing.sourceConfig, candidate.sourceConfig) ? '/trigger/sourceConfig'
+          : existing.watcher !== null && candidate.watcher !== null
+            && !arePluginMachineMaterializationRefsEqual(existing.watcher, candidate.watcher) ? '/trigger/observationTransport'
+          : null;
+        if (path) unavailable('invalid_input', { issues: [{
+          code: 'invalid_input', path, severity: 'error',
+          message: path === '/trigger/sourceConfig'
+            ? 'This source already has a different configuration. Edit the saved source to make this change.'
+            : 'This source already uses a different Machine. Edit the saved source to change its Machine.',
+        }] });
+      }
       // Compare the complete prospective set as well, without comparing a
       // replacement against its own old revision or ignoring retained siblings.
-      retained.push({ ...candidate, automationId, name });
+      retained.push(candidate);
     }
     return retainedDefinitions;
   };
@@ -867,7 +873,7 @@ if (trigger.kind === 'sessionLifecycle') {
             return definition.sourceInstanceId === requested.sourceInstanceId
               && (!savedHealthCheck || pluginJsonValuesEqual(definition.sourceConfig, requested.sourceConfig));
           } : undefined;
-        const retained = current ? await assertSourceConfigurations(input.automationId, input.name,
+        const retained = current ? await assertSourceConfigurations(input.automationId,
           triggers.flatMap(item => {
             const source = requestedEvent(input.automationId, item.triggerId, 0, item.trigger, current);
             return source ? [source] : [];
@@ -928,7 +934,7 @@ if (trigger.kind === 'sessionLifecycle') {
           && (!input.enabled || input.triggers.some(item => item.kind === 'existing' && item.enabled === false))
           && input.triggers.every(item => item.kind === 'existing' && item.enabled !== true
             && item.trigger === undefined && item.triggerDefinitionEnvelope === undefined);
-        if (current && !withdrawingObservation) await assertSourceConfigurations(automationId, input.name,
+        if (current && !withdrawingObservation) await assertSourceConfigurations(automationId,
           input.triggers.flatMap(item => {
             if (item.kind === 'new' || item.trigger !== undefined) {
               const trigger = item.kind === 'new' ? item.trigger : { ...item.trigger!, enabled: item.enabled ?? false };

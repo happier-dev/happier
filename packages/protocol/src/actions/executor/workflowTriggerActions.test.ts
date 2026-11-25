@@ -34,6 +34,7 @@ import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1, readWor
 import { resolveActionCurrentSessionScopeFailure } from './sessionListAccess.js';
 import { AutomationStoredWorkflowDefinitionRecipeV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
 import { SessionInitialTriggerAdmissionV1Schema } from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
+import { normalizeWorkflowActionThrownError } from './workflowAccountActions.js';
 import { createAccountHealthCheckSourceReaderV1, createAccountWorkflowTriggerActions, readAccountStoredPluginEventTriggerV1 } from './workflowTriggerAccountHost.js';
 import { createAccountScopedCryptoMaterialSnapshotV1, sealAccountScopedBlobCiphertext } from '../../crypto/accountScopedCipher.js';
 import { isAvailableE2eeAutomationAccountEncryptionV1, type AvailableAutomationAccountEncryptionV1 } from '../../automations/automationAccountCurrentnessV1.js';
@@ -1445,6 +1446,40 @@ describe('Account source watcher assignment', () => {
     const updated = f.rows.get(stored.id)!;
     expect(updated.triggers[0]).toMatchObject({ eventRef: { pluginId, localId: 'health-status' } });
     expect(open(updated)).toMatchObject({ kind: 'available', definition: { sourceConfig: event.sourceConfig } });
+  });
+
+  it('keeps an existing Environment check and identifies a conflicting Add check in the Action refusal', async () => {
+    const f = fixture();
+    const host = createAccountWorkflowTriggerActions({
+      automations: f.deps.automations,
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      randomBytes: length => new Uint8Array(length).fill(3), resolveWorkflow: f.deps.resolveWorkflow,
+      newId: () => crypto.randomUUID(),
+    });
+    const deploymentEnvironment = { serverId: 'home', projectSourceId: 'project', environmentId: 'staging' };
+    const pluginId = HEALTH_CHECK_EVENT_REFS_V1.status.pluginId;
+    const request = (endpoint: string) => ({
+      observationOnly: { kind: 'observationOnly' as const, deploymentEnvironment },
+      trigger: { ...deploymentEventTrigger, eventRef: HEALTH_CHECK_EVENT_REFS_V1.status,
+        sourceInstanceId: 'health:staging',
+        sourceConfig: { v: 1, subject: { kind: 'environment', environmentId: deploymentEnvironment.environmentId },
+          checks: [{ checkId: 'http', kind: { pluginId, localId: 'http' }, binding: { kind: 'healthCheck' },
+            config: { endpoint, expectStatus: 200 }, periodMs: 60000, consecutiveFailuresBeforeAlerting: 1 }] },
+        observationTransport: { kind: 'checkpointedPull' as const,
+          watcherMaterializationRef: { pluginId, machineId: project.machineId, materializationId: 'services' } } },
+    });
+    const first = await host.add(request('http://127.0.0.1:5001/health'));
+    await expect(host.add(request('http://127.0.0.1:5001/health'))).resolves.toMatchObject({
+      set: { automationId: first.set.automationId }, triggerId: first.triggerId,
+    });
+    const refusal = host.add(request('http://127.0.0.1:5002/health'))
+      .catch(error => normalizeWorkflowActionThrownError(error));
+    await expect(refusal).resolves.toMatchObject({
+      ok: false, errorCode: 'invalid_input',
+      details: { issues: [{ code: 'invalid_input', path: '/trigger/sourceConfig', severity: 'error',
+        message: expect.any(String) }] },
+    });
+    expect(f.rows.size).toBe(1);
   });
 
   it.each(['plain', 'e2ee'] as const)('retains the %s preview Environment identity through trigger add, cold readback and update', async mode => {

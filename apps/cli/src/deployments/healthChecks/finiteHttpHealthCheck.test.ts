@@ -173,14 +173,15 @@ describe('finite saved HTTP and certificate health', () => {
         expect((await readHttpHealthCheckV1({ ...admitted(url), keyword: 'absent' }, context(url))).status).toBe('down');
     });
 
-    it('keeps incomplete keyword evidence unknown instead of claiming the keyword is absent', async () => {
-        const url = 'https://service.example/health';
-        stubFetch(async () => new Response(new ReadableStream<Uint8Array>({
-            start(controller) { controller.error(Object.assign(new Error('private-response-error'), { code: 'ECONNRESET' })); },
-        })));
+    it('reports a body reset without claiming the keyword is absent', async () => {
+        const url = await endpoint((_request, response) => {
+            response.writeHead(200, { 'Content-Length': '100' });
+            response.write('private-incomplete-body', () => response.destroy());
+        });
         const result = await readHttpHealthCheckV1({ ...admitted(url), keyword: 'needle' }, context(url));
-        expect(result.status).toBe('unknown');
-        expect(JSON.stringify(result)).not.toContain('private-response-error');
+        expect(result).toMatchObject({ status: 'down', cause: { reason: 'connection_reset' } });
+        expect(result.cause).not.toHaveProperty('keywordMatched');
+        expect(JSON.stringify(result)).not.toContain('private-incomplete-body');
     });
 
     it('keeps certificate capture absence independent from successful HTTP and reads no body', async () => {
@@ -268,6 +269,37 @@ describe('finite saved HTTP and certificate health', () => {
             reason: 'dns', requiredFact: 'resolvableHealthEndpoint', remedy: expect.any(String),
         });
         expect(JSON.stringify(unresolved)).not.toContain('private-');
+    });
+
+    it('reports the Fetch port restriction without claiming the endpoint was reached', async () => {
+        const url = 'http://127.0.0.1:9/health';
+        const observation = await readHttpHealthCheckV1(admitted(url), context(url));
+        expect(observation).toMatchObject({ status: 'unknown', cause: {
+            reason: 'http_port_blocked', requiredFact: 'allowedHealthEndpointPort', remedy: expect.any(String),
+        } });
+    });
+
+    it.each([
+        ['UND_ERR_CONNECT_TIMEOUT', 'timeout'],
+        ['ETIMEDOUT', 'timeout'],
+        ['ECONNRESET', 'connection_reset'],
+        ['EPIPE', 'connection_reset'],
+    ])('observes %s as a failed HTTP check with a typed cause', async (code, reason) => {
+        stubFetch(async () => { throw new TypeError('private-transport-message', {
+            cause: Object.assign(new Error('private-connection'), { code }),
+        }); });
+        const url = 'http://127.0.0.1:8080/health';
+        const observation = await readHttpHealthCheckV1(admitted(url), context(url));
+        expect(observation).toMatchObject({ status: 'down', cause: { reason, remedy: expect.any(String) } });
+        expect(JSON.stringify(observation)).not.toContain('private-');
+    });
+
+    it('records a mismatched status separately from an unavailable HTTP response', async () => {
+        const url = await endpoint((_request, response) => { response.writeHead(503).end(); });
+        const observation = await readHttpHealthCheckV1(admitted(url), context(url));
+        expect(observation).toMatchObject({ status: 'down', cause: {
+            httpStatus: 503, expectStatus: 200, reason: 'http_status_mismatch',
+        } });
     });
 
     it('keeps a temporary resolver failure unavailable rather than claiming outside DNS failure', async () => {

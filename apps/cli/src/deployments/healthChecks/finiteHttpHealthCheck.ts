@@ -36,19 +36,43 @@ export type HealthCheckFiniteLeafContextV1 = Readonly<{
     http: Pick<HttpService, 'request' | 'requestStream'>;
 }>;
 
-function nativeFailure(error: unknown, url: string): 'tls' | 'dns' | 'connection' | undefined {
+function nativeFailure(error: unknown, url: string) {
     if (!(error instanceof Error)) return;
     const native = error.cause instanceof Error ? error.cause : error;
+    // Fetch rejects restricted ports before opening a socket.
+    if (error instanceof TypeError && native !== error && native.message === 'bad port') return 'http_port_blocked';
     if (!('code' in native) || typeof native.code !== 'string') return;
     if (isNativeTlsErrorCode(native.code, new URL(url).protocol === 'https:')) return 'tls';
-    if (native.code === 'ENOTFOUND') return 'dns';
-    // Reset/timeout may occur after headers while reading a keyword body;
-    // those are incomplete evidence, not a proved connection refusal.
-    if (['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH'].includes(native.code)) {
-        return 'connection';
+    switch (native.code) {
+        case 'ENOTFOUND': return 'dns';
+        case 'ECONNREFUSED':
+        case 'EHOSTUNREACH':
+        case 'ENETUNREACH': return 'connection';
+        case 'ECONNRESET':
+        case 'EPIPE':
+        case 'UND_ERR_SOCKET': return 'connection_reset';
+        case 'ETIMEDOUT':
+        case 'UND_ERR_CONNECT_TIMEOUT':
+        case 'UND_ERR_HEADERS_TIMEOUT':
+        case 'UND_ERR_BODY_TIMEOUT': return 'timeout';
     }
-    return undefined;
 }
+
+const nativeFailureFacts = {
+    tls: { requiredFact: 'validEndpointTlsConnection',
+        remedy: 'Check the endpoint TLS configuration, certificate chain, hostname and validity from the selected observer.' },
+    dns: { requiredFact: 'resolvableHealthEndpoint',
+        remedy: 'Check the endpoint DNS records from the selected observer.' },
+    connection: { requiredFact: 'reachableHealthEndpoint',
+        remedy: 'Check that the service is listening and that its port is reachable from the selected observer.' },
+    connection_reset: { requiredFact: 'completedHealthEndpointResponse',
+        remedy: 'Check why the endpoint, proxy or network closes the HTTP connection before the probe completes.' },
+    timeout: { requiredFact: 'timelyHealthEndpointResponse',
+        remedy: 'Check why the endpoint did not respond in time from the selected observer.' },
+    http_port_blocked: { requiredFact: 'allowedHealthEndpointPort',
+        disclosure: 'The HTTP client blocks this port before making a connection',
+        remedy: 'Choose an HTTP endpoint on a port the observer can check.' },
+} as const;
 
 function result(check: AdmittedHttpHealthCheckV1, kind: 'http' | 'certificate',
     context: HealthCheckFiniteLeafContextV1, startedAt: number, status: HealthCheckResultV1['status'],
@@ -101,14 +125,9 @@ async function observe(check: AdmittedHttpHealthCheckV1, context: HealthCheckFin
         if (isPluginError(error) && error.code !== 'plugin_fetch_response_too_large') throw error;
         if (error instanceof Error && error.name === 'AbortError') throw error;
         const failure = nativeFailure(error, url);
-        if (failure === 'tls' || ((failure === 'connection' || failure === 'dns') && kind === 'http')) {
-            return result(check, kind, context, startedAt, 'down', { reason: failure,
-                requiredFact: failure === 'tls' ? 'validEndpointTlsConnection'
-                    : failure === 'dns' ? 'resolvableHealthEndpoint' : 'reachableHealthEndpoint',
-                remedy: failure === 'tls'
-                    ? 'Check the endpoint TLS configuration, certificate chain, hostname and validity from the selected observer.'
-                    : failure === 'dns' ? 'Check the endpoint DNS records from the selected observer.'
-                    : 'Check endpoint DNS, service availability and network or firewall access from the selected observer.' });
+        if (failure === 'http_port_blocked' || (failure && (failure === 'tls' || kind === 'http'))) {
+            return result(check, kind, context, startedAt, failure === 'http_port_blocked' ? 'unknown' : 'down',
+                { reason: failure, ...nativeFailureFacts[failure] });
         }
         logger.warnLocalFile('[Deployment health] HTTP observation incomplete',
             projectActionFailureCauseV1(error, `deployment.health.${kind}`, { allowUnknownErrorCode: false }));
@@ -135,6 +154,7 @@ async function observe(check: AdmittedHttpHealthCheckV1, context: HealthCheckFin
         const keywordMatched = check.keyword === undefined || new TextDecoder().decode(response.body).includes(check.keyword);
         return result(check, kind, context, startedAt, statusMatched && keywordMatched ? 'up' : 'down',
             { httpStatus: response.status, ...(expectStatus === undefined ? {} : { expectStatus }),
+                ...(!statusMatched ? { reason: 'http_status_mismatch' } : {}),
                 ...(check.keyword === undefined ? {} : { keywordMatched }) });
     }
     const peer = response.tlsPeer;
