@@ -1201,7 +1201,7 @@ export async function requestExecutionRunConnectedServicesMaterialization(
   request: Omit<ConnectedServiceRunMaterializeRequest, 'activationId'>,
   options: Readonly<{ signal?: AbortSignal }> = {},
 ): Promise<
-  | { ok: true; result: { activationId: string; env: Record<string, string>; unsetEnvKeys?: readonly string[]; connectedServicesBindings: unknown; registration: ExecutionRunConnectedServicesRegistrationV1 } }
+  | { ok: true; result: { activationId: string; env: Record<string, string>; unsetEnvKeys?: readonly string[]; secretValues?: readonly string[]; connectedServicesBindings: unknown; registration: ExecutionRunConnectedServicesRegistrationV1 } }
   | { ok?: false; error?: string; errorCode?: string; errorMessage?: string; uxDiagnostic?: ConnectedServiceUxDiagnosticV1; failureCause?: SessionRuntimeIssueV1["failureCause"] }
 > {
   options.signal?.throwIfAborted();

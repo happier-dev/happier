@@ -1246,6 +1246,8 @@ export function createExecutionRunConnectedServicesBridge(
                         env,
                         producedConnectedAccountPurposes: resolved.producedConnectedAccountPurposes,
                         ...(resolved.unsetEnvKeys?.length ? { unsetEnvKeys: resolved.unsetEnvKeys } : {}),
+                        // The Run process writes the Agent's results; it keeps these out of them.
+                        ...(resolved.secretValues?.length ? { secretValues: [...resolved.secretValues] } : {}),
                         connectedServicesBindings,
                         registration,
                     };

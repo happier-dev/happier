@@ -30,6 +30,7 @@ import { resolveExecutionRunChildSelection } from './openInputs';
 import { findCatalogEntry } from '@/agent/catalog/registry';
 import { projectExecutionRunError } from '../errors';
 import { toVoiceAgentStartError } from '@/agent/voice/agent/voiceAgentStartError';
+import { redactTranscriptSecrets, runInExecutionRunTranscriptSecretScope, TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 const CONNECTED_BINDINGS = {
     v: 2,
@@ -377,6 +378,25 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         }, expect.anything());
         // QA2-F02: explicit selections never consult the session defaulting owner.
         expect(deps.resolveSessionSpawnDefaults).not.toHaveBeenCalled();
+    });
+
+    it('keeps the materialized credential out of what this Run writes, in the Run\'s own scope only', async () => {
+        // The daemon returns the credential collector's secret set; `native` and ids are not in it.
+        const deps = createDeps({ requestMaterialization: vi.fn(async () => ({ ok: true as const, result: {
+            activationId: ACTIVATION_ID, env: { CODEX_HOME: MATERIALIZED_ENV_VALUE, OPENAI_API_KEY: 'codex-access-secret' },
+            secretValues: ['codex-access-secret'], connectedServicesBindings: CONNECTED_BINDINGS, registration: REGISTRATION,
+        } })) });
+        const runSecrets = new Map<string, number>();
+        const resolved = await runInExecutionRunTranscriptSecretScope(runSecrets, () => resolveExecutionRunConnectedServicesEnv({
+            runId: 'run_1', backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'), backendSourceKind: 'built_in',
+            connectedServices: CONNECTED_BINDINGS, cwd: '/tmp/project', deps,
+        }));
+        const echo = 'native token codex-access-secret';
+        expect(runInExecutionRunTranscriptSecretScope(runSecrets, () => redactTranscriptSecrets(echo)))
+            .toBe(`native token ${TRANSCRIPT_SECRET_REDACTED}`);
+        expect(runInExecutionRunTranscriptSecretScope(new Map(), () => redactTranscriptSecrets(echo))).toBe(echo);
+        expect(redactTranscriptSecrets(echo)).toBe(echo);
+        await resolved?.cleanup();
     });
 
     it('logs the selected pool member through the selection parser without logging credential environment values', async () => {

@@ -80,6 +80,8 @@ export const ConnectedServiceRunMaterializeSuccessResponseSchema = z.strictObjec
         env: z.record(z.string(), z.string()),
         producedConnectedAccountPurposes: z.optional(z.array(z.string())),
         unsetEnvKeys: z.optional(z.array(z.string())),
+        /** The materializations' own secret set (the credential collector's), for the Run's transcript scope. */
+        secretValues: z.optional(z.array(z.string().check(z.minLength(1)))),
         connectedServicesBindings: z.unknown(),
         registration: ExecutionRunConnectedServicesRegistrationV1Schema,
     }),
@@ -219,6 +221,7 @@ export type ConnectedServiceRunMaterializationHandlerResult =
         env: Readonly<Record<string, string>>;
         producedConnectedAccountPurposes?: readonly string[];
         unsetEnvKeys?: readonly string[];
+        secretValues?: readonly string[];
         connectedServicesBindings: unknown;
         registration: ExecutionRunConnectedServicesRegistrationV1;
     }>

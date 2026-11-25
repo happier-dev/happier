@@ -39,6 +39,7 @@ import {
     resolveSecretReferenceOverlayEnvironment,
 } from '@/settings/secrets/secretReferenceOverlay';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
+import { registerSessionTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
 import type { ResolveManagedProviderPurposeBindingIntent } from '@/providers/managed/resolvePurposeBindingSnapshot';
 import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/runtimeCatalog';
 import type { DirectManagedProviderEndpointPreparer } from '@/providers/lifecycle/prepareDirectLaunch';
@@ -476,11 +477,20 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 }
             }
             const diagnosticValues = Object.values(secretReferenceEnvironment);
+            // The admitted overlay values are this Run's secrets: kept out of its process output and,
+            // in the Run's own transcript scope, out of what its Agent writes.
+            let releaseSecretReferenceTranscript: readonly (() => void)[] = [];
             if (diagnosticValues.length > 0) {
                 secretReferenceRedaction = createProviderRedactionLease({
                     values: diagnosticValues,
                 });
+                releaseSecretReferenceTranscript = diagnosticValues.filter(value => value.length > 0)
+                    .map(registerSessionTranscriptSecret);
             }
+            const closeSecretReference = () => {
+                for (const release of releaseSecretReferenceTranscript) release();
+                secretReferenceRedaction?.close();
+            };
             let isolationUnsetEnvKeys = normalizeUnsetEnvKeys([
                 ...(connectedServicesEnv?.unsetEnvKeys ?? []),
                 ...(providerLaunch?.unsetEnvKeys ?? []),
@@ -511,7 +521,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
             catch (error) {
                 await connectedServicesEnv?.cleanup();
                 await providerLaunch?.cleanupOnExit?.();
-                secretReferenceRedaction?.close();
+                closeSecretReference();
                 throw error;
             }
             const prepareRuntimeFailureRecovery: NonNullable<CreateCliExecutionRunBackendParams['prepareRuntimeFailureRecovery']> = async input => {
@@ -655,7 +665,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     const sanitized = sanitizeExecutionRunError(error, value => secretReferenceRedaction?.redact(
                         providerLaunch?.sanitizeDiagnosticText(value) ?? value,
                     ) ?? providerLaunch?.sanitizeDiagnosticText(value) ?? value, opts.runId ? { runId: opts.runId } : undefined);
-                    secretReferenceRedaction?.close();
+                    closeSecretReference();
                     throw sanitized;
                 }
                 throw error;
@@ -694,7 +704,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
             const withSecretReferenceCleanup = secretReferenceRedaction
                 ? withExecutionRunHostRuntimeCleanup(
                     withProviderCleanup,
-                    async () => { secretReferenceRedaction?.close(); },
+                    async () => { closeSecretReference(); },
                 )
                 : withProviderCleanup;
             return connectedServicesEnv

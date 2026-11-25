@@ -16,6 +16,7 @@ import type {
   RuntimePermissionResponseOutcome,
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
+import { redactTranscriptSecrets, runInExecutionRunTranscriptSecretScope, TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 // One runtime, one lifetime: the signal must stay stable across calls so
@@ -212,7 +213,12 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
       start: { intent: 'delegate', retentionPolicy: 'resumable' },
     });
 
-    await runtime.provisionRuntime({ initialPrompt: 'delegate' });
+    // A detached Run provisions in its own transcript scope; the overlay value is this Run's secret.
+    const runSecrets = new Map<string, number>();
+    await runInExecutionRunTranscriptSecretScope(runSecrets, () => runtime.provisionRuntime({ initialPrompt: 'delegate' }));
+    expect(runInExecutionRunTranscriptSecretScope(runSecrets, () => redactTranscriptSecrets('use run-secret-value')))
+      .toBe(`use ${TRANSCRIPT_SECRET_REDACTED}`);
+    expect(redactTranscriptSecrets('use run-secret-value')).toBe('use run-secret-value');
     await runtime.dispose();
     expect(createExecutionRunBackendMock).toHaveBeenCalledTimes(1);
   });

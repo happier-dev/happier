@@ -38,6 +38,8 @@ import { materializeWorkflowAcceptedSnapshotV1, type WorkflowDefinitionV1 } from
 import { createWorkflowCoordinator } from '@/daemon/workflows/coordinator';
 import { evaluateWorkflowCondition } from '@/daemon/workflows/input';
 import { registerSessionTranscriptSecret, TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { createConnectedAccountCredentialRedaction } from '@happier-dev/cli-common/connectedAccounts';
+import type { ExecutionRunHostRuntimeEvent } from './executionRunHostRuntime';
 import { createInMemoryWorkflowCoordinatorStore } from '@/daemon/workflows/workflowCoordinator.testkit';
 import { buildBackendTargetKeyV2, convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
@@ -930,5 +932,89 @@ describe('ExecutionRunHostBridge detached task scope', () => {
     } finally {
       await manager.dispose();
     }
+  });
+
+  describe('detached Run secret scope lifetime and sources', () => {
+    const openResult = { kind: 'json' as const, schema: { type: 'object', required: ['mode', 'body'],
+      properties: { mode: { type: 'string' }, body: { type: 'string' } } } };
+    const startRun = (manager: ExecutionRunHostBridge) => manager.start({ sessionId: null, intent: 'agent',
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_BACKEND_ID }, instructions: 'Stay ready.', permissionMode: 'read_only',
+      retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'request_response' });
+    const sendTyped = async (manager: ExecutionRunHostBridge, runId: string) => {
+      await vi.waitFor(async () => expect(await manager.send(runId, { message: 'Return the typed result',
+        localInputId: `typed-${runId}`, resultContract: openResult })).toEqual({ ok: true }));
+      await vi.waitFor(() => expect(manager.get(runId)?.inputTurns?.last?.state).toBe('completed'));
+      return manager.get(runId)!.inputTurns!.last!.result;
+    };
+
+    it('masks a Connected Account credential its launch materialized and keeps the collector-excluded metadata exact', async () => {
+      // The Providers collector decides which credential values are secret; `native`, `Bearer` and ids are not.
+      const registered = createConnectedAccountCredentialRedaction({
+        mode: { id: 'device', kind: 'oauthDeviceCode', title: 'Sign in', scopes: [], outcomeReconciliation: 'none' } as never,
+        credential: { v: 1, values: { accessToken: 'muse-access-secret', credentialMode: 'native', tokenType: 'Bearer', providerAccountId: 'acct-1' } },
+        configuration: {},
+      }).readSecretValues();
+      let releases: Array<() => void> = [];
+      const runtime: TestExecutionRunHostRuntime = createTestExecutionRunHostRuntime({
+        onProvisionRuntime: () => { releases = registered.map(registerSessionTranscriptSecret); },
+        onSendPrompt: async (_runtimeId, prompt) => runtime.emitMessage({ type: 'model-output', fullText: prompt.includes('Return the typed result')
+          ? JSON.stringify({ mode: 'native', body: 'sent muse-access-secret as Bearer for acct-1' }) : 'ready' } as AgentMessage),
+        onWaitForTurnCompletion: async () => {},
+        onDispose: () => { for (const release of releases) release(); },
+      });
+      runtimeFactoryMock.createExecutionRunBridgeRuntime.mockReturnValue(runtime);
+      const manager = new ExecutionRunHostBridge({ parentProvider: TEST_BACKEND_ID, cwd: process.cwd(), sendAcp: async () => {} });
+      try {
+        const started = await startRun(manager);
+        expect(await sendTyped(manager, started.runId)).toEqual({ kind: 'json',
+          value: { mode: 'native', body: `sent ${TRANSCRIPT_SECRET_REDACTED} as Bearer for acct-1` } });
+      } finally { await manager.dispose(); }
+    });
+
+    it('still masks a result decoded after the launch that materialized the secret was released', async () => {
+      // A per-turn Agent process can exit (its launch released) before the completion loop decodes the turn.
+      let releases: Array<() => void> = [];
+      const runtime: TestExecutionRunHostRuntime = createTestExecutionRunHostRuntime({
+        onProvisionRuntime: () => { releases = ['launch-secret-value'].map(registerSessionTranscriptSecret); },
+        onSendPrompt: async (_runtimeId, prompt) => runtime.emitMessage({ type: 'model-output', fullText: prompt.includes('Return the typed result')
+          ? JSON.stringify({ mode: 'open', body: 'echo launch-secret-value' }) : 'ready' } as AgentMessage),
+        onWaitForTurnCompletion: async () => { for (const release of releases) release(); },
+      });
+      runtimeFactoryMock.createExecutionRunBridgeRuntime.mockReturnValue(runtime);
+      const manager = new ExecutionRunHostBridge({ parentProvider: TEST_BACKEND_ID, cwd: process.cwd(), sendAcp: async () => {} });
+      try {
+        const started = await startRun(manager);
+        expect(await sendTyped(manager, started.runId)).toEqual({ kind: 'json',
+          value: { mode: 'open', body: `echo ${TRANSCRIPT_SECRET_REDACTED}` } });
+      } finally { await manager.dispose(); }
+    });
+
+    it('masks a provider runtime-ended message delivered outside the Run operation that launched it', async () => {
+      let emitRuntimeEvent: ((event: ExecutionRunHostRuntimeEvent) => void) | undefined;
+      const runtime = {
+        ...createTestExecutionRunHostRuntime({
+          onProvisionRuntime: () => { registerSessionTranscriptSecret('ended-secret-value'); },
+          onSendPrompt: async () => {},
+          onWaitForTurnCompletion: async () => {},
+        }),
+        subscribeRuntimeEvents: (listener: (event: ExecutionRunHostRuntimeEvent) => void) => {
+          emitRuntimeEvent = listener;
+          return () => { emitRuntimeEvent = undefined; };
+        },
+      };
+      runtimeFactoryMock.createExecutionRunBridgeRuntime.mockReturnValue(runtime);
+      const manager = new ExecutionRunHostBridge({ parentProvider: TEST_BACKEND_ID, cwd: process.cwd(), sendAcp: async () => {} });
+      try {
+        const started = await startRun(manager);
+        await vi.waitFor(() => expect(emitRuntimeEvent).toBeDefined());
+        // Delivered from this test's own context, as a provider process exit is.
+        emitRuntimeEvent!({ kind: 'runtime-ended', sessionId: 'native', sequence: 1, emittedAtMs: 1, cause: 'processExited', retryable: false,
+          diagnostic: { code: 'provider_ended', severity: 'error', message: 'provider rejected ended-secret-value' } } as ExecutionRunHostRuntimeEvent);
+        await vi.waitFor(() => expect(manager.get(started.runId)?.status).not.toBe('running'));
+        const stored = JSON.stringify(manager.get(started.runId));
+        expect(stored).not.toContain('ended-secret-value');
+        expect(stored).toContain(TRANSCRIPT_SECRET_REDACTED);
+      } finally { await manager.dispose(); }
+    });
   });
 });

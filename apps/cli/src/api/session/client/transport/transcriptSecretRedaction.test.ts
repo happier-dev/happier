@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import {
   redactTranscriptSecrets,
+  registerSessionTranscriptSecret,
   registerTranscriptSecret,
+  runInExecutionRunTranscriptSecretScope,
   TRANSCRIPT_SECRET_REDACTED,
 } from './transcriptSecretRedaction';
 
@@ -87,5 +89,22 @@ describe('transcript secret redaction', () => {
       releaseOwner();
       releaseBearer();
     }
+  });
+
+  it('keeps a detached Run launch secret in that Run for the Run\'s life, never in another Run or the process set', async () => {
+    // Two Accounts' detached Runs in one daemon, each with its own store.
+    const owner = new Map<string, number>();
+    const guest = new Map<string, number>();
+    const release = runInExecutionRunTranscriptSecretScope(owner, () => registerSessionTranscriptSecret('1'));
+    release(); // the launch ends before the Run decodes its last turn
+    const read = (store: Map<string, number>) => runInExecutionRunTranscriptSecretScope(store,
+      async () => { await new Promise(resolve => setTimeout(resolve, 1)); return redactTranscriptSecrets({ line: 1, note: 'port 1' }); });
+    await expect(read(owner)).resolves.toEqual({ line: 1, note: `port ${TRANSCRIPT_SECRET_REDACTED}` });
+    await expect(read(guest)).resolves.toEqual({ line: 1, note: 'port 1' });
+    expect(redactTranscriptSecrets('port 1')).toBe('port 1');
+    expect(registerSessionTranscriptSecret('outside-any-scope')).toBeTypeOf('function');
+    expect(redactTranscriptSecrets('outside-any-scope')).toBe('outside-any-scope');
+    owner.clear(); // the bridge empties the store once the Run settled
+    await expect(read(owner)).resolves.toEqual({ line: 1, note: 'port 1' });
   });
 });

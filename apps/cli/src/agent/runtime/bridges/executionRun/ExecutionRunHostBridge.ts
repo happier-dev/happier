@@ -861,6 +861,16 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     controller: ExecutionRunBackendController,
     event: Extract<ExecutionRunHostRuntimeEvent, { kind: 'runtime-ended' }>,
   ): Promise<void> {
+    // A provider exit arrives from the process, outside the Run operation; its diagnostic can carry provider text.
+    await runInExecutionRunTranscriptSecretScope(this.readRunTranscriptSecrets(runId),
+      () => this.handleBackendRuntimeEndedInRunSecretScope(runId, controller, event));
+  }
+
+  private async handleBackendRuntimeEndedInRunSecretScope(
+    runId: string,
+    controller: ExecutionRunBackendController,
+    event: Extract<ExecutionRunHostRuntimeEvent, { kind: 'runtime-ended' }>,
+  ): Promise<void> {
     const isCurrent = () => isExecutionRunControllerCurrent({ runId, controller, controllers: this.controllers });
     if (!isCurrent() || this.runs.get(runId)?.status !== 'running') return;
     let error = projectExecutionRunError(createExecutionRunDiagnosticError(
@@ -2211,7 +2221,38 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     return null;
   }
 
+  /** The Run's terminal writer masks with the Run's own store wherever its settlement was triggered. */
   private async finishRun(
+    runId: string,
+    next: Omit<
+      ExecutionRunState,
+      | 'runId'
+      | 'callId'
+      | 'sidechainId'
+      | 'sessionId'
+      | 'depth'
+      | 'intent'
+      | 'backendTarget'
+      | 'backendId'
+      | 'instructions'
+      | 'permissionMode'
+      | 'retentionPolicy'
+      | 'runClass'
+      | 'ioMode'
+      | 'startedAtMs'
+      | 'resumeHandle'
+    > & {
+      status: ExecutionRunState['status'];
+      finishedAtMs: number;
+    },
+    toolResult: { output: any; isError?: boolean; meta?: Record<string, unknown> },
+    structuredMeta?: ExecutionRunStructuredMeta,
+  ): Promise<void> {
+    await runInExecutionRunTranscriptSecretScope(this.readRunTranscriptSecrets(runId),
+      () => this.finishRunInRunSecretScope(runId, next, toolResult, structuredMeta));
+  }
+
+  private async finishRunInRunSecretScope(
     runId: string,
     next: Omit<
       ExecutionRunState,
@@ -2297,6 +2338,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
             ...(completedRun.error ? { error: completedRun.error } : {}),
           },
         });
+        // Everything this Run stores is written; a later resume's launch registers again.
+        this.runTranscriptSecrets.get(runId)?.clear();
       }
     }
   }
@@ -3615,6 +3658,10 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   }
 
   async stop(runId: string): ReturnType<typeof stopExecutionRun> {
+    return await runInExecutionRunTranscriptSecretScope(this.readRunTranscriptSecrets(runId), () => this.stopInRunSecretScope(runId));
+  }
+
+  private async stopInRunSecretScope(runId: string): ReturnType<typeof stopExecutionRun> {
     await this.recoverRetainedRuns();
     const recoveryInput = this.boundedRecoveryInputs.get(runId);
     this.boundedRecoveryInputs.delete(runId);

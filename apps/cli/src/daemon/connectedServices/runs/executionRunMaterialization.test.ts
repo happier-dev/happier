@@ -635,6 +635,18 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         });
     });
 
+    it('returns the materializations\' own secret set to the Run process that writes the Agent\'s results', async () => {
+        const { bridge } = createBridge({ resolveAuthForSpawn: (async () => ({
+            env: { CODEX_HOME: '/materialized/run_abc/codex-home', [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: '[]' },
+            secretValues: ['run-access-secret'],
+            cleanupOnFailure: null, cleanupOnExit: vi.fn(), connectedServicesBindings: RUN_BINDINGS,
+            targetMaterializedRoot: '/materialized/run_abc/codex',
+        })) as never });
+        const result = await bridge.materialize({ ...MATERIALIZE_INPUT, activationId: randomUUID() });
+        expect(result).toMatchObject({ ok: true, secretValues: ['run-access-secret'] });
+        expect(JSON.stringify(result.ok ? result.registration : null)).not.toContain('run-access-secret');
+    });
+
     it('fails closed when the agent id is not a catalog agent (no resolver call)', async () => {
         const { bridge, resolveAuthForSpawn, registerRunTargets } = createBridge();
 

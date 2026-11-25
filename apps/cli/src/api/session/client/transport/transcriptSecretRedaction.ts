@@ -78,10 +78,16 @@ export function registerTranscriptSecret(secret: string): () => void {
  * Register a launch's own secret in its own scope only: the hosted Session's, or the detached
  * Execution Run's. Launch secrets never enter the process set, where they would mask (and reveal)
  * other Accounts' content in the same host; outside both scopes nothing is registered.
+ *
+ * In a Run's scope the value stays registered for the Run, not the launch: a per-turn Agent process
+ * can exit (its launch released) before the Run decodes that turn. The bridge owner empties the
+ * Run's store once the Run has settled and deletes it with the Run's history.
  */
 export function registerSessionTranscriptSecret(secret: string): () => void {
-    const store = readOwnScopeSecrets(true);
-    return store ? registerIn(store, secret) : () => {};
+    if (readHostedSessionScope()) return registerIn(readOwnScopeSecrets(true)!, secret);
+    const run = executionRunSecrets.getStore();
+    if (run) run.set(secret, (run.get(secret) ?? 0) + 1);
+    return () => {};
 }
 
 function redactString(value: string, secrets: readonly string[]): string {

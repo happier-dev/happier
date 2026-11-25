@@ -1199,7 +1199,8 @@ describe('createStablePluginExecService', () => {
                 launch.release(); launch.release();
             }
             expect(released).toBe(1);
-            expect(readMasked()).toBe('use exact-project-key');
+            // The Run owns the lifetime (its result may be decoded after its Agent exited), not the launch.
+            expect(readMasked()).toBe(`use ${TRANSCRIPT_SECRET_REDACTED}`);
         });
     });
 

@@ -24,6 +24,7 @@ import { CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES, type ExecutionRunCon
 import { readConnectedServiceChildMemberLogContextFromEnv } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import type { ConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/types';
 import { createExecutionRunCodedError } from '../errors';
+import { registerSessionTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
 import type { RuntimeAuthRefreshViaDaemon } from '@/plugins/runtime/context/runtimeAuthRefresh';
 import type { CreateCliExecutionRunBackendParams } from '@/agent/runtime/registry/engineRegistryTypes';
 
@@ -349,10 +350,14 @@ export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
             response && 'failureCause' in response ? response.failureCause : undefined);
     }
 
+    // The credential collector's secret set for these materializations: kept out of what this Run's
+    // Agent writes, in the Run's own scope (a detached Run's in the daemon, else the hosted Session's).
+    const releaseTranscriptSecrets = (response.result.secretValues ?? []).map(registerSessionTranscriptSecret);
     let cleanupPromise: Promise<void> | null = null;
     const cleanup = async (): Promise<void> => {
         if (cleanupPromise) return await cleanupPromise;
         const attempt = (async () => {
+            for (const releaseSecret of releaseTranscriptSecrets) releaseSecret();
             const result = await deps.release({
                 runId: params.runId,
                 runnerPid: deps.runnerPid,
