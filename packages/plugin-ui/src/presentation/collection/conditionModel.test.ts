@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeSessionListFilterV1, sessionWorkFilterFields, matchSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
-import { createWorkflowListFilterRegistryV1, compileWorkflowListFilterV1 } from '@happier-dev/protocol/workflows/listing/workflowListFilterV1';
+import { createWorkflowListFilterRegistryV1, compileWorkflowListFilterV1, WorkflowListFilterViewV1Schema } from '@happier-dev/protocol/workflows/listing/workflowListFilterV1';
 import { admitPluginListFilterFieldV1 } from '@happier-dev/protocol/collections/filter/pluginListFilterFieldV1';
 import { SESSION_WORK_STATUS_FILTERS_V1, listSessionPresentationStatesForWorkStatusFilterV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import * as publicFilters from '../../components/CollectionFilter.js';
@@ -207,8 +207,10 @@ describe('shared collection condition model', () => {
         const available = publicFilters.conditionModelFromFilter(registry, initial, {
             valueCounts: { fieldId: admitted.field.id, options: [{ value: 'ready', count: 4 }] },
         }).availableFields;
-        expect(available.find(field => field.id === 'view')).toMatchObject({ operators: ['is'],
-            valueOptions: [{ value: 'triggered' }, { value: 'running' }] });
+        expect(available.find(field => field.id === 'view')).toMatchObject({
+            operators: ['is'],
+            valueOptions: WorkflowListFilterViewV1Schema.options.filter(value => value !== initial.view).map(value => ({ value })),
+        });
         expect(available.find(field => field.id === admitted.field.id)?.operators).toEqual(['is', 'is_not']);
         expect(available.find(field => field.id === admitted.field.id)?.valueOptions).toEqual([
             { value: 'ready', count: 4 }, { value: 'blocked' },
