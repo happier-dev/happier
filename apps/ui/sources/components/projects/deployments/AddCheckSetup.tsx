@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { isActionOutcomeUnknownErrorCodeV1, UNEXPECTED_ACTION_FAILURE_CODES_V1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { AUTOMATION_EVENT_WATCHER_NOT_CURRENT } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { PluginUiActionFailureV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
@@ -12,7 +13,9 @@ import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionErro
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { useMachineListStatusForServer, useServerScopedMachine } from '@/sync/store/hooks';
 import { sync } from '@/sync/sync';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -22,6 +25,8 @@ type Settlement = Parameters<
   >['onSettled']
 >[0];
 type Configured = Extract<Settlement, { kind: 'configured' }>;
+
+const readMachineOwnership = (machine: Machine | null) => machine ? !machine.isShared : null;
 
 /**
  * Add check (PAGE-ACCEPT-176 R10-D1): the check's own native form, opened directly on the Machine that runs it, as the
@@ -33,6 +38,7 @@ export function AddCheckSetup(
     lifetime: ServerAccountScopeLifetime;
     deploymentEnvironment: DeploymentEnvironmentRefV1;
     seed: PluginUiOpenAutomationEventRequestV1 | undefined;
+    collectorPlacement?: boolean;
     onClose: () => void;
     testID: string;
   }>,
@@ -71,6 +77,12 @@ export function AddCheckSetup(
   const machineLabel = (machineName: string | null) =>
     machineName ?? t('machine.unnamedMachine');
   const seed = props.seed;
+  const collectorId = props.collectorPlacement ? seed?.monitoringMachineId : undefined;
+  const serverId = props.lifetime.scope.serverId;
+  const ownedCollector = useServerScopedMachine(serverId, collectorId, readMachineOwnership);
+  const inventoryStatus = useMachineListStatusForServer(serverId);
+  const collectorRefused = collectorId && (ownedCollector === false || (ownedCollector === null && inventoryStatus === 'idle'));
+  const waitingForCollector = collectorId && ownedCollector === null && inventoryStatus === 'loading';
   const failedWrite = write?.status === 'failed' ? write : null;
   const unconfirmed = isActionOutcomeUnknownErrorCodeV1(failedWrite?.failure.errorCode);
   const writeFailure = failedWrite && presentActionExecutionFailure(failedWrite.failure,
@@ -97,7 +109,24 @@ export function AddCheckSetup(
             ? { label: t('common.close'), onPress: props.onClose }
             : { label: t('common.retry'), onPress: () => { void save(failedWrite.settlement); } }}
         />
-      ) : seed ? (
+      ) : collectorRefused ? (
+        <SurfaceStateCard
+          testID={`${props.testID}.collector-refused`}
+          size="line"
+          kind="unavailable"
+          title={t('projects.deployments.services.addCheckFailed')}
+          reason={t('projects.deployments.monitoring.addCheckCollectorOwnership')}
+          diagnosticCode={AUTOMATION_EVENT_WATCHER_NOT_CURRENT}
+          accessibilitySemantics="alert"
+          action={{ label: t('common.close'), onPress: props.onClose }}
+        />
+      ) : waitingForCollector ? (
+        <SurfaceStateCard
+          size="line"
+          kind="loading"
+          title={t('common.loading')}
+        />
+      ) : seed && (!collectorId || ownedCollector === true) ? (
         <PluginEventAutomationEditor
           automationId="new"
           clientId="add-check"

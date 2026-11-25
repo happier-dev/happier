@@ -515,6 +515,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
       {addingCheck && lifetime ? (
         <AddCheckSetup
           testID="project-deployments.telemetry.add-check"
+          collectorPlacement
           onClose={() => setAddingCheck(null)}
           lifetime={lifetime}
           deploymentEnvironment={{ serverId: environment.serverId,

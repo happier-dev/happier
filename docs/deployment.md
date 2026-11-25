@@ -67,6 +67,9 @@ Monitoring editor with the Environment, observing Machine, emitted service,
 HTTP method and route filled in. The editor starts with p95 selected. Choose
 the window and threshold before saving. The installed telemetry check kind
 validates the finished draft and the Monitoring source stores the saved check.
+The collector Machine must belong to the Account saving the check. When it
+belongs to another Account, Add check shows the ownership refusal before
+opening the editor.
 
 ## Browser exception setup (0.3 development)
 

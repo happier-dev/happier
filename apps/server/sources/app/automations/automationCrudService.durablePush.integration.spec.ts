@@ -435,6 +435,27 @@ describe("Automation durable-push authoring", () => {
         });
     });
 
+    it("returns a typed refusal for a watcher belonging to another Account", async () => {
+        await seedAccount();
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const ownedMachineId = randomUUID();
+        await db.machine.create({ data: { id: ownedMachineId, accountId: account.id, metadata: "{}", installationId: randomUUID() } });
+        const automationId = randomUUID();
+        const trigger = triggerInput(pullTrigger());
+        await withAuthenticatedTestApp(registerAutomationV3Routes, async app => {
+            const response = await app.inject({ method: "POST", url: "/v3/automations",
+                headers: { "x-test-user-id": account.id }, payload: {
+                    automationId, name: "Foreign watcher", enabled: true,
+                    triggers: [trigger], executionRecipe: executionRecipe(1),
+                    assignments: [{ machineId: ownedMachineId }],
+                } });
+            expect(response.statusCode).toBe(400);
+            expect(response.json()).toEqual({ error: "event_watcher_not_current" });
+        });
+        expect(await db.automation.findUnique({ where: { id: automationId } })).toBeNull();
+        expect(await db.automationTrigger.findUnique({ where: { id: trigger.triggerId } })).toBeNull();
+    });
+
     it("returns a typed declaration conflict when a release-less claim omits the selected Event", async () => {
         const account = await seedAccount();
         const manifest = releaseFacts({ supportsDurablePush: true }).normalizedManifest;

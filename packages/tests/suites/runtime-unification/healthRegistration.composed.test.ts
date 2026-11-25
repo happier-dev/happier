@@ -165,8 +165,8 @@ else process.exitCode=17;
             await expect(triggers.add({ observationOnly: { kind: 'observationOnly' }, name: 'Invalid installation',
                 trigger: { ...eventTrigger, observationTransport: { kind: 'checkpointedPull',
                     watcherMaterializationRef: { ...materialization, materializationId: plugin.manifest.id } } } }))
-                .rejects.toMatchObject({ code: 'workflow_http_error', details: { status: 400 } });
-            expect(refusalBodies).toEqual([{ error: 'Automation Event watcher is not current' }]);
+                .rejects.toMatchObject({ code: 'event_watcher_not_current', response: { status: 400 } });
+            expect(refusalBodies).toEqual([{ error: 'event_watcher_not_current' }]);
             const written = await triggers.add({ observationOnly: { kind: 'observationOnly' }, name: 'Observed service', trigger: eventTrigger });
             expect(written.set.health).toBe('available');
 

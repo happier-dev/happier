@@ -104,6 +104,7 @@ import { resolveCurrentClaimablePluginMachineMaterializationTx } from "@/app/plu
 import {
     assertAutomationTemplateEnvelopeForAccountMode,
     AutomationEventFilterValidationError,
+    AutomationEventWatcherCurrentnessError,
     AutomationValidationError,
     parseAutomationScheduleInput,
     readLegacyExistingSessionTemplateAdmission,
@@ -487,29 +488,20 @@ function durablePushObservationEligibilityFingerprint(
     });
 }
 
-async function normalizeAutomationPluginEventWriteTx(params: Readonly<{
+async function admitAutomationEventWatcherTx(params: Readonly<{
     tx: Tx;
     accountId: string;
-    serverIdentityId: string | null;
-    input: AutomationPlainPluginEventWriteInput;
-}>): Promise<NormalizedAutomationPluginEventWrite> {
-    const accountCurrentness = await fetchAutomationAccountCurrentnessWitnessTx(
-        params.tx,
-        params.accountId,
-    );
-    if (!accountCurrentness || accountCurrentness.mode !== "plain") {
-        throw new AutomationStoredContentReadError("modeMismatch");
-    }
+    input: Pick<AutomationPluginEventWriteInput, "eventRef" | "observationTransport">;
+}>) {
     const transport = params.input.observationTransport;
-    const observationTarget = transport.kind === "durablePush"
+    const watcher = transport.kind === "durablePush"
         ? transport.endpointMaterializationRef
         : transport.watcherMaterializationRef;
-    if (observationTarget.pluginId !== params.input.eventRef.pluginId) {
+    if (watcher.pluginId !== params.input.eventRef.pluginId) {
         throw new AutomationValidationError(
             "Automation Event watcher must use the Event's declaring plugin",
         );
     }
-    const watcher = observationTarget;
     const [materialization, machine] = await Promise.all([
         params.tx.pluginMachineMaterialization.findUnique({
             where: {
@@ -534,10 +526,9 @@ async function normalizeAutomationPluginEventWriteTx(params: Readonly<{
         !materialization
         || materialization.accountId !== params.accountId
         || materialization.pluginId !== watcher.pluginId
-        || !machine
-        || machine.installationId === null
+        || !machine?.installationId
     ) {
-        throw new AutomationValidationError("Automation Event watcher is not current");
+        throw new AutomationEventWatcherCurrentnessError();
     }
     const current = await resolveCurrentClaimablePluginMachineMaterializationTx({
         tx: params.tx,
@@ -550,9 +541,25 @@ async function normalizeAutomationPluginEventWriteTx(params: Readonly<{
         version: materialization.version,
     });
     if (current.kind !== "current") {
-        throw new AutomationValidationError("Automation Event watcher is not current");
+        throw new AutomationEventWatcherCurrentnessError();
     }
+    return { transport, watcher, materialization, machine: { installationId: machine.installationId } };
+}
 
+async function normalizeAutomationPluginEventWriteTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    serverIdentityId: string | null;
+    input: AutomationPlainPluginEventWriteInput;
+}>): Promise<NormalizedAutomationPluginEventWrite> {
+    const accountCurrentness = await fetchAutomationAccountCurrentnessWitnessTx(
+        params.tx,
+        params.accountId,
+    );
+    if (!accountCurrentness || accountCurrentness.mode !== "plain") {
+        throw new AutomationStoredContentReadError("modeMismatch");
+    }
+    const { transport, watcher, materialization, machine } = await admitAutomationEventWatcherTx(params);
     const contribution = await resolveCurrentAutomationEventContributionTx({
         tx: params.tx,
         accountId: params.accountId,
@@ -706,43 +713,7 @@ async function normalizeEncryptedAutomationPluginEventWriteTx(params: Readonly<{
         throw new AutomationStoredContentReadError("contentInvalid");
     }
 
-    const transport = params.input.observationTransport;
-    const watcher = transport.kind === "durablePush"
-        ? transport.endpointMaterializationRef
-        : transport.watcherMaterializationRef;
-    if (watcher.pluginId !== params.input.eventRef.pluginId) {
-        throw new AutomationValidationError("Automation Event watcher must use the Event's declaring plugin");
-    }
-    const [materialization, machine] = await Promise.all([
-        params.tx.pluginMachineMaterialization.findUnique({
-            where: { machineId_materializationId: {
-                machineId: watcher.machineId,
-                materializationId: watcher.materializationId,
-            } },
-            select: { accountId: true, pluginId: true, version: true, serverIdentityId: true },
-        }),
-        params.tx.machine.findFirst({
-            where: { accountId: params.accountId, id: watcher.machineId },
-            select: { installationId: true },
-        }),
-    ]);
-    if (!materialization || materialization.accountId !== params.accountId
-        || materialization.pluginId !== watcher.pluginId || !machine?.installationId) {
-        throw new AutomationValidationError("Automation Event watcher is not current");
-    }
-    const claimable = await resolveCurrentClaimablePluginMachineMaterializationTx({
-        tx: params.tx,
-        accountId: params.accountId,
-        serverIdentityId: materialization.serverIdentityId,
-        machineId: watcher.machineId,
-        machineInstallationId: machine.installationId,
-        materializationId: watcher.materializationId,
-        pluginId: watcher.pluginId,
-        version: materialization.version,
-    });
-    if (claimable.kind !== "current") {
-        throw new AutomationValidationError("Automation Event watcher is not current");
-    }
+    const { transport, watcher, materialization, machine } = await admitAutomationEventWatcherTx(params);
     const contribution = await resolveCurrentAutomationEventContributionTx({
         tx: params.tx,
         accountId: params.accountId,

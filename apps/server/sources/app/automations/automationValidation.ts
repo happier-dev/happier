@@ -1,3 +1,4 @@
+import { AUTOMATION_EVENT_WATCHER_NOT_CURRENT } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { z } from "zod/mini";
 import { AUTOMATION_INT_COLUMN_MAX } from '@happier-dev/protocol/automations/automationColumnBoundsV1';
 import { AutomationOnceScheduleSchema } from '@happier-dev/protocol/automations/automationTriggerDefinition';
@@ -16,6 +17,16 @@ export class AutomationValidationError extends Error {
     constructor(message: string) {
         super(message);
         this.name = "AutomationValidationError";
+    }
+}
+
+/** Account or installation currentness of a watcher selected at write admission. */
+export class AutomationEventWatcherCurrentnessError extends AutomationValidationError {
+    readonly code = AUTOMATION_EVENT_WATCHER_NOT_CURRENT;
+
+    constructor() {
+        super(AUTOMATION_EVENT_WATCHER_NOT_CURRENT);
+        this.name = "AutomationEventWatcherCurrentnessError";
     }
 }
 

@@ -69,7 +69,7 @@ import { loadAutomationEventStatusProjections } from "@/app/automations/automati
 import { loadAutomationSessionLifecycleStatusProjections } from "@/app/automations/automationSessionLifecycleStatusProjection";
 import { AutomationStoredContentReadError } from "@/app/automations/automationStoredContentRead";
 import { readSharedWorkflowTriggerSummaries } from '@/app/automations/automationSharedWorkflowSummaries';
-import { AutomationValidationError } from "@/app/automations/automationValidation";
+import { AutomationEventWatcherCurrentnessError, AutomationValidationError } from "@/app/automations/automationValidation";
 import { AutomationEventCurrentnessError } from "@/app/automations/automationEventCurrentness";
 import { AutomationSessionLifecycleRegistrationValidationError } from "@/app/automations/automationSessionLifecycleRegistration";
 import {
@@ -180,7 +180,8 @@ async function loadAutomationLastRunAtProjections(accountId: string, automationI
 
 function automationDefinitionValidationMessage(error: AutomationValidationError | AutomationEventCurrentnessError | z.core.$ZodError): string {
     if (error instanceof AutomationEventCurrentnessError) return error.code;
-    if (error instanceof AutomationSessionLifecycleRegistrationValidationError) return error.code;
+    if (error instanceof AutomationSessionLifecycleRegistrationValidationError
+        || error instanceof AutomationEventWatcherCurrentnessError) return error.code;
     if (error instanceof AutomationValidationError) return error.message;
     const issue = error.issues[0];
     const path = issue?.path.join(".") || "payload";
