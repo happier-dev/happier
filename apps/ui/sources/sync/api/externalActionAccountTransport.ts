@@ -54,7 +54,7 @@ import { tellRequesterMachineUseOnce } from '@/sync/ops/account/requesterMachine
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ServerFetchWriteTimeoutError } from '@/sync/http/client';
-import { readServerUnreachableFetchCode } from '@/sync/runtime/connectivity/transientConnectivityErrors';
+import { readServerUnreachableFetchCode, SERVER_UNREACHABLE_ERROR_CODE } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { projectDeploymentTelemetryReadAdmissionV1, type DeploymentTelemetryReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
@@ -477,9 +477,14 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
                 payload = await response.json();
             }
         } catch (error) {
-            return withActionFailureDiagnostic({ ...failure(invalid),
-                failureCause: projectActionFailureCauseV1(error, 'external_action.http.response'),
-            }, { phase: 'external_action.http.response', causeKind: 'incomplete', error });
+            const cause = projectActionFailureCauseV1(error, 'external_action.http.response');
+            if (!response.ok) {
+                // An intermediary can answer after Home dispatched the effect.
+                const code = retainsEffectReceipt ? 'outcome_unknown' : SERVER_UNREACHABLE_ERROR_CODE;
+                return { ...failure(code), failureCause: { ...cause, httpStatus: response.status } };
+            }
+            return withActionFailureDiagnostic({ ...failure(invalid), failureCause: cause },
+                { phase: 'external_action.http.response', causeKind: 'incomplete', error });
         }
         if (!response.ok) {
             const refusal = ExternalActionHttpErrorSchema.safeParse(payload);

@@ -3,7 +3,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { PluginUiSelectedActionInputCarrierV1Schema } from '@happier-dev/protocol/plugins/ui/selectedActionInput';
 import { DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
-import { SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { APPROVAL_REQUEST_DECIDE_ACTION_ID_V1, SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { buildManagedSessionDefaultsContext } from '@happier-dev/protocol/teams/managedDefaults';
@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 import { projectExternalActionHttpError, projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
-import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema, ExternalActionRequestEnvelopeV2Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import nacl from 'tweetnacl';
@@ -41,6 +41,7 @@ import { keepHyphenatedNameTogether } from '@/utils/sessions/machineDisplayNames
 import { readPresentationNotice, retirePresentationNotice, subscribePresentationNotices } from '@/components/sessions/presentation/presentationNotices';
 import { requesterMachineNoticeKey } from '@happier-dev/protocol/machines/managed/requesterMachineNotice';
 import { t } from '@/text';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 const disclosureConsent = vi.hoisted(() => vi.fn<() => Promise<boolean>>());
 vi.mock('@/modal', async () => {
@@ -1263,6 +1264,55 @@ describe('captured Account Action response decoding', () => {
         homes.answer(serverId, path, { status: 502, body: { error: 'invalid_request', code: 'action_outcome_unknown',
             requestId: binding.requestId, diagnostic } });
         expect(await execute()).toMatchObject({ ok: false, errorCode: 'action_outcome_unknown', details: { diagnostic } });
+    });
+
+    describe('protected approval decision HTTP responses', () => {
+        const decisionBinding = { ...binding, actionId: APPROVAL_REQUEST_DECIDE_ACTION_ID_V1, requestId: 'decision-1' };
+        const decisionPath = `/v1/actions/${decisionBinding.actionId}`;
+        const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(19) };
+
+        function decide() {
+            if (!account) throw new Error('Expected captured Account');
+            return executeOriginalAccountActionTransport({ account, binding: decisionBinding, material,
+                input: { artifactId: 'approval-1', decision: 'approve' }, authority: 'present_user' });
+        }
+
+        const plainText = 'upstream connection failed';
+        const html = '<html><body>internal gateway error</body></html>';
+        const gatewayReplies = [502, 503, 504].flatMap(status => [
+            { status, contentType: 'text/plain', body: plainText },
+            { status, contentType: 'text/html', body: html },
+        ]);
+
+        it.each([...gatewayReplies, { status: 200, contentType: 'text/plain', body: plainText }])(
+            'classifies HTTP $status with a $contentType body after a protected decision', async ({ status, contentType, body }) => {
+                setRuntimeFetch((input, init) => String(input) === `https://plugin-transport.test${decisionPath}`
+                    ? Promise.resolve(new Response(body, { status, headers: { 'content-type': contentType } }))
+                    : homes.request(input, init));
+                try {
+                    const result = await decide();
+                    expect(result).toMatchObject({ ok: false, errorCode: status === 200 ? 'invalid_action_output' : 'outcome_unknown' });
+                    if (status !== 200) {
+                        expect(result).toMatchObject({ failureCause: { httpStatus: status } });
+                        expect(result).not.toHaveProperty('effectAttempted');
+                        expect(JSON.stringify(result)).not.toContain(body);
+                        expect(readActionOutputDiagnostic(result)?.exception).toBeUndefined();
+                    }
+                } finally {
+                    installHomeGovernanceBoundaries(homes);
+                }
+            },
+        );
+
+        it('still opens the protected decision response', async () => {
+            const execution = { ok: true as const, result: { status: 'executed' } };
+            homes.answer(serverId, decisionPath, { select: body => {
+                const envelope = ExternalActionRequestEnvelopeV2Schema.parse(body);
+                return { body: prepareExternalActionResponseV2({ binding: decisionBinding, request: envelope,
+                    material, randomBytes: getRandomBytes, executedMachineId: 'machine-1', execution }).response };
+            } });
+            expect(await decide()).toEqual(execution);
+        });
     });
 
     it('keeps the server’s empty post-dispatch 502 acknowledgement loss uncertain', async () => {
