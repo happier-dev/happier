@@ -2756,10 +2756,14 @@ export function createCliActionExecutorFromCredentials(params: Parameters<typeof
         // Capture local custody before policy/approval awaits; the effect never
         // resolves a replacement Account after the containing Action is admitted.
         const destinationHomePromise = resolveHome(parsed.destination.serverId, outerCredentials);
-        const [sourceHome, destinationHome] = await Promise.all([
-          await isServerProfileHomeIdentity(parsed.source.serverId, parsed.destination.serverId) ? destinationHomePromise : resolveHome(parsed.source.serverId),
-          destinationHomePromise,
-        ]);
+        const sourceHomePromise = isServerProfileHomeIdentity(parsed.source.serverId, parsed.destination.serverId)
+          .then(sameHome => sameHome ? destinationHomePromise : resolveHome(parsed.source.serverId));
+        const [destination, source] = await Promise.allSettled([destinationHomePromise, sourceHomePromise]);
+        // Report the destination refusal when neither Home can be resolved.
+        if (destination.status === 'rejected') throw destination.reason;
+        if (source.status === 'rejected') throw source.reason;
+        const { value: destinationHome } = destination;
+        const { value: sourceHome } = source;
         const matchesCapturedHome = (home: typeof sourceHome, serverId: string | null | undefined) =>
           areServerProfileIdentifiersEquivalent(home.serverId, serverId,
             identifier => identifier === home.serverId || identifier === home.serverIdentityId ? home.serverIdentityId ?? home.serverId : null);

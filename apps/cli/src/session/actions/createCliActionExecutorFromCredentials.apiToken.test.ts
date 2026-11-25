@@ -12,6 +12,7 @@ import { API_TOKEN_FULL_GRANT_V1, ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1, ACCOUN
 import { projectSessionSummaryV1, SessionStatusActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
 
 import { configuration, reloadConfiguration } from '@/configuration';
+import { writeStoredCredentialsForServerId } from '@/persistence';
 import { DAEMON_CONTROL_TOKEN_HEADER } from '@/daemon/controlHttp';
 import { registerDaemonExternalActionRoute } from '@/daemon/externalActions/registerDaemonExternalActionRoute';
 import { installDaemonMachineAdmissionTransport } from '@/daemon/machineAdmissionTransport';
@@ -342,13 +343,49 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       input: { summary: 'Progress' },
     }]);
   });
-  it('refuses a qualified copy with unavailable exact Home credentials before remote effects', async () => {
-    installPatActionTransportMock(() => { throw new Error('Missing Home copy reached the Action transport'); });
-    const executor = createCliActionExecutorFromCredentials({ credentials: { token: SYNTHETIC_API_TOKEN, encryption: null } });
-    await expect(executor.execute('daemon.filesystem.copy', { kind: 'target_copy',
-      source: { serverId: 'missing-source-home', machineId: 'source', rootPath: '/source', path: 'file.dat' },
-      destination: { serverId: 'missing-destination-home', machineId: 'destination', rootPath: '/destination', path: 'copy.dat' },
-      overwrite: false, recursive: false }, { surface: 'mcp' })).resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+  it.each([
+    { source: 'source-home', destination: 'missing-destination-home', missing: 'missing-destination-home', homeRequests: null },
+    { source: 'missing-source-home', destination: 'destination-home', missing: 'missing-source-home', homeRequests: null },
+    { source: 'missing-source-home', destination: 'missing-destination-home', missing: 'missing-destination-home', homeRequests: null },
+    { source: 'source-home', destination: 'destination-home', missing: null, homeRequests: 2 },
+    { source: 'destination-home', destination: 'destination-home', missing: null, homeRequests: 1 },
+  ])('settles qualified copy from $source to $destination', async ({
+    source, destination, missing, homeRequests,
+  }) => {
+    await withPublishedAccountDaemon(async ({ credentials, serverApiUrl }) => {
+      const profiles = Object.fromEntries(['source-home', 'destination-home'].map(id =>
+        [id, { id, name: id, serverUrl: serverApiUrl, webappUrl: serverApiUrl }]));
+      const settings = { servers: profiles };
+      readSettings.mockResolvedValue(settings);
+      if (destination === 'missing-destination-home') {
+        // Complete the destination profile read before the equivalence read
+        // returns. Vitest also fails the run on any unhandled rejection.
+        readSettings.mockResolvedValueOnce(settings).mockImplementationOnce(async () => {
+          await new Promise<void>(resolve => setImmediate(resolve));
+          return settings;
+        });
+      }
+      await writeStoredCredentialsForServerId('source-home', { ...credentials, token: 'fixture-source-bearer' });
+      const requests: string[] = [];
+      installPatActionTransportMock(url => {
+        requests.push(url.pathname);
+        return { statusCode: 200, body: FeaturesResponseSchema.parse({ features: {}, capabilities: {} }) };
+      });
+      // A mismatched fixed URL provides an observable stop after both Home
+      // lookups succeeded, before the Action can perform any remote effects.
+      const executor = createCliActionExecutorFromCredentials({ credentials,
+        ...(missing === null ? { serverId: destination, serverApiUrl: 'https://other-home.example.test' } : {}),
+      });
+      await expect(executor.execute('daemon.filesystem.copy', { kind: 'target_copy',
+        source: { serverId: source, machineId: 'source', rootPath: '/source', path: 'file.dat' },
+        destination: { serverId: destination, machineId: 'destination', rootPath: '/destination', path: 'copy.dat' },
+        overwrite: false, recursive: false }, { surface: 'mcp' })).resolves.toEqual(missing
+        ? { ok: false, errorCode: 'target_unavailable', error: `Server profile not found: ${missing}` }
+        : { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' });
+      if (homeRequests !== null) {
+        expect(requests).toEqual(Array.from({ length: homeRequests }, () => '/v1/features/authenticated'));
+      }
+    });
   });
   it('refuses generic MCP byte transfers before the PAT transport can prepare one', async () => {
     installPatActionTransportMock(() => { throw new Error('A generic MCP caller opened a prepared transfer'); });
