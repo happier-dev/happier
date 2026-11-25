@@ -3,6 +3,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import type { ProjectSourceListItemV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { teamSignInReturnPath } from '@/components/teams/entry/teamSignInHome';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -11,10 +12,11 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { getPreferredLanguage, t } from '@/text';
 
+import { presentCredentialListReadFailure } from '../credentials/teamCredentialPresentation';
 import { CredentialRow, mayOfferCredential } from '../credentials/TeamCredentialsScreen';
 import { useTeamCredentialsProjection } from '../credentials/useTeamCredentialsProjection';
 import type { TeamSectionContext } from '../teamSectionContext';
-import { teamCredentialsPath } from '../teamsRoutes';
+import { teamCredentialsPath, teamNewMembersPath } from '../teamsRoutes';
 import { useSourceSetupRequirementNames } from './useSourceSetupRequirementNames';
 
 type KeySource = Pick<ProjectSourceListItemV1, 'id' | 'revision' | 'name'>;
@@ -30,7 +32,7 @@ export function TeamNewMembersKeys(props: Readonly<{ context: TeamSectionContext
     const sources = props.sources ?? NO_SOURCES;
     const router = useRouter();
     const { theme } = useUnistyles();
-    const { featureEnabled, projection, rows, displayNames, recipientPending, settled, retry } = useTeamCredentialsProjection(context);
+    const { featureEnabled, projection, rows, displayNames, recipientPending, error, settled, retry } = useTeamCredentialsProjection(context);
     const requirements = useSourceSetupRequirementNames(context.scope, sources, true);
     const needed = React.useMemo(() => {
         const byName = new Map<string, string[]>();
@@ -51,7 +53,17 @@ export function TeamNewMembersKeys(props: Readonly<{ context: TeamSectionContext
     const nothingShown = credentialRows.length === 0 && needed.rows.length === 0;
     if (!featureEnabled && nothingShown && !needed.pending && needed.failed.length === 0) return null;
     const loading = nothingShown && (credentialsLoading || needed.pending);
-    const credentialsFailed = featureEnabled && projection.error && credentialRows.length === 0;
+    const refusal = featureEnabled && error ? presentCredentialListReadFailure(error, {
+        retry: { onPress: () => void retry(), testIDPrefix: 'team-new-members-keys-failed' },
+        openActionSettings: () => router.push('/settings/actions'),
+        signIn: {
+            label: t('teams.entry.signInToTeam'),
+            testID: 'team-new-members-keys-sign-in',
+            onPress: () => router.push(teamSignInReturnPath({
+                ...context.address, returnTo: teamNewMembersPath(context.address),
+            })),
+        },
+    }) : null;
     const offer = featureEnabled && mayOfferCredential(projection.viewer, context);
     return (
         <ItemGroup
@@ -87,13 +99,12 @@ export function TeamNewMembersKeys(props: Readonly<{ context: TeamSectionContext
                     }}
                 />
             ) : null}
+            {refusal ? (
+                <SurfaceStateCard testID="team-new-members-keys-failed" kind="error" size="line"
+                    title={refusal.message} action={refusal.action} accessibilitySemantics="alert" />
+            ) : null}
             {loading ? (
                 <ItemLoadStateRows testID="team-new-members-keys-loading" state={{ kind: 'loading' }} rows={2} lines={2} />
-            ) : credentialsFailed ? (
-                <ItemLoadStateRows
-                    testID="team-new-members-keys-failed"
-                    state={{ kind: 'failed', reason: t('teams.unavailable.offline'), onRetry: () => void retry() }}
-                />
             ) : nothingShown && needed.failed.length === 0 && (settled || !featureEnabled) ? (
                 <SurfaceStateCard
                     testID="team-new-members-keys-empty"

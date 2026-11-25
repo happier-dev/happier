@@ -35,6 +35,8 @@ const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/
 const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamActionClient');
 // Load the screen after transport boundaries, outside a test's interaction clock.
 const { TeamCredentialsScreen } = await import('./TeamCredentialsScreen');
+const { TeamNewMembersKeys } = await import('../newMembers/TeamNewMembersKeys');
+const { TeamSection } = await import('../TeamSection');
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const CREDENTIALS_LIST_PATH = '/v1/teams/credential-resources/list';
@@ -106,6 +108,27 @@ describe('TeamCredentialsScreen', () => {
             const signInUrl = new URL(routerPush.mock.lastCall?.[0] ?? '', 'https://app.example');
             expect(signInUrl.pathname).toBe('/teams/team-1/sign-in');
             expect(signInUrl.searchParams.get('serverId')).toBe(serverId);
+        }
+    });
+
+    it.each([
+        { status: 404, error: 'not_found_or_not_visible', message: 'teams.credentials.detail.notFound', signIn: false },
+        { status: 403, error: 'team_authentication_required', message: 'teams.credentials.errors.teamAuthenticationRequired', signIn: true },
+    ])('preserves the credential list refusal $error on the new member Keys surface', async ({ status, error, message, signIn }) => {
+        const serverId = await addHome();
+        harness.answer(serverId, CREDENTIALS_LIST_PATH, { status, body: { error } });
+        const screen = await renderScreen(<TeamSection serverId={serverId} teamId="team-1" title="New Members">
+            {context => <TeamNewMembersKeys context={context} />}
+        </TeamSection>);
+
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.findByTestId('team-new-members-keys-failed-retry')).toBeNull();
+        expect(screen.findByTestId('team-new-members-keys-sign-in') !== null).toBe(signIn);
+        if (signIn) {
+            await screen.pressByTestIdAsync('team-new-members-keys-sign-in');
+            const destination = new URL(routerPush.mock.lastCall?.[0] ?? '', 'https://app.example');
+            expect(destination.pathname).toBe('/teams/team-1/sign-in');
+            expect(destination.searchParams.get('serverId')).toBe(serverId);
         }
     });
 
