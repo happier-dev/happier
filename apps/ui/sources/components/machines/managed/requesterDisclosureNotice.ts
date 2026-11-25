@@ -1,6 +1,5 @@
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
-import { claimRequesterMachineNotice } from '@/sync/domains/state/disclosureUiState';
 import { storage } from '@/sync/domains/state/storageStore';
 import { t } from '@/text';
 import { keepHyphenatedNameTogether, readDisplayedMachineName } from '@/utils/sessions/machineDisplayNames';
@@ -52,26 +51,17 @@ export function formatRequesterDisclosureCopy(
   };
 }
 
-/**
- * Owner ruling 2026-11-23 "tell once, never block": the first time this device sends the person's
- * sign-in to a Machine another person holds, say so once. Never awaited and never refuses: the
- * Action has already been admitted and proceeds whatever happens here.
- */
-export function tellRequesterMachineUseOnce(
+/** Present the Account's claimed first-use notice. */
+export function presentRequesterMachineNotice(
   params: Readonly<{
     serverId: string;
     serverIdentityId: string;
     machineId: string;
-    owner: Readonly<{ displayName?: string | null }>;
+    owner: string | null;
   }>,
 ): void {
   const machineKey = `${params.serverIdentityId}:${params.machineId}`;
   const key = `machine-requester-use:${machineKey}`;
-  try {
-    if (!claimRequesterMachineNotice(machineKey)) return;
-  } catch {
-    // Device storage refused the record: tell now; it may be told again on a later use.
-  }
   // A host name like "NLDW3-5-36-33" wraps around the name, never inside it.
   const machine = keepHyphenatedNameTogether(
     readDisplayedMachineName(
@@ -84,7 +74,7 @@ export function tellRequesterMachineUseOnce(
   );
   // The glance, not the badge popover's full account: whose Machine (the badge's own "Runs on" words), then what
   // that means in two sentences. It is told when the Machine is first used, before any one Session runs.
-  const title = formatRequesterRunsOn(params.owner.displayName || null, machine);
+  const title = formatRequesterRunsOn(params.owner, machine);
   publishPresentationNotice({
     key,
     severity: 'info',

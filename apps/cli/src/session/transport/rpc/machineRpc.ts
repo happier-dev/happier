@@ -66,6 +66,7 @@ import {
 } from '@happier-dev/sync-client';
 import { readRpcObservation, withUserScopedRpcSocket, type RpcObservationOptions } from './withUserScopedRpcSocket';
 import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
+import { reportRequesterMachineUse } from '@/api/machine/requesterMachineNotice';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { createWorkspaceSyncSourceOperationContinuation } from '@/api/rpc/workspaceSyncOperationContinuation';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -561,7 +562,9 @@ export async function callExactMachineRpc(params: Readonly<{
         ...(attemptSignal ? { signal: attemptSignal } : {}),
       });
       const accountRpc = machineTarget.machineRpcAuthorization === 'account';
-      if (!accountRpc && moveChild && params.externalAction && moveAuthorization) {
+      const reviewedMove = !accountRpc && moveChild && params.externalAction && moveAuthorization;
+      const requester = reviewedMove ? readRequesterAccountActionTransportContext(reviewedMove) : null;
+      if (reviewedMove && params.externalAction) {
         if (childFamily === 'service_move') {
           const child = ActionIdSchema.safeParse(params.externalAction.effectActionId);
           const wrapper = TargetedActionRpcRequestV1Schema.safeParse(params.request);
@@ -572,12 +575,11 @@ export async function callExactMachineRpc(params: Readonly<{
           if (!child.success || !normalized?.success || !readHostReviewedChildOperationV1(params.externalAction.context,
             child.data, projectNativeJsonValueForTransport(normalized.data))) throw new MachineRpcTargetNotCurrentError(machineId, 'child_not_derived');
         }
-        const requester = readRequesterAccountActionTransportContext(moveAuthorization);
         if (!requester) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_unavailable');
         if (requester.credentials.token !== params.credentials.token) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_credentials_mismatch');
         if (!await requester.isCurrent()) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_not_current');
         let derivationReason: DeploymentChildDerivationRefusal | undefined;
-        if (!childFamily || !await isReviewedMachineRpcChild(childFamily, { authorization: moveAuthorization,
+        if (!childFamily || !await isReviewedMachineRpcChild(childFamily, { authorization: reviewedMove,
           envelope: params.externalAction.context.originalActionEnvelope, signal,
           actionId: params.externalAction.effectActionId, machineId, params: params.request, method: params.method,
           target: stopChildTarget, reviewedChild, onRefused: reason => { derivationReason = reason; } })) {
@@ -665,6 +667,7 @@ export async function callExactMachineRpc(params: Readonly<{
               || Reflect.get(request, 'kind') === 'requester_session_handoff_workspace_capture_v1');
           if (deploymentArchive) await assertDeploymentArchiveChildCurrentForHost({ context: externalAction!.context,
             machineId: deploymentArchive.job.machineId, installationId: externalAction!.installationId });
+          let foreignCustodian: NonNullable<typeof machineTarget.access>['custodian'] | undefined;
           if (seal && transportAuthorization && !hasPrivateBootstrap && !deploymentArchive && !referenceServiceList) {
             const encodedKey = machineTarget.installationPublicKey;
             if (!moveChild && (machineTarget.installationId !== transportAuthorization.binding.installationId
@@ -679,6 +682,8 @@ export async function callExactMachineRpc(params: Readonly<{
                 ...((creationChild || childFamily === 'backup_receiver_setup') && reviewedChild ? { reviewedChild } : {}),
                 ...(moveChild && !readinessChild ? { recipient: { machineId, installationId: machineTarget.installationId } } : {}) }, installationPublicKey: publicKey });
             if (!sealed || !sealed.requesterAccountContext) throw new Error('Requester Account custody unavailable');
+            const custodian = machineTarget.access?.custodian;
+            if (requester && custodian && custodian.accountId !== sealed.binding.accountId) foreignCustodian = custodian;
             transportAuthorization = sealed;
           }
           if (!accountRpc && moveChild && !seal) throw new Error('Requester Account custody unavailable');
@@ -693,7 +698,11 @@ export async function callExactMachineRpc(params: Readonly<{
               ? { onContinuation: createWorkspaceSyncSourceOperationContinuation(params.operationContext), waitForResultOnCancel: true } : {}),
             requestId: deploymentChildRequestId ?? params.requestId ?? randomUUID(),
             timeoutMs: remainingTimeoutMs(),
-            onIssued: () => { issued = true; },
+            onIssued: () => {
+              issued = true;
+              if (foreignCustodian && requester) reportRequesterMachineUse({ credentials: requester.credentials,
+                serverBaseUrl: requester.serverHttpBaseUrl, machineId, owner: foreignCustodian.displayName || null, surface: 'agent' });
+            },
             signal: attemptSignal,
             ...(waitForResultOnCancel ? { waitForResultOnCancel: true } : {}),
             authorization: params.authorization,

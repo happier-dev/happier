@@ -1,4 +1,5 @@
 import { deliverExternalActionRequest } from './deliverExternalActionRequest';
+import { reportRequesterMachineUse } from './machine/requesterMachineNotice';
 export { deliverExternalActionRequest } from './deliverExternalActionRequest';
 import { isProjectCheckoutRemovalActionIdV1, isProjectSessionDefaultsPreparationReadActionIdV1, isReviewAgentRunActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { SCM_WORKTREE_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/scmActionIdsV1';
@@ -1641,9 +1642,25 @@ async function prepareOriginalAccountAction(
         admittedBody = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: destinationId, envelope,
           executionAuthorization: authorization });
       } catch (error) { return parseActionExecuteFailure(error) ?? fail('content_unavailable'); }
-      return { deliver: () => deliverExternalActionRequest({ actionId, serverHttpBaseUrl: homeUrl, body: admittedBody, envelope, headers,
-        ...(material ? { material } : {}), ...(binding ? { binding } : {}),
-        ...(signal ? { signal } : {}), isCurrent }) };
+      return { deliver: () => {
+        const surface = invocation?.surface === 'cli' && invocation.caller.kind === 'host' && !input.requesterCustody
+          ? 'cli' : invocation?.surface === 'agent' ? 'agent' : null;
+        return deliverExternalActionRequest({ actionId, serverHttpBaseUrl: homeUrl, body: admittedBody, envelope, headers,
+          ...(material ? { material } : {}), ...(binding ? { binding } : {}),
+          ...(signal ? { signal } : {}), isCurrent,
+          ...(surface ? { onIssued: () => {
+            const notice = { credentials: input.credentials, serverBaseUrl: homeUrl, surface } as const;
+            const wake = authorization.managedFiniteWake;
+            if (foreign && authorization.requesterAccountContext && !controllerCodec) {
+              reportRequesterMachineUse({ ...notice, machineId: destinationId, ...(machine ? { machineLabel: machine.label } : {}),
+                owner: (scopedController?.custodian ?? access?.custodian)?.displayName || null });
+            }
+            if (wake?.target.controller && wake.requesterCredentialDisclosure) {
+              reportRequesterMachineUse({ ...notice, machineId: wake.target.controller.machineId,
+                owner: wake.requesterCredentialDisclosure.displayName || null });
+            }
+          } } : {}) });
+      } };
     };
     if (pendingSessionResume) return prepareDelivery();
     const deliver = async (invocation = input.invocation, signal = input.signal): Promise<ActionExecuteResult> => {

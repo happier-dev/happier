@@ -33,6 +33,7 @@ import * as fsPromises from 'node:fs/promises';
 import { Buffer } from 'node:buffer';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { ed25519 } from '@noble/curves/ed25519';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -47,6 +48,7 @@ import { openExternalActionRequesterAccountContextV1, openManagedControllerActio
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { requesterMachineNoticeKey } from '@happier-dev/protocol/machines/managed/requesterMachineNotice';
 import { projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { dispatchManagedSessionStart, dispatchOriginalAccountAction, readExternalActionRequesterInvocation, requiresOriginalAccountMachineActionProof } from './externalActionExecutionAuthorization';
 import { resolvePluginActionCaller } from '@/plugins/runtime/invocation/services/actionCaller';
@@ -775,6 +777,7 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
   beforeEncryptionRead?: () => Promise<void>;
   beforeInventoryRead?: () => Promise<void>;
   beforeAccountSecurityRead?: () => Promise<void>;
+  requesterMachineNotices?: Map<string, { value: string; version: number }>;
   onInstalledMachineRead?: () => void;
   installedCustodianAccountId?: string;
   passiveReadDelayMs?: number;
@@ -915,6 +918,19 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
     let raw = '';
     for await (const chunk of request) raw += String(chunk);
     const body: unknown = raw ? JSON.parse(raw) : {};
+    if (request.url === '/v1/kv' && request.method === 'POST' && options.requesterMachineNotices) {
+      const [mutation] = z.object({ mutations: z.array(z.object({ key: z.string(), value: z.string(), version: z.number() })) }).parse(body).mutations;
+      if (!mutation) throw new Error('Expected one notice mutation');
+      const existing = options.requesterMachineNotices.get(mutation.key);
+      events.push('notice-claim');
+      if (existing) {
+        response.statusCode = 409;
+        return respond({ success: false, errors: [{ key: mutation.key, error: 'version-mismatch', ...existing }] });
+      }
+      expect(mutation.version).toBe(-1);
+      options.requesterMachineNotices.set(mutation.key, { value: mutation.value, version: 0 });
+      return respond({ success: true, results: [{ key: mutation.key, version: 0 }] });
+    }
     const availability = readBundledPluginAvailabilityHttpFixture(request.url ?? '', body);
     if (availability) return respond(availability);
     if (request.url === managedMachineActionEndpointPathV1('machines.managed.get')) {
@@ -2432,6 +2448,30 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     expect(openExternalActionRequesterAccountContextV1({ authorization: received.executionAuthorization,
       purpose: { kind: 'external_action' }, machineId: 'alice-machine', installationId: 'alice-installation',
       serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey })).toEqual(encodeStoredCredentials(credentials));
+  });
+
+  it.each([false, true])('prints the foreign Machine notice once across CLI calls (app already showed it: %s)', async appAlreadyTold => {
+    const events: string[] = [];
+    const requesterMachineNotices = new Map<string, { value: string; version: number }>();
+    if (appAlreadyTold) requesterMachineNotices.set(requesterMachineNoticeKey('alice-machine'), {
+      value: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: true }))), version: 0,
+    });
+    const target = await home('plain', events, { originalOwnAction: 'agents.models.list', requesterMachineNotices });
+    const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      for (const requestId of ['request-1', 'request-2']) {
+        const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
+          serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId, machineId: 'alice-machine',
+          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) } });
+        await expect(executor.execute('agents.models.list', ownMachineInput,
+          { surface: 'cli', authority: 'present_user', actionRequestId: requestId })).resolves.toMatchObject({ ok: true });
+      }
+      await vi.waitFor(() => expect(events.filter(event => event === 'notice-claim')).toHaveLength(2));
+      const notices = () => stderr.mock.calls.filter(([value]) => String(value).includes('Your Happier sign-in is stored on this machine'));
+      if (!appAlreadyTold) await vi.waitFor(() => expect(notices()).toHaveLength(1));
+      expect(notices()).toHaveLength(appAlreadyTold ? 0 : 1);
+    } finally { stderr.mockRestore(); }
   });
 
   it('originates genuine terminal private custody through the public CLI factory without a human upgrade', async () => {

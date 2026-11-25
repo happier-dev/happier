@@ -17,6 +17,7 @@ export async function deliverExternalActionRequest(input: Readonly<{
   actionId: string; serverHttpBaseUrl: string; body: unknown; envelope: ExternalActionRequestEnvelope;
   headers: Readonly<Record<string, string>>; material?: Extract<AccountScopedCryptoMaterial, { type: 'dataKey' }>;
   binding?: ExternalActionEncryptionBindingV2; signal?: AbortSignal; isCurrent(): Promise<boolean>;
+  onIssued?: () => void;
 }>): Promise<ActionExecuteResult> {
   const fail = (errorCode: string, issuerPhase?: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode,
     ...(issuerPhase ? { failureCause: projectActionFailureCauseV1({ code: errorCode }, issuerPhase) } : {}) });
@@ -27,9 +28,11 @@ export async function deliverExternalActionRequest(input: Readonly<{
   try {
     const deliver = (signal?: AbortSignal) => {
       deliverySignal = signal;
-      return axios.post<unknown>(`${input.serverHttpBaseUrl}${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${input.actionId}`, input.body, {
+      const response = axios.post<unknown>(`${input.serverHttpBaseUrl}${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${input.actionId}`, input.body, {
         headers: input.headers, ...(signal ? { signal } : {}), validateStatus: () => true,
       });
+      input.onIssued?.();
+      return response;
     };
     // Saved Secret commands consume the existing finite CLI HTTP budget. The whole
     // response is bounded, including a peer that keeps streaming an unfinished body.

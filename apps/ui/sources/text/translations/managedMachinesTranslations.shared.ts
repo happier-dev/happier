@@ -1,3 +1,5 @@
+import { requesterMachineNoticeEnglish } from '@happier-dev/protocol/machines/managed/requesterMachineNotice';
+
 /**
  * Copy for machines Happier creates (plans 50–52): Keep it / wake, Machine defaults, the configurator
  * and receipt, presets, the created machine's detail and its lifecycle states. English is the shape
@@ -937,8 +939,8 @@ export const managedMachinesEn = {
         eraseReview: "Review these resources before erasing the account. Erasing Happier data won’t delete them at the provider.",
     },
     machineRequester: {
-        runsOn: ({ owner, machine }: { owner: string; machine: string }) => `Runs on ${owner}’s ${machine}`,
-        runsOnSomeoneElses: ({ machine }: { machine: string }) => `Runs on someone else’s ${machine}`,
+        runsOn: requesterMachineNoticeEnglish.runsOn,
+        runsOnSomeoneElses: requesterMachineNoticeEnglish.runsOnSomeoneElses,
         scopedSignIn: ({ machine }: { machine: string }) => `Happier gives ${machine} a sign-in that works only for this session.`,
         fullSignIn: ({ machine, retention }: { machine: string; retention?: 'run' | 'trigger' }) => `Your Happier sign-in is stored on ${machine} ${retention === 'trigger' ? 'while the trigger exists' : retention === 'run' ? 'while this workflow runs' : 'while this session runs'}. People with terminal or agent access there may use it to access your Happier account.`,
         osVisibility: ({ owner, machine }: { owner: string; machine: string }) => `${owner} and anyone who can sign in to ${machine} can see this session’s files and output there.`,
@@ -946,7 +948,7 @@ export const managedMachinesEn = {
         signInPurposes: ({ purposes }: { purposes: string }) => `They can also read the sign-ins used for this session: ${purposes}, and this session’s Happier access.`,
         nativeSignInPurpose: ({ service }: { service: string }) => `${service} (native sign-in)`,
         howShared: "How shared machines work",
-        toldOnce: "Your Happier sign-in is stored on this machine while you work on it. Anyone with terminal or agent access could use your account and see your sessions’ files there.",
+        toldOnce: requesterMachineNoticeEnglish.toldOnce,
         loading: ({ machine }: { machine: string }) => `Checking ${machine} before starting your session.`,
         launching: ({ machine }: { machine: string }) => `Starting your session on ${machine}.`,
         offline: ({ machine }: { machine: string }) => `${machine} is offline. Your draft is kept here.`,

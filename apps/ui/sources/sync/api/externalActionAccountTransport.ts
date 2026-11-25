@@ -50,7 +50,7 @@ import { resolveFreshMachineAdministrationExecutionTarget } from '@/sync/domains
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { storage } from '@/sync/domains/state/storageStore';
 import { serializeRequesterAccountCredentials } from '@/sync/ops/actions/requesterSessionSpawnPreparation';
-import { tellRequesterMachineUseOnce } from '@/components/machines/managed/requesterDisclosureNotice';
+import { tellRequesterMachineUseOnce } from '@/sync/ops/account/requesterMachineNotice';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ServerFetchWriteTimeoutError } from '@/sync/http/client';
@@ -397,11 +397,11 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
                 if (refused) return refused;
                 throw error;
             }
-            // Told once per device and Machine (owner ruling 2026-11-23); the Action never waits on it.
-            const tell = { serverId: account.serverId, serverIdentityId: binding.serverIdentityId };
-            if (foreignGuest) tellRequesterMachineUseOnce({ ...tell, machineId: binding.target.machineId, owner: custody.custodian });
+            if (foreignGuest) tellRequesterMachineUseOnce(
+                account, binding.serverIdentityId, binding.target.machineId, custody.custodian.displayName || null,
+            );
             if (wakeDisclosure && controllerPublicKey && wake?.target.controller) {
-                tellRequesterMachineUseOnce({ ...tell, machineId: wake.target.controller.machineId, owner: wakeDisclosure });
+                tellRequesterMachineUseOnce(account, binding.serverIdentityId, wake.target.controller.machineId, wakeDisclosure.displayName || null);
             }
         }
         request = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: binding.target.machineId,

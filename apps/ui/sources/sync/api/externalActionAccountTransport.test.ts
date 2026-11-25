@@ -37,9 +37,9 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { requesterMachineNoticesState } from '@/sync/domains/state/disclosureUiState';
 import { keepHyphenatedNameTogether } from '@/utils/sessions/machineDisplayNames';
 import { readPresentationNotice, retirePresentationNotice, subscribePresentationNotices } from '@/components/sessions/presentation/presentationNotices';
+import { requesterMachineNoticeKey } from '@happier-dev/protocol/machines/managed/requesterMachineNotice';
 import { t } from '@/text';
 
 const disclosureConsent = vi.hoisted(() => vi.fn<() => Promise<boolean>>());
@@ -51,6 +51,7 @@ vi.mock('@/modal', async () => {
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+const { observeRequesterMachineNotices } = await import('@/sync/ops/account/requesterMachineNotice');
 const { executeOriginalAccountActionTransport, executeOriginalAccountMachineAction, readOriginalAccountActionMachine } = await import('./externalActionAccountTransport');
 const { machinePluginUiResourceRead, machinePluginStructuredMessageActionExecute } = await import('@/sync/ops/machineContributionRegistryProjection');
 let account: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | null = null;
@@ -531,8 +532,17 @@ describe('captured Account Action response decoding', () => {
             installationId: 'installation-1', installationPublicKey: encodeBase64(guestKeys.publicKey),
             ...(recipient === 'owned-spawn' ? { managedMachineRef: { homeId: binding.serverIdentityId, managedId: 'managed-guest' } } : {}),
             access: { custodian: { accountId: recipient === 'shared' ? 'custodian' : 'owner', displayName: 'Custodian' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } };
-        // Each case is a first use on this device.
-        for (const key of Object.keys(requesterMachineNoticesState.readAll())) requesterMachineNoticesState.remove(key);
+        const noticeRows = new Map<string, string>();
+        homes.answer(serverId, 'POST /v1/kv', { select: body => {
+            const mutation = (body as { mutations: Array<{ key: string; value: string; version: number }> }).mutations[0];
+            if (!mutation) throw new Error('Expected one notice mutation');
+            const exists = noticeRows.get(mutation.key);
+            if (exists) return { status: 409,
+                body: { success: false, errors: [{ key: mutation.key, error: 'version-mismatch', version: 0, value: exists }] } };
+            expect(mutation.version).toBe(-1);
+            noticeRows.set(mutation.key, mutation.value);
+            return { body: { success: true, results: [{ key: mutation.key, version: 0 }] } };
+        } });
         retirePresentationNotice();
         const notices: string[] = [];
         const stopNotices = subscribePresentationNotices(() => { const notice = readPresentationNotice(); if (notice) notices.push(notice.key); });
@@ -619,16 +629,42 @@ describe('captured Account Action response decoding', () => {
             expect(result).toMatchObject({ ok: true, result: { sessionId: 'created-session' } });
             // The person is told once, naming the other person's Machine that received the sign-in.
             const told = recipient === 'shared' ? row.id : 'private-controller';
-            expect(notices).toEqual([`machine-requester-use:${binding.serverIdentityId}:${told}`]);
+            await vi.waitFor(() => expect(notices).toEqual([`machine-requester-use:${binding.serverIdentityId}:${told}`]));
+            expect(noticeRows.size).toBe(1);
             expect(readPresentationNotice()).toMatchObject({ severity: 'info', sticky: true,
                 message: expect.stringContaining(t('machineRequester.runsOn', { owner: 'Custodian', machine: keepHyphenatedNameTogether(told) })) });
             retirePresentationNotice();
-            // A second use of the same Machine on this device proceeds and says nothing.
+            // A second use of the same Machine proceeds and says nothing.
             expect(await run()).toMatchObject({ ok: true, result: { sessionId: 'created-session' } });
             expect(homes.requestsFor(actionPath)).toHaveLength(2);
+            await vi.waitFor(() => expect(homes.requestsFor('/v1/kv')).toHaveLength(2));
             expect(notices).toHaveLength(1);
             expect(readPresentationNotice()).toBeNull();
         } finally { stopNotices(); }
+    });
+    it('shows an Agent-originated first use on app startup and records it for other clients', async () => {
+        if (!account) throw new Error('Expected captured Account');
+        const machineId = 'agent-destination';
+        const key = requesterMachineNoticeKey(machineId);
+        const encoded = (value: unknown) => encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: value })));
+        let row = { key, version: 0, value: encoded({ owner: 'Custodian' }) };
+        homes.answer(serverId, 'GET /v1/kv', { select: (_body, { url }) => ({
+            body: { items: new URL(url).searchParams.has('afterKey') ? [] : [row] },
+        }) });
+        homes.answer(serverId, 'POST /v1/kv', { select: body => {
+            expect(body).toEqual({ mutations: [{ ...row, value: encoded(true) }] });
+            row = { ...row, version: 1, value: encoded(true) };
+            return { body: { success: true, results: [{ key, version: row.version }] } };
+        } });
+        retirePresentationNotice();
+        const dispose = observeRequesterMachineNotices(account);
+        try {
+            await vi.waitFor(() => expect(readPresentationNotice()).toMatchObject({
+                key: `machine-requester-use:${binding.serverIdentityId}:${machineId}`,
+                message: expect.stringContaining(t('machineRequester.toldOnce')),
+            }));
+            expect(row).toEqual({ key, version: 1, value: encoded(true) });
+        } finally { dispose(); retirePresentationNotice(); }
     });
     it.each(['matching', 'mismatched'] as const)('preserves the Machine availability cause and remedy with %s request correlation', async correlation => {
         const diagnostic = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };

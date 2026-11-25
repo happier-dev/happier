@@ -19,6 +19,7 @@ import { DesktopBrowserRecordingReverseCaptureRuntime } from '@/sync/domains/bro
 import { resolveVerifiedLocalBrowserRecordingCaptureMachineId } from '@/sync/domains/browser/recording/localReverseCaptureOwnership';
 import { storage, useAllMachines } from '@/sync/domains/state/storage';
 import { CurrentSessionPresentationRuntime } from '@/components/sessions/presentation/CurrentSessionPresentationRuntime';
+import { RequesterMachineNoticeRuntime } from '@/components/machines/managed/RequesterMachineNoticeRuntime';
 import { ActionOperationRuntime } from '@/sync/domains/actionOperations/actionOperationRuntime';
 import { UpdateFactsBackgroundRuntime } from '@/updates/UpdateFactsBackgroundRuntime';
 import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
@@ -118,6 +119,7 @@ function AppWideRuntimeMounts(props: Readonly<{ isAuthenticated: boolean; isDesk
         <>
             <ActivityBadgeRuntime />
             {props.isAuthenticated ? <SessionAttentionReminderRuntime /> : null}
+            {props.isAuthenticated ? <RequesterMachineNoticeRuntime /> : null}
             <IosActivitySurfacesRuntimeMount />
             <ActivityLocalNotificationRuntime />
             <OnboardingShowcaseAutoShowMount />
