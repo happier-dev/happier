@@ -1,5 +1,5 @@
 /**
- * Environment rows by their Project, in the read's own order: the first Environment of each Project places its group.
+ * Environment rows by their Project. Rows retain their inventory order within each named Project.
  * The name is the admitted Source name the read carries; Environments whose Project name is unavailable or withdrawn
  * are kept apart (`unnamed`) so one placeholder is never repeated. The Services page and the Services column both
  * group through here, so the two never disagree about which Project an Environment belongs to.
@@ -31,7 +31,8 @@ export function groupDeploymentRowsByProject<
         rows: [row],
       });
   }
-  return { named: [...named.values()], unnamed };
+  return { named: [...named.values()].sort((left, right) =>
+    left.title.localeCompare(right.title) || left.key.localeCompare(right.key)), unnamed };
 }
 
 /** The unbanded group a view's rows share when it lists one Project (no heading). */
@@ -41,7 +42,7 @@ export const DEPLOYMENT_OTHER_PROJECT_GROUP = 'other';
 
 /**
  * The one band rule of every Services view (Apps, Databases, Domains; UI refinements 2026-11-18): a view bands its rows by
- * Project only when it lists more than one Project. Then every Project gets its band, in the read's order, and rows whose
+ * Project only when it lists more than one Project. Then every Project gets its band, by name, and rows whose
  * Project name is unavailable share one last band titled `otherTitle`; a view of one Project stands unbanded.
  */
 export function deploymentProjectBands<

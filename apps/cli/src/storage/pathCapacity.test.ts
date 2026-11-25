@@ -1,4 +1,4 @@
-import { mkdir, realpath } from 'node:fs/promises';
+import { lstat, mkdir, realpath, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -26,9 +26,16 @@ it('reads the selected filesystem once, preserves zero and reports unavailable w
             expect(calls).toEqual([]);
             expect(await service.capacityForPath(selected)).toMatchObject({ status: 'known', path: canonical, freeBytes: 0, observedAt: 1234,
                 volume: { volumeId: 'archive', mountPath: canonical, label: 'Archive' } });
+            const nextFolder = join(selected, 'future', 'backup');
+            expect(await service.capacityForPath(nextFolder)).toMatchObject({ status: 'known', path: canonical, freeBytes: 0,
+                volume: { volumeId: 'archive', mountPath: canonical, label: 'Archive' } });
+            await expect(lstat(nextFolder)).rejects.toMatchObject({ code: 'ENOENT' });
+            const missingMount = join(root, 'missing-mount');
+            await symlink(join(root, 'missing-target'), missingMount, 'junction');
+            expect(await service.capacityForPath(join(missingMount, 'backup'))).toMatchObject({ status: 'unknown', reason: 'ENOENT' });
             available = undefined;
             expect(await service.capacityForPath(selected)).toMatchObject({ status: 'unknown', path: canonical, reason: 'ENOTSUP' });
-            expect(calls).toEqual([canonical, canonical]);
+            expect(calls).toEqual([canonical, canonical, canonical]);
         } finally { service.dispose(); }
     });
 });

@@ -1,5 +1,5 @@
-import { realpath, statfs } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { lstat, realpath, statfs } from 'node:fs/promises';
+import { dirname, isAbsolute } from 'node:path';
 import type { StoragePathCapacityV1 } from '@happier-dev/protocol/storage/storageV1';
 import { canonicalAbsolutePathsEqual, expandHomeDirPath, isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
@@ -18,9 +18,35 @@ export function storageVolumeForPath<T extends Volume>(volumes: readonly T[], pa
     return selected;
 }
 
-/** Exact selected filesystem only: no recursive measure, Vitals estimate or policy gate. */
+function filesystemErrorCode(error: unknown): string | undefined {
+    return error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+        ? error.code : undefined;
+}
+
+async function resolveCapacityPath(path: string, allowMissingPath: boolean): Promise<string> {
+    let candidate = path;
+    for (;;) {
+        try {
+            return await realpath(candidate);
+        } catch (error) {
+            const parent = dirname(candidate);
+            if (!allowMissingPath || filesystemErrorCode(error) !== 'ENOENT' || parent === candidate) throw error;
+            try {
+                // A dangling symlink is an existing entry. Its filesystem is not the intended destination.
+                await lstat(candidate);
+                throw error;
+            } catch (lookupError) {
+                if (lookupError === error || filesystemErrorCode(lookupError) !== 'ENOENT') throw lookupError;
+            }
+            candidate = parent;
+        }
+    }
+}
+
+/** Capacity on the selected filesystem, or on the closest existing parent for a new destination. */
 export async function readStoragePathCapacity(path: string, deps: Readonly<{
     readVolumes(): readonly Volume[];
+    allowMissingPath?: boolean;
     readFilesystemCapacity?: StorageFilesystemCapacityReader;
     nowMs?: () => number;
 }>): Promise<StoragePathCapacityV1 & Readonly<{ totalBytes?: number }>> {
@@ -29,7 +55,7 @@ export async function readStoragePathCapacity(path: string, deps: Readonly<{
     const readFilesystemCapacity: StorageFilesystemCapacityReader = deps.readFilesystemCapacity
         ?? (value => statfs(value, { bigint: true }));
     try {
-        selectedPath = await realpath(selectedPath);
+        selectedPath = await resolveCapacityPath(selectedPath, deps.allowMissingPath === true);
         const facts = await readFilesystemCapacity(selectedPath);
         const freeBytes = Number(BigInt(facts.bavail) * BigInt(facts.bsize));
         if (!Number.isSafeInteger(freeBytes) || freeBytes < 0) {
@@ -41,8 +67,7 @@ export async function readStoragePathCapacity(path: string, deps: Readonly<{
             ...(totalBytes !== undefined && Number.isSafeInteger(totalBytes) && totalBytes >= 0 ? { totalBytes } : {}), observedAt: (deps.nowMs ?? Date.now)(),
             ...(volume ? { volume: { volumeId: volume.id, mountPath: volume.mount, label: volume.label } } : {}) };
     } catch (error) {
-        const reason = error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
-            ? error.code : 'capacity_unavailable';
+        const reason = filesystemErrorCode(error) ?? 'capacity_unavailable';
         return { status: 'unknown', path: selectedPath, reason };
     }
 }

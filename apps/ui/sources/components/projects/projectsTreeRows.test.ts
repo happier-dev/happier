@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { teamSetupPath } from '@/components/settings/teams/teamsRoutes';
 
 import { t } from '@/text';
+import { groupDeploymentRowsByProject } from './deployments/deploymentProjectGroups';
 
 import { buildProjectsTreeEnvironmentChildren, buildProjectsTreeProjects, buildProjectsTreeRows, buildProjectsPhoneTreeRows, projectsTreeRowChild, projectsTreeRowEnvironment, projectsTreeRowOpenTarget, projectsTreeRowSubtitle, type ProjectsTreeCheckout, type ProjectsTreeEnvironment, type ProjectsTreeEnvironmentChild, type ProjectsTreeProject } from './projectsTreeRows';
 
@@ -13,6 +14,20 @@ const project = (key: string, checkouts: ProjectsTreeCheckout[], teamLabel: stri
 const shape = (rows: ReturnType<typeof buildProjectsTreeRows>) => rows.map((row) => `${'  '.repeat(row.level)}${row.title}${row.titleQualifier ? ` (${row.titleQualifier})` : ''}${row.expandable ? (row.expanded ? ' v' : ' >') : ''}`);
 
 describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
+    it('keeps deployed Projects in the same order as Environment updates reorder the inventory', () => {
+        const environmentRows = [
+            { id: 'staging', projectSourceId: 'z-source', projectName: 'Zulu' },
+            { id: 'production', projectSourceId: 'a-source', projectName: 'Alpha' },
+            { id: 'preview', projectSourceId: 'z-source', projectName: 'Zulu' },
+        ];
+        const changedInventory = [environmentRows[1]!, environmentRows[0]!, environmentRows[2]!];
+        for (const inventory of [changedInventory, environmentRows]) {
+            const { named } = groupDeploymentRowsByProject(inventory);
+            expect(named.map(group => group.key)).toEqual(['a-source', 'z-source']);
+            expect(named[1]?.rows.map(row => row.id)).toEqual(['staging', 'preview']);
+        }
+    });
+
     it('names every checkout by one rule and tells same-branch siblings apart by folder (QA-PROJECTS D19)', async () => {
         const { applyProjectsTreeCheckoutFacts, labelProjectCheckouts } = await import('./projectsTreeRows');
         const folders = project('anchor', [checkout('a', 'devbox', 'happier'), checkout('b', 'devbox', 'happier-wt'), checkout('c', 'devbox', 'docs')]);

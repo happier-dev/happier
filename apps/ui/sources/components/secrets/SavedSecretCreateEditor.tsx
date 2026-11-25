@@ -68,6 +68,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
     onCreated: (ref: string, storage: SecretStorage) => void | Promise<void>;
     /** The name a new secret gets unless the person types another (a Connect sheet's "DeepSeek key"). */
     initialName?: string;
+    namePlaceholder?: string;
     confirmTypedValueStorage?: () => Promise<boolean>;
     /** The primary's words where the sheet names what it saves ("Save key"); "Save secret" by default. */
     submitLabel?: string;
@@ -414,7 +415,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                         testID="saved-secret-create-name"
                         value={name}
                         onChangeText={setName}
-                        placeholder={suggestedName || t('secrets.placeholders.nameExample')}
+                        placeholder={suggestedName || props.namePlaceholder || t('secrets.placeholders.nameExample')}
                         accessibilityLabel={t('secrets.fields.name')}
                         editable={!busy}
                     />

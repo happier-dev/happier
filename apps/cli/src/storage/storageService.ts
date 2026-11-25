@@ -500,7 +500,7 @@ export function createStorageService(deps: StorageServiceDeps) {
     }) : undefined;
     return {
         ...operations,
-        capacityForPath: (path: string) => readStoragePathCapacity(path, deps),
+        capacityForPath: (path: string) => readStoragePathCapacity(path, { ...deps, allowMissingPath: true }),
         protectedAdd: protectedFolders.add,
         protectedRemove: protectedFolders.remove,
         async initialize() { await scans(); await maintenance?.start(); },

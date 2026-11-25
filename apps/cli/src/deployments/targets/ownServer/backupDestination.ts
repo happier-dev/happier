@@ -213,7 +213,7 @@ export function createPrepareDeploymentBackupConfigurationDestinationForHost(hos
                     targetLinks: input.environment.targetLinks.map(targetLink => ({ targetLink })),
                 }));
                 capacity = runtimeMachine?.machineId === host.machineId && runtimeMachine.installationId === identity.installationId
-                    ? await readStoragePathCapacity(captured.opened.local.path, { readVolumes: () => [] })
+                    ? await readStoragePathCapacity(captured.opened.local.path, { readVolumes: () => [], allowMissingPath: true })
                     : { status: 'unknown', path: captured.opened.local.path,
                         reason: input.environment.environment.runtimeTargetLinkId ? 'runtime_capacity_unavailable' : 'runtime_machine_not_linked' };
             }

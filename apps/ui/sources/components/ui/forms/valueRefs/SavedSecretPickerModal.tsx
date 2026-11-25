@@ -19,6 +19,7 @@ import { SharedSavedSecretReferenceSelectionV1Schema, type SharedSavedSecretRefe
 export type SavedSecretPickerModalProps = CustomModalInjectedProps & Readonly<{
     /** The source editor's captured Home, retained when this modal stays mounted. */
     scope: AccountSettingsScope | null;
+    secretPurpose?: string;
     referenceSelection: Readonly<{
         selected: SharedSavedSecretReferenceSelectionV1 | null;
         onSelect: (selection: SharedSavedSecretReferenceSelectionV1) => void;
@@ -40,6 +41,7 @@ export function SavedSecretPickerModal(props: SavedSecretPickerModalProps) {
         <View style={styles.body} testID="saved-secret-picker">
             <SavedSecretReferenceChoice
                 scope={props.scope}
+                secretPurpose={props.secretPurpose}
                 selectedRef={props.referenceSelection.selected?.ref ?? null}
                 onSelect={select}
                 onCancel={onClose}
@@ -61,6 +63,7 @@ type ChoiceMode = 'saved' | 'new';
 export function SavedSecretReferenceChoice(props: Readonly<{
     scope: AccountSettingsScope | null;
     selectedRef: string | null;
+    secretPurpose?: string;
     onSelect: (selection: SharedSavedSecretReferenceSelectionV1) => void;
     /** Leaves the choice (the picker sheet closes); the create form's Cancel when there is no saved list to go back to. */
     onCancel?: () => void;
@@ -119,6 +122,7 @@ export function SavedSecretReferenceChoice(props: Readonly<{
         <SavedSecretCreateEditor
             scope={scope}
             presentation="sheet"
+            namePlaceholder={props.secretPurpose}
             onCreatePersonal={catalog.personalMutations.create}
             sharedAvailable={catalog.sharedEnabled}
             approvalPending={approval.approvalPending}

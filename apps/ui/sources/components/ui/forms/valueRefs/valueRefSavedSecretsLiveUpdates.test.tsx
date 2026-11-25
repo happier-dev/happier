@@ -30,6 +30,8 @@ await vi.hoisted(async () => {
 // Load the real store, catalog and Action graph after the network/platform boundaries.
 const { ValueRefEditorModal } = await import('./ValueRefEditorModal');
 const { SavedSecretPickerModal } = await import('./SavedSecretPickerModal');
+const { presentSavedSecretReferencePicker } = await import('./presentSavedSecretReferencePicker');
+const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
 const { useConnectKeySheetModel } = await import('@/components/settings/connectedServices/setup/useConnectKeySheetModel');
 let home: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undefined;
 
@@ -53,6 +55,26 @@ afterEach(async () => {
 });
 
 describe('value ref saved secrets live updates', () => {
+    it('shows the requested purpose in the Name placeholder and leaves the name empty', async () => {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        expect(lifetime?.scope).toMatchObject(home!.scope);
+        const abort = new AbortController();
+        const selection = presentSavedSecretReferencePicker({ accountLifetime: lifetime!,
+            signal: abort.signal, isCurrent: () => true, title: 'Repository password' });
+        try {
+            const picker = modalShowSpy.mock.calls.at(-1)?.[0];
+            const screen = await renderScreen(<SavedSecretPickerModal {...picker.props} onClose={vi.fn()} />);
+            await vi.waitFor(() => {
+                const name = screen.findAllByTestId('saved-secret-create-name').find(node => node.props.placeholder);
+                expect(name?.props.placeholder).toBe('Repository password');
+                expect(name?.props.value).toBe('');
+            });
+        } finally {
+            abort.abort();
+            await selection;
+        }
+    });
+
     it('keeps named rows while material resolves, shows loading, and settles without outage copy', async () => {
         const { entry } = await home!.addOwnerResource();
         await refreshSavedSecretCatalog(home!.scope, { includeMaterial: false });

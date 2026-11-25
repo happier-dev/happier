@@ -19,8 +19,8 @@ export function presentSavedSecretReferencePicker(input: Readonly<{
     /** The control that opened it; without one the sheet centres. */
     anchor?: PopoverAnchor;
     /**
-     * What the secret is for ("Repository password"): the sheet's title, true whether it lists saved secrets or opens on
-     * the form for a new one. Without it the sheet says it uses a saved secret.
+     * What the secret is for ("Repository password"): the sheet's title and the example name if the person creates
+     * a new secret. Without it the sheet says it uses a saved secret.
      */
     title?: string;
 }>): Promise<SharedSavedSecretReferenceSelectionV1 | null> {
@@ -49,6 +49,7 @@ export function presentSavedSecretReferencePicker(input: Readonly<{
             component: SavedSecretPickerModal,
             props: {
                 scope: input.accountLifetime.scope,
+                secretPurpose: input.title,
                 referenceSelection: {
                     selected: selected.success ? selected.data : null,
                     onSelect: (selection: SharedSavedSecretReferenceSelectionV1) => {
