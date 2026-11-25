@@ -1,13 +1,17 @@
 import { randomUUID } from 'node:crypto';
+import axios from 'axios';
 import fastify from 'fastify';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import tweetnacl from 'tweetnacl';
 import type { LimaExecutor } from '@happier-dev/cli-common/machineLima';
-import { API_TOKEN_FULL_GRANT_V1, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent, MachineOperationProtocolCapabilitiesV1Schema } from '@happier-dev/protocol';
+import { API_TOKEN_FULL_GRANT_V1, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent, MachineOperationProtocolCapabilitiesV1Schema, signMachineInstallationProof } from '@happier-dev/protocol';
 import { decodeBase64 } from 'privacy-kit';
 import { ExternalActionExecutionAuthorizationV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { ManagedAdmissionOutputV1Schema, ManagedControllerSubmitOutputV1Schema, ManagedControllerMachineOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionOutputV1Schema, ManagedControllerSubmitOutputV1Schema, ManagedControllerMachineOutputV1Schema,
+    ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_CANCEL_ACTION_ID_V1, MANAGED_DELETE_ACTION_ID_V1, MANAGED_GET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1, readMachineProvisionerSelectionForLaunchV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
@@ -22,6 +26,7 @@ import { enableErrorHandlers } from '@/app/api/utils/enableErrorHandlers';
 import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
 import { createPluginAvailabilityOperations } from '@/app/plugins/availability/operations';
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
+import { registerAccountEncryptionRoutes } from '@/app/api/routes/account/registerAccountEncryptionRoutes';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { snapshotEnv, restoreEnv } from '@/testkit/env';
 import { measure, seedBundledManagedAvailability } from './managedProjectionVolume.testkit';
@@ -75,12 +80,16 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
     };
 
     it.each(['signed-credential', 'api-token', 'api-token-grant', 'machine-grant', 'controller-retired', 'controller-retired-unreviewed',
-        'publication', 'legacy-missing', 'legacy-mismatched'] as const)('settles or explains a signed submitted Lima report (%s)', async (withdrawal) => {
+        'publication', 'legacy-missing', 'legacy-mismatched', 'MR-R1 lost bound report response', 'MR-R4 registration after Cancel'] as const)(
+        'settles or explains a signed submitted Lima report (%s)', async withdrawal => {
         // Configurator admissions retain reviewed facts; Action/Session-originated
         // admissions may not, and report them with the issued native fact.
         const retired = withdrawal === 'controller-retired' || withdrawal === 'controller-retired-unreviewed';
         const unpublished = withdrawal === 'publication' || withdrawal === 'legacy-missing';
         const legacy = withdrawal === 'legacy-missing' || withdrawal === 'legacy-mismatched';
+        const lostReport = withdrawal === 'MR-R1 lost bound report response';
+        const cancelRegistration = withdrawal === 'MR-R4 registration after Cancel';
+        const ordering = lostReport || cancelRegistration;
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
         const { controller, keys } = await createController(account.id);
@@ -104,7 +113,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             choices };
         const { reviewedFacts: _reviewedFacts, ...unreviewedInput } = managedQb56Input;
         const input = { ...unreviewedInput, selection: { ...managedQb56Input.selection, controller, launch } };
-        const apiToken = withdrawal === 'signed-credential' || withdrawal === 'machine-grant' || unpublished || legacy || retired ? undefined : await auth.createApiToken({
+        const apiToken = withdrawal === 'signed-credential' || withdrawal === 'machine-grant' || unpublished || legacy || retired || ordering ? undefined : await auth.createApiToken({
             accountId: account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Acquire completion'),
         });
         const token = apiToken?.token ?? await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -117,6 +126,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             dispatch: async () => { throw new Error('The report must not dispatch another Action'); },
         });
         machinesRoutes(app as Parameters<typeof machinesRoutes>[0]);
+        registerAccountEncryptionRoutes(app as Parameters<typeof registerAccountEncryptionRoutes>[0]);
         const { installAxiosFastifyAdapter } = await vi.importActual<{
             installAxiosFastifyAdapter(params: { app: typeof app; origin: string }): () => void;
         }>('../../../../../cli/src/testkit/http/axiosAdapter');
@@ -144,6 +154,8 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             const { createLimaProvider } = await vi.importActual<{
                 createLimaProvider(executor: LimaExecutor, observedAt: number, qemuAvailable: () => Promise<boolean>): {
                     acquire(input: unknown): Promise<unknown>;
+                    destroy(input: unknown): Promise<unknown>;
+                    inspect(input: unknown): Promise<unknown>;
                     options(input: unknown): Promise<unknown>;
                 };
             }>('../../../../../../packages/plugins/machine-lima/src/machine/provider');
@@ -158,6 +170,11 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
                     : args[0] === 'info' ? JSON.stringify({ hostOS: 'linux', hostArch: 'x86_64', vmTypes: ['qemu'] })
                     : present ? JSON.stringify(native()) : '' });
             const executor: LimaExecutor = { capture, run: async (_command, args) => {
+                if (ordering && args[0] === 'delete') {
+                    expect(args).toEqual(['delete', '--force', nativeName]);
+                    present = false;
+                    return { exitCode: 0, out: '', err: '' };
+                }
                 if (args[0] !== 'create') throw new Error('Unexpected native effect');
                 nativeName = args[args.indexOf('--name') + 1];
                 present = true;
@@ -203,15 +220,147 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
                 if (withdrawal === 'api-token') await auth.revokeApiToken({ accountId: account.id, tokenId: apiToken.tokenId });
                 else await auth.updateApiToken({ accountId: account.id, tokenId: apiToken.tokenId,
                     grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['machines.managed.get'] } } });
-            } else if (!legacy) await auth.signOutEverywhere(account.id);
+            } else if (!legacy && !ordering) await auth.signOutEverywhere(account.id);
             const freshAcquire = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.acquire'),
                 headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: controller.machineId,
                     envelope: { v: 1, requestId: randomUUID(), target: { kind: 'machine', machineId: controller.machineId }, input } } });
-            expect(freshAcquire.statusCode, freshAcquire.body).toBe(unpublished || legacy ? 200 : withdrawal === 'api-token-grant' ? 403
+            expect(freshAcquire.statusCode, freshAcquire.body).toBe(unpublished || legacy || ordering ? 200 : withdrawal === 'api-token-grant' ? 403
                 : retired ? 409 : 401);
 
             const fact = AcquireResultV1Schema.parse(await provider.acquire({ managedId: admitted.machine.id, launch: launch.choices }));
             if (fact.kind !== 'bound') throw new Error(`Lima did not bind: ${fact.kind}`);
+            if (ordering) {
+                const report = () => client.reportIssuedAcquireFact(admitted.machine, fact, configurationFacts);
+                const personHeaders = { authorization: `Bearer ${token}` };
+                const target = { homeId, managedId: admitted.machine.id };
+                const readByRequest = async () => {
+                    const read = await app.inject({ method: 'POST', url: managedMachineActionEndpointPathV1(MANAGED_GET_ACTION_ID_V1),
+                        headers: personHeaders, payload: { homeId, creationRequestId: requestId } });
+                    expect(read.statusCode, read.body).toBe(200);
+                    return unwrapManagedMachineReadV1(ManagedMachineActionOutputSchemasV1[MANAGED_GET_ACTION_ID_V1].parse(read.json()));
+                };
+                if (lostReport) {
+                    const { createHostActionOperationRuntime } = await vi.importActual<
+                        typeof import('../../../../../cli/src/daemon/actionOperations/createHostActionOperationRuntime')
+                    >('../../../../../cli/src/daemon/actionOperations/createHostActionOperationRuntime');
+                    const operationId = randomUUID();
+                    const operations = createHostActionOperationRuntime({ machineId: controller.machineId,
+                        resolveAccountId: async () => account.id, generateOperationId: () => operationId });
+                    const send = axios.post.bind(axios);
+                    const dropBoundReport = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+                        const response = await send(url, body, config);
+                        if (new URL(url).pathname === '/v1/machines/managed/controller/report') {
+                            expect(response.status).toBe(200);
+                            expect(ManagedControllerMachineOutputV1Schema.parse(response.data).machine)
+                                .toMatchObject({ id: target.managedId, allocation: 'bound', resource: fact.resource });
+                            throw new axios.AxiosError('Bound report response lost', 'ECONNRESET');
+                        }
+                        return response;
+                    });
+                    try {
+                        const acquisition = operations.observeExecution({ actionId: MANAGED_ACQUIRE_ACTION_ID_V1,
+                            actionRequestId: requestId, input, response: 'terminal',
+                            execute: async ({ operationOwnerUpdate, operationAcceptance }) => {
+                                const accepted = { managedId: target.managedId, operation: { operationId } };
+                                operationOwnerUpdate.update({ domainRef: { kind: 'managedMachine', id: target.managedId } });
+                                operationAcceptance?.accept(accepted);
+                                await report();
+                                return { ok: true, result: accepted };
+                            } });
+                        await expect(acquisition).rejects.toMatchObject({ code: 'ECONNRESET',
+                            failureCause: { phase: 'managed.controller.report', errorCode: 'ECONNRESET' } });
+                    } finally { dropBoundReport.mockRestore(); }
+                    expect(ActionOperationGetV1ResponseSchema.parse(await operations.handlers.getV2({ operationId })))
+                        .toMatchObject({ kind: 'found', operation: { state: 'failed',
+                            domainRef: { kind: 'managedMachine', id: target.managedId }, error: { errorCode: 'ECONNRESET' } } });
+                } else {
+                    await report();
+                }
+                const bound = await readByRequest();
+                expect(bound).toMatchObject({ id: target.managedId, allocation: 'bound', resource: fact.resource });
+                expect(bound.enrolledMachineId).toBeUndefined();
+                expect(bound.submittedNativeEffect).toBeUndefined();
+                expect(await provider.inspect(fact.resource.value)).toMatchObject({ availability: 'present' });
+                let revision = bound.intentRevision;
+                if (cancelRegistration) {
+                    const correlation = { ...target, requestId, controller, expectedIntentRevision: revision, resource: fact.resource };
+                    const machineId = randomUUID();
+                    const installationId = randomUUID();
+                    const guestKeys = tweetnacl.sign.keyPair();
+                    const guestToken = await auth.createToken(account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+                    const { ApiClient } = await vi.importActual<typeof import('../../../../../cli/src/api/api')>('../../../../../cli/src/api/api');
+                    const { encodeBase64Url } = await vi.importActual<{ encodeBase64Url(bytes: Uint8Array): string }>(
+                        '../../../../../cli/src/api/encryption');
+                    const { runWithServerHttpBaseUrl } = await vi.importActual<typeof import('../../../../../cli/src/api/client/serverHttpBaseUrl')>(
+                        '../../../../../cli/src/api/client/serverHttpBaseUrl');
+                    const guest = await ApiClient.create({ token: guestToken, encryption: null });
+                    const atIngress = Promise.withResolvers<void>();
+                    const release = Promise.withResolvers<void>();
+                    const send = axios.post.bind(axios);
+                    const hold = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+                        if (new URL(url).pathname === '/v1/machines' && body?.id === machineId) {
+                            expect(body.managedEnrollment).toEqual(correlation);
+                            atIngress.resolve();
+                            await release.promise;
+                        }
+                        return send(url, body, config);
+                    });
+                    const pending = runWithServerHttpBaseUrl('http://managed-report.test', () => guest.getOrCreateMachine({
+                        machineId, metadata: { host: 'guest', platform: 'linux', happyCliVersion: 'test',
+                            homeDir: '/home/guest', happyHomeDir: '/home/guest/.happier' },
+                        managedEnrollment: correlation, registrationIdentity: { installationId,
+                            installationPublicKey: encodeBase64Url(guestKeys.publicKey),
+                            installationProof: signMachineInstallationProof({ payload: { version: 1, machineId, installationId,
+                                accountId: account.id }, privateKey: guestKeys.secretKey }) },
+                    }));
+                    try {
+                        try {
+                            await Promise.race([atIngress.promise, pending.then(() => {
+                                throw new Error('Guest registration completed before Cancel');
+                            })]);
+                            const cancel = await app.inject({ method: 'POST', url: managedMachineActionEndpointPathV1(MANAGED_CANCEL_ACTION_ID_V1),
+                                headers: personHeaders, payload: { ...target, expectedIntentRevision: revision } });
+                            expect(cancel.statusCode, cancel.body).toBe(200);
+                            const canceled = ManagedMachineActionOutputSchemasV1[MANAGED_CANCEL_ACTION_ID_V1].parse(cancel.json()).machine;
+                            expect(canceled).toMatchObject({ creationState: 'canceled', allocation: 'bound', resource: fact.resource });
+                            revision = canceled.intentRevision;
+                        } finally { release.resolve(); }
+                        await expect(pending).rejects.toMatchObject({ response: { status: 409, data: { reason: 'enrollment_retired' } } });
+                    } finally {
+                        await pending.catch(() => undefined);
+                        hold.mockRestore();
+                    }
+                    expect(await db.machine.findUnique({ where: { id: machineId } })).toBeNull();
+                }
+                const action = MANAGED_DELETE_ACTION_ID_V1;
+                const deleteRequestId = randomUUID();
+                const deleteInput = { ...target, expectedRevision: revision, intent: 'delete', when: 'now', reviewedDependencies: true };
+                const issuedDelete = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(action),
+                    headers: personHeaders, payload: { v: 1, machineId: controller.machineId,
+                        envelope: { v: 1, requestId: deleteRequestId, target: { kind: 'machine', machineId: controller.machineId }, input: deleteInput } } });
+                expect(issuedDelete.statusCode, issuedDelete.body).toBe(200);
+                const deleteAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse(issuedDelete.json());
+                const deletion = createManagedMachineControllerClient({ token, serverUrl: 'http://managed-report.test', homeId, controller,
+                    externalActionMachineRequestPrivateKey: keys.secretKey }, { requestId: deleteRequestId, context: { surface: 'cli',
+                    externalActionExecutionAuthorization: deleteAuthorization, externalActionTarget: deleteAuthorization.binding.target } }, action);
+                const admittedDelete = await deletion.post('/v1/machines/managed/controller/admit-control',
+                    { action, requestId: deleteRequestId, input: deleteInput }, ManagedAdmissionOutputV1Schema);
+                const deleteCorrelation = { ...target, controller, requestId: deleteRequestId, expectedIntentRevision: admittedDelete.machine.intentRevision };
+                expect(await deletion.post('/v1/machines/managed/controller/submit-intent', deleteCorrelation, ManagedControllerSubmitOutputV1Schema))
+                    .toMatchObject({ submitted: true });
+                const result = await provider.destroy(fact.resource.value);
+                const observation = await provider.inspect(fact.resource.value);
+                expect(result).toMatchObject({ kind: 'confirmed' });
+                expect(observation).toMatchObject({ availability: 'absent' });
+                const settled = await deletion.post('/v1/machines/managed/controller/report-intent',
+                    { ...deleteCorrelation, result, observation }, ManagedControllerMachineOutputV1Schema);
+                expect(settled.machine).toMatchObject({ id: target.managedId, allocation: 'confirmed-absent', observation: { availability: 'absent' } });
+                expect(await db.managedMachine.findMany({ where: { homeId, custodianAccountId: account.id },
+                    select: { id: true, allocation: true, enrolledMachineId: true } }))
+                    .toEqual([{ id: target.managedId, allocation: 'confirmed-absent', enrolledMachineId: null }]);
+                expect(await db.machine.findMany({ where: { accountId: account.id }, select: { id: true } })).toEqual([{ id: controller.machineId }]);
+                return;
+            }
             const reportBody = { homeId, managedId: admitted.machine.id, controller,
                 expectedIntentRevision: admitted.machine.intentRevision, requestId, result: fact };
             const { resolveExternalActionServerRequestHeaders } = await vi.importActual<{
