@@ -10,9 +10,11 @@ import { createSessionHandoffPrepareTargetJobStore } from '@/session/handoff/pre
 import { createSessionHandoffSourceExportStore } from '@/session/handoff/state/sessionHandoffSourceExportStore';
 import { runSessionHandoffPrepareTargetJob } from './prepareTargetRunJob';
 import { createSessionHandoffPrepareTargetResultGetActionHandler } from './prepareTargetResultGet';
+import { logger } from '@/ui/logger';
 import { isTerminalHandoffStatus, readPersistedPrepareJob } from './prepareTargetState';
 
 it('retains the native import cause through durable settlement and result-get after a successful import control', async () => {
+  const log = vi.spyOn(logger, 'debug');
   const root = await mkdtemp(join(tmpdir(), 'handoff-native-cause-'));
   vi.stubEnv('CLAUDE_CONFIG_DIR', join(root, 'claude'));
   const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
@@ -37,6 +39,11 @@ it('retains the native import cause through durable settlement and result-get af
       prepareJobStore, sourceExportStore, prepareTargetJobLeaseOwnerId: `test:${process.pid}`,
       machineTransferChannel: undefined, directPeerTransfer: undefined,
       importSessionBundle: (bundle, targetPath, sessionStorageMode) => importSessionHandoffAgentBundle({ bundle, targetPath, sessionStorageMode }) });
+    const diagnostics = [{ code: 'transcript_content_mismatch', details: { pathKind: 'transcript_file' } }];
+    expect(await prepareJobStore.read(jobId)).toMatchObject({ diagnostics });
+    const lines = log.mock.calls.filter(([line]) => line === '[session-handoff] Target import failed');
+    expect(lines).toEqual([['[session-handoff] Target import failed', { phase: 'session_handoff.target_import', code: 'target_identity_conflict', diagnostics }]]);
+    expect(JSON.stringify(lines)).not.toContain(root);
     const handler = createSessionHandoffPrepareTargetResultGetActionHandler({
       prepareJobStore, readPersistedPrepareJob, isTerminalHandoffStatus,
       invalidRequest: () => ({ ok: false, errorCode: 'invalid_request' }) });
@@ -46,5 +53,5 @@ it('retains the native import cause through durable settlement and result-get af
     expect(SessionHandoffPrepareTargetResultGetResponseSchema.parse(result)).toMatchObject({ failureCause: { nativeErrorCode: 'transcript_content_mismatch' } });
     expect(JSON.stringify(result)).not.toContain(root);
     expect(JSON.stringify(result)).not.toContain(bundle.remoteSessionId);
-  } finally { await runtime.dispose(); vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); }
+  } finally { log.mockRestore(); await runtime.dispose(); vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); }
 });

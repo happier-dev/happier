@@ -1,3 +1,4 @@
+import type { ClaudeHandoffTargetImportDiagnosticV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
 import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readSessionHandoffTypedImportFailureCode, SessionHandoffTypedImportError } from './import';
 import type { HandoffImportResultV1 } from '@happier-dev/agents';
@@ -24,7 +25,7 @@ export type MemberSessionImportEffect = Readonly<{
 /** The Agent's native result, or its typed failure, for the host to project once. */
 export type MemberSessionImportRecord =
   | Readonly<{ t: 'imported'; value: HandoffImportResultV1 }>
-  | Readonly<{ t: 'failed'; code: string; message: string; failureCause?: ActionFailureCauseV1 }>;
+  | Readonly<{ t: 'failed'; code: string; message: string; failureCause?: ActionFailureCauseV1; diagnostics?: readonly ClaudeHandoffTargetImportDiagnosticV1[] }>;
 
 function readCode(error: unknown): string {
   return error &&
@@ -105,6 +106,7 @@ export async function executeMemberSessionImport(
     return {
       t: 'failed',
       code: readCode(error),
+      ...(error instanceof SessionHandoffTypedImportError ? { diagnostics: error.diagnostics } : {}),
       failureCause: projectActionFailureCauseV1(error, 'session_handoff.target_import', { allowUnknownErrorCode: true }),
       message:
         error instanceof Error && error.message ? error.message : readCode(error),

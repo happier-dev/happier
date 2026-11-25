@@ -56,7 +56,7 @@ it.each([false, true])('imports or retains the native cause in the member Worksp
             surfaces: { handoff: {
               exportBundle: async () => ({ ok: false, code: 'unsupported' }),
               importBundle: async (request) => {
-                if (${refused}) return { ok: false, code: 'target_identity_conflict', diagnostics: [{ code: 'transcript_content_mismatch', details: { pathKind: 'transcript_file' } }] };
+                if (${refused}) return { ok: false, code: 'target_identity_conflict', diagnostics: [{ code: 'transcript_content_mismatch', details: { pathKind: 'transcript_file' } }, { code: 'not_directory', details: { pathKind: 'session_dir', path: '/private/member' } }, { code: '/private/member', details: { pathKind: 'session_dir' } }] };
                 await writeFile(join(request.targetDirectory, 'imported.txt'), String(request.bundle.transcriptBase64));
                 return { ok: true, value: { providerSessionId: String(request.bundle.remoteSessionId),
                   launch: { directory: request.targetDirectory, environmentVariables: {} } } };
@@ -154,6 +154,8 @@ it.each([false, true])('imports or retains the native cause in the member Worksp
     if (refused) {
       expect(record).toMatchObject({ t: 'failed', code: 'target_identity_conflict', failureCause: {
         phase: 'session_handoff.target_import', errorCode: 'target_identity_conflict', nativeErrorCode: 'transcript_content_mismatch' } });
+      expect(record).toHaveProperty('diagnostics', [{ code: 'transcript_content_mismatch', details: { pathKind: 'transcript_file' } }]);
+      expect(JSON.stringify(record)).not.toContain('/private/member');
       return;
     }
     expect(record, JSON.stringify(record)).toMatchObject({

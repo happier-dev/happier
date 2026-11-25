@@ -180,6 +180,7 @@ export async function prepareMemberSessionHandoffImport(
                 code: typed,
                 message: record.message,
                 failureCause: record.failureCause,
+                diagnostics: record.diagnostics,
               })
             : Object.assign(new Error(record.message), { code: record.code });
         }

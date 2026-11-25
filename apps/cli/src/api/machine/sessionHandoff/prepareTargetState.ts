@@ -1,3 +1,4 @@
+import type { ClaudeHandoffTargetImportDiagnosticV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
   createSessionHandoffPrepareTargetJobStore,
@@ -109,6 +110,7 @@ export function buildPrepareJobRecord(input: Readonly<{
   lastErrorMessage?: string;
   lastErrorCode?: string;
   failureCause?: ActionFailureCauseV1;
+  diagnostics?: readonly ClaudeHandoffTargetImportDiagnosticV1[];
 }>): SessionHandoffPrepareTargetJobRecordInput {
   return {
     jobId: input.jobId,
@@ -121,6 +123,7 @@ export function buildPrepareJobRecord(input: Readonly<{
     ...(input.failedAtMs ? { failedAtMs: input.failedAtMs } : {}),
     ...(input.lastErrorMessage ? { lastErrorMessage: input.lastErrorMessage } : {}),
     ...(input.lastErrorCode ? { lastErrorCode: input.lastErrorCode } : {}),
+    ...(input.diagnostics ? { diagnostics: [...input.diagnostics] } : {}),
     ...(input.failureCause ? { failureCause: input.failureCause } : {}),
     status: input.status,
     ...(input.prepareTargetRequest ? { prepareTargetRequest: input.prepareTargetRequest } : {}),

@@ -1,3 +1,5 @@
+import { readSessionHandoffImportDiagnostics } from './importDiagnostics';
+import type { ClaudeHandoffTargetImportDiagnosticV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
 import { projectActionFailureCauseV1, readActionErrorCodeV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ImportedSessionHandoffBundle, SessionHandoffAgentBundle } from '../types';
 import { projectSessionMetadataForAgentHandoff, readProviderSessionIdSessionState, resolveAgentIdFromSessionMetadata, type HandoffImportResultV1 } from '@happier-dev/agents';
@@ -17,6 +19,7 @@ export type SessionHandoffTypedImportFailureCode =
 
 export class SessionHandoffTypedImportError extends Error {
   readonly code: SessionHandoffTypedImportFailureCode;
+  readonly diagnostics: readonly ClaudeHandoffTargetImportDiagnosticV1[];
   readonly failureCause: ActionFailureCauseV1;
 
   constructor(input: Readonly<{
@@ -24,12 +27,13 @@ export class SessionHandoffTypedImportError extends Error {
     message?: string;
     cause?: unknown;
     failureCause?: ActionFailureCauseV1;
-    diagnostics?: readonly Readonly<{ code: string }>[];
+    diagnostics?: unknown;
   }>) {
     super(input.message ?? input.code, input.cause === undefined ? undefined : { cause: input.cause });
     this.name = 'SessionHandoffTypedImportError';
     this.code = input.code;
-    const nativeErrorCode = readActionErrorCodeV1(input.diagnostics?.[0]);
+    this.diagnostics = readSessionHandoffImportDiagnostics(input.diagnostics);
+    const nativeErrorCode = readActionErrorCodeV1(this.diagnostics[0]);
     this.failureCause = input.failureCause ?? {
       ...projectActionFailureCauseV1({ code: input.code }, 'session_handoff.target_import', { allowUnknownErrorCode: true }),
       ...(nativeErrorCode ? { nativeErrorCode } : {}),
@@ -73,6 +77,7 @@ export async function importSessionHandoffAgentBundle(params: Readonly<{
         code,
         message: error instanceof Error ? error.message : undefined,
         cause: error,
+        diagnostics: error instanceof SessionHandoffTypedImportError ? error.diagnostics : undefined,
         failureCause: projectActionFailureCauseV1(error, 'session_handoff.target_import', { allowUnknownErrorCode: true }),
       });
     }

@@ -1,5 +1,6 @@
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readSessionHandoffTypedImportFailureCode } from '../../../session/handoff/agentBundle/import';
+import { logger } from '@/ui/logger';
+import { SessionHandoffTypedImportError, readSessionHandoffTypedImportFailureCode } from '../../../session/handoff/agentBundle/import';
 import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 import type { RuntimeDescriptorV1, SessionHandoffPrepareTargetFailure, SessionHandoffPrepareTargetRequest, SessionHandoffPrepareTargetResultGetSuccessResponse, SessionHandoffResumePlan, SessionHandoffStatus } from '@happier-dev/protocol';
 
@@ -437,9 +438,16 @@ export async function runSessionHandoffPrepareTargetJob(
         ...(currentJob?.cancelRequestedAtMs ? { cancelRequestedAtMs: currentJob.cancelRequestedAtMs, abortedAtMs: failedAtMs } : { failedAtMs }),
         ...(lastErrorCode ? { lastErrorCode } : {}),
         lastErrorMessage,
+        ...(error instanceof SessionHandoffTypedImportError ? { diagnostics: error.diagnostics } : {}),
         ...(typedImportFailure ? { failureCause: projectActionFailureCauseV1(error, 'session_handoff.target_import', { allowUnknownErrorCode: true }) } : {}),
         status: failedStatus,
       }));
+      if (typedImportFailure) {
+        logger.debug('[session-handoff] Target import failed', {
+          phase: 'session_handoff.target_import', code: typedImportFailure.code,
+          diagnostics: error instanceof SessionHandoffTypedImportError ? error.diagnostics : [],
+        });
+      }
     }
   } finally {
     try {

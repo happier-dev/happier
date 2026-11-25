@@ -12,6 +12,27 @@ import {
 } from './sessionHandoffPrepareTargetJobStore';
 
 describe('sessionHandoffPrepareTargetJobStore', () => {
+  it('keeps only closed target import diagnostics on write and retained read, and reads older jobs', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'handoff-job-diagnostics-'));
+    const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+    const status = { handoffId: 'handoff', jobId: 'prepare_handoff', status: 'pending' as const,
+      phase: 'staging_target' as const, recoveryActions: [] };
+    const record = { jobId: status.jobId, handoffId: status.handoffId, createdAtMs: 1, updatedAtMs: 1, status };
+    const diagnostics = [{ code: 'not_directory', details: { pathKind: 'session_dir' } }];
+    const unsafe = { code: 'not_directory', details: { pathKind: 'session_dir', path: '/private/member' } };
+    try {
+      await store.write(record);
+      expect(await store.read(record.jobId)).toMatchObject(record);
+      await store.write({ ...record, diagnostics: [...diagnostics, unsafe] });
+      expect(await store.read(record.jobId)).toHaveProperty('diagnostics', diagnostics);
+      const file = join(activeServerDir, 'session-handoff', 'prepare-target-jobs', `${record.jobId}.json`);
+      const stored = JSON.parse(await readFile(file, 'utf8'));
+      expect(stored.diagnostics).toEqual(diagnostics);
+      await writeFile(file, JSON.stringify({ ...stored, diagnostics: [...diagnostics, unsafe] }));
+      expect(await store.read(record.jobId)).toHaveProperty('diagnostics', diagnostics);
+    } finally { await rm(activeServerDir, { recursive: true, force: true }); }
+  });
+
   it('settles its local waiter only when the observed job status changes, without polling', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'handoff-job-status-wait-'));
     const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
