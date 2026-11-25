@@ -7,6 +7,7 @@ import { decideApprovalRequestTransition, isApprovalResultRouteUnavailableV1, re
 import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { PileApplyResultV1Schema } from '../storage/storageV1.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '../actions/externalActionExecutionAuthorization.js';
+import { deriveWorkspaceSyncRelationshipId, projectWorkspaceSyncAdmissionInputV1 } from '../workspaces/workspaceSyncAdmissionV1.js';
 
 describe('approval result delivery route availability', () => {
   it.each([
@@ -53,6 +54,8 @@ describe('finite original envelope settlement', () => {
     const input = { workspace: { serverId: 'home', workspaceId: 'source-ref', machineId: 'source', rootPath: '/source' },
       executable: 'echo', argv: ['private-value'], cwd: '.' };
     const envelope = { v: 1 as const, requestId: 'finite-request', target, input };
+    const source = projectWorkspaceSyncAdmissionInputV1(actionId, input);
+    if (!source) throw new Error('Expected the command workspace source admission');
     const open = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
       createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId, actionArgs: input, summary: 'Run command',
       executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
@@ -61,7 +64,12 @@ describe('finite original envelope settlement', () => {
         externalActionExecutionAuthorization: { v: 1, token: 'root', binding: { accountId: 'requester',
           authentication: { kind: 'terminal', tokenEpoch: 1 }, custodianAccountId: 'owner', serverIdentityId: 'home',
           machineId: 'worker', installationId: 'worker-installation', accountEncryptionMode: 'plain', actionId,
-          requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target } } } });
+          requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target,
+          workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(envelope.requestId),
+            sourceWorkspaceRefId: source.sourceWorkspaceRefId, source: { machineId: source.sourceMachineId,
+              actorAccountId: 'requester', custodianAccountId: 'requester', installationId: 'source-installation',
+              role: 'manage', encryptionMode: 'plain' } },
+        } } } });
     const { originalActionEnvelope: _envelope, ...settledOrigin } = open.executionOriginV1;
     expect(decideApprovalRequestTransition(open, { ...open, status: 'approved', updatedAtMs: 2,
       decision: { kind: 'approve', decidedAtMs: 2 }, executionOriginV1: settledOrigin }))
