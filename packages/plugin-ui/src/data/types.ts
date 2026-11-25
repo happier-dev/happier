@@ -1,4 +1,3 @@
-import type { PluginAccountDataObservationV1, PluginAccountDataChangeV1 } from '@happier-dev/protocol/plugins/data/hostedWebAccountDataBridgeV1';
 import type {
   PluginAccountCollectionDefinition,
   PluginAccountCollectionForDefinition,
@@ -7,6 +6,16 @@ import type {
   PluginCollectionUiQueryResultV1,
 } from '@happier-dev/plugin-sdk/collections';
 import type { AccountKvService } from '@happier-dev/plugin-sdk/storage';
+import type {
+  PluginHostedWebAccountDataBridgeChangeV1,
+  PluginHostedWebAccountDataBridgeOperationV1,
+} from '@happier-dev/plugin-sdk/ui';
+
+type PluginAccountDataObservationV1 = Extract<
+  PluginHostedWebAccountDataBridgeOperationV1,
+  { operation: 'accountData.watch' }
+>['arguments'][0];
+type PluginAccountDataChangeV1 = NonNullable<PluginHostedWebAccountDataBridgeChangeV1['accountDataChange']>;
 
 /**
  * The direct Account Collection operations that an executable plugin surface
