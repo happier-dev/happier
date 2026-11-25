@@ -358,10 +358,8 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
           const runId = '29831e71-ad14-4d07-ae6d-b3e87250ecb9';
           const attribution = { serverId, accountId, machineId, installationId: 'review-installation' };
           const transport = createWorkflowRunMachineTransport({ runId, credentials, requesterWorkAttributionV1: attribution,
+            machineAdmission: packet.machineAdmission,
             isCurrent: async () => true, boundary: { serverId, serverHttpBaseUrl: 'https://review-home.test', happyHomeDir: homeDir,
-              getObservedServerIdentityId: () => 'srv_review_home' },
-            machineAdmissionBoundary: { machineId, daemonToken: credentials.token, isHomeCurrent: () => true,
-              readInstallation: () => ({ installationId: 'review-installation', privateKey: keys.secretKey }),
               getObservedServerIdentityId: () => 'srv_review_home' },
             transport: { machineId, invoke: async () => { throw new Error('Unexpected Workflow Machine RPC'); } },
             runActionOperation: async operation => operation.execute(operation.context) });

@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import { join } from 'node:path';
 import type { DaemonProviderModelProjectionRequestV1 } from '@happier-dev/protocol/rpc/providers';
 import { ProviderContributionV1Schema } from '@happier-dev/protocol';
+import { resolveProviderConnectedAccountDeclarationsV1 } from '@happier-dev/protocol/providers/contributions';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createBrokerProviderRegistry } from '@/providers/broker/providerBroker.testkit';
@@ -30,12 +31,14 @@ it('admits the selected source model using the same observed descriptor as the n
     try {
       const base = createBrokerProviderRegistry();
       const registry = { ...fixture.lease.registry, contributes: { ...fixture.lease.registry.contributes,
-        providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, { ...provider,
-          definition: ProviderContributionV1Schema.parse({ ...provider.definition, managedRuntime: { ...provider.definition.managedRuntime,
+        providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => {
+          const definition = ProviderContributionV1Schema.parse({ ...provider.definition,
             connectedAccounts: [{ purpose: 'openai-upstream', service,
               endpointTemplateIds: provider.definition.endpointTemplates.map(endpoint => endpoint.id),
-              catalogObservation: { agent: fixture.lease.registry.contributes.agentDefinitionsById.get(fixture.agentId)!.identity } }] } }),
-        }])) } };
+              catalogObservation: { agent: fixture.lease.registry.contributes.agentDefinitionsById.get(fixture.agentId)!.identity } }] });
+          return [key, { ...provider, definition,
+            connectedAccountDeclarations: resolveProviderConnectedAccountDeclarationsV1({ identity: provider.identity, definition }) }];
+        })) } };
       const unexpected = async (): Promise<never> => { throw new Error('No credential, mutation or gateway during catalog discovery'); };
       const purposes = createConnectedAccountPurposeBindingOwner({
         store: { read: async () => ({ v: 1, bindings: [] }), update: unexpected, subscribe: () => ({ dispose() {} }) },
@@ -65,10 +68,10 @@ it('admits the selected source model using the same observed descriptor as the n
       // fixture; its external Connected Account catalog is the system boundary.
       const control = await catalogs.projectModels({ machineId: fixture.machineId, agentTargetKey: fixture.agentTargetKey,
         connectedServices, mode: 'picker' });
-      expect(control).toMatchObject({ status: 'success', groups: [expect.objectContaining({ catalogObserved: true,
+      expect(control).toMatchObject({ status: 'success', groups: expect.arrayContaining([expect.objectContaining({ catalogObserved: true,
         rows: expect.arrayContaining([expect.objectContaining({ ref: expect.objectContaining({ modelId, providerConnectionId: null }),
           descriptor: expect.objectContaining({ capabilities: { structuredOutput: 'supported' } }),
-          compatibility: expect.objectContaining({ confirmed: true }) })]) })] });
+          compatibility: expect.objectContaining({ confirmed: true }) })]) })]) });
       const native = { backendTarget: { kind: 'builtInAgent' as const, agentId: fixture.agentId }, modelId, cwd: homeDir,
         connectedServices, machineId: fixture.machineId, readProviderModels,
         catalogEntry: fixture.lease.registry.contributes.agentDefinitionsById.get(fixture.agentId)?.catalogEntry };

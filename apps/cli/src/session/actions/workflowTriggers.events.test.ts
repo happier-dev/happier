@@ -246,7 +246,8 @@ describe('configured Event source writer consistency', () => {
       const failure = await f.actions.add({ observationOnly: { kind: 'observationOnly' }, trigger: {
         ...configuredEvent(60_000, 'auto_start'), eventRef: { ...event.eventRef, localId: 'issue-resolved-v1' },
       } }).then(() => null, normalizeWorkflowActionThrownError);
-      expect(failure).toMatchObject({ ok: false, errorCode: 'invalid_input', error: expect.stringContaining(original.set.automationId) });
+      expect(failure).toMatchObject({ ok: false, errorCode: 'invalid_input',
+        details: { issues: [{ code: 'invalid_input', path: '/trigger/sourceConfig', severity: 'error' }] } });
       expect(f.mutations()).toBe(before);
     });
 
@@ -283,8 +284,8 @@ describe('configured Event source writer consistency', () => {
               ...(operation === 'update' ? { triggerId: changed!.triggerId,
                 patch: { trigger: nextTrigger } } : { patch: { enabled: true } }) }, { surface });
         const failure = await attempt.then(() => null, normalizeWorkflowActionThrownError);
-        expect(failure).toMatchObject({ ok: false, errorCode: 'invalid_input', error: expect.stringContaining(original.set.automationId) });
-        expect(failure?.error).toContain('Existing errors definition');
+        expect(failure).toMatchObject({ ok: false, errorCode: 'invalid_input',
+          details: { issues: [{ code: 'invalid_input', path: '/trigger/sourceConfig', severity: 'error' }] } });
       }
       expect(f.mutations()).toBe(before);
     });
@@ -323,7 +324,8 @@ describe('configured Event source writer consistency', () => {
       const before = f.mutations();
       const failure = await f.actions.update({ automationId: row.id, triggerId: first.triggerId,
         expectedRevision: row.templateVersion, patch: { trigger: replacement } }).then(() => null, normalizeWorkflowActionThrownError);
-      expect(failure).toMatchObject({ errorCode: 'invalid_input', error: expect.stringContaining(row.id) });
+      expect(failure).toMatchObject({ errorCode: 'invalid_input',
+        details: { issues: [{ code: 'invalid_input', path: '/trigger/sourceConfig', severity: 'error' }] } });
       expect(f.mutations()).toBe(before);
     });
   }

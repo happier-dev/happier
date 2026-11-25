@@ -6,7 +6,11 @@ import { normalizeExecutableParticipantSelectionV1 } from '../discussions/execut
 
 function createActionExecutor(deps: ActionExecutorDeps) {
   const records = createInMemoryReviewRecordPortV1();
-  return createCoreActionExecutor({ reviewRecords: () => records, ...deps });
+  return createCoreActionExecutor({ reviewRecords: () => records,
+    // Session status crosses the Machine transport; keep project resolution real.
+    sessionStatusGet: async ({ sessionId }) => ({ session: { id: sessionId, createdAt: 1, updatedAt: 1,
+      active: true, activeAt: 1, encryption: null, title: 'Selected reviewer', path: '/repo', machineId: 'machine' } }),
+    ...deps });
 }
 
 // Already admitted native leaves keep this test at the source-read owner;
@@ -46,7 +50,7 @@ describe('review.start selected source transcript', () => {
     const model = { kind: 'model', launch: { executionTarget: { serverId: 'home', machineId: 'machine' },
       directory: { kind: 'path', path: '/repo' }, agentTarget: { kind: 'agent', identity: { pluginId: 'acme.agent', localId: 'default' } } },
       includeSessionTranscript: true };
-    expect(await executor.execute('review.start', { sessionId: 'review-session', scope: 'repository', instructions: 'Review.',
+    expect(await executor.execute('review.start', { sessionId: 'review-session', scope: 'repository', cwd: '/repo', instructions: 'Review.',
       sourceSession, reviewers: [reviewer, { ...bot, includeSessionTranscript: true }, model,
         { kind: 'session', session: { serverId: 'home', sessionId: 'diff-only-reviewer' } }] },
     { surface: 'ui', serverId: 'home' })).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
@@ -129,7 +133,7 @@ describe('review.start selected source transcript', () => {
     });
     const reviewer = { kind: 'engine', engineId: 'codex', profileId: 'native-cli-review', profileSourceCustody, includeSessionTranscript: true } as const;
     const session = { kind: 'session', session: { serverId: 'home', sessionId: 'other-reviewer' } } as const;
-    const input = { sessionId: 'review-session', scope: 'repository', instructions: 'Review.',
+    const input = { sessionId: 'review-session', scope: 'repository', cwd: '/repo', instructions: 'Review.',
       sourceSession: { serverId: 'home', sessionId: 'source' },
       reviewers: route === 'mixed' ? [reviewer, session] : [reviewer],
       ...(route === 'direct' ? { reviewRound } : route === 'steps'

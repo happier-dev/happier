@@ -30,7 +30,7 @@ describe('Review workflow settlement', () => {
     expect((await records.read(reviewRound.reviewId))?.rounds[0]).toMatchObject({
       state: expectedState, runs: [{ kind: 'workflow', runId: 'workflow-run' }],
     });
-    expect(result).toMatchObject(mode === 'denied'
+    expect(result).toMatchObject(mode === 'denied' || mode === 'denied-and-missing'
       ? { ok: false, errorCode: 'resource_forbidden' }
       : { ok: true, result: reviewRound });
     expect(writes).toBe(2);
