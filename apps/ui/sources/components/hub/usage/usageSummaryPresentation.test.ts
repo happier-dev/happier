@@ -44,4 +44,20 @@ describe('usage amounts across saved summaries and provider grouping', () => {
         expect(usage.staleAt).toBe(19_000);
         expect(buildUsageSummary({ live: buildUsageSummaryCache([silent]), saved: null, accountsWithoutUsage: [] }).asOf).toBeNull();
     });
+
+    it('dates the rail by its newest shown reading; meterless or undated entries neither date nor blank it (review J-B50)', () => {
+        const at = (minute: number) => Date.UTC(2026, 10, 25, 12, minute);
+        const first = { ...summary, key: 'service/first', fetchedAt: at(0), staleAfterMs: 3_600_000 };
+        const second = { ...summary, key: 'service/second', fetchedAt: at(4), staleAfterMs: 3_600_000 };
+        const live = buildUsageSummary({ live: buildUsageSummaryCache([first, second]), saved: null, accountsWithoutUsage: [] });
+        expect(live.shownReadAt).toBe(at(4));
+        // A saved meterless entry without a read time (the cache schema admits null).
+        const saved = buildUsageSummaryCache([first, second])!;
+        const undated = { ...saved, entries: [...saved.entries, { key: 'service/undated', fetchedAt: null, serviceLabel: 'Service', profileLabel: null, planLabel: null, meters: [] }] };
+        const restored = buildUsageSummary({ live: null, saved: undated, accountsWithoutUsage: [] });
+        expect(restored.shownReadAt).toBe(at(4));
+        // Credentials keeps its oldest-reading bound.
+        expect(restored.asOf).toBe(at(0));
+        expect(buildUsageSummary({ live: null, saved: { v: 1, entries: [undated.entries[2]!] }, accountsWithoutUsage: [] }).shownReadAt).toBeNull();
+    });
 });

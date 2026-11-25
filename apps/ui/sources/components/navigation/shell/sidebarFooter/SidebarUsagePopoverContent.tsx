@@ -300,12 +300,11 @@ export function SidebarUsagePopoverView(props: Readonly<{
     const total = accounts.length + facts.accountsNeedingSignIn.length;
     const nothing = total === 0 && !scoped;
     const refresh = props.refresh;
-    // A row past its window carries its own as-of line; the header then names no time, so an old reading's time is
-    // never said above rows read minutes ago (acceptance r227 #68).
-    const datesItself = (entry: (typeof accounts)[number]) => entry.expired && entry.account.windows.length > 0;
+    // The rail's header is dated by the newest shown reading, decided by the summary owner (review J-B50); a row past
+    // its window carries its own as-of line. Scoped, the one row's own time, unless that row already dates itself.
     const shownAsOf = scoped
-        ? sessionAccount && !datesItself(sessionAccount) ? sessionAccount.account.fetchedAt : null
-        : accounts.some(datesItself) ? null : usage.asOf;
+        ? sessionAccount && !(sessionAccount.expired && sessionAccount.account.windows.length > 0) ? sessionAccount.account.fetchedAt : null
+        : usage.shownReadAt;
 
     // Every account shown together is named at once, so two that read as their service's account are
     // told apart by the one naming owner instead of each row naming itself.

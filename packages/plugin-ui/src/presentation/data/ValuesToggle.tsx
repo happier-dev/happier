@@ -21,7 +21,8 @@ export function HappierDataValuesToggle(props: Readonly<{
 }>) {
   const text = useHappierDataTextStyles(props.theme);
   return (
-    <HappierPressable testID={props.testID} accessibilityLabel={props.accessibilityLabel ?? props.label}
+    // A button, so Space opens it as Enter does (review J-B52: the bare pressable answered Enter only).
+    <HappierPressable testID={props.testID} accessibilityRole="button" accessibilityLabel={props.accessibilityLabel ?? props.label}
       expanded={props.expanded} onPress={props.onPress} style={props.style}>
       <HappierText style={{ ...text.caption, color: props.theme.colors.secondaryText }}>{props.label}</HappierText>
     </HappierPressable>

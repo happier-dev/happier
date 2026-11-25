@@ -11,15 +11,20 @@ export type UsageSummary = Readonly<{
      * entries, plus, from this launch's read, the accounts still being read or with nothing to show.
      */
     accounts: readonly UsageAccountInput[];
-    /** When the shown values were read (epoch ms); `null` when nothing is known. */
+    /** The oldest read time of the shown readings (epoch ms): Credentials' bound for every row; `null` when one is unknown. */
     asOf: number | null;
+    /**
+     * The newest read time among the readings shown with a meter (epoch ms), the Usage popover's header date; entries
+     * that are meterless or have no read time neither date it nor blank it; `null` when no shown reading has one.
+     */
+    shownReadAt: number | null;
     /** When the first shown read goes stale (epoch ms), by its producer's window; `null` when none says. */
     staleAt: number | null;
     /** `live`: read in this launch; `lastKnown`: the device's saved value; `none`: nothing yet. */
     source: 'live' | 'lastKnown' | 'none';
 }>;
 
-const NOTHING: UsageSummary = Object.freeze({ entries: [], accounts: [], asOf: null, staleAt: null, source: 'none' });
+const NOTHING: UsageSummary = Object.freeze({ entries: [], accounts: [], asOf: null, shownReadAt: null, staleAt: null, source: 'none' });
 
 function toAccount(entry: UsageSummaryEntry): UsageAccountInput {
     return {
@@ -100,6 +105,8 @@ export function buildUsageSummary(input: Readonly<{
         asOf: readings.length > 0 && readings.every((entry) => entry.fetchedAt != null)
             ? Math.min(...readings.map((entry) => entry.fetchedAt!))
             : null,
+        shownReadAt: readings.reduce<number | null>((newest, entry) => entry.fetchedAt == null
+            ? newest : newest === null ? entry.fetchedAt : Math.max(newest, entry.fetchedAt), null),
         staleAt: resolveStaleAt(readings),
         source: input.live ? 'live' : input.saved ? 'lastKnown' : 'none',
     };

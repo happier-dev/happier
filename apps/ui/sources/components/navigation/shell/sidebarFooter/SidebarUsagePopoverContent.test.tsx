@@ -322,7 +322,7 @@ describe('SidebarUsagePopoverContent', () => {
         expect(screen.findByTestId('sidebar-usage-as-of')).toBeNull();
     });
 
-    it('labels the shared header with the oldest account reading instead of the newest account time', async () => {
+    it('dates the shared header by the newest shown reading, never an older time above a newer row (review J-B50)', async () => {
         state.summaries = [
             { ...summary('claude:a', 'Work', 73), fetchedAt: 1_000 },
             { ...summary('claude:b', 'Personal', 40), fetchedAt: 5_000 },
@@ -331,7 +331,7 @@ describe('SidebarUsagePopoverContent', () => {
         const { SurfaceAsOfLabel } = await import('@/components/ui/surfaces/SurfaceAsOfLabel');
         const times = screen.findAllByType(SurfaceAsOfLabel)
             .map((label) => label.props.at);
-        expect(times).toEqual([1_000]);
+        expect(times).toEqual([5_000]);
     });
 
     it('never dates the header by a reading it does not show, nor puts an expired row\'s time above fresh rows', async () => {
@@ -346,14 +346,24 @@ describe('SidebarUsagePopoverContent', () => {
         expect(quiet.findAllByType(SurfaceAsOfLabel).map((label) => label.props.at)).toEqual([now - 60_000]);
         await quiet.unmount();
 
-        // A shown row past its window carries its own as-of line; the header then names no time of its own.
+        // A shown row past its window carries its own as-of line; the header names the newest shown reading.
         state.summaries = [
             { ...summary('claude:a', 'Work', 73), fetchedAt: now - 60_000, staleAfterMs: 3_600_000 },
             { ...summary('claude:b', 'Old', 40), fetchedAt: now - 3 * 86_400_000, staleAfterMs: 120_000 },
         ];
         const expired = await renderContent();
         expect(expired.findByTestId('sidebar-usage-account-claude:b.freshness')).toBeTruthy();
-        expect(expired.findByTestId('sidebar-usage-as-of')).toBeNull();
+        expect(expired.findAllByType(SurfaceAsOfLabel).map((label) => label.props.at)).toEqual([now - 60_000]);
+        await expired.unmount();
+
+        // Restored from the device with an undated meterless account beside them (review J-B50 arm b).
+        state.summaries = [
+            { ...summary('claude:a', 'Work', 73), fetchedAt: now - 5 * 60_000, staleAfterMs: 3_600_000 },
+            { ...summary('claude:b', 'Personal', 40), fetchedAt: now - 60_000, staleAfterMs: 3_600_000 },
+            { ...summary('claude:undated', 'Undated', 0), fetchedAt: null as unknown as number, meters: [] },
+        ];
+        const restored = await renderContent(true);
+        expect(restored.findAllByType(SurfaceAsOfLabel).map((label) => label.props.at)).toEqual([now - 60_000]);
     });
 
     it('explains what usage is for when no account is connected, with the one way to connect one', async () => {

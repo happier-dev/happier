@@ -82,6 +82,57 @@ describe('neutral intervals and outcomes', () => {
       expect(query(mount.container, 'value-values-row-0')!.getAttribute('aria-label')).toContain('Merged PRs: 0');
     } finally { mount.unmount(); }
   });
+  it('speaks the caption\'s basis once with each bare amount, opened and without a plot (review J-B51)', async () => {
+    const basis = 'API-equivalent, not your bill · USD';
+    const render = (width: number) => <OutcomeScatter theme={SURFACE_CONTEXT_THEME_FIXTURE} testID="money" label="Session value"
+      xLabel="Session cost" yLabel="Merged PRs" basis={basis} formatX={value => `$${value.toFixed(2)}`}
+      geometry={{ width, height: 320 }} points={[{ id: 'a', label: 'Audit', x: 4, y: 0 }, { id: 'b', label: 'Docs', x: 9, y: 2 }]} />;
+    const mount = mountThroughReactNativeWeb(render(500));
+    try {
+      act(() => query(mount.container, 'money-values-toggle')!.click());
+      const opened = query(mount.container, 'money-values-row-0')!;
+      expect(opened.getAttribute('aria-label')).toContain('$4.00');
+      expect(opened.getAttribute('aria-label')!.split(basis)).toHaveLength(2);
+      await mount.render(render(40));
+      expect(query(mount.container, 'money-plot')).toBeNull();
+      const fallback = query(mount.container, 'money-values-row-1')!;
+      expect(fallback.getAttribute('aria-label')).toContain('$9.00');
+      expect(fallback.getAttribute('aria-label')!.split(basis)).toHaveLength(2);
+    } finally { mount.unmount(); }
+  });
+  it('keeps every fact visible when Exact values opens in a narrow scatter, by Enter and by Space (review J-B52)', () => {
+    const annotation = 'No merged pull request is linked to this session yet';
+    const mount = mountThroughReactNativeWeb(<OutcomeScatter theme={SURFACE_CONTEXT_THEME_FIXTURE} testID="narrow" label="Session value"
+      xLabel="Session cost" yLabel="Merged PRs" annotationLabel="Linked pull requests and their state" valuesLabel="Exact values"
+      valuesCollapseLabel="Hide values" geometry={{ width: 180, height: 320 }}
+      points={[{ id: 'a', label: 'Audit', x: 1, y: 0 }, { id: 'b', label: 'Docs', x: 9, y: 2 },
+        { id: 'c', label: 'Review', x: 5, y: null, annotation }]} />);
+    const press = (key: string) => act(() => {
+      const toggle = query(mount.container, 'narrow-values-toggle')!;
+      toggle.focus();
+      const code = key === ' ' ? 'Space' : key;
+      toggle.dispatchEvent(new KeyboardEvent('keydown', { key, code, bubbles: true, cancelable: true }));
+      toggle.dispatchEvent(new KeyboardEvent('keyup', { key, code, bubbles: true, cancelable: true }));
+      // A browser turns a native button's Enter and Space into this click; jsdom does not synthesize it.
+      expect(toggle.tagName).toBe('BUTTON');
+      toggle.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+    try {
+      expect(query(mount.container, 'narrow-plot')).not.toBeNull();
+      press('Enter');
+      const values = query(mount.container, 'narrow-values')!;
+      // The table measures its room; a narrow card must still show the annotation as text.
+      const handler = (values as unknown as { __reactLayoutHandler?: (event: { nativeEvent: { layout: { x: number; y: number; width: number; height: number } } }) => void }).__reactLayoutHandler;
+      if (handler) act(() => handler({ nativeEvent: { layout: { x: 0, y: 0, width: 180, height: 120 } } }));
+      const shown = [...mount.container.querySelectorAll<HTMLElement>('[data-testid^="narrow-values"] *')]
+        .filter(node => node.children.length === 0 && node.textContent?.includes(annotation));
+      expect(shown.length).toBeGreaterThan(0);
+      press(' ');
+      expect(query(mount.container, 'narrow-values')).toBeNull();
+      press(' ');
+      expect(query(mount.container, 'narrow-values')).not.toBeNull();
+    } finally { mount.unmount(); }
+  });
   it('names a caller-chosen scatter point beside its mark and draws a supplied reference value at its exact position', () => {
     const mount = mountThroughReactNativeWeb(<OutcomeScatter theme={SURFACE_CONTEXT_THEME_FIXTURE} testID="scatter" label="Runs"
       xLabel="Cost" yLabel="Merged" geometry={{ width: 500, height: 320 }}
@@ -435,7 +486,7 @@ describe('neutral intervals and outcomes', () => {
     try {
       act(() => query(mount.container, 'laboratory-values-toggle')!.click());
       expect(query(mount.container, 'laboratory-values-row-3')).not.toBeNull();
-      expect(query(mount.container, 'laboratory-values-row-3')!.getAttribute('aria-label')).toContain('Charge: Unknown, Deflection: 0');
+      expect(query(mount.container, 'laboratory-values-row-3')!.getAttribute('aria-label')).toContain('Charge, Observed measurements: Unknown, Deflection: 0');
       expect(query(mount.container, 'laboratory-point-missing')).toBeNull();
       for (const id of ['min', 'zero', 'max']) {
         const point = query(mount.container, `laboratory-point-${id}`)!;
