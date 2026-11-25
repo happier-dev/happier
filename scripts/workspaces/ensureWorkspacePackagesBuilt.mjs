@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdtempSync, existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { cp, lstat, mkdir, readFile, readdir, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { cp, link, lstat, mkdir, readFile, readdir, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -1387,6 +1387,71 @@ async function reclaimRetiredPackageOutput(publishing, name) {
   }
 }
 
+async function copySharedPackageOutput(source, staging, publishing, record) {
+  const parent = dirname(publishing);
+  const candidates = await readdir(parent, { withFileTypes: true });
+  const recent = [];
+  const cutoff = Date.now() - WORKSPACE_PACKAGE_OUTPUT_RETENTION_MS;
+  for (const candidate of candidates) {
+    if (!candidate.isDirectory() || !/^[a-f0-9]{64}$/.test(candidate.name) || candidate.name === basename(publishing)) continue;
+    const path = join(parent, candidate.name);
+    const info = await lstat(path).catch(error => {
+      if (error.code !== 'ENOENT') throw error;
+      return null;
+    });
+    if (info?.isDirectory() && info.mtimeMs > cutoff) recent.push({ path, usedAt: info.mtimeMs });
+  }
+  recent.sort((a, b) => b.usedAt - a.usedAt);
+  const copy = () => cp(source, staging, { recursive: true, verbatimSymlinks: true });
+  const digests = new Map(record.outputs.map(({ path, digest }) => [path, digest]));
+  for (const { path } of recent) {
+    const readReceipt = () => readJson(join(path, BUILD_INPUT_RECORD)).catch(error => {
+      if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+      return null;
+    });
+    if ((await readReceipt())?.packageName !== record.packageName) continue;
+    try {
+      const shared = await withWorkspaceBundleLock(async ({ assertOwned }) => {
+        const previous = await readReceipt();
+        if (previous?.packageName !== record.packageName || !Array.isArray(previous.outputs)) return false;
+        const priorDigests = new Map(previous.outputs.map(({ path, digest }) => [path, digest]));
+        let linkUnavailable = false;
+        await cp(source, staging, {
+          recursive: true,
+          verbatimSymlinks: true,
+          filter: async (from, to) => {
+            const name = relative(source, from).split(sep).join('/');
+            const digest = digests.get(name);
+            if (linkUnavailable || !digest || priorDigests.get(name) !== digest) return true;
+            const prior = join(path, name);
+            const [fromInfo, priorInfo] = await Promise.all([lstat(from), lstat(prior).catch(error => {
+              if (error.code !== 'ENOENT') throw error;
+              return null;
+            })]);
+            if (!fromInfo.isFile() || !priorInfo?.isFile() || fromInfo.mode !== priorInfo.mode
+              || readWorkspaceBuildFileDigest(prior) !== digest) return true;
+            assertOwned();
+            try {
+              await link(prior, to);
+              return false;
+            } catch (error) {
+              if (!['EXDEV', 'EPERM', 'ENOSYS', 'ENOTSUP', 'EMLINK'].includes(error.code)) throw error;
+              linkUnavailable = true;
+              process.stderr.write(`[workspace-build] package output deduplication unavailable for ${record.packageName}: ${error.code}; copying remaining output\n`);
+              return true;
+            }
+          },
+        });
+        return true;
+      }, { lockPath: path + '.lock', wait: false, env: {} });
+      if (shared) return;
+    } catch (error) {
+      if (error.code !== WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE) throw error;
+    }
+  }
+  await copy();
+}
+
 async function publishWorkspacePackageDist(distDir, build, { publicationMode = 'live', fingerprint, buildMode, packageName }) {
   await buildIntoTempThenReplace(distDir, build, {
     preserveDestinationPath: true,
@@ -1616,6 +1681,7 @@ async function consumeWorkspacePackageBuildInputs({
     }
     const record = {
       version: 2,
+      packageName: packageJson.name,
       // A runtime-only refresh cannot upgrade emit-only compiler evidence.
       buildMode: refreshOnly ? priorRecord.buildMode ?? 'strict' : buildMode === 'source-dev' ? 'qa-runtime' : buildMode,
       builtAt: refreshOnly ? priorRecord.builtAt : new Date().toISOString(),
@@ -1634,7 +1700,7 @@ async function consumeWorkspacePackageBuildInputs({
     publishedRecord = record;
     if (sharedOutput && tmpDistDir !== distDir) {
       await buildIntoTempThenReplace(sharedOutput, staging =>
-        cp(tmpDistDir, staging, { recursive: true, verbatimSymlinks: true }), {
+        copySharedPackageOutput(tmpDistDir, staging, sharedOutput, record), {
         reclaimRetiredEntry: name => reclaimRetiredPackageOutput(sharedOutput, name),
       });
     }

@@ -4075,6 +4075,7 @@ test('source declaration consumers in separate checkouts share successful packag
       const input = await readFile(join(dir, 'src/index.ts'), 'utf8');
       builds.push(input);
       await writeFile(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.d.ts'), input);
+      await writeFile(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'stable.d.ts'), 'export declare const stable: boolean;\n');
     },
   };
   const prepare = checkout => ensureWorkspacePackagesBuiltByName(checkout.root, ['@fixture/shared'], {
@@ -4101,6 +4102,10 @@ test('source declaration consumers in separate checkouts share successful packag
   const retained = entries().find(entry => /number/.test(readFileSync(join(entry, 'index.d.ts'), 'utf8')));
   const leased = entries().find(entry => /string/.test(readFileSync(join(entry, 'index.d.ts'), 'utf8')));
   assert.ok(retained && leased);
+  const firstStored = statSync(join(retained, 'stable.d.ts'));
+  const secondStored = statSync(join(leased, 'stable.d.ts'));
+  assert.equal(secondStored.ino, firstStored.ino, 'unchanged output shares storage across input hashes');
+  assert.notEqual(statSync(join(second.pkg, 'dist/stable.d.ts')).ino, firstStored.ino, 'checkout owns a private output copy');
   const inactive = new Date(Date.now() - 49 * 60 * 60 * 1000);
   const active = new Date(Date.now() - 47 * 60 * 60 * 1000);
   utimesSync(retained, inactive, inactive);
