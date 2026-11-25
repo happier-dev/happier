@@ -35,6 +35,7 @@ import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connec
 export type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
 export type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 export type { ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts/authenticationTypes';
+export { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 export { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol/connect/connectedServiceQuotaMeterLabel';
 export type {
     PluginConnectedAccountAuthenticationModeV2,
