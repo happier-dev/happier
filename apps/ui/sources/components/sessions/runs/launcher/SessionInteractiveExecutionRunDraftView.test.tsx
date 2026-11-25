@@ -44,10 +44,12 @@ import { WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows
 import { ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema, ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol/scm';
 import { REVIEW_ARTIFACT_KIND_V1, ReviewRoundBindingV1Schema } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { ReviewStartInputSchema, reviewReviewerIdForSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
+import { ReviewHumanStateV1Schema, ReviewReviewersSetInputV1Schema } from '@happier-dev/protocol/reviews/reviewHumanV1';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { EMPTY_SCM_CAPABILITIES } from '@/scm/core/snapshotMappers';
@@ -224,6 +226,7 @@ let listedRuns: Run[];
 let listResult: Promise<unknown> | null;
 let emittedStarts: Array<Record<string, unknown>>;
 let emittedWorkflowStarts: Array<ReturnType<typeof WorkflowRunStartRequestV1Schema.parse>>;
+let emittedHumanReviewerRequests: Array<ReturnType<typeof ReviewReviewersSetInputV1Schema.parse>>;
 let refuseWorkflowStart = false;
 let artifactStore: ReturnType<typeof createArtifactStoreBoundary>;
 let detachedInputs: Array<{ input: Record<string, unknown>; machineId: string }>;
@@ -443,6 +446,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         listResult = null;
         emittedStarts = [];
         emittedWorkflowStarts = [];
+        emittedHumanReviewerRequests = [];
         refuseWorkflowStart = false;
         detachedInputs = [];
         outbound = [];
@@ -627,6 +631,16 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                     id => id === 'machine_1' ? createPlainMachineRowFixture({ id, accountId: 'account_1' }) : null);
                 if (request.path === '/v1/machines/machine_1') return Response.json({ machine: createPlainMachineRowFixture({ id: 'machine_1', accountId: 'account_1' }) });
                 if (request.path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (request.path === '/v1/account/project-rows/list') return Response.json(createPlainProjectAccountRowListFixture());
+                if (request.method === 'POST' && /^\/v1\/reviews\/[^/]+\/reviewers$/.test(request.path)) {
+                    const input = ReviewReviewersSetInputV1Schema.parse({ ...record(request.body), reviewId: request.path.split('/')[3] });
+                    emittedHumanReviewerRequests.push(input);
+                    return Response.json(ReviewHumanStateV1Schema.parse({ reviewId: input.reviewId, roundOrdinal: input.roundOrdinal,
+                        requests: input.reviewers.map((reviewer, index) => ({ ...reviewer, id: `request-${index}`,
+                            roundOrdinal: input.roundOrdinal, needsAccess: false })), verdicts: [],
+                        needsYou: { reviewId: input.reviewId, roundOrdinal: input.roundOrdinal, reason: 'review_needs_you',
+                            requestedVerdict: false, pendingDecisions: false, needsYou: false, canSubmitVerdict: false } }));
+                }
                 if (request.path === ACP_CATALOG_ROWS_ROUTE_V1) return Response.json(AcpCatalogRowReadResponseV1Schema.parse({ status: 'absent' }));
                 if (request.path === PROFILE_ROWS_ROUTE_V1 || request.path === PROFILE_TRANSFER_ROUTE_V1 || request.path === PROFILE_REFERENCE_GUARD_ROUTE_V1) {
                     const transferControl = ProfileTransferRowReadResponseV1Schema.parse({ status: 'present', revision: 1,
@@ -2039,6 +2053,65 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             ...(walkthrough ? { outputs: ['walkthrough'] } : {}) });
         expect(input().props.value).toBe('');
         expect(opened).not.toHaveBeenCalled();
+        await waitFor(() => expect(reviewRouterPush).toHaveBeenCalledWith(artifactViewRoute(
+            ReviewRoundBindingV1Schema.parse(accepted.inputs?.reviewRound).reviewId)));
+    });
+    it('submits duplicate Agent models, a required person and independent step Focus through the Review Workflow compiler', async () => {
+        const firstReviewers = [
+            { kind: 'engine', engineId: 'claude', modelId: 'security-model' },
+            { kind: 'engine', engineId: 'claude', modelId: 'storage-model' },
+            { kind: 'person', principal: { kind: 'account', accountId: 'alice' }, required: true },
+        ];
+        const secondReviewers = [{ kind: 'engine', engineId: 'codex', modelId: 'verification-model' }];
+        await mount({ intent: 'review', sessionId: null, workspace: { machineId: 'machine_1', cwd: '/repo' },
+            initialActionInput: { scope: 'repository', reviewers: firstReviewers, steps: [
+                { kind: 'review', reviewers: firstReviewers, instructions: '' },
+                { kind: 'verify', reviewers: secondReviewers, instructions: '' },
+            ] } });
+        const focus = async (step: number, text: string) => {
+            const field = screen.root.findAll(node => node.props.testID === `review-start-step:${step}:focus`
+                && typeof node.props.onChangeText === 'function').at(-1);
+            if (!field) throw new Error(`Missing Focus for step ${step}`);
+            await act(async () => changeTextTestInstance(field, text));
+        };
+        await focus(0, 'Inspect authentication and storage');
+        await screen.pressByTestIdAsync('review-start-step:1:header');
+        await focus(1, 'Verify only the reported defects');
+        await send('Inspect this mixed roster');
+        expect(emittedWorkflowStarts, JSON.stringify({ visible: screen.getTextContent(),
+            alerts: modal.alert.mock.calls, starts: emittedStarts,
+            http: home.requests.map(request => ({ method: request.method, path: request.path,
+                ...(/workflow|artifact/.test(request.path) ? { body: request.body } : {}) })),
+        })).toHaveLength(1);
+        const accepted = emittedWorkflowStarts[0]!;
+        const review = ReviewStartInputSchema.parse(accepted.inputs?.reviewInput);
+        expect(emittedHumanReviewerRequests).toEqual([{ ...ReviewRoundBindingV1Schema.parse(accepted.inputs?.reviewRound),
+            reviewers: [{ principal: { kind: 'account', accountId: 'alice' }, required: true }] }]);
+        expect(review.steps).toEqual([
+            { kind: 'review', reviewers: firstReviewers, instructions: 'Inspect authentication and storage' },
+            { kind: 'verify', reviewers: secondReviewers, instructions: 'Verify only the reported defects' },
+        ]);
+        expect(accepted.source).toMatchObject({ kind: 'inline', definition: { blocks: [
+            expect.anything(),
+            expect.objectContaining({ kind: 'parallel', branches: [
+                expect.objectContaining({ blocks: [expect.objectContaining({ actionId: 'review.start', input: expect.objectContaining({
+                    reviewers: { kind: 'literal', value: [firstReviewers[0]] },
+                    instructions: expect.objectContaining({ document: expect.objectContaining({ text: expect.stringContaining('Inspect authentication and storage') }) }),
+                }) })] }),
+                expect.objectContaining({ blocks: [expect.objectContaining({ actionId: 'review.start', input: expect.objectContaining({
+                    reviewers: { kind: 'literal', value: [firstReviewers[1]] },
+                }) })] }),
+            ] }),
+            expect.anything(),
+            expect.objectContaining({ kind: 'parallel', branches: [expect.objectContaining({ blocks: [expect.objectContaining({
+                actionId: 'review.start', input: expect.objectContaining({
+                    reviewers: { kind: 'literal', value: secondReviewers },
+                    instructions: expect.objectContaining({ document: expect.objectContaining({ text: expect.stringContaining('Verify only the reported defects') }) }),
+                }),
+            })] })] }),
+            expect.anything(), expect.anything(),
+        ] } });
+        expect(emittedStarts).toEqual([]);
         await waitFor(() => expect(reviewRouterPush).toHaveBeenCalledWith(artifactViewRoute(
             ReviewRoundBindingV1Schema.parse(accepted.inputs?.reviewRound).reviewId)));
     });
