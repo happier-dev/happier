@@ -438,7 +438,6 @@ function useWorkflowWhereChoices(props: WorkflowWhereInput) {
         if (!machines || !onChange) return;
         const needsRequesterStatus = selected.isShared === true || hasUnresolvedRequesterDirectories({ machine: selected });
         const ownStatus = needsRequesterStatus ? await readOwnStatus(selected.id) : null;
-        if (needsRequesterStatus && ownStatus === null) return;
         onChange(selectWorkflowProjectMachine({
             current: target,
             machineId: selected.id,

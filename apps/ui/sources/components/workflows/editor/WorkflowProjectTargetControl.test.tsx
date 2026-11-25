@@ -267,6 +267,30 @@ describe('workflow project target control', () => {
         await vi.waitFor(async () => expect(onChange).toHaveBeenCalledWith({ machineId: 'machine-2', directory: '/member/workspace' }));
     });
 
+    it('keeps a selected shared Machine when its requester directory is unavailable', async () => {
+        const sharedMachine = createMachineFixture({ ...MACHINES[1], isShared: true,
+            access: { custodian: { accountId: 'custodian-account', displayName: 'Machine owner' },
+                role: 'use', resourceMode: 'plain', accessState: 'ready' },
+            metadata: { ...MACHINES[1]!.metadata!, agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } } });
+        const machines = [MACHINES[0]!, sharedMachine];
+        storage.getState().applyMachines(machines, true, { sourceServerId: account!.home.id });
+        machineRpc.mockImplementation(async ({ method }) => {
+            if (method === RPC_METHODS.MACHINES_AGENT_ISOLATION_STATUS) return null;
+            if (method === RPC_METHODS.SCM_WORKTREES_ENRICHMENT) return { success: true, entries: [] };
+            if (method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot: repoSnapshot() };
+            throw new Error(`Unexpected native Machine RPC: ${method}`);
+        });
+        const onChange = vi.fn();
+        const screen = await renderControl({
+            machines,
+            target: { machineId: 'machine-1', directory: '/repo/payments', workspaceRefId: 'ref-main' },
+            onChange,
+        });
+        await screen.pressByTestIdAsync('agent-input-machine-chip');
+        await screen.pressByTestIdAsync('workflow-editor-machine-option:machine-2');
+        await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith({ machineId: 'machine-2', directory: '' }));
+    });
+
     it('opens placement and edits its directory through mounted commands using the same project adapter', async () => {
         const { WorkflowProjectTargetControl } = await import('./WorkflowProjectTargetControl');
         const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
