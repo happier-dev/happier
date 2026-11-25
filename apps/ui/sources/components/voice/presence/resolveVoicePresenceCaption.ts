@@ -14,7 +14,8 @@ type CaptionFacts = Pick<VoiceAttemptControlProjection, 'live' | 'muted' | 'surf
     & Partial<Pick<VoiceAttemptControlProjection, 'statusCell' | 'canCommitInput' | 'awaitingSend' | 'failureMessage'>>;
 
 export function resolveVoiceListeningNotice(voice: CaptionFacts): string | null {
-    return voice.live && voice.surfaceState === 'listening' && !voice.muted ? voice.failureMessage ?? null : null;
+    return voice.live && (voice.surfaceState === 'listening' || voice.surfaceState === 'live') && !voice.muted
+        ? voice.failureMessage ?? null : null;
 }
 
 /**

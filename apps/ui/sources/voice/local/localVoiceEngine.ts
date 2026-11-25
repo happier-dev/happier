@@ -4,7 +4,7 @@ import { createAttemptGuard } from '@/utils/timing/attemptGuard';
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { presentVoiceUsageLimitMessage } from '@/voice/runtime/machine/voiceMachineErrorCopy';
-import { classifyVoiceMachineError, VoiceMachineFailure } from '@/voice/runtime/machine/voiceMachineError';
+import { classifyVoiceMachineError, createVoiceMachineError, VoiceMachineFailure } from '@/voice/runtime/machine/voiceMachineError';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
@@ -1249,11 +1249,16 @@ async function stopSttAndSend(
       await permissionResponse('');
       return;
     }
-    if (await maybeRearmHandsFreeCapture(admission, endpointDecision.followUp)) {
-      return;
+    if (!await maybeRearmHandsFreeCapture(admission, endpointDecision.followUp)) {
+      transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
+      await resumeNativeVoiceListening(admission, captureAttempt);
     }
-    transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
-    await resumeNativeVoiceListening(admission, captureAttempt);
+    if (endpointDecision.reason === 'empty_transcript' && isCaptureInputEnabled(admission, admission.captureAttempt)) {
+      voiceConversationRuntimeMachine.setLocalCaptureNotice({
+        controlSessionId: sessionId,
+        notice: createVoiceMachineError({ kind: 'provider_error', reason: endpointDecision.reason }),
+      });
+    }
     return;
   }
 
@@ -1597,8 +1602,10 @@ export async function toggleLocalVoiceTurn(
           const text = typeof assistantText === 'string' ? assistantText.trim() : '';
           if (text && !await activeNativePermissionInput?.waitForPendingReadout()) {
             const assistantEntryId = await persistLocalVoiceAgentAssistantText(controlSessionId, text);
+            // A spoken turn admitted during startup owns playback and its call phase.
             if (!isCaptureAttemptCurrent(admission, captureAttempt)
-              || !playbackController.isEpochCurrent(playbackEpoch)) return;
+              || !playbackController.isEpochCurrent(playbackEpoch)
+              || activeTurnAbortSessionId === controlSessionId) return;
             await speakAssistantText({
               sessionId,
               text,

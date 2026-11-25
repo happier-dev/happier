@@ -18,6 +18,7 @@ import {
   emitAudioStreamEvent,
   LOCAL_VOICE_STT_PACK_ID,
   localVoiceModelPackFilesystem,
+  localVoiceSpeechOutputBoundary,
   nativeMicRequestPermissionsAsync,
   getStorage,
   loadLocalVoiceEngineWithCompatState,
@@ -329,6 +330,55 @@ describe('local voice engine local neural STT (streaming)', () => {
     const { waitForLocalVoiceState } = await import('./localVoiceEngine.testHarness');
     await waitForLocalVoiceState(state => state.status === 'recording');
     expect(getLocalVoiceState().status, JSON.stringify(getLocalVoiceState())).toBe('recording');
+  });
+
+  it('rearms hands-free after an empty recognizer endpoint and clears the notice at End', async () => {
+    const storage = await getStorage();
+    const voice = storage.getState().settings.voice;
+    const config = readLocalDirectVoiceSettings(voice);
+    storage.__setState({ settings: { ...storage.getState().settings, voice: {
+      ...voice, providerId: 'local_direct',
+      providers: { ...voice.providers, local_direct: { schemaVersion: 1, config: {
+        ...config, handsFree: { ...config.handsFree, enabled: true },
+        stt: { ...config.stt, provider: 'local_neural',
+          localNeural: { assetId: LOCAL_VOICE_STT_PACK_ID, language: 'en' } },
+      } } },
+    } } });
+    const nativeVad = {
+      createVadDetector: vi.fn(async () => {}),
+      pushVadAudioFrame: vi.fn(async () => ({ speechStarted: false, speechEnded: false })),
+      cancelVadDetector: vi.fn(async () => {}),
+    };
+    Object.assign(localVoiceSpeechOutputBoundary.native, nativeVad);
+    const clock = vi.spyOn(Date, 'now');
+    const { getSharedVoicePcmCapture } = await import('@happier-dev/audio-stream-native');
+    const engine = await loadLocalVoiceEngineWithCompatState();
+    const { getVoiceConversationRuntimeSnapshot, useVoiceConversationRuntimeStore } =
+      await import('@/voice/runtime/machine/voiceConversationRuntimeStore');
+    try {
+      await engine.toggleLocalVoiceTurn('s1');
+      expect(nativeVad.createVadDetector).toHaveBeenCalled();
+      const capture = getSharedVoicePcmCapture();
+      if (!capture) throw new Error('Native voice capture unavailable');
+      const frame = { streamId: 'audio-stream-1', pcm16leBase64: 'AA==', sampleRate: 16000, channels: 1 };
+      const speechStartedAt = Date.now();
+      clock.mockReturnValue(speechStartedAt);
+      nativeVad.pushVadAudioFrame.mockResolvedValueOnce({ speechStarted: true, speechEnded: false });
+      emitAudioStreamEvent('audioFrame', frame);
+      await capture.waitForDrain();
+      clock.mockReturnValue(speechStartedAt + 1_000);
+      nativeVad.pushVadAudioFrame.mockResolvedValueOnce({ speechStarted: false, speechEnded: true });
+      emitAudioStreamEvent('audioFrame', frame);
+      await waitForTestEvent(useVoiceConversationRuntimeStore.subscribe, getVoiceConversationRuntimeSnapshot,
+        snapshot => snapshot.state === 'listening' && snapshot.error?.reason === 'empty_transcript');
+      expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
+      await engine.stopLocalVoiceSession();
+      expect(getVoiceConversationRuntimeSnapshot()).toMatchObject({ state: 'disconnected', error: null });
+    } finally {
+      clock.mockRestore();
+      await engine.stopLocalVoiceSession();
+      for (const method of Object.keys(nativeVad)) Reflect.deleteProperty(localVoiceSpeechOutputBoundary.native, method);
+    }
   });
 
   it.each([false, true])('retires the retained mic before a refused endpoint turn becomes disconnected (spoken replies: %s)', async (autoSpeakReplies) => {

@@ -77,10 +77,11 @@ export function createVoiceWelcomePolicy(args: Readonly<{
                 }
                 return assistantText;
             } catch (error) {
+                if (!isCurrent()) return null;
                 if (isVoiceAgentNotFoundError(error)) {
                     args.resetCachedHandle(sessionId);
                 }
-                return null;
+                throw error;
             }
         },
     };

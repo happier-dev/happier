@@ -68,6 +68,7 @@ export type VoiceConversationRuntimeMachine = Readonly<{
         retryAvailable?: boolean;
         recoveryNotice?: VoiceMachineError | null;
     }) => void;
+    setLocalCaptureNotice: (args: Readonly<{ controlSessionId: string; notice: VoiceMachineError }>) => void;
     setMuted: (args: MuteArgs) => void;
     setInUseVoice: (args: TransitionArgs & { inUseVoice: VoiceConversationInUseVoice | null }) => void;
     setPreparedInstructionsFor: (args: TransitionArgs & { preparedInstructionsFor: SessionAddress | null }) => void;
@@ -255,9 +256,9 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
                     ? (transition.attemptId ?? null)
                     : (transition.attemptId ?? activeAttemptId);
 
-            const endingAfterCaptureRecovery = transition.toState === 'ending'
-                && current.error?.reason === 'voice_capture_recovered';
-            const nextError = transition.clearError || endingAfterCaptureRecovery
+            const endingAfterCaptureNotice = transition.toState === 'ending'
+                && (current.error?.reason === 'voice_capture_recovered' || current.error?.reason === 'empty_transcript');
+            const nextError = transition.clearError || endingAfterCaptureNotice
                 ? null
                 : transition.error !== undefined
                     ? transition.error
@@ -458,6 +459,15 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
                     { ...current, reconnecting, error: recoveryNotice === undefined ? current.error : recoveryNotice },
                     nextRetryAvailable,
                 );
+            });
+        },
+        setLocalCaptureNotice: ({ controlSessionId, notice }) => {
+            patchSnapshot(current => {
+                if (current.controlSessionId !== controlSessionId || current.adapterId !== null
+                    || (current.state !== 'connected' && current.state !== 'listening') || current.error) {
+                    return current;
+                }
+                return { ...current, error: notice };
             });
         },
         setMuted: ({ controlSessionId, adapterId, attemptId, micMuted }) => {

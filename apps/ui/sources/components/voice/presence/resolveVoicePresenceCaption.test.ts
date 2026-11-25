@@ -41,6 +41,13 @@ describe('Voice presence captions for a bound Session target', () => {
     expect(resolveVoicePresenceCaption({ ...voice, muted: true })).toBe(t('voicePresence.captions.muted'));
   });
 
+  it('shows the no-speech notice ahead of the last words while push-to-talk is idle', () => {
+    const notice = t('voiceAssistant.dictationNoSpeech');
+    const voice = { ...base, surfaceState: 'live', failureMessage: notice } as const;
+    expect(resolveVoicePresenceCaption(voice)).toBe(notice);
+    expect(resolveVoiceCompactLine(voice, 'Earlier reply')).toEqual({ kind: 'caption', text: notice });
+  });
+
   it('tells the person to press Send only while the call is waiting for it, ahead of the last words', () => {
     const waiting = { ...base, surfaceState: 'listening', awaitingSend: true } as const;
     expect(resolveVoicePresenceCaption(waiting)).toBe(t('voicePresence.captions.listeningSend'));

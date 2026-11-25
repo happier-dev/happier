@@ -851,6 +851,87 @@ describe('local voice engine agent behavior', () => {
         }
     });
 
+    it.each([
+        { code: 'usage_limit', recovery: 'none' },
+        { code: 'agent_signed_out', recovery: 'connect_agent' },
+        { code: 'execution_run_failed', recovery: 'retry' },
+    ])('surfaces a $code refusal from the immediate greeting', async ({ code, recovery }) => {
+        const storage = await getStorage();
+        const voice = storage.getState().settings.voice;
+        const config = readLocalConversationVoiceSettings(voice);
+        storage.__setState({ settings: { ...storage.getState().settings, voice: {
+            ...voice, providerId: 'local_conversation',
+            welcome: { ...voice.welcome, enabled: true, mode: 'immediate' },
+            providers: { ...voice.providers, local_conversation: { schemaVersion: 1, config: {
+                ...config, conversationMode: 'agent',
+                tts: { ...config.tts, provider: 'device', autoSpeakReplies: true },
+            } } },
+        } } });
+        welcomeActionRpc.mockResolvedValueOnce(ExecutionRunActionResponseSchema.parse({
+            ok: false, errorCode: code, error: code,
+        }));
+        await localVoiceEngine.toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+        await vi.waitFor(() => expect(welcomeActionRpc).toHaveBeenCalled());
+
+        const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
+        const { deriveLocalVoiceSessionSnapshot } = await import('@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot');
+        await vi.waitFor(() => expect(deriveLocalVoiceSessionSnapshot(
+            'local_conversation', 'local', voiceConversationRuntimeMachine.getSnapshot(),
+        )).toMatchObject({ errorMessage: code, errorRecoveryAction: recovery, canStop: false }));
+    });
+
+    it('keeps the first spoken turn in charge when the greeting arrives after early speech', async () => {
+        const storage = await getStorage();
+        const voice = storage.getState().settings.voice;
+        const config = readLocalConversationVoiceSettings(voice);
+        storage.__setState({ settings: { ...storage.getState().settings, voice: {
+            ...voice, providerId: 'local_conversation',
+            welcome: { ...voice.welcome, enabled: true, mode: 'immediate' },
+            providers: { ...voice.providers, local_conversation: { schemaVersion: 1, config: {
+                ...config, conversationMode: 'agent', handsFree: { ...config.handsFree, enabled: false },
+                stt: { ...config.stt, provider: 'device' },
+                tts: { ...config.tts, provider: 'device', autoSpeakReplies: true },
+            } } },
+        } } });
+        speechRecStart.mockImplementation(() => { emitSpeechRecEvent('start'); emitSpeechRecEvent('audiostart'); });
+        speechRecStop.mockImplementation(() => emitSpeechRecEvent('end'));
+        const startup = holdNextAgentStartAtDaemon();
+        const replyEntered = createDeferred<void>();
+        const reply = createDeferred<ReturnType<typeof createTurnReadReply>>();
+        welcomeActionRpc.mockResolvedValueOnce({ ok: true, result: { assistantText: 'A late greeting.' } });
+        readTurnRpc.mockImplementationOnce(async () => { replyEntered.resolve(); return await reply.promise; });
+        let turn: Promise<void> | undefined;
+        try {
+            await localVoiceEngine.toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+            await startup.reached;
+            expect(localVoiceEngine.getLocalVoiceState().status).toBe('recording');
+            emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'Please say purple zebra', confidence: 0.9 }] });
+            turn = localVoiceEngine.commitLocalVoiceInput(VOICE_AGENT_GLOBAL_SESSION_ID);
+            await waitForLocalVoiceState(state => state.status === 'sending');
+            startup.reply.resolve(undefined);
+            await replyEntered.promise;
+            const { readStoredSessionMessages } = await import('@happier-dev/session-core/messages');
+            const conversationSessionId = welcomeActionRpc.mock.calls[0]?.[0].sessionId;
+            if (!conversationSessionId) throw new Error('Welcome conversation boundary missing');
+            await vi.waitFor(() => expect(readStoredSessionMessages(storage.getState(), conversationSessionId)
+                .some(message => message.kind === 'agent-text' && message.text === 'A late greeting.')).toBe(true));
+            await flushMicrotasks();
+
+            expect(startTurnRpc.mock.calls[0]?.[0].payload).toMatchObject({
+                message: expect.stringContaining('Please say purple zebra'),
+            });
+            expect(expoSpeechSpeak).not.toHaveBeenCalled();
+            expect(localVoiceEngine.getLocalVoiceState().status).toBe('sending');
+            reply.resolve(createTurnReadReply({ assistantText: 'Purple zebra.' }));
+            await turn;
+            expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual(['Purple zebra.']);
+        } finally {
+            startup.reply.resolve(undefined);
+            reply.resolve(createTurnReadReply({ assistantText: 'Purple zebra.' }));
+            await turn;
+        }
+    }, 180_000);
+
     it('retains a delayed welcome transcript without replacing newer Say playback', async () => {
         const storage = await getStorage();
         const local = readLocalConversationVoiceSettings(storage.getState().settings.voice);

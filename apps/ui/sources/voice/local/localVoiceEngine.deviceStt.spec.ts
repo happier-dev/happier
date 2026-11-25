@@ -81,6 +81,28 @@ describe('local voice engine device STT (experimental)', () => {
         }
     }, 180_000);
 
+    it('publishes a quiet no-speech notice after empty capture without ending the call', async () => {
+        await configureDuplexDeviceSpeech(false);
+        speechRecStop.mockImplementation(() => emitSpeechRecEvent('end'));
+        const engine = await loadLocalVoiceEngineWithCompatState();
+        const { createLocalDirectVoiceAdapter } = await import('@/voice/adapters/localDirect/localDirectAdapter');
+        const adapter = createLocalDirectVoiceAdapter();
+        try {
+            await engine.toggleLocalVoiceTurn('s1');
+            await engine.commitLocalVoiceInput('s1');
+            expect(adapter.getSnapshot()).toMatchObject({
+                status: 'connected', canStop: true, errorMessage: 'empty_transcript',
+                errorPresentation: 'notice', errorRecoveryAction: 'none',
+            });
+            expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
+            await engine.toggleLocalVoiceTurn('s1');
+            expect(adapter.getSnapshot()).toMatchObject({ status: 'connected', mode: 'listening' });
+            expect(adapter.getSnapshot().errorMessage).toBeUndefined();
+        } finally {
+            await engine.stopLocalVoiceSession();
+        }
+    }, 180_000);
+
     it('publishes a push-to-talk partial to the existing transcript readout before Send', async () => {
         await configureDuplexDeviceSpeech(false);
         const engine = await loadLocalVoiceEngineWithCompatState();
