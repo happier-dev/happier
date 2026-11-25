@@ -936,6 +936,7 @@ export function TeamSetupPageView(
           {repositories.map((source) => (
             <TeamSetupRepositoryRow
               key={source.id}
+              navigationContextKey={arriving ? undefined : props.navigationContextKey}
               source={source}
               machineId={machineId}
               homeDir={props.homeDir}
@@ -1050,6 +1051,7 @@ function readRequirementsForSource(entry: { revision: number; read: SourceSetupR
 
 const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
   props: Readonly<{
+    navigationContextKey?: string;
     source: ProjectSourceV1;
     machineId: string | null;
     homeDir: string | null;
@@ -1101,6 +1103,19 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
     ? { serverId: checkout.serverId, workspaceId: checkout.id, rootPath: checkout.rootPath } : null);
   const bindingsSourceId = projectResult?.facts?.source?.sourceId
     ?? (bindingsProject?.workspaceId === checkout?.id ? checkout?.source?.sourceId : undefined);
+  const requiredNames = props.included && props.requirements?.status === 'ready' ? props.requirements.names : [];
+  const bindingsHref = requiredNames.length > 0 && bindingsProject ? buildProjectRouteHref({
+    workspaceRefId: bindingsProject.workspaceId,
+    serverId: bindingsProject.serverId,
+    segment: 'scripts',
+    activeRootPath: bindingsProject.rootPath,
+    defaultRootPath: bindingsProject.rootPath,
+    // Folder Open keeps the checkout as it is. The Project owner reviews its Source setup before use.
+    ...(bindingsSourceId !== props.source.id
+      ? { routeParams: { [PROJECT_USE_SHARED_SETUP_PARAM]: props.source.id } } : {}),
+  }) : null;
+  const openBindings = bindingsHref ? () => router.push(bindingsHref) : undefined;
+  const bindingTitle = t('projects.scripts.environment.title');
   const destination = existingPath ? null : props.machineId
     ? suggestProjectOpenDestination({
         machineId: props.machineId,
@@ -1111,6 +1126,12 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
     : '';
   const nameWithOwner =
     props.source.repository?.repository.nameWithOwner ?? props.source.name;
+  useCurrentUiContextLocalCommands(openBindings && props.navigationContextKey ? [{
+    key: `team-setup-bindings:${props.source.id}`,
+    title: bindingTitle,
+    description: nameWithOwner,
+    invoke: openBindings,
+  }] : [], { contextKey: JSON.stringify([props.navigationContextKey, bindingsHref]) });
   return (
     <>
     <Item
@@ -1151,22 +1172,13 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
         )
       }
     />
-    {props.included && props.requirements?.status === 'ready' && props.requirements.names.length > 0 ? (
+    {requiredNames.length > 0 ? (
       <Item
         testID={`team-setup-repository-keys:${props.source.id}`}
-        title={t('projects.scripts.environment.title')}
-        subtitle={props.requirements.names.join(', ')}
-        onPress={bindingsProject ? () => router.push(buildProjectRouteHref({
-          workspaceRefId: bindingsProject.workspaceId,
-          serverId: bindingsProject.serverId,
-          segment: 'scripts',
-          activeRootPath: bindingsProject.rootPath,
-          defaultRootPath: bindingsProject.rootPath,
-          // Folder Open keeps the checkout as it is. The Project owner reviews its Source setup before use.
-          ...(bindingsSourceId !== props.source.id
-            ? { routeParams: { [PROJECT_USE_SHARED_SETUP_PARAM]: props.source.id } } : {}),
-        })) : undefined}
-        showChevron={!!bindingsProject}
+        title={bindingTitle}
+        subtitle={requiredNames.join(', ')}
+        onPress={openBindings}
+        showChevron={!!openBindings}
       />
     ) : null}
     {props.included && props.requirements?.status === 'failed' && props.onRetryRequirements ? (

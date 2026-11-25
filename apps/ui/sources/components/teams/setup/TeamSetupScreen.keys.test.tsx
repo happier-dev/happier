@@ -24,6 +24,8 @@ import {
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createMachineAdministrationTargetSelectionFixture } from '@/dev/testkit/fixtures/machineAdministrationTargetSelectionFixtures';
+import { teamProjectSourceFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { PROJECT_USE_SHARED_SETUP_PARAM } from '@/components/projects/projectSetup/sharedSetupRoute';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -99,6 +101,65 @@ it('offers exact Setup recovery and lets an agent open the same retained operati
     ACTION_ID_FAMILIES_V1.current_ui_context[1], { commandId: command!.id }, { surface: 'agent' },
   )).toMatchObject({ ok: true });
   expect(onOpenOperation.mock.calls).toEqual([['setup-operation'], ['setup-operation']]);
+});
+
+it('lets an agent open the same Source binding review on the adopted checkout', async () => {
+  const serverId = await homes.addHome({ name: 'Setup Home', serverUrl: 'https://setup-bindings.example.test',
+    serverIdentityId: 'srv_setup_bindings', accountId: 'member', currentAccount: true, teamsEnabled: true });
+  const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'member' };
+  storage.getState().activateProfileScope(scope);
+  publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+  const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+  const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+  const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+  const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+  const source = teamProjectSourceFixture({ id: 'acme-web', name: 'Web', nameWithOwner: 'acme/web', teamId: 'acme' });
+  const rootPath = '/home/mara/code/acme-web-adopted';
+  const screen = await renderMountedCurrentUiContext(<TeamSetupPageView
+    navigationContextKey="setup-bindings"
+    header={null} teamName="Acme" selection={createMachineAdministrationTargetSelectionFixture()}
+    machineId="devbox" machineLabel="Mac" homeDir={null}
+    run={{ kind: 'idle' }} canRun onRun={vi.fn()} onOpenOperation={vi.fn()}
+    sources={{ loading: false, failure: null, onRetry: vi.fn() }}
+    hasPreset={false} machinePlan={null} repositories={[source]} repositoryFreeSources={[]}
+    excluded={new Set()} onToggleRepository={vi.fn()} sharedKeys={[]} keyDisplayNames={{}}
+    firstTask={null} presetChange={null}
+    requirements={{ entries: new Map([[source.id, {
+      revision: source.revision, read: { status: 'ready', names: ['DATABASE_URL'] },
+    }]]), retry: vi.fn() }}
+    clones={{ onFind: null, searching: false, folder: '/home/mara/code',
+      adopted: new Map([[source.id, rootPath]]), failure: null, noneFound: false }}
+    batch={{
+      selection: {
+        team: { serverId: scope.serverId, teamId: 'acme' },
+        target: { serverId: scope.serverId, homeId: 'srv_setup_bindings', machineId: 'devbox' },
+        lifetime: { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
+        repositories: [{ repositoryId: source.id, source, requestId: 'open-adopted' }],
+      },
+      dispatched: new Set([source.id]), running: false, completed: true,
+      settlement: { completed: true, machine: null, machineSettlement: null, repositories: [{
+        id: source.id, result: { ok: true, result: {
+          kind: 'opened', setup: 'notRequired', directory: rootPath,
+          workspace: { serverId: scope.serverId, machineId: 'devbox', workspaceId: 'adopted-web', rootPath },
+        } },
+      }] },
+    }}
+  />);
+  await screen.pressByTestIdAsync(`team-setup-repository-keys:${source.id}`);
+  const target = navigation.push.mock.lastCall?.[0];
+  const href = new URL(String(target), 'https://app.example.test');
+  expect(href.pathname).toBe('/projects/adopted-web/scripts');
+  expect(href.searchParams.get('serverId')).toBe(scope.serverId);
+  expect(href.searchParams.get(PROJECT_USE_SHARED_SETUP_PARAM)).toBe(source.id);
+  navigation.push.mockClear();
+
+  const reader = readCurrentUiContextActionReader({ surface: 'agent' });
+  const command = reader?.readCurrentUiContext()?.commands.find(item => item.title === t('projects.scripts.environment.title'));
+  expect(command).toBeDefined();
+  expect(await createDefaultActionExecutor().execute(
+    ACTION_ID_FAMILIES_V1.current_ui_context[1], { commandId: command!.id }, { surface: 'agent' },
+  )).toMatchObject({ ok: true });
+  expect(navigation.push).toHaveBeenCalledExactlyOnceWith(target);
 });
 
 it.each([false, true])('lists shared keys and mirrors any Source link to the agent (Source: %s)', async (includeSource) => {
