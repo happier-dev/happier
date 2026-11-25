@@ -3430,7 +3430,11 @@ describe('WorkflowEditorHostScreen composition', () => {
             definition: WorkflowDefinitionV1Schema.parse(request.definition), metadata: request.metadata, access: 'owner',
             revision: { headerVersion: 1, bodyVersion: 1 } }));
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Notify on completion', defaults: definition.defaults, blocks: definition.blocks }));
+        const draft = readBodyProps()!.draftStore.get();
+        const { draft: withoutPlaceholder } = removeWorkflowBlock(draft, draft.blocks[0]!.id);
+        await act(async () => readBodyProps()!.onChange({
+            ...withoutPlaceholder, name: 'Notify on completion', defaults: definition.defaults, blocks: definition.blocks,
+        }));
         await act(async () => readBodyProps()!.onSave?.());
         expect(definitionActions.create).not.toHaveBeenCalled();
         expect(readBodyProps()!.saveStatus?.kind).not.toBe('saved');
@@ -5290,7 +5294,7 @@ describe('WorkflowEditorHostScreen composition', () => {
                 },
                 blocks: [{
                     kind: 'step',
-                    id: 'analyze',
+                    id: draft.blocks[0]!.id,
                     document: { text: 'Analyze the repository', references: [], attachments: [] },
                     input: [],
                     result: { kind: 'text' },
@@ -5341,7 +5345,7 @@ describe('WorkflowEditorHostScreen composition', () => {
                 ...draft,
                 name: 'Nightly release',
                 defaults: { ...draft.defaults, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
-                blocks: [{ kind: 'step', id: 'analyze', document: { text: 'Prepare the release', references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
+                blocks: [{ kind: 'step', id: draft.blocks[0]!.id, document: { text: 'Prepare the release', references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
             } as never));
             // The first trigger's set runs on the editor's Where.
             await act(async () => readBodyProps()?.onChangeProjectTarget?.({ machineId: 'machine-1', directory: '/repo' } as never));
@@ -5456,7 +5460,7 @@ describe('WorkflowEditorHostScreen composition', () => {
                 },
                 blocks: [{
                     kind: 'step',
-                    id: 'analyze',
+                    id: draft.blocks[0]!.id,
                     document: { text: 'Analyze the repository', references: [], attachments: [] },
                     input: [],
                     result: { kind: 'text' },
@@ -5570,7 +5574,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             },
             blocks: [{
                 kind: 'step',
-                id: 'analyze',
+                id: draft.blocks[0]!.id,
                 document: { text: 'Analyze the repository', references: [], attachments: [] },
                 input: [],
                 result: { kind: 'text' },
@@ -5621,7 +5625,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             },
             blocks: [{
                 kind: 'step' as const,
-                id: 'analyze',
+                id: draft.blocks[0]!.id,
                 document: { text: 'Analyze the repository', references: [], attachments: [] },
                 input: [],
                 result: { kind: 'text' as const },
