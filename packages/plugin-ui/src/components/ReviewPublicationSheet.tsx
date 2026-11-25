@@ -3,7 +3,6 @@ import type { ReviewPublicationSummaryPartsV1 } from '@happier-dev/plugin-sdk/re
 
 import type { ReviewCommentProposalWithBodyV1 } from '../hostApi/reviewCommentProposals.public.js';
 import { Button } from './Button.js';
-import { Checkbox } from './Checkbox.js';
 import { Heading } from './Foundation.js';
 import { Field, Select, Toggle } from './Form.js';
 import { Item } from './List.js';
@@ -13,9 +12,12 @@ import {
   type PluginTranslate,
 } from './PluginUiProvider.js';
 import { ReviewPublicationSummaryPreview } from './ReviewPublicationSummaryPreview.js';
+import { ReviewPublicationFindings } from './ReviewPublicationFindings.js';
 import { SettingRow } from './Setting.js';
 import { Card } from './Surface.js';
 import { Text } from './Text.js';
+
+export { reviewPublicationFindingTitle } from './ReviewPublicationFindings.js';
 
 export type ReviewPublicationSheetProps = Readonly<{
   /** The forge's name as the person knows it ("GitHub", "GitLab"). */
@@ -177,44 +179,6 @@ export function useReviewPublicationSelection(
   return [selectedIds, setSelectedIds];
 }
 
-function severityLabel(
-  text: PluginTranslate,
-  proposal: ReviewCommentProposalWithBodyV1,
-): string | null {
-  const severity = proposal.finding?.severity;
-  if (severity === undefined) return null;
-  // The published summary's three groups (blockers, nits, and everything else as "Should fix").
-  if (severity === 'blocker') return text(`${KEY}.severity.blocker`, 'Blocker');
-  if (severity === 'nit') return text(`${KEY}.severity.nit`, 'Nit');
-  return text(`${KEY}.severity.shouldFix`, 'Should fix');
-}
-
-function locationLabel(
-  proposal: ReviewCommentProposalWithBodyV1,
-): string | null {
-  const anchor = proposal.anchor;
-  const path =
-    proposal.finding?.filePath ??
-    ('filePath' in anchor ? anchor.filePath : null);
-  if (!path) return null;
-  const name = path.slice(path.lastIndexOf('/') + 1);
-  const line =
-    proposal.finding?.startLine ??
-    (anchor.kind === 'line'
-      ? anchor.line
-      : anchor.kind === 'range'
-        ? anchor.startLine
-        : null);
-  return line ? `${name}:${line}` : name;
-}
-
-/** A proposed finding's one-line name: its finding's title, or the first line of its comment. */
-export function reviewPublicationFindingTitle(proposal: ReviewCommentProposalWithBodyV1): string {
-  return (
-    proposal.finding?.title ?? proposal.body.split('\n', 1)[0] ?? proposal.body
-  );
-}
-
 /**
  * The Publish sheet's body, shared by every forge (lab ideas-1118-reviews scene 4 "Publish sheet"): review type,
  * summary, the findings to post (the ones left out stay listed as not posted), the folded Walkthrough, and the
@@ -224,7 +188,6 @@ export function ReviewPublicationSheet(
   props: ReviewPublicationSheetProps,
 ): ReactElement {
   const text = usePluginTranslation();
-  const selected = new Set(props.selectedIds);
   const walkthrough = props.walkthrough;
   return (
     <Stack gap="medium" testID={props.testID}>
@@ -246,45 +209,8 @@ export function ReviewPublicationSheet(
       </Field>
       <Field label={text(`${KEY}.summary`, 'Summary')}>{props.summary}</Field>
       {props.notices}
-      {props.proposals.length > 0 ? (
-        <Field
-          label={text(`${KEY}.findings`, 'Findings')}
-          description={text(`${KEY}.findingsCount`, '{selected} of {total} · ignored ones are never posted', {
-            selected: props.selectedIds.length,
-            total: props.proposals.length,
-          })}
-        >
-        <Card padding="none">
-          {props.proposals.map((proposal, index) => {
-            const posted = selected.has(proposal.id);
-            const facts = [
-              severityLabel(text, proposal),
-              locationLabel(proposal),
-              posted ? text(`${KEY}.inlineComment`, 'inline comment') : text(`${KEY}.notPosted`, 'not posted'),
-            ];
-            return (
-              <Item
-                key={proposal.id}
-                testID={`review-publication-finding-${proposal.id}`}
-                title={reviewPublicationFindingTitle(proposal)}
-                subtitle={facts.filter((fact): fact is string => fact !== null).join(' · ')}
-                titleNumberOfLines={1}
-                showDivider={index < props.proposals.length - 1}
-                tone={posted ? undefined : 'secondary'}
-                icon={<Checkbox
-                  checked={posted}
-                  accessibilityLabel={reviewPublicationFindingTitle(proposal)}
-                  onChange={(next) => props.onSelectedIdsChange(next
-                    ? props.proposals.filter((candidate) => candidate.id === proposal.id || selected.has(candidate.id))
-                      .map((candidate) => candidate.id)
-                    : props.selectedIds.filter((id) => id !== proposal.id))}
-                />}
-              />
-            );
-          })}
-        </Card>
-        </Field>
-      ) : null}
+      <ReviewPublicationFindings proposals={props.proposals} selectedIds={props.selectedIds}
+        onSelectedIdsChange={props.onSelectedIdsChange} />
       {walkthrough ? (
         <SettingRow
           title={text(`${KEY}.includeWalkthrough`, 'Include the walkthrough')}
