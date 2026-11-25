@@ -203,15 +203,14 @@ describe('Connected Account runtime declaration ownership', () => {
             '@happier-dev/protocol',
             'PluginConnectedAccountMaterializationRequest',
         )).toBeUndefined();
-        for (const name of [
-            'PluginConnectedAccountAuthenticationAttempt',
-            'PluginConnectedAccountReadContext',
-            'PluginConnectedAccountRuntimeConfigurationTarget',
-        ]) {
-            const typeText = exportedTypeText(runtimeSource, name);
-            expect(typeText, name).toContain('ConnectedAccountRef');
-            expect(typeText, name).not.toContain('PluginConnectedAccountRef');
-        }
+        const authenticationOwner = '@happier-dev/cli-common/connectedAccounts/authenticationTypes';
+        expect(reexportedName(runtimeSource, authenticationOwner, 'PluginConnectedAccountAuthenticationAttempt'))
+            .toBe('ConnectedAccountAuthenticationAttempt');
+        expect(reexportedName(runtimeSource, authenticationOwner, 'PluginConnectedAccountRuntimeConfigurationTarget'))
+            .toBe('ConnectedAccountRuntimeConfigurationTarget');
+        const readContext = exportedTypeText(runtimeSource, 'PluginConnectedAccountReadContext');
+        expect(readContext).toContain('ConnectedAccountRef');
+        expect(readContext).not.toContain('PluginConnectedAccountRef');
         expect(exportedInterfaceText(
             runtimeSource,
             'PluginConnectedAccountRegistrationApi',
