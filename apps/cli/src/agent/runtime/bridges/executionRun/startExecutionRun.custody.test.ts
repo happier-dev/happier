@@ -69,7 +69,7 @@ describe('execution run start transcript custody', () => {
           runs, controllers, budgetRegistry: null, parentProvider: 'daemon.executionRuns', sendAcp: async () => {},
           enqueueMarkerWrite: async (_id, write) => { await write(); }, terminalMarkerWritePromises: new Map(),
         }); },
-      })).resolves.toEqual({ ok: true });
+      })).resolves.toEqual({ ok: true, status: 'cancelled' });
       const stopped = runs.get(runId);
       expect(stopped?.status).toBe('cancelled');
       await expect(observeWorkflowDetachedExecutionRunInput({ runId, localInputId,

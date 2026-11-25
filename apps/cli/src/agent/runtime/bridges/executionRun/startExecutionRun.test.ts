@@ -887,7 +887,7 @@ describe('startExecutionRun', () => {
       expect(runs.get(started.runId)?.status).toBe('running');
       expect(await stopExecutionRun({ runId: started.runId, runs, controllers, getNowMs: common.getNowMs, voiceAgentManager,
         finishRun: async (id, next) => { runs.set(id, { ...runs.get(id)!, ...next }); },
-        onPublicStateUpdated: common.onPublicStateUpdated })).toEqual({ ok: true });
+        onPublicStateUpdated: common.onPublicStateUpdated })).toEqual({ ok: true, status: 'cancelled' });
       expect(publicStates.at(-1)?.status).toBe('cancelled');
       if (retentionPolicy === 'resumable') {
         expect(await resumeBackendControllerForResumableRun({ ...common, runId: started.runId,
@@ -2468,7 +2468,7 @@ describe('startExecutionRun', () => {
         voiceAgentManager,
         getNowMs: () => 1_700_000_000_001,
         finishRun,
-      })).resolves.toEqual({ ok: true });
+      })).resolves.toEqual({ ok: true, status: 'cancelled' });
       resolveProvision();
 
       await vi.waitFor(() => expect(cancel).toHaveBeenCalledWith('late_child_session'));
@@ -2544,7 +2544,7 @@ describe('startExecutionRun', () => {
         voiceAgentManager,
         getNowMs: () => 1_700_000_000_001,
         finishRun,
-      })).resolves.toEqual({ ok: true });
+      })).resolves.toEqual({ ok: true, status: 'cancelled' });
       await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1));
       expect(runs.get(runId)?.status).toBe('cancelled');
 
@@ -2627,7 +2627,7 @@ describe('startExecutionRun', () => {
         voiceAgentManager,
         getNowMs: () => 1_700_000_000_001,
         finishRun,
-      })).resolves.toEqual({ ok: true });
+      })).resolves.toEqual({ ok: true, status: 'cancelled' });
       await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1));
       expect(runs.get(runId)?.status).toBe('cancelled');
 
@@ -2704,7 +2704,7 @@ describe('startExecutionRun', () => {
         voiceAgentManager,
         getNowMs: () => 1_700_000_000_001,
         finishRun,
-      })).resolves.toEqual({ ok: true });
+      })).resolves.toEqual({ ok: true, status: 'cancelled' });
       resolveProvision();
 
       await expect(startPromise).resolves.toMatchObject({ runId });
@@ -2791,7 +2791,7 @@ describe('startExecutionRun', () => {
       resolveResumeSupport();
       await startPromise;
 
-      expect(stopResult).toEqual({ ok: true });
+      expect(stopResult).toEqual({ ok: true, status: 'cancelled' });
       expect(executeBoundedRun).not.toHaveBeenCalled();
       expect(dispose).toHaveBeenCalled();
       expect(runs.get(runId)?.status).toBe('cancelled');
@@ -2866,7 +2866,7 @@ describe('startExecutionRun', () => {
       resolveTranscript();
       await startPromise;
 
-      expect(stopResult).toEqual({ ok: true });
+      expect(stopResult).toEqual({ ok: true, status: 'cancelled' });
       expect(createRuntime).not.toHaveBeenCalled();
       expect(runs.get(runId)?.status).toBe('cancelled');
     } finally {
