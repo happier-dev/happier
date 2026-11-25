@@ -461,8 +461,9 @@ export function HappierPressable({
       : accessibilityRole === 'menuitemradio'
         ? 'radio'
         : accessibilityRole;
+  const webAccessibilityRole = webRole ?? accessibilityRole;
   const platformRoleProps = Platform.OS === 'web'
-    ? { role: webRole ?? accessibilityRole }
+    ? { role: webAccessibilityRole }
     : { accessibilityRole: nativeAccessibilityRole };
   const semanticSelected = accessibilityRole === 'option' || accessibilityRole === 'tab' || webRole === 'treeitem'
     ? selected === true
@@ -541,7 +542,7 @@ export function HappierPressable({
       aria-busy={isBusy || undefined}
       aria-disabled={isDisabled || undefined}
       aria-selected={Platform.OS === 'web' && current !== undefined ? undefined : semanticSelected}
-      aria-pressed={accessibilityRole === 'button' ? selected : undefined}
+      aria-pressed={webAccessibilityRole === 'button' ? selected : undefined}
       aria-current={current}
       aria-level={accessibilityLevel}
       aria-posinset={accessibilityPositionInSet}

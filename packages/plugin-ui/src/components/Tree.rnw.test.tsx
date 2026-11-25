@@ -286,6 +286,8 @@ describe('Tree', () => {
     expect(row('docs').getAttribute('role')).toBe('treeitem');
     expect(row('docs').getAttribute('aria-level')).toBe('1');
     expect(row('docs').getAttribute('aria-expanded')).toBe('true');
+    expect(row('docs').getAttribute('aria-selected')).toBe('false');
+    expect(row('docs').hasAttribute('aria-pressed')).toBe(false);
     expect(row('docs/guide').getAttribute('aria-level')).toBe('2');
     expect(row('docs/guide').hasAttribute('aria-expanded')).toBe(false);
     expect(row('src').getAttribute('aria-expanded')).toBe('false');
