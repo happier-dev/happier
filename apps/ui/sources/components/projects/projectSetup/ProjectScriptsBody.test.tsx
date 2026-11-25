@@ -3206,11 +3206,6 @@ describe('Project setup layers on the Scripts page (plan A L6)', () => {
       && (call.input as { reviewSharedSetup?: unknown }).reviewSharedSetup !== undefined);
     expect(reviewReads()).toHaveLength(0);
     await act(async () => { await screen.pressByTestIdAsync('scripts.pendingShared.review'); });
-    // Use still takes the Source's content (A §3 override-only), so the review says it changes nothing that runs here.
-    await vi.waitFor(() => {
-      expect(textOf(review, 'project-shared-setup-update.unchangedHere')).toContain('projects.scripts.sharedUpdate.unchangedHere');
-    });
-    expect(review.findByTestId('project-shared-setup-update.changes')).toBeNull();
     expect(showModal).toHaveBeenCalledWith(expect.objectContaining({
       props: expect.objectContaining({ sourceId: 'src-acme-web', sourceName: 'Acme web', pending: true }),
       chrome: expect.objectContaining({ title: 'projects.scripts.sharedUpdate.titlePending' }) }));
@@ -3220,6 +3215,11 @@ describe('Project setup layers on the Scripts page (plan A L6)', () => {
       expect(review.findByTestId('project-shared-setup-update.use'), review.getTextContent()).not.toBeNull();
     });
     expect(review.findByTestId('project-shared-setup-update.current')).toBeNull();
+    // Use still takes the Source's content (A §3 override-only), so the review says it changes nothing that runs here.
+    await vi.waitFor(() => {
+      expect(textOf(review, 'project-shared-setup-update.unchangedHere')).toContain('projects.scripts.sharedUpdate.unchangedHere');
+    });
+    expect(review.findByTestId('project-shared-setup-update.changes')).toBeNull();
     expect(reviewReads()).toHaveLength(1);
   });
 });

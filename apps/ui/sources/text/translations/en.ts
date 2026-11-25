@@ -22239,7 +22239,6 @@ const enProjects = {
       shared: ({ source }: { source: string }) => `Setup shared with ${source}`,
       artifactTitle: ({ source }: { source: string }) => `${source} setup`,
     },
-      unchangedHere: ({ name }: { name: string }) => `${name} doesn’t change what runs here: the repository or your own changes already set everything it does.`,
     sharedUpdate: {
       title: "Shared setup changes",
       check: "Check shared setup for changes",
@@ -22249,6 +22248,7 @@ const enProjects = {
       detach: "Stop using the shared setup",
       detachFailed: "Couldn’t stop using the shared setup. Try again.",
       current: ({ name }: { name: string }) => `You’re using the latest ${name}.`,
+      unchangedHere: ({ name }: { name: string }) => `${name} doesn’t change what runs here: the repository or your own changes already set everything it does.`,
       titleChanged: "Setup changed",
       usingReviewed: "you’re using the copy you reviewed",
       after: "After the change",

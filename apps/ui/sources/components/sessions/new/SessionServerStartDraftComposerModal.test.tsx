@@ -540,11 +540,11 @@ describe('mounted Session server-start recipe composer', () => {
                 node.props.testID === 'server-start-draft-control-approvalProfileId')).toBe(true));
             const picker = mounted.screen.findAllByType(DropdownMenu).find(node =>
                 node.props.testID === 'server-start-draft-control-approvalProfileId')!;
-            const { selectedId, items }: DropdownMenuProps = picker.props;
-            expect(selectedId).toBe(approvalProfileId === undefined ? APPROVAL_PROFILE_INHERIT_OPTION_ID
+            const items: DropdownMenuProps['items'] = picker.props.items;
+            expect(picker.props.selectedId).toBe(approvalProfileId === undefined ? APPROVAL_PROFILE_INHERIT_OPTION_ID
                 : approvalProfileId === null ? APPROVAL_PROFILE_ACCOUNT_OPTION_ID : approvalProfileId);
             if (approvalProfileId === undefined || approvalProfileId === null) {
-                expect(items?.find(item => item.id === selectedId)?.title).toBe(
+                expect(items?.find(item => item.id === picker.props.selectedId)?.title).toBe(
                     approvalProfileId === undefined ? 'common.default' : 'workflows.triggers.guided.profile.accountSettings',
                 );
             }
