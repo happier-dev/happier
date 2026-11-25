@@ -11,17 +11,32 @@ import {
     PluginCollectionQueryResultV1Schema,
 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { buildTodoSessionLinkKeyV1 } from '@happier-dev/protocol/todos/todoSessionLinkV1';
+import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { answerSourceDeclaredAccountPluginForHome } from '@/dev/testkit/harness/portableAccountPlugin';
-import { createSessionFixture, renderScreen, standardCleanup, withPopoverWebGlobals } from '@/dev/testkit';
+import { createDeferred, createMachineFixture, createSessionFixture, renderScreen, standardCleanup, withPopoverWebGlobals } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { PluginProjectionV2Schema, type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PLUGIN_MANIFEST } from '@happier-dev/plugins-triage/manifest';
 
 const packaged = vi.hoisted(() => ({ artifacts: [] as unknown[], declarations: [] as unknown[],
     files: new Map<number, Uint8Array>(), reads: 0 }));
+const daemon = vi.hoisted(() => ({ projection: null as PluginProjectionV2 | null }));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    return createServerScopedMachineRpcBoundaryMock(async ({ method }) => {
+        if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+            return { protocolVersion: 1, projection: daemon.projection };
+        }
+        throw new Error(`Unexpected Triage fixture RPC: ${method}`);
+    });
+});
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
     Platform: { OS: 'web' },
 }));
@@ -45,7 +60,7 @@ installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 afterEach(async () => { await standardCleanup(); await homes.reset(); });
 
-it('exposes the linked Task in a fresh Session header before a Triage page has been visited', async () => {
+it.each([false, true])('exposes the linked Task on the direct Session route (different Machine version: %s)', async (versionSkew) => {
     const { prepareAuthenticationInventory } = await import('@/dev/testkit/fixtures/connectedAccountAuthentication');
     const { projectBundledPluginUiDeclaration, projectBundledPluginUiFirstPaintDeclaration } =
         await import('../../../../../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs');
@@ -82,6 +97,7 @@ it('exposes the linked Task in a fresh Session header before a Triage page has b
     const { resolveSessionViewHeaderProps } = await import('./resolveSessionViewHeaderProps');
     const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
     const { resolvePluginUiClientWorkItemsRegistration } = await import('@/components/plugins/reactNative/clientExecutableContributions');
+    const { usePluginUiProjectionCurrentness } = await import('@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness');
 
     await loadSyncSingletonForTests();
     const disposeLoader = await installRealActionExecutorModuleLoader();
@@ -91,8 +107,41 @@ it('exposes the linked Task in a fresh Session header before a Triage page has b
     const sessionId = 'wait-question-session';
     const taskId = 'linked-task';
     const title = 'Check the linked task';
-    const serverId = await homes.addHome({ name: 'Header Home', serverUrl, accountId, currentAccount: true });
-    answerSourceDeclaredAccountPluginForHome(homes, serverId, PLUGIN_MANIFEST.id);
+    const serverIdentityId = 'srv_header_task';
+    const serverId = await homes.addHome({ name: 'Header Home', serverUrl, accountId, currentAccount: true, serverIdentityId });
+    const machineId = 'linked-session-machine';
+    const machineVersion = '2.0.0';
+    const sourceCustody = { kind: 'development', registeredRootId: '/fixture/triage' } as const;
+    const machine = versionSkew ? createMachineFixture({
+        id: machineId, active: true, activeAt: Date.now(), daemonStateVersion: 1,
+    }) : null;
+    const sourceId = `${PLUGIN_MANIFEST.id}/${workItems.id}`;
+    daemon.projection = machine ? PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+        installedPackagesById: { [PLUGIN_MANIFEST.id]: { id: PLUGIN_MANIFEST.id, displayName: 'Triage',
+            version: machineVersion, enabled: true, occurrenceId: 'triage-machine', sourceCustody,
+            source: { kind: 'localPath', locator: '/fixture/triage' },
+            executionOrigin: { serverIdentityId, sourceRef: { machineId, pluginId: PLUGIN_MANIFEST.id, sourceCustody } },
+        } }, familiesById: { workItems: { family: 'workItems', entriesById: { [sourceId]: {
+            id: sourceId, pluginId: PLUGIN_MANIFEST.id, pluginVersion: machineVersion,
+            occurrenceId: 'triage-machine', definition: workItems,
+        } } } },
+    }) : null;
+    if (machine) homes.answer(serverId, '/v1/machines', { body: [createPlainMachineRowFixture({ id: machineId, accountId, machine })] });
+    const intentsReady = createDeferred<void>();
+    const intentsRoute = `POST ${PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']}`;
+    answerSourceDeclaredAccountPluginForHome({
+        answer(id, route, response) {
+            if (!machine || route !== intentsRoute) {
+                homes.answer(id, route, response);
+                return;
+            }
+            homes.answer(id, route, { ...response, async select(input, request) {
+                // A retained Machine catalog can be available before the Account's release read.
+                await intentsReady.promise;
+                return response.select?.(input, request);
+            } });
+        },
+    }, serverId, PLUGIN_MANIFEST.id);
     // The fixture Home has no imported corpus rows. The real Triage reader still
     // lists native Tasks and their links through the host's Account Actions.
     const contracts = normalizePluginAccountCollectionContractsV1({
@@ -113,7 +162,8 @@ it('exposes the linked Task in a fresh Session header before a Triage page has b
             return { body: PluginCollectionQueryResultV1Schema.parse({ rows: [], changeCursor: 0 }) };
         },
     });
-    const features = createRootLayoutFeaturesResponse({ features: {
+    const features = createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId } }, features: {
+        machines: { enabled: true },
         plugins: { enabled: true, ui: { enabled: true, hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } } },
     } });
     homes.answer(serverId, '/v1/features', { body: features });
@@ -132,9 +182,24 @@ it('exposes the linked Task in a fresh Session header before a Triage page has b
         const credentials = await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId });
         if (!credentials) throw new Error('Expected fixture Home credentials');
         await restoreConnectionToActiveServer(credentials);
-        await getSyncSingleton().refreshPluginAccountAvailability();
+        const refreshAvailability = getSyncSingleton().refreshPluginAccountAvailability();
+        if (!machine) await refreshAvailability;
         const account = captureActiveServerAccountScopeLifetime();
         if (!account) throw new Error('Expected active fixture Account');
+        if (machine) {
+            const { storage } = await import('@/sync/domains/state/storageStore');
+            storage.setState({ endpointStatus: 'online' });
+            await publishMachineInventoryForTest(account.scope, [machine]);
+            let catalog: ReturnType<typeof usePluginUiProjectionCurrentness> | undefined;
+            function LoadMachineCatalog() { catalog = usePluginUiProjectionCurrentness({ machineId, serverId }); return null; }
+            const warm = await renderScreen(<LoadMachineCatalog />);
+            try {
+                await vi.waitFor(() => {
+                    expect(catalog?.phase, catalog?.unavailableReasonCode).toBe('current');
+                    expect(catalog?.pluginUiProjection?.installedPackagesById[PLUGIN_MANIFEST.id]?.version).toBe(machineVersion);
+                });
+            } finally { await warm.unmount(); }
+        }
         const destination = { ...account.scope, sessionId };
         const task = { id: taskId, title, done: false, createdAt: 1, updatedAt: 1,
             linkedSessions: { [buildTodoSessionLinkKeyV1(destination)]: { title, linkedAt: 1, session: destination } } };
@@ -157,7 +222,6 @@ it('exposes the linked Task in a fresh Session header before a Triage page has b
             statusErrorColor: '#f00', externalSessionRuntime: null,
         });
         let projection: ReturnType<typeof useAppShellPluginUiProjection> | undefined;
-        const sourceId = `${PLUGIN_MANIFEST.id}/${workItems.id}`;
         function ProjectionProbe() { projection = useAppShellPluginUiProjection(); return null; }
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
             <AppShellPluginUiProjectionProvider>
@@ -173,13 +237,23 @@ it('exposes the linked Task in a fresh Session header before a Triage page has b
             expect(chips.length).toBeGreaterThan(0);
         });
         try {
+            if (machine) {
+                await vi.waitFor(() => expect(projection?.pluginUiProjection?.installedPackagesById[PLUGIN_MANIFEST.id]?.version)
+                    .toBe(machineVersion));
+                await act(async () => {
+                    intentsReady.resolve();
+                    await refreshAvailability;
+                });
+            }
             await vi.waitFor(() => {
                 const source = projection?.pluginUiProjection?.workItemsById[sourceId];
                 expect(source, JSON.stringify({ phase: projection?.phase, enabled: projection?.interactionEnabled,
                     activation: projection?.clientExecutableActivation?.status, assetReads: packaged.reads })).toBeDefined();
                 expect(projection?.interactionEnabled).toBe(true);
-                expect(resolvePluginUiClientWorkItemsRegistration({ source: source!, platform: 'web' }),
-                    JSON.stringify(projection?.clientExecutableActivation)).not.toBeNull();
+                expect(source?.pluginVersion).toBe(PLUGIN_MANIFEST.version);
+                expect(projection?.pluginUiProjection?.installedPackagesById[PLUGIN_MANIFEST.id]?.version)
+                    .toBe(machine ? machineVersion : PLUGIN_MANIFEST.version);
+                expect(projection?.clientExecutableActivation?.status).toBe('ready');
             });
             try {
                 await waitForTaskChip();
@@ -202,7 +276,8 @@ it('exposes the linked Task in a fresh Session header before a Triage page has b
                     } finally { owner.dispose(); }
                 }
                 const paths = [...new Set(homes.requests.map(request => request.path))];
-                throw new Error(JSON.stringify({ result, paths, assetReads: packaged.reads }), { cause: error });
+                throw new Error(JSON.stringify({ result, paths, assetReads: packaged.reads,
+                    activation: projection?.clientExecutableActivation }), { cause: error });
             }
             const layout = async (testId: string, width: number) => {
                 await act(async () => {
@@ -221,6 +296,7 @@ it('exposes the linked Task in a fresh Session header before a Triage page has b
                 expect.objectContaining({ id: expect.stringMatching(/^header\.task:/), title: expect.stringContaining(title) })));
         } finally { await screen.unmount(); }
     } finally {
+        intentsReady.resolve();
         disposeLoader();
         restorePopover();
         vi.unstubAllGlobals();

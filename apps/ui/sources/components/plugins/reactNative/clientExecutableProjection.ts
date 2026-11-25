@@ -264,11 +264,13 @@ function readModuleReference(input: Readonly<{
         : null;
 }
 
-function readInstalledPluginVersion(
+function readExecutablePluginVersion(
     projection: ClientExecutableProjectionFacts,
-    pluginId: string,
+    bundle: PluginUiProjectionModel['reactNativeBundlesById'][string],
 ): string | undefined {
-    const version = projection.installedPackagesById[pluginId]?.version;
+    // The admitted bundle carries its producer's version. The merged catalog
+    // can show a different installation of the same plugin on a Machine.
+    const version = bundle.pluginVersion ?? projection.installedPackagesById[bundle.pluginId]?.version;
     return typeof version === 'string' && version.trim().length > 0 ? version : undefined;
 }
 
@@ -401,6 +403,7 @@ function readClientContributionCandidate(input: Readonly<{
             artifactOwnerKind: 'clientContribution',
             clientContribution: Object.freeze({ family: input.family, contribution: Object.freeze({ pluginId: entry.pluginId, localId }) }),
         });
+    const pluginVersion = readExecutablePluginVersion(input.source.projection, bundle);
 
     return Object.freeze({
         family: input.family,
@@ -408,9 +411,7 @@ function readClientContributionCandidate(input: Readonly<{
         pluginId: entry.pluginId,
         occurrenceId: entry.occurrenceId,
         immutableGenerationId: input.source.projection.installedPackagesById[entry.pluginId]?.immutableGenerationId,
-        ...(readInstalledPluginVersion(input.source.projection, entry.pluginId) === undefined
-            ? {}
-            : { pluginVersion: readInstalledPluginVersion(input.source.projection, entry.pluginId) }),
+        ...(pluginVersion === undefined ? {} : { pluginVersion }),
         target,
         executionOrigin: origin.executionOrigin,
         authority: origin.authority,
@@ -505,6 +506,7 @@ function readVoiceCandidate(input: Readonly<{
         artifactGraph,
     });
     if (!moduleReference) return null;
+    const pluginVersion = readExecutablePluginVersion(input.source.projection, bundle);
 
     return Object.freeze({
         family: 'voiceProviders',
@@ -512,9 +514,7 @@ function readVoiceCandidate(input: Readonly<{
         pluginId: entry.pluginId,
         occurrenceId,
         immutableGenerationId: input.source.projection.installedPackagesById[entry.pluginId]?.immutableGenerationId,
-        ...(readInstalledPluginVersion(input.source.projection, entry.pluginId) === undefined
-            ? {}
-            : { pluginVersion: readInstalledPluginVersion(input.source.projection, entry.pluginId) }),
+        ...(pluginVersion === undefined ? {} : { pluginVersion }),
         target,
         executionOrigin: origin.executionOrigin,
         authority: origin.authority,
