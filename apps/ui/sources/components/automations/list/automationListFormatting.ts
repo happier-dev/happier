@@ -41,25 +41,9 @@ export function formatAutomationScheduleLabel(automation: {
     schedule: { kind: 'once'; scheduledAt: number }
         | { kind: 'cron' | 'interval'; everyMs: number | null; scheduleExpr: string | null; timezone?: string | null };
 }): string {
-    if (automation.schedule.kind === 'once') return formatTriggerSummary({ kind: 'schedule', schedule: automation.schedule });
-    if (automation.schedule.kind === 'interval' && typeof automation.schedule.everyMs === 'number') {
-        const minutes = Math.max(1, Math.round(automation.schedule.everyMs / 60_000));
-        const timezone = typeof automation.schedule.timezone === 'string' && automation.schedule.timezone.trim().length > 0
-            ? automation.schedule.timezone.trim()
-            : null;
-        return t('automations.list.interval', { minutes, timezone });
-    }
-    if (automation.schedule.kind === 'cron' && typeof automation.schedule.scheduleExpr === 'string') {
-        const expr = automation.schedule.scheduleExpr.trim();
-        const timezone = typeof automation.schedule.timezone === 'string' && automation.schedule.timezone.trim().length > 0
-            ? automation.schedule.timezone.trim()
-            : null;
-        return t('automations.list.cron', {
-            expression: expr.length > 0 ? expr : null,
-            timezone,
-        });
-    }
-    return t('automations.list.schedule');
+    const summary = formatTriggerSummary({ kind: 'schedule', schedule: automation.schedule });
+    const timezone = automation.schedule.kind === 'once' ? undefined : automation.schedule.timezone?.trim();
+    return timezone ? `${summary} · ${timezone}` : summary;
 }
 
 /** Public definition summaries expose trigger identity, never source configuration. */

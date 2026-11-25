@@ -13,6 +13,7 @@ import { findActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 import { preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 import { resolveActionTitle } from '@/text/actionTitles';
+import { formatTriggerSummary } from '@/components/workflows/triggers/formatTriggerSummary';
 import {
     formatAutomationNextRun,
     formatAutomationRunCauseLabel,
@@ -75,7 +76,7 @@ describe('formatAutomationTriggerLabel', () => {
             sourceStatus: null,
             sourceCatalogStatus: null,
         });
-        expect(formatAutomationTriggerLabel(trigger)).toBe('Pull request opened');
+        expect(formatAutomationTriggerLabel(trigger)).toBe('When pull request opened');
         expect(formatAutomationTriggerStatusLabel(trigger)).toBe('Waiting for the first report');
     });
 
@@ -84,12 +85,12 @@ describe('formatAutomationTriggerLabel', () => {
         await preloadTranslations();
         vi.spyOn(Date.prototype, 'toLocaleString').mockReturnValue('fecha-localizada');
 
-        expect(formatAutomationScheduleLabel({
-            schedule: { kind: 'interval', everyMs: 15 * 60_000, scheduleExpr: null, timezone: null },
-        })).toBe('Cada 15 min');
-        expect(formatAutomationScheduleLabel({
-            schedule: { kind: 'cron', everyMs: null, scheduleExpr: '0 9 * * 1', timezone: 'Europe/Madrid' },
-        })).toBe('Cron: 0 9 * * 1 (Europe/Madrid)');
+        const interval = { kind: 'interval', everyMs: 15 * 60_000, scheduleExpr: null, timezone: null } as const;
+        expect(formatAutomationScheduleLabel({ schedule: interval })).toBe(formatTriggerSummary({ kind: 'schedule', schedule: interval }));
+        const schedule = { kind: 'cron', everyMs: null, scheduleExpr: '0 9 * * 1', timezone: 'Europe/Madrid' } as const;
+        const trigger = { kind: 'schedule', schedule } as const;
+        expect(formatAutomationScheduleLabel({ schedule })).toBe(`${formatTriggerSummary(trigger)} · Europe/Madrid`);
+        expect(formatAutomationScheduleLabel({ schedule })).not.toContain(schedule.scheduleExpr);
         expect(formatAutomationTriggerLabel(AutomationTriggerListItemSchema.parse({
             id: 'trigger-event-1',
             revision: 3,
