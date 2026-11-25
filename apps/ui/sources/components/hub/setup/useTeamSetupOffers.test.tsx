@@ -3,6 +3,7 @@ import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home';
 import { renderHook, standardCleanup, teamCapabilitiesFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -131,10 +132,12 @@ it('offers the latest eligible join per Home and retires it after an Action dism
     const execute = createFrontDoorActionExecute({ ...executor,
         executeConfirmed: (id, input, context) => executor.execute(id, input, bindPresentUserActionConfirmation(id, input, context ?? {})),
     });
-    const context = { serverId, surface: 'ui' as const, authority: 'present_user' as const, expectedAccountId: 'member' };
+    const context = { serverId, surface: 'ui', authority: 'present_user',
+        runtimeAccountId: scope.accountId, expectedAccountId: scope.accountId,
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) } as const;
     const plan = await renderHook(() => useTeamSetupPlan(execute, context));
     const source = { id: 'repo', revision: 1, name: 'Repo' };
-    const prepared = await plan.getCurrent().prepare({ target: { serverId, homeId: 'home', machineId: 'machine' },
+    const prepared = await plan.getCurrent().prepare({ target: { serverId, homeId: serverId, machineId: workspace.machineId },
         repositories: [{ id: source.id, input: { source: { kind: 'folder', path: '/repo' }, materialization: { kind: 'attach' } } }],
         isCurrent: () => true });
     try {
@@ -143,6 +146,7 @@ it('offers the latest eligible join per Home and retires it after an Action dism
         await act(async () => {
             const result = await plan.getCurrent().run(run);
             expect(result.completed).toBe(false);
+            expect(result.machineSettlement).toBeNull();
             expect(result.repositories).toMatchObject([{ result: { ok: true, result: { kind: 'opened', setup: 'prepared' } } }]);
         });
         expect(await agent.execute('home.hub.layout.get', {}, agentContext)).toMatchObject({ ok: true, result: { hiddenSetupStepIds: [b.stepId] } });
