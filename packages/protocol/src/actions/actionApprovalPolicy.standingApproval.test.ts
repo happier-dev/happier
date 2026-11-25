@@ -14,7 +14,7 @@ describe('Workflow exact-input standing approval', () => {
   const actionId = 'machines.setup.apply';
   const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId: 'target', targets: [{
     homeId: 'home', machineId: 'target', desiredRevision: 0, recipePlans: [], sources: [
-    { kind: 'accountPreset', presetId: 'preset', presetRevision: 1, contentEncryptionMode: 'plain' as const, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
+    { kind: 'accountPresetOpaque', presetId: 'preset', presetRevision: 1, contentEncryptionMode: 'e2ee' },
     { kind: 'direct', setup: {} },
   ] }] });
   const approvedOperation = {
@@ -30,7 +30,7 @@ describe('Workflow exact-input standing approval', () => {
   it('uses the stored approval only for the exact materialized Action and input', () => {
     expect(resolve().required).toBe(false);
     expect(resolve({ input: { ...input, targets: input.targets.map(target => ({ ...target,
-      sources: target.sources.map(source => source.kind === 'accountPreset'
+      sources: target.sources.map(source => source.kind === 'accountPresetOpaque'
         ? { ...source, presetRevision: 2 } : source) })) } }).required).toBe(true);
     expect(resolve({ approvedOperation: { ...approvedOperation,
       steps: [{ actionId: 'machines.setup.resolve', input }] } }).required).toBe(true);
