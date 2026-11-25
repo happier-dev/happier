@@ -9,7 +9,8 @@ import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/re
 import { createCliManagedSessionDefaultsContextLoader } from '@/session/creation/cliManagedSessionDefaultsContext';
 import { resolveSessionSpawnManagedDefaults } from '@/session/creation/resolveSessionSpawnManagedDefaults';
 import { withSessionNativeSandbox } from '@/session/shared/sessionCreationCorrespondence';
-import { createSpawnConnectedServicesTeamResourceCatalogResolver } from '@/session/services/spawnConnectedServicesDefaults';
+import { agentSupportsSpawnConnectedServicesDefaults, createSpawnConnectedServicesTeamResourceCatalogResolver,
+  requireSessionSpawnConnectedServicesPurposeCatalog, withSessionSpawnConnectedServicesDefaultContext } from '@/session/services/spawnConnectedServicesDefaults';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { ExecutionRunManagerStartParams } from './executionRunTypes';
 import { createExecutionRunCodedError } from './errors';
@@ -36,7 +37,9 @@ export async function resolveDetachedRunManagedDefaults(params: ExecutionRunMana
   const selectionTarget = params.runnerAgentTarget ?? params.backendTarget;
   const agentTarget = parseBackendTargetKeyV2(resolveBackendTargetKeyV2(selectionTarget));
   if (agentTarget.kind !== 'agent') throw createExecutionRunCodedError('target_unavailable', 'Agent target is unavailable');
+  const agentId = resolveExecutionRunRuntimeBackendId(selectionTarget);
   const accountSettingsContext = bootstrap?.accountSettingsContext ?? requester?.accountSettingsContext;
+  const operationContext = bootstrap?.savedSecretOperationContext ?? requester?.savedSecretOperationContext;
   const loader = createCliManagedSessionDefaultsContextLoader({ credentials, serverId, serverHttpBaseUrl,
     ...(params.signal ? { signal: params.signal } : {}) });
   const home = createAccountServerActionDeps({ credentials, token: credentials.token, serverId, serverHttpBaseUrl });
@@ -46,6 +49,16 @@ export async function resolveDetachedRunManagedDefaults(params: ExecutionRunMana
       agentTargetKey: buildBackendTargetKeyV2(agentTarget), providerConnectionId: null, modelId: params.modelId,
     } } : undefined;
   return runWithServerHttpBaseUrl(serverHttpBaseUrl, async () => {
+    let purposeCatalog = accountSettingsContext?.connectedPurposeCatalog;
+    if (params.connectedServices !== null
+      && Object.keys(params.connectedServices?.bindingsByServiceId ?? {}).length === 0
+      && !(params.modelSelection && 'source' in params.modelSelection)
+      && !params.teamCredentialModel
+      && agentSupportsSpawnConnectedServicesDefaults(agentId)) {
+      purposeCatalog = operationContext
+        ? await requireSessionSpawnConnectedServicesPurposeCatalog({ credentials, operationContext, signal: params.signal })
+        : await withSessionSpawnConnectedServicesDefaultContext({ credentials, signal: params.signal }, context => context.purposeCatalog);
+    }
     const resolved = await resolveSessionSpawnManagedDefaults({
       executionTarget: { serverId, machineId }, agentTarget,
       ...(params.projectContext ? { projectContext: params.projectContext } : {}),
@@ -58,9 +71,9 @@ export async function resolveDetachedRunManagedDefaults(params: ExecutionRunMana
         permissionIntent: { value: null, updatedAtMs: 0 }, options: {},
       } : undefined, params.nativeSandbox),
     }, {
-      agentId: resolveExecutionRunRuntimeBackendId(selectionTarget),
+      agentId,
       accountSettings: accountSettingsContext?.rawSettings ?? accountSettingsContext?.settings ?? params.accountSettings,
-      purposeCatalog: accountSettingsContext?.connectedPurposeCatalog,
+      purposeCatalog,
       organizationPolicy: configuration.organizationPolicy,
       ...host.agentSandbox,
       readPersonalDefaults: loader.readPersonalDefaults, readSource: loader.readSource,

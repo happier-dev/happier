@@ -2567,6 +2567,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
           };
           const defaults = await resolveDetachedRunManagedDefaults(params, {
             machineId: this.machineId, agentSandbox: agentSandboxContext,
+          }).catch((error: unknown) => {
+            throw markExecutionRunStartPreparationFailure(error, 'execution_run_profile_preparation_failed');
           });
           if (defaults) params = { ...params,
             childSelection: defaults.childSelection,

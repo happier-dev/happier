@@ -143,6 +143,73 @@ export class ConnectedServicesDefaultUnavailableError extends Error {
   }
 }
 
+/** Admit the authoritative purpose row for any Session or Run launch. */
+export async function requireSessionSpawnConnectedServicesPurposeCatalog(params: Readonly<{
+  credentials: StoredCredentials;
+  operationContext: SavedSecretOperationContextV1;
+  signal?: AbortSignal;
+}>) {
+  const catalog = await refreshConnectedAccountCatalogForAdmission({ ...params, key: 'purposes' });
+  if (catalog.status !== 'ready' || catalog.record.key !== 'purposes') {
+    throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding',
+      catalog.status === 'unavailable' ? catalog.reason : undefined);
+  }
+  return catalog;
+}
+
+type SessionSpawnConnectedServicesDefaultAccount = Readonly<{
+  credentials: StoredCredentials;
+  signal?: AbortSignal;
+  operationContext?: SavedSecretOperationContextV1;
+}>;
+
+/** Open the acting Account's current purpose row before applying launch defaults. */
+export async function withSessionSpawnConnectedServicesDefaultContext<T>(
+  params: SessionSpawnConnectedServicesDefaultAccount,
+  use: (context: Readonly<{
+    settings: NonNullable<ReturnType<SavedSecretOperationContextV1['readSnapshot']>>['settings'];
+    purposeCatalog: Extract<ConnectedAccountCatalogSnapshotV1, { status: 'ready' }>;
+    operationContext: SavedSecretOperationContextV1;
+  }>) => T | Promise<T>,
+): Promise<T> {
+  const resolve = async () => {
+    const serverHttpBaseUrl = params.operationContext?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
+    try {
+      const accountSettingsContext = await bootstrapAccountSettingsContext({
+        credentials: params.credentials,
+        ...(params.signal ? { signal: params.signal } : {}),
+        mode: 'blocking',
+        publication: 'invocation',
+        deps: { applySideEffects: () => undefined },
+      });
+      const operationContext = params.operationContext ?? createInvocationSavedSecretOperationContextV1({
+        credentials: params.credentials, snapshot: accountSettingsContext, serverHttpBaseUrl,
+        isCurrent: async () => resolveServerHttpBaseUrl() === serverHttpBaseUrl
+          && (await readStoredCredentials())?.token === params.credentials.token,
+      });
+      if (params.operationContext && !await operationContext.replaceAccountSettings(accountSettingsContext)) {
+        throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable');
+      }
+      const purposeCatalog = await requireSessionSpawnConnectedServicesPurposeCatalog({
+        credentials: params.credentials, operationContext, signal: params.signal,
+      });
+      const admittedSnapshot = operationContext.readSnapshot();
+      if (!admittedSnapshot || !await operationContext.isCurrent()) {
+        throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding', 'scope-retired');
+      }
+      return await use({ settings: admittedSnapshot.settings, purposeCatalog, operationContext });
+    } catch (error) {
+      if (isAccountSettingsContentInvalidError(error)) {
+        throw new ConnectedServicesDefaultUnavailableError('connected_services_default_settings_invalid');
+      }
+      if (error instanceof ConnectedServicesDefaultUnavailableError) throw error;
+      throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding',
+        readConnectedAccountCatalogUnavailableReason(error, params.signal));
+    }
+  };
+  return params.operationContext ? runWithServerHttpBaseUrl(params.operationContext.serverHttpBaseUrl, resolve) : resolve();
+}
+
 /**
  * THE session spawn-defaulting owner (one defaulting owner, one settings path — QA2-F02).
  *
@@ -180,35 +247,7 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
   const agentId = params.agentId.trim();
   if (!agentSupportsSpawnConnectedServicesDefaults(agentId, params.catalogEntry, params.contributions)) return null;
 
-  const resolve = async () => {
-  const serverHttpBaseUrl = params.operationContext?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
-  try {
-    const accountSettingsContext = await bootstrapAccountSettingsContext({
-      credentials: params.credentials,
-      ...(params.signal ? { signal: params.signal } : {}),
-      mode: 'blocking',
-      publication: 'invocation',
-      deps: { applySideEffects: () => undefined },
-    });
-    const operationContext = params.operationContext ?? createInvocationSavedSecretOperationContextV1({
-      credentials: params.credentials, snapshot: accountSettingsContext, serverHttpBaseUrl,
-      isCurrent: async () => resolveServerHttpBaseUrl() === serverHttpBaseUrl
-        && (await readStoredCredentials())?.token === params.credentials.token,
-    });
-    if (params.operationContext && !await operationContext.replaceAccountSettings(accountSettingsContext)) {
-      throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable');
-    }
-    const purposeCatalog = await refreshConnectedAccountCatalogForAdmission({ credentials: params.credentials,
-      key: 'purposes', operationContext, ...(params.signal ? { signal: params.signal } : {}) });
-    if (purposeCatalog.status !== 'ready' || purposeCatalog.record.key !== 'purposes') {
-      throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding',
-        purposeCatalog.status === 'unavailable' ? purposeCatalog.reason : undefined);
-    }
-    const admittedSnapshot = operationContext.readSnapshot();
-    if (!admittedSnapshot || !await operationContext.isCurrent()) {
-      throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding', 'scope-retired');
-    }
-    const accountSettings = admittedSnapshot.settings;
+  return await withSessionSpawnConnectedServicesDefaultContext(params, async ({ settings: accountSettings, purposeCatalog, operationContext }) => {
     const payload = await materializeSessionSpawnConnectedServicesDefaults({
       agentId,
       catalogEntry: params.catalogEntry,
@@ -222,16 +261,7 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
       throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding', 'scope-retired');
     }
     return payload;
-  } catch (error) {
-    if (isAccountSettingsContentInvalidError(error)) {
-      throw new ConnectedServicesDefaultUnavailableError('connected_services_default_settings_invalid');
-    }
-    if (error instanceof ConnectedServicesDefaultUnavailableError) throw error;
-    throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding',
-      readConnectedAccountCatalogUnavailableReason(error, params.signal));
-  }
-  };
-  return params.operationContext ? runWithServerHttpBaseUrl(params.operationContext.serverHttpBaseUrl, resolve) : resolve();
+  });
 }
 
 /**

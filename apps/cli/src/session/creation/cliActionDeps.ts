@@ -74,8 +74,7 @@ import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
-import { refreshConnectedAccountCatalogForAdmission } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
-import { agentSupportsSpawnConnectedServicesDefaults, ConnectedServicesDefaultUnavailableError } from '@/session/services/spawnConnectedServicesDefaults';
+import { agentSupportsSpawnConnectedServicesDefaults, requireSessionSpawnConnectedServicesPurposeCatalog } from '@/session/services/spawnConnectedServicesDefaults';
 import { canReadPrivateSessionDefaults, createCliManagedSessionDefaultsContextLoader, readSessionCreationAccountSettingsContext } from './cliManagedSessionDefaultsContext';
 import { createPrepareSessionSpawnInput } from './prepareSessionSpawnInput';
 import { readSessionCreationAgentTarget, type ReadMachineAgentProjection } from './resolveSessionCreationAgentTarget';
@@ -783,13 +782,9 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       }) : null;
       const purposeCatalog = defaultsContext && operation && agentSupportsSpawnConnectedServicesDefaults(resolvedAgentTarget.agentId)
         ? defaultsContext.connectedPurposeCatalog?.status === 'ready' ? defaultsContext.connectedPurposeCatalog
-          : await refreshConnectedAccountCatalogForAdmission({ credentials: defaultsCredentials, key: 'purposes',
+          : await requireSessionSpawnConnectedServicesPurposeCatalog({ credentials: defaultsCredentials,
             operationContext: operation, ...(signal ? { signal } : {}) })
         : undefined;
-      if (purposeCatalog && purposeCatalog.status !== 'ready') {
-        throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding',
-          purposeCatalog.status === 'unavailable' ? purposeCatalog.reason : undefined);
-      }
       const defaultsSettings = operation?.readSnapshot()?.settings ?? defaultsContext?.settings ?? accountSettingsParse({});
       const homeActions = createAccountServerActionDeps({ token: defaultsCredentials.token, credentials: defaultsCredentials,
         serverId: executionTarget.serverId, serverHttpBaseUrl: machineReferenceServerUrl,
