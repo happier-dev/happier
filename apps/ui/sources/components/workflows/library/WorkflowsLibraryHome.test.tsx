@@ -401,7 +401,10 @@ describe('workflow library page anatomy', () => {
         // Host refs are the native focus boundary; column, library, deletion and focus-return owners stay real.
         const screen = await renderScreen(<WorkflowsColumn surface="page" definitionsContent={<WorkflowsLibraryHome />} />, {
             wrapper: Wrapper,
-            createNodeMock: element => ({ focus: () => { if (typeof element.props.testID === 'string') focused.push(element.props.testID); } }),
+            createNodeMock: element => ({
+                focus: () => { if (typeof element.props.testID === 'string') focused.push(element.props.testID); },
+                scrollTo: () => {},
+            }),
         });
         try {
             await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${definitionId}`)).not.toBeNull());
@@ -967,7 +970,10 @@ describe('workflow library page anatomy', () => {
         expect(screen.findAll(node => node.props.accessibilityRole === 'checkbox'
             && !String(node.props.testID).includes('-quick-filter:'))).toHaveLength(0);
     });
-    it('lists Account workflows in the one Library section while saved workflows are still loading', async () => {
+    it('lists Account workflows in one Library section after both inventories settle', async () => {
+        const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
+        const accountInventoryRead = createDeferred<void>();
+        const savedInventory = createDeferred<void>();
         const [{ AutomationDefinitionDetailSchema, AutomationDefinitionListResponseSchema }, { AutomationStoredWorkflowDefinitionRecipeV2Schema }] = await Promise.all([
             import('@happier-dev/protocol/automations/automationApiV3'), import('@happier-dev/protocol/automations/automationWorkflowRecipeV2')]);
         const { createWorkflowDefinitionFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
@@ -994,6 +1000,7 @@ describe('workflow library page anatomy', () => {
             if (url.pathname === '/v3/automations/query' && init?.method === 'POST') {
                 const { AutomationDefinitionDetailsRequestSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
                 const query = AutomationDefinitionDetailsRequestSchema.parse(JSON.parse(String(init.body)));
+                if (query.scope !== 'account_saved') accountInventoryRead.resolve();
                 return Response.json({ automations: query.scope === 'account_saved' ? [] : [detail], nextCursor: null });
             }
             return url.pathname === '/v3/automations' ? Response.json(list)
@@ -1001,11 +1008,17 @@ describe('workflow library page anatomy', () => {
         };
         // The saved library's first page has not answered yet.
         execute.mockImplementation(async (actionId: string) => {
-            if (actionId === 'workflow.definition.list') return new Promise(() => {});
+            if (actionId === 'workflow.definition.list') {
+                await savedInventory.promise;
+                return { ok: true, result: { definitions: [] } };
+            }
             if (actionId === 'workflow.run.list') return { ok: true, result: { runs: [], metadataByRunId: {} } };
             return { ok: false, errorCode: 'unexpected', error: 'unexpected' };
         });
         const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
+        await act(async () => { await accountInventoryRead.promise; });
+        expect(screen.findByTestId('workflows-home:row:account-trigger:digest')).toBeNull();
+        await act(async () => { savedInventory.resolve(); });
         await vi.waitFor(() => expect(screen.findByTestId('workflows-home:row:account-trigger:digest')).not.toBeNull());
         // The rows' own Library section is the only one: no second titled placeholder section above it.
         expect(screen.findHostByTestId('workflows-home:collection:skeleton-row')).toBeNull();
@@ -1183,8 +1196,11 @@ describe('workflow library page anatomy', () => {
             {besideColumn ? <WorkflowsColumn surface="plane" /> : null}
             <WorkflowsDestinationIndex />
         </AppShellColumnContext.Provider>, { wrapper: Wrapper,
-            // Native refs supply geometry; the real Popover owns placement and portal rendering.
-            createNodeMock: () => ({ measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(40, 40, 120, 40) }),
+            // Native refs supply geometry and scrolling; Popover and Modal own their behavior.
+            createNodeMock: () => ({
+                measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(40, 40, 120, 40),
+                scrollTo: () => {},
+            }),
         });
         await accountQueryAdmitted.promise;
         expect(screen.findByTestId('workflows-column:view:runs')).not.toBeNull();
