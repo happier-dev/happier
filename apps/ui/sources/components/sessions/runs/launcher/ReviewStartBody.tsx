@@ -168,7 +168,8 @@ function StepWho(props: Props & Readonly<{ stepIndex: number; steps: ReturnType<
     const accountLifetime = props.source.where?.accountLifetime;
     return accountLifetime ? <ParticipantStepWho {...props} accountLifetime={accountLifetime} source={source}
         input={input} onChange={next => setInput(next)} controls={controls} />
-        : <ContextualStartComposerBody model={model} whoLabel={t('reviewWalkthrough.start.whoReviews')} {...controls} />;
+        : <ContextualStartComposerBody model={model} presentationKey={`review-step:${props.stepIndex}`}
+            whoLabel={t('reviewWalkthrough.start.whoReviews')} {...controls} />;
 }
 
 const NO_PROJECT_CHANGE = () => undefined;
@@ -176,6 +177,7 @@ const NO_PROJECT_CHANGE = () => undefined;
 /** Each visible step consumes the same exact-Home participant and recipe owner as second opinions. */
 function ParticipantStepWho(props: Props & Readonly<{
     accountLifetime: ServerAccountScopeLifetime;
+    stepIndex: number;
     controls: Pick<React.ComponentProps<typeof ContextualStartComposerBody>, 'details' | 'whoAccessory'>;
 }>) {
     const reviewers = readReviewLauncherSteps(props.input)[0]!.reviewers;
@@ -215,5 +217,6 @@ function ParticipantStepWho(props: Props & Readonly<{
         selectedIds: new Set([...participantSource.selectedIds, ...props.source.selectedIds]),
     };
     const model = useContextualStartComposer(source, ADMISSIBLE);
-    return <ContextualStartComposerBody model={model} whoLabel={t('reviewWalkthrough.start.whoReviews')} {...props.controls} />;
+    return <ContextualStartComposerBody model={model} presentationKey={`review-step:${props.stepIndex}`}
+        whoLabel={t('reviewWalkthrough.start.whoReviews')} {...props.controls} />;
 }

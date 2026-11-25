@@ -25,6 +25,7 @@ import { getPermissionModeLabelForAgentType } from '@/sync/domains/permissions/p
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
+import { useDetailsTabPresentationField } from '@/components/appShell/panes/details/workspace/detailsTabLifetime';
 import { resolveExecutableModelParticipantDisplay, useExecutableParticipantLabels } from './useExecutableParticipantLabel';
 import { t } from '@/text';
 
@@ -179,8 +180,10 @@ type ModelSelection = Extract<ExecutableParticipantSelectionV1, { kind: 'model' 
  * under the list.
  * Change opens that recipe there too and sets the question aside until it closes.
  */
-export function ContextualStartComposerBody({ model, whoLabel, whoHint, question, whoContent, whoAccessory, details }: Readonly<{
+export function ContextualStartComposerBody({ model, whoLabel, whoHint, question, whoContent, whoAccessory, details, presentationKey }: Readonly<{
     model: ContextualStartComposerModel;
+    /** The host's stable step identity within its Details tab, when responsive presenters remount. */
+    presentationKey?: string;
     /** The host's word for the list ("Who reviews" on a Reviews start); "Who answers" otherwise. */
     whoLabel?: string;
     /** A quiet note at the Who label's trailing edge ("Pick two or more to run Fresh opinions"). */
@@ -200,7 +203,10 @@ export function ContextualStartComposerBody({ model, whoLabel, whoHint, question
     const accessoryAnchorRef = React.useRef<View | null>(null);
     const closeAccessory = React.useCallback(() => setAccessoryOpen(false), []);
     const [expanded, setExpanded] = React.useState(false);
-    const [whoFilter, setWhoFilter] = React.useState<WhoFilter>('all');
+    const [localWhoFilter, setLocalWhoFilter] = React.useState<WhoFilter>('all');
+    const tabFilter = useDetailsTabPresentationField(presentationKey ? `contextual-start:${presentationKey}:who-filter` : null);
+    const whoFilter = tabFilter ? WHO_FILTER_KINDS.find(kind => kind === tabFilter.value) ?? 'all' : localWhoFilter;
+    const setWhoFilter = tabFilter?.setValue ?? setLocalWhoFilter;
     const whoQuery = source.search?.value ?? '';
     const [whoEditing, setWhoEditing] = React.useState(() => source.selectedIds.size === 0);
     // Whether the open recipe adds an agent or changes a chosen one. Presentation only: the recipe
@@ -364,8 +370,8 @@ export function ContextualStartComposerBody({ model, whoLabel, whoHint, question
     const whoFilters = React.useMemo<readonly SelectionListFilter[]>(() => whoKinds.length < 2 ? []
         : (['all', ...whoKinds] as const).map(kind => ({ id: `who:${kind}`, testID: `contextual-start-who-filter:${kind}`,
             label: t(WHO_FILTER_LABEL_KEYS[kind]), selected: whoFilter === kind, disabled: busy,
-            onToggle: () => setWhoFilter(current => kind === 'all' || current === kind ? 'all' : kind) })),
-    [busy, whoFilter, whoKinds]);
+            onToggle: () => setWhoFilter(kind === 'all' || whoFilter === kind ? 'all' : kind) })),
+    [busy, whoFilter, whoKinds, setWhoFilter]);
     const changing = openRecipe === 'change';
     // The recipe closes itself when it resolves; the mode follows it.
     React.useEffect(() => { if (editor === null) setRecipe(null); }, [editor]);

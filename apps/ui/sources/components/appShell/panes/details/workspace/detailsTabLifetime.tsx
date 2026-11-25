@@ -3,6 +3,7 @@ import * as React from 'react';
 import { AppPaneContext, type AppPaneContextSubscription } from '@/components/appShell/panes/AppPaneContext';
 import { findSelectedPaneSlot, isSelectedPaneDestinationTabKey } from '@/components/appShell/panes/model/selectedPaneDestination';
 import { useRetainedPresentationEntryRetirement } from '@/components/ui/presentation/retainedPresentationEntryLifetime';
+import { getOwnDetailsWorkspaceRecordEntry } from './detailsWorkspaceTypes';
 
 type DetailsTabBinding = Readonly<{
     pane: AppPaneContextSubscription;
@@ -21,6 +22,28 @@ export function detailsTabNavigationKey(scopeId: string, tabKey: string): string
 export function useDetailsTabNavigationKey(fallbackTabKey: string): string {
     const binding = React.useContext(DetailsTabLifetimeContext);
     return binding?.tabKey ? detailsTabNavigationKey(binding.scopeId, binding.tabKey) : fallbackTabKey;
+}
+
+/** Read one ephemeral presentation field from the tab's existing state owner. Closing the tab clears it. */
+export function useDetailsTabPresentationField(fieldId: string | null) {
+    const incumbent = React.useContext(DetailsTabLifetimeContext);
+    const binding = fieldId !== null && incumbent?.tabKey != null ? incumbent : null;
+    const readValue = React.useCallback(() => {
+        if (!binding || binding.tabKey === null || fieldId === null) return undefined;
+        const scope = getOwnDetailsWorkspaceRecordEntry(binding.pane.getSnapshot().state.scopes, binding.scopeId);
+        const state = scope && getOwnDetailsWorkspaceRecordEntry(scope.details.tabState, binding.tabKey);
+        return state && typeof state === 'object' && !Array.isArray(state)
+            ? getOwnDetailsWorkspaceRecordEntry(state as Readonly<Record<string, unknown>>, fieldId) : undefined;
+    }, [binding, fieldId]);
+    const value = React.useSyncExternalStore(binding?.pane.subscribe ?? subscribeToNothing, readValue, readValue);
+    const setValue = React.useCallback((next: unknown) => {
+        if (!binding || binding.tabKey === null || fieldId === null) return;
+        binding.pane.getSnapshot().dispatch({
+            type: 'patchDetailsTabState', scopeId: binding.scopeId, tabKey: binding.tabKey,
+            patch: { [fieldId]: next }, persist: false,
+        });
+    }, [binding, fieldId]);
+    return React.useMemo(() => binding ? { value, setValue } : null, [binding, value, setValue]);
 }
 
 /** The tab's canonical membership survives a temporary presentation/route unmount. */
