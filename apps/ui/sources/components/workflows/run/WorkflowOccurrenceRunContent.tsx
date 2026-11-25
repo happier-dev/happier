@@ -10,7 +10,6 @@ import type { AutomationRunCause, AutomationV3RunDetail } from '@happier-dev/pro
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
-import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -896,14 +895,14 @@ function WorkflowOccurrenceRunFacts({ detail }: Readonly<{ detail: OccurrenceDet
         {loadFailed ? <AttentionBanner testID="automation-run-detail-stale-refresh-error"
             title={t('runs.runDetails.failedToLoad')} announce="alert" accessibilityLiveRegion="assertive"
             action={{ label: t('common.retry'), onPress: refresh, testID: 'automation-run-detail-stale-refresh-retry' }} /> : null}
-        {/* Sections of the Run's page: title and description above their rows, as every page section reads. */}
-        {/* The managed Run body already owns the page column's padding: no second inset (phone NF-32). */}
-        {run === null ? loading ? <ActivitySpinner size="small" /> : null : <ListPresentationProvider value="page" pageInsets="contained">
+        {/* Sections of the Run's page: title and description above their rows, as every page section reads. The Run
+            body hosts them in its page column and decides their insets there (WorkflowRunContent). */}
+        {run === null ? loading ? <ActivitySpinner size="small" /> : null : <>
             {run.replyHandoffState === 'none' ? null : <ItemGroup title={t('automations.detail.runMeta.replyHandoffTitle')}>
                 <WorkflowOccurrenceDeliveryItems detail={detail} />
             </ItemGroup>}
             <WorkflowOccurrenceCauseAndHistory run={run} events={currentDetail?.detail.events ?? []} />
-        </ListPresentationProvider>}
+        </>}
     </>;
 }
 

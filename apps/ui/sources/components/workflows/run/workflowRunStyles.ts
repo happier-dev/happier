@@ -164,6 +164,10 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
     pageSectionSheet: {
         paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx,
     },
+    /** A section title in a phone section that stands its sheet on the sheet edge: the title stays on the text edge. */
+    headingOnTextEdge: {
+        paddingHorizontal: HAPPIER_PAGE_METRICS.headingOpticalInsetPx,
+    },
     /** A phone page's last header section when no view switch row follows it: the page's section gap before the Map. */
     sectionBeforeView: {
         marginBottom: HAPPIER_PAGE_METRICS.sectionGapPx,

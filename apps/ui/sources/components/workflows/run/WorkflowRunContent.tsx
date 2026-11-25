@@ -1555,7 +1555,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                         ? `${String(attentionCount)} ${t('workflows.a11y.needsYouLoaded')}`
                         : t('workflows.a11y.needsYou', { count: attentionCount })}
                 >
-                    <View style={styles.sectionHeading}>
+                    <View style={[styles.sectionHeading, phone ? styles.headingOnTextEdge : null]}>
                         <Text style={styles.sectionTitle}>{t('workflows.run.needsYou')}</Text>
                         <Text style={styles.sectionCount}>{props.attentionHasMore === true
                             ? `${String(attentionCount)} ${t('workflows.run.needsYouLoadedCount')}`
@@ -1921,7 +1921,12 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
 
     const footer = (
         <View style={styles.root}>
-            {props.occurrenceDetails == null ? null : <View style={pageSectionStyle}>{props.occurrenceDetails}</View>}
+            {/* What started the Run, as page sections. Wide, the column owns the text edge and they stand on it. A phone
+                gives them the page's own anatomy: sheets on the sheet edge, titles on the text edge with the header's
+                Back (NF-32). */}
+            {props.occurrenceDetails == null ? null : <View style={phone ? null : styles.pageSection}>
+                <ListPresentationProvider value="page" pageInsets={phone ? 'standard' : 'contained'}>{props.occurrenceDetails}</ListPresentationProvider>
+            </View>}
             {technicalOpen ? (
             <View testID={`${testIDPrefix}-technical`} style={[styles.section, styles.pageSection]}>
                 <Text style={styles.sectionLabel}>{t('workflows.run.technicalDetails')}</Text>

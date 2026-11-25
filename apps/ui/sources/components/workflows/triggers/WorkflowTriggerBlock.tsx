@@ -72,7 +72,7 @@ import {
   type TriggerWhenValue,
 } from './sessionTriggerForm';
 import { REPEAT_LABEL_KEYS, useStoredSessionItem } from './TriggerPopover';
-import { TriggerEventStepContext, TriggerPluginEventRows } from './TriggerPluginEventRows';
+import { TriggerEventStepContext, TriggerPluginEventRows, type TriggerEventStep } from './TriggerPluginEventRows';
 import { useSessionPullRequestChoices } from './SessionTriggerPullRequestPicker';
 import {
   formatScheduleTimeInput,
@@ -206,8 +206,11 @@ export function WorkflowTriggerBlock(
 ): React.ReactElement {
   const { theme } = useUnistyles();
   const { when } = props;
-  // In a popover that offers it (the sentence's chip), the Event's setup is its own step and replaces this block.
-  const eventStep = React.useContext(TriggerEventStepContext);
+  // The Event's setup is its own step and replaces this block: in a popover that offers it (the sentence's chip), the
+  // popover holds the step; otherwise (the Steps card) the block holds it and the setup stands in flow.
+  const hostedStep = React.useContext(TriggerEventStepContext);
+  const [stepping, setStepping] = React.useState(false);
+  const eventStep: TriggerEventStep = hostedStep ?? { editing: stepping, onEditingChange: setStepping };
   const [namedSubject, setNamedSubject] = React.useState<Readonly<{ key: string; label: string }> | null>(null);
   const title = when?.kind === 'action' && isDeployFinishedTrigger(when)
     ? formatTriggerSummary(when, { subjectTitle: subject => namedSubject?.key === automationSubjectKeyV1(subject) ? namedSubject.label : undefined })
@@ -262,8 +265,10 @@ export function WorkflowTriggerBlock(
       eventEdit={props.eventEdit}
       initialEventSeed={props.initialEventSeed}
       onEditSeedApplied={props.onEditSeedApplied}
-      {...(eventStep ? { editing: eventStep.editing, onEditingChange: eventStep.onEditingChange,
-        editorMaxHeight: eventStep.maxHeight } : {})}
+      editing={eventStep.editing}
+      onEditingChange={eventStep.onEditingChange}
+      editorMaxHeight={eventStep.maxHeight}
+      editorPresentation={hostedStep ? 'floating' : 'inFlow'}
       renderEntry={(entry) => (
         <TrackRow
           label={t('workflows.triggers.card.source')}
@@ -283,7 +288,7 @@ export function WorkflowTriggerBlock(
     />
   ) : null;
   // The setup step stands alone: the When select above it would repeat the Event it sets up.
-  if (eventStep?.editing && eventRows) return eventRows;
+  if (eventStep.editing && eventRows) return hostedStep ? eventRows : <View testID={props.testID} style={styles.block}>{eventRows}</View>;
   return (
     <View testID={props.testID} style={styles.block}>
       <View style={styles.header}>

@@ -105,3 +105,26 @@ describe('the sentence When clause as labelled rows (phone builder sheet)', () =
     } finally { await screen.unmount(); }
   });
 });
+
+describe('an Event trigger set up in flow (Steps card)', () => {
+  it('replaces the trigger\'s rows with the setup step, drawn flat in the card, and comes back on Cancel', async () => {
+    const eventRef = { pluginId: 'acme.deploy', localId: 'released' };
+    const screen = await renderScreen(
+      <WorkflowTriggerBlock testID="b" title="Released" when={{ kind: 'pluginEvent', value: null, eventRef }}
+        enabled incomplete startOptions={[]} onSelectStart={() => {}} onChangeWhen={() => {}} onRemove={() => {}}
+        machineId={null} serverId={null} />,
+    );
+    try {
+      await screen.pressByTestIdAsync('b-configure-event');
+      expect(screen.findAllByType(TriggerPluginEventRows)[0]!.props.editing).toBe(true);
+      // One step: no trigger title or When above it, and no floating surface inside the in-flow card.
+      expect(screen.findByTestId('b')).not.toBeNull();
+      expect(screen.findByTestId('b-title')).toBeNull();
+      expect(screen.findByTestId('b-starts')).toBeNull();
+      expect(screen.findAllByType(FloatingOverlay)).toHaveLength(0);
+      await screen.pressByTestIdAsync('automation-plugin-event-cancel');
+      expect(screen.findByTestId('b-title')).not.toBeNull();
+      expect(screen.findAllByType(TriggerPluginEventRows)[0]!.props.editing).toBe(false);
+    } finally { await screen.unmount(); }
+  });
+});

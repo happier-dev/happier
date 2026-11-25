@@ -1,11 +1,12 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { AutomationEventTestResultV1Schema } from '@happier-dev/protocol/automations/automationEventTestV1';
 import { type AutomationEventTestResultV1 } from '@happier-dev/protocol/automations/automationEventTestV1';
 import type { AutomationRunPluginEventTriggerEvidenceV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
-import { PluginEventAutomationEditor } from '@/components/automations/editor/PluginEventAutomationEditor';
+import { PluginEventAutomationEditor, type PluginEventEditorPresentation } from '@/components/automations/editor/PluginEventAutomationEditor';
 import { Item } from '@/components/ui/lists/Item';
 import { Text } from '@/components/ui/text/Text';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
@@ -21,13 +22,15 @@ import type { TriggerWhenValue } from './sessionTriggerForm';
 
 const styles = StyleSheet.create((theme) => ({
     testResult: { color: theme.colors.text.primary },
+    inFlowFoot: { alignItems: 'flex-start' },
 }));
 
 type EventWhen = Extract<TriggerWhenValue, { kind: 'pluginEvent' }>;
 
 /**
- * A popover that hosts a trigger's rows (the sentence's detail chip) shows an Event's setup as its own step, as the
- * Link sheet does: the setup replaces the popover's body, with one footer, and comes back on Done or Cancel.
+ * An Event's setup is its own step wherever a trigger's rows stand, as on the Link sheet: it replaces the trigger's
+ * rows, with one footer, and comes back on Done or Cancel. A popover that hosts the rows (the sentence's detail chip)
+ * provides the step; without one, the trigger card holds it in flow.
  */
 export type TriggerEventStep = Readonly<{
     editing: boolean;
@@ -49,6 +52,7 @@ export function TriggerPluginEventRows(props: Readonly<{
     editing?: boolean;
     onEditingChange?: (editing: boolean) => void;
     editorMaxHeight?: number;
+    editorPresentation?: PluginEventEditorPresentation;
     initialEventSeed?: PluginUiOpenAutomationEventRequestV1;
     initialEventEditSeed?: PluginEventAutomationEditSeed;
     onEditSeedApplied?: React.ComponentProps<typeof PluginEventAutomationEditor>['onEditSeedApplied'];
@@ -96,13 +100,18 @@ export function TriggerPluginEventRows(props: Readonly<{
     const eventRef = props.when.value?.eventRef ?? props.when.eventRef;
     const readStatus = props.initialEventEditSeed ? 'ready'
         : seedRead.automationId === automationId && seedRead.triggerId === triggerId ? seedRead.status : 'loading';
-    return <>
-        {editing ? needsSeed && readStatus !== 'ready' ? <FloatingOverlay maxHeight={props.editorMaxHeight}
-            surfaceChrome="theme" footer={<RoundButton testID="automation-plugin-event-cancel" size="small" display="inverted"
-                title={t('common.cancel')} onPress={() => setEditing(false)} />}><Item
-            testID={`${props.testID}-event-read`} title={t(readStatus === 'loading' ? 'common.loading' : 'automations.form.trigger.sourceUnavailable')}
+    const renderSeedRead = () => {
+        const read = <Item testID={`${props.testID}-event-read`}
+            title={t(readStatus === 'loading' ? 'common.loading' : 'automations.form.trigger.sourceUnavailable')}
             onPress={readStatus === 'unavailable' ? () => setRetry((value) => value + 1) : undefined}
-            detail={readStatus === 'unavailable' ? t('common.retry') : undefined} showChevron={false} /></FloatingOverlay> : <PluginEventAutomationEditor
+            detail={readStatus === 'unavailable' ? t('common.retry') : undefined} showChevron={false} />;
+        const cancel = <RoundButton testID="automation-plugin-event-cancel" size="small" display="inverted"
+            title={t('common.cancel')} onPress={() => setEditing(false)} />;
+        return props.editorPresentation === 'inFlow' ? <>{read}<View style={styles.inFlowFoot}>{cancel}</View></>
+            : <FloatingOverlay maxHeight={props.editorMaxHeight} surfaceChrome="theme" footer={cancel}>{read}</FloatingOverlay>;
+    };
+    return <>
+        {editing ? needsSeed && readStatus !== 'ready' ? renderSeedRead() : <PluginEventAutomationEditor
                 automationId={automationId ?? 'trigger-draft'} clientId={triggerId ?? 'event-draft'}
                 value={props.when.value} seed={needsSeed ? props.initialEventEditSeed ?? seedRead.seed : null} initialEventRef={eventRef ?? null}
                 authoringMachineId={props.initialEventSeed?.monitoringMachineId ?? props.machineId} serverId={props.serverId}
@@ -110,6 +119,7 @@ export function TriggerPluginEventRows(props: Readonly<{
                 onEditSeedApplied={props.onEditSeedApplied}
                 observationOnly={props.when.observationOnly}
                 maxHeight={props.editorMaxHeight}
+                presentation={props.editorPresentation}
                 onComplete={(value, intent) => { props.onChange({ kind: 'pluginEvent', value, ...intent }); setEditing(false); }}
                 onCancel={() => setEditing(false)} /> : props.renderEntry ? props.renderEntry({
                     detail: props.when.value?.displayLabel, configured: props.when.value !== null || props.eventEdit !== undefined,

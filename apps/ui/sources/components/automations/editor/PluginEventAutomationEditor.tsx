@@ -125,39 +125,52 @@ const styles = StyleSheet.create((theme) => ({
     overlayFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: theme.space.s8,
         marginHorizontal: theme.space.s16, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border.default,
         paddingTop: theme.space.s12, paddingBottom: theme.space.s16 },
+    inFlowFooter: { marginHorizontal: 0, paddingBottom: 0 },
+    // The card's own top padding already sits above the step's title, as above a trigger's title.
+    inFlowHeader: { paddingTop: 0 },
 }));
+
+/**
+ * `floating`: the step is its popover's or sheet's surface. `inFlow`: the step stands in a card already on the page (the
+ * Steps view's trigger card), which owns the material, so it draws the same body and footer with no floating surface.
+ */
+export type PluginEventEditorPresentation = 'floating' | 'inFlow';
 
 export function InlinePluginEventEditor(props: Readonly<{
     model: PluginEventAutomationComposerModel;
     onComplete: PluginEventEditorCompletion;
     onCancel: () => void;
     maxHeight?: number;
+    presentation?: PluginEventEditorPresentation;
 }>) {
     const insideSheet = React.useContext(FloatingOverlaySheetContext);
     const complete = React.useCallback(async () => {
         await completePluginEventAutomationEditor(props.model, props.onComplete);
     }, [props]);
+    const inFlow = props.presentation === 'inFlow';
+    const footer = <View style={[styles.overlayFooter, inFlow ? styles.inFlowFooter : null]}>
+        <RoundButton testID="automation-plugin-event-cancel" size="small" display="inverted"
+            title={t('common.cancel')} onPress={props.onCancel} />
+        <RoundButton
+            testID="automation-plugin-event-done"
+            title={t('common.done')}
+            size="small"
+            onPress={props.model.createDraft ? () => { void complete(); } : undefined}
+            disabled={!props.model.createDraft}
+        />
+    </View>;
+    // The sheet's header already names the step, so its section repeats no title (as a pushed page's).
+    // In flow, the card already insets its content: the step's title, fields and footer stand on the card's edge.
+    const body = <ListPresentationProvider value="page" pageInsets={inFlow ? 'contained' : undefined}><ItemGroup surface="none" title={insideSheet ? undefined : t('workflows.triggers.popover.configureEvent')}
+        {...(inFlow ? { constrainToContentWidth: false, headerStyle: styles.inFlowHeader } : {})}>
+        <ListPresentationProvider value="grouped" floating={insideSheet}>
+            <View style={styles.sectionContent}><PluginEventAutomationComposerContent model={props.model} /></View>
+        </ListPresentationProvider>
+    </ItemGroup></ListPresentationProvider>;
+    if (inFlow) return <View>{body}{footer}</View>;
     return (
-        <FloatingOverlay surfaceChrome="theme" maxHeight={props.maxHeight ?? 640}
-            footer={<View style={styles.overlayFooter}>
-                <RoundButton testID="automation-plugin-event-cancel" size="small" display="inverted"
-                    title={t('common.cancel')} onPress={props.onCancel} />
-                <RoundButton
-                    testID="automation-plugin-event-done"
-                    title={t('common.done')}
-                    size="small"
-                    onPress={props.model.createDraft ? () => { void complete(); } : undefined}
-                    disabled={!props.model.createDraft}
-                />
-            </View>}>
-            {/* One tree in the popover and its phone sheet: crossing the breakpoint keeps the open pickers and their
-                search. The sheet's header already names the step, so its section repeats no title (as a pushed page's). */}
-            <ListPresentationProvider value="page"><ItemGroup surface="none" title={insideSheet ? undefined : t('workflows.triggers.popover.configureEvent')}>
-                <ListPresentationProvider value="grouped" floating={insideSheet}>
-                    <View style={styles.sectionContent}><PluginEventAutomationComposerContent model={props.model} /></View>
-                </ListPresentationProvider>
-            </ItemGroup></ListPresentationProvider>
-        </FloatingOverlay>
+        // One tree in the popover and its phone sheet: crossing the breakpoint keeps the open pickers and their search.
+        <FloatingOverlay surfaceChrome="theme" maxHeight={props.maxHeight ?? 640} footer={footer}>{body}</FloatingOverlay>
     );
 }
 
@@ -185,6 +198,7 @@ export function PluginEventAutomationEditor(props: Readonly<{
     onComplete: PluginEventEditorCompletion;
     onCancel: () => void;
     maxHeight?: number;
+    presentation?: PluginEventEditorPresentation;
 }>) {
     const currentSeed = React.useMemo(() => {
         if (!props.value || !('sourceInstanceId' in props.value)) return props.seed;
@@ -304,6 +318,7 @@ export function PluginEventAutomationEditor(props: Readonly<{
             onComplete={props.onComplete}
             onCancel={props.onCancel}
             maxHeight={props.maxHeight}
+            presentation={props.presentation}
         />
     );
 }
