@@ -225,6 +225,7 @@ describe('CLI session pull request binding', () => {
     let instances: WidgetInstanceV1[] = [];
     let adds = 0;
     let savedRow: ReturnType<typeof AutomationDefinitionDetailSchema.parse> | undefined;
+    let readWorkflowTriggers: NonNullable<ReturnType<typeof createCliActionDeps>['workflowAction']>;
     const hostBoundary: PluginActionsHostExecutor = { async execute(actionId, rawInput, context) {
       if (actionId === 'account.profile.get' || actionId === 'widgets.catalog.list'
         || actionId === 'widgets.item.list' || actionId === 'widgets.item.add') {
@@ -287,7 +288,7 @@ describe('CLI session pull request binding', () => {
       }
       if (actionId === 'automation.conversation.target.verify') {
         const input = AutomationConversationActionInputSchemasV1[actionId].parse(rawInput);
-        const trigger = savedRow?.triggers[0];
+        const trigger = savedRow?.triggers.find(item => item.id === input.scopedTrigger?.triggerId);
         if (!savedRow || !trigger) throw new Error('Expected a committed Automation trigger to verify');
         expect(context?.actionCaller).toMatchObject({ kind: 'plugin', pluginId: CHANNELS_MANIFEST.id });
         expect(input).toMatchObject({ automationId: savedRow.id, scopedTrigger: {
@@ -295,6 +296,10 @@ describe('CLI session pull request binding', () => {
           triggerKind: trigger.kind, pullRequest: { repository: 'acme/widgets', number: 42 },
         } });
         return { ok: true, result: { kind: 'verified' } };
+      }
+      if (actionId === 'workflow.trigger.list' && readWorkflowTriggers && context) {
+        const result = await readWorkflowTriggers({ actionId, input: rawInput, context });
+        return parseActionExecuteFailure(result) ?? { ok: true, result };
       }
       throw new Error(`Unexpected external host Action ${actionId}`);
     } };
@@ -444,6 +449,7 @@ describe('CLI session pull request binding', () => {
         expect(action).toEqual({ pluginId: CHANNELS_MANIFEST.id, localId: SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1 });
         expect(context).toMatchObject({ surface: 'cli', actionCaller: { kind: 'host' }, defaultSessionId: sessionId, actionRequestId: linkRequestId });
         const binding = SessionPullRequestBindingInputV1Schema.parse(input);
+        if (binding.kind === 'list') return { ok: true, result: await invokeCore(action.localId, binding) };
         if (binding.kind === 'attach') {
           expect(binding).toMatchObject({ target: {
             automationId: savedRow?.id, triggerId: savedRow?.triggers[0]?.id, triggerRevision: 0, triggerKind: 'prComment',
@@ -461,6 +467,7 @@ describe('CLI session pull request binding', () => {
         return parseActionExecuteFailure(result) ?? { ok: true as const, result };
       },
     }).deps : createCliActionDeps(hostParams);
+    readWorkflowTriggers = deps.workflowAction!;
     const open = () => deps.scmActionExecute!({ actionId: 'scm.pullRequest.openOrReuse', input: { cwd: '/repo', base: { kind: 'branch', name: 'main' } },
       context: { surface: 'cli', actionCaller: { kind: 'host' }, defaultSessionId: sessionId,
         externalActionTarget: { kind: 'machine', machineId: 'scm-machine' } },
@@ -473,6 +480,14 @@ describe('CLI session pull request binding', () => {
         const explicitlyAttached = await invokeCore(SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, qualified);
         expect(explicitlyAttached).toMatchObject({ kind: 'attached', bindingId: expect.any(String) });
 
+        const ordinaryPost = boundary.post.getMockImplementation()!;
+        boundary.post.mockImplementation(async (url: string, input: unknown) => {
+          if (url.endsWith('/v3/automations/query')) {
+            expect(input).toMatchObject({ scopeSessionId: sessionId, details: true });
+            return { status: 200, data: { automations: savedRow ? [structuredClone(savedRow)] : [], nextCursor: null } };
+          }
+          return ordinaryPost(url, input);
+        });
         boundary.request.mockImplementation(async ({ url, method, data }: { url: string; method: string; data: unknown }) => {
           if (method === 'GET' && savedRow && url.endsWith(`/v3/automations/${savedRow.id}`)) {
             return { status: 200, data: structuredClone(savedRow) };
@@ -484,8 +499,9 @@ describe('CLI session pull request binding', () => {
           if (method === 'PUT' && savedRow && url.endsWith(`/v3/automations/${savedRow.id}`)) {
             const removal = AutomationDefinitionReconcileRequestSchema.parse(data);
             expect(removal.removedTriggers).toEqual([{ triggerId: savedRow.triggers[0]?.id, expectedRevision: 0 }]);
-            expect(removal.triggers).toEqual([]);
-            savedRow = { ...savedRow, triggers: [], templateVersion: 2 };
+            expect(removal.triggers).toMatchObject(savedRow.triggers.slice(1).map(item => ({ triggerId: item.id })));
+            savedRow = { ...savedRow, triggers: savedRow.triggers.filter(item =>
+              !removal.removedTriggers.some(removed => removed.triggerId === item.id)), templateVersion: 2 };
             return { status: 200, data: structuredClone(savedRow) };
           }
           if (method !== 'POST' || !url.endsWith('/v3/automations') || savedRow) throw new Error('Unexpected Automation request');
@@ -549,18 +565,40 @@ describe('CLI session pull request binding', () => {
         } else if (credentialConnected) {
           expect(receipt).not.toHaveProperty('postWriteFailure');
           expect(attaches).toBe(1);
+          const automationId = savedRow.id;
+          const triggerId = savedRow.triggers[0]!.id;
+          const cleanup = { kind: 'removeTrigger', sessionId, automationId } as const;
+          const siblingId = 'retained-sibling-trigger';
+          if (removeSingleTrigger) {
+            // A second saved PR trigger in the same set must survive removing the first.
+            const sibling = { ...savedRow.triggers[0], id: siblingId,
+              triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+                binding: { v: 1, automationId, triggerId: siblingId, triggerRevision: 0, triggerKind: 'prComment' },
+                definition: { kind: 'prComment', pullRequest: qualified.pullRequest },
+              })) };
+            savedRow = AutomationDefinitionDetailSchema.parse({ ...savedRow, triggers: [...savedRow.triggers, sibling] });
+            expect(await invokeCore(SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, { ...qualified, target: {
+              automationId, triggerId: siblingId, triggerRevision: 0, triggerKind: 'prComment', origin: 'automatic',
+            } })).toMatchObject({ kind: 'attached' });
+          }
           const before = readBindings();
           expect(before).toContainEqual(expect.objectContaining({ enabled: true, deletionState: 'none',
             target: expect.objectContaining({ kind: 'automation', automationId: savedRow.id }) }));
-          const automationId = savedRow.id;
+          if (!removeSingleTrigger && !originless) {
+            for (const input of [cleanup, { ...cleanup, triggerId }]) {
+              expect(await invokeCore(SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, input)).toEqual({ kind: 'removed' });
+              expect(readBindings()).toEqual(before);
+            }
+          }
           const removal = await deps.workflowAction!({
-            actionId: 'workflow.trigger.remove', input: { automationId, ...(removeSingleTrigger ? { triggerId: savedRow.triggers[0]!.id } : {}) },
+            actionId: 'workflow.trigger.remove', input: { automationId, ...(removeSingleTrigger ? { triggerId } : {}) },
             context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId: linkRequestId },
           });
           if (removeSingleTrigger) {
-            expect(savedRow?.triggers).toEqual([]);
-            expect(removal).toMatchObject({ set: { automationId, revision: 2, triggers: [] } });
+            expect(savedRow?.triggers.map(item => item.id)).toEqual([siblingId]);
+            expect(removal).toMatchObject({ set: { automationId, revision: 2, triggers: [{ id: siblingId }] } });
             expect(removal).not.toHaveProperty('postWriteFailure');
+            expect(await invokeCore(SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, cleanup)).toEqual({ kind: 'removed' });
           } else {
             expect(savedRow).toBeUndefined();
             expect(removal).toEqual({ automationId, deleted: true, removedRevision: 1 });
@@ -570,7 +608,9 @@ describe('CLI session pull request binding', () => {
             .toEqual(before.filter(binding => binding.target.kind === 'session'));
           expect(after.filter(binding => binding.target.kind === 'automation')).toEqual([
             expect.objectContaining({ enabled: originless, deletionState: 'none',
-              target: expect.objectContaining({ kind: 'automation', automationId }) }),
+              target: expect.objectContaining({ kind: 'automation', automationId, scopedTrigger: expect.objectContaining({ triggerId }) }) }),
+            ...(removeSingleTrigger ? [expect.objectContaining({ enabled: true, deletionState: 'none',
+              target: expect.objectContaining({ kind: 'automation', automationId, scopedTrigger: expect.objectContaining({ triggerId: siblingId }) }) })] : []),
           ]);
         } else {
           expect(receipt).toMatchObject({ postWriteFailure: { ok: false, errorCode: 'github_credential_unavailable' } });

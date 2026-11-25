@@ -10965,8 +10965,10 @@ authorized Machine even when the Session is closed. An unavailable binding reade
 must not fabricate an empty link list. Removing a trigger or its set disables
 scoped conversation ingress for bindings created automatically by Save while
 preserving the Session's PR link. Explicit attachments and older bindings
-without a recorded origin keep their existing state. A failed detach after
-deletion appears in the committed receipt's `postWriteFailure`.
+without a recorded origin keep their existing state. Channels uses the current
+Session-scoped Workflow trigger list to verify that each automatic binding's
+creating trigger is gone before disabling it. A failed detach after deletion
+appears in the committed receipt's `postWriteFailure`.
 
 The GitHub checks source projects one rollup into `checksCompleted`, `checksFailed`
 and `checksPassed` events. The scoped `ciFailed` adapter consumes that same

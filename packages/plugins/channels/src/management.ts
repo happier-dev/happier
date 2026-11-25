@@ -3995,16 +3995,29 @@ export async function refreshSessionPullRequestBindingsForInvocation(input: Read
 async function disableSessionPullRequestTriggerBindings(input: Readonly<{
   sessionId: string; triggerId?: string; triggerRevision?: number; exceptBindingId?: string; automationId?: string;
 }>, context: PluginInvocationContext): Promise<void> {
+  let retainedTriggerIds: Set<string> | undefined;
   for (const { row, binding } of await readSessionPullRequestBindings(input.sessionId, context)) {
     if (!binding.enabled || binding.id === input.exceptBindingId || binding.target.kind !== 'automation') continue;
     const scope = binding.target.scopedTrigger;
     if (scope === undefined || (input.triggerId !== undefined && scope.triggerId !== input.triggerId)) continue;
+    if (input.triggerRevision !== undefined && scope.triggerRevision > input.triggerRevision) continue;
     if (input.automationId !== undefined) {
       const payload = own(row.value, 'payload');
       if (binding.target.automationId !== input.automationId
         || !isJsonRecord(payload) || own(payload, 'automaticTriggerId') !== scope.triggerId) continue;
+      if (retainedTriggerIds === undefined) {
+        // The invoking surface supplies the selector. The Workflow owner supplies deletion evidence.
+        const listed = await context.services.actions.execute('workflow.trigger.list', {
+          lifetimeSession: { sessionId: input.sessionId },
+        }, { signal: context.signal });
+        if (isPluginActionApprovalRequestCreated(listed) || listed.lifetimeSession?.sessionId !== input.sessionId) {
+          throw pluginError('channels_pr_link_session_not_verified', 'Could not verify the current Workflow triggers for this Session.');
+        }
+        const set = listed.sets.find(item => item.automationId === input.automationId);
+        retainedTriggerIds = new Set(set?.triggers.map(trigger => trigger.id));
+      }
+      if (retainedTriggerIds.has(scope.triggerId)) continue;
     }
-    if (input.triggerRevision !== undefined && scope.triggerRevision > input.triggerRevision) continue;
     await setConversationBindingEnabledForInvocation({ bindingId: binding.id, expectedRevision: row.revision, enabled: false }, context);
   }
 }
