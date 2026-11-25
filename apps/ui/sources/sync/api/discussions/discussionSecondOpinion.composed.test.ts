@@ -13,6 +13,7 @@ import { DiscussionCreateRequestV1Schema, DiscussionPostRequestV1Schema } from '
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { SetSessionAccessGrantRequestV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
@@ -31,10 +32,11 @@ beforeEach(async () => {
 });
 afterEach(() => { getStorage().setState(initial, true); standardCleanup(); });
 
-async function sourceHome() {
+async function sourceHome(sharing = false) {
     const serverId = await homes.addHome({ name: 'Review', serverUrl: 'https://review.test', accountId: 'alice', currentAccount: true });
     const features = createRootLayoutFeaturesResponse();
     expect(tryWriteServerEnabledBitInPlace(features, 'sessions.conversations', true)).toBe(true);
+    if (sharing) expect(tryWriteServerEnabledBitInPlace(features, 'sharing.session', true)).toBe(true);
     const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
     primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
     homes.answer(serverId, '/v1/features', { body: features });
@@ -294,6 +296,49 @@ it('requires explicit confirmation of a changed preview, then retries the one or
     expect(thread.messages).toHaveLength(2);
     expect(homes.requestsFor('/v1/discussions/committed-thread/messages').filter(row => row.input !== null)
         .map(row => DiscussionPostRequestV1Schema.parse(row.input).localId)).toEqual([retry.questionLocalId, retry.questionLocalId]);
+});
+
+it('retries the same Second-opinion ask after the source grant commits without its response', async () => {
+    const { serverId, source, preview } = await sourceHome(true);
+    const reviewers = [{ selection: { kind: 'session' as const, session: { serverId, sessionId: 'reviewer' } } }];
+    const grants = new Map<string, ReturnType<typeof SetSessionAccessGrantRequestV1Schema.parse>>();
+    homes.answer(serverId, 'POST /v1/discussions/second-opinion/preview', { select: () => ({ body: {
+        ok: true, value: DiscussionSecondOpinionPreviewV1Schema.parse({ ...preview,
+            sourceAudienceAccountIds: ['alice', ...grants.keys()],
+            reviewers: [{ ...reviewers[0], sourceAccess: 'read', runtimeAccountId: 'bob',
+                audienceAccountIds: ['alice', 'bob'], missingSourceAccountIds: grants.has('bob') ? [] : ['bob'],
+                canGrantSource: true, disclosure: grants.has('bob') ? { ok: true }
+                    : { ok: false, reason: 'destination_audience_broader' } }],
+        }),
+    } }) });
+    homes.answer(serverId, 'POST /v2/sessions/access-grants/set', { select: input => {
+        const request = SetSessionAccessGrantRequestV1Schema.parse(input);
+        if (request.subject.kind !== 'account') throw new Error('Expected the admitted source recipient');
+        grants.set(request.subject.accountId, request);
+        return { dispatchThenFail: true };
+    } });
+    const thread = answerDiscussionThreadForTests(homes, serverId, { accountId: 'alice', loseCreate: false, loseFirstRejoin: false });
+    homes.answer(serverId, 'POST /v1/discussions/committed-thread/participants/invite', { body: {
+        discussionId: 'committed-thread', ownerAccountId: 'alice', access: 'owner', grants: [], changed: true,
+    } });
+    const controller = createDiscussionSecondOpinionController({ scope: { serverId, accountId: 'alice' },
+        availability: 'available', source, draft: { title: 'Review', question: 'What changes?', reviewers } });
+    const retry = controller.getSnapshot().retry;
+    await controller.preview();
+    expect(controller.getSnapshot().preview?.preview.reviewers[0]?.missingSourceAccountIds).toEqual(['bob']);
+    await controller.ask();
+    expect(controller.getSnapshot().result).toMatchObject({ operation: 'second_opinion', outcome: {
+        kind: 'succeeded', value: { status: 'pending', stage: 'grant', errorCode: 'outcome_unknown' },
+    } });
+    expect([...grants.values()]).toMatchObject([{ sessionId: 'source-session', subject: { kind: 'account', accountId: 'bob' }, accessLevel: 'view' }]);
+    expect(thread.stored()).toBeNull();
+
+    await controller.retry();
+    expect(controller.getSnapshot()).toMatchObject({ retry, result: { operation: 'second_opinion', outcome: {
+        kind: 'succeeded', value: { status: 'asked', discussion: { serverId, discussionId: 'committed-thread' } },
+    } } });
+    expect(thread.stored()?.discussion.creationLocalId).toBe(retry.creationLocalId);
+    expect(thread.messages.map(row => row.localId)).toEqual([retry.quoteLocalId, retry.questionLocalId]);
 });
 
 it.each([false, true])('carries selected Workflow placement to multi-reviewer admission and refuses its absence before creation (project=%s)', async withProject => {
