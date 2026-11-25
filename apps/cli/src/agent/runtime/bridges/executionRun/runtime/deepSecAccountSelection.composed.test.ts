@@ -7,6 +7,8 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { ExecutionRunStartRequestBaseSchema } from '@happier-dev/protocol/execution/runs/startRequest';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 import { bindRequesterSessionCredentialScope } from '@/persistence';
 import { reloadConfiguration } from '@/configuration';
 import { findCatalogEntry } from '@/agent/catalog/registry';
@@ -17,6 +19,7 @@ import { resolveExecutionRunConnectedServicesEnv } from './connectedServicesEnv'
 import { prepareCodexConnectedAccountLaunchEnvironment } from '../../../../../../../../packages/plugins/codex/src/agent/runtime/connectedAccountKeys';
 import { activate, PLUGIN_MANIFEST } from '../../../../../../../../packages/plugins/review-deepsec/src/index';
 import { buildGitSnapshot } from '../../../../../../../../packages/plugins/scm-git/src/statusSnapshot';
+import { applyExecutionRunChildSelection } from '../../../../../../../ui/sources/components/sessions/runs/launcher/executionRunChildChoice';
 
 const home = await vi.hoisted(async () => {
     const [{ mkdtemp }, { tmpdir }, { join }] = await Promise.all([
@@ -105,7 +108,8 @@ describe('DeepSec consumes the canonical host Account selection', () => {
         await rm(home.directory, { recursive: true, force: true });
     });
 
-    async function launch(selection?: ConnectedServiceBindingsV2 | null) {
+    async function launch(selection?: ConnectedServiceBindingsV2 | null,
+        modelSelection?: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>['modelSelection']) {
         const resolved = await resolveExecutionRunConnectedServicesEnv({
             runId: 'deepsec-selection', backendId: 'codex', backendSourceKind: 'built_in',
             agentCatalogEntry: findCatalogEntry('codex'), cwd: home.directory,
@@ -161,6 +165,7 @@ describe('DeepSec consumes the canonical host Account selection', () => {
                 runnerAgentTarget: { kind: 'agent', identity: consumer },
                 runnerConnectedAccountPurposes: prepared.purposes, runnerConnectedAccountMaterialization: prepared.materialization,
                 launchEnvironment: prepared.launchEnvironment,
+                ...(modelSelection ? { modelSelection } : {}),
                 input: { text: 'Review authentication', structuredInput: {
                     reviewers: [{ kind: 'engine', engineId: 'deepsec' }], instructions: 'Review authentication',
                     engines: { deepsec: { mode: 'current_diff', confirmedCostWarning: true } },
@@ -211,12 +216,26 @@ describe('DeepSec consumes the canonical host Account selection', () => {
         expect(nativeRequests).toEqual([]);
         expect(homeReads).toEqual([]);
     });
-    it('honors explicit Machine login without a linked Account or API key', async () => {
+    it('consumes the deliberate UI native choice rather than Agent default without a linked Account or API key', async () => {
         linkedAccount = null;
-        const { process } = await launch(null);
+        const nativeModel = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-5' };
+        const draft = { sessionId: 'fixture-session', instructions: 'Review authentication',
+            reviewers: [{ kind: 'engine', engineId: 'deepsec', runnerAgentTarget: { kind: 'agent', identity: consumer } }] };
+        const chosen = applyExecutionRunChildSelection(draft, nativeModel);
+        const admitted = ReviewStartInputSchema.parse(chosen);
+        const engine = admitted.reviewers.find(reviewer => reviewer.kind === 'engine');
+        if (!engine || engine.kind !== 'engine') throw new Error('Selected DeepSec reviewer missing');
+        expect(engine.modelSelection).toEqual(nativeModel);
+        expect(engine.connectedServices).toBeNull();
+        const defaulted = ReviewStartInputSchema.parse(applyExecutionRunChildSelection(chosen, 'agentDefault'));
+        expect(defaulted.reviewers[0]).toMatchObject({ childSelection: 'agentDefault' });
+        expect(defaulted.reviewers[0]).not.toHaveProperty('connectedServices');
+        expect(defaulted.reviewers[0]).not.toHaveProperty('modelSelection');
+        const selectedServices = ExecutionRunStartRequestBaseSchema.shape.connectedServices.parse(engine.connectedServices);
+        const { process } = await launch(selectedServices, nativeModel);
         expect(homeReads).toEqual([]);
         expect(transport.materialize).not.toHaveBeenCalled();
-        expect(process?.args).toEqual(expect.arrayContaining(['--agent', 'codex', '--ai-api-key-env', 'OPENAI_API_KEY']));
+        expect(process?.args).toEqual(expect.arrayContaining(['--agent', 'codex', '--ai-api-key-env', 'OPENAI_API_KEY', '--model', 'gpt-5']));
         expect(process?.env).toMatchObject({ CODEX_HOME: '/machine/native-login', OPENAI_API_KEY: '', AI_GATEWAY_API_KEY: '' });
     });
 });
