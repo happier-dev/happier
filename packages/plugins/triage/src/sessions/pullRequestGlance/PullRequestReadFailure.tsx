@@ -18,7 +18,7 @@ export function PullRequestReadFailure(props: Readonly<{
   if (readError === undefined && unavailable === undefined) return null;
   const codes = readError === undefined ? [unavailable?.failure.code]
     : [readError.code, ...(readError.diagnostics ?? [])];
-  const requestId = readPluginErrorRequestIdV1(readError);
+  const requestId = readError === undefined ? unavailable?.failure.requestId : readPluginErrorRequestIdV1(readError);
   return <Stack gap="small">
     <ErrorState
       kind={readError === undefined ? 'unavailable' : 'error'}

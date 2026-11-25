@@ -182,7 +182,7 @@ describe('the composed Session PR Resource', () => {
     it.each(['observation', 'relations'] as const)('retains the typed %s dependency refusal alongside the known linked PR', async stage => {
         let refused = true;
         const refuse = () => { throw new PluginError({ code: 'plugin_resource_not_found',
-            message: 'The requested dependency is not available.', retryable: false }); };
+            message: 'The requested dependency is not available.', retryable: false, details: { requestId: 'dependency-request' } }); };
         const host = boundary({
             ...(stage === 'relations' ? { readRelations: async () => refused ? refuse() : relations() } : {}),
             bindActions: options => ({ readAction: options.readAction,
@@ -194,7 +194,7 @@ describe('the composed Session PR Resource', () => {
         });
         try {
             expect(await host.read()).toMatchObject({ kind: 'ready', pullRequests: [{
-                link: { url }, nativeStatus: { kind: 'unavailable', failure: { code: 'plugin_resource_not_found' } },
+                link: { url }, nativeStatus: { kind: 'unavailable', failure: { code: 'plugin_resource_not_found', requestId: 'dependency-request' } },
             }] });
             refused = false;
             if (stage === 'relations') host.changed('relations');
@@ -213,8 +213,9 @@ describe('the composed Session PR Resource', () => {
             async readAction(ref, input, requestOptions) {
                 if (ref.pluginId === (stage === 'metadata' ? 'happier.channels' : 'happier.triage')) {
                     if (thrown) throw new PluginError({ code: 'plugin_action_generation_retired',
-                        message: 'The mounted generation retired.', retryable: false });
-                    return { ok: false, errorCode: 'plugin_action_generation_retired', error: 'The mounted generation retired.' };
+                        message: 'The mounted generation retired.', retryable: false, details: { requestId: 'action-request' } });
+                    return { ok: false, errorCode: 'plugin_action_generation_retired', error: 'The mounted generation retired.',
+                        details: { requestId: 'action-request' } };
                 }
                 return options.readAction(ref, input, requestOptions);
             },
@@ -222,7 +223,7 @@ describe('the composed Session PR Resource', () => {
         try {
             const result = await host.read();
             expect(stage === 'metadata' ? result : result.kind === 'ready' ? result.pullRequests[0]?.nativeStatus : null)
-                .toMatchObject({ kind: 'unavailable', failure: { code: 'plugin_action_generation_retired' } });
+                .toMatchObject({ kind: 'unavailable', failure: { code: 'plugin_action_generation_retired', requestId: 'action-request' } });
         } finally { await host.dispose(); }
     });
 

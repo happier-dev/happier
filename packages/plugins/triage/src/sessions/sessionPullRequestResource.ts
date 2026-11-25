@@ -1,4 +1,4 @@
-import { isPluginError, PluginError, type Disposable } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, readPluginErrorRequestIdV1, type Disposable } from '@happier-dev/plugin-sdk';
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginDynamicResourceInvocationOptionsV1, PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
@@ -88,8 +88,13 @@ function observationFailureStatus(demand: NativeDemand, failure: TriageSourceFai
         : unavailable(failure);
 }
 
-function transportFailure(code: string): TriageSourceFailureV1 {
-    return { class: 'transient', code };
+function transportFailure(
+    code: string,
+    cause?: unknown,
+    classification: TriageSourceFailureV1['class'] = 'transient',
+): TriageSourceFailureV1 {
+    const requestId = readPluginErrorRequestIdV1(cause);
+    return { class: classification, code, ...(requestId === undefined ? {} : { requestId }) };
 }
 
 function preserveLeaf<T>(previous: T | undefined, next: T): T {
@@ -191,7 +196,7 @@ async function attachNativeObservation(demand: NativeDemand, options: PluginDyna
         }, { signal });
     } catch (error) {
         if (signal.aborted) throw error;
-        demand.observationFailure = { class: 'unsupportedContract', code: isPluginError(error) ? error.code : 'nativeObservationUnavailable' };
+        demand.observationFailure = transportFailure(isPluginError(error) ? error.code : 'nativeObservationUnavailable', error, 'unsupportedContract');
         return undefined;
     }
 }
@@ -222,10 +227,10 @@ async function refreshNative(demand: NativeDemand, options: PluginDynamicResourc
         const envelope = await options.readAction(nativeAction, demand.input, { signal: options.signal });
         next = envelope.ok
             ? TriagePullRequestStatusResultV1Schema.parse(envelope.result)
-            : { kind: 'unavailable' as const, failure: transportFailure(envelope.errorCode) };
+            : { kind: 'unavailable' as const, failure: transportFailure(envelope.errorCode, envelope) };
     } catch (error) {
         if (options.signal.aborted) throw error;
-        next = { kind: 'unavailable' as const, failure: transportFailure(isPluginError(error) ? error.code : 'nativeStatusUnavailable') };
+        next = { kind: 'unavailable' as const, failure: transportFailure(isPluginError(error) ? error.code : 'nativeStatusUnavailable', error) };
     }
     const previous = demand.status?.kind === 'current' || demand.status?.kind === 'stale' ? demand.status : undefined;
     if (next.kind === 'unavailable' && next.failure.code === 'sourceAuthorityChanged') return { status: unavailable(next.failure) };
@@ -257,13 +262,13 @@ async function read(state: State, options: PluginDynamicResourceInvocationOption
             const envelope = await options.readAction(watchAction, { kind: 'get', sessionId: id }, { signal: options.signal });
             if (!envelope.ok) {
                 await clearAdmitted(state);
-                return { kind: 'unavailable', sessionId: id, failure: { class: 'permission', code: envelope.errorCode } };
+                return { kind: 'unavailable', sessionId: id, failure: transportFailure(envelope.errorCode, envelope, 'permission') };
             }
             state.metadata = admitMetadata(state.metadata, SessionPullRequestWatchReadResultV1Schema.parse(envelope.result));
         } catch (error) {
             if (options.signal.aborted) throw error;
             await clearAdmitted(state);
-            return { kind: 'unavailable', sessionId: id, failure: transportFailure(isPluginError(error) ? error.code : 'watchUnavailable') };
+            return { kind: 'unavailable', sessionId: id, failure: transportFailure(isPluginError(error) ? error.code : 'watchUnavailable', error) };
         }
     }
     const metadata = state.metadata;
@@ -282,7 +287,7 @@ async function read(state: State, options: PluginDynamicResourceInvocationOption
         } catch (error) {
             if (options.signal.aborted) throw error;
             state.relations = undefined;
-            state.relationFailure = transportFailure(isPluginError(error) ? error.code : 'configuredSourceUnavailable');
+            state.relationFailure = transportFailure(isPluginError(error) ? error.code : 'configuredSourceUnavailable', error);
         }
     }
     const wanted = new Map<string, NativeDemand>();

@@ -409,7 +409,8 @@ export function PullRequestGlance(props: PullRequestGlanceProps): ReactElement {
               ? text('plugins.triage.prGlance.unavailable.rate', 'GitHub is limiting requests, so checks, review and merge state wait. The link stays and they come back on their own.')
               : text('plugins.triage.prGlance.unavailable.description', 'Checks, review and merge state can’t be shown right now. The link stays, and watching resumes when they can be read.')} />
       )}
-      {model.freshness.kind === 'current' ? null : <PullRequestFailureDetails codes={[model.freshness.failure.code]} />}
+      {model.freshness.kind === 'current' ? null : <PullRequestFailureDetails codes={[model.freshness.failure.code]}
+        requestId={model.freshness.failure.requestId} />}
       <Row gap="small" align="center" testID={`pr-glance.watch:${model.watch.kind}`}>
         {model.watch.kind === 'fixing' ? <Spinner size="small" tone="secondary" accessibilityLabel={watch.value} />
           : model.watch.kind === 'exhausted' ? <Icon name="attention" size="small" tone="warning" />
