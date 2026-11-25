@@ -68,7 +68,8 @@ const { VoiceComposerPlanet } = await import('@/components/voice/composer/VoiceC
 const { VoiceMarkArt } = await import('@/components/voice/presence/VoiceMark');
 const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
 const { getVoiceSessionPresentedAttemptId, resetVoiceSessionRuntimeStateForTests, setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
-const { beginCanonicalVoiceTranscriptAttempt, projectCanonicalVoiceTranscriptEvent, releaseCanonicalVoiceTranscriptConversation } = await import('@/voice/transcript/voiceConversationTranscript');
+const { beginCanonicalVoiceTranscriptAttempt, clearLocalVoiceCapturePartial, projectCanonicalVoiceTranscriptEvent, projectLocalVoiceCapturePartial, releaseCanonicalVoiceTranscriptConversation } = await import('@/voice/transcript/voiceConversationTranscript');
+const { voiceRuntimeLevelStore } = await import('@/voice/runtime/levels/voiceRuntimeLevelStore');
 const { deriveCanonicalVoiceTranscriptEntryId } = await import('@/voice/transcript/canonicalProjector');
 const { sendVoiceSessionComposerText } = await import('@/voice/binding/sendVoiceSessionComposerText');
 const { VoiceSetupFirstSuccessRuntime } = await import('./VoiceSetupFirstSuccessRuntime');
@@ -178,6 +179,8 @@ it.each([
         { kind: 'agent-text', id: 'reply', localId: 'voice-realtime:current:assistant:reply', seq: 12, createdAt: 2, text: 'Hi', meta },
     ];
     let canonicalAttempt: CanonicalVoiceTranscriptAttempt | null = null;
+    let tryCommits = 0;
+    const countTryCommit = () => { tryCommits += 1; };
     const publish = (rows: readonly Message[]) => storage.setState((state) => ({
         sessionMessages: { ...state.sessionMessages, conversation: createSessionMessagesFixture({ isLoaded: true,
             messageIdsOldestFirst: rows.map((row) => row.id), messagesById: Object.fromEntries(rows.map((row) => [row.id, row])) }) },
@@ -190,7 +193,9 @@ it.each([
         return <>
             {source === 'durable' ? <VoiceSessionRuntime /> : <VoiceSetupFirstSuccessRuntime />}
             {panel}
-            {liveTry && React.isValidElement<React.ComponentProps<typeof VoiceSetupPanel>>(panel) && panel.props.renderTry}
+            {liveTry && React.isValidElement<React.ComponentProps<typeof VoiceSetupPanel>>(panel) && (
+                <React.Profiler id="voice-setup-try" onRender={countTryCommit}>{panel.props.renderTry}</React.Profiler>
+            )}
             <VoiceComposerPlanet pose="ready" muted={false} markEvent={control.markEvent}
                 accessibilityLabel="Voice" accessibilityHint="Voice" onPress={() => {}} />
         </>;
@@ -239,6 +244,25 @@ it.each([
                 content: { t: 'plain', v: expect.objectContaining({ meta: expect.objectContaining({
                     happier: expect.objectContaining({ kind: 'voice_note.v1' }),
                 }) }) } })]);
+        }
+        if (liveTry) {
+            expect(tryCommits).toBeGreaterThan(0);
+            tryCommits = 0;
+            act(() => projectLocalVoiceCapturePartial(conversation.sessionId, 'Hello Happier'));
+            try {
+                expect(tryCommits).toBe(1);
+                const meter = voiceRuntimeLevelStore.open({ channel: 'input', sourceId: 'setup-try-count' });
+                try {
+                    act(() => meter.write(0.25));
+                    tryCommits = 0;
+                    act(() => meter.write(0.5));
+                    expect(tryCommits).toBe(0);
+                } finally {
+                    act(() => meter.close());
+                }
+            } finally {
+                act(() => clearLocalVoiceCapturePartial());
+            }
         }
         if (restartBeforeInput) await act(async () => {
             setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
