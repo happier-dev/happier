@@ -8229,13 +8229,13 @@ export const zhHans: TranslationStructure = {
     },
         pendingActivation: {
     held: { title: "已停止", body: "有人停止了此会话。在有人恢复之前，消息会一直保留在队列中。" },
-    held_offline: { title: "已停止", body: "此机器已离线。消息会保留在队列中；机器恢复后请重新发送或恢复。" },
-            waiting_offline: { title: '消息已加入此机器的队列', body: '这台机器及其守护进程恢复在线后，消息将被处理。' },
+    held_offline: { title: ({ machine }: { machine: string }) => `已停止 · ${machine} 恢复后请恢复会话`, body: ({ machine }: { machine: string }) => `${machine} 已离线。消息不会自动发送。` },
+            waiting_offline: { title: ({ machine }: { machine: string }) => `${machine} 恢复后将发送`, body: ({ machine }: { machine: string }) => `${machine} 已离线。` },
             waiting: { title: '等待恢复', body: '守护进程恢复此会话时，你的消息会安全地保留在队列中。' },
             failed: { title: '无法恢复会话', body: '你的消息仍安全地保留在队列中。准备好后请重试。' },
-            queued: { title: '消息已加入队列', body: '此非活动会话有一条排队消息。准备好后请恢复会话。' },
-            queued_offline: { title: '消息等待手动恢复', body: '在你恢复此会话之前，消息会一直留在队列中。' },
-            actions: { retry: '重试', resume: '恢复', process_when_online: '在线后处理', chooseAccount: '选择其他账户', keepQueued: '保留在队列中', autoResumeOptions: '自动恢复选项' },
+            queued: { title: '消息已加入队列', body: "恢复此会话后消息就会发送。" },
+            queued_offline: { title: ({ machine }: { machine: string }) => `${machine} 已离线`, body: "消息不会自动发送。" },
+            actions: { retry: '重试', resume: '恢复', process_when_online: "上线后发送", chooseAccount: '选择其他账户', keepQueued: '保留在队列中', autoResumeOptions: '自动恢复选项' },
         },
 	    permissionUnreachable: {
 	      status: "需要权限 · 机器离线",

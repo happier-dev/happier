@@ -7063,13 +7063,13 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           },
         pendingActivation: {
     held: { title: "已停止", body: "有人停止了此工作階段。在有人恢復之前，訊息會一直保留在佇列中。" },
-    held_offline: { title: "已停止", body: "此機器已離線。訊息會保留在佇列中；機器恢復後請重新傳送或恢復。" },
-            waiting_offline: { title: '訊息已加入此機器的佇列', body: '這台機器及其背景服務重新上線後，訊息將被處理。' },
+    held_offline: { title: ({ machine }: { machine: string }) => `已停止 · ${machine} 恢復後請恢復工作階段`, body: ({ machine }: { machine: string }) => `${machine} 已離線。訊息不會自動傳送。` },
+            waiting_offline: { title: ({ machine }: { machine: string }) => `${machine} 恢復後將傳送`, body: ({ machine }: { machine: string }) => `${machine} 已離線。` },
             waiting: { title: '等待恢復', body: '背景服務恢復此工作階段時，你的訊息會安全地保留在佇列中。' },
             failed: { title: '無法恢復工作階段', body: '你的訊息仍安全地保留在佇列中。準備好後請重試。' },
-            queued: { title: '訊息已加入佇列', body: '此非作用中工作階段有一則排隊訊息。準備好後請恢復工作階段。' },
-            queued_offline: { title: '訊息等待手動恢復', body: '在你恢復此工作階段之前，訊息會一直留在佇列中。' },
-            actions: { retry: '重試', resume: '恢復', process_when_online: '上線後處理', chooseAccount: '選擇其他帳戶', keepQueued: '保留在佇列中', autoResumeOptions: '自動恢復選項' },
+            queued: { title: '訊息已加入佇列', body: "恢復此工作階段後訊息就會傳送。" },
+            queued_offline: { title: ({ machine }: { machine: string }) => `${machine} 已離線`, body: "訊息不會自動傳送。" },
+            actions: { retry: '重試', resume: '恢復', process_when_online: "上線後傳送", chooseAccount: '選擇其他帳戶', keepQueued: '保留在佇列中', autoResumeOptions: '自動恢復選項' },
         },
             composerBanners: {
               showBannerAction: '顯示橫幅',

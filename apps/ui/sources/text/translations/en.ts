@@ -9931,10 +9931,13 @@ const enSession = {
   },
   pendingActivation: {
     held: { title: "Stopped", body: "A person stopped this session. Your message stays queued until someone resumes it." },
-    held_offline: { title: "Stopped", body: "This machine is offline. Your message stays queued; send again or resume once it is back." },
+    held_offline: {
+      title: ({ machine }: { machine: string }) => `Stopped · resume once ${machine} is back`,
+      body: ({ machine }: { machine: string }) => `${machine} is offline. Your message won’t send by itself.`,
+    },
     waiting_offline: {
-      title: 'Message queued for this machine',
-      body: 'It will be processed when this machine and its daemon are back online.',
+      title: ({ machine }: { machine: string }) => `Sends when ${machine} is back`,
+      body: ({ machine }: { machine: string }) => `${machine} is offline.`,
     },
     waiting: {
       title: 'Waiting to resume',
@@ -9946,16 +9949,16 @@ const enSession = {
     },
     queued: {
       title: 'Message queued',
-      body: 'This inactive session has queued input. Resume it when you are ready.',
+      body: 'It sends when you resume this session.',
     },
     queued_offline: {
-      title: 'Machine offline · message queued',
-      body: 'It will stay queued until you resume this session.',
+      title: ({ machine }: { machine: string }) => `${machine} is offline`,
+      body: 'Your message won’t send by itself.',
     },
     actions: {
       retry: 'Retry',
       resume: 'Resume',
-      process_when_online: 'Process when online',
+      process_when_online: 'Send when online',
       chooseAccount: 'Choose another account',
       keepQueued: 'Keep queued',
       autoResumeOptions: 'Auto-resume options',

@@ -8847,13 +8847,13 @@ localTailscale: {
     },
         pendingActivation: {
     held: { title: "停止済み", body: "このセッションは停止されました。誰かが再開するまで、メッセージはキューに保持されます。" },
-    held_offline: { title: "停止済み", body: "このマシンはオフラインです。メッセージはキューに保持されます。復帰後に再送信するか再開してください。" },
-            waiting_offline: { title: 'このマシン用にメッセージをキューへ保存しました', body: 'このマシンとデーモンがオンラインに戻ると処理されます。' },
+    held_offline: { title: ({ machine }: { machine: string }) => `停止済み · ${machine} が戻ったら再開してください`, body: ({ machine }: { machine: string }) => `${machine} はオフラインです。メッセージは自動では送信されません。` },
+            waiting_offline: { title: ({ machine }: { machine: string }) => `${machine} が戻ると送信されます`, body: ({ machine }: { machine: string }) => `${machine} はオフラインです。` },
             waiting: { title: '再開を待っています', body: 'デーモンがこのセッションを再開する間、メッセージは安全にキューへ保存されています。' },
             failed: { title: 'セッションを再開できませんでした', body: 'メッセージは引き続き安全にキューへ保存されています。準備ができたら再試行してください。' },
-            queued: { title: 'メッセージをキューへ保存しました', body: 'この非アクティブなセッションにはキュー内のメッセージがあります。準備ができたら再開してください。' },
-            queued_offline: { title: '手動再開待ちのメッセージ', body: 'このセッションを再開するまでキューに残ります。' },
-            actions: { retry: '再試行', resume: '再開', process_when_online: 'オンライン時に処理', chooseAccount: '別のアカウントを選ぶ', keepQueued: 'キューに残す', autoResumeOptions: '自動再開オプション' },
+            queued: { title: 'メッセージをキューへ保存しました', body: "このセッションを再開すると送信されます。" },
+            queued_offline: { title: ({ machine }: { machine: string }) => `${machine} はオフラインです`, body: "メッセージは自動では送信されません。" },
+            actions: { retry: '再試行', resume: '再開', process_when_online: "オンライン時に送信", chooseAccount: '別のアカウントを選ぶ', keepQueued: 'キューに残す', autoResumeOptions: '自動再開オプション' },
         },
 	    permissionUnreachable: {
 	      status: "許可が必要 · マシンがオフライン",

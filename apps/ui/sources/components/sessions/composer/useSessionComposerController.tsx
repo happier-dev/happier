@@ -267,6 +267,7 @@ import type { PendingMessage } from "@/sync/domains/state/storageTypes";
 import { useManagedWakeRecovery } from "@/components/sessions/pending/useManagedWakeRecovery";
 import { submitPendingActivationRequest } from "@/components/sessions/pending/pendingActivationRequest";
 import { useSessionPendingActivationPresentation } from "@/components/sessions/pending/useSessionPendingActivationPresentation";
+import { pendingActivationLineCopy } from "@/components/sessions/pending/pendingActivationLineCopy";
 import { findExchangeCheckInRoot, SessionExchangeCheckInBanner } from "@/components/sessions/pending/ExchangeCheckInBanner";
 import type { SessionManagedWakePresentation } from "@/components/sessions/pending/useSessionManagedWakePresentation";
 import { ManagedWakePopover, describeManagedWakeLabel } from "@/components/sessions/pending/ManagedWakePopover";
@@ -5502,6 +5503,7 @@ export function useSessionComposerController({
         // Queued input waiting on this Session to start speaks on the same line, never as a card: the
         // producer (`resolvePendingActivationBanner`) keeps the fact; the line states it with one recovery.
         // A managed wake keeps its own badge and popover, which own its observed stages.
+        const pendingQueueMachineName = getMachineSentenceName(sessionMachineRecord);
         const pendingQueueLine = React.useMemo<SessionViewPendingQueueLine | null>(() => {
             // A queued message blocked by the Session's account is the one cause: the presenter's words,
             // with the account chooser as its next action, instead of the activation's own failure title.
@@ -5524,16 +5526,18 @@ export function useSessionComposerController({
             const action: SessionViewPendingQueueAction | null = presentation.primaryAction && presentation.row
                 ? presentation.primaryAction
                 : presentation.secondaryAction && presentation.row?.localId ? 'keep_queued' : null;
+            // Offline kinds name the Machine the message waits for.
+            const copy = pendingActivationLineCopy(presentation.kind, pendingQueueMachineName);
             return {
-                text: t(presentation.titleKey ?? `session.pendingActivation.${presentation.kind}.title`),
+                text: presentation.titleKey ? t(presentation.titleKey) : copy.text,
                 detail: presentation.holdReason === 'managed_power_required'
                     ? t('managedWake.refusedDetail')
-                    : t(`session.pendingActivation.${presentation.kind}.body`),
+                    : copy.detail,
                 action,
                 color: presentation.kind === 'failed' || presentation.holdReason === 'managed_power_required'
                     ? theme.colors.state.attention.textForeground : sessionStatus.statusColor,
             };
-        }, [connectedServicesAuthRecoveryChip, hasWriteAccess, pendingActivationPresentation, sessionDeliveryFailure, sessionStartApprovalId, sessionStatus.statusColor, theme.colors.state.attention.textForeground]);
+        }, [connectedServicesAuthRecoveryChip, hasWriteAccess, pendingActivationPresentation, pendingQueueMachineName, sessionDeliveryFailure, sessionStartApprovalId, sessionStatus.statusColor, theme.colors.state.attention.textForeground]);
         // An agent exchange paused for the person (lab T1): the held input carries its exact original root.
         const exchangeCheckInRoot = React.useMemo(() => findExchangeCheckInRoot(pendingMessages), [pendingMessages]);
         // The main transcript's queue size, said once on the line instead of a header over the queue.
