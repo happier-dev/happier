@@ -17790,6 +17790,7 @@ const polish: TeamsTranslationRoot = {
                 privateTitle: 'Sesje Happier',
                 privateDetail: 'Prywatnie przez Happier',
                 unavailable: 'Zewnętrzny dostęp API nie jest dostępny w tym Home.',
+                readinessUnavailable: 'Ten Home nie mógł potwierdzić dostępu do zewnętrznego API. Poproś administratora Home o sprawdzenie konfiguracji.',
                 publicHttpsRequired: 'Narzędzia zewnętrzne wymagają publicznego adresu HTTPS tego Home.',
                 homeDisclosure: 'Surowa treść żądań do dostawcy przechodzi przez publiczny punkt końcowy HTTPS tego Home i może być odczytana przez jego operatora.',
                 bearerDisclosure: 'Ten klucz jest sekretem typu bearer. Każdy, kto go posiada, może korzystać z przypisanego dostępu do czasu wygaśnięcia lub unieważnienia klucza.',

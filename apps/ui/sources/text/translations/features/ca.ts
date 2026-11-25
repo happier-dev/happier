@@ -17776,6 +17776,7 @@ const catalan: TeamsTranslationRoot = {
                 privateTitle: 'Sessions de Happier',
                 privateDetail: 'Privat a través de Happier',
                 unavailable: 'L’accés a l’API externa no està disponible en aquest Home.',
+                readinessUnavailable: 'Aquest Home no ha pogut confirmar l’accés a l’API externa. Demana a un administrador del Home que en revisi la configuració.',
                 publicHttpsRequired: 'Les eines externes necessiten una adreça HTTPS pública per a aquest Home.',
                 homeDisclosure: 'Els cossos sense processar de les sol·licituds al proveïdor passen pel punt final HTTPS públic d’aquest Home i el seu operador els pot llegir.',
                 bearerDisclosure: 'Aquesta clau és un secret al portador. Qui la tingui pot utilitzar l’accés assignat fins que caduqui o es revoqui.',

@@ -1005,6 +1005,7 @@ export const english = {
                 privateTitle: 'Happier sessions',
                 privateDetail: 'Private through Happier',
                 unavailable: 'External API access is not available on this Home.',
+                readinessUnavailable: 'This Home couldn’t confirm External API access. Ask a Home administrator to check its setup.',
                 publicHttpsRequired: 'External tools need a public HTTPS address for this Home.',
                 homeDisclosure: "Raw provider request bodies pass through this Home's public HTTPS endpoint and can be read by its operator.",
                 bearerDisclosure: 'This is a bearer secret. Anyone who has it can use the assigned access until the key expires or is revoked.',

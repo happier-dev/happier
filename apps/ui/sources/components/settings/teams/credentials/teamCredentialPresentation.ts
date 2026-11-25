@@ -14,6 +14,7 @@ import type {
     TeamCredentialUsageLimitV1,
 } from '@happier-dev/protocol/teams';
 
+import { TeamCredentialResourceErrorV1Schema, type TeamCredentialExternalApiUnavailableReasonV1 } from '@happier-dev/protocol/teams';
 import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 import type { AttentionBannerAction } from '@/components/ui/lists/AttentionBanner';
 import { t } from '@/text';
@@ -468,6 +469,23 @@ export function presentCredentialSourceReadFailure(
 ): Readonly<{ message: string; action?: AttentionBannerAction }> {
     if (failure.code === 'not_found_or_not_visible') return { message: t('teams.errors.notFound') };
     return presentCredentialReadFailure(failure, recoveryAction);
+}
+
+export function credentialExternalApiUnavailableLabel(reason: TeamCredentialExternalApiUnavailableReasonV1): string {
+    switch (reason) {
+        case 'home_not_public_https':
+            return t('teams.credentials.externalApi.publicHttpsRequired');
+        case 'deployment_readiness_unavailable':
+            return t('teams.credentials.externalApi.readinessUnavailable');
+        case 'feature_disabled':
+            return t('teams.credentials.externalApi.unavailable');
+    }
+}
+
+export function credentialExternalApiFailureLabel(failure: Pick<HomeDomainFailure<string>, 'code' | 'details'>): string | null {
+    if (failure.code !== 'feature_disabled') return null;
+    const refusal = TeamCredentialResourceErrorV1Schema.safeParse(failure.details);
+    return credentialExternalApiUnavailableLabel(refusal.success ? refusal.data.externalApiUnavailableReason ?? 'feature_disabled' : 'feature_disabled');
 }
 
 export function credentialFailureMessage(failure: HomeDomainFailure<string>): string | null {

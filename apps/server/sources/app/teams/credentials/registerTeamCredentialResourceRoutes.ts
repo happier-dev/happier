@@ -1285,7 +1285,14 @@ export function registerTeamCredentialResourceRoutes(
         const availability = resolveTeamCredentialExternalApiAvailability(
             resolveServerFeaturesForGating(await readHomeEffectiveEnv({ env, request })),
         );
-        if (!availability.available) return reply.code(503).send({ error: "feature_disabled" });
+        if (!availability.available) {
+            // This is the deployment's public readiness answer. It contains
+            // no facts about the Team or the requested credential.
+            return reply.code(503).send({
+                error: "feature_disabled",
+                ...(availability.reason === "feature_disabled" ? {} : { externalApiUnavailableReason: availability.reason }),
+            });
+        }
     };
 
     routes.post(homeDomainActionPathForMethod("teams.credentials.externalKeys.create", "POST"), {

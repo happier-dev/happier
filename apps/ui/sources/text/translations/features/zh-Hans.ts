@@ -17638,6 +17638,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 privateTitle: 'Happier 会话',
                 privateDetail: '通过 Happier 私密进行',
                 unavailable: '这个 Home 不提供外部 API 访问。',
+                readinessUnavailable: '此 Home 无法确认外部 API 访问权限。请让 Home 管理员检查相关配置。',
                 publicHttpsRequired: '外部工具需要此 Home 的公共 HTTPS 地址。',
                 homeDisclosure: '发送给供应商的原始请求正文会经过此 Home 的公共 HTTPS 端点，其运营者可以读取这些内容。',
                 bearerDisclosure: '此密钥是持有者凭证。任何持有它的人都可以使用所分配的访问权限，直到密钥过期或被撤销。',

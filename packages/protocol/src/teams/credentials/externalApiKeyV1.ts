@@ -6,6 +6,15 @@ import {
 } from '../../crypto/privateLabelSchemaV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 
+export const TeamCredentialExternalApiUnavailableReasonV1Schema = lazyZodSchema(() => z.enum([
+  'feature_disabled',
+  'home_not_public_https',
+  'deployment_readiness_unavailable',
+]));
+export type TeamCredentialExternalApiUnavailableReasonV1 = z.infer<
+  typeof TeamCredentialExternalApiUnavailableReasonV1Schema
+>;
+
 /** Client-generated so a sealed label can bind itself to the persisted key id. */
 export const TeamCredentialExternalApiKeyIdV1Schema = lazyZodSchema(() => z.string().check(z.uuid()));
 

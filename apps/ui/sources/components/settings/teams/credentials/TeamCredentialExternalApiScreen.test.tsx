@@ -289,11 +289,19 @@ describe('TeamCredentialExternalApiScreen', () => {
         { status: 403, error: 'team_authentication_required', label: 'teams.credentials.errors.teamAuthenticationRequired', signIn: true },
         { status: 503, error: 'team_authentication_policy_unavailable', label: 'teams.credentials.externalApi.authenticationUnavailable' },
         { status: 503, error: 'feature_disabled', label: 'teams.credentials.externalApi.unavailable' },
+        { status: 503, error: 'feature_disabled', deployment: 'home_not_public_https', label: 'teams.credentials.externalApi.publicHttpsRequired' },
+        { status: 503, error: 'feature_disabled', deployment: 'deployment_readiness_unavailable', label: 'teams.credentials.externalApi.readinessUnavailable' },
         { status: 400, error: 'resource_corrupt', label: 'teams.credentials.externalApi.keysUnreadable' },
-    ] as const)('shows the API key list refusal $error and its real action', async (scenario) => {
+    ] as const)('shows the API key list refusal $error $label and its real action', async (scenario) => {
         routerPush.mockClear();
         const serverId = await addManagedHome();
-        harness.answer(serverId, EXTERNAL_KEYS_LIST_PATH, { status: scenario.status, body: { error: scenario.error } });
+        harness.answer(serverId, EXTERNAL_KEYS_LIST_PATH, {
+            status: scenario.status,
+            body: {
+                error: scenario.error,
+                ...('deployment' in scenario ? { externalApiUnavailableReason: scenario.deployment } : {}),
+            },
+        });
         const screen = await renderScreen(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
@@ -336,12 +344,12 @@ describe('TeamCredentialExternalApiScreen', () => {
         {
             name: 'missing deployment projection',
             availability: undefined,
-            expected: 'teams.credentials.externalApi.unavailable',
+            expected: 'teams.credentials.externalApi.readinessUnavailable',
         },
         {
             name: 'malformed deployment projection',
             availability: { available: true, baseUrl: 'not-a-url', protocols: [] },
-            expected: 'teams.credentials.externalApi.unavailable',
+            expected: 'teams.credentials.externalApi.readinessUnavailable',
         },
         {
             name: 'HTTP deployment projection',
@@ -350,7 +358,7 @@ describe('TeamCredentialExternalApiScreen', () => {
                 baseUrl: 'http://home.example.test/api/provider-broker/v1',
                 protocols: ['openai_responses', 'openai_chat_completions', 'anthropic_messages'],
             },
-            expected: 'teams.credentials.externalApi.unavailable',
+            expected: 'teams.credentials.externalApi.readinessUnavailable',
         },
         {
             name: 'server-declared non-HTTPS deployment',

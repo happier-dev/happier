@@ -49,7 +49,13 @@ import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamCredentialExternalApiPath } from '../teamsRoutes';
 import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
-import { credentialApprovalFailureMessage, credentialFailureMessage, presentCredentialReadFailure } from './teamCredentialPresentation';
+import {
+    credentialApprovalFailureMessage,
+    credentialExternalApiFailureLabel,
+    credentialExternalApiUnavailableLabel,
+    credentialFailureMessage,
+    presentCredentialReadFailure,
+} from './teamCredentialPresentation';
 import { useTeamCredentialResourceView } from './useTeamCredentialResourceView';
 import { useTeamCredentialExternalApiAvailability } from './useTeamCredentialExternalApiAvailability';
 import { TeamCredentialAudiencePicker } from './TeamCredentialAudiencePicker';
@@ -317,7 +323,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
     }, [context.scope, currentBinding, requestKey, resourceId, setKeys, targetKey]);
     reloadAcceptedTarget.current = () => void reload();
     const applyMutationFailure = React.useCallback((failure: Parameters<typeof credentialFailureMessage>[0]) => {
-        setNotice(credentialFailureMessage(failure));
+        setNotice(credentialExternalApiFailureLabel(failure) ?? credentialFailureMessage(failure));
         if (failure.kind === 'outcome_unknown') void reload();
     }, [reload]);
 
@@ -384,9 +390,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
         );
     }
     if (!availability.available) {
-        const unavailable = availability.reason === 'home_not_public_https'
-            ? t('teams.credentials.externalApi.publicHttpsRequired')
-            : t('teams.credentials.externalApi.unavailable');
+        const unavailable = credentialExternalApiUnavailableLabel(availability.reason);
         return (
             <ItemGroup description={unavailable}>
                 <Item
@@ -412,11 +416,12 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
     // unknown. Previously acknowledged rows remain visible below for recovery.
     const keyListTrusted = resolved && !listFailure;
     const currentListFailure = resolved ? listFailure : null;
+    const deploymentRefusal = currentListFailure ? credentialExternalApiFailureLabel(currentListFailure) : null;
     const listRefusal = !currentListFailure ? null
         : currentListFailure.code === 'resource_corrupt'
             ? { message: t('teams.credentials.externalApi.keysUnreadable'), action: undefined }
-            : currentListFailure.code === 'feature_disabled'
-                ? { message: t('teams.credentials.externalApi.unavailable'), action: undefined }
+            : deploymentRefusal
+                ? { message: deploymentRefusal, action: undefined }
                 : presentCredentialReadFailure(currentListFailure, () => readFailureAction(currentListFailure, {
                     testIDPrefix: 'team-credential-external',
                     onPress: () => void reload(),

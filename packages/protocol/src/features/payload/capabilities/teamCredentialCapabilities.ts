@@ -5,19 +5,16 @@ import {
   TEAM_CREDENTIAL_EXTERNAL_PROVIDER_API_BASE_PATH_V1,
   TEAM_CREDENTIAL_EXTERNAL_PROVIDER_PROTOCOLS_V1,
 } from '../../../teams/credentials/externalProviderApiV1.js';
+import {
+  TeamCredentialExternalApiUnavailableReasonV1Schema,
+  type TeamCredentialExternalApiUnavailableReasonV1,
+} from '../../../teams/credentials/externalApiKeyV1.js';
 import { TeamCredentialRequestProtocolKindV1Schema } from '../../../teams/credentials/resourceV1.js';
 import { readServerEnabledBit } from '../../serverEnabledBit.js';
 import type { FeatureId } from '../../catalog.js';
 import type { FeaturesResponse } from '../../../features.js';
 
-export const TeamCredentialExternalApiUnavailableReasonV1Schema = lazyZodSchema(() => z.enum([
-  'feature_disabled',
-  'home_not_public_https',
-  'deployment_readiness_unavailable',
-]));
-export type TeamCredentialExternalApiUnavailableReasonV1 = z.infer<
-  typeof TeamCredentialExternalApiUnavailableReasonV1Schema
->;
+export { TeamCredentialExternalApiUnavailableReasonV1Schema, type TeamCredentialExternalApiUnavailableReasonV1 };
 
 const ExternalProviderApiBaseUrlV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.superRefine((value, context) => {
   let parsed: URL;

@@ -17576,6 +17576,7 @@ const german: TeamsTranslationRoot = {
                 privateTitle: 'Happier-Sessions',
                 privateDetail: 'Privat über Happier',
                 unavailable: 'Externer API-Zugriff ist auf diesem Home nicht verfügbar.',
+                readinessUnavailable: 'Dieses Home konnte den Zugriff auf die externe API nicht bestätigen. Bitte einen Home-Administrator, die Einrichtung zu überprüfen.',
                 publicHttpsRequired: 'Externe Tools benötigen eine öffentliche HTTPS-Adresse für dieses Home.',
                 homeDisclosure: 'Unverarbeitete Anfrageinhalte an den Anbieter laufen über den öffentlichen HTTPS-Endpunkt dieses Homes und sind für dessen Betreiber lesbar.',
                 bearerDisclosure: 'Dieser Schlüssel ist ein Bearer-Secret. Wer ihn besitzt, kann den zugewiesenen Zugriff bis zum Ablauf oder Widerruf nutzen.',

@@ -4299,8 +4299,9 @@ describe("Team credential resource routes (SQLite integration)", () => {
             });
             expect({ status: response.statusCode, body: response.json() }).toEqual({
                 status: 503,
-                body: { error: "feature_disabled" },
+                body: { error: "feature_disabled", externalApiUnavailableReason: "home_not_public_https" },
             });
+            expect(TeamCredentialResourceErrorV1Schema.safeParse(response.json()).success).toBe(true);
         } finally {
             harness.resetEnv({ HAPPIER_PUBLIC_SERVER_URL: "https://home.example.test" });
         }

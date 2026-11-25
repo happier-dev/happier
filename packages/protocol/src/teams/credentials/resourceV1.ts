@@ -10,7 +10,7 @@ import {
   PrivateLabelStoredV1Schema,
   type PrivateLabelBindingV1,
 } from '../../crypto/privateLabelSchemaV1.js';
-import { TeamCredentialExternalApiKeyIdV1Schema } from './externalApiKeyV1.js';
+import { TeamCredentialExternalApiKeyIdV1Schema, TeamCredentialExternalApiUnavailableReasonV1Schema } from './externalApiKeyV1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 
 import {
@@ -681,6 +681,7 @@ export type TeamCredentialResourceDiscoveryPageV1 = z.infer<typeof TeamCredentia
 export const TeamCredentialResourceErrorV1Schema = lazyZodSchema(() => z.strictObject({
   error: TeamCredentialErrorCodeV1Schema,
   message: z.optional(z.string()),
+  externalApiUnavailableReason: z.optional(TeamCredentialExternalApiUnavailableReasonV1Schema),
 }));
 
 /**

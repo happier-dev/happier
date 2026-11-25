@@ -17698,6 +17698,7 @@ const japanese: TeamsTranslationRoot = {
                 privateTitle: 'Happier のセッション',
                 privateDetail: 'Happier 経由でプライベート',
                 unavailable: 'この Home では外部 API アクセスを利用できません。',
+                readinessUnavailable: 'この Home は外部 API へのアクセスを確認できませんでした。Home の管理者に設定の確認を依頼してください。',
                 publicHttpsRequired: '外部ツールには、この Home の公開 HTTPS アドレスが必要です。',
                 homeDisclosure: 'プロバイダーへの未加工のリクエスト本文は、この Home の公開 HTTPS エンドポイントを通過し、Home の運用者が内容を読むことができます。',
                 bearerDisclosure: 'このキーは Bearer シークレットです。キーを持つ人は、有効期限が切れるか取り消されるまで、割り当てられたアクセスを利用できます。',

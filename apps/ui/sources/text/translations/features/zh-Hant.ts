@@ -17638,6 +17638,7 @@ const traditionalChinese: TeamsTranslationRoot = {
                 privateTitle: 'Happier 工作階段',
                 privateDetail: '透過 Happier 私密進行',
                 unavailable: '這個 Home 不提供外部 API 存取。',
+                readinessUnavailable: '此 Home 無法確認外部 API 存取權限。請請 Home 管理員檢查相關設定。',
                 publicHttpsRequired: '外部工具需要此 Home 的公開 HTTPS 位址。',
                 homeDisclosure: '傳送給供應商的原始請求內容會經過此 Home 的公開 HTTPS 端點，其營運者可以讀取這些內容。',
                 bearerDisclosure: '此金鑰是持有者憑證。任何持有者都能使用獲派的存取權，直到金鑰到期或遭撤銷。',
