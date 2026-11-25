@@ -30,6 +30,7 @@ export default defineConfig({
         ...uiConfig.test,
         fileParallelism: false,
         include: [
+            'sources/app/reviews/comments/scopeAttribution.sqlite.composed.integration.spec.ts',
             'sources/app/api/routes/actions/sessionOrganizationAppearance.sqlite.composed.integration.spec.ts',
             'sources/app/api/routes/account/accountEncryptionAbsentSettings.sqlite.composed.integration.spec.ts',
             'sources/app/session/organization/sessionOrganizationReseal.sqlite.composed.integration.spec.ts',

@@ -30,6 +30,7 @@ export default defineConfig({
       'scripts/**/*.real.integration.test.ts',
     ],
     exclude: [
+      'sources/app/reviews/comments/scopeAttribution.sqlite.composed.integration.spec.ts',
       'sources/app/api/routes/actions/sessionOrganizationAppearance.sqlite.composed.integration.spec.ts',
       ...resolveVitestFeatureTestExcludeGlobs(),
       // The public integration lane runs this with the UI's native/Expo boundary harness.
