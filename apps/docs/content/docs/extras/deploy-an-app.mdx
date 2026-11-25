@@ -97,8 +97,8 @@ After creation, inspect the exact service and confirm adoption before Happier
 links it to the Environment. You can also adopt an existing database from
 that environment. Workbench can list the linked database.
 
-To read it in Workbench, turn on Public Networking for that database service in
-Railway (**Settings → Networking**). Happier doesn't turn it on for you, and
+To read it in Workbench, [enable a TCP proxy for the database service in Railway](https://docs.railway.com/networking/tcp-proxy).
+Happier doesn't turn it on for you, and
 Workbench asks you to do it if it's off. Workbench then reaches the database
 through Railway's public TCP proxy and asks for a read-only login: attach an
 existing one from Saved Secrets, or review and create one with the database's
