@@ -119,7 +119,12 @@ export const DatabaseDescriptorV1Schema = z.strictObject({
     endpointLabel: z.optional(z.string().check(z.minLength(1))),
     /** The managed connection owner reports when TLS cannot verify the server's identity. */
     endpointTrust: z.optional(z.literal('encrypted_unverified')),
-    origin: z.strictObject({ label: z.string(), environment: z.optional(z.enum(['development', 'preview', 'production'])) }),
+    origin: z.strictObject({
+        label: z.string(),
+        environment: z.optional(z.enum(['development', 'preview', 'production'])),
+        /** The admitted Environment name when the origin label names the managed provider. */
+        environmentName: z.optional(z.string()),
+    }),
     capabilities: z.array(DatabaseCapabilityV1Schema),
     access: z.optional(DatabaseAccessSummaryV1Schema),
     /** Authored identity projected by the public Database read producer. */

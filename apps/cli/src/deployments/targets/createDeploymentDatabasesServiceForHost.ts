@@ -74,6 +74,10 @@ const setupUnavailable = (code: string, reason: string): DatabaseFailureV1 => ({
 const refuse = (code: string): never => { throw new PluginError({ code }); };
 type EnvironmentScope = Extract<DatabaseTargetsListInputV1['scope'], { kind: 'environment' }>;
 
+function managedDatabaseOrigin(origin: DatabaseDescriptorV1['origin'], providerLabel: string): DatabaseDescriptorV1['origin'] {
+    return { ...origin, label: providerLabel, environmentName: origin.label };
+}
+
 /** Captures actual invocation custody; operands select a Link, never a caller or credential. */
 export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabasesHostInput): DeploymentDatabasesServiceV1 {
     const context = input.seed.approvalContext;
@@ -425,7 +429,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                         if (descriptor.target.kind !== 'managed_deployment') return refuse('target_mismatch');
                         const target: DatabaseManagedDeploymentTargetV1 = { ...selected.target, database: descriptor.target.database };
                         targets.push({ ...descriptor, target, automationSubject: readAutomationDatabaseSubjectV1(admission.host.serverId, target), access: summary,
-                            origin: { ...admission.origin, label: descriptor.origin.label },
+                            origin: managedDatabaseOrigin(admission.origin, descriptor.origin.label),
                             placement: bound.placement });
                     }
                     if (!result.completeness.complete) completeness = result.completeness;
@@ -509,7 +513,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                         placement: bound.placement }, bound.invocation);
                 const close = async () => { try { await resolved.connection.close(); } finally { bound.dispose(); } };
                 return { descriptor: { ...resolved.descriptor, target,
-                    origin: { ...admission.origin, label: resolved.descriptor.origin.label },
+                    origin: managedDatabaseOrigin(admission.origin, resolved.descriptor.origin.label),
                     automationSubject: readAutomationDatabaseSubjectV1(admission.host.serverId, target), access: summary, placement: bound.placement },
                     connection: { engine: resolved.connection.engine,
                         ...(resolved.connection.normalizeStatementShape

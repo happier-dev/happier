@@ -301,16 +301,18 @@ export function StagedReview(
   const refusalStands = refusal !== undefined && (writeSetup != null ? configuredFor !== refusal : policyRefusal && !policyLifted);
   const policy = access.value?.setBy === 'environment' ? access.value : null;
   const engineIsMysql = descriptor.engine === 'mysql';
-  // Close on this review's own Apply, never on an earlier receipt still held for the relation.
+  const total = draft.counts.edits + draft.counts.inserts + draft.counts.removals;
+  // A new Apply result belongs to this Review. The relation can still hold an older result.
   const openedWith = React.useRef(draft.outcome);
   const { onClose } = props;
   React.useEffect(() => {
-    if (draft.outcome !== openedWith.current && draft.outcome?.kind === 'applied') onClose();
-  }, [draft.outcome, onClose]);
-  const total = draft.counts.edits + draft.counts.inserts + draft.counts.removals;
+    if (total === 0 || (draft.outcome !== openedWith.current && draft.outcome?.kind === 'applied')) onClose();
+  }, [draft.outcome, onClose, total]);
+  if (total === 0) return null;
+
   const count = String(total);
-  // A deployment's origin is its Environment: the Review says where the changes go (plan F3).
-  const environmentName = target?.kind === 'deployment_service' ? descriptor.origin.label : undefined;
+  const environmentName = target?.kind === 'managed_deployment' ? descriptor.origin.environmentName
+    : target?.kind === 'deployment_service' ? descriptor.origin.label : undefined;
   return (
     <Stack gap="large">
       {/* The Review stands in the page's column, so its title is a page title on the content edge; Cancel ends it. */}
@@ -322,11 +324,17 @@ export function StagedReview(
         }
         description={
           production
-            ? translate(
-                'plugins.database.review.production',
-                'These changes go to {name} on Production.',
-                { name: descriptor.label },
-              )
+            ? environmentName
+              ? translate(
+                  'plugins.database.review.productionIn',
+                  'These changes go to {name} in {environment} on Production.',
+                  { name: descriptor.label, environment: environmentName },
+                )
+              : translate(
+                  'plugins.database.review.production',
+                  'These changes go to {name} on Production.',
+                  { name: descriptor.label },
+                )
             : environmentName
               ? translate(
                   'plugins.database.review.togetherIn',

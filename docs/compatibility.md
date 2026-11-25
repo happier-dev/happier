@@ -10643,6 +10643,12 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+In unreleased 0.3, a managed Database descriptor can carry
+`origin.environmentName` from the admitted Environment. The provider display
+label is still `origin.label`. Load matching client, daemon and bundled
+declarations for the closed descriptor. The host takes the display name from
+the Environment content it reads under the existing admission.
+
 Unreleased 0.3 machine-services Event setup declarations use the `homeId` and
 `savedHealthSourceId` host input types. Load matching App, daemon and plugin
 declarations. The setup Action inputs and saved Event source formats keep

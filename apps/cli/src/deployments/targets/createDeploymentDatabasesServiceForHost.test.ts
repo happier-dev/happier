@@ -297,7 +297,11 @@ describe('managed database attachment at the deployment owner', () => {
             const listed = await service.listTargets({ scope: { kind: 'environment', environment,
                 selection: { kind: 'managed_link', targetLinkId: target.targetLinkId } } });
             expect(requests).toHaveLength(beforeSelection + 1);
-            const origin = { label: 'Linked database', environment: 'production' };
+            const origin = {
+                label: 'Linked database',
+                environment: 'production',
+                environmentName: stored.state.environment.content.name,
+            };
             expect(listed).toMatchObject({ targets: [{ target, origin, access: { canRead: true, canWrite: false, reason: 'database_editing_off' } }], completeness: { complete: true } });
             const automationSubject = { ok: true, subject: { kind: 'database', serverId: environment.serverId,
                 target: { kind: 'managed_deployment', environmentId: environment.environmentId,
