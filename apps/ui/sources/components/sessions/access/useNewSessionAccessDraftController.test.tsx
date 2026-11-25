@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import { SessionAccessCreationRefusalV1Schema, type SessionAccessCreationRefusalV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -994,11 +995,20 @@ describe('useNewSessionAccessDraft repository currentness', () => {
         await after.unmount();
     });
 
-    it.each([
-        { choice: 'selected', code: 'session_access_authentication_required' },
-        { choice: 'selected', code: 'session_access_authentication_unavailable' },
-        { choice: 'attempted', code: 'session_access_authentication_unavailable' },
-    ] as const)('shows $code once for a $choice Team and offers only applicable recovery', async ({ choice, code }) => {
+    const creationRefusalPresentation = {
+        session_access_authentication_required: {
+            action: () => t('teams.errors.signInRequiredAction'),
+            message: () => t('teams.errors.signInRequired', { methods: t('teams.errors.signInMethodRecoveryKey') }),
+        },
+        session_access_authentication_unavailable: {
+            action: () => undefined,
+            message: () => t('session.access.authenticationUnavailable'),
+        },
+    } satisfies Record<SessionAccessCreationRefusalV1['code'], { action: () => string | undefined; message: () => string }>;
+
+    it.each(SessionAccessCreationRefusalV1Schema.shape.code.options.flatMap((code) =>
+        (['selected', 'attempted'] as const).map((choice) => ({ code, choice, expected: creationRefusalPresentation[code] })),
+    ))('shows $code once for a $choice Team and offers only applicable recovery', async ({ choice, code, expected }) => {
         runTeamActionMock.mockImplementation(async (request) => {
             if ((request as unknown as { actionId?: string }).actionId !== 'teams.list') {
                 return { kind: 'failed' as const, failure: { kind: 'unreachable' as const, retryable: true, code: null } };
@@ -1034,14 +1044,10 @@ describe('useNewSessionAccessDraft repository currentness', () => {
         if (choice === 'attempted') await act(async () => latest!.actions.setContext('team-willow'));
         const refusedChoice = () => latest!.model.context?.options.find((option) => option.teamId === 'team-willow')?.blockedReason;
         await vi.waitFor(() => expect(refusedChoice()?.code).toBe(code));
-        if (code === 'session_access_authentication_required') {
-            expect(refusedChoice()?.action?.label).toBe(t('teams.errors.signInRequiredAction'));
-        } else {
-            expect(refusedChoice()?.action).toBeUndefined();
-            expect(refusedChoice()?.message).toBe(t('session.access.authenticationUnavailable'));
-            // The context choice already shows the explanation. Pressing it must not repeat the notice.
-            await act(async () => latest!.actions.explain(refusedChoice()!));
-        }
+        expect(refusedChoice()?.action?.label).toBe(expected.action());
+        expect(refusedChoice()?.message).toBe(expected.message());
+        // The context choice already shows the explanation. Pressing it must not repeat the notice.
+        await act(async () => latest!.actions.explain(refusedChoice()!));
         expect(latest!.model.context?.unavailableReason).toBeUndefined();
         expect(latest!.model.context?.error).toBeUndefined();
         expect(latest!.model.content.issue).toBeUndefined();
@@ -1062,7 +1068,7 @@ describe('useNewSessionAccessDraft repository currentness', () => {
         }
     });
 
-    it('retries an unavailable creation decision through the existing content retry action', async () => {
+    it('offers Retry on a transient creation decision and reconciles the Team policy', async () => {
         const profile = await upsertServerProfile({ name: 'Retry decision Home', serverUrl: 'https://retry-decision.example.test' });
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({
             token: `e30.${Buffer.from(JSON.stringify({ sub: 'creator' })).toString('base64url')}.signature`,
@@ -1087,9 +1093,38 @@ describe('useNewSessionAccessDraft repository currentness', () => {
         let latest: Controller | null = null;
         await renderScreen(<Probe initial={null} initialPrimaryTeamId="team-retry" availability="available"
             scope={{ serverId: profile.id, accountId: 'creator' }} onReady={(controller) => { latest = controller; }} />);
-        await vi.waitFor(() => expect(attempts).toBe(1));
-        await act(async () => { latest!.actions.retryContent(); });
+        await vi.waitFor(() => expect(latest?.model.context?.unavailableReason?.action?.label).toBe(t('common.retry')));
+        expect(attempts).toBe(1);
+        expect(latest!.model.context?.unavailableReason?.message).toBe(t('session.access.contextPolicyUnavailable'));
+        expect(latest!.model.context?.error).toBeUndefined();
+        expect(latest!.model.notice).toBeUndefined();
+        await act(async () => { latest!.model.context?.unavailableReason?.action?.onPress(); });
         await vi.waitFor(() => expect(attempts).toBe(2));
         await vi.waitFor(() => expect(latest!.model.grants[0]?.requiredByTeamPolicy).toBe(true));
+    });
+
+    it('leaves an opaque creation decision private without offering Retry', async () => {
+        const profile = await upsertServerProfile({ name: 'Selected Home', serverUrl: 'https://unavailable-team.example.test' });
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({
+            token: `e30.${Buffer.from(JSON.stringify({ sub: 'creator' })).toString('base64url')}.signature`,
+        });
+        creationDecisionNetworkMode.enabled = true;
+        setRuntimeFetch(async (url) => {
+            const parsed = new URL(String(url));
+            if (parsed.pathname === '/v1/auth/ping') return new Response('{}');
+            if (parsed.pathname === '/v1/session-access/principals/resolve') {
+                return Response.json({ v: 1, principals: [], creationDecision: null });
+            }
+            return new Response('{}', { status: 404 });
+        });
+        let latest: Controller | null = null;
+        await renderScreen(<Probe initial={null} initialPrimaryTeamId="unavailable-team" availability="available"
+            scope={{ serverId: profile.id, accountId: 'creator' }} onReady={(controller) => { latest = controller; }} />);
+
+        await vi.waitFor(() => expect(latest?.model.context?.unavailableReason?.message).toBe(t('teams.errors.notFound')));
+        expect(latest!.model.context?.unavailableReason?.action).toBeUndefined();
+        expect(latest!.model.context?.options.find((option) => option.teamId === null)?.blockedReason).toBeUndefined();
+        await act(async () => { latest!.actions.setContext(null); });
+        expect(latest!.model.context?.primaryTeamId).toBeNull();
     });
 });

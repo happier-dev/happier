@@ -17,13 +17,13 @@ import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGro
 import { getTempData, storeTempData } from '@/utils/sessions/tempDataStore';
 
 import { useSessionAccessTeamNames } from './useSessionAccessTeamNames';
-import { presentSessionAccessReason } from './presentSessionAccessFailure';
+import { presentSessionAccessFailure, presentSessionAccessReason } from './presentSessionAccessFailure';
 import { projectSessionAccessChipSummary } from './projectSessionAccessChipSummary';
 import { projectSessionAccessPrincipal } from './projectSessionAccessEditorSnapshot';
 import { projectSessionAccessContextChange } from './projectSessionAccessContextChange';
 import { sessionAccessGrantMutation } from './sessionAccessGrantMutation';
 import { projectSessionAccessDelegationControl, sessionAccessSubjectKey } from './projectSessionAccessEditorSnapshot';
-import { resolveSessionAccessCreationDecision, resolveSessionAccessPrincipals } from '@/sync/api/session/sessionAccessApi';
+import { SessionAccessApiError, resolveSessionAccessCreationDecision, resolveSessionAccessPrincipals } from '@/sync/api/session/sessionAccessApi';
 import { useSessionAccessDirectory, type SessionAccessDirectoryTeamContext } from './useSessionAccessDirectory';
 import { createSessionAccessQuery } from './sessionAccessQuery';
 import type {
@@ -33,9 +33,27 @@ import type {
     SessionAccessGrantRowModel,
     SessionAccessLevel,
     SessionAccessPrincipalPresentation,
+    SessionAccessUiError,
+    SessionAccessUiReason,
 } from './sessionAccessEditorTypes';
 
 const ACCESS_LEVEL_OPTIONS: readonly SessionAccessLevel[] = ['view', 'edit', 'admin'];
+
+type TeamCreationObservation = SessionAccessCreationDecisionV1 | SessionAccessCreationRefusalV1 | SessionAccessUiError | null;
+
+function presentCreationReadFailure(error: unknown): SessionAccessUiError {
+    const issue = presentSessionAccessFailure(error);
+    return {
+        ...issue,
+        message: issue.code === 'session_access_request_failed' || issue.code === 'session_access_failed'
+            ? t('session.access.contextPolicyUnavailable') : issue.message,
+        retryable: issue.retryable && (!(error instanceof SessionAccessApiError) || error.status === undefined || error.status >= 500),
+    };
+}
+
+function unavailableTeam(): SessionAccessUiError {
+    return { code: 'session_access_subject_not_found', message: t('teams.errors.notFound'), retryable: false };
+}
 
 type TeamSignInIntent = Readonly<{
     kind: 'newSessionTeamSignIn';
@@ -113,10 +131,12 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     const [revision, setRevision] = React.useState(0);
     const [pendingContextTeamId, setPendingContextTeamId] = React.useState<string | null | undefined>(undefined);
     const [explainedReason, setExplainedReason] = React.useState<Readonly<{ code: string; message: string }> | null>(null);
-    const [creationOutcome, setCreationDecision] = React.useState<SessionAccessCreationDecisionV1 | SessionAccessCreationRefusalV1 | null | undefined>(undefined);
-    // The Home's typed refusal belongs to the Team choice in both restored and fresh drafts.
-    const creationRefusal = creationOutcome && 'code' in creationOutcome ? creationOutcome : null;
-    const creationDecision = creationRefusal ? null : creationOutcome as SessionAccessCreationDecisionV1 | null | undefined;
+    const [creationOutcome, setCreationDecision] = React.useState<TeamCreationObservation | undefined>(undefined);
+    // The Home's typed sign-in refusal belongs to its Team choice.
+    const creationReadError = creationOutcome === null ? unavailableTeam()
+        : creationOutcome && 'message' in creationOutcome ? creationOutcome : null;
+    const creationRefusal = creationOutcome && 'code' in creationOutcome && !('message' in creationOutcome) ? creationOutcome : null;
+    const creationDecision = creationOutcome && !('code' in creationOutcome) ? creationOutcome : null;
     const [contextRefusal, setContextRefusal] = React.useState<SessionAccessCreationRefusalV1 | null>(null);
     const teamRefusal = contextRefusal ?? creationRefusal;
     // Read at press time: navigation is not an input of the projected reason.
@@ -125,7 +145,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     routerRef.current = router;
     const [pendingContextDecision, setPendingContextDecision] = React.useState<Readonly<{ teamId: string; retry: number }> | null>(null);
     const [pendingContextTarget, setPendingContextTarget] = React.useState<SessionAccessDirectoryTeamContext | null>(null);
-    const [contextDecisionError, setContextDecisionError] = React.useState(false);
+    const [contextDecisionError, setContextDecisionError] = React.useState<SessionAccessUiError | null>(null);
     // Candidate names serve accounts and Groups; Team names remain live in the
     // existing qualified Team owner, including after restoring a draft.
     const scopeKey = JSON.stringify([scope.serverId, scope.accountId]);
@@ -137,7 +157,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     React.useEffect(() => {
         setPendingContextDecision(null);
         setPendingContextTarget(null);
-        setContextDecisionError(false);
+        setContextDecisionError(null);
     }, [scopeKey]);
     const grants = React.useMemo(() => access?.grants ?? [], [access]);
     const subjects = React.useMemo(() => grants.map(grant => grant.subject), [grants]);
@@ -183,8 +203,8 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     const creationDecisionRevision = React.useRef(0);
     const creationDecisionCache = React.useRef<Readonly<{
         key: string;
-        value?: SessionAccessCreationDecisionV1 | SessionAccessCreationRefusalV1 | null;
-        pending?: Promise<SessionAccessCreationDecisionV1 | SessionAccessCreationRefusalV1 | null>;
+        value?: TeamCreationObservation;
+        pending?: Promise<TeamCreationObservation>;
     }> | null>(null);
     const [creationDecisionRetryRevision, setCreationDecisionRetryRevision] = React.useState(0);
     React.useEffect(() => {
@@ -212,16 +232,11 @@ export function useNewSessionAccessDraftController(input: Readonly<{
                 // only cancels the shared request when its scope/retry key is
                 // no longer the active cache entry.
                 isCurrent: () => creationDecisionCache.current?.key === requestKey,
-            }).then((decision) => {
+            }).catch(presentCreationReadFailure).then((decision) => {
                 if (creationDecisionCache.current?.key === requestKey) {
                     creationDecisionCache.current = { key: requestKey, value: decision };
                 }
                 return decision;
-            }).catch(() => {
-                if (creationDecisionCache.current?.key === requestKey) {
-                    creationDecisionCache.current = { key: requestKey, value: null };
-                }
-                return null;
             });
         if (creationDecisionCache.current?.key !== requestKey || creationDecisionCache.current.pending !== pending) {
             creationDecisionCache.current = { key: requestKey, pending };
@@ -263,8 +278,10 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     // authoritative only when the selected-Home server has returned its typed
     // decision; a missing decision must never be inferred from a cached row.
     const primaryTeamPolicy = primaryTeamDecisionPolicy;
-    const primaryTeamPolicyUnavailable = primaryTeamId !== null && creationDecision !== undefined && creationDecision === null
-        && creationRefusal === null && primaryTeamPolicy === null;
+    const primaryTeamPolicyUnavailable = primaryTeamId !== null && creationReadError !== null;
+    // Private still means no recipients. A restored draft can leave a Team
+    // without a decision once its audience is empty.
+    const privateWithoutTeam = primaryTeamId !== null && creationOutcome === null && grants.length === 0;
     const teamRefusalReason = React.useMemo(() => {
         if (!teamRefusal) return null;
         if (teamRefusal.code === 'session_access_authentication_unavailable') return presentSessionAccessReason(teamRefusal.code);
@@ -293,7 +310,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
         setContextRefusal(null);
         setCreationDecisionRetryRevision((value) => value + 1);
     }), [scope.serverId]);
-    const primaryTeamDecisionPending = primaryTeamId !== null && creationDecision === undefined;
+    const primaryTeamDecisionPending = primaryTeamId !== null && creationOutcome === undefined;
 
     const rows = React.useMemo<readonly SessionAccessGrantRowModel[]>(() => grants.map((grant) => {
         const key = sessionAccessSubjectKey(grant.subject);
@@ -379,7 +396,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
         onPrimaryTeamIdChange(teamId);
         setPendingContextTeamId(undefined);
         setPendingContextTarget(null);
-        setContextDecisionError(false);
+        setContextDecisionError(null);
     }, [onPrimaryTeamIdChange, primaryTeamId, primaryTeamPolicy]);
 
     React.useEffect(() => {
@@ -393,18 +410,18 @@ export function useNewSessionAccessDraftController(input: Readonly<{
             if (!active) return;
             if (decision !== null && 'code' in decision) {
                 setPendingContextDecision(null);
-                setContextDecisionError(false);
+                setContextDecisionError(null);
                 setContextRefusal(decision);
                 return;
             }
             if (decision === null) {
-                setContextDecisionError(true);
-                setExplainedReason({ code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable') });
+                setPendingContextDecision(null);
+                setContextDecisionError(unavailableTeam());
                 return;
             }
             const target = projectCreationDecisionPolicy(decision);
             setPendingContextDecision(null);
-            setContextDecisionError(false);
+            setContextDecisionError(null);
             const consequences = projectSessionAccessContextChange({
                 target,
                 current: primaryTeamPolicy,
@@ -416,25 +433,26 @@ export function useNewSessionAccessDraftController(input: Readonly<{
                 return;
             }
             submitContext(request.teamId, target);
-        }).catch(() => {
+        }).catch((error) => {
             if (!active) return;
-            setContextDecisionError(true);
-            setExplainedReason({ code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable') });
+            const issue = presentCreationReadFailure(error);
+            if (!issue.retryable) setPendingContextDecision(null);
+            setContextDecisionError(issue);
         });
         return () => { active = false; };
     }, [availability, pendingContextDecision, primaryTeamPolicy, scope.accountId, scope.serverId, submitContext]);
 
     const setContext = React.useCallback((teamId: string | null) => {
-        if (!editable || primaryTeamId === teamId || (primaryTeamId !== null && (primaryTeamDecisionPending || primaryTeamPolicyUnavailable))) return;
-        if (creationDecision?.requiredByPolicy === true) return;
-        setContextRefusal(null);
-        // A restored Team this sign-in cannot use leaves Private one press away.
-        if (teamId === null && creationRefusal !== null) {
+        if (!editable || primaryTeamId === teamId || creationDecision?.requiredByPolicy === true) return;
+        if (teamId === null && (creationRefusal !== null || privateWithoutTeam)) {
+            setContextRefusal(null);
             submitContext(null);
             return;
         }
+        if (primaryTeamDecisionPending || primaryTeamPolicyUnavailable) return;
+        setContextRefusal(null);
         if (teamId !== null && teamId !== primaryTeamId) {
-            setContextDecisionError(false);
+            setContextDecisionError(null);
             setExplainedReason(null);
             setPendingContextDecision((current) => ({ teamId, retry: (current?.teamId === teamId ? current.retry : 0) + 1 }));
             return;
@@ -450,7 +468,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
             return;
         }
         submitContext(teamId, target);
-    }, [creationDecision?.requiredByPolicy, creationRefusal, editable, primaryTeamDecisionPending, primaryTeamId, primaryTeamPolicy, primaryTeamPolicyUnavailable, submitContext]);
+    }, [creationDecision?.requiredByPolicy, creationRefusal, editable, primaryTeamDecisionPending, primaryTeamId, primaryTeamPolicy, primaryTeamPolicyUnavailable, privateWithoutTeam, submitContext]);
 
     React.useEffect(() => {
         if (typeof teamSignInIntentId !== 'string' || !editable || !scope.accountId || !draftScope
@@ -463,15 +481,24 @@ export function useNewSessionAccessDraftController(input: Readonly<{
         setContext(intent.teamId);
     }, [draftId, draftScope, editable, hostRouter, primaryTeamDecisionPending, scope, setContext, teamSignInIntentId]);
 
+    const retryContent = React.useCallback(() => {
+        if (pendingContextDecision !== null) {
+            setContextDecisionError(null);
+            setPendingContextDecision((current) => current === null ? current : { ...current, retry: current.retry + 1 });
+        } else {
+            setCreationDecisionRetryRevision((value) => value + 1);
+        }
+        setRevision((value) => value + 1);
+    }, [pendingContextDecision]);
+    const creationIssue = contextDecisionError ?? (primaryTeamPolicyUnavailable ? creationReadError : null);
+    const contextUnavailableReason: SessionAccessUiReason | undefined = creationIssue ? {
+        code: creationIssue.code,
+        message: creationIssue.message,
+        ...(creationIssue.retryable ? { action: { label: t('common.retry'), onPress: retryContent } } : {}),
+    } : undefined;
     const actions = React.useMemo<SessionAccessEditorActions>(() => ({
         setQuery,
-        retryContent: () => {
-            setCreationDecisionRetryRevision((value) => value + 1);
-            if (pendingContextDecision !== null) {
-                setPendingContextDecision((current) => current === null ? current : { ...current, retry: current.retry + 1 });
-            }
-            setRevision((value) => value + 1);
-        },
+        retryContent,
         retryDirectory: (kind) => { directory.retry(kind); setRevision((value) => value + 1); },
         loadMore: (kind) => directory.loadMore(kind),
         retryMutation: () => {},
@@ -498,7 +525,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
         confirmRemove: (subject) => replace(subject, null),
         cancelRemove: () => {},
         explain: (reason) => {
-            if (reason !== teamRefusalReason) setExplainedReason(reason);
+            if (reason !== teamRefusalReason && reason.code !== creationIssue?.code) setExplainedReason(reason);
         },
         setContext,
         confirmContext: () => { if (pendingContextTeamId !== undefined) submitContext(pendingContextTeamId, pendingContextTarget); },
@@ -512,7 +539,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
         prepareAccess: () => {},
         toggleAllRecipients: () => {},
         loadMoreRecipients: () => {},
-    }), [directory, pendingContextDecision, pendingContextTarget, pendingContextTeamId, replace, setContext, submitContext, teamRefusalReason]);
+    }), [creationIssue?.code, directory, pendingContextTarget, pendingContextTeamId, replace, retryContent, setContext, submitContext, teamRefusalReason]);
 
     // The context choice already carries the refusal. The Teams directory leaves that Team out.
     const refusedContextTeamKey = teamRefusal
@@ -564,7 +591,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
 
     return {
         query,
-        placementPending: differsFromDefault || primaryTeamPolicyUnavailable || contextDecisionError
+        placementPending: differsFromDefault || primaryTeamPolicyUnavailable || contextDecisionError !== null
             || pendingContextDecision !== null || pendingContextTeamId !== undefined || explainedReason !== null
             || input.homeReconciled === true || (!editable && grants.length > 0),
         actions,
@@ -579,19 +606,15 @@ export function useNewSessionAccessDraftController(input: Readonly<{
             summary: projectSessionAccessChipSummary({ grants: rows, audienceComplete: true }),
             context: {
                 primaryTeamId,
-                ...(pendingContextDecision || contextDecisionError ? {
-                    operation: contextDecisionError ? 'error' as const : 'saving' as const,
-                    ...(contextDecisionError ? { error: {
-                        code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable'), retryable: true,
-                    } } : {}),
-                } : {}),
+                ...(contextUnavailableReason ? { operation: 'error' as const, unavailableReason: contextUnavailableReason }
+                    : pendingContextDecision ? { operation: 'saving' as const } : {}),
                 options: [
                     { teamId: null, label: t('session.access.private'),
                         ...(primaryTeamPolicy?.sessionCreationPolicy === 'team_required' ? { blockedReason: {
                             code: 'session_access_team_policy_required', message: t('session.access.required'),
-                        } } : primaryTeamPolicyUnavailable ? { blockedReason: {
-                            code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable'),
-                        } } : {}) },
+                        } } : primaryTeamPolicyUnavailable && !privateWithoutTeam && contextUnavailableReason ? {
+                            blockedReason: contextUnavailableReason,
+                        } : {}) },
                     ...[
                         ...(primaryTeamPolicy && !directory.teamContexts.some((team) => team.teamId === primaryTeamPolicy.teamId) ? [primaryTeamPolicy] : []),
                         ...(teamRefusal && !directory.teamContexts.some((team) => team.teamId === teamRefusal.teamId)
@@ -603,9 +626,8 @@ export function useNewSessionAccessDraftController(input: Readonly<{
                             code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable'),
                         } } : creationDecision?.requiredByPolicy === true && team.teamId !== primaryTeamId
                             ? { blockedReason: { code: 'session_access_team_policy_required', message: t('session.access.required') } }
-                            : team.teamId === primaryTeamId && primaryTeamPolicyUnavailable ? { blockedReason: {
-                            code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable'),
-                        } } : {}),
+                            : team.teamId === primaryTeamId && primaryTeamPolicyUnavailable && contextUnavailableReason
+                                ? { blockedReason: contextUnavailableReason } : {}),
                     })),
                 ],
                 ...(pendingContextTeamId !== undefined ? { confirmation: {

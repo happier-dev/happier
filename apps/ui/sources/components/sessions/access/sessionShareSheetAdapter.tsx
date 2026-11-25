@@ -252,13 +252,14 @@ export function createSessionShareSheetAdapter(input: Readonly<{
                         const reason = option.blockedReason;
                         // A choice refused with its own way forward (the sign-in a Team needs) says it whole under its
                         // name and offers that step where its check would be, as the Share Team row does.
-                        const resolution = option.teamId === context.primaryTeamId ? undefined : reason?.action;
+                        const statedUnderContext = contextReason !== undefined && reason === contextReason;
+                        const resolution = option.teamId === context.primaryTeamId || statedUnderContext ? undefined : reason?.action;
                         return <Item
                             key={option.teamId ?? 'personal'}
                             testID={`${idPrefix}session-access-context-${option.teamId ?? 'personal'}`}
                             // Each choice carries its mark so its title lines up with every other row's title.
                             icon={<SessionContextOptionMark teamId={option.teamId} label={option.label} />}
-                            title={option.label} subtitle={reason?.message} subtitleLines={0}
+                            title={option.label} subtitle={statedUnderContext ? undefined : reason?.message} subtitleLines={0}
                             selected={option.teamId === context.primaryTeamId}
                             loading={context.operation === 'saving' && option.teamId === (context.confirmation?.teamId ?? context.primaryTeamId)}
                             disabled={!editable || context.operation === 'saving'}
