@@ -237,9 +237,7 @@ export type PluginInvocationServicesFactoryParams = Readonly<{
     resources?: StablePluginResourcesOwner;
     settings?: StablePluginSettingsHost;
     http?: StablePluginHttpHost;
-    healthChecks?: Readonly<{ bind(seed: PluginInvocationServicesSeed, services: Readonly<{
-        actions: ActionsService; http: HttpService;
-    }>): PluginServices['healthChecks'] | null }>;
+    healthChecks?: Pick<ReturnType<typeof import('@/deployments/healthChecks/savedHealthChecks').createSavedHealthChecksHost>, 'bind'>;
     connectedAccounts?: StablePluginConnectedAccountsHost;
     approvals?: StablePluginApprovalQueueOwner;
     actionExecutor?: PluginActionsHostExecutor;
@@ -279,6 +277,7 @@ export async function resolvePluginInvocationExecutable(
 }
 
 type PluginInvocationServiceDescriptorContext = Readonly<{
+    admittedSavedHealthCheck?: import('@happier-dev/protocol').ActionExecutorContext['admittedSavedHealthCheck'];
     seed: PluginInvocationServicesSeed;
     binding: PluginInvocationServiceBinding;
     params: PluginInvocationServicesFactoryParams;
@@ -520,7 +519,9 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
             if (!context.params.healthChecks) return null;
             const actions = PLUGIN_SERVICE_DESCRIPTORS.actions.createAvailable(context);
             const http = PLUGIN_SERVICE_DESCRIPTORS.http.createAvailable(context);
-            return actions && http ? context.params.healthChecks.bind(context.seed, { actions, http }) : null;
+            return actions && http ? context.params.healthChecks.bind(context.seed, { actions, http,
+                bindAdmittedActions: admittedSavedHealthCheck => PLUGIN_SERVICE_DESCRIPTORS.actions.createAvailable({ ...context, admittedSavedHealthCheck }),
+            }) : null;
         },
     },
     fs: {
@@ -818,7 +819,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                 executeAdmittedTargetedOperationWithExecutionOrigin: fail,
             }) as ActionsService;
         },
-        createAvailable({ seed, params }): ActionsService | null {
+        createAvailable({ seed, params, admittedSavedHealthCheck }): ActionsService | null {
             if (params.invokeContributedAction === undefined) return null;
             const unavailable = PLUGIN_SERVICE_DESCRIPTORS.actions.createUnavailable();
             const actionRequestAttributionV1 = seed.actionRequestAttributionV1 ?? seed.approvalContext?.actionRequestAttributionV1;
@@ -889,6 +890,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                 }),
                 actionExecutor: params.actionExecutor ?? { execute: unavailableMethod('actions') },
                 invokeContributedAction: params.invokeContributedAction,
+                admittedSavedHealthCheck,
             });
             if (params.actionExecutor !== undefined) return actions;
             return Object.freeze({

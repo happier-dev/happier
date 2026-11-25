@@ -810,6 +810,14 @@ export type ActionExecutorContext = Readonly<{
     installationId: string;
   }>;
 
+  /** One scheduled contributed Health Action's adopted source and local observer, for handler context only. */
+  admittedSavedHealthCheck?: Readonly<{
+    sourceInstanceId: string;
+    source: import('../../activity/usageNoticeArtifactV1.js').HealthCheckSourceConfigV1;
+    accountId: string;
+    observer: Readonly<{ machineId: string; installationId: string }>;
+  }>;
+
   /** Host-private current admission of the deciding human; never accepted from Action input. */
   verifyMachineAdmissionCurrent?: () => Promise<boolean>;
 

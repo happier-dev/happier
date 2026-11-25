@@ -883,9 +883,10 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     const services = params.createServices(seed, effectiveServiceBinding);
                     const admittedContext = invocation.approvalContext;
                     const localCustody = admittedContext?.authenticatedLocalRootCustody;
-                    const requesterAccountId = admittedContext?.machineAdmission?.actorAccountId
+                    const savedHealthCheck = admittedContext?.admittedSavedHealthCheck;
+                    const requesterAccountId = savedHealthCheck?.accountId ?? admittedContext?.machineAdmission?.actorAccountId
                         ?? localCustody?.accountId ?? admittedContext?.runtimeAccountId;
-                    const chosenMachine = admittedContext?.machineAdmission ?? localCustody;
+                    const chosenMachine = savedHealthCheck?.observer ?? admittedContext?.machineAdmission ?? localCustody;
                     const context: PluginInvocationContext = Object.freeze({
                         plugin: seed.plugin,
                         contribution: seed.contribution,

@@ -613,9 +613,11 @@ consumes this binding through the shared checkpointed Event runner; generic
 Environment and Machine-service checks also share the finite HTTP, certificate,
 TCP, DNS and heartbeat owners. Qualified contributed kinds validate their saved
 configuration against the admitted declaration and invoke its finite Action
-through ordinary Action dispatch. `services.healthChecks.listKinds({ signal })`
-projects that same admitted catalog; `readSource({ sourceInstanceId }, { signal })`
-reads the current adopted source of the Machine-services observer. Configure uses
+through ordinary Action dispatch with the saved observer Machine and Check
+Account. The Action's `readSource({ sourceInstanceId }, { signal })` consumes
+the admitted source snapshot. Other finite callers read the Machine-services
+observer's current adopted source. `services.healthChecks.listKinds({ signal })`
+projects the admitted kind catalog. Configure uses
 that same `health/setup` Action with `mode: 'preview'` before saving. Its readonly
 branch returns a draft with effective P40 Account/Project alert defaults only when
 the alert leaf is absent; explicit empty channels remain Off. It enrolls no

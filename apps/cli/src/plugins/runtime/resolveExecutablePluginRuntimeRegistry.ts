@@ -3751,6 +3751,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         ...(!params?.accountExecution ? { healthChecks: createSavedHealthChecksHost({
             serverId: sessionCredentialsServerId,
             homeServerIdentityId: await resolveServerProfileHomeIdentityId(sessionCredentialsServerId),
+            sourceAccountId: notificationAccountId,
             resolveAdoptedDefinitionSet: resolveAutomationEventAdoptedDefinitionSet,
             readKinds: () => (authoritativeContributes.healthCheckKinds ?? []).map(entry => ({
                 pluginId: entry.pluginId, ...entry.definition,

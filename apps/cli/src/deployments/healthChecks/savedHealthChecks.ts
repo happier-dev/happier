@@ -1,7 +1,7 @@
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { deploymentUnavailableDiagnostic } from '../deploymentFailure';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
-import type { AccountSettings } from '@happier-dev/protocol';
+import type { AccountSettings, ActionExecutorContext } from '@happier-dev/protocol';
 import type { SavedHealthCheckSourceRead } from './readSavedHealthCheckSource';
 import { HealthCheckSetupPreviewResultV1Schema, type HealthCheckSetupPreviewInputV1, type HealthCheckSetupPreviewResultV1, type HealthCheckSourceConfigV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import type { HealthChecksService, HealthCheckKindCatalogV1 } from '@happier-dev/plugin-sdk';
@@ -62,12 +62,21 @@ export type SavedMachineServiceHealthResult = Readonly<{
     retirementSignal?: AbortSignal;
 }>;
 
+type AdmittedSavedHealthCheck = NonNullable<ActionExecutorContext['admittedSavedHealthCheck']>;
+type SavedHealthCheckServices = Readonly<{
+    actions: ActionsService;
+    http: HttpService;
+    bindAdmittedActions?(check: AdmittedSavedHealthCheck): ActionsService | null;
+}>;
+
 /** One finite admission over the existing adopted source and live service read. */
 export function createSavedHealthChecksHost(input: Readonly<{
     /** Local profile for client contexts and service-result publication. */
     serverId: string;
     /** Exact portable Home identity for deployment Actions. */
     homeServerIdentityId: string | null;
+    /** Same Account whose daemon credentials own the adopted definition set. */
+    sourceAccountId?: string | null;
     resolveAdoptedDefinitionSet: ResolveAutomationEventAdoptedDefinitionSetV1;
     readKinds?(): HealthCheckKindCatalogV1;
     readSavedSource?(sourceInstanceId: string, signal: AbortSignal): Promise<SavedHealthCheckSourceRead>;
@@ -94,7 +103,7 @@ export function createSavedHealthChecksHost(input: Readonly<{
         | Readonly<{ kind: 'unavailable'; code: 'endpoint_unavailable' }>>;
 }>) {
     return Object.freeze({
-        bind(seed: PluginInvocationServicesSeed, services: Readonly<{ actions: ActionsService; http: HttpService }>): HealthChecksService | null {
+        bind(seed: PluginInvocationServicesSeed, services: SavedHealthCheckServices): HealthChecksService | null {
             if (!seed.resolveCurrentPluginMaterializationRef) return null;
             const readEnvironment = async (environmentId: string, signal: AbortSignal) => {
                 if (!input.homeServerIdentityId) return unavailable('server_scope_mismatch');
@@ -274,6 +283,8 @@ export function createSavedHealthChecksHost(input: Readonly<{
                     const signal = options?.signal ? AbortSignal.any([seed.signal, options.signal]) : seed.signal;
                     signal.throwIfAborted();
                     if (!seed.isOccurrenceCurrent()) return unavailable('source_unavailable');
+                    const admitted = seed.approvalContext?.admittedSavedHealthCheck;
+                    if (admitted?.sourceInstanceId === request.sourceInstanceId) return admitted.source;
                     const own = seed.resolveCurrentPluginMaterializationRef?.();
                     if (!own) return unavailable('source_unavailable');
                     // All producers borrow the one current health observer's adopted source;
@@ -322,9 +333,14 @@ export function createSavedHealthChecksHost(input: Readonly<{
                         }
                         return check;
                     });
+                    const sourceAccountId = input.sourceAccountId;
+                    const admittedActions = contributions.size && sourceAccountId ? services.bindAdmittedActions?.({
+                        sourceInstanceId: request.sourceInstanceId, source: batch.source, accountId: sourceAccountId, observer,
+                    }) : undefined;
                     const readContributed = async (check: HealthCheckDefinitionV1) => {
+                        if (!admittedActions) return unavailable('source_unavailable');
                         const kind = contributions.get(check.checkId)!;
-                        const result = await services.actions.execute({ pluginId: kind.pluginId, localId: kind.action }, {
+                        const result = await admittedActions.execute({ pluginId: kind.pluginId, localId: kind.action }, {
                             sourceInstanceId: request.sourceInstanceId, checkId: check.checkId,
                         }, { signal });
                         signal.throwIfAborted();

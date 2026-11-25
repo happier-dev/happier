@@ -407,6 +407,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
     seed: PluginActionsServiceSeed;
     actionExecutor: PluginActionsHostExecutor;
     invokeContributedAction: InvokeContributedAction;
+    admittedSavedHealthCheck?: ActionExecutorContext['admittedSavedHealthCheck'];
 }>): ActionsService {
     const requestId = params.seed.requestId ?? params.seed.correlationId;
     const withRequestId = <TArgs extends readonly unknown[], TResult>(invoke: (...args: TArgs) => Promise<TResult>) =>
@@ -808,6 +809,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
                 if (update.progress?.approval) workspaceOperation.operationAcceptance.accept(update.progress.approval);
             } } satisfies NonNullable<ActionExecutorContext['operationOwnerUpdate']> } : {}),
             ...(executionOriginRequest ? { contributedActionExecutionOrigin: executionOriginRequest } : {}),
+            ...(params.admittedSavedHealthCheck ? { admittedSavedHealthCheck: params.admittedSavedHealthCheck } : {}),
             // Preserve original execution/signing custody without inheriting
             // present-person authority or a bypass from the initiating call.
             ...(source?.runtimeAccountId ? { runtimeAccountId: source.runtimeAccountId } : {}),

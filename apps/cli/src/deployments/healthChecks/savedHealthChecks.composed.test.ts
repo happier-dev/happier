@@ -34,7 +34,8 @@ import { createCurrentDomainEdgeObservation } from './currentDomainEdgeObservati
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createPluginHttpService } from '@/plugins/runtime/fetch/service';
 import { createGlobalFetchRuntime } from '@/plugins/runtime/fetch/globalFetchRuntime';
-import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
+import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
+import { createPluginInvocationActionsService, type InvokeContributedAction } from '@/plugins/runtime/invocation/services/actions';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
@@ -48,6 +49,21 @@ import { makeShareEligibleForTest } from '../../../../server/sources/testkit/sha
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { monitorDefinitions } from '../../../../../packages/plugins/machine-services/src/monitorDefinitions';
+
+import { createHostContributedActionInvoker } from '@/plugins/runtime/invocation/actions/hostContributedActionInvoker';
+import { createTargetActionInvocationRegistry, type TargetActionInvocationRegistration } from '@/plugins/runtime/invocation/targetActionRegistry';
+import { createPluginInvocationServicesFactory, createPluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
+import { createTargetActionHostBindingResolver } from '@/plugins/runtime/hostAccess/resolve';
+import { createManagedPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
+import { databaseActionLocalIdV1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { manifest as telemetryManifest } from '../../../../../packages/plugins/telemetry/src/index';
+import { telemetryHealthActions } from '../../../../../packages/plugins/telemetry/src/health';
+import { keyFlowConfigSchema } from '../../../../../packages/plugins/telemetry/src/healthSchemas';
+import { localCaptureBackground } from '../../../../../packages/plugins/telemetry/src/background';
+import { captureMigrations } from '../../../../../packages/plugins/telemetry/src/store/capture';
+import { createCaptureSqliteFixture } from '../../../../../packages/plugins/telemetry/src/testing/sqlite';
 
 async function adopted(sourceConfig: HealthCheckSourceConfigV1, observerMachineId = 'subject') {
     const caller = { pluginId: 'happier.machine.services', machineId: observerMachineId, materializationId: 'installed' };
@@ -241,36 +257,178 @@ describe('saved source finite native producer binding', () => {
                 author: { kind: 'process' as const }, text: 'Healthy' }] } };
         const configSchema = { type: 'object' as const, additionalProperties: false,
             properties: { monitorId: { type: 'string' as const } }, required: ['monitorId'] };
-        const host = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server', resolveAdoptedDefinitionSet: (caller, occurrence) =>
-            caller.pluginId === f.seed.plugin.id && occurrence === f.seed.occurrenceId ? f.owner : null,
+        const host = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server', sourceAccountId: 'check-owner',
+            resolveAdoptedDefinitionSet: (caller, occurrence) =>
+                caller.pluginId === f.seed.plugin.id && occurrence === f.seed.occurrenceId ? f.owner : null,
             readObserver: () => f.observer, openDomainArtifact: async () => null,
             resolveSourceOwner: () => ({ caller: f.seed.resolveCurrentPluginMaterializationRef!()!, occurrenceId: f.seed.occurrenceId }),
             readKinds: () => [{ pluginId: kind.pluginId, id: kind.localId, title: 'External health', action: 'observe-health', configSchema }],
         });
         // Contributed Action transport is the external plugin boundary. Its
         // producer reads the real adopted source through the host-stamped caller.
-        const execute = vi.fn(async (action: unknown, value: unknown) => {
-            if (action === 'deployments.environments.get') return { ok: true, environment, targetLinks: [] };
-            expect(action).toEqual({ pluginId: kind.pluginId, localId: 'observe-health' });
-            expect(value).toEqual({ sourceInstanceId: 'health:subject', checkId: 'external' });
-            const producer = host.bind({ ...f.seed, plugin: { id: kind.pluginId, version: '1.0.0' },
-                contribution: { id: 'observe-health', qualifiedId: `${kind.pluginId}/actions/observe-health` },
-                resolveCurrentPluginMaterializationRef: () => ({ pluginId: kind.pluginId,
-                    machineId: 'observer', materializationId: 'external' }),
-                caller: { kind: 'plugin', pluginId: f.seed.plugin.id, occurrenceId: f.seed.occurrenceId,
-                    contribution: f.seed.contribution, sourceCustody: f.seed.sourceCustody!,
-                    materialization: f.seed.resolveCurrentPluginMaterializationRef!()! },
-            }, { actions: { execute } as unknown as ActionsService, http: {} as HttpService })!;
-            const saved = await producer.readSource({ sourceInstanceId: 'health:subject' });
-            expect(saved).toEqual(sourceConfig);
-            return observed;
-        });
-        const service = host.bind(f.seed, { actions: { execute } as unknown as ActionsService, http: {} as HttpService })!;
+        const actions = { execute: async () => ({ ok: true, environment, targetLinks: [] }) } as unknown as ActionsService;
+        const http = {} as HttpService;
+        const bindAdmittedActions: NonNullable<Parameters<typeof host.bind>[1]['bindAdmittedActions']> = admittedSavedHealthCheck => ({
+            execute: async (action: unknown, value: unknown) => {
+                expect(action).toEqual({ pluginId: kind.pluginId, localId: 'observe-health' });
+                expect(value).toEqual({ sourceInstanceId: 'health:subject', checkId: 'external' });
+                const producer = host.bind({ ...f.seed, plugin: { id: kind.pluginId, version: '1.0.0' },
+                    approvalContext: { admittedSavedHealthCheck },
+                    contribution: { id: 'observe-health', qualifiedId: `${kind.pluginId}/actions/observe-health` },
+                    resolveCurrentPluginMaterializationRef: () => ({ pluginId: kind.pluginId,
+                        machineId: 'observer', materializationId: 'external' }),
+                    caller: { kind: 'plugin', pluginId: f.seed.plugin.id, occurrenceId: f.seed.occurrenceId,
+                        contribution: f.seed.contribution, sourceCustody: f.seed.sourceCustody!,
+                        materialization: f.seed.resolveCurrentPluginMaterializationRef!()! },
+                }, { actions, http })!;
+                const saved = await producer.readSource({ sourceInstanceId: 'health:subject' });
+                expect(saved).toEqual(sourceConfig);
+                return observed;
+            },
+        }) as unknown as ActionsService;
+        const service = host.bind(f.seed, { actions, http, bindAdmittedActions })!;
         expect(await service.read({ sourceInstanceId: 'health:subject', checkIds: ['external'] }))
             .toEqual([{ checkId: 'external', result: observed }]);
         expect(f.readStoredDefinitions).toHaveBeenCalledTimes(1);
         await expect(service.read({ sourceInstanceId: 'health:subject', checkIds: ['missing'] }))
             .rejects.toMatchObject({ code: 'health_check_kind_unavailable' });
+    });
+
+    it('retains a priced Spend result under the saved Check Account on a scheduled collector tick', async () => {
+        const accountId = 'check-owner';
+        const observerMachineId = 'collector';
+        const environment = createDeploymentEnvironmentHeaderV1({ id: 'env', serverId: 'server', controllerMachineId: 'app-machine' });
+        const kind = TELEMETRY_KEY_FLOW_HEALTH_KIND_V1;
+        const localId = databaseActionLocalIdV1(TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1);
+        const sourceConfig: HealthCheckSourceConfigV1 = { v: 1,
+            subject: { kind: 'environment', environmentId: environment.id },
+            checks: [{ ...definition('spend', { environmentId: environment.id, serviceName: 'checkout', windowMs: 3600000,
+                measure: { kind: 'spend', costMode: 'api_equivalent' }, threshold: { operator: 'above', value: 1 } }), kind }],
+        };
+        const f = await adopted(sourceConfig, observerMachineId);
+        const resolveAdoptedDefinitionSet = vi.fn(() => f.owner);
+        const healthChecks = createSavedHealthChecksHost({
+            serverId: 'server', homeServerIdentityId: 'server', sourceAccountId: accountId,
+            resolveAdoptedDefinitionSet, readObserver: () => f.observer, openDomainArtifact: async () => null,
+            resolveSourceOwner: () => ({ caller: f.seed.resolveCurrentPluginMaterializationRef!()!, occurrenceId: f.seed.occurrenceId }),
+            readKinds: () => [{ pluginId: kind.pluginId, id: kind.localId, title: 'Key flow', action: localId,
+                configSchema: keyFlowConfigSchema.jsonSchema }],
+        });
+        const sqlite = createCaptureSqliteFixture();
+        for (const migration of captureMigrations) await migration.up(sqlite.db);
+        const storage = { daemon: { database: async () => sqlite.db } } as unknown as BackgroundServiceContext['services']['storage'];
+        const lease = await localCaptureBackground.acquireRuntime({ signal: f.seed.signal, services: { storage } });
+        const producer = telemetryHealthActions[localId]!;
+        const declaration = normalizePluginManifestV2(telemetryManifest).contributes.actions.find(action => action.id === localId)!;
+        const occurrenceId = 'telemetry-occurrence' as TargetActionInvocationRegistration['occurrenceId'];
+        const pricing = vi.fn(async (id: string) => {
+            if (id === 'settings.get') return { anchor: 'usage.modelPrices', value: {
+                model: { kind: 'rates', inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+            } };
+            if (id === 'usage.prices.get') return { v: 1, models: { model: { inputUsdPerMillion: 4, outputUsdPerMillion: 8 } },
+                provenance: { source: 'litellm', origin: 'fetched', asOfMs: 1000, revision: 'spend-prices', fetchStatus: 'ready' } };
+            throw new Error(`Unexpected pricing Action ${id}`);
+        });
+        const registration: TargetActionInvocationRegistration = {
+            pluginId: kind.pluginId, pluginVersion: telemetryManifest.version, occurrenceId, localId,
+            sourceCustody: createManagedPluginSourceCustody('telemetry-generation'),
+            definition: declaration,
+            handler: async (value, context) => StrictJsonValueSchema.parse(await producer.run(value, context)),
+        };
+        const targets = createTargetActionInvocationRegistry({
+            actions: [registration], readCurrentPluginOccurrenceId: () => occurrenceId,
+            resolveCurrentPluginMaterializationRef: () => ({ pluginId: kind.pluginId,
+                machineId: observerMachineId, materializationId: 'telemetry-installation' }),
+            readMachineLocalDatabaseAgentLevel: async () => undefined,
+            resolveAuthorizationFacts: () => ({
+                generation: { targetGeneration: occurrenceId, desiredGeneration: occurrenceId, appliedGeneration: occurrenceId },
+                resourceSelections: [], scopedGrants: [], operatingSystemAuthorization: [],
+            }),
+            resolveHostBinding: createTargetActionHostBindingResolver(),
+            createServices: (seed, binding) => {
+                const services = createServices(seed, binding);
+                // Collector assignments and Account pricing are host boundaries. The collector
+                // store, Spend check, Action dispatch and scheduled result projection stay real.
+                return { ...services, actions: { ...services.actions, execute: pricing } as ActionsService,
+                    deploymentTelemetry: { ...services.deploymentTelemetry, readAssignments: async () => [{
+                        environmentId: environment.id, tokenHash: null,
+                        capabilities: { metrics: false, appLlmCost: true, exceptions: false },
+                    }] } };
+            },
+        });
+        const invokeContributedAction: InvokeContributedAction = async request => {
+            const result = await targets.invoke({ pluginId: request.action.pluginId, localId: request.action.localId, input: request.input,
+                surface: request.surface, caller: request.caller, approvalContext: request.approvalContext, signal: request.signal });
+            if (result.status === 'deferred') throw new Error('Unexpected deferred Spend Action');
+            return result;
+        };
+        const deploymentAction = async () => ({ ok: true as const, environment, targetLinks: [] });
+        const executor = createActionExecutor({
+            ...createUnavailableActionTransportDeps(),
+            invokeContributedAction: createHostContributedActionInvoker({
+                invokeContributedAction, revalidatePluginActionCallerMaterialization: async () => true,
+                revalidatePluginActionCallerOccurrence: async () => true,
+            }),
+            deploymentAction, resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(deploymentAction),
+        });
+        const createServices = createPluginInvocationServicesFactory({
+            actionExecutor: executor, invokeContributedAction, loggerSink: { write() {} }, healthChecks,
+            http: { bind: () => createPluginHttpFixture({ request: async () => { throw new Error('Unexpected collector HTTP probe'); } }) },
+        });
+        try {
+            vi.useFakeTimers({ toFake: ['Date'] });
+            vi.setSystemTime(3600000);
+            await lease.runtime.store.write([{ id: 'scheduled-call', kind: 'span', source: 'otlp',
+                worktree: `environment:${environment.id}`, at: 1000, serviceName: 'checkout',
+                genAi: { provider: 'openai', modelId: 'model', requestedModel: 'model', operation: 'chat',
+                    tokens: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 150 },
+                    tokenCategories: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 150 }, reportedCost: null } }]);
+            const seed = { ...f.seed, approvalContext: { serverId: 'server', serverIdentityId: 'server' } };
+            const services = createServices(seed, createPluginInvocationServiceBinding(seed.occurrenceId, 'observer-services'));
+            const cursors = new Map<string, AccountKvEntry>();
+            let failure: unknown;
+            const context = { ...f.seed, materialization: f.seed.resolveCurrentPluginMaterializationRef!(),
+                services: { ...services, healthChecks: { ...services.healthChecks, async read(...args: Parameters<typeof services.healthChecks.read>) {
+                    try { return await services.healthChecks.read(...args); }
+                    catch (error) { failure = error; throw error; }
+                } }, storage: { account: { kv: {
+                    async get(key: string) { return cursors.get(key) ?? null; },
+                    async set(key: string, value: JsonValue) {
+                        const version = (cursors.get(key)?.version ?? 0) + 1;
+                        cursors.set(key, { version, value }); return { version };
+                    },
+                } } }, actions: { async execute(id: string) {
+                    if (id === 'automation.event.sources.list') {
+                        const projection = f.owner.readPublicProjection();
+                        if (projection.kind !== 'available') throw new Error('Fixture adoption is unavailable');
+                        return { ...projection, kind: 'page', nextCursor: null };
+                    }
+                    if (id === 'automation.event.source.status.report') return { kind: 'reported' };
+                    throw new Error(`Unexpected observer Action ${id}`);
+                } }, events: { host: { subscribe: () => ({ dispose() {} }) } } },
+            } as unknown as BackgroundServiceContext;
+            await runCheckpointedPluginEventObserverV1({ context, source: createHealthCheckSourceAdapter(), mode: 'once' });
+            if (failure) throw failure;
+            expect([...cursors.values()]).toEqual(expect.arrayContaining([expect.objectContaining({
+                value: expect.objectContaining({ current: expect.objectContaining({ checks: [expect.objectContaining({
+                    checkId: 'spend', result: expect.objectContaining({ status: 'up',
+                        cause: expect.objectContaining({ observerMachineId }),
+                        measurements: expect.objectContaining({ value: 0.0002, unit: 'USD', completeness: 'complete' }),
+                        evidence: expect.objectContaining({ items: expect.arrayContaining([
+                            expect.objectContaining({ text: expect.stringContaining(`Check Account ${accountId}`) }),
+                        ]) }),
+                    }),
+                })] }) }),
+            })]));
+            expect(pricing.mock.calls.map(([id]) => id)).toEqual(expect.arrayContaining(['settings.get', 'usage.prices.get']));
+            expect(resolveAdoptedDefinitionSet).toHaveBeenCalledTimes(1);
+            expect(pricing).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+            targets.dispose();
+            await lease.release();
+            sqlite.close();
+        }
     });
 
     it('executes generic Environment endpoint checks from its controller without a Domain or watched service', async () => {
