@@ -19,7 +19,7 @@
   "machineServices.events.deploymentSucceeded.description": "A deployment receipt settled successfully.",
   "machineServices.events.promotionCompleted.title": "Promotion completed",
   "machineServices.events.promotionCompleted.description": "A promotion receipt settled successfully.",
-  "machineServices.events.deploymentCancelled.title": "Deployment cancelled",
+  "machineServices.events.deploymentCancelled.title": "Deployment canceled",
   "machineServices.events.deploymentCancelled.description": "A deployment receipt settled as cancelled.",
   "machineServices.events.deploymentOutcomeUnknown.title": "Deployment outcome unknown",
   "machineServices.events.deploymentOutcomeUnknown.description": "A deployment receipt recorded an unknown outcome.",

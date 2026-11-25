@@ -6,6 +6,7 @@ import { ActionInputHintsSchema } from './actionInputHints.js';
 import { getActionSpec } from './actionSpecs.js';
 import { completeActionInputHints } from './schemaInputHints.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { seedInputByFieldHints } from '../inputs/inputFieldRuntime.js';
 import { resolveEffectiveActionInputFields } from './actionInputHintsRuntime.js';
 
 describe('schema-derived Action input hints', () => {
@@ -29,6 +30,24 @@ describe('schema-derived Action input hints', () => {
       { path: 'advanced', title: 'Advanced', widget: 'json' },
       { path: 'mixed', title: 'Mixed', widget: 'json' },
     ]);
+  });
+
+  it('seeds and hides fixed values without changing any editable field projection', () => {
+    const properties = {
+      endpoint: { type: 'string' as const },
+      active: { type: 'boolean' as const },
+      count: { type: 'integer' as const },
+      mode: { anyOf: [{ const: 'auto' }, { const: 'manual' }] },
+    };
+    const baseline = normalizePluginActionInputHintsV2(undefined, { type: 'object', properties });
+    const hints = normalizePluginActionInputHintsV2({ fields: [{ path: 'v', title: 'Version', widget: 'integer' }] },
+      { type: 'object', required: ['v'], properties: { v: { const: 1 }, optionalFixed: { const: null }, ...properties } });
+    const spec = { inputHints: hints };
+    const draft = seedInputByFieldHints(spec, {});
+    expect(draft).toEqual({ v: 1 });
+    expect(resolveEffectiveActionInputFields(spec, draft)).toEqual(resolveEffectiveActionInputFields({ inputHints: baseline }, {}));
+    expect(resolveEffectiveActionInputFields(spec, { v: 2, optionalFixed: 'wrong' })).toEqual(
+      resolveEffectiveActionInputFields({ inputHints: baseline }, {}));
   });
 
   it('lets an Action with its own editor explicitly omit the host input form', () => {

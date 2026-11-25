@@ -53,7 +53,7 @@ const outcomes = {
     'promotion-completed': { completesActionIds: [DEPLOYMENT_PROMOTE_ACTION_ID_V1], state: 'succeeded', operation: 'promote', schema: outcomeSchema, key: 'promotionCompleted',
         title: 'Promotion completed', description: 'A promotion receipt settled successfully.' },
     'deployment-cancelled': { completesActionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], state: 'cancelled', operation: null, schema: outcomeSchema, key: 'deploymentCancelled',
-        title: 'Deployment cancelled', description: 'A deployment receipt settled as cancelled.' },
+        title: 'Deployment canceled', description: 'A deployment receipt settled as cancelled.' },
     'deployment-outcome-unknown': { completesActionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], state: 'outcome_unknown', operation: null, schema: outcomeSchema, key: 'deploymentOutcomeUnknown',
         title: 'Deployment outcome unknown', description: 'A deployment receipt recorded an unknown outcome.' },
 } as const;

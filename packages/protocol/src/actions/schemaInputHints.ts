@@ -1,3 +1,4 @@
+import { sameStrictJsonValue, StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import type { ActionSpec } from './actionSpecs.js';
 import { ActionInputPathSchema, type ActionInputFieldHint, type ActionInputHints } from './actionInputHints.js';
 import { isUrlJsonSchemaFormat, zodSchemaToJsonSchemaObject, type JsonSchemaObject } from './actionInputJsonSchema.js';
@@ -56,6 +57,7 @@ export function deriveActionInputHints(
   if (!schema) return authored;
   const authoredFields = authored?.fields ?? [];
   const fields = [...authoredFields];
+  let changed = false;
   const appendFields = (position: JsonSchemaObject, prefix: string, parentRequired: boolean): void => {
     // Authored fields that name one union arm's properties choose that arm: the form is that shape, with its own
     // widgets, and the other arms stay for callers that pass complete inputs.
@@ -78,16 +80,37 @@ export function deriveActionInputHints(
     for (const [key, variants] of properties) {
       const path = prefix ? `${prefix}.${key}` : key;
       // A literal dotted key is not a nested path in the shared input grammar.
-      if (key.includes('.') || !ActionInputPathSchema.safeParse(path).success
-        || authoredFields.some(field => field.path === path)) continue;
+      if (key.includes('.') || !ActionInputPathSchema.safeParse(path).success) continue;
+      const property = variants[0]!;
       const required = parentRequired && alternatives.every(alternative => Array.isArray(alternative.required) && alternative.required.includes(key));
+      const authoredIndex = fields.findIndex(field => field.path === path);
+      if (Object.hasOwn(property, 'const') && variants.length === alternatives.length
+        && variants.every(variant => sameStrictJsonValue(property.const, variant.const))) {
+        const fixed = StrictJsonValueSchema.safeParse(property.const);
+        if (fixed.success) {
+          const truthy = { op: 'truthy', path } as const;
+          const field: ActionInputFieldHint = {
+            ...fields[authoredIndex],
+            path,
+            title: fields[authoredIndex]?.title ?? fieldTitle(key),
+            widget: fields[authoredIndex]?.widget ?? fieldPresentation(property).widget,
+            defaultValue: required ? fixed.data : undefined,
+            // Keep the schema's fixed value available to draft seeding and out of every form state.
+            visibleWhen: { op: 'and', all: [truthy, { op: 'not', predicate: truthy }] },
+          };
+          if (authoredIndex === -1) fields.push(field);
+          else fields[authoredIndex] = field;
+          changed = true;
+          continue;
+        }
+      }
+      if (authoredIndex !== -1) continue;
       if (authoredFields.some(field => field.path.startsWith(`${path}.`))) {
         // Retain the author's nested editor and fill its uncovered siblings,
         // without introducing an overlapping whole-object control.
         appendFields(variants.length === 1 ? variants[0]! : { anyOf: variants }, path, required);
         continue;
       }
-      const property = variants[0]!;
       fields.push({
         path,
         title: typeof property.title === 'string' && property.title.trim() ? property.title : fieldTitle(key),
@@ -98,7 +121,7 @@ export function deriveActionInputHints(
     }
   };
   appendFields(schema, '', true);
-  return fields.length === authoredFields.length ? authored : { ...authored, fields };
+  return changed || fields.length !== authoredFields.length ? { ...authored, fields } : authored;
 }
 
 function withDerivedHints<T extends Readonly<{ inputSchema: ActionSpec['inputSchema']; inputHints?: ActionInputHints }>>(

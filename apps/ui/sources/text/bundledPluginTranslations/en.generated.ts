@@ -236,7 +236,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "machineServices.events.backupSucceeded.description": "A backup run settled successfully.",
   "machineServices.events.backupSucceeded.title": "Backup succeeded",
   "machineServices.events.deploymentCancelled.description": "A deployment receipt settled as cancelled.",
-  "machineServices.events.deploymentCancelled.title": "Deployment cancelled",
+  "machineServices.events.deploymentCancelled.title": "Deployment canceled",
   "machineServices.events.deploymentFailed.description": "A deployment receipt settled as failed; includes the failed phase.",
   "machineServices.events.deploymentFailed.title": "Deployment failed",
   "machineServices.events.deploymentOutcomeUnknown.description": "A deployment receipt recorded an unknown outcome.",
