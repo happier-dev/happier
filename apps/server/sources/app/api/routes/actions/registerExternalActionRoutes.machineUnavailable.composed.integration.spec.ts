@@ -5,6 +5,11 @@ import tweetnacl from 'tweetnacl';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import { createExternalActionDaemonDispatchResponseV1, prepareExternalActionResponseEnvelopeV1, bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionHttpErrorSchema, ExternalActionResponseEnvelopeV1Schema, EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, type ExternalActionDaemonDispatchRequest } from '@happier-dev/protocol/actions';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contributionIdentity';
+import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import { callSocketRpc } from '@happier-dev/sync-client';
+import { withUserScopedRpcSocket } from '../../../../../../cli/src/session/transport/rpc/withUserScopedRpcSocket';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { buildRpcMethodRoom } from '@/app/api/socket/rpc/rpcMethodRoom';
 import { createMachinePresenceDeadlineOwner, stopLocalMachinePresenceTimeout } from '@/app/presence/timeout';
@@ -55,11 +60,12 @@ async function createActionRelayFixture(options: Readonly<{ active?: boolean; wi
     const method = `${machine.id}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`;
     const methodRoom = buildRpcMethodRoom({ userId: account.id, method });
     const delivered: string[] = [];
+    const connectMachineSocket = () => sockets.connect({ baseUrl, token, accountId: account.id,
+        machineId: machine.id, installationId, keys });
     return {
-        account, machine, app, token, io, methodRoom, delivered,
+        account, machine, app, token, io, baseUrl, methodRoom, delivered, connectMachineSocket,
         async connectDaemon() {
-            const daemon = await sockets.connect({ baseUrl, token, accountId: account.id,
-                machineId: machine.id, installationId, keys });
+            const daemon = await connectMachineSocket();
             daemon.on(SOCKET_RPC_EVENTS.REQUEST, ({ params }: { params: ExternalActionDaemonDispatchRequest },
                 ack: (response: unknown) => void) => {
                 const { envelope, actionId } = params;
@@ -141,6 +147,75 @@ it.each((['action.operations.list', 'action.operations.get', 'action.operations.
         });
     },
 );
+
+it('admits a fresh exact detail retry through Machine RPC after a ping timeout', async () => {
+    await withActionRelayFixture({}, async ({ account, machine, token, io, baseUrl, readActive, connectMachineSocket }) => {
+        // Bound the real Engine.IO heartbeat for this fixture's connections.
+        io.engine.opts.pingInterval = 1_000;
+        io.engine.opts.pingTimeout = 1_000;
+        const rpcMethod = RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE;
+        const method = `${machine.id}:${rpcMethod}`;
+        const room = buildRpcMethodRoom({ userId: account.id, method });
+        const action = buildQualifiedPluginContributionKey({ pluginId: 'happier.scm.forge.github', localId: 'triage/get-github-entry-native' });
+        const detail = { number: 140, title: 'Fixture pull request' };
+        const handled: string[] = [];
+        const connect = async () => {
+            const daemon = await connectMachineSocket();
+            daemon.on(SOCKET_RPC_EVENTS.REQUEST, ({ params }: { params: unknown }, ack: (result: unknown) => void) => {
+                const input = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(params);
+                handled.push(input.requestId!);
+                ack({ ok: true, result: detail });
+            });
+            daemon.emit(SOCKET_RPC_EVENTS.REGISTER, { method });
+            await vi.waitFor(() => expect(io.sockets.adapter.rooms.get(room)?.has(daemon.id!)).toBe(true));
+            return daemon;
+        };
+        const read = (requestId: string) => withUserScopedRpcSocket({ token, serverUrl: baseUrl, connectTimeoutMs: 5_000 },
+            async (socket, ready) => {
+                await ready();
+                return callSocketRpc({ socket, target: { kind: 'machine', id: machine.id }, method: rpcMethod,
+                    requestId, content: { mode: 'plain' },
+                    params: DaemonPluginStructuredMessageActionExecuteRequestSchema.parse({
+                        machineId: machine.id, requestId, qualifiedActionId: action, executionSurface: 'ui',
+                        expectedContributorOccurrenceId: 'github-occurrence',
+                        invocation: { kind: 'clientPluginAction', clientActionBinding: {
+                            pluginId: 'happier.scm.forge.github', contributionLocalId: 'triage/get-github-entry',
+                            occurrenceId: 'github-occurrence',
+                        } },
+                        input: { localRef: { kindId: 'pull-request', entryId: '140' } },
+                    }) });
+            });
+        const first = await connect();
+        const controlId = crypto.randomUUID();
+        expect(await read(controlId)).toEqual({ ok: true, result: detail });
+        let disconnectReason: string | undefined;
+        io.sockets.sockets.get(first.id!)!.once('disconnect', reason => { disconnectReason = reason; });
+        // Stop answering pings at the transport boundary and let Home expire the socket.
+        const transport = first.io.engine.transport;
+        const send = transport.send.bind(transport);
+        vi.spyOn(transport, 'send').mockImplementation(packets => send(packets.filter(packet => packet.type !== 'pong')));
+        await vi.waitFor(() => expect(disconnectReason).toBe('ping timeout'), { timeout: 5_000 });
+        await vi.waitFor(async () => expect(await readActive()).toBe(false));
+        expect(io.sockets.adapter.rooms.has(room)).toBe(false);
+
+        const unavailableId = crypto.randomUUID();
+        await expect(read(unavailableId)).rejects.toMatchObject({ rpcErrorCode: 'target_unavailable' });
+        expect(handled).toEqual([controlId]);
+
+        await connect();
+        // The replacement can serve requests even if its stored heartbeat observation has expired.
+        const lastActiveAt = new Date(0);
+        await db.machine.update({ where: { id: machine.id }, data: { lastActiveAt } });
+        const deadlines = createMachinePresenceDeadlineOwner();
+        try {
+            deadlines.schedule({ machineId: machine.id, accountId: account.id, lastActiveAt });
+            await vi.waitFor(async () => expect(await readActive()).toBe(false));
+            const retryId = crypto.randomUUID();
+            expect(await read(retryId)).toEqual({ ok: true, result: detail });
+            expect(handled).toEqual([controlId, retryId]);
+        } finally { await deadlines.stop(); }
+    });
+});
 
 it.each(['connected after persisted presence expired', 'reconnecting after disconnect'] as const)(
     'delivers a new Action once to a Machine %s', async (scenario) => {

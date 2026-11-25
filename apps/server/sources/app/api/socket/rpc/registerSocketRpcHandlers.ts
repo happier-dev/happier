@@ -2213,12 +2213,12 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     const deliveredSessionRoot = verifiedExternalAction?.binding.sessionActionSource
                         && verifiedExternalAction.effectActionId === verifiedExternalAction.binding.actionId
                         && verifiedExternalAction.binding.machineId === machinePrefix ? verifiedExternalAction.binding.actionId : undefined;
-                    const actionPolicy = structuredMessageRouting?.invocationKind === 'mountedPluginSurface'
-                        || structuredMessageRouting?.invocationKind === 'clientPluginAction' ? 'action.invoke' : deliveredSessionRoot;
-                    // Passive status and retained operation controls do not wake a Machine.
-                    // Authority is admitted independently of persisted presence; the
-                    // existing forwarder still requires the live exact installation.
-                    const requireOnline = rpcMethod !== 'projects.worker.status'
+                    const mountedPluginAction = structuredMessageRouting?.invocationKind === 'mountedPluginSurface'
+                        || structuredMessageRouting?.invocationKind === 'clientPluginAction';
+                    const actionPolicy = mountedPluginAction ? 'action.invoke' : deliveredSessionRoot;
+                    // Mounted Actions, passive status and retained operation controls use
+                    // registered RPC discovery for reachability after authority admission.
+                    const requireOnline = !mountedPluginAction && rpcMethod !== 'projects.worker.status'
                         && !isRetainedMachineOperationRequest({ rpcMethod });
                     const managedTarget = rpcMethod === MANAGED_ACTIVITY_READ_RPC_METHOD ? ManagedActivityReadRequestV1Schema.safeParse(callParams)
                         : rpcMethod === MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD ? ManagedAdmissionDrainConfirmRequestV1Schema.safeParse(callParams) : null;

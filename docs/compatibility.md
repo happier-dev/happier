@@ -3091,6 +3091,12 @@ the offline diagnostic. A request whose daemon acknowledgment is lost keeps its
 existing unknown outcome. This unreleased 0.3 contract uses the existing wire
 fields, presence timers, and persisted state.
 
+Mounted plugin Actions and their Action watches on the Machine RPC carrier
+also use the registered method to establish reachability after Home admits
+the requester's Machine access. A fresh retry can reach the authenticated
+replacement socket as soon as its method registers, including when the
+stored presence observation has expired.
+
 A 0.2 Home omits the projection marker, retaining its existing UI heartbeat grace
 and shared runtime clock. Its ten-minute default Machine timeout accommodates a
 0.3 daemon's 50-second cadence. A 0.2 UI connected to a 0.3 Home receives the real
