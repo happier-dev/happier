@@ -154,8 +154,10 @@ describe('pre-publication MCP and resources source projections', () => {
         );
     }, 45_000);
 
-    it('keeps resources type-only and exposes only the approved MCP normalization value', () => {
-        expect(Object.keys(resourcesProjection)).toEqual([]);
+    it('exposes only the portable Resource helpers and MCP normalization value', () => {
+        expect(Object.keys(resourcesProjection).sort()).toEqual([
+            'createDeploymentTargetOptionsResource',
+        ]);
         expect(Object.keys(mcpProjection)).toEqual(['normalizeDetectedMcpServerV1']);
     });
 });
