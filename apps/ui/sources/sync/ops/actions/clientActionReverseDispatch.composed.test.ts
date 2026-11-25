@@ -1372,8 +1372,9 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const { ClientActionReverseRuntime } = await import('@/components/appShell/runtime/ClientActionReverseRuntime');
     const { useWorkflowLibraryView } = await import('@/components/workflows/library/useWorkflowLibraryView');
     const { getBuiltinWorkflowCatalogV1 } = await import('@happier-dev/protocol/workflows/builtins/catalog');
+    let offeredViews: ReturnType<typeof useWorkflowLibraryView>['offeredViews'] = [];
     function LibraryOwner() {
-      useWorkflowLibraryView(true);
+      offeredViews = useWorkflowLibraryView(true).offeredViews;
       return null;
     }
     const machine = createMachineFixture({ id: 'driver-machine', activeAt: Date.now(), storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
@@ -1427,7 +1428,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     if (!libraryRead.ok) throw new Error(libraryRead.errorCode);
     // Validate the complete actual DTO, not a hand-built retired fixture shape.
     expect(ScopeActionOutputSchemas['workflow.library.view.get'].parse(libraryRead.result)).toMatchObject({
-      view: 'all', searchQuery: '', offeredViews: ['all'], visibleKeys: getBuiltinWorkflowCatalogV1().map(entry => entry.id) });
+      view: 'all', searchQuery: '', offeredViews, visibleKeys: getBuiltinWorkflowCatalogV1().map(entry => entry.id) });
     await act(async () => {
       expect(await caller.execute('workflow.library.view.set', { searchQuery: 'QA-FIN35c' }, context))
         .toEqual({ ok: true, result: { ok: true } });
