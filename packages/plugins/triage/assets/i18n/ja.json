@@ -739,6 +739,7 @@
   "plugins.triage.surface.detail.noConnection.title": "このエントリを介して開く接続なし",
   "plugins.triage.surface.detail.noConnection.description": "現在、このエントリを観察している設定された接続がありませんので、読み取るものはありません。",
   "plugins.triage.surface.detail.reading": "このエントリを読み取り中",
+  "plugins.triage.sourceFailure.scope-outside-binding": "この項目のソースは接続されていません",
   "plugins.triage.surface.detail.removedConnection.title": "この接続は設定されていません",
   "plugins.triage.surface.detail.removedConnection.description": "このエントリが読み取られた接続が削除または置き換えられましたので、その詳細を開くことはできません。",
   "plugins.triage.surface.detail.accountError.title": "詳細を読み取れませんでした",

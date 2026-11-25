@@ -739,6 +739,7 @@
   "plugins.triage.surface.detail.noConnection.title": "No hi ha connexió per obrir-ho a través",
   "plugins.triage.surface.detail.noConnection.description": "No hi ha cap connexió configurada que observes aquesta entrada, així que no hi ha res per llegir-lo amb.",
   "plugins.triage.surface.detail.reading": "Llegint aquesta entrada",
+  "plugins.triage.sourceFailure.scope-outside-binding": "La font d’aquesta entrada ja no està connectada",
   "plugins.triage.surface.detail.removedConnection.title": "Aquesta connexió ja no està configurada",
   "plugins.triage.surface.detail.removedConnection.description": "La connexió a través del qual s'ha llegit aquesta entrada ha estat eliminada o reemplaçada, així que no es poden obrir els detalls.",
   "plugins.triage.surface.detail.accountError.title": "No s’han pogut llegir aquests detalls",

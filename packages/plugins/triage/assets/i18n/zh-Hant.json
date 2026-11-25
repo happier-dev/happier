@@ -739,6 +739,7 @@
   "plugins.triage.surface.detail.noConnection.title": "無法通過打開此項目",
   "plugins.triage.surface.detail.noConnection.description": "目前沒有配置的連接觀察此項目，因此無法用於讀取它。",
   "plugins.triage.surface.detail.reading": "讀取此項目",
+  "plugins.triage.sourceFailure.scope-outside-binding": "此項目的來源已中斷連線",
   "plugins.triage.surface.detail.removedConnection.title": "此連接不再配置",
   "plugins.triage.surface.detail.removedConnection.description": "此項目通過的連接已被移除或替換，因此無法打開其詳情。",
   "plugins.triage.surface.detail.accountError.title": "無法讀取這些詳情",

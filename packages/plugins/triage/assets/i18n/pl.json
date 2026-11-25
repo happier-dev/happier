@@ -739,6 +739,7 @@
   "plugins.triage.surface.detail.noConnection.title": "Brak połączenia do otwarcia tego",
   "plugins.triage.surface.detail.noConnection.description": "Nie skonfigurowane połączenie obserwuje obecnie tego wpisu, więc nie ma czego odczytać.",
   "plugins.triage.surface.detail.reading": "Odczytywanie tego wpisu",
+  "plugins.triage.sourceFailure.scope-outside-binding": "Źródło tego wpisu nie jest już połączone",
   "plugins.triage.surface.detail.removedConnection.title": "To połączenie nie jest już skonfigurowane",
   "plugins.triage.surface.detail.removedConnection.description": "Połączenie, przez które ten wpis był odczytywany, zostało usunięte lub zastąpione, więc nie można otworzyć szczegółów.",
   "plugins.triage.surface.detail.accountError.title": "Nie udało się odczytać szczegółów",

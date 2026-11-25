@@ -739,6 +739,7 @@
   "plugins.triage.surface.detail.noConnection.title": "无法通过此打开连接",
   "plugins.triage.surface.detail.noConnection.description": "当前没有配置的连接观察此条目，因此无法读取。",
   "plugins.triage.surface.detail.reading": "正在读取此条目",
+  "plugins.triage.sourceFailure.scope-outside-binding": "此条目的来源已断开连接",
   "plugins.triage.surface.detail.removedConnection.title": "此连接已不再配置",
   "plugins.triage.surface.detail.removedConnection.description": "此条目通过的连接已被移除或替换，因此无法打开其详细信息。",
   "plugins.triage.surface.detail.accountError.title": "无法读取这些详情",

@@ -739,6 +739,7 @@
   "plugins.triage.surface.detail.noConnection.title": "Nenhuma conexão para abrir isso",
   "plugins.triage.surface.detail.noConnection.description": "Nenhuma conexão configurada está observando esta entrada, então não há nada para ler com ela.",
   "plugins.triage.surface.detail.reading": "Lendo esta entrada",
+  "plugins.triage.sourceFailure.scope-outside-binding": "A fonte deste item já não está ligada",
   "plugins.triage.surface.detail.removedConnection.title": "Esta conexão não está mais configurada",
   "plugins.triage.surface.detail.removedConnection.description": "A conexão através da qual esta entrada foi lida foi removida ou substituída, então seus detalhes não podem ser abertos.",
   "plugins.triage.surface.detail.accountError.title": "Não foi possível ler estes detalhes",

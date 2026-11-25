@@ -739,6 +739,7 @@
   "plugins.triage.surface.detail.noConnection.title": "Нет подключения для открытия этого.",
   "plugins.triage.surface.detail.noConnection.description": "В настоящее время нет настроенного подключения, который наблюдает за этой записью, поэтому ее невозможно прочитать.",
   "plugins.triage.surface.detail.reading": "Чтение этой записи",
+  "plugins.triage.sourceFailure.scope-outside-binding": "Источник этой записи больше не подключён",
   "plugins.triage.surface.detail.removedConnection.title": "Эта связь больше не настроена",
   "plugins.triage.surface.detail.removedConnection.description": "Связь, через которую была прочитана эта запись, была удалена или заменена, поэтому ее детали не могут быть открыты.",
   "plugins.triage.surface.detail.accountError.title": "Не удалось прочитать сведения",
