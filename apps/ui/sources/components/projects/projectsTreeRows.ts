@@ -282,7 +282,9 @@ function environmentRows(project: ProjectsTreeProject, context: EnvironmentRowsC
 /** A Project that only deploys: one row that opens its deployments page and discloses its Environments. */
 function deploymentProjectRows(project: ProjectsTreeProject, open: boolean, context: EnvironmentRowsContext): ProjectsTreeRow[] {
     const environments = project.environments ?? [];
-    if (!project.deploymentSource || environments.length === 0) return [];
+    if (!project.deploymentSource) return [];
+    const expandable = environments.length > 0;
+    const expanded = expandable && open;
     const row: ProjectsTreeRow = {
         key: project.key,
         level: 0,
@@ -291,17 +293,17 @@ function deploymentProjectRows(project: ProjectsTreeProject, open: boolean, cont
         titleQualifier: project.teamLabel ?? null,
         subtitle: null,
         glyph: 'project',
-        expandable: true,
-        expanded: open,
+        expandable,
+        expanded,
         refId: null,
         opens: null,
-        attention: open ? null : mostUrgent(environments),
-        state: open ? null : foldedEnvironmentState(environments),
-        fact: open ? null : foldedEnvironmentFact(project.name, environments),
+        attention: expanded ? null : mostUrgent(environments),
+        state: expanded ? null : foldedEnvironmentState(environments),
+        fact: expanded ? null : foldedEnvironmentFact(project.name, environments),
         selected: false,
         child: { kind: 'href', href: buildDeploymentProjectHref(project.deploymentSource) },
     };
-    return open ? [row, ...environmentRows(project, context)] : [row];
+    return expanded ? [row, ...environmentRows(project, context)] : [row];
 }
 
 function holdsEnvironment(project: ProjectsTreeProject, openEnvironmentId: string | null | undefined): boolean {

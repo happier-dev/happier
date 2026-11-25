@@ -401,8 +401,11 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
         // With no checkout to open the Project on, an Environment and its database open on the Environment route.
         expect(projectsTreeRowChild(open[1]!)).toEqual({ kind: 'href', href: '/deployments/src-q?serverId=home&deploymentEnvironment=e1' });
         expect(projectsTreeRowChild(open[2]!)).toEqual({ kind: 'href', href: '/deployments/src-q?serverId=home&deploymentEnvironment=e1&deploymentService=db' });
-        // A deploy-only Project with nothing deployed has nothing to list.
-        expect(buildProjectsTreeRows({ projects: [{ ...demo, environments: [] }], openRefId: null, expandedKeys: new Set() })).toEqual([]);
+        // The scope owner includes an empty Project while it is open. Its row keeps its destination and has no disclosure.
+        const empty = buildProjectsTreeRows({ projects: [{ ...demo, environments: [] }], openRefId: null, expandedKeys: new Set() });
+        expect(empty).toHaveLength(1);
+        expect(empty[0]).toMatchObject({ title: 'Billing demo', expandable: false, expanded: false });
+        expect(projectsTreeRowChild(empty[0]!)).toEqual({ kind: 'href', href: '/deployments/src-q?serverId=home' });
         expect(shape(buildProjectsPhoneTreeRows({ projects: [demo], openRefId: null, expandedKeys: new Set(['deployments:src-q']),
             describe: { checkoutCount: String, machineCount: String, offlineCount: String } }))).toEqual(['Billing demo v', '  Production >']);
     });

@@ -107,6 +107,7 @@ function Column(
     grouping?: ServicesColumnGrouping;
     onGroupingChange?: (grouping: ServicesColumnGrouping) => void;
     space?: React.ComponentProps<typeof ServicesColumnView>['space'];
+    lifetime?: React.ComponentProps<typeof ServicesColumnView>['lifetime'];
   }>,
 ) {
   const read = useDeploymentCollection(props.controller, shown);
@@ -114,7 +115,7 @@ function Column(
     <ServicesColumnView
       read={read}
       serverId={props.controller.scope.serverId}
-      lifetime={null}
+      lifetime={props.lifetime ?? null}
       selection={props.selection}
       selectedServerId={props.selectedServerId}
       onNavigate={props.onNavigate}
@@ -188,13 +189,13 @@ const ITEMS = [
 ];
 
 describe('Services column', () => {
-  it('leads with All services, then each Project folded in the read’s order, a one-Environment Project as its Environment, unnamed last', async () => {
+  it('leads with All services, then each Project folded in title order, a one-Environment Project as its Environment, unnamed last', async () => {
     const controller = controllerFor(ITEMS);
     const { screen } = await render(controller, { kind: 'all' });
     expect(rowIds(screen)).toEqual([
       'services-column:all',
-      'services-column:project:source-shop',
       'services-column:environment:env-api',
+      'services-column:project:source-shop',
       'services-column:project:unnamed',
     ]);
     expect(selectedOf(screen, 'services-column:all')).toBe(
@@ -316,10 +317,10 @@ describe('Services column', () => {
       await waitFor('services-column:project:unnamed');
       expect(rowIds(screen)).toEqual([
         'services-column:all',
+        'services-column:environment:env-api',
         'services-column:project:source-shop',
         'services-column:environment:env-shop-staging',
         'services-column:environment:env-shop-production',
-        'services-column:environment:env-api',
         'services-column:project:unnamed',
       ]);
       expect(selectedOf(screen, 'services-column:environment:env-shop-production')).toBe(true);
@@ -349,6 +350,31 @@ describe('Services column', () => {
       await homes.reset();
       storage.setState(previous);
       vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps the open Project in Services when it has no Environments', async () => {
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const serverId = await homes.addHome({ name: 'Services', serverUrl: 'https://services-empty-project.test',
+      accountId: 'alice', currentAccount: true });
+    homes.answer(serverId, 'GET /v1/projects/sources/source-shop', { body: { ok: true, canManage: true,
+      source: { id: 'source-shop', revision: 1, name: 'Storefront', owner: { kind: 'account', accountId: 'alice' },
+        audience: [], createdByAccountId: 'alice' } } });
+    const account = await captureLazyActionAccountContext(serverId);
+    const controller = controllerFor([], null, {}, account.accountLifetime.scope);
+    const onNavigate = vi.fn();
+    const screen = await renderAccountScreen(<Column controller={controller} lifetime={account.accountLifetime}
+      selection={{ kind: 'project', projectSourceId: 'source-shop' }} onNavigate={onNavigate} />);
+    try {
+      const id = 'services-column:project:source-shop';
+      await vi.waitFor(() => expect(selectedOf(screen, id)).toBe(true));
+      await screen.pressByTestIdAsync(id);
+      expect(onNavigate).toHaveBeenCalledWith(`/deployments/source-shop?serverId=${serverId}`);
+    } finally {
+      await screen.unmount();
+      controller.retire();
+      account.dispose();
+      await homes.reset();
     }
   });
 
@@ -623,8 +649,8 @@ describe('Services column saved view (owner D5: one Services header, the column 
       { space, pinnedEnvironmentIds: ['env-shop-production', 'env-api'] });
     expect(rowIds(screen)).toEqual([
       'services-column:all',
-      'services-column:project:source-shop',
       'services-column:environment:env-api',
+      'services-column:project:source-shop',
     ]);
     // A pin the view leaves out is not drawn under Pinned either.
     expect(screen.findByTestId('services-column:pinned:env-shop-production')).toBeNull();

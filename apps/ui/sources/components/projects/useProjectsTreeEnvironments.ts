@@ -11,6 +11,8 @@ import { deploymentEnvironmentRowFact, deploymentEnvironmentRunsOnMachine } from
 import { useDeploymentPresentationDemand } from './deployments/useDeploymentPresentationDemand';
 import { groupDeploymentRowsByProject } from './deployments/deploymentProjectGroups';
 import { useDeploymentInventory } from './deployments/useDeploymentProject';
+import { readProjectRouteStringParam } from './detail/projectRouteState';
+import { useProjectSourceName } from './sources/useProjectSources';
 import type {
   ProjectsTreeEnvironment,
   ProjectsTreeProject,
@@ -18,6 +20,10 @@ import type {
 
 type EnvironmentItem = DeploymentEnvironmentCollectionV1['items'][number];
 const NO_ITEMS: readonly EnvironmentItem[] = Object.freeze([]);
+const selectOpenProject = (params: Readonly<Record<string, string | string[] | undefined>>) => ({
+  projectSourceId: readProjectRouteStringParam(params.projectSourceId),
+  serverId: readProjectRouteStringParam(params.serverId),
+});
 
 /**
  * The Projects tree's Environments (pfc-redesign dProject, reach board "One tree"): each tree Project whose Source
@@ -36,6 +42,12 @@ export function useProjectsTreeEnvironments(
   const items = read.snapshot.value?.items ?? NO_ITEMS;
   const parts = useDeploymentEnvironmentRowParts(items, 'projects-tree.environment', lifetime, 'rail');
   const serverId = lifetime?.scope.serverId ?? null;
+  const open = useCurrentRouteParamsSelector(selectOpenProject);
+  const missingProject = open.projectSourceId && (!open.serverId || open.serverId === serverId)
+    && !projects.some((project) => project.source?.source.id === open.projectSourceId)
+    && !parts.some((row) => row.projectSourceId === open.projectSourceId && row.projectName)
+    ? open.projectSourceId : null;
+  const openProjectName = useProjectSourceName(lifetime, missingProject);
   const previous = React.useRef<readonly ProjectsTreeProject[] | null>(null);
   return React.useMemo(() => {
     const projectBySource = new Map<string, ProjectsTreeProject>();
@@ -81,14 +93,15 @@ export function useProjectsTreeEnvironments(
       return incoming ? withEnvironments(project, incoming) : project;
     });
     // Environments whose Project name the read withholds stay in Services only: one placeholder never names a Project.
-    const deployOnlyProjects = groupDeploymentRowsByProject(deployOnly).named.map((group) => withEnvironments({
+    const openProject = missingProject && openProjectName ? { key: missingProject, title: openProjectName } : null;
+    const deployOnlyProjects = serverId ? groupDeploymentRowsByProject(deployOnly, openProject).named.map((group) => withEnvironments({
       key: `deployments:${group.key}`, name: group.title, checkouts: [],
-      deploymentSource: { serverId: group.rows[0]!.environment.serverId, projectSourceId: group.key },
-    }, group.rows.map((row) => row.environment)));
+      deploymentSource: { serverId, projectSourceId: group.key },
+    }, group.rows.map((row) => row.environment))) : [];
     const output = deployOnlyProjects.length === 0 ? joined : [...joined, ...deployOnlyProjects];
     previous.current = output;
     return output;
-  }, [items, parts, projects, serverId]);
+  }, [items, parts, projects, serverId, missingProject, openProjectName]);
 }
 
 const selectOpenEnvironmentId = (params: Readonly<Record<string, string | string[] | undefined>>): string | null =>

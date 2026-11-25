@@ -28,6 +28,7 @@ import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { useDestinationPageTitle } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
@@ -141,6 +142,11 @@ export const ProjectDeploymentsBody = React.memo(
 );
 
 const NO_OPENED_SOURCES: ReadonlySet<string> = new Set();
+
+function ProjectDeploymentsTitle({ title }: Readonly<{ title: string }>) {
+  useDestinationPageTitle(title);
+  return null;
+}
 
 /**
  * Without a source this Project has nothing deployed yet. Deploy an app leads (journey-deploy proj), never asking for a
@@ -498,6 +504,7 @@ const ProjectDeploymentsPage = React.memo(
         testID: 'project-deployments.empty.settings',
       };
       return (<>{props.header}
+        <ProjectDeploymentsTitle title={sourceRead.source?.source.name ?? t('projects.deployments.environments')} />
         <ItemList testID="project-deployments.empty">
           <EmptyState
             layout="page"

@@ -14,6 +14,7 @@ export function groupDeploymentRowsByProject<
   Row extends Readonly<{ projectSourceId: string; projectName: string | null }>,
 >(
   rows: readonly Row[],
+  openProject?: Readonly<{ key: string; title: string }> | null,
 ): Readonly<{ named: DeploymentProjectGroup<Row>[]; unnamed: Row[] }> {
   const named = new Map<string, { key: string; title: string; rows: Row[] }>();
   const unnamed: Row[] = [];
@@ -31,6 +32,7 @@ export function groupDeploymentRowsByProject<
         rows: [row],
       });
   }
+  if (openProject && !named.has(openProject.key)) named.set(openProject.key, { ...openProject, rows: [] });
   return { named: [...named.values()].sort((left, right) =>
     left.title.localeCompare(right.title) || left.key.localeCompare(right.key)), unnamed };
 }

@@ -26,6 +26,7 @@ import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { t } from '@/text';
 
 import { useOpenNewApp } from '../starters/newAppPresentation';
+import { useProjectSourceName } from '../sources/useProjectSources';
 import { readProjectRouteStringParam } from '../detail/projectRouteState';
 import { deploymentReadIssue } from './deploymentPresentation';
 import { ProjectsTreeEnvironmentRead, useProjectsTreeEnvironmentChildren } from '../ProjectsTreeEnvironmentReads';
@@ -206,6 +207,11 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
     props.lifetime,
     'rail',
   );
+  const selectionOnThisHome = selection !== null && (props.selectedServerId == null || props.selectedServerId === serverId);
+  const routeProject = selectionOnThisHome && selection?.kind !== 'all' ? selection?.projectSourceId ?? null : null;
+  const missingProject = routeProject && !rows.some((row) => row.projectSourceId === routeProject && row.projectName)
+    ? routeProject : null;
+  const openProjectName = useProjectSourceName(props.lifetime, missingProject);
   const [query, setQuery] = React.useState('');
   const needle = query.trim().toLocaleLowerCase();
   // A saved Environment puts its Project in this column before its first deployment.
@@ -219,7 +225,9 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
             .includes(needle),
         )
       : listed;
-    const { named, unnamed } = groupDeploymentRowsByProject(shown);
+    const openProject = missingProject && openProjectName && openProjectName.toLocaleLowerCase().includes(needle)
+      ? { key: missingProject, title: openProjectName } : null;
+    const { named, unnamed } = groupDeploymentRowsByProject(shown, openProject);
     return unnamed.length
       ? [
           ...named,
@@ -230,7 +238,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
           },
         ]
       : named;
-  }, [needle, listed]);
+  }, [needle, listed, missingProject, openProjectName]);
   // Pinned (lab sideSvc): the pinned Environments the tree shows, in pin order; a search narrows them as it does the tree.
   const pinnedSet = React.useMemo(() => new Set(props.pinnedEnvironmentIds), [props.pinnedEnvironmentIds]);
   const pinnedRows = React.useMemo(() => {
@@ -244,8 +252,6 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
   const [expanded, setExpanded] = React.useState<ReadonlySet<string>>(NO_KEYS);
   const [collapsed, setCollapsed] =
     React.useState<ReadonlySet<string>>(NO_KEYS);
-  const routeProject =
-    selection && selection.kind !== 'all' ? selection.projectSourceId : null;
   const isOpen = (key: string) =>
     !collapsed.has(key) &&
     (expanded.has(key) || key === routeProject || needle.length > 0);
@@ -291,7 +297,6 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
   const searchable = items.length > 0;
   const status = read.snapshot;
   const homeUnreachable = deploymentReadIssue(status.failure?.code) === 'homeUnreachable';
-  const selectionOnThisHome = selection !== null && (props.selectedServerId == null || props.selectedServerId === serverId);
   const selectedPageOwnsFailure = selection?.kind === 'all' || (selectionOnThisHome && homeUnreachable);
   // Where a service or database under an opened Environment goes (the tree below reads it while it builds).
   const childHref = (row: (typeof rows)[number], child: ProjectsTreeEnvironmentChild) => child.opens.kind === 'href'
@@ -308,7 +313,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
         isSameDeploymentName(group.rows[0]!.title, group.title)
           ? group.rows[0]!
           : null;
-      return { group, only, open: only === null && isOpen(group.key) };
+      return { group, only, open: only === null && group.rows.length > 0 && isOpen(group.key) };
     });
     const environmentRow = (row: (typeof rows)[number], level: number): ServicesTreeRow[] => {
       const open = environmentOpen(row.environmentId);
@@ -343,7 +348,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
               {
                 key: `project:${group.key}`,
                 level: 0,
-                expandable: true,
+                expandable: group.rows.length > 0,
                 expanded: open,
                 href: group.key === 'unnamed' ? null : projectHref(group.key),
                 groupKey: group.key,
@@ -537,10 +542,10 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
                 needsYou={deploymentRowStateNeedsYou(trouble)}
                 treeItem={treeItemOf(`project:${group.key}`)}
                 count={open ? null : group.rows.length}
-                disclosure={{
+                disclosure={group.rows.length > 0 ? {
                   expanded: open,
                   onToggle: () => toggle(group.key, open),
-                }}
+                } : null}
                 selected={
                   selection?.kind === 'project' &&
                   selection.projectSourceId === group.key

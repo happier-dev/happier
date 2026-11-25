@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { NavigationTitleChromeProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { DestinationInstanceContext } from '@/components/appShell/workspace/destinationInstanceContext';
 import { renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -69,6 +70,8 @@ describe('Source availability at Environment creation', () => {
       const project = <ProjectDeploymentsView lifetime={account.accountLifetime} sourceId="source-app"
         controller={controller} demand={{ mounted: true, visible: true, focused: true }} accountId="alice" serverId={serverId}
         actions={createDeploymentActions(account.accountLifetime, 'source-app')} />;
+      const setPageTitle = vi.fn();
+      const publisher = { setPageTitle };
       const body = (newDefinition: string | null) => (
         <DestinationInstanceContext.Provider value={{
           tabId: 'project-tab', focused: true, visible: true, isFocused: () => true,
@@ -76,7 +79,7 @@ describe('Source availability at Environment creation', () => {
           ref: { kind: 'deployments', params: { serverId, projectSourceId: 'source-app',
             workspacePathname: '/deployments/source-app', ...(newDefinition ? { newDefinition } : {}) } },
         }}>
-          {project}
+          <NavigationTitleChromeProvider showsTitle={false} publisher={publisher}>{project}</NavigationTitleChromeProvider>
         </DestinationInstanceContext.Provider>
       );
       const screen = await renderScreen(body(definition));
@@ -85,6 +88,7 @@ describe('Source availability at Environment creation', () => {
           // The Project page's one New environment (PAGE-ACCEPT-176 R11-D6).
           ? 'project-deployments.project.add' : 'project-deployments.empty.deployApp'), node => node !== null);
         expect(screen.findByTestId('project-deployments.sourceUnavailable')).toBeNull();
+        if (!populated) expect(setPageTitle).toHaveBeenLastCalledWith('App');
         // This Source has no repository: both agent ways open a pull request, so neither is offered (R16-D4), and the
         // Project page's agent row leads to the Source where its repository is added.
         expect(screen.findByTestId('project-deployments.prepare.open')).toBeNull();
