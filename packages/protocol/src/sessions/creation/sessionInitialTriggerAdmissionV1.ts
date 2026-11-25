@@ -1,6 +1,6 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { AutomationExecutionDefinitionCreateRequestSchema } from '../../automations/automationApiV3.js';
-import { AutomationStoredWorkflowDefinitionRecipeV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
+import { AutomationStoredWorkflowDefinitionRecipeV2Schema } from '../../automations/automationWorkflowRecipeSchemaV2.js';
 import { AutomationTriggerIdSchema } from '../../automations/automationTriggerIdentity.js';
 import { AutomationTriggerDefinitionInputSchema } from '../../automations/automationTriggerDefinition.js';
 

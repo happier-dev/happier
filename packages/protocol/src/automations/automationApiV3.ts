@@ -35,8 +35,8 @@ import {
 import {
   AutomationStoredDefinitionExecutionRecipeV1ReadSchema,
   AutomationStoredActionDefinitionRecipeV1Schema,
-} from './automationRunExecutionRecipeV1.js';
-import { AutomationManagedTargetV1Schema, AutomationObservationOnlyDefinitionV1Schema, AutomationStoredWorkflowDefinitionRecipeV2Schema, AutomationStoredWorkflowDefinitionRecipeV2ReadSchema } from './automationWorkflowRecipeV2.js';
+} from './automationRunRecipeSchemaV1.js';
+import { AutomationManagedTargetV1Schema, AutomationObservationOnlyDefinitionV1Schema, AutomationStoredWorkflowDefinitionRecipeV2Schema, AutomationStoredWorkflowDefinitionRecipeV2ReadSchema } from './automationWorkflowRecipeSchemaV2.js';
 import { ExecutionRunWaitResultSchema } from '../execution/runs/responseSchemas.js';
 import { AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS } from './automationTemplateEnvelope.js';
 import {

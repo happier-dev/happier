@@ -1,0 +1,981 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
+import { AutomationSubjectContextV1Schema } from './automationSubjectV1.js';
+import { z } from '../zodRuntimePolicy.js';
+import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
+import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
+import { PluginJsonValueV2Schema } from '../plugins/contributions/publicTypes.js';
+
+import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
+import {
+  AutomationConversationOccurrenceEvidenceV1Schema,
+  AutomationPluginEventOccurrenceEvidenceV1Schema,
+  deriveAutomationOccurrenceKeyV1,
+} from './automationOccurrenceV1.js';
+import {
+  AutomationRunCauseSchema,
+  type AutomationRunCause,
+} from './automationRunCause.js';
+import { AutomationEventPositiveSafeIntegerV1Schema } from './automationColumnBoundsV1.js';
+import { AutomationAccountCurrentnessWitnessV1Schema } from './automationAccountCurrentnessV1.js';
+import {
+  AutomationDefinitionDisplayV1Schema,
+} from './automationDefinitionDisplayV1.js';
+import {
+  AutomationEventPayloadV1Schema,
+  AutomationEventSourceInstanceIdV1Schema,
+} from './automationEventJsonBoundsV1.js';
+import {
+  AutomationStoredContentEnvelopeV1Schema,
+  AutomationStoredContentEnvelopeV1ReadSchema,
+  MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES,
+  MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
+} from './automationStoredContentEnvelopeV1.js';
+import {
+  ExecutionRunDetachedStartRequestV1Schema,
+  ExecutionRunStartRequestSchema,
+  type ExecutionRunStartRequest,
+} from '../execution/runs/startRequest.js';
+import {
+  MENTION_BOUNDS,
+  MentionRefV1Schema,
+  admitMentionRefsV1ForText,
+  type MentionRefV1,
+} from '../runtime/input/mentionRefV1.js';
+import { SessionIdSchema } from '../sessions/idsV1.js';
+import { PluginMachineMaterializationMachineIdV1Schema } from '../plugins/availability/materializationRefV1.js';
+// Imported from the draft owner rather than the session-start module: the
+// latter reaches Account-scoped crypto, which the browser-realm Action catalog
+// closure must not pull in through this recipe.
+import {
+  SessionServerStartSpawnDraftV1Schema,
+  type SessionServerStartSpawnDraftV1,
+} from '../sessions/creation/sessionSpawnNewInputV2.js';
+import {
+  SessionSpawnNewInputV2Schema,
+  type SessionSpawnNewInputV2,
+} from '../sessions/creation/sessionSpawnNewInputV2.js';
+
+const UTF8_ENCODER = new TextEncoder();
+const TIMESTAMP_SCHEMA = z.number().check(z.int(), z.nonnegative(), z.int());
+const AUTOMATION_RUN_ID_SCHEMA = z.string().check(z.trim(), z.minLength(1), z.maxLength(256));
+
+function addUtf8LimitIssue(params: Readonly<{
+  value: string;
+  maxBytes: number;
+  context: z.core.$RefinementCtx;
+  message: string;
+}>): void {
+  if (UTF8_ENCODER.encode(params.value).byteLength > params.maxBytes) {
+    params.context.addIssue({ code: "custom", message: params.message });
+  }
+}
+
+/**
+ * The private, separately rendered prompt program retained by an Automation
+ * Run. Execution-target facts belong to the target arm rather than this
+ * program, so a rendered prompt cannot rewrite target authority.
+ */
+export const AutomationRunTemplateV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  /** Current Action definitions carry their private Automation label here. */
+  display: z.optional(AutomationDefinitionDisplayV1Schema),
+  prompt: z.string().check(z.superRefine((value, context) => {
+    addUtf8LimitIssue({
+      value,
+      maxBytes: MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES,
+      context,
+      message: 'Automation template prompt exceeds its UTF-8 byte limit',
+    });
+  })),
+  /**
+   * The composer references this program carries, in the one canonical
+   * identity-only shape every other send path persists (`MentionRefV1`). It is
+   * additive and optional: a template authored before this field, or by a
+   * surface with no reference picker, parses unchanged. Nothing here is
+   * provider context — that is still reconstructed at dispatch (D-3/INV-9).
+   */
+  mentions: z.optional(z.array(MentionRefV1Schema).check(z.maxLength(MENTION_BOUNDS.maxPerMessage))),
+  /** Private Action operands; Event payloads come from the frozen occurrence. */
+  actionInput: z.optional(z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('literal'), value: PluginJsonValueV2Schema }),
+    z.strictObject({ kind: z.literal('eventPayload') }),
+  ])),
+}));
+export type AutomationRunTemplateV1 = z.infer<typeof AutomationRunTemplateV1Schema>;
+export const AutomationRunTemplateV1ReadSchema = createStoredReadSchema(AutomationRunTemplateV1Schema);
+
+/**
+ * The immutable private Event evidence consumed by the one Run materializer.
+ * Its payload reuses the Event-admission bound, so decoded JSON allocation is
+ * bounded before a repeated template token can expand it.
+ */
+export const AutomationRunPluginEventTriggerEvidenceV1Schema =
+  lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationPluginEventOccurrenceEvidenceV1Schema, {
+    subjectContexts: z.optional(z.array(AutomationSubjectContextV1Schema)),
+    payload: asProtocolZod(AutomationEventPayloadV1Schema),
+    sourceInstanceId: AutomationEventSourceInstanceIdV1Schema,
+    sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,
+    observationReceivedAt: z.number().check(z.int(), z.nonnegative(), z.int()),
+    filter: z.strictObject({
+      version: z.nullable(z.literal(1)),
+      result: z.literal('matched'),
+    }),
+  })));
+export type AutomationRunPluginEventTriggerEvidenceV1 = z.infer<
+  typeof AutomationRunPluginEventTriggerEvidenceV1Schema
+>;
+
+export const AutomationRunConversationTriggerEvidenceV1Schema =
+  lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationConversationOccurrenceEvidenceV1Schema, {
+    observationReceivedAt: z.number().check(z.int(), z.nonnegative(), z.int()),
+  })));
+export type AutomationRunConversationTriggerEvidenceV1 = z.infer<
+  typeof AutomationRunConversationTriggerEvidenceV1Schema
+>;
+
+export const AutomationRunTriggerEvidenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  AutomationRunPluginEventTriggerEvidenceV1Schema,
+  AutomationRunConversationTriggerEvidenceV1Schema,
+]));
+export type AutomationRunTriggerEvidenceV1 = z.infer<
+  typeof AutomationRunTriggerEvidenceV1Schema
+>;
+const AutomationRunTriggerEvidenceV1ReadSchema = createStoredReadSchema(AutomationRunTriggerEvidenceV1Schema);
+
+/** One retained evidence projection for the recipe and its separately stored sibling. */
+export const AutomationRunTriggerEvidenceEnvelopeV1ReadSchema = lazyZodSchema(() =>
+  z.pipe(AutomationStoredContentEnvelopeV1ReadSchema, z.transform((envelope, context) => {
+    if (envelope.t === 'encrypted') return envelope;
+    const evidence = AutomationRunTriggerEvidenceV1ReadSchema.safeParse(envelope.v);
+    if (!evidence.success) {
+      for (const issue of evidence.error.issues) {
+        context.issues.push({ ...issue, path: ['v', ...issue.path], input: ('input' in issue ? issue.input ?? context.value : context.value) } as z.core.$ZodRawIssue);
+      }
+      return z.NEVER;
+    }
+    return AutomationStoredContentEnvelopeV1Schema.parse({ t: 'plain', v: evidence.data });
+  })));
+
+/**
+ * Why one frozen prompt program could not be materialized. Execution surfaces
+ * this as the Run failure detail, so the offending token travels with the
+ * refusal instead of being re-derived by a second parser.
+ */
+export type AutomationRunPromptMaterializationRefusalV1 =
+  | Readonly<{ reason: 'templateInvalid' }>
+  | Readonly<{ reason: 'triggerEvidenceInvalid' }>
+  | Readonly<{ reason: 'malformedToken' }>
+  | Readonly<{ reason: 'unsupportedToken'; token: string }>
+  | Readonly<{ reason: 'materializedInputTooLarge' }>;
+
+export type AutomationRunPromptMaterializationResultV1 =
+  | Readonly<{ kind: 'available'; prompt: string; mentions: readonly MentionRefV1[] }>
+  | (Readonly<{ kind: 'contentInvalid' }> & AutomationRunPromptMaterializationRefusalV1);
+
+function encodeAutomationInputData(value: string): string {
+  return value
+    .replaceAll('<', '\\u003c')
+    .replaceAll('>', '\\u003e')
+    .replaceAll('&', '\\u0026');
+}
+
+function renderPluginEventInput(
+  evidence: AutomationRunPluginEventTriggerEvidenceV1,
+): string {
+  return [
+    '<automation_input v="1">',
+    'cause_kind="pluginEvent"',
+    `event_plugin_id=${encodeAutomationInputData(JSON.stringify(evidence.eventRef.pluginId))}`,
+    `event_local_id=${encodeAutomationInputData(JSON.stringify(evidence.eventRef.localId))}`,
+    `source_selector_id=${encodeAutomationInputData(JSON.stringify(evidence.sourceSelectorId))}`,
+    `source_instance_id=${encodeAutomationInputData(JSON.stringify(evidence.sourceInstanceId))}`,
+    `source_contract_version=${evidence.sourceContractVersion}`,
+    `occurrence_id=${encodeAutomationInputData(JSON.stringify(evidence.occurrenceId))}`,
+    `occurred_at=${evidence.occurredAt}`,
+    `observation_received_at=${evidence.observationReceivedAt}`,
+    `filter_version=${evidence.filter.version === null ? 'null' : evidence.filter.version}`,
+    `filter_result=${encodeAutomationInputData(JSON.stringify(evidence.filter.result))}`,
+    `payload_json=${encodeAutomationInputData(createCanonicalJsonSigningInput(evidence.payload))}`,
+    '</automation_input>',
+  ].join('\n');
+}
+
+function renderConversationInput(
+  evidence: AutomationRunConversationTriggerEvidenceV1,
+): string {
+  return [
+    '<automation_input v="1">',
+    'cause_kind="conversation"',
+    `binding_id=${encodeAutomationInputData(JSON.stringify(evidence.bindingId))}`,
+    `occurrence_id=${encodeAutomationInputData(JSON.stringify(evidence.occurrenceId))}`,
+    `occurred_at=${evidence.occurredAt}`,
+    `observation_received_at=${evidence.observationReceivedAt}`,
+    `input_json=${encodeAutomationInputData(createCanonicalJsonSigningInput(evidence.input))}`,
+    `reply_context_identity=${encodeAutomationInputData(JSON.stringify(evidence.replyContextIdentity))}`,
+    '</automation_input>',
+  ].join('\n');
+}
+
+function renderAutomationInput(evidence: AutomationRunTriggerEvidenceV1 | null): string {
+  if (evidence === null) return '';
+  return evidence.kind === 'pluginEvent'
+    ? renderPluginEventInput(evidence)
+    : renderConversationInput(evidence);
+}
+
+type ParsedTemplateProgram =
+  | Readonly<{ kind: 'parsed'; inputTokenCount: number; literalUtf8Bytes: number }>
+  | Readonly<{ kind: 'malformedToken' }>
+  | Readonly<{ kind: 'unsupportedToken'; token: string }>;
+
+function parseTemplateProgram(prompt: string): ParsedTemplateProgram {
+  let cursor = 0;
+  let inputTokenCount = 0;
+  let literalUtf8Bytes = 0;
+
+  while (cursor < prompt.length) {
+    const opening = prompt.indexOf('{{', cursor);
+    const closing = prompt.indexOf('}}', cursor);
+    if (closing !== -1 && (opening === -1 || closing < opening)) {
+      return { kind: 'malformedToken' };
+    }
+    if (opening === -1) {
+      literalUtf8Bytes += UTF8_ENCODER.encode(prompt.slice(cursor)).byteLength;
+      break;
+    }
+
+    literalUtf8Bytes += UTF8_ENCODER.encode(prompt.slice(cursor, opening)).byteLength;
+    const tokenClosing = prompt.indexOf('}}', opening + 2);
+    if (tokenClosing === -1) return { kind: 'malformedToken' };
+    const token = prompt.slice(opening, tokenClosing + 2);
+    if (token !== '{{input}}') return { kind: 'unsupportedToken', token };
+    inputTokenCount += 1;
+    cursor = tokenClosing + 2;
+  }
+
+  return { kind: 'parsed', inputTokenCount, literalUtf8Bytes };
+}
+
+function renderTemplateProgram(params: Readonly<{
+  prompt: string;
+  input: string;
+}>): string {
+  return params.prompt.replaceAll('{{input}}', params.input);
+}
+
+/**
+ * The sole token materializer for frozen Automation Run prompt programs. It
+ * parses and bounds the program before repeated substitution can allocate a
+ * large output; Event and Conversation values remain data inside a delimited
+ * input block and never choose target or permission authority.
+ */
+export function materializeAutomationRunPromptV1(params: Readonly<{
+  template: unknown;
+  triggerEvidence: unknown | null;
+}>): AutomationRunPromptMaterializationResultV1 {
+  const template = AutomationRunTemplateV1Schema.safeParse(params.template);
+  if (!template.success) return { kind: 'contentInvalid', reason: 'templateInvalid' };
+
+  const triggerEvidence = params.triggerEvidence === null
+    ? null
+    : AutomationRunTriggerEvidenceV1Schema.safeParse(params.triggerEvidence);
+  if (triggerEvidence !== null && !triggerEvidence.success) {
+    return { kind: 'contentInvalid', reason: 'triggerEvidenceInvalid' };
+  }
+
+  const input = renderAutomationInput(triggerEvidence?.data ?? null);
+  const program = parseTemplateProgram(template.data.prompt);
+  if (program.kind === 'malformedToken') {
+    return { kind: 'contentInvalid', reason: 'malformedToken' };
+  }
+  if (program.kind === 'unsupportedToken') {
+    return { kind: 'contentInvalid', reason: 'unsupportedToken', token: program.token };
+  }
+
+  const inputUtf8Bytes = UTF8_ENCODER.encode(input).byteLength;
+  const appendInput = input.length > 0 && program.inputTokenCount === 0;
+  const outputUtf8Bytes = program.literalUtf8Bytes
+    + (program.inputTokenCount * inputUtf8Bytes)
+    + (appendInput ? inputUtf8Bytes + 2 : 0);
+  if (outputUtf8Bytes > MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES) {
+    return { kind: 'contentInvalid', reason: 'materializedInputTooLarge' };
+  }
+
+  const rendered = renderTemplateProgram({ prompt: template.data.prompt, input });
+  const prompt = appendInput
+    ? (rendered.length > 0 ? `${rendered}\n\n${input}` : input)
+    : rendered;
+  if (UTF8_ENCODER.encode(prompt).byteLength > MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES) {
+    return { kind: 'contentInvalid', reason: 'materializedInputTooLarge' };
+  }
+  // The same composed admission step every other send path uses: a reference
+  // whose token the rendered program no longer contains is dropped, and its
+  // siblings survive. Token substitution is a text transform like any other,
+  // so this owner must not re-implement the rule.
+  return {
+    kind: 'available',
+    prompt,
+    mentions: admitMentionRefsV1ForText(prompt, template.data.mentions ?? []),
+  };
+}
+
+export const AutomationContributedActionTargetV1Schema = lazyZodSchema(() => z.strictObject({
+    kind: z.literal('contributedAction'),
+    action: asProtocolZod(PluginContributionIdentityV1Schema),
+}));
+
+export const AutomationRunExecutionTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  AutomationContributedActionTargetV1Schema,
+  z.strictObject({
+    kind: z.literal('existingSession'),
+    sessionId: asProtocolZod(SessionIdSchema),
+  }),
+  z.strictObject({
+    kind: z.literal('newSession'),
+    spawn: SessionServerStartSpawnDraftV1Schema,
+  }),
+  z.strictObject({
+    kind: z.literal('executionRun'),
+    request: ExecutionRunDetachedStartRequestV1Schema,
+  }),
+]));
+export type AutomationRunExecutionTargetV1 = z.infer<typeof AutomationRunExecutionTargetV1Schema>;
+
+/**
+ * Whether a target hands the Run's composer references to its dispatch owner.
+ *
+ * Only the existing-Session target reaches a structured-input seam: its effect
+ * is a Session message, which already carries `happierStructuredInputV1` beside
+ * the text. The new-Session spawn draft and the detached execution-Run request
+ * carry a bare instruction string and have no reference field, so a reference
+ * stored for them would be persisted and then dropped.
+ *
+ * Authoring surfaces read this instead of restating the target list, so a
+ * writer's refusal cannot drift from what
+ * `materializeAutomationRunExecutionRecipeV1` actually delivers.
+ */
+export function automationRunExecutionTargetDeliversComposerReferencesV1(
+  kind: AutomationRunExecutionTargetV1['kind'],
+): boolean {
+  return kind === 'existingSession';
+}
+
+/** Physical predecessor target projection, shared by stored readers and admission. */
+export function automationRunExecutionTargetTypeV1(
+  target: AutomationRunExecutionTargetV1,
+): 'new_session' | 'existing_session' | 'execution_run' | null {
+  switch (target.kind) {
+    case 'contributedAction': return null;
+    case 'newSession': return 'new_session';
+    case 'existingSession': return 'existing_session';
+    case 'executionRun': return 'execution_run';
+  }
+}
+
+export type AutomationRunTemplateTargetAdmissionV1Result =
+  | Readonly<{
+    kind: 'available';
+    template: AutomationRunTemplateV1;
+    target: AutomationRunExecutionTargetV1;
+  }>
+  | Readonly<{ kind: 'contentInvalid' }>;
+
+/**
+ * The one plaintext semantic admission for an Automation template/target pair.
+ * Identity-bearing references are useful only when the target has the
+ * canonical structured-input transport that can deliver them. Keeping this
+ * check beside the target and template schemas lets encrypted authoring call
+ * it before sealing, while materialization repeats it after opening private
+ * bytes. Ciphertext-blind persistence schemas cannot infer private content.
+ */
+export function validateAutomationRunTemplateForExecutionTargetV1(params: Readonly<{
+  template: unknown;
+  target: unknown;
+}>): AutomationRunTemplateTargetAdmissionV1Result {
+  const template = AutomationRunTemplateV1Schema.safeParse(params.template);
+  const target = AutomationRunExecutionTargetV1Schema.safeParse(params.target);
+  if (!template.success || !target.success) return { kind: 'contentInvalid' };
+  if (target.data.kind === 'contributedAction'
+    ? template.data.actionInput === undefined || template.data.prompt !== ''
+    : template.data.actionInput !== undefined) return { kind: 'contentInvalid' };
+  if (
+    (template.data.mentions?.length ?? 0) > 0
+    && !automationRunExecutionTargetDeliversComposerReferencesV1(target.data.kind)
+  ) {
+    return { kind: 'contentInvalid' };
+  }
+  return { kind: 'available', template: template.data, target: target.data };
+}
+
+/**
+ * The sole current durable execution-input shape. Account currentness stays
+ * beside this recipe because claim/start publication advances Account.seq;
+ * the pair of private envelopes remains mode-checked against that witness at
+ * every owner boundary.
+ */
+const AutomationExecutionRecipeBaseShapeV1 = {
+  v: z.literal(1),
+  templateVersion: z.number().check(z.int(), z.nonnegative(), z.int()),
+  template: AutomationStoredContentEnvelopeV1Schema,
+  triggerEvidence: z.nullable(AutomationStoredContentEnvelopeV1Schema),
+  target: AutomationRunExecutionTargetV1Schema,
+} as const;
+
+function addAutomationExecutionRecipeFramingIssueV1(value: unknown, context: z.core.$RefinementCtx): void {
+  addUtf8LimitIssue({
+    value: createCanonicalJsonSigningInput(value),
+    // The recipe retains independently bounded opaque envelopes. Its framing
+    // therefore uses the persisted-envelope ceiling; the separate prompt and
+    // target requests stay at the narrower materialized-input ceiling.
+    maxBytes: MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
+    context,
+    message: 'Automation Run execution recipe exceeds its UTF-8 byte limit',
+  });
+}
+
+function addAutomationExecutionRecipePlainTemplateTargetIssueV1(
+  value: Readonly<{
+    template: z.infer<typeof AutomationStoredContentEnvelopeV1Schema>;
+    target: AutomationRunExecutionTargetV1;
+  }>,
+  context: z.core.$RefinementCtx,
+  templateSchema: typeof AutomationRunTemplateV1Schema,
+): void {
+  if (value.template.t !== 'plain') return;
+  const template = templateSchema.safeParse(value.template.v);
+  if (
+    !template.success
+    || validateAutomationRunTemplateForExecutionTargetV1({
+      template: template.data,
+      target: value.target,
+    }).kind !== 'available'
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ['template'],
+      message: 'Automation template is incompatible with its execution target',
+    });
+  }
+}
+
+function createAutomationRunExecutionRecipeV1Schema(templateSchema: typeof AutomationRunTemplateV1Schema) {
+  return z.strictObject({
+    ...AutomationExecutionRecipeBaseShapeV1,
+    assignmentMachineIds: z.array(PluginMachineMaterializationMachineIdV1Schema),
+  }).check(z.superRefine((value, context) => {
+    addAutomationExecutionRecipeFramingIssueV1(value, context);
+    addAutomationExecutionRecipePlainTemplateTargetIssueV1(value, context, templateSchema);
+    if (new Set(value.assignmentMachineIds).size !== value.assignmentMachineIds.length) {
+      context.addIssue({
+        code: "custom",
+        path: ['assignmentMachineIds'],
+        message: 'Automation Run assignment machine ids must be unique',
+      });
+    }
+  }));
+}
+
+function projectAutomationExecutionRecipePlainContentV1<T extends Readonly<{
+  template: z.infer<typeof AutomationStoredContentEnvelopeV1Schema>;
+  triggerEvidence: z.infer<typeof AutomationStoredContentEnvelopeV1Schema> | null;
+}>>(recipe: T, context: z.core.ParsePayload) {
+  const evidence = recipe.triggerEvidence === null
+    ? null
+    : AutomationRunTriggerEvidenceEnvelopeV1ReadSchema.safeParse(recipe.triggerEvidence);
+  if (evidence !== null && !evidence.success) {
+    for (const issue of evidence.error.issues) {
+      context.issues.push({ ...issue, path: ['triggerEvidence', ...issue.path], input: 'input' in issue ? issue.input ?? context.value : context.value } as z.core.$ZodRawIssue);
+    }
+    return z.NEVER;
+  }
+  return {
+    ...recipe,
+    template: recipe.template.t === 'plain'
+      ? AutomationStoredContentEnvelopeV1Schema.parse({
+        t: 'plain', v: AutomationRunTemplateV1ReadSchema.parse(recipe.template.v),
+      })
+      : recipe.template,
+    triggerEvidence: evidence?.success
+      ? evidence.data
+      : recipe.triggerEvidence,
+  };
+}
+
+export const AutomationRunExecutionRecipeV1Schema = defineStoredReadProjection(
+  createAutomationRunExecutionRecipeV1Schema(AutomationRunTemplateV1Schema),
+  () => z.pipe(createStoredReadSchema(createAutomationRunExecutionRecipeV1Schema(AutomationRunTemplateV1ReadSchema)), z.transform(projectAutomationExecutionRecipePlainContentV1)),
+);
+export type AutomationRunExecutionRecipeV1 = z.infer<typeof AutomationRunExecutionRecipeV1Schema>;
+
+/**
+ * The one stored-definition projection of the current recipe. A definition
+ * carries no occurrence evidence: admission freezes that onto the Run. Every
+ * definition authoring surface — the account-owner V3 route and the plugin
+ * Conversation target Action — parses through this single owner.
+ */
+function createAutomationStoredDefinitionExecutionRecipeV1Schema(templateSchema: typeof AutomationRunTemplateV1Schema) {
+  return z.strictObject({
+    ...AutomationExecutionRecipeBaseShapeV1,
+  }).check(z.superRefine((value, context) => {
+    addAutomationExecutionRecipeFramingIssueV1(value, context);
+    addAutomationExecutionRecipePlainTemplateTargetIssueV1(value, context, templateSchema);
+    if (value.triggerEvidence !== null) {
+      context.addIssue({
+        code: "custom",
+        path: ['triggerEvidence'],
+        message: 'A stored Automation definition cannot carry Run occurrence evidence',
+      });
+    }
+  }));
+}
+
+export const AutomationStoredDefinitionExecutionRecipeV1Schema = defineStoredReadProjection(
+  createAutomationStoredDefinitionExecutionRecipeV1Schema(AutomationRunTemplateV1Schema),
+  () => z.pipe(createStoredReadSchema(createAutomationStoredDefinitionExecutionRecipeV1Schema(AutomationRunTemplateV1ReadSchema)), z.transform(projectAutomationExecutionRecipePlainContentV1)),
+);
+export type AutomationStoredDefinitionExecutionRecipeV1 = z.infer<
+  typeof AutomationStoredDefinitionExecutionRecipeV1Schema
+>;
+
+/** Current Action writes reuse the recipe owner; historical Session writes stay retired. */
+export const AutomationStoredActionDefinitionRecipeV1Schema = lazyZodSchema(() => z.safeExtend(
+  AutomationStoredDefinitionExecutionRecipeV1Schema, { target: AutomationContributedActionTargetV1Schema },
+));
+export type AutomationStoredActionDefinitionRecipeV1 = z.infer<typeof AutomationStoredActionDefinitionRecipeV1Schema>;
+
+export const AutomationRunExecutionRecipeV1ReadSchema = createStoredReadSchema(AutomationRunExecutionRecipeV1Schema);
+export const AutomationStoredDefinitionExecutionRecipeV1ReadSchema = createStoredReadSchema(AutomationStoredDefinitionExecutionRecipeV1Schema);
+
+export type AutomationStoredDefinitionExecutionRecipeSerializedV1Result =
+  | Readonly<{
+    kind: 'available';
+    recipe: AutomationStoredDefinitionExecutionRecipeV1;
+    serialized: string;
+  }>
+  | Readonly<{ kind: 'contentInvalid' }>;
+
+export function parseAutomationStoredDefinitionExecutionRecipeV1(
+  serialized: unknown,
+): AutomationStoredDefinitionExecutionRecipeSerializedV1Result {
+  if (
+    typeof serialized !== 'string'
+    || UTF8_ENCODER.encode(serialized).byteLength > MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES
+  ) return { kind: 'contentInvalid' };
+  let value: unknown;
+  try {
+    value = JSON.parse(serialized);
+  } catch {
+    return { kind: 'contentInvalid' };
+  }
+  const recipe = AutomationStoredDefinitionExecutionRecipeV1ReadSchema.safeParse(value);
+  return recipe.success
+    ? { kind: 'available', recipe: recipe.data, serialized }
+    : { kind: 'contentInvalid' };
+}
+
+export function serializeAutomationStoredDefinitionExecutionRecipeV1(
+  recipe: unknown,
+): AutomationStoredDefinitionExecutionRecipeSerializedV1Result {
+  const parsed = AutomationStoredDefinitionExecutionRecipeV1Schema.safeParse(recipe);
+  if (!parsed.success) return { kind: 'contentInvalid' };
+  const serialized = createCanonicalJsonSigningInput(parsed.data);
+  return UTF8_ENCODER.encode(serialized).byteLength > MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES
+    ? { kind: 'contentInvalid' }
+    : { kind: 'available', recipe: parsed.data, serialized };
+}
+
+export type AutomationRunExecutionRecipeSerializedV1Result =
+  | Readonly<{
+    kind: 'available';
+    recipe: AutomationRunExecutionRecipeV1;
+    serialized: string;
+  }>
+  | Readonly<{ kind: 'contentInvalid' }>;
+
+/**
+ * The canonical persistence parser for a frozen Automation recipe. Callers do
+ * not JSON.parse recipe bytes themselves: this keeps known-field validation, decoded
+ * allocation, and UTF-8 framing limits at the Protocol owner.
+ */
+export function parseAutomationRunExecutionRecipeV1(
+  serialized: unknown,
+): AutomationRunExecutionRecipeSerializedV1Result {
+  if (
+    typeof serialized !== 'string'
+    || UTF8_ENCODER.encode(serialized).byteLength > MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES
+  ) {
+    return { kind: 'contentInvalid' };
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(serialized);
+  } catch {
+    return { kind: 'contentInvalid' };
+  }
+  const recipe = AutomationRunExecutionRecipeV1ReadSchema.safeParse(value);
+  if (!recipe.success) return { kind: 'contentInvalid' };
+  return { kind: 'available', recipe: recipe.data, serialized };
+}
+
+/** Writes one canonical strict recipe representation for durable storage. */
+export function serializeAutomationRunExecutionRecipeV1(
+  recipe: unknown,
+): AutomationRunExecutionRecipeSerializedV1Result {
+  const parsed = AutomationRunExecutionRecipeV1Schema.safeParse(recipe);
+  if (!parsed.success) return { kind: 'contentInvalid' };
+  const serialized = createCanonicalJsonSigningInput(parsed.data);
+  return UTF8_ENCODER.encode(serialized).byteLength > MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES
+    ? { kind: 'contentInvalid' }
+    : { kind: 'available', recipe: parsed.data, serialized };
+}
+
+export type FreezeAutomationRunPluginEventExecutionRecipeV1Result =
+  | Readonly<{
+    kind: 'available';
+    recipe: AutomationRunExecutionRecipeV1;
+    serialized: string;
+  }>
+  | Readonly<{ kind: 'contentInvalid' }>;
+
+/**
+ * The one strict Event-definition-to-Run freezer.  An Event definition is a
+ * complete strict recipe with no occurrence evidence; E3 supplies only the
+ * mode-correct sealed evidence for this occurrence.  No caller parses or
+ * reconstructs the recipe's template or target outside this owner.
+ */
+export function freezeAutomationRunPluginEventExecutionRecipeV1(params: Readonly<{
+  definitionRecipe: unknown;
+  templateVersion: number;
+  triggerEvidence: unknown;
+  assignmentMachineIds: readonly string[];
+}>): FreezeAutomationRunPluginEventExecutionRecipeV1Result {
+  const definition = parseAutomationStoredDefinitionExecutionRecipeV1(params.definitionRecipe);
+  if (
+    definition.kind !== 'available'
+    || definition.recipe.triggerEvidence !== null
+    || definition.recipe.templateVersion !== params.templateVersion
+  ) {
+    return { kind: 'contentInvalid' };
+  }
+  const triggerEvidence = AutomationStoredContentEnvelopeV1Schema.safeParse(params.triggerEvidence);
+  if (
+    !triggerEvidence.success
+    || (
+      triggerEvidence.data.t === 'plain'
+      && !AutomationRunPluginEventTriggerEvidenceV1Schema.safeParse(triggerEvidence.data.v).success
+    )
+  ) return { kind: 'contentInvalid' };
+  const frozen = serializeAutomationRunExecutionRecipeV1({
+    ...definition.recipe,
+    triggerEvidence: triggerEvidence.data,
+    assignmentMachineIds: params.assignmentMachineIds,
+  });
+  return frozen.kind === 'available'
+    ? frozen
+    : { kind: 'contentInvalid' };
+}
+
+export type AutomationStoredDefinitionExecutionRecipeOuterInspectionResultV1 =
+  | Readonly<{ kind: 'available'; recipe: AutomationStoredDefinitionExecutionRecipeV1 }>
+  | Readonly<{ kind: 'modeMismatch' }>
+  | Readonly<{ kind: 'contentInvalid' }>;
+
+export type AutomationStoredDefinitionExecutionRecipeOuterValidationResultV1 =
+  | Readonly<{ kind: 'available'; recipe: AutomationStoredDefinitionExecutionRecipeV1 }>
+  | Readonly<{ kind: 'contentInvalid' }>;
+
+/**
+ * The canonical ciphertext-blind Definition inspection. Definitions contain
+ * neither occurrence evidence nor an admitted assignment snapshot; this owner
+ * additionally proves the template envelope matches current Account custody.
+ */
+export function inspectAutomationStoredDefinitionExecutionRecipeOuterV1(params: Readonly<{
+  recipe: unknown;
+  accountCurrentness: unknown;
+}>): AutomationStoredDefinitionExecutionRecipeOuterInspectionResultV1 {
+  const recipe = AutomationStoredDefinitionExecutionRecipeV1ReadSchema.safeParse(params.recipe);
+  const accountCurrentness = AutomationAccountCurrentnessWitnessV1Schema.safeParse(
+    params.accountCurrentness,
+  );
+  if (!recipe.success || !accountCurrentness.success) return { kind: 'contentInvalid' };
+  if (!envelopeMatchesCurrentness(recipe.data.template, accountCurrentness.data)) {
+    return { kind: 'modeMismatch' };
+  }
+  return { kind: 'available', recipe: recipe.data };
+}
+
+/** Definition writers fail closed for either invalid framing or wrong mode. */
+export function validateAutomationStoredDefinitionExecutionRecipeOuterV1(params: Readonly<{
+  recipe: unknown;
+  accountCurrentness: unknown;
+}>): AutomationStoredDefinitionExecutionRecipeOuterValidationResultV1 {
+  if (!AutomationStoredDefinitionExecutionRecipeV1Schema.safeParse(params.recipe).success) return { kind: 'contentInvalid' };
+  const inspected = inspectAutomationStoredDefinitionExecutionRecipeOuterV1(params);
+  return inspected.kind === 'available' ? inspected : { kind: 'contentInvalid' };
+}
+
+export type AutomationRunExecutionRecipeOuterValidationResultV1 =
+  | Readonly<{ kind: 'available'; recipe: AutomationRunExecutionRecipeV1 }>
+  | Readonly<{ kind: 'contentInvalid' }>;
+
+/**
+ * A routed detail reader needs to distinguish strict recipe framing that is
+ * invalid from framing that is valid but belongs to a different Account mode.
+ * Execution retains its established content-invalid result below.
+ */
+export type AutomationRunExecutionRecipeOuterInspectionResultV1 =
+  | Readonly<{ kind: 'available'; recipe: AutomationRunExecutionRecipeV1 }>
+  | Readonly<{ kind: 'modeMismatch' }>
+  | Readonly<{ kind: 'contentInvalid' }>;
+
+function envelopeMatchesCurrentness(
+  envelope: AutomationRunExecutionRecipeV1['template'],
+  currentness: z.infer<typeof AutomationAccountCurrentnessWitnessV1Schema>,
+): boolean {
+  return currentness.mode === 'plain'
+    ? envelope.t === 'plain'
+    : envelope.t === 'encrypted';
+}
+
+/**
+ * Parses the unencrypted recipe framing and verifies that each private content
+ * envelope has the Account mode currently under custody. Decryption and
+ * content-key proof remain with the canonical Account encryption owner.
+ */
+export function inspectAutomationRunExecutionRecipeOuterV1(params: Readonly<{
+  recipe: unknown;
+  accountCurrentness: unknown;
+}>): AutomationRunExecutionRecipeOuterInspectionResultV1 {
+  const recipe = AutomationRunExecutionRecipeV1ReadSchema.safeParse(params.recipe);
+  const accountCurrentness = AutomationAccountCurrentnessWitnessV1Schema.safeParse(
+    params.accountCurrentness,
+  );
+  if (!recipe.success || !accountCurrentness.success) {
+    return { kind: 'contentInvalid' };
+  }
+  if (
+    !envelopeMatchesCurrentness(recipe.data.template, accountCurrentness.data)
+    || (
+      recipe.data.triggerEvidence !== null
+      && !envelopeMatchesCurrentness(recipe.data.triggerEvidence, accountCurrentness.data)
+    )
+  ) {
+    return { kind: 'modeMismatch' };
+  }
+  return { kind: 'available', recipe: recipe.data };
+}
+
+/**
+ * Execution cannot dispatch either invalid or mode-mismatched bytes. Preserve
+ * that legacy contract while giving read-only detail consumers the exact
+ * unavailable reason through inspectAutomationRunExecutionRecipeOuterV1.
+ */
+export function validateAutomationRunExecutionRecipeOuterV1(params: Readonly<{
+  recipe: unknown;
+  accountCurrentness: unknown;
+}>): AutomationRunExecutionRecipeOuterValidationResultV1 {
+  const inspected = inspectAutomationRunExecutionRecipeOuterV1(params);
+  return inspected.kind === 'available'
+    ? inspected
+    : { kind: 'contentInvalid' };
+}
+
+export type AutomationRunOpenedExecutionRecipeContentV1 = Readonly<{
+  template: unknown;
+  triggerEvidence: unknown | null;
+}>;
+
+const AutomationRunOpenedExecutionRecipeContentV1Schema = lazyZodSchema(() => z.strictObject({
+  template: z.unknown(),
+  triggerEvidence: z.nullable(z.unknown()),
+}));
+
+type ReadRecipeContentResult =
+  | Readonly<{ kind: 'available'; content: AutomationRunOpenedExecutionRecipeContentV1 }>
+  | Readonly<{ kind: 'contentInvalid' }>
+  | Readonly<{ kind: 'materialUnavailable' }>;
+
+function readRecipeContent(params: Readonly<{
+  recipe: AutomationRunExecutionRecipeV1;
+  openedContent: unknown | undefined;
+}>): ReadRecipeContentResult {
+  if (params.recipe.template.t === 'plain') {
+    if (
+      params.recipe.triggerEvidence !== null
+      && params.recipe.triggerEvidence.t !== 'plain'
+    ) {
+      return { kind: 'contentInvalid' };
+    }
+    return {
+      kind: 'available',
+      content: {
+        template: params.recipe.template.v,
+        triggerEvidence: params.recipe.triggerEvidence?.v ?? null,
+      },
+    };
+  }
+  if (params.recipe.triggerEvidence !== null && params.recipe.triggerEvidence.t !== 'encrypted') {
+    return { kind: 'contentInvalid' };
+  }
+  if (params.openedContent === undefined) return { kind: 'materialUnavailable' };
+  const openedContent = lazyZodSchema(() => z.safeExtend(createStoredReadSchema(AutomationRunOpenedExecutionRecipeContentV1Schema), {
+    template: AutomationRunTemplateV1ReadSchema,
+    triggerEvidence: z.nullable(AutomationRunTriggerEvidenceV1ReadSchema),
+  })).safeParse(params.openedContent);
+  return openedContent.success
+    ? { kind: 'available', content: openedContent.data }
+    : { kind: 'contentInvalid' };
+}
+
+export function matchesCauseEvidence(
+  cause: AutomationRunCause,
+  triggerEvidence: AutomationRunTriggerEvidenceV1 | null,
+): boolean {
+  switch (cause.kind) {
+    case 'manual':
+      return triggerEvidence === null;
+    case 'trigger':
+      if (cause.triggerKind !== 'pluginEvent') return triggerEvidence === null;
+      return triggerEvidence?.kind === 'pluginEvent'
+        && triggerEvidence.eventRef.pluginId === cause.evidence.eventRef.pluginId
+        && triggerEvidence.eventRef.localId === cause.evidence.eventRef.localId
+        && triggerEvidence.sourceSelectorId === cause.evidence.sourceSelectorId
+        && triggerEvidence.occurredAt === cause.occurredAt
+        && deriveAutomationOccurrenceKeyV1({
+          triggerId: cause.triggerId,
+          evidence: {
+            v: triggerEvidence.v,
+            kind: triggerEvidence.kind,
+            eventRef: triggerEvidence.eventRef,
+            sourceSelectorId: triggerEvidence.sourceSelectorId,
+            occurrenceId: triggerEvidence.occurrenceId,
+            occurredAt: triggerEvidence.occurredAt,
+            payload: triggerEvidence.payload,
+          },
+        }) === cause.occurrenceKey;
+    case 'conversation':
+      return triggerEvidence?.kind === 'conversation'
+        && triggerEvidence.occurredAt === cause.occurredAt
+        && deriveAutomationOccurrenceKeyV1({
+          v: triggerEvidence.v,
+          kind: triggerEvidence.kind,
+          bindingId: triggerEvidence.bindingId,
+          occurrenceId: triggerEvidence.occurrenceId,
+          occurredAt: triggerEvidence.occurredAt,
+          caller: triggerEvidence.caller,
+          input: triggerEvidence.input,
+          replyContextIdentity: triggerEvidence.replyContextIdentity,
+        }) === cause.occurrenceKey;
+  }
+}
+
+export type AutomationRunExecutionRecipeMaterializationResultV1 =
+  | Readonly<{
+    kind: 'available';
+    target:
+      | Readonly<{
+        kind: 'contributedAction';
+        action: PluginContributionIdentityV1;
+        input: z.infer<typeof PluginJsonValueV2Schema>;
+      }>
+      | Readonly<{
+        kind: 'existingSession';
+        sessionId: string;
+        prompt: string;
+        mentions: readonly MentionRefV1[];
+      }>
+      | Readonly<{ kind: 'newSession'; spawn: SessionSpawnNewInputV2 }>
+      | Readonly<{ kind: 'executionRun'; request: ExecutionRunStartRequest }>;
+  }>
+  | Readonly<{ kind: 'contentInvalid' }>
+  | Readonly<{ kind: 'materialUnavailable' }>;
+
+/**
+ * Materializes one exact effect request from a frozen recipe. It never opens
+ * ciphertext itself: callers provide encrypted plaintext only after the
+ * canonical Account owner has verified the same envelope under the current
+ * witness. Plain content is always read directly from the persisted envelope.
+ */
+export function materializeAutomationRunExecutionRecipeV1(params: Readonly<{
+  recipe: unknown;
+  cause: unknown;
+  accountCurrentness: unknown;
+  runId: unknown;
+  openedContent?: unknown;
+}>): AutomationRunExecutionRecipeMaterializationResultV1 {
+  const outer = validateAutomationRunExecutionRecipeOuterV1({
+    recipe: params.recipe,
+    accountCurrentness: params.accountCurrentness,
+  });
+  if (outer.kind !== 'available') return outer;
+  const cause = AutomationRunCauseSchema.safeParse(params.cause);
+  const runId = AUTOMATION_RUN_ID_SCHEMA.safeParse(params.runId);
+  if (!cause.success || !runId.success) return { kind: 'contentInvalid' };
+
+  const content = readRecipeContent({
+    recipe: outer.recipe,
+    openedContent: params.openedContent,
+  });
+  if (content.kind !== 'available') return content;
+  const admittedTemplate = validateAutomationRunTemplateForExecutionTargetV1({
+    template: content.content.template,
+    target: outer.recipe.target,
+  });
+  const triggerEvidence = content.content.triggerEvidence === null
+    ? null
+    : AutomationRunTriggerEvidenceV1Schema.safeParse(content.content.triggerEvidence);
+  if (admittedTemplate.kind !== 'available' || (triggerEvidence !== null && !triggerEvidence.success)) {
+    return { kind: 'contentInvalid' };
+  }
+  const parsedEvidence = triggerEvidence?.data ?? null;
+  if (!matchesCauseEvidence(cause.data, parsedEvidence)) return { kind: 'contentInvalid' };
+
+  if (outer.recipe.target.kind === 'contributedAction') {
+    const program = admittedTemplate.template.actionInput;
+    if (!program) return { kind: 'contentInvalid' };
+    if (program.kind === 'literal') return { kind: 'available', target: { ...outer.recipe.target, input: program.value } };
+    return parsedEvidence?.kind === 'pluginEvent'
+      ? { kind: 'available', target: { ...outer.recipe.target, input: parsedEvidence.payload } }
+      : { kind: 'contentInvalid' };
+  }
+
+  const prompt = materializeAutomationRunPromptV1({
+    template: admittedTemplate.template,
+    triggerEvidence: parsedEvidence,
+  });
+  if (prompt.kind !== 'available') return { kind: 'contentInvalid' };
+
+  switch (outer.recipe.target.kind) {
+    case 'existingSession':
+      return {
+        kind: 'available',
+        target: {
+          kind: 'existingSession',
+          sessionId: outer.recipe.target.sessionId,
+          prompt: prompt.prompt,
+          mentions: prompt.mentions,
+        },
+      };
+    case 'newSession': {
+      const spawn = SessionSpawnNewInputV2Schema.safeParse({
+        ...outer.recipe.target.spawn,
+        creationKey: `automation-run:${runId.data}`,
+        initialInput: { text: prompt.prompt },
+      });
+      return spawn.success
+        ? { kind: 'available', target: { kind: 'newSession', spawn: spawn.data } }
+        : { kind: 'contentInvalid' };
+    }
+    case 'executionRun': {
+      const request = ExecutionRunStartRequestSchema.safeParse({
+        ...outer.recipe.target.request,
+        instructions: prompt.prompt,
+        intentInput: {},
+      });
+      return request.success
+        ? { kind: 'available', target: { kind: 'executionRun', request: request.data } }
+        : { kind: 'contentInvalid' };
+    }
+  }
+}

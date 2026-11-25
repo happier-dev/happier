@@ -1,6 +1,6 @@
 import type { WorkflowApprovedOperationV1 } from '../approvedOperationV1.js';
 import type { WorkflowDefinitionV1 } from '../../workflows/workflowV1.js';
-import type { WorkflowTriggerContextV1 } from '../../automations/automationWorkflowRecipeV2.js';
+import type { WorkflowTriggerContextV1 } from '../../automations/automationWorkflowRecipeSchemaV2.js';
 import { WorkflowProjectTargetV1Schema, type WorkflowProjectTargetV1 } from '../../workflows/workflowWorkspaceV1.js';
 import { materializeWorkflowDefinitionAuthorityV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
 import { resolveWorkflowRunStartInputsV1 } from '../../workflows/workflowStartPreparationV1.js';

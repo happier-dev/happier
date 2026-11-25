@@ -26,7 +26,7 @@ import { AutomationTriggerDetailSchema, AutomationScheduleTriggerProjectionSchem
   AutomationCheckpointedPullObservationSchema } from '../../automations/automationTriggerProjectionV1.js';
 import { AutomationRunLifecycleTriggerSchema } from '../../automations/automationRunLifecycle.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
-import { AutomationDeploymentTriggerFilterV1Schema, AutomationManagedTargetV1Schema, AutomationObservationOnlyDefinitionV1Schema, AutomationStoredWorkflowDefinitionV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
+import { AutomationDeploymentTriggerFilterV1Schema, AutomationManagedTargetV1Schema, AutomationObservationOnlyDefinitionV1Schema, AutomationStoredWorkflowDefinitionV2Schema } from '../../automations/automationWorkflowRecipeSchemaV2.js';
 import { WorkflowProjectTargetV1Schema, type WorkflowProjectTargetV1 } from '../workflowWorkspaceV1.js';
 import { WorkflowDefinitionRefV1StringSchema } from '../workflowDefinitionRefV1.js';
 import { TriggerTargetV1Schema } from './triggerTargetV1.js';

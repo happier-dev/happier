@@ -18,7 +18,7 @@ import {
   AutomationStoredWorkflowDefinitionV2Schema,
   AutomationStoredWorkflowDefinitionV2ReadSchema,
   type AutomationStoredWorkflowDefinitionRecipeV2, type WorkflowTriggerContextV1,
-} from '../../automations/automationWorkflowRecipeV2.js';
+} from '../../automations/automationWorkflowRecipeSchemaV2.js';
 import { isKeepGoingTriggerTargetV1, readTriggerTargetV1, type TriggerTargetV1 } from '../../workflows/triggers/triggerTargetV1.js';
 import { parseWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '../../artifacts/artifactListSelectionV1.js';

@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { WorkflowDefinitionRefV1StringSchema } from '../workflowDefinitionRefV1.js';
 import { WorkflowDefinitionV1Schema } from '../workflowV1.js';
-import { AutomationStoredWorkflowDefinitionV2ReadSchema } from '../../automations/automationWorkflowRecipeV2.js';
+import { AutomationStoredWorkflowDefinitionV2ReadSchema } from '../../automations/automationWorkflowRecipeSchemaV2.js';
 
 export const TriggerTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('workflow'), ref: WorkflowDefinitionRefV1StringSchema }),
