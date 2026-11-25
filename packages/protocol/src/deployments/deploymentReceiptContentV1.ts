@@ -1,5 +1,5 @@
 import { z } from '../zodRuntimePolicy.js';
-import { ActionActorV1Schema } from '../actions/actionRequestAttributionV1.js';
+import { ActionActorV1Schema } from '../actions/actionActorV1.js';
 import { SharedSavedSecretReferenceSelectionV1Schema } from '../account/settings/savedSecretReferenceV1.js';
 import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '../artifacts/deploymentArtifactKindsV1.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
@@ -12,7 +12,7 @@ import { readDeploymentArtifactContentV1, type DeploymentArtifactContentReferenc
 import { DeploymentPreMigrationBackupV1Schema } from './deploymentBackupActionsV1.js';
 import { DeploymentOwnServerTargetMachinesV1Schema } from './deploymentEnvironmentCreateV1.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
-import { DeploymentPreviewDomainFactV1Schema } from './deploymentPreviewTemplateV1.js';
+import { DeploymentPreviewDomainFactV1Schema } from './deploymentPreviewReferenceV1.js';
 import { DeploymentReferenceAddressV1Schema } from './deploymentReadsV1.js';
 import { DeploymentReceiptFailureV1Schema } from './deploymentReceiptEventsV1.js';
 import { DeploymentReviewRevisionV1Schema, DeploymentMachineReviewV1Schema } from './deploymentReviewV1.js';

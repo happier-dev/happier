@@ -7,7 +7,7 @@ import { readDeploymentArtifactContentV1, type DeploymentArtifactContentReferenc
 import type { DeploymentDomainHeaderV1 } from './deploymentDomainV1.js';
 import { CloudflareTunnelConnectorsPerMachineV1Schema } from './cloudflareTunnelConnectorsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { AccessProviderSelectionV1Schema } from '../plugins/contributions/accessProviders.js';
+import { AccessProviderSelectionV1Schema } from '../plugins/contributions/accessProviderSelection.js';
 import { MachineCaddyPrivateBindingV1Schema } from '../machines/setup/machineFirewallV1.js';
 import { DeploymentDomainHealthCheckV1Schema } from './deploymentDomainHealthCheckV1.js';
 import { DeploymentTextV1Schema as text } from './storedAppInputV1.js';

@@ -39,7 +39,10 @@ const protocolDataCollectionOpaqueCursor = resolve(
 const protocolLaunchProfileId = resolve(import.meta.dirname, '../../protocol/src/profiles/v2/profileId.ts');
 const protocolTriageEntryRef = resolve(import.meta.dirname, '../../protocol/src/tasks/entryRefV1.ts');
 
-async function bundleProtocolAuthoring(): Promise<Readonly<{
+async function bundleProtocolAuthoring(exportStatements: readonly string[] = [
+    `export { defineProtocolArray, defineProtocolJsonValue, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, defineProtocolUtf8String, defineProtocolUniqueArray, pluginJsonValuesEqual, ProtocolComposerRefV1Schema, ProtocolComposerReferenceResolutionV1Schema, ProtocolLaunchProfileIdV2Schema, TriageEntryRefV1Schema } from ${JSON.stringify(protocolBrowserEntry)};`,
+    `export { defineContributionPoint, defineContributionProtocol, PluginTargetedContributionSelectionV1Schema } from ${JSON.stringify(contributionsBrowserEntry)};`,
+]): Promise<Readonly<{
     moduleIds: readonly string[];
     code: string;
 }>> {
@@ -54,10 +57,7 @@ async function bundleProtocolAuthoring(): Promise<Readonly<{
             },
             load(id) {
                 if (id !== '\0virtual:protocol-authoring-browser-realm-entry') return null;
-                return [
-                    `export { defineProtocolArray, defineProtocolJsonValue, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, defineProtocolUtf8String, defineProtocolUniqueArray, pluginJsonValuesEqual, ProtocolComposerRefV1Schema, ProtocolComposerReferenceResolutionV1Schema, ProtocolLaunchProfileIdV2Schema, TriageEntryRefV1Schema } from ${JSON.stringify(protocolBrowserEntry)};`,
-                    `export { defineContributionPoint, defineContributionProtocol, PluginTargetedContributionSelectionV1Schema } from ${JSON.stringify(contributionsBrowserEntry)};`,
-                ].join('\n');
+                return exportStatements.join('\n');
             },
             generateBundle() {
                 for (const id of this.getModuleIds()) moduleIds.add(id);
@@ -173,5 +173,18 @@ describe('protocol-authoring public browser entrypoint', () => {
         ))).toEqual([]);
         expect(code).not.toMatch(/(?:from\s*|import\s*\(|require\()\s*['"]node:/u);
         expect(code).not.toContain('__vite-browser-external');
+    }, 60_000);
+
+    it('keeps Deployment header schemas out of runtime mutation and crypto', async () => {
+        const deployment = resolve(import.meta.dirname, './protocol/deploymentHeaders.ts');
+        const { moduleIds } = await bundleProtocolAuthoring([
+            `export { ProtocolDeploymentEnvironmentHeaderV1Schema, ProtocolDeploymentReceiptHeaderV1Schema, ProtocolDeploymentReceiptOperationV1Schema } from ${JSON.stringify(deployment)};`,
+        ]);
+        expect(moduleIds.filter((id) => (
+            id.endsWith('/deployments/deploymentActionsV1.ts')
+            || id.endsWith('/deployments/deploymentDomainV1.ts')
+            || id.endsWith('/machines/identity/installationIdentity.ts')
+            || id.endsWith('/crypto/accountScopedCipher.ts')
+        ))).toEqual([]);
     }, 60_000);
 });

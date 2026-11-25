@@ -199,7 +199,6 @@ export { ProtocolArtifactGetOutputV1Schema } from './artifact.js';
 export {
     ProtocolDeploymentPreviewProvenanceV1Schema,
     ProtocolDeploymentSourceIntentV1Schema,
-    ProtocolDeploymentReceiptOperationV1Schema,
     ProtocolDeploymentControllerAvailabilityV1Schema,
     DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE,
     ProtocolCloudflareTunnelConnectorsPerMachineV1Schema,
@@ -210,8 +209,6 @@ export {
     formatSharedSavedSecretRefV1,
     ProtocolDeploymentDeploySemanticInputV1Schema,
     ProtocolDeploymentCorrelationV1Schema,
-    ProtocolDeploymentEnvironmentHeaderV1Schema,
-    ProtocolDeploymentReceiptHeaderV1Schema,
     ProtocolDeploymentVariableBindingV1Schema,
     ProtocolDeploymentSecretBindingSourceV1Schema,
     readDeploymentArtifactJsonBodyV1,
@@ -231,8 +228,6 @@ export type {
     DeploymentReceiptFailureV1,
     DeploymentDeploySemanticInputV1,
     DeploymentCorrelationV1,
-    DeploymentEnvironmentHeaderV1,
-    DeploymentReceiptHeaderV1,
     EnvironmentVariableBindingV1,
     DeploymentSecretBindingSourceV1,
     DeploymentSourceIntentV1,
@@ -240,6 +235,8 @@ export type {
     DeploymentArtifactReadFailureV1,
     OpenedDeploymentArtifactV1,
 } from './deployment.js';
+export { ProtocolDeploymentReceiptOperationV1Schema, ProtocolDeploymentEnvironmentHeaderV1Schema, ProtocolDeploymentReceiptHeaderV1Schema } from './deploymentHeaders.js';
+export type { DeploymentEnvironmentHeaderV1, DeploymentReceiptHeaderV1 } from './deploymentHeaders.js';
 export type { ProtocolNoticeArtifactV1, ProtocolOwnedNoticeV1 } from './accountNotice.js';
 export { readOwnedNoticeArtifactV1 } from './accountNotice.js';
 export { ProtocolServiceHealthNoticeSourceV1Schema, ProtocolServiceHealthNoticePageV1Schema } from './accountNotice.js';

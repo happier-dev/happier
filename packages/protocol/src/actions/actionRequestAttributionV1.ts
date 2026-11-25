@@ -2,10 +2,12 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { CoordinationMessageRefV1Schema } from '../discussions/messageRefs.js';
 import { SessionMessageRefV1Schema } from '../sessions/messages/sessionMessageRefV1.js';
-import { SessionMessageAccountActorV1Schema, deriveSessionMessageAuthorAccountIdV1 } from '../sessions/messages/sessionMessageAccountActorV1.js';
+import { deriveSessionMessageAuthorAccountIdV1 } from '../sessions/messages/sessionMessageAccountActorV1.js';
 import { SessionInputAdmissionReceiptV1Schema, SessionInputAuthoritySchema } from '../sessions/messages/sessionInputAdmission.js';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from './externalActionApi.js';
 import type { ActionExecutorContext } from './executor/types.js';
+import { ActionRequestRequesterV1Schema, type ActionActorV1 } from './actionActorV1.js';
+export { ActionActorV1Schema, ActionRequestRequesterV1Schema, type ActionActorV1 } from './actionActorV1.js';
 import type { ActionId } from './actionIds.js';
 import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation, readInitiatingActionCallerV1 } from './invocationAuthority.js';
 
@@ -15,22 +17,6 @@ export function readAuthenticatedActionRequesterAccountIdV1(binding: ExternalAct
     && (binding.authentication.kind === 'account' || binding.authentication.kind === 'terminal')
     ? binding.accountId : null;
 }
-
-/** Qualified authenticated person, independent of the eventual executing persona. */
-export const ActionRequestRequesterV1Schema = lazyZodSchema(() => z.strictObject({
-  serverId: SessionMessageRefV1Schema.shape.session.shape.serverId,
-  accountId: SessionMessageAccountActorV1Schema.shape.accountId,
-}));
-
-/** Private historical actor references; display names remain with their existing content owners. */
-export const ActionActorV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ actorKind: z.literal('person'), accountId: ActionRequestRequesterV1Schema.shape.accountId }),
-  z.strictObject({ actorKind: z.literal('agent'), sessionId: SessionMessageRefV1Schema.shape.session.shape.sessionId,
-    onBehalfOf: z.optional(ActionRequestRequesterV1Schema) }),
-  z.strictObject({ actorKind: z.literal('workflow'), runId: z.string().check(z.minLength(1)),
-    automationId: z.optional(z.string().check(z.minLength(1))), onBehalfOf: z.optional(ActionRequestRequesterV1Schema) }),
-]));
-export type ActionActorV1 = Readonly<z.infer<typeof ActionActorV1Schema>>;
 
 /** Immutable admitted Workflow cause, independent of the person who later approves the effect. */
 export function readActionWorkflowOriginRunIdV1(context: ActionExecutorContext): string | undefined {

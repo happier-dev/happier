@@ -3,6 +3,7 @@ import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 import { AccountDisplayProfileV1Schema } from '../../account/accountDisplayProfileV1.js';
+import { SessionMessageActorAccountIdV1Schema } from './sessionMessageActorAccountIdV1.js';
 import { SessionMessageRoleSchema } from './sessionMessageRole.js';
 import { SessionInputAdmissionReceiptV1Schema } from './sessionInputAdmission.js';
 
@@ -22,7 +23,7 @@ import { SessionInputAdmissionReceiptV1Schema } from './sessionInputAdmission.js
  */
 export const SessionMessageAccountActorV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
-  accountId: z.string().check(z.trim(), z.minLength(1), z.maxLength(191)),
+  accountId: SessionMessageActorAccountIdV1Schema,
   profile: z.nullable(AccountDisplayProfileV1Schema),
   accessibility: z.optional(z.enum(['current', 'former'])),
 }));

@@ -1,6 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
+import { DeploymentTextV1Schema } from './storedAppInputV1.js';
 
 /** The four-part live preview key fits its portable storage index boundary. */
 export const DeploymentPreviewPullRequestIdV1Schema = lazyZodSchema(() => DeploymentIdentifierV1Schema.check(
@@ -14,3 +15,7 @@ export const DeploymentPreviewReferenceV1Schema = lazyZodSchema(() => z.strictOb
   pullRequestId: DeploymentPreviewPullRequestIdV1Schema,
   runtimeTargetLinkId: DeploymentIdentifierV1Schema,
 }));
+
+/** Captured selected TEMPLATE Domain identity, not the allocated child Domain id. */
+export const DeploymentPreviewDomainFactV1Schema = lazyZodSchema(() => z.strictObject({ domainId: DeploymentIdentifierV1Schema, url: DeploymentTextV1Schema }));
+export type DeploymentPreviewDomainFactV1 = z.infer<typeof DeploymentPreviewDomainFactV1Schema>;
