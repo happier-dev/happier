@@ -742,8 +742,8 @@ describe('Artifact composed view reads', () => {
         }
     });
 
-    it('keeps Share unavailable for an owner opening an unlisted Deployment Artifact URL', async () => {
-        const { head, row } = await setup('file');
+    it('refuses a cached internal Deployment Artifact even for its owner', async () => {
+        const { head, row, served } = await setup('file');
         const header = { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Production' };
         head.header = encodePlainArtifactStoredContent(header);
         head.body = encodePlainArtifactStoredContent({ body: '{}' });
@@ -751,8 +751,11 @@ describe('Artifact composed view reads', () => {
         getStorage().getState().addArtifact(artifact);
         const screen = await renderScreen(<ArtifactDetailContent id={row.id} artifact={artifact} />);
         try {
-            await vi.waitFor(() => expect(screen.findByTestId('artifact:history')).not.toBeNull());
-            expect(screen.findByTestId('artifact:share') === null).toBe(true);
+            await vi.waitFor(() => expect(screen.findByTestId('artifact:bodyFailed')).not.toBeNull());
+            expect(screen.findByTestId('artifact:history')).toBeNull();
+            expect(screen.findByTestId('artifact:share')).toBeNull();
+            expect(served.requests.filter(request => request.path === `/v1/artifacts/${row.id}`
+                || request.path === '/v1/artifacts/read')).toHaveLength(0);
         } finally {
             await screen.unmount();
         }
