@@ -8280,6 +8280,7 @@ const ca: typeof en = {
         runAgain: 'Torna-ho a executar',
         ranAt: ({ time }: { time: string }) => `Executada a les ${time} · no s’ha eliminat res`,
         sweepInProgress: 'Hi ha una neteja en curs — torna-ho a provar quan acabi.',
+        previewOwnerOnly: "Demana a un propietari del Home que executi aquesta previsualització.",
         wouldDelete: ({ count, examined }: { count: string; examined: string }) => `Eliminaria ${count} · ${examined} examinats`,
         nothingToDelete: 'Res a eliminar',
         stopTimeBudget: 'aturada: límit de temps',

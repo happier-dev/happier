@@ -8307,6 +8307,7 @@ const pl: typeof en = {
         runAgain: 'Uruchom ponownie',
         ranAt: ({ time }: { time: string }) => `Uruchomiono o ${time} · nic nie usunięto`,
         sweepInProgress: 'Trwa czyszczenie — spróbuj ponownie, gdy się skończy.',
+        previewOwnerOnly: "Poproś właściciela Home o uruchomienie tego podglądu.",
         wouldDelete: ({ count, examined }: { count: string; examined: string }) => `Do usunięcia: ${count} · sprawdzono: ${examined}`,
         nothingToDelete: 'Nic do usunięcia',
         stopTimeBudget: 'zatrzymano: limit czasu',

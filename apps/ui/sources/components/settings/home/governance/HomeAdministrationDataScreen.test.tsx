@@ -268,6 +268,34 @@ describe('HomeAdministrationDataScreen', () => {
         expect(harness.requestsFor(SETTINGS_SET)).toHaveLength(0);
     });
 
+    it.each([
+        { status: 400, error: 'invalid_home_input', message: 'homeGovernance.invalidRead', retryable: false },
+        { status: 403, error: 'home_governance_forbidden', message: 'homeGovernance.data.previewOwnerOnly', retryable: false },
+        { status: 503, error: 'Service Unavailable', message: 'homeGovernance.unavailableBody', retryable: true },
+    ])('presents the retention preview refusal $error and its actual recovery', async ({ status, error, message, retryable }) => {
+        const home = await addHome();
+        harness.answer(home, SETTINGS_GET, { body: dataProjection() });
+        harness.answer(home, DRY_RUN, { status, body: { error } });
+
+        const screen = await renderData(home);
+        await screen.pressByTestIdAsync('home-retention-dry-run.run');
+
+        await waitForHomeGovernance(() => {
+            expect(textUnder(screen.findByTestId('home-retention-dry-run'))).toContain(message);
+        });
+        const run = screen.findByTestId('home-retention-dry-run.run');
+        if (retryable) {
+            expect(run).not.toBeNull();
+            harness.answer(home, DRY_RUN, { body: { ranAt: '2026-09-27T10:42:00.000Z', byDomain: {} } });
+            await screen.pressByTestIdAsync('home-retention-dry-run.run');
+            await waitForHomeGovernance(() => {
+                expect(textUnder(screen.findByTestId('home-retention-dry-run'))).toContain('homeGovernance.data.ranAt');
+            });
+        } else {
+            expect(run).toBeNull();
+        }
+    });
+
     it('says a clean-up is running when the sweep holds the lock', async () => {
         const home = await addHome();
         harness.answer(home, SETTINGS_GET, { body: dataProjection() });

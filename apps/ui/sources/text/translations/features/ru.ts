@@ -8309,6 +8309,7 @@ const ru: typeof en = {
         runAgain: 'Запустить снова',
         ranAt: ({ time }: { time: string }) => `Запущено в ${time} · ничего не удалено`,
         sweepInProgress: 'Идёт очистка — попробуйте снова, когда она закончится.',
+        previewOwnerOnly: "Попросите владельца Home запустить этот предварительный просмотр.",
         wouldDelete: ({ count, examined }: { count: string; examined: string }) => `Будет удалено: ${count} · проверено: ${examined}`,
         nothingToDelete: 'Нечего удалять',
         stopTimeBudget: 'остановлено: лимит времени',

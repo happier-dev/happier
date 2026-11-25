@@ -8296,6 +8296,7 @@ const fr: typeof en = {
         runAgain: 'Relancer',
         ranAt: ({ time }: { time: string }) => `Lancée à ${time} · rien n’a été supprimé`,
         sweepInProgress: 'Un nettoyage est en cours — réessaie quand il sera terminé.',
+        previewOwnerOnly: "Demande à un propriétaire du Home de lancer cet aperçu.",
         wouldDelete: ({ count, examined }: { count: string; examined: string }) => `Supprimerait ${count} · ${examined} examinés`,
         nothingToDelete: 'Rien à supprimer',
         stopTimeBudget: 'arrêté : budget de temps',

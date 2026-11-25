@@ -338,15 +338,20 @@ const DryRunRow = React.memo(function DryRunRow(props: Readonly<{
 }>) {
     const { state } = props;
     const last = lastDryRun(state);
+    const refusal = state.kind === 'refused' ? state.failure : null;
     const subtitle = state.kind === 'busy'
         ? t('homeGovernance.data.sweepInProgress')
-        : state.kind === 'refused'
-            ? homeGovernanceFailureNotice(state.failure).body
-            : last
-                ? t('homeGovernance.data.ranAt', {
-                    time: formatWithCachedDateTimeFormatter(new Date(last.ranAt), undefined, { timeStyle: 'short' }),
-                })
-                : t('homeGovernance.data.tryRulesDescription');
+        : refusal?.code === 'home_governance_forbidden'
+            ? t('homeGovernance.data.previewOwnerOnly')
+            : refusal
+                ? homeGovernanceFailureNotice(refusal, { effect: 'read' }).body
+                : last
+                    ? t('homeGovernance.data.ranAt', {
+                        time: formatWithCachedDateTimeFormatter(new Date(last.ranAt), undefined, { timeStyle: 'short' }),
+                    })
+                    : t('homeGovernance.data.tryRulesDescription');
+    const runLabel = refusal ? t('homeGovernance.retry')
+        : last ? t('homeGovernance.data.runAgain') : t('homeGovernance.data.runDryRun');
     return (
         <SettingAnchor setting={HOME_DATA_SETTINGS.settings.dryRun} showDivider={props.showDivider}>
             <Item
@@ -358,17 +363,17 @@ const DryRunRow = React.memo(function DryRunRow(props: Readonly<{
                 showChevron={false}
                 showDivider={props.showDivider}
                 mode="info"
-                rightElement={(
+                rightElement={!refusal || refusal.retryable ? (
                     <RoundButton
                         testID="home-retention-dry-run.run"
                         size="small"
                         display="secondary"
-                        title={last ? t('homeGovernance.data.runAgain') : t('homeGovernance.data.runDryRun')}
+                        title={runLabel}
                         loading={state.kind === 'running'}
                         disabled={props.disabled || state.kind === 'running'}
                         onPress={props.onRun}
                     />
-                )}
+                ) : undefined}
             />
         </SettingAnchor>
     );

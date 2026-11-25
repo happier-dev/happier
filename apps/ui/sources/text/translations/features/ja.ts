@@ -8236,6 +8236,7 @@ const ja: typeof en = {
         runAgain: 'もう一度実行',
         ranAt: ({ time }: { time: string }) => `${time} に実行 · 何も削除されていません`,
         sweepInProgress: 'クリーンアップの実行中です。終わってからもう一度お試しください。',
+        previewOwnerOnly: "Home のオーナーにこのプレビューの実行を依頼してください。",
         wouldDelete: ({ count, examined }: { count: string; examined: string }) => `${count} 件を削除予定 · ${examined} 件を確認`,
         nothingToDelete: '削除するものはありません',
         stopTimeBudget: '停止: 時間の上限',

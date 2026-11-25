@@ -8176,6 +8176,7 @@ const zhHans: typeof en = {
         runAgain: '再次运行',
         ranAt: ({ time }: { time: string }) => `${time} 运行 · 未删除任何内容`,
         sweepInProgress: '正在进行清理，请在完成后重试。',
+        previewOwnerOnly: "请让 Home 所有者运行此预览。",
         wouldDelete: ({ count, examined }: { count: string; examined: string }) => `将删除 ${count} 条 · 已检查 ${examined} 条`,
         nothingToDelete: '没有要删除的内容',
         stopTimeBudget: '已停止：时间上限',

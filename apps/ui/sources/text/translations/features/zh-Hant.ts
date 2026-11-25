@@ -8176,6 +8176,7 @@ const zhHant: typeof en = {
         runAgain: '再次執行',
         ranAt: ({ time }: { time: string }) => `${time} 執行 · 未刪除任何內容`,
         sweepInProgress: '正在進行清理，請在完成後重試。',
+        previewOwnerOnly: "請讓 Home 擁有者執行此預覽。",
         wouldDelete: ({ count, examined }: { count: string; examined: string }) => `將刪除 ${count} 筆 · 已檢查 ${examined} 筆`,
         nothingToDelete: '沒有要刪除的內容',
         stopTimeBudget: '已停止：時間上限',

@@ -8175,6 +8175,7 @@ const es: typeof en = {
         runAgain: 'Volver a ejecutar',
         ranAt: ({ time }: { time: string }) => `Ejecutada a las ${time} · no se eliminó nada`,
         sweepInProgress: 'Hay una limpieza en curso: vuelve a intentarlo cuando termine.',
+        previewOwnerOnly: "Pide a un propietario del Home que ejecute esta vista previa.",
         wouldDelete: ({ count, examined }: { count: string; examined: string }) => `Eliminaría ${count} · ${examined} examinados`,
         nothingToDelete: 'Nada que eliminar',
         stopTimeBudget: 'detenida: límite de tiempo',

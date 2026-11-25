@@ -773,6 +773,7 @@ export const en = {
         runAgain: 'Run again',
         ranAt: ({ time }: { time: string }) => `Ran at ${time} · nothing was deleted`,
         sweepInProgress: 'A clean-up is running — try again when it finishes.',
+        previewOwnerOnly: "Ask a Home owner to run this preview.",
         wouldDelete: ({ count, examined }: { count: string; examined: string }) => `Would delete ${count} · examined ${examined}`,
         nothingToDelete: 'Nothing to delete',
         stopTimeBudget: 'stopped: time budget',
