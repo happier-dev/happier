@@ -334,7 +334,7 @@ function proposeWidgetCandidateSetupDraft(candidate: WidgetCandidate, fields: re
 /** An acknowledged step result, or a write that resolves only after success and throws on refusal. */
 export type WidgetSetupCommandResult = void | WidgetSetupSubmitResult;
 
-function widgetSetupRefusal(error: unknown, fallback: string): WidgetSetupSubmitResult {
+export function widgetSetupRefusal(error: unknown, fallback: string): WidgetSetupSubmitResult {
     const details = error && typeof error === 'object' && 'details' in error ? error.details : undefined;
     return { ok: false, message: resolveActionExecutionErrorMessage(error, fallback),
         ...(details === undefined ? {} : { details }) };

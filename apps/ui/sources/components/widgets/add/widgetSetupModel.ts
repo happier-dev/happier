@@ -80,6 +80,8 @@ export type WidgetSetupDraft = Readonly<{
 }>;
 
 export type WidgetSetupSubmitResult = Readonly<{ ok: true; approvalPending?: true }> | Readonly<{ ok: false; message: string; details?: unknown }>;
+/** A settled preview may be unavailable without providing an admission decision. */
+export type WidgetSetupAdmissionResult = WidgetSetupSubmitResult | null;
 
 type WidgetSetupPresentation = Readonly<{
     /** "Set up Checks" or "Checks · inputs". */
@@ -135,7 +137,7 @@ export type WidgetSetup = WidgetSetupPresentation & Readonly<{
 }>;
 export type WidgetSetupStepModel = WidgetSetup | (WidgetSetupPresentation & Readonly<{
     resolve?: never;
-    readAdmission: (draft: WidgetSetupDraft, signal: AbortSignal) => Promise<WidgetSetupSubmitResult>;
+    readAdmission: (draft: WidgetSetupDraft, signal: AbortSignal) => Promise<WidgetSetupAdmissionResult>;
 }>);
 
 /**

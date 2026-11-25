@@ -21,6 +21,7 @@ import {
     runWidgetSetupCommand,
     widgetDefinitionOfCandidate,
     widgetProvidedContext,
+    widgetSetupRefusal,
     type WidgetSurfaceContext,
     type WidgetSetupCommandResult,
 } from '@/components/widgets/surface/widgetSurfaceSetup';
@@ -30,7 +31,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
 
 import type { WidgetAddEntry, WidgetAddSection } from './widgetAddModel';
-import type { WidgetSetupDraft } from './widgetSetupModel';
+import type { WidgetSetupAdmissionResult, WidgetSetupDraft } from './widgetSetupModel';
 
 /**
  * Home and a WorkBoard have no Session or page of their own: a Session input is chosen, never
@@ -60,7 +61,7 @@ export type AccountWidgetAddInput = Readonly<{
     fragments?: readonly WidgetLayoutFragmentSummaryV1[];
     fragmentActions?: (fragment: WidgetLayoutFragmentSummaryV1) => ItemAction[];
     addGroup?: (fragment: WidgetLayoutFragmentSummaryV1, draft: WidgetSetupDraft) => Promise<WidgetSetupCommandResult>;
-    reviewGroup?: (fragment: WidgetLayoutFragmentSummaryV1, signal: AbortSignal) => Promise<WidgetSetupCommandResult>;
+    reviewGroup?: (fragment: WidgetLayoutFragmentSummaryV1, signal: AbortSignal) => Promise<WidgetSetupAdmissionResult>;
     /** A saved group's live preview in its pane. */
     renderGroupPreview?: (fragment: WidgetLayoutFragmentSummaryV1, draft: WidgetSetupDraft, waiting?: string) => React.ReactNode;
 }>;
@@ -140,7 +141,7 @@ export function buildAccountWidgetAddSections(input: AccountWidgetAddInput): rea
     const groups = addGroup && reviewGroup ? (input.fragments ?? []).map(fragment => ({ ...buildWidgetGroupFragmentEntry({
         fragment, candidates: input.candidates, scope: input.scope, context, submitLabel: input.labels.submit,
         add: (saved, draft) => runWidgetSetupCommand(() => addGroup(groupDraft(saved, draft), draft), t('widgetAdd.addFailed')),
-        review: (saved, draft, signal) => runWidgetSetupCommand(() => reviewGroup(groupDraft(saved, draft), signal), t('widgetAdd.addFailed')),
+        review: (saved, draft, signal) => reviewGroup(groupDraft(saved, draft), signal),
         renderGroupPreview: input.renderGroupPreview ?? (() => null),
     }), ...(input.fragmentActions ? { actions: input.fragmentActions(fragment) } : {}) })) : [];
     const yours = [...widgets.yours.map(entry), ...groups];
@@ -214,10 +215,12 @@ export function useAccountWidgetAddSections(input: Readonly<{
         return runAcknowledgedWidgetSetupCommand(() => runAddWidgetLayoutFragmentCommandV1(fragment.group, scope,
             { name: fragment.name, ...(area ? { area } : {}), widgetAreaContext }), t('widgetAdd.addFailed'));
     }, [area, scope, widgetAreaContext]);
-    const reviewGroup = React.useCallback(async (fragment: WidgetLayoutFragmentSummaryV1, signal: AbortSignal) => {
-        if (!scope) throw new Error('widget_area_unavailable');
-        await reviewAddWidgetLayoutFragmentCommandV1(fragment.group, scope,
+    const reviewGroup = React.useCallback(async (fragment: WidgetLayoutFragmentSummaryV1, signal: AbortSignal): Promise<WidgetSetupAdmissionResult> => {
+        if (!scope) return null;
+        const review = await reviewAddWidgetLayoutFragmentCommandV1(fragment.group, scope,
             { name: fragment.name, ...(area ? { area } : {}), widgetAreaContext, signal });
+        if (review === 'unavailable') return null;
+        return review === 'ready' ? { ok: true } : widgetSetupRefusal(review, t('widgetAdd.addFailed'));
     }, [area, scope, widgetAreaContext]);
     const sections = React.useMemo(() => buildAccountWidgetAddSections({
         candidates,

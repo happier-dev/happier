@@ -35,6 +35,7 @@ import {
     setWidgetSetupBinding,
     widgetSetupBlockingIssues,
     type WidgetSetupStepModel,
+    type WidgetSetupAdmissionResult,
     type WidgetSetupDraft,
     type WidgetSetupValue,
     type WidgetSetupSubmitResult,
@@ -129,7 +130,7 @@ export function WidgetSetupStep(props: Readonly<{
     const [completion, setCompletion] = React.useState<'added' | 'approvalPending' | null>(null);
     const { readAdmission, readInherited, resolve } = setup;
     const [review, setReview] = React.useState<Readonly<{
-        read: NonNullable<WidgetSetupStepModel['readAdmission']>; draft: WidgetSetupDraft; result: WidgetSetupSubmitResult;
+        read: NonNullable<WidgetSetupStepModel['readAdmission']>; draft: WidgetSetupDraft; result: WidgetSetupAdmissionResult;
     }> | null>(null);
     React.useEffect(() => {
         if (!readAdmission) return;
@@ -139,7 +140,7 @@ export function WidgetSetupStep(props: Readonly<{
         });
         return () => controller.abort();
     }, [draft, readAdmission]);
-    const admission = review && review.read === readAdmission && review.draft === draft ? review.result : null;
+    const admission = review && review.read === readAdmission && review.draft === draft ? review.result : undefined;
     const resolution = React.useMemo(() => {
         if (resolve) return resolve(draft);
         if (admission?.ok) return ADMITTED_GROUP;
@@ -155,7 +156,7 @@ export function WidgetSetupStep(props: Readonly<{
     const blocker = describeWidgetSetupBlocker(setup.fields, resolution);
     // Finishable once nothing blocks; a per-viewer input is each viewer's own and never blocks.
     const finishable = completion !== 'approvalPending'
-        && (readAdmission ? admission?.ok === true : widgetSetupBlockingIssues(setup.fields, resolution).length === 0)
+        && (readAdmission ? admission === null || admission?.ok === true : widgetSetupBlockingIssues(setup.fields, resolution).length === 0)
         && (!props.blockedReason || submission.current !== null);
     const pane = props.presentation === 'pane';
     const offersAnother = pane && completion === 'added' && props.onAddAnother !== undefined;
@@ -344,7 +345,7 @@ export function WidgetSetupStep(props: Readonly<{
     const blockerSaidOnRow = !!blockerEntry && !!blockerState && isNothingToChoose({ field: blockerEntry.field,
         optionsStatus: blockerState.status, optionCount: blockerState.options.length,
         value: blockerBinding?.kind === 'value' ? blockerBinding.value : undefined, follows: blockerBinding?.kind === 'context' });
-    const admissionNotice = readAdmission && !admission ? t('common.loading') : admission?.ok === false ? admission.message : null;
+    const admissionNotice = readAdmission && admission === undefined ? t('common.loading') : admission?.ok === false ? admission.message : null;
     const neededNotice = blocker && (blocker.status === 'selection_required' || !admissionNotice)
         ? t('widgetAdd.stillNeeded', { field: blocker.title }) : null;
     const waitingText = blockerSaidOnRow ? '' : admissionNotice && !blocker ? admissionNotice : finishable || props.blockedReason ? t('widgetAdd.previewAfterAdd')

@@ -1,12 +1,16 @@
-import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1, type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getActionSpec, type PublicActionInputById, type PublicActionResultById } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { matchesWidgetWriteAcknowledgement, type WidgetDefinitionV1, type WidgetInstanceRefV1, type WidgetLayoutFragmentV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { matchesWidgetWriteAcknowledgement, WidgetAreaReadFailureDetailsV1Schema, type WidgetDefinitionV1, type WidgetInstanceRefV1, type WidgetLayoutFragmentV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import { randomUUID } from '@/platform/randomUUID';
-import { createFrontDoorActionExecute, requireActionSuccess, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createFrontDoorActionExecute, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { isMachineUnreachableFailureCode } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { SERVER_UNREACHABLE_ERROR_CODE } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
@@ -233,16 +237,29 @@ export async function runWidgetDefinitionCommand<Id extends CommandId>(
 
 /** Read the placement Action's admission without dispatching the prepared write. */
 export async function reviewWidgetGroupAddCommandV1(
-    input: PublicActionInputById['widgets.group.add'],
+    prepareInput: () => Promise<PublicActionInputById['widgets.group.add']>,
     widgetAreaContext: ActionExecutorContext['widgetAreaContext'],
     signal: AbortSignal,
-): Promise<void> {
-    const { serverId, accountId } = input.surface;
-    const reviewed = await executeWidgetAction.prepare('widgets.group.add', input, {
-        surface: 'ui', authority: 'present_user', serverId, expectedAccountId: accountId, signal,
-        ...(widgetAreaContext ? { widgetAreaContext } : {}),
-    }, { reviewOnly: true });
-    if (reviewed.kind === 'ready') return;
-    requireActionSuccess(reviewed.result);
-    throw new Error('Expected a prepared group placement');
+): Promise<'ready' | 'unavailable' | ActionExecuteFailure> {
+    const reviewed = await (async () => {
+        const input = await prepareInput();
+        const { serverId, accountId } = input.surface;
+        return executeWidgetAction.prepare('widgets.group.add', input, {
+            surface: 'ui', authority: 'present_user', serverId, expectedAccountId: accountId, signal,
+            ...(widgetAreaContext ? { widgetAreaContext } : {}),
+        }, { reviewOnly: true });
+    })().catch(() => null);
+    if (reviewed?.kind === 'ready') return 'ready';
+    if (!reviewed || reviewed.result.ok) return 'unavailable';
+    const { errorCode, details } = reviewed.result;
+    // A failed acquisition supplies no placement decision. Keep settled refusals intact for setup.
+    if (WidgetAreaReadFailureDetailsV1Schema.safeParse(details).success
+        || (errorCode === 'widget_inputs_invalid' && readRecord(details).status === 'unavailable')
+        || errorCode === SERVER_UNREACHABLE_ERROR_CODE || isMachineUnreachableFailureCode(errorCode)
+        || errorCode === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE || errorCode === MACHINE_RPC_TIMEOUT_ERROR_CODE
+        || errorCode === 'account_storage_currentness_unavailable' || errorCode === 'widget_scope_unavailable'
+        || errorCode === 'widget_inputs_unavailable' || errorCode === 'widget_type_unavailable'
+        || errorCode === 'action_prepare_unavailable' || errorCode === 'invalid_action_output'
+        || isActionOutcomeUnknownErrorCodeV1(errorCode)) return 'unavailable';
+    return reviewed.result;
 }

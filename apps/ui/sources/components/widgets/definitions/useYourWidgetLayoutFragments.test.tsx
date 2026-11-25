@@ -3,12 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { buildHomeHubArtifactIdV1 } from '@happier-dev/protocol/home/homeHubArtifactV1';
 import { instantiateWidgetLayoutFragmentGroupV1, WidgetLayoutFragmentDraftV1Schema, WidgetSurfaceReadV1Schema, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import * as uuidBoundary from '@/platform/randomUUID';
 import { Pressable } from 'react-native';
 import { widgetProvidedContext, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
+import { t } from '@/text';
 
 const modalBoundary = vi.hoisted(() => ({ prompt: vi.fn(), confirm: vi.fn(), alert: vi.fn() }));
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: modalBoundary }).module);
@@ -74,6 +76,7 @@ function answerArtifactInventory(serverId: string, respondAfter?: Promise<void>)
 async function renderGallery(options: Readonly<{
     waiveManagementApproval?: boolean;
     usage?: Readonly<{ periodAvailable: boolean }>;
+    fieldlessHome?: boolean;
 }> = {}) {
     const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://fragments-home.example', accountId: ACCOUNT_ID });
     const account = { serverId, accountId: ACCOUNT_ID };
@@ -107,7 +110,10 @@ async function renderGallery(options: Readonly<{
                 body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Period preview rendered' } } } },
         }, context)).toMatchObject({ ok: true });
     }
-    const fragment = options.usage ? PERIOD_GROUP : DRAFT;
+    const fragment = options.usage ? PERIOD_GROUP : options.fieldlessHome
+        ? { ...DRAFT, group: { ...DRAFT.group, children: [{ kind: 'widget' as const,
+            instance: { v: 1 as const, definition: { kind: 'builtin' as const, id: 'your_home' }, bindings: {} } }] } }
+        : DRAFT;
     expect(await executor.execute('widgets.fragment.create', { account, artifactId: 'saved', fragment }, context)).toMatchObject({ ok: true });
     const scope: WidgetSurfaceRefV1 = { ...account, owner: options.usage
         ? { kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'overview' }
@@ -145,6 +151,38 @@ describe('saved-group Gallery management', () => {
         restoreUuid = null;
         if (connection) { await connection.dispose(); connection = null; installHomeGovernanceBoundaries(harness); }
         if (previousSettings) { storage.setState({ settings: previousSettings }); previousSettings = null; }
+    });
+
+    it.each([503, null])('can add a fieldless Home group after its review read returns %s', async (failureStatus) => {
+        const { screen, account, scope, executor, context } = await renderGallery({ fieldlessHome: true });
+        const layoutPath = '/v1/artifacts/' + buildHomeHubArtifactIdV1(account.accountId);
+        let failRead = failureStatus !== null;
+        let readFailed = false;
+        if (failureStatus !== null) {
+            harness.answer(account.serverId, `GET ${layoutPath}`, { select: async (_input, request) => {
+                if (failRead) {
+                    readFailed = true;
+                    return { status: failureStatus, body: {} };
+                }
+                const response = await harness.artifacts(account.serverId).handle(layoutPath, request.init);
+                if (!response) throw new Error('Expected the Home layout Artifact read');
+                return { status: response.status, body: await response.json() };
+            } });
+        }
+        await screen.pressByTestIdAsync('gallery.entry.group-saved');
+        await waitForHomeGovernance(() => {
+            if (failureStatus !== null) expect(readFailed).toBe(true);
+            const note = screen.findByTestId('gallery.detail.why');
+            expect(note).not.toBeNull();
+            expect(note?.props.children).not.toBe(t('common.loading'));
+        });
+        expect(screen.findByTestId('gallery.detail.submit')?.props.disabled).toBe(false);
+        expect(screen.getTextContent()).not.toContain(t('widgetAdd.addFailed'));
+        failRead = false;
+        await screen.pressByTestIdAsync('gallery.detail.submit');
+        await waitForHomeGovernance(async () => expect(await executor.execute('widgets.item.list', { surface: scope }, context)).toMatchObject({
+            ok: true, result: { items: expect.arrayContaining([expect.objectContaining({ kind: 'group', title: DRAFT.name })]) },
+        }));
     });
 
     it('adds the saved group that previews a required Period supplied by the Usage destination', async () => {

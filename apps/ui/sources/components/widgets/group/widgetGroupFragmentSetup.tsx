@@ -14,6 +14,7 @@ import type { WidgetAddEntry } from '@/components/widgets/add/widgetAddModel';
 import type {
   WidgetSetupStepModel,
   WidgetSetupDraft,
+  WidgetSetupAdmissionResult,
   WidgetSetupSubmitResult,
 } from '@/components/widgets/add/widgetSetupModel';
 import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
@@ -91,7 +92,7 @@ export function buildWidgetGroupFragmentEntry(
     scope: WidgetSurfaceRefV1 | null;
     context: WidgetSurfaceContext;
     submitLabel: string;
-    review: (fragment: WidgetLayoutFragmentSummaryV1, draft: WidgetSetupDraft, signal: AbortSignal) => Promise<WidgetSetupSubmitResult>;
+    review: (fragment: WidgetLayoutFragmentSummaryV1, draft: WidgetSetupDraft, signal: AbortSignal) => Promise<WidgetSetupAdmissionResult>;
     add: (
       fragment: WidgetLayoutFragmentSummaryV1,
       draft: WidgetSetupDraft,

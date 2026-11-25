@@ -51,9 +51,9 @@ export function runAddWidgetLayoutFragmentCommandV1(group: WidgetLayoutFragmentG
         surface, options.signal, options.widgetAreaContext);
 }
 
-export async function reviewAddWidgetLayoutFragmentCommandV1(group: WidgetLayoutFragmentGroupV1, surface: WidgetSurfaceRefV1,
+export function reviewAddWidgetLayoutFragmentCommandV1(group: WidgetLayoutFragmentGroupV1, surface: WidgetSurfaceRefV1,
     options: GroupPlacementOptions & Readonly<{ signal: AbortSignal }>) {
-    return reviewWidgetGroupAddCommandV1(await prepareGroupPlacement(group, surface, options), options.widgetAreaContext, options.signal);
+    return reviewWidgetGroupAddCommandV1(() => prepareGroupPlacement(group, surface, options), options.widgetAreaContext, options.signal);
 }
 
 export function runCopyWidgetGroupCommandV1(group: WidgetLayoutGroupV1, surface: WidgetSurfaceRefV1,
