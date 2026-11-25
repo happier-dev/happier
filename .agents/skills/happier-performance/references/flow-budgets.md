@@ -347,6 +347,14 @@ The first-open gates in `.project/plans/2026-11-19-first-open/` own these formul
 
 ## Reviews dimension accounting (PERF-REV-1120, 2026-11-20)
 
+### Follow-up count evidence (PERF-REVIEWS-1125, 2026-11-25)
+
+| Flow | Shape contract | Measured count | Deciding evidence |
+| --- | --- | --- | --- |
+| `REV02.F3.bulk-sources` | Read selected source records as a batch, then persist each changed decision. Source reads do not multiply with selected comments. | Real PostgreSQL, 200 selected comments: source SELECTs 200 → 1, all 200 durable decisions retained. This is the source-query coefficient, not total SQL. | `apps/server/sources/app/reviews/comments/paging.dbcontract.spec.ts`; `.project/tmp/PERF-REVIEWS-1125/server/{bulk-red,bulk-green}.log` |
+| `REV04.publish.finding-renders` | Summary editing renders zero unchanged finding rows; toggling one finding renders that row, preserving consecutive choices and changed proposal content. | Constructed 204 proposals: summary 204 → 0 checkbox marks, toggle 204 → 1. Loaded 204-proposal GitHub sheet: summary 0 finding renders, toggle 1; explicit continuation adds one comment request and four rows. | `packages/plugin-ui/src/components/ReviewPublicationSheet.rnw.test.tsx`; `.project/tmp/PERF-REVIEWS-1125/publication-204-loaded.json` |
+| `REV01.selected-readiness` | A singleton target uses the existing Machine inventory selector; several targets share one ordinary batched inventory. Unrelated native/ACP probes are zero for a singleton. | Native transport fixture: one selected engine probes 3 → 1; full roster remains 3. Installed qualified Agent and configured ACP singleton controls also pass. | `apps/cli/src/session/actions/cliActionDeps/{machineTransport,createCliActionInventoryDeps.acpCatalog}.test.ts`; `.project/tmp/PERF-REVIEWS-1125/cli/readiness-{red,green-final,adjacent}.log` |
+
 The 26 `REV01`–`REV04` registrations above/below map to the Flows tables in
 `.project/plans/2026-11-17-reviews/01-engines-and-plugins.md` through
 `04-surfaces-and-sdk.md`. `reviews.F1`–`F4` were the former plan-01 identifiers.
