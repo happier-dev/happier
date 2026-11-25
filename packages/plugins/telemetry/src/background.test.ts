@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
-import { connect, createServer } from 'node:net';
+import { connect, createServer, Server } from 'node:net';
 import { once } from 'node:events';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { DaemonDatabase, DaemonDatabaseRow, DaemonDatabaseService, DaemonDatabaseValue } from '@happier-dev/plugin-sdk/storage';
 import { DATABASE_CAPTURE_PLUGIN } from './manifest.js';
@@ -78,6 +78,59 @@ describe('local capture background lifecycle', () => {
    if (capture) await capture.then(lease => lease.release(), () => {});
    lifetime.abort();
    await settlement;
+   fixture.close();
+  }
+ });
+
+ it('stops a selected project while another project is still binding its receiver', async () => {
+  const { createCaptureBackgroundOwner } = await import('./background.js');
+  const owner = createCaptureBackgroundOwner();
+  const fixture = createCaptureSqliteFixture();
+  const lifetime = new AbortController();
+  const ready = Promise.withResolvers<void>();
+  const running = owner.run({ signal: lifetime.signal, services: {
+   storage: { daemon: { async database(_name, options) {
+    for (const migration of options.migrations ?? []) await migration.up(fixture.db);
+    return fixture.db;
+   } } }, events: { host: { subscribe() { ready.resolve(); return { dispose() {} }; } } },
+  } });
+  const projectScope = { serverId: 'home', machineId: 'machine', projectId: 'selected' };
+  const input = { enabled: true, projectScope, ownerAccountId: 'account', physicalRootIdentity: '/selected',
+   partition: 'selected', urls: [], signal: lifetime.signal, otlpPort: 0 };
+  const releaseBind = Promise.withResolvers<void>();
+  let selected: Awaited<ReturnType<typeof owner.acquireLocalCapture>> | undefined;
+  let neighbor: ReturnType<typeof owner.acquireLocalCapture> | undefined;
+  let stopping: Promise<void> | undefined;
+  const listen = Server.prototype.listen;
+  const heldListen = vi.spyOn(Server.prototype, 'listen');
+  try {
+   await Promise.race([ready.promise, running]);
+   selected = await owner.acquireLocalCapture(input);
+   expect((await fetch(`${selected.endpoint}/v1/logs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(200);
+   heldListen.mockImplementationOnce(function (this: Server, ...args: unknown[]) {
+    // Delay the actual socket bind, leaving the owner with a real pending acquisition.
+    void releaseBind.promise.then(() => Reflect.apply(listen, this, args));
+    return this;
+   });
+   neighbor = owner.acquireLocalCapture({ ...input, projectScope: { ...projectScope, projectId: 'neighbor' },
+    physicalRootIdentity: '/neighbor', partition: 'neighbor' });
+   expect(owner.readWorktreeLaunchStatus('neighbor')).toEqual({ preparing: true });
+   let stopped = false;
+   stopping = owner.stopProjectCapture(projectScope, input.ownerAccountId).then(() => { stopped = true; });
+   await vi.waitFor(() => expect(stopped).toBe(true));
+   await expect(fetch(`${selected.endpoint}/v1/logs`, { method: 'POST', body: '{}' })).rejects.toThrow();
+   expect(owner.readWorktreeLaunchStatus('neighbor')).toEqual({ preparing: true });
+   releaseBind.resolve();
+   const other = await neighbor;
+   expect((await fetch(`${other.endpoint}/v1/logs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(200);
+  } finally {
+   heldListen.mockRestore();
+   releaseBind.resolve();
+   await stopping;
+   await neighbor?.then(lease => lease.release());
+   await selected?.release();
+   lifetime.abort();
+   await running;
    fixture.close();
   }
  });

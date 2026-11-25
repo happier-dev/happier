@@ -55,6 +55,8 @@ describe('capture single in-flight writer', () => {
   expect(writer.coverage('b')).toEqual({ lostObservations: 1, reason: 'incomplete_interval' });
   expect(writer.coverage('untouched')).toEqual({ lostObservations: 0, reason: null });
   expect(published).toEqual([['a'], ['b'], ['a', 'b']]);
+  for (let i = 0; i < 10; i++) writer.retry();
+  expect(published).toEqual([['a'], ['b'], ['a', 'b']]);
   } finally { f.close(); }
  });
  it('settles quota exhaustion as visible loss and resumes only on explicit retry', async () => {

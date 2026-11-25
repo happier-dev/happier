@@ -1,5 +1,6 @@
 import type { DeploymentTelemetryServiceV1 } from '@happier-dev/plugin-sdk';
 import type { BackgroundServiceContext, BackgroundServiceRunner } from '@happier-dev/plugin-sdk/background-services';
+import { isPluginError, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/plugin-sdk/errors';
 import type { DaemonDatabaseService } from '@happier-dev/plugin-sdk/storage';
 import { localCaptureBackground, type createCaptureBackgroundOwner } from '../background.js';
 import { startTelemetryCollector, type TelemetryCollector } from './collector.js';
@@ -24,8 +25,8 @@ export async function runTelemetryCollector(context: TelemetryCollectorRunnerCon
     let collector: TelemetryCollector | undefined;
     let withdrawEndpoint: (() => void) | undefined;
     let teams = new Map<string, string>();
-    const findingsLifetime = new AbortController();
     let findings: ReturnType<typeof startProductionFindingObserver> | undefined;
+    let findingsRunning: Promise<void> | undefined;
     const issues = startCollectorIssueProjection({ account: context.issues?.account, runtime: acquisition.runtime,
         publish: context.issues?.publish ?? (async () => {}), teamOf: environmentId => teams.get(environmentId) });
     try {
@@ -48,23 +49,29 @@ export async function runTelemetryCollector(context: TelemetryCollectorRunnerCon
             },
         });
         if (context.findings) {
+            const findingsContext = context.findings.context;
             findings = startProductionFindingObserver({ ...context.findings, runtime: acquisition.runtime,
-                context: { ...context.findings.context, signal: AbortSignal.any([context.signal, findingsLifetime.signal]) },
+                context: { ...findingsContext, signal: context.signal },
+            });
+            findingsRunning = findings.running.catch((error: unknown) => {
+                findings = undefined;
+                if (!context.signal.aborted) findingsContext.services.logger.warn('Production finding observation is unavailable', {
+                    code: isPluginError(error) ? error.code : readUnexpectedActionErrorDiagnosticV1(error).errorCode ?? 'action_failed',
+                });
             });
         }
         const shutdown = new Promise<void>(resolve => {
             if (context.signal.aborted) resolve();
             else context.signal.addEventListener('abort', () => resolve(), { once: true });
         });
-        await (findings ? Promise.race([shutdown, findings.running]) : shutdown);
+        await shutdown;
     } catch (error) {
         if (!context.signal.aborted) throw error;
     } finally {
         withdrawEndpoint?.();
         withdrawEndpoint = undefined;
-        findingsLifetime.abort();
-        try { await collector?.stop(); await findings?.running; }
-        finally { issues.stop(); await acquisition.release(); }
+        try { await collector?.stop(); }
+        finally { await findingsRunning; issues.stop(); await acquisition.release(); }
     }
 }
 export const telemetryCollectorRunner: BackgroundServiceRunner = context => {

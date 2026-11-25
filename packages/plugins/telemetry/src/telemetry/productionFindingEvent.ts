@@ -43,8 +43,7 @@ export const productionFindingEventParts = {
             const { source: subject } = setupInputSchema.parse(input);
             const admit = context.services.deploymentDatabases?.admitTelemetryRead;
             if (!admit) throw new PluginError({ code: 'deployment_target_role_unavailable' });
-            const { collectorMachineId } = await admit(subject);
-            if (collectorMachineId !== context.chosenMachine?.machineId) throw new PluginError({ code: 'capture_source_unavailable' });
+            await admit(subject);
             return { v: 1 as const, sourceInstanceId: productionFindingSourceInstanceId(subject), sourceContractVersion,
                 sourceConfig: { v: 1 as const, subject }, displayLabel: 'Production findings' };
         },

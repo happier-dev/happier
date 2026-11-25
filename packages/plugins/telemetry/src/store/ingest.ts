@@ -109,7 +109,7 @@ export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => 
     dirtyPartitions.add(partition);
     changed.push(partition);
    }
-   publish(coverage(), changed);
+   if (changed.length) publish(coverage(), changed);
   },
  };
 }

@@ -3,13 +3,14 @@ import { createServer } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 import type { BackgroundServiceContext, PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
 import type { DaemonDatabaseService } from '@happier-dev/plugin-sdk/storage';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { createCaptureBackgroundOwner } from '../background.js';
 import { createCaptureStore } from '../store/capture.js';
 import { createCaptureSqliteFixture } from '../testing/sqlite.js';
 import { runTelemetryCollector, telemetryCollectorRunner } from './runner.js';
 
 describe('registered production collector runner', () => {
-    it.each(['machine', 'deployed-app'] as const)('publishes the %s collector, joins shutdown and resumes assigned telemetry after role restart', async placement => {
+    it.each(['machine', 'deployed-app', 'machine-with-unavailable-findings'] as const)('publishes the %s collector, joins shutdown and resumes assigned telemetry after role restart', async placement => {
         let deployedAppPort: number | undefined;
         if (placement === 'deployed-app') {
             const reservation = createServer();
@@ -39,7 +40,15 @@ describe('registered production collector runner', () => {
             }
             return fixture.db;
         } };
-        const start = (signal: AbortSignal) => runTelemetryCollector({ signal, services: { storage: { daemon: storage },
+        const subscribeToFindings = vi.fn(() => {
+            throw new PluginError({ code: 'plugin_service_unavailable' });
+        });
+        const findingsContext = { services: { events: { host: { subscribe: subscribeToFindings } },
+            logger: { warn: vi.fn() } } } as unknown as BackgroundServiceContext;
+        const start = (signal: AbortSignal) => runTelemetryCollector({ signal,
+            ...(placement === 'machine-with-unavailable-findings'
+                ? { findings: { context: findingsContext, serverId: 'home', machineId: 'collector' } } : {}),
+            services: { storage: { daemon: storage },
             deploymentTelemetry: {
                 ...(deployedAppPort === undefined ? {} : { deployedAppPort }),
                 async readAssignments() { reads++; return assigned ? [{ environmentId: 'A', tokenHash: createHash('sha256').update(token).digest('hex') }] : []; },
@@ -48,11 +57,16 @@ describe('registered production collector runner', () => {
             },
         } }, owner);
         const settled = start(lifetime.signal);
+        void settled.catch(() => {});
         let restarted: Promise<void> | undefined;
         try {
             const endpointPattern = placement === 'deployed-app' ? /^http:\/\/0\.0\.0\.0:/ : /^http:\/\/127\.0\.0\.1:/;
             await vi.waitFor(() => expect(endpointNow()).toMatch(endpointPattern));
             if (deployedAppPort !== undefined) expect(new URL(endpointNow()!).port).toBe(String(deployedAppPort));
+            if (placement === 'machine-with-unavailable-findings') {
+                expect(subscribeToFindings).toHaveBeenCalledTimes(1);
+                expect(findingsContext.services.logger.warn).toHaveBeenCalledWith(expect.any(String), { code: 'plugin_service_unavailable' });
+            }
             const endpoint = endpointNow();
             const response = await fetch(`${endpoint}/v1/logs`, { method: 'POST',
                 headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
@@ -86,6 +100,7 @@ describe('registered production collector runner', () => {
             await expect(fetch(`${endpoint}/v1/logs`, { method: 'POST', body: '{}' })).rejects.toThrow();
 
             restarted = start(restartedLifetime.signal);
+            void restarted.catch(() => {});
             await vi.waitFor(() => expect(endpointNow()).toMatch(endpointPattern));
             if (deployedAppPort !== undefined) expect(new URL(endpointNow()!).port).toBe(String(deployedAppPort));
             const restartedEndpoint = endpointNow();

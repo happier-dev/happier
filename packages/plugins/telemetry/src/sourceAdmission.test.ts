@@ -9,6 +9,7 @@ import { captureSourcePartition } from './partition.js';
 import { createCaptureSqliteFixture } from './testing/sqlite.js';
 import { captureMigrations } from './store/capture.js';
 import { DATABASE_CAPTURE_PLUGIN } from './manifest.js';
+import { TELEMETRY_PRODUCTION_FINDING_SETUP_ACTION_LOCAL_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 
 const source = {
   kind: 'worktree' as const,
@@ -122,6 +123,16 @@ async function setup(canClear = false) {
 }
 
 describe('R2-A3 local capture Source/project admission through the real manifest', () => {
+  it('configures production findings with the admitted collector and no requester Machine', async () => {
+    const f = await setup();
+    try {
+      const prepared = await f.host.invokeAction(TELEMETRY_PRODUCTION_FINDING_SETUP_ACTION_LOCAL_ID_V1,
+        { v: 1, source: environment }, { requesterAccount: { accountId: 'alice' } });
+      expect(prepared).toMatchObject({ sourceConfig: { v: 1, subject: environment } });
+      expect(f.telemetryReads()).toBe(1);
+    } finally { await f.close(); }
+  });
+
   it("admits a worktree source for the Account that recorded it, and nobody else reads that Account's rows", async () => {
     const f = await setup();
     try {

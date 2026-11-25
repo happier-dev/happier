@@ -12,8 +12,8 @@ export type LocalCaptureInput = Omit<Parameters<typeof bindLocalCapture>[0], 'ru
  projectScope: CaptureProjectScope; ownerAccountId: string;
 }>;
 type LocalCaptureLease = Awaited<ReturnType<typeof bindLocalCapture>>;
-type LocalCaptureBinding = CaptureProjectScope & {
- ownerAccountId: string;
+type LocalCaptureProject = CaptureProjectScope & { ownerAccountId: string };
+type LocalCaptureBinding = LocalCaptureProject & {
  partition: string;
  restartRequired?: true;
 };
@@ -24,7 +24,7 @@ type RunningCapture = {
  signal: AbortSignal;
  accountStorage: PluginAccountStorageScope | undefined;
  leases: Map<LocalCaptureLease, LocalCaptureBinding>;
- pending: Map<Promise<LocalCaptureLease>, Pick<LocalCaptureInput, 'partition' | 'signal'>>;
+ pending: Map<Promise<LocalCaptureLease>, LocalCaptureProject & Pick<LocalCaptureInput, 'partition' | 'signal'>>;
 };
 
 /** Role demands share one writer; the local runner alone admits local listeners. */
@@ -120,10 +120,11 @@ export function createCaptureBackgroundOwner() {
   async stopProjectCapture(scope: CaptureProjectScope, ownerAccountId: string): Promise<void> {
    const state = running;
    if (!state) return;
-   await Promise.allSettled([...state.pending.keys()]);
+   const matches = (selected: LocalCaptureProject) => selected.ownerAccountId === ownerAccountId && selected.serverId === scope.serverId
+    && selected.machineId === scope.machineId && selected.projectId === scope.projectId;
+   await Promise.allSettled([...state.pending].filter(([, selected]) => matches(selected)).map(([acquisition]) => acquisition));
    const changed = new Set<string>();
-   await Promise.all([...state.leases].filter(([, selected]) => selected.ownerAccountId === ownerAccountId && selected.serverId === scope.serverId
-    && selected.machineId === scope.machineId && selected.projectId === scope.projectId).map(async ([lease, selected]) => {
+   await Promise.all([...state.leases].filter(([, selected]) => matches(selected)).map(async ([lease, selected]) => {
     await lease.stopRecording();
     if (selected.restartRequired || (lease.endpoint === undefined && Object.keys(lease.replacements).length === 0)) return;
     selected.restartRequired = true;
@@ -163,7 +164,7 @@ export function createCaptureBackgroundOwner() {
     return lease;
    });
    if (bindingStarted) {
-    state.pending.set(acquisition, { partition: input.partition, signal: input.signal });
+    state.pending.set(acquisition, { ...input.projectScope, ownerAccountId: input.ownerAccountId, partition: input.partition, signal: input.signal });
     const settled = () => state.pending.delete(acquisition);
     void acquisition.then(settled, settled);
    }
