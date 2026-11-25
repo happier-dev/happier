@@ -5,6 +5,7 @@ import { buildQualifiedPluginContributionKey, qualifyPluginContributionReference
 import { resolvePluginActionConnectedAccountUseRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { DeploymentTargetContributionV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
+import type { DeploymentTargetLinkProviderContentV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contributionIdentity';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 import type { DeploySuggestionCatalogV1, DeploySuggestionTargetPortRowV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
@@ -12,6 +13,19 @@ import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plug
 
 export type DeploymentTargetDeclarationV1 = Readonly<{ pluginId: string; identity: PluginContributionIdentityV1; definition: DeploymentTargetContributionV1 }>;
 import { DeploymentOwnServerTargetLinkContentV1Schema, DeploymentTargetV1Schema, type DeploymentTargetV1 } from '@happier-dev/deployments/contracts/v1';
+
+/**
+ * The name a person knows a linked provider resource by, as the provider recorded it: a Preview's name, else the
+ * project or Worker name captured at preparation, else the selected target's declared presentation name.
+ */
+export function readPlatformResourceName(content: Partial<DeploymentTargetLinkProviderContentV1> | undefined,
+    providerName?: string | null): string | null {
+  const environment = content?.providerEnvironment?.selection;
+  if (environment?.kind === 'preview' && typeof environment.previewName === 'string') return environment.previewName;
+  return content?.preparedNative?.projectName
+    ?? (environment?.kind === 'script' && typeof environment.scriptName === 'string' ? environment.scriptName : null)
+    ?? providerName ?? null;
+}
 
 /** The consumed S0 daemon contribution. Role references use the public Action front door. */
 export const OWN_SERVER_DEPLOYMENT_TARGET_V1: DeploymentTargetV1 = DeploymentTargetV1Schema.parse({

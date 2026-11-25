@@ -326,7 +326,10 @@ export async function prepareOwnServerDomainReviewedChildren(
         && environment.targetLinks.some(item => item.targetLink.id === add.targetLinkId && item.targetLink.targetKind === 'ownServer')
         ? await reviewOwnServerDomainSetup(add, environment, content, request.context, host, host.reviewNativeSetup) : undefined;
     if (isActionExecuteFailure(preview)) return preview;
-    const approvalPreview = preview?.domainNativeSetup.length ? preview : undefined;
+    const approvalPreview = isDeploymentDomainRemoveActionIdV1(actionId) && content.hostname
+        ? { deploymentReview: { removal: { subject: { kind: 'domain', hostname: content.hostname },
+            ...(observed ? { environment: observed.environment.content.name } : {}) } } }
+        : preview?.domainNativeSetup.length ? preview : undefined;
     const selected = resolved.selection;
     if (!selected) return approvalPreview ? { children: [], approvalPreview } : null;
     const credentialRef = readCloudflareDomainAccount(selected.selection);
@@ -347,7 +350,8 @@ export async function prepareOwnServerDomainReviewedChildren(
         if (!discovered.ok) return discovered;
         const origin = discovered.topology.tunnelOrigin;
         if (!origin) return failure('required_fact_unavailable', { requiredFact: 'cloudflare_tunnel_origin' });
-        return { children: [{ action: { pluginId: credentialRef.service.pluginId, localId: 'cloudflare-named/disable' }, role: 'disable',
+        return { ...(approvalPreview ? { approvalPreview } : {}),
+            children: [{ action: { pluginId: credentialRef.service.pluginId, localId: 'cloudflare-named/disable' }, role: 'disable',
             input: { credentialRef, accountId, zoneId, tunnelName: tunnel.name,
                 owned: [{ hostname: content.hostname, ...(content.target.path ? { path: content.target.path } : {}),
                     expectedService: origin.service }], dnsOwnership: [] } }] };

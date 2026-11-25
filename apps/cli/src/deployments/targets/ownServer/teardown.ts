@@ -360,8 +360,9 @@ export function createOwnServerTeardownForHost(host: Host) {
                             expectedTargetLinkRevision: input.expectedTargetLinkRevision, requestKey: input.requestKey,
                             reason: input.reason, removeEnvironment: true, nothingDeployed: true,
                             ...(volumesInput ? { volumes: [] } : {}) });
-                        return { input: prepared, preview: normalizeStrictJsonValue({ environmentId: input.environmentId,
-                            nothingDeployed: true, removeEnvironment: true }) };
+                        return { input: prepared, preview: normalizeStrictJsonValue({
+                            removal: { subject: { kind: 'ownServer' }, environment: environment.content.name, removeEnvironment: true },
+                        }) };
                     }
                 }
                 if (!host.runtime.acquireTeardown) return unsupported('native_executor_unavailable',
@@ -392,11 +393,14 @@ export function createOwnServerTeardownForHost(host: Host) {
                 return { input: buildDeploymentTeardownInputV1(input, { requestKey: input.requestKey,
                     expectedRevision: input.expectedRevision, targetLinkId: link.id,
                     expectedTargetLinkRevision: input.expectedTargetLinkRevision, candidate: reference }),
-                    preview: normalizeStrictJsonValue({ environmentId: input.environmentId, targetLinkId: input.targetLinkId,
+                    preview: normalizeStrictJsonValue({
                         summary: removeEnvironment
                             ? 'Remove this Environment’s containers, owned networks, private image tags, and selected named volumes. Shared image tags and unselected volumes stay.'
                             : 'Remove this target’s containers, owned networks, and selected named volumes. Images and unselected volumes stay.',
-                        machines: members.map(member => member.machineId), resources: content.teardown?.resources ?? [] }) };
+                        removal: { subject: { kind: 'ownServer' }, environment: environment.content.name, removeEnvironment: removeEnvironment === true,
+                            volumes: resources.filter(resource => resource.kind === 'data')
+                                .map(resource => ({ name: resource.id, removed: resource.disposition === 'remove' })) },
+                    }) };
             } catch (error) { return {
                 ...projectDeploymentException(error, { signal: context.signal, phase: 'deployment.teardown.prepare' }),
                 effectAttempted: false }; }

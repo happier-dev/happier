@@ -47,6 +47,7 @@ import { SAVED_HEALTH_ALERT_TEST_ACTION_ID } from '../notificationConfigurationA
 import { NotificationConfigurationActionInputSchemas, SavedHealthAlertTestApprovalReviewSchema } from '../notificationConfigurationActionFamily.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { readReviewedDeploymentDomainRemovalsV1 } from './hostReviewedChildrenV1.js';
+import { DeploymentRemovalApprovalReviewV1Schema } from '../../deployments/deploymentReviewV1.js';
 import { prepareTeamMemberApprovalPresentation } from '../specs/teamMemberApproval.js';
 
 export function mapApprovalCreatedBySurface(surface: ActionExecutorContext['surface']): ApprovalRequestV1['createdBy']['surface'] {
@@ -428,10 +429,14 @@ export async function prepareApprovalRequest(params: Readonly<{
       ? readReviewedDeploymentDomainRemovalsV1(params.hostReviewedChildren) : [];
     const summary = [buildApprovalSummary(spec, displayArgs, deployment.preview),
       ...domains.map(({ hostname }) => `Also removes the Domain ${hostname}.`)].join(' ');
+    const review = domains.length ? DeploymentRemovalApprovalReviewV1Schema.safeParse(deployment.preview) : undefined;
+    const deploymentReview = review?.success
+      ? { ...review.data, removal: { ...review.data.removal, domains: domains.map(({ hostname }) => hostname) } }
+      : deployment.preview;
     return { actionArgs: params.forCarriedReview ? displayArgs : deployment.input,
       preview: { actionId: params.actionId, actionArgs: displayArgs,
       summary: appendTeamCredentialSourceSummary(summary, teamCredentialSources),
-      ...(teamCredentialSources.length ? { teamCredentialSources } : {}), deploymentReview: deployment.preview,
+      ...(teamCredentialSources.length ? { teamCredentialSources } : {}), deploymentReview,
       ...(originalInput === undefined ? {} : { deploymentRolloutSemanticInput: originalInput }),
       ...(params.hostReviewedChildren ? { hostReviewedChildren: params.hostReviewedChildren } : {}) } };
   }

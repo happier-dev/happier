@@ -3,7 +3,7 @@ import { DeploymentTeardownDetachInputV1Schema, DeploymentTeardownInputV1Schema,
     type ActionExecutorDeps, type DeploymentTargetLinkHeaderV1 } from '@happier-dev/protocol';
 import { DeploymentProviderTeardownContentV1Schema, type DeploymentEnvironmentDetailV1, type DeploymentProviderTeardownContentV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
-import { selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
+import { readDeploymentTargetDisplayNameV1, readPlatformResourceName, selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
 import { DeploymentTargetDataInputV1Schema, DeploymentTargetRoleResultV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
@@ -51,7 +51,7 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
         const reference = projects?.delete;
         const action = reference?.kind === 'plugin' ? parseQualifiedPluginActionId(reference.actionId) : null;
         const observeAction = projects?.observe?.kind === 'plugin' ? parseQualifiedPluginActionId(projects.observe.actionId) : null;
-        return { lease, action, observeAction, declaration: action ? readResolvedActionContribution(lease.registry.contributes, action) : null };
+        return { lease, action, observeAction, target, declaration: action ? readResolvedActionContribution(lease.registry.contributes, action) : null };
     }
     return {
         async prepareProject(request: Request, environment: DeploymentEnvironmentDetailV1) {
@@ -62,7 +62,7 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
                 if (input.serverId !== host.serverId) return failure('server_scope_mismatch');
                 if ('dataCreation' in input || 'detachKeepRunning' in input) return null;
                 if (input.volumes !== undefined || 'machines' in input && input.machines !== undefined) return failure('deployment_invalid');
-                const { lease, action, observeAction, declaration } = await leaseDeclaration(row.targetLink);
+                const { lease, action, observeAction, target, declaration } = await leaseDeclaration(row.targetLink);
                 try {
                     const choices = selectDeploymentTargetRemovalChoicesV1(row.targetLink.source, [{
                         pluginId: row.targetLink.source.contribution.pluginId, targetId: row.targetLink.source.contribution.localId,
@@ -78,7 +78,7 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
                             requestKey: input.requestKey ?? randomUUID(), reason: input.reason, detachKeepRunning: true }),
                             preview: deploymentTeardownDetachPreview };
                     }
-                    if (!action || !row.content) return failure('deployment_target_role_unavailable');
+                    if (!action || !row.content || !target) return failure('deployment_target_role_unavailable');
                     const prior = !('contentArtifactId' in input) && input.requestKey ? await host.findReceipt({
                         environmentId: input.environmentId, targetLinkId: row.targetLink.id, requestKey: input.requestKey }, context) : null;
                     const retained = prior ? DeploymentProviderTeardownContentV1Schema.safeParse(prior.content)
@@ -114,8 +114,12 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
                             ...(prior ? { contentArtifactId: prior.deployment.contentArtifactId,
                                 contentHeaderVersion: prior.deployment.contentHeaderVersion, contentBodyVersion: prior.deployment.contentBodyVersion }
                                 : await host.createCandidate(environment, content, context)) });
-                    return { input: prepared, preview: normalizeStrictJsonValue({ providerIdentity: content.platform.providerIdentity,
-                        providerEnvironment: content.platform.providerEnvironment, summary: 'Delete this linked resource at its provider.' }),
+                    const platform = readDeploymentTargetDisplayNameV1(target);
+                    return { input: prepared, preview: normalizeStrictJsonValue({
+                        summary: 'Delete this linked resource at its provider.',
+                        removal: { subject: { kind: 'platformResource', name: readPlatformResourceName(content.platform) ?? platform, platform },
+                            environment: environment.content.name, removeEnvironment: input.removeEnvironment === true },
+                    }),
                         hostReviewedChildren: { children: [{ action, role: 'projects.delete', input: child },
                             ...(observeAction ? [{ action: observeAction, role: 'projects.observe' as const, input: child }] : [])] } };
                 } finally { await lease.release(); }

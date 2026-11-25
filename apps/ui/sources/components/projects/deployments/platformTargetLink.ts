@@ -14,7 +14,7 @@ import type { DeploymentTargetCredentialPrincipalV1 } from '@happier-dev/protoco
 import type { ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { DeploymentTargetCheckResultV1, DeploymentTargetLinkCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploySuggestionCatalogV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
-import { listDeploymentTargetsFromManifestsV1, readDeploymentTargetDisplayNameV1, readPluginActionCredentialPurposeV1 } from '@happier-dev/deployments';
+import { listDeploymentTargetsFromManifestsV1, readDeploymentTargetDisplayNameV1, readPlatformResourceName, readPluginActionCredentialPurposeV1 } from '@happier-dev/deployments';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 
 import type { InputFieldOptionsState } from '@/components/sessions/actions/inputFieldOptionsStore';
@@ -84,18 +84,7 @@ export function readTeardownConsequence(actions: readonly unknown[], localId: st
   return consequence ? { teardownConsequence: consequence } : {};
 }
 
-/**
- * The name a person knows a linked provider resource by, as the provider recorded it: a Preview's name, else the
- * project or Worker name captured at preparation, else the selected target's declared presentation name.
- */
-export function readPlatformResourceName(content: Partial<DeploymentTargetLinkProviderContentV1> | undefined,
-    providerName?: string | null): string | null {
-  const environment = content?.providerEnvironment?.selection;
-  if (environment?.kind === 'preview' && typeof environment.previewName === 'string') return environment.previewName;
-  return content?.preparedNative?.projectName
-    ?? (environment?.kind === 'script' && typeof environment.scriptName === 'string' ? environment.scriptName : null)
-    ?? providerName ?? null;
-}
+export { readPlatformResourceName } from '@happier-dev/deployments';
 
 export function readDeploymentPlatformTargets(
   declarations: readonly Declaration[],

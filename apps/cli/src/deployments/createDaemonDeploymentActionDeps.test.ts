@@ -2435,6 +2435,12 @@ describe('installed deployment storage and target composition', () => {
                     const { artifactId } = z.object({ artifactId: z.string() }).parse(review.result);
                     expect(await approvalStore.approvalsGet({ artifactId })).toMatchObject({ v: 2, preview: {
                         summary: reviewedAssignedDomain ? expect.stringContaining(assignedHostname) : expect.not.stringContaining(assignedHostname),
+                        deploymentReview: { removal: {
+                            subject: { kind: 'platformResource', name: expect.any(String), platform: expect.any(String) },
+                            environment: environment.content.name,
+                            removeEnvironment: false,
+                            ...(reviewedAssignedDomain ? { domains: [assignedHostname] } : {}),
+                        } },
                     } });
                     expect(states).toEqual([]);
                     if (assignedDomainChanged) {

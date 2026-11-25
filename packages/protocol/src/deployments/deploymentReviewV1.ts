@@ -147,6 +147,24 @@ const platformReview = {
   providerEnvironment: id,
 };
 
+const DeploymentRemovalReviewV1Schema = z.strictObject({
+  subject: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('platformResource'), name: z.string(), platform: z.string() }),
+    z.strictObject({ kind: z.literal('ownServer') }),
+    z.strictObject({ kind: z.literal('domain'), hostname: z.string() }),
+  ]),
+  environment: z.optional(z.string()),
+  removeEnvironment: z.optional(z.boolean()),
+  domains: z.optional(z.array(z.string())),
+  volumes: z.optional(z.array(z.strictObject({ name: z.string(), removed: z.boolean() }))),
+});
+export type DeploymentRemovalReviewV1 = z.infer<typeof DeploymentRemovalReviewV1Schema>;
+
+export const DeploymentRemovalApprovalReviewV1Schema = z.strictObject({
+  summary: z.optional(z.string()),
+  removal: DeploymentRemovalReviewV1Schema,
+});
+
 export const DeploymentApprovalReviewV1Schema = z.union([
   DeploymentReviewV1Schema,
   z.strictObject({

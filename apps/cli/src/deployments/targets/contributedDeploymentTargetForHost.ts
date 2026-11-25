@@ -11,7 +11,7 @@ import { deploymentInProgressStates, isDeploymentSettledV1, DeploymentProviderTe
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_PROMOTE_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
-import { selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
+import { readDeploymentTargetDisplayNameV1, readPlatformResourceName, selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
 import type { DeploymentTeardownRequestInputV1 } from '@happier-dev/protocol/deployments/deploymentTeardownRequestV1';
 import type { DeploymentExecutionFailureDetailsV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { DeploymentTargetRoleCommonInputV1Schema, DeploymentTargetRoleInputSchemasV1,
@@ -369,6 +369,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             if (removal === 'delete') {
                 return await withRole(request, environment, 'teardown', async scope => {
                     await scope.admit(scope.common, 'preparation');
+                    const platform = readDeploymentTargetDisplayNameV1(descriptor);
+                    const name = readPlatformResourceName(scope.common) ?? readPlatformResourceName(row.content ?? undefined) ?? platform;
                     const content = DeploymentProviderTeardownContentV1Schema.parse({ machines: [], images: [],
                         machineResults: [], steps: [], teardown: { reason: request.reason,
                             targetLinkRevision: link.revision, machines: [], resources: [], proofs: [] },
@@ -385,9 +387,10 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                         expectedRevision: environment.environment.revision, targetLinkId: link.id,
                         expectedTargetLinkRevision: link.revision, candidate: reference }),
                         hostReviewedChildren: { children: scope.children }, preview: normalizeStrictJsonValue({
-                            environmentId: environment.environment.id, targetLinkId: link.id,
-                            summary: 'Delete this linked resource at its provider.', providerIdentity: scope.common.providerIdentity,
-                            providerEnvironment: scope.common.providerEnvironment }) };
+                            summary: 'Delete this linked resource at its provider.',
+                            removal: { subject: { kind: 'platformResource', name, platform },
+                                environment: environment.content.name, removeEnvironment: request.removeEnvironment === true },
+                        }) };
                 });
             }
             await host.assertCurrent(request.context);

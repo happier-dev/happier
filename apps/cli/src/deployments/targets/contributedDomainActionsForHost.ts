@@ -130,7 +130,11 @@ export function createContributedDomainActionsForHost(host: NativeHost & Readonl
             const childInput = { ...scope.common, domainId: input.domainId, domain: { hostname: recoveryHostname ?? content.hostname,
                 ...(recoveryHostname ? { providerAssigned: true } : {}), ...(target.zone ? { zone: target.zone } : {}) } };
             await scope.admit(childInput, 'execution');
-            return { children: [{ action: scope.action, role, input: normalizeStrictJsonValue(childInput) }] };
+            return { children: [{ action: scope.action, role, input: normalizeStrictJsonValue(childInput) }],
+                ...(role === 'domains.remove' && childInput.domain.hostname ? {
+                    approvalPreview: { deploymentReview: { removal: { subject: { kind: 'domain', hostname: childInput.domain.hostname },
+                        environment: environment.content.name } } },
+                } : {}) };
         });
     }
     async function execute(actionId: string, raw: unknown, context: ActionExecutorContext): Promise<ActionExecuteResult | null> {
