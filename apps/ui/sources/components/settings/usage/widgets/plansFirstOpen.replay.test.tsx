@@ -8,6 +8,8 @@ import { buildProviderAccountUsageMaterialChangesV1 } from '@happier-dev/protoco
 import { buildConnectedServicesAccountChangeV1, CHANGES_AFTER_CURSOR_HTTP_HEADER } from '@happier-dev/protocol/changes';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { buildProviderAccountUsagePageProjectionV1,
+  packProviderAccountUsagePageProjectionV1 } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { UsageAnalyticsQueryBatchRequestSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
@@ -43,9 +45,15 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-it.each(['Profile', 'descriptor catalog'])(
-  'settles stock Plans without re-admitting unchanged quota when the %s qualifies two late sources', async producer => {
-    const openedAtMs = Date.UTC(2026, 10, 25, 12);
+it.each([
+  { producer: 'Profile', wake: 'mixed feed' },
+  { producer: 'descriptor catalog', wake: 'mixed feed' },
+  { producer: 'Profile', wake: 'midnight binding' },
+  { producer: 'Profile', wake: 'newer quota clock' },
+])('settles stock Plans with late qualification by $producer and a $wake wake', async ({ producer, wake }) => {
+    const midnight = Date.UTC(2026, 10, 26);
+    const dayMs = 24 * 3600_000;
+    const openedAtMs = wake === 'midnight binding' ? midnight - 30_000 : Date.UTC(2026, 10, 25, 12);
     let nowMs = openedAtMs;
     vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
     const usesDescriptors = producer === 'descriptor catalog';
@@ -63,13 +71,19 @@ it.each(['Profile', 'descriptor catalog'])(
         accountSubject: { kind: 'providerSubject', id: accountId },
         observedAtMs: nowMs - 100, fetchedAtMs: nowMs - 100, staleAfterMs: 60_000, source: 'providerHttp', confidence: 'confirmed',
         state: 'loaded_data', meters: [{ meterId: 'weekly', label: 'Weekly', used: 20, limit: 100, utilizationPct: 20,
-          unit: 'requests', resetsAt: nowMs + 360000, windowDurationMs: 3600000, status: 'ok', details: {} }] });
+          unit: 'requests', resetsAt: wake === 'midnight binding' && index >= 16 ? nowMs - 100 : nowMs + 360000, windowDurationMs: 3600000, status: 'ok', details: {} }] });
       const row = { ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
         credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] };
       const record = snapshot && { content: { t: 'plain', v: snapshot }, metadata: {
         fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, status: 'ok' }, sources: [source] };
-      return { source, snapshot, record, row };
+      return { source, snapshot, record, row, observations: snapshot ? [snapshot] : [] };
     });
+    const acceptObservation = (row: typeof records[number], at: number) => {
+      row.snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ ...row.snapshot, observedAtMs: at, fetchedAtMs: at });
+      row.record = { ...row.record!, content: { t: 'plain', v: row.snapshot },
+        metadata: { ...row.record!.metadata, fetchedAt: at } };
+      row.observations.push(row.snapshot);
+    };
     const profile = (all: boolean) => AccountProfileSchema.parse({ id: 'account-a',
       connectedAccountsV4: records.slice(0, all ? 18 : 16).map(row => row.row) });
     let servedProfile = profile(usesDescriptors);
@@ -81,7 +95,7 @@ it.each(['Profile', 'descriptor catalog'])(
     let machine = createMachineFixture({ id: machineId, active: false, activeAt: nowMs, presenceProtocolVersion: 1 });
     const machineRow = () => createPlainMachineRowFixture({ id: machineId, accountId: 'account-a', machine });
     let accountingStarts = 0;
-    const traffic: Array<{ route: string; recordId?: string; range?: unknown; ref?: unknown }> = [];
+    const traffic: Array<{ route: string; recordId?: string; range?: { startAtMs: number; endAtMs: number }; ref?: unknown }> = [];
     const costs = () => ['resolve', 'record', 'day-summaries', 'history'].map(route => traffic.filter(row => row.route === route).length);
     const accounting: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: 1,
       tokens: { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 15 },
@@ -116,18 +130,43 @@ it.each(['Profile', 'descriptor catalog'])(
         const recordId = query?.recordId ?? request.url.searchParams.get('recordId') ?? undefined;
         if (route === 'resolve') {
           const source = JSON.parse(request.url.searchParams.get('source')!);
-          traffic.push({ route, recordId, range: query?.history?.range, ref: source.ref });
+          traffic.push({ route, recordId, range: query?.projection?.range ?? query?.history?.range, ref: source.ref });
           const row = records.find(record => record.source.ref.accountId === source.ref.accountId);
           if (!row?.snapshot) return Response.json(null);
           return Response.json({ source, recordId: row.snapshot.recordId,
-            providerAccountId: row.snapshot.recordKey.accountSubjectId, fetchedAt: nowMs - 100, staleAfterMs: 60_000 });
+            providerAccountId: row.snapshot.recordKey.accountSubjectId, fetchedAt: row.snapshot.fetchedAtMs, staleAfterMs: row.snapshot.staleAfterMs });
         }
-        traffic.push({ route, recordId, range: query?.history?.range });
-        const row = records.find(row => row.snapshot?.recordId === recordId);
-        if (route === 'record') return Response.json(row!.record);
-        if (route === 'day-summaries') return Response.json({ summaries: [], missingDays: [] });
-        if (route === 'history') return Response.json({ entries: row?.snapshot ? [{ id: 'observation',
-          observedAtMs: row.snapshot.observedAtMs, record: row.record }] : [], nextCursor: null });
+        const range = query?.projection?.range ?? query?.history?.range ?? query?.range;
+        traffic.push({ route, recordId, range });
+        const row = records.find(row => row.snapshot?.recordId === recordId)!;
+        if (route === 'record') return Response.json(row.record);
+        const entries = row.observations.map(snapshot => ({ id: String(snapshot.fetchedAtMs),
+          observedAtMs: snapshot.fetchedAtMs, snapshot }));
+        if (route === 'day-summaries') {
+          const days = new Map<number, typeof entries>();
+          for (const entry of entries) {
+            const day = Math.floor(entry.observedAtMs / dayMs) * dayMs;
+            if (!range || (range.startAtMs < day + dayMs && day < range.endAtMs)) {
+              const group = days.get(day) ?? [];
+              group.push(entry);
+              days.set(day, group);
+            }
+          }
+          return Response.json({ summaries: [], missingDays: Array.from(days, ([dayStartAtMs, day]) => {
+            const { id, observedAtMs } = day.at(-1)!;
+            return { dayStartAtMs, coverage: { observationCount: day.length, frontier: { id, observedAtMs } } };
+          }) });
+        }
+        if (route === 'history') {
+          const selected = entries.filter(entry => range.startAtMs <= entry.observedAtMs && entry.observedAtMs < range.endAtMs);
+          if (!query.projection) return Response.json({ entries: selected.filter(entry => entry.observedAtMs > (query.history.cursor?.observedAtMs ?? -1))
+            .map(({ id, observedAtMs, snapshot }) => ({ id, observedAtMs, record: { ...row.record, content: { t: 'plain', v: snapshot },
+              metadata: { ...row.record?.metadata, fetchedAt: snapshot.fetchedAtMs } } })), nextCursor: null });
+          const frontier = selected.length ? { id: selected.at(-1)!.id, observedAtMs: selected.at(-1)!.observedAtMs } : null;
+          const projection = buildProviderAccountUsagePageProjectionV1({ recordId, range, history: { entries: selected, nextCursor: null } });
+          return Response.json({ projection: { recordId, demand: query.projection, observationCount: selected.length,
+            frontier, content: { t: 'plain', v: packProviderAccountUsagePageProjectionV1(projection) } }, complete: true });
+        }
       }
       if (request.path === '/v1/account/entity-rows/connected-metadata/presentation'
         || request.path === '/v1/account/entity-rows/connected-metadata/acknowledgements')
@@ -210,9 +249,45 @@ it.each(['Profile', 'descriptor catalog'])(
       await flushHookEffects({ cycles: 30 });
       expect(costs(), 'resolve, head, summary and exact history each admit each source only once').toEqual([18, 16, 16, 16]);
       const history = traffic.filter(row => row.route === 'history');
-      expect(new Set(history.map(row => JSON.stringify(row.range))).size).toBe(1);
+      expect(new Set(history.map(row => row.range?.startAtMs))).toEqual(new Set([Date.UTC(2026, 10, 25)]));
       expect(new Set(history.map(row => row.recordId)).size).toBe(16);
       expect(new Set(traffic.filter(row => row.route === 'record').map(row => row.recordId)).size).toBe(16);
+
+      const consume = async (rows: readonly Pick<ApiChangeEntry, 'kind' | 'entityId' | 'hint'>[]) => {
+        changes = rows.map(row => ({ ...row, cursor: ++cursor, changedAt: nowMs }));
+        await act(async () => { await sync.resumeSync('socket-reconnect'); });
+      };
+      if (wake !== 'mixed feed') {
+        const row = records[16]!;
+        const snapshot = row.snapshot!;
+        const exactRead = () => slices.flatMap(slice => slice.quota ?? [])
+          .find(quota => quota.current?.recordId === snapshot.recordId && quota.pageFacts?.historyStatus === 'complete');
+        await expect.poll(() => exactRead()?.current?.recordId).toBe(snapshot.recordId);
+        if (wake === 'midnight binding') {
+          expect(exactRead()?.unusedCapacity?.windows.map(value => value.window.resetAtMs)).toEqual([snapshot.meters[0]!.resetsAt]);
+          nowMs = midnight + 1_000;
+          expect(nowMs - snapshot.observedAtMs).toBeLessThan(snapshot.staleAfterMs);
+        } else {
+          acceptObservation(row, nowMs);
+        }
+        const before = traffic.length;
+        await consume([buildConnectedServicesAccountChangeV1(row.source.ref.service)]);
+        await expect.poll(() => traffic.slice(before).filter(request => request.route === 'resolve').length).toBe(2);
+        await expect.poll(() => slices.every(slice => !slice.pending)).toBe(true);
+        await flushHookEffects({ cycles: 30 });
+        const reads = traffic.slice(before);
+        if (wake === 'midnight binding') {
+          expect.soft(exactRead()?.unusedCapacity?.windows, 'Today must not show yesterday’s ended cycle').toEqual([]);
+          expect.soft(reads.filter(request => request.route === 'day-summaries').map(request => request.range))
+            .toEqual(records.slice(16).map(() => ({ startAtMs: midnight, endAtMs: nowMs })));
+          expect.soft(reads.filter(request => request.route === 'record').map(request => request.recordId).sort())
+            .toEqual(records.slice(16).map(row => row.snapshot!.recordId).sort());
+        } else {
+          expect.soft(exactRead()?.current?.fetchedAtMs, 'same binding with a newer Home clock requires the new body').toBe(nowMs);
+          expect.soft(reads.filter(request => request.route === 'record').map(request => request.recordId)).toEqual([snapshot.recordId]);
+        }
+        return;
+      }
 
       const recordId = records[0]!.snapshot!.recordId;
       const mark = traffic.length;
@@ -223,10 +298,10 @@ it.each(['Profile', 'descriptor catalog'])(
       });
       await expect.poll(() => costs()[1]).toBe(17);
       await flushHookEffects({ cycles: 30 });
-      const wake = traffic.slice(mark);
-      expect(wake.filter(row => row.route === 'resolve')).toEqual([]);
-      expect(wake.filter(row => row.route === 'record')).toEqual([{ route: 'record', recordId, range: undefined }]);
-      expect(wake.every(row => row.recordId === recordId)).toBe(true);
+      const namedWake = traffic.slice(mark);
+      expect(namedWake.filter(row => row.route === 'resolve')).toEqual([]);
+      expect(namedWake.filter(row => row.route === 'record')).toEqual([{ route: 'record', recordId, range: undefined }]);
+      expect(namedWake.every(row => row.recordId === recordId)).toBe(true);
 
       const named = [0, 1, 2, 4].map(index => records[index]!.snapshot!.recordId);
       const [global, exact] = buildProviderAccountUsageMaterialChangesV1(named[3]!, {
@@ -238,10 +313,6 @@ it.each(['Profile', 'descriptor catalog'])(
         { kind: 'machine', entityId: machineId },
         global, exact,
       ];
-      const consume = async (rows: readonly Pick<ApiChangeEntry, 'kind' | 'entityId' | 'hint'>[]) => {
-        changes = rows.map(row => ({ ...row, cursor: ++cursor, changedAt: nowMs }));
-        await act(async () => { await sync.resumeSync('socket-reconnect'); });
-      };
       const bindingTargets = records.slice(16);
       const beforeProfile = structuredClone(servedProfile.connectedAccountsV4);
       const originalBindings = bindingTargets.map(row => row.snapshot!.recordId);
@@ -263,9 +334,13 @@ it.each(['Profile', 'descriptor catalog'])(
             rebound.snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ ...previous, recordKey,
               recordId: buildProviderAccountUsageRecordId(recordKey), accountSubject: { kind: 'providerSubject', id: 'fixture-rebound' } });
             rebound.record = { ...rebound.record!, content: { t: 'plain', v: rebound.snapshot } };
+            rebound.observations = [rebound.snapshot];
           }
           await consume([buildConnectedServicesAccountChangeV1(rebound.source.ref.service)]);
         }
+        // The named observation changed those records' day coverage. The
+        // two service-binding operands receive no new observation.
+        for (const index of [0, 1, 2, 4]) acceptObservation(records[index]!, nowMs - 1);
         machine = { ...machine, active: !machine.active, activeAt: nowMs, updatedAt: nowMs };
         await consume(mixedPage);
         await act(async () => accountingHold.resolve());

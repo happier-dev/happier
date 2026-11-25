@@ -590,7 +590,7 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
         return { ...view, sources };
     });
     const addressedReads = new Map<string, ProviderAccountUsageRecordId>();
-    const retainedBindings = new Map<string, ConnectedServiceQuotaGetResultV1>();
+    const retainedBindings = new Map<string, readonly ConnectedServiceQuotaGetResultV1[]>();
     const recordIds = admissions.map(({ admitted }, index) => admitted.usageRecordId
         ?? progress.find(view => view.sources[index]?.value?.current)?.sources[index]?.value?.current?.recordId);
     // A publication for an as-yet unknown record can be the first reading
@@ -604,13 +604,8 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
             // A named record still requires a body read. Resolve the source first
             // since its old record can remain accessible through another source.
             if (recordId && !targets.recordIds.includes(recordId)) {
-                const rows = progress.map(view => view.sources[index]!);
-                const head = rows[0]?.previous;
-                const current = head?.current;
-                // A binding wake cannot reopen an unrelated history failure.
-                if (head && current?.recordId === recordId && rows.every(({ previous }) =>
-                    previous?.current?.recordId === recordId
-                    && previous.current.recordKey.accountSubjectId === current.recordKey.accountSubjectId)) retainedBindings.set(sourceKey, head);
+                const retained = progress.flatMap(view => view.sources[index]?.previous ?? []);
+                if (retained.length === progress.length) retainedBindings.set(sourceKey, retained);
             }
             return [index];
         }
