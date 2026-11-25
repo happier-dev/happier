@@ -108,7 +108,10 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
             try { return await sourceAdapter.observe(input); } catch (error) { errors.push(error); throw error; }
         } }, mode: 'once', now: () => now,
     });
-    return { context, adapter, errors, read, writes, rows, admissions, cycle, kv, tick(value: HealthCheckResultV1['status']) { now += 1000; status = value; },
+    // A fixture-driven wake subscription spans several finite cycles. The
+    // finite runner must leave that subscription under the caller's custody.
+    const cycleWithExternalWake = () => cycle({ ...adapter, subscribeWake: undefined });
+    return { context, adapter, errors, read, writes, rows, admissions, cycle, cycleWithExternalWake, kv, tick(value: HealthCheckResultV1['status']) { now += 1000; status = value; },
         clock(time: number) { now = time; },
         async heartbeat(payload: JsonValue) {
             for (const listener of hostListeners.get('@happier/health-check/heartbeat-received') ?? []) await listener({ payload });
@@ -538,11 +541,11 @@ describe('saved health source registration and finite cycles', () => {
                 delivery: { deliveryId: `monitor-${receivedAtMs}`, providerDeliveryId: `monitor-${receivedAtMs}`, attempt: 1, replay: 0, receivedAtMs },
                 request: { contentType: 'application/json', headers: [], rawBodyBytes: Buffer.byteLength(raw), rawBodyBase64: Buffer.from(raw).toString('base64') },
                 verified: { verifier: 'capabilityUrl_v1' } });
-            await f.cycle();
+            await f.cycleWithExternalWake();
         };
         const subscription = f.adapter.subscribeWake?.(async () => {});
         try {
-            await f.cycle();
+            await f.cycleWithExternalWake();
             await deliver('down', 200); await deliver('down', 200);
             expect(f.admissions).toHaveLength(0);
             await deliver('down', 300);
@@ -573,18 +576,18 @@ describe('saved health source registration and finite cycles', () => {
         const subscription = f.adapter.subscribeWake?.(async () => {});
         const hint = { sourceInstanceId: definition.sourceInstanceId, checkId: 'http', webhookEndpointId: endpoint };
         try {
-            await f.cycle();
-            f.clock(100_000); await f.cycle();
+            await f.cycleWithExternalWake();
+            f.clock(100_000); await f.cycleWithExternalWake();
             expect(f.read).toHaveBeenCalledTimes(1);
-            await f.monitor(hint); await f.cycle();
+            await f.monitor(hint); await f.cycleWithExternalWake();
             expect(f.admissions).toHaveLength(0);
             observation = result('down', 2000);
-            await f.monitor(hint); await f.cycle();
+            await f.monitor(hint); await f.cycleWithExternalWake();
             expect(f.admissions).toHaveLength(1);
             observation = result('up', 3000);
-            await f.monitor({ ...hint, webhookEndpointId: 'wh_ep_BBBBBBBBBBBBBBBBBBBBBA' }); await f.cycle();
+            await f.monitor({ ...hint, webhookEndpointId: 'wh_ep_BBBBBBBBBBBBBBBBBBBBBA' }); await f.cycleWithExternalWake();
             expect(f.admissions).toHaveLength(1);
-            await f.monitor(hint); await f.cycle();
+            await f.monitor(hint); await f.cycleWithExternalWake();
             expect(f.admissions).toHaveLength(2);
             expect(f.admissions[1]?.payload).toMatchObject({ transition: 'recovered', observedAt: 3000 });
         } finally { subscription?.dispose(); }
