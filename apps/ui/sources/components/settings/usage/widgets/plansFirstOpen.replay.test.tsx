@@ -6,8 +6,6 @@ import { installConnectedAccountDescriptorProjection } from '@/sync/domains/conn
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { buildProviderAccountUsageMaterialChangesV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
-import { buildProviderAccountUsagePageProjectionV1, PROVIDER_ACCOUNT_USAGE_PAGE_ENCODING } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
-import { sealProviderAccountUsagePageProjectionV1 } from '@happier-dev/protocol/connect/providerAccountUsagePageProjectionCrypto';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { UsageAnalyticsQueryBatchRequestSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
@@ -42,15 +40,12 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-it.each(['Profile', 'descriptor catalog', 'late range', 'two cold ranges', 'late range after midnight'] as const)(
-  'settles Plans quota without redundant admission: %s', async producer => {
-    const crossesMidnight = producer === 'late range after midnight';
-    const openedAtMs = crossesMidnight ? Date.UTC(2026, 10, 25, 23, 59, 50) : Date.UTC(2026, 10, 25, 12);
+it.each(['Profile', 'descriptor catalog'])(
+  'settles stock Plans without re-admitting unchanged quota when the %s qualifies two late sources', async producer => {
+    const openedAtMs = Date.UTC(2026, 10, 25, 12);
     let nowMs = openedAtMs;
     vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
     const usesDescriptors = producer === 'descriptor catalog';
-    const changesRange = producer === 'late range' || producer === 'two cold ranges' || crossesMidnight;
-    const addedPeriod = { startMs: openedAtMs - 4 * 3600_000, endMs: openedAtMs + 3600_000 };
     const records = Array.from({ length: 18 }, (_, index) => {
       const accountId = `fixture-${index}`;
       const service = index >= 16 && usesDescriptors
@@ -73,7 +68,7 @@ it.each(['Profile', 'descriptor catalog', 'late range', 'two cold ranges', 'late
     });
     const profile = (all: boolean) => AccountProfileSchema.parse({ id: 'account-a',
       connectedAccountsV4: records.slice(0, all ? 18 : 16).map(row => row.row) });
-    let servedProfile = profile(usesDescriptors || changesRange);
+    let servedProfile = profile(usesDescriptors);
     const held = createDeferred<void>();
     let accountingStarts = 0;
     const traffic: Array<{ route: string; recordId?: string; range?: unknown }> = [];
@@ -98,7 +93,7 @@ it.each(['Profile', 'descriptor catalog', 'late range', 'two cold ranges', 'late
         const route = request.path.split('/').at(-1)!;
         const query = JSON.parse(request.url.searchParams.get('query') ?? 'null');
         const recordId = query?.recordId ?? request.url.searchParams.get('recordId') ?? undefined;
-        if (request.method === 'GET') traffic.push({ route, recordId, range: query?.history?.range ?? query?.projection?.range });
+        traffic.push({ route, recordId, range: query?.history?.range });
         if (route === 'resolve') {
           const source = JSON.parse(request.url.searchParams.get('source')!);
           const row = records.find(record => record.source.ref.accountId === source.ref.accountId);
@@ -109,20 +104,8 @@ it.each(['Profile', 'descriptor catalog', 'late range', 'two cold ranges', 'late
         const row = records.find(row => row.snapshot?.recordId === recordId);
         if (route === 'record') return Response.json(row!.record);
         if (route === 'day-summaries') return Response.json({ summaries: [], missingDays: [] });
-        if (route === 'history' && row?.snapshot) {
-          const { snapshot, record } = row;
-          if (query.projection) {
-            const { range } = query.projection;
-            const entries = snapshot.observedAtMs >= range.startAtMs && snapshot.observedAtMs < range.endAtMs
-              ? [{ id: 'observation', observedAtMs: snapshot.observedAtMs, snapshot }] : [];
-            const last = entries.at(-1);
-            const projection = buildProviderAccountUsagePageProjectionV1({ recordId, range, history: { entries, nextCursor: null } });
-            return Response.json({ complete: true, projection: { recordId, encoding: PROVIDER_ACCOUNT_USAGE_PAGE_ENCODING,
-              demand: query.projection, observationCount: entries.length, frontier: last ? { id: last.id, observedAtMs: last.observedAtMs } : null,
-              content: sealProviderAccountUsagePageProjectionV1({ accountMode: 'plain', projection }) } });
-          }
-          return Response.json({ entries: [{ id: 'observation', observedAtMs: snapshot.observedAtMs, record }], nextCursor: null });
-        }
+        if (route === 'history') return Response.json({ entries: row?.snapshot ? [{ id: 'observation',
+          observedAtMs: row.snapshot.observedAtMs, record: row.record }] : [], nextCursor: null });
       }
       if (request.path === '/v1/account/entity-rows/connected-metadata/presentation'
         || request.path === '/v1/account/entity-rows/connected-metadata/acknowledgements')
@@ -153,9 +136,9 @@ it.each(['Profile', 'descriptor catalog', 'late range', 'two cold ranges', 'late
       React.useLayoutEffect(() => demand?.place(props.instanceId, props.id, true), [demand, props.instanceId, props.id]);
       return <UsageWidgetBody {...props} />;
     }
-    const page = (showAdditionalRange: boolean) => <InjectedAuthProvider credentials={credentials}><CoreCollectionScope>
+    const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><CoreCollectionScope>
       <UsageWidgetBatchProvider clauses={clauses} inventoryQuery={inventoryQuery}
-        queryWidgetIds={[...widgets.map(({ instance }) => instance.id), ...(showAdditionalRange ? ['additional-projections'] : [])]}>
+        queryWidgetIds={widgets.map(({ instance }) => instance.id)}>
         <Observe />
         {widgets.map(({ instance }) => {
           if (instance.definition.kind !== 'builtin') throw new Error('Expected builtin Plans preset');
@@ -165,49 +148,14 @@ it.each(['Profile', 'descriptor catalog', 'late range', 'two cold ranges', 'late
               serverId={server.id} testID={instance.id} />
           </WidgetFrameInstanceIdContext.Provider>;
         })}
-        {showAdditionalRange && <WidgetFrameInstanceIdContext.Provider value="additional-projections">
-          <Body instanceId="additional-projections" id="usage_projections" input={{ ...pageScope, period: addedPeriod }}
-            serverId={server.id} testID="additional-projections" />
-        </WidgetFrameInstanceIdContext.Provider>}
       </UsageWidgetBatchProvider>
-    </CoreCollectionScope></InjectedAuthProvider>;
-    if (changesRange) held.resolve();
-    const screen = await renderScreen(page(producer === 'two cold ranges'));
+    </CoreCollectionScope></InjectedAuthProvider>);
     const refreshProfile = async () => {
       servedProfile = profile(true);
       const { fetchAndApplyProfile } = await import('@/sync/engine/account/syncAccount');
       await fetchAndApplyProfile({ credentials: credentials!, applyProfile: value => storage.getState().applyProfile(value) });
     };
     try {
-      if (changesRange) {
-        const settledRanges = () => new Set(slices.filter(slice => !slice.pending
-          && slice.quota?.filter(row => row.pageFacts?.historyStatus === 'complete').length === 16)
-          .map(slice => JSON.stringify(slice.requestedQuery.period))).size;
-        await expect.poll(settledRanges).toBe(producer === 'two cold ranges' ? 2 : 1);
-        await flushHookEffects({ cycles: 30 });
-        if (producer !== 'two cold ranges') {
-          expect(costs(), 'stock Plans').toEqual([18, 16, 16, 16]);
-          const initialCosts = costs();
-          if (crossesMidnight) nowMs += 20_000;
-          await screen.update(page(true));
-          await expect.poll(settledRanges).toBe(2);
-          await flushHookEffects({ cycles: 30 });
-          if (crossesMidnight) {
-            const afterMidnight = traffic.filter(row => row.route === 'history'
-              && JSON.stringify(row.range) === JSON.stringify({ startAtMs: Date.UTC(2026, 10, 26), endAtMs: nowMs }));
-            expect(afterMidnight, "Today's old history must not settle the new day").toHaveLength(16);
-            return;
-          }
-          expect(costs().map((count, index) => count - initialCosts[index]!),
-            'additional range: resolves, current records, day summaries, history').toEqual([0, 0, 0, 16]);
-        } else {
-          expect(costs(), 'cold two-range view: resolves, current records, day summaries, history').toEqual([18, 16, 16, 32]);
-        }
-        const ranges = traffic.filter(row => row.route === 'history');
-        expect(new Set(ranges.map(row => JSON.stringify(row.range))).size).toBe(2);
-        expect(new Set(ranges.map(row => JSON.stringify([row.recordId, row.range]))).size).toBe(32);
-        return;
-      }
       await expect.poll(() => accountingStarts).toBeGreaterThan(0);
       await expect.poll(() => costs().slice(0, 3)).toEqual([16, 14, 14]);
       await expect.poll(() => slices.some(slice => slice.quota?.filter(q => q.current).length === 14)).toBe(true);
@@ -240,7 +188,7 @@ it.each(['Profile', 'descriptor catalog', 'late range', 'two cold ranges', 'late
       await flushHookEffects({ cycles: 30 });
       expect(costs(), 'resolve, head, summary and exact history each admit each source only once').toEqual([18, 16, 16, 16]);
       const history = traffic.filter(row => row.route === 'history');
-      expect(new Set(history.map(row => JSON.stringify([row.recordId, row.range]))).size).toBe(16);
+      expect(new Set(history.map(row => JSON.stringify(row.range))).size).toBe(1);
       expect(new Set(history.map(row => row.recordId)).size).toBe(16);
       expect(new Set(traffic.filter(row => row.route === 'record').map(row => row.recordId)).size).toBe(16);
 

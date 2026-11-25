@@ -8,7 +8,7 @@ import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/
 import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { getUsageQueryKey, normalizeUsageQuery, resolveUsageQueryPeriod } from '@happier-dev/protocol/inputs/usageQuery';
+import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { USAGE_HISTORY_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { UsageHistoryReadStateSchema, type UsageHistoryReadInput } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import * as usageSessionEvidence from '@happier-dev/protocol/usage/usageSessionEvidence';
@@ -7371,11 +7371,7 @@ describe('usage query captured Resource adapter', () => {
       expect.soft(quotaFor(mixedExact, exact)?.unusedCapacity?.windows.map(window => window.value.status)).toEqual(['available']);
       expect.soft(quotaFor(mixedExact, thirtyDays)?.unusedCapacity?.windows.map(window => window.value.status)).toEqual(['available', 'available']);
       expect.soft(sourceReads() - before).toBe(1);
-      expect(exactRanges).toHaveLength(2);
-      for (const query of [exact, thirtyDays]) {
-        const period = resolveUsageQueryPeriod(query, now);
-        expect(exactRanges).toContainEqual({ startAtMs: period.startMs, endAtMs: period.endMs });
-      }
+      expect(exactRanges).toHaveLength(1);
     }
   });
 

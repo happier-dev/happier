@@ -94,15 +94,7 @@ type DailyHistoryCoverage = ReadonlyMap<number, DayHistoryEvidence>;
 function sameDayHistoryEvidence(previous: DayHistoryEvidence | undefined, next: DayHistoryEvidence | undefined): boolean {
     return sameStrictJsonValue(previous?.coverage, next?.coverage) && sameStrictJsonValue(previous?.summary, next?.summary);
 }
-export type ProviderAccountUsageQuotaViewDemand = Readonly<{
-    key: string; range?: HistoryRange; exact: boolean;
-    /** Acquisition range shared by views of a relative period. */
-    historyRange?: HistoryRange;
-}>;
-export type RetainedProviderAccountUsageQuotaRead = Readonly<{
-    read: ConnectedServiceQuotaGetResultV1;
-    views: readonly ProviderAccountUsageQuotaViewDemand[];
-}>;
+export type ProviderAccountUsageQuotaViewDemand = Readonly<{ key: string; range?: HistoryRange; exact: boolean }>;
 type DailySummaryBasis = Readonly<{
     throughCursor: number | undefined;
     source: ConnectedServiceQuotaGetInputV1['source'];
@@ -161,7 +153,6 @@ export type ProviderAccountUsageQuotaReadOptions = Readonly<{
     readAllHistory?: Readonly<{
         /** Host-only projections of the shared operands, including current-only demand. */
         views?: readonly ProviderAccountUsageQuotaViewDemand[];
-        retainedReads?: ReadonlyMap<string, RetainedProviderAccountUsageQuotaRead>;
         onProgress(value: ConnectedServiceQuotaGetResultV1, views?: ReadonlyMap<string, ConnectedServiceQuotaGetResultV1>): void;
         onViewFailure?(source: ConnectedServiceQuotaGetInputV1['source'], queryKeys: readonly string[], error: unknown): void;
     }>;
@@ -181,14 +172,10 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
     }>): Promise<ConnectedServiceQuotaGetResultV1> {
     const transportOptions = { ...inputOptions, request: inputOptions.request ?? createServerFetchForActiveServer(inputOptions.expectedActiveServer) };
     const request = ConnectedServiceQuotaGetInputV1Schema.parse(input);
-    const sourceKey = createCanonicalJsonSigningInput(request.source);
-    const addressed = inputOptions.addressedReads?.get(sourceKey);
-    const progress = inputOptions.readAllHistory;
-    const retained = progress?.retainedReads?.get(sourceKey);
+    const addressed = inputOptions.addressedReads?.get(createCanonicalJsonSigningInput(request.source));
     // Address resolution and encrypted-byte acquisition need the captured
     // Account, not its mode. Opening still waits for the authoritative mode.
     const [{ resolution, recordRead, retainedCurrent, publication }, accountMode] = await Promise.all([(async () => {
-        if (retained?.read.current) return { resolution: null, recordRead: null, retainedCurrent: retained.read.current, publication: undefined };
         const day = inputOptions.dayChange;
         const prior = day && inputOptions.projectionDocuments?.get(day.recordId)?.daily;
         let publication: AdmittedDayPublication | undefined;
@@ -223,17 +210,8 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
     })(), inputOptions.accountMode]);
     // Addressed reads belong to the mounted Usage Resource. Its independent
     // catalog subscription supplies current entered prices during composition.
-    const retainedDaily = retained?.views.some(view => view.range && !view.exact);
-    const retainedExact = retained?.views.flatMap(view => view.exact && view.range ? [view.range] : []) ?? [];
     let options: ProviderAccountUsageQuotaReadOptions = { ...transportOptions, accountMode,
-        ...(addressed || retained ? { readEnteredMonthlyPrice: undefined } : {}),
-        ...(retained && progress ? { readAllHistory: { ...progress, views: retained.views },
-            historyView: retainedDaily ? 'daily' : undefined,
-            exactHistoryRange: retainedDaily && retainedExact.length ? {
-                startAtMs: Math.min(...retainedExact.map(range => range.startAtMs)),
-                endAtMs: Math.max(...retainedExact.map(range => range.endAtMs)),
-            } : undefined,
-        } : {}) };
+        ...(addressed ? { readEnteredMonthlyPrice: undefined } : {}) };
     throwIfAborted(options.signal); options.assertCurrent?.();
     const material = options.accountMode === 'e2ee' ? options.material ?? resolveAccountScopedCryptoMaterialFromCredentials(credentials) : undefined;
     const progressive = options.readAllHistory && (request.history || request.projection) && resolution;
@@ -250,7 +228,7 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
     const projectedRecordId = resolution?.recordId ?? retainedCurrent?.recordId;
     if (request.projection && projectedRecordId) return await readProviderAccountUsageProjectedQuota(credentials, request, {
         ...options, material,
-    }, projectedRecordId, current, recordJson, publication, retained?.read);
+    }, projectedRecordId, current, recordJson, publication);
     const historyRequest = request.history;
     if (options.readAllHistory && historyRequest && resolution) {
         let history: ConnectedServiceQuotaGetResultV1['history'];
@@ -320,7 +298,7 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
 /** The B owner materializes exact accepted observations once; Plans never carries raw history trees. */
 async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentials, request: ConnectedServiceQuotaGetInputV1,
     options: ProviderAccountUsageQuotaReadOptions, recordId: string, initialCurrent: ProviderAccountUsageSnapshotV1 | null, recordJson: unknown,
-    publication?: AdmittedDayPublication, retainedHead?: ConnectedServiceQuotaGetResultV1): Promise<ConnectedServiceQuotaGetResultV1> {
+    publication?: AdmittedDayPublication): Promise<ConnectedServiceQuotaGetResultV1> {
     const displayDemand = request.projection!;
     const daily = options.historyView === 'daily';
     const exactDemand = daily ? options.exactHistoryRange ? { ...displayDemand, range: options.exactHistoryRange } : null : displayDemand;
@@ -328,8 +306,8 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
     let current = initialCurrent;
     let history: ConnectedServiceQuotaGetResultV1['history'];
     let pageFacts: ConnectedServiceQuotaGetResultV1['pageFacts'];
-    let waitingWork = retainedHead?.waitingWork;
-    let targets = retainedHead?.targets ?? options.targets;
+    let waitingWork: ProviderAccountUsageWaitingWorkV1 | undefined;
+    let targets = options.targets;
     let active = true;
     let admitted: AdmittedUsageProjection | undefined;
     let daySummaries: ProviderAccountUsageDaySummaryV1[] | undefined;
@@ -346,12 +324,6 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
     const changedDate = change && { startAtMs: change.dayStartAtMs, endAtMs: change.dayStartAtMs + PROVIDER_ACCOUNT_USAGE_DAY_MS };
     const priorExact = options.projectionDocuments?.get(recordId)?.exact?.admitted;
     const priorExactBasis = priorExact?.settled;
-    const dayStart = (atMs: number) => Math.floor(atMs / PROVIDER_ACCOUNT_USAGE_DAY_MS);
-    const retainedDayCoverage = retainedHead && !daily && priorExactBasis
-        && hasUsageProjectionCustody(priorExact, options, credentialScope, materialBytes)
-        && dayStart(priorExactBasis.range.startAtMs) <= dayStart(displayDemand.range.startAtMs)
-        && dayStart(priorExactBasis.range.endAtMs - 1) >= dayStart(displayDemand.range.endAtMs - 1)
-        ? priorExactBasis.coverage : undefined;
     const scopedExact = change && changedDate && exactDemand && priorExactBasis
         && hasUsageProjectionCustody(priorExact, options, credentialScope, materialBytes)
         && (priorExactBasis.throughCursor ?? -1) >= change.afterCursor
@@ -386,25 +358,12 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
             interval: getProviderAccountUsageDerivationInterval({ current, history: history.entries.map(entry => entry.snapshot), nowMs }) };
         return value;
     };
-    const viewGroups = new Map<string, {
-        range?: HistoryRange; historyRange?: HistoryRange; exact: boolean; keys: string[];
-        history?: NonNullable<ConnectedServiceQuotaGetResultV1['history']>;
-        projected?: ConnectedServiceQuotaGetResultV1;
-    }>();
-    for (const { key, range, historyRange, exact } of options.readAllHistory?.views ?? []) {
+    const viewGroups = new Map<string, { range?: HistoryRange; exact: boolean; keys: string[]; projected?: ConnectedServiceQuotaGetResultV1 }>();
+    for (const { key, range, exact } of options.readAllHistory?.views ?? []) {
         const identity = JSON.stringify([range?.startAtMs, range?.endAtMs, exact]);
         const group = viewGroups.get(identity);
         if (group) group.keys.push(key);
-        else viewGroups.set(identity, { range, historyRange, exact, keys: [key] });
-    }
-    const exactGroups = [...viewGroups.values()].filter(group => group.exact && group.range);
-    const exactReads = new Map<string, { range: HistoryRange; groups: typeof exactGroups }>();
-    for (const group of exactGroups) {
-        const range = group.historyRange ?? group.range!;
-        const key = JSON.stringify(range);
-        const read = exactReads.get(key);
-        if (read) read.groups.push(group);
-        else exactReads.set(key, { range, groups: [group] });
+        else viewGroups.set(identity, { range, exact, keys: [key] });
     }
     const projectViews = () => {
         const views = new Map<string, ConnectedServiceQuotaGetResultV1>();
@@ -412,10 +371,9 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
         for (const group of viewGroups.values()) {
             const { range, exact, keys } = group;
             let value: ConnectedServiceQuotaGetResultV1;
-            if (!range || !(exact ? group.history : dailyReady)) value = head ??= projectProviderAccountUsageQuotaReadV1({ input: { source: request.source },
+            if (!range || !(exact ? history : dailyReady)) value = head ??= projectProviderAccountUsageQuotaReadV1({ input: { source: request.source },
                 current, nowMs: readNowMs, targets, waitingWork });
-            else if (exact && !daily && exactGroups.length === 1
-                && range.startAtMs === displayDemand.range.startAtMs && range.endAtMs === displayDemand.range.endAtMs) value = project();
+            else if (exact && !daily && range.startAtMs === displayDemand.range.startAtMs && range.endAtMs === displayDemand.range.endAtMs) value = project();
             else {
                 // Select raw accepted observations and day operands before deriving
                 // windows, coverage, curves or cursors for this view.
@@ -424,7 +382,8 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
                 const facts = group.projected ??= projectProviderAccountUsageQuotaReadV1({
                     input: { source: request.source, projection: { ...displayDemand, range } }, current, nowMs: readNowMs, targets, waitingWork,
                     daySummaries: exact ? daySummaries?.filter(overlaps) : daySummaries, missingDays: missingDays?.filter(overlaps),
-                    ...(exact ? { history: group.history!, exactHistoryRange: range }
+                    ...(exact ? { history: { entries: history!.entries.filter(entry => range.startAtMs <= entry.observedAtMs
+                        && entry.observedAtMs < range.endAtMs), nextCursor: null }, exactHistoryRange: range }
                         : { recentHistory, recentHistorySelection }),
                 });
                 value = facts.current === current && (targets === undefined || facts.targets === targets)
@@ -446,7 +405,7 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
         progress.onProgress(views?.values().next().value ?? project(), views);
     };
     publish();
-    const pacing = !retainedHead && options.readPacingTargets ? options.readPacingTargets().then(value => {
+    const pacing = options.readPacingTargets ? options.readPacingTargets().then(value => {
         if (!active) return;
         targets = value; publish();
     }) : Promise.resolve();
@@ -489,9 +448,7 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
         // The stored day did not change. Fold the newly admitted exact suffix over its retained facts for this view.
         return { missingDays: [], coverage: new Map<number, DayHistoryEvidence>(), summaries: [buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: summaryDate.startAtMs,
             previous, precedingSnapshot, snapshots: deltaEntries.map(entry => entry.snapshot) })] };
-    })() : retainedDayCoverage ? Promise.resolve({ coverage: retainedDayCoverage, missingDays: [],
-        summaries: [...retainedDayCoverage.values()].flatMap(day => day.summary ? [day.summary] : []) })
-        : requestProviderAccountUsageDaySummaries(credentials, { recordId,
+    })() : requestProviderAccountUsageDaySummaries(credentials, { recordId,
         // Clock evidence covers all admitted days, independently of the display range.
         includeCoverage: true, ...(summaryDate ? { range: summaryDate } : daily ? {} : { range: displayDemand.range }) }, options))
         .then(value => {
@@ -527,7 +484,7 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
             if (daily) recentHistorySelection = resolveProviderAccountUsageRecentHistoryRangesV1({ current,
                 daySummaries, missingDays, nowMs: readNowMs });
         });
-    const pendingSourceKey = retainedHead || options.includePendingWork === false ? undefined : createCanonicalJsonSigningInput(request.source);
+    const pendingSourceKey = options.includePendingWork === false ? undefined : createCanonicalJsonSigningInput(request.source);
     let pendingBasis: PendingResetStartBasis | undefined;
     const pending = pendingSourceKey === undefined ? Promise.resolve()
         : readProviderAccountUsageWaitingWork(credentials, request, current, options, {
@@ -601,13 +558,14 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
                 if (viewGroups.size || !exactDemand) publish();
                 if (!exactDemand) return;
             }
+            const demand = exactDemand!;
+            const query = { recordId, projection: demand };
             // Day coverage also changes when retention prunes rows without
             // advancing the Account feed. Revalidate it before local reuse.
             // Read before the body so a concurrent prune cannot pair an older
             // result with newer coverage on the next admission.
             await summaries;
-            const readExact = async (demand: typeof displayDemand) => {
-                const query = { recordId, projection: demand };
+            const readExact = async () => {
                 if (scopedExact && priorExact && change && changedDate && dayCoverage) {
                     const previous = scopedExact.coverage.get(change.dayStartAtMs);
                     const next = dayCoverage.get(change.dayStartAtMs);
@@ -639,7 +597,7 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
                     if ((admitted.settled?.throughCursor ?? -1) <= change.throughCursor) {
                         admitted.settled = { range: demand.range, throughCursor, coverage: dayCoverage, history };
                     }
-                    return history;
+                    return;
                 }
                 // A concurrent backfill or accepted tail can invalidate publication.
                 // Reopen canonical coverage before deriving another write.
@@ -650,7 +608,7 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
                     const overlaps = (day: number) => day < demand.range.endAtMs
                         && day + PROVIDER_ACCOUNT_USAGE_DAY_MS > demand.range.startAtMs;
                     const coverage = dayCoverage;
-                    const reuse = !retainedHead && exactReads.size <= 1 && retained && admittedPrefix && settled && coverage
+                    const reuse = retained && admittedPrefix && settled && coverage
                         && hasUsageProjectionCustody(admittedPrefix, options, credentialScope, materialBytes)
                         && settled.range.startAtMs <= demand.range.startAtMs
                         && (demand.range.endAtMs <= settled.range.endAtMs || [...coverage].every(([day, proof]) =>
@@ -768,32 +726,17 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
                     if (admitted && !reuse && dayCoverage) admitted.settled = { range: demand.range, throughCursor, coverage: dayCoverage, history };
                     pageFacts = view && history === view.history && sameStrictJsonValue(recordJson, view.record)
                         && sameStrictJsonValue(daySummaries ?? null, view.daySummaries ?? null) ? view.value.pageFacts : undefined;
-                    return history;
+                    return;
                 }
             };
-            const reads = exactReads.size ? exactReads.values() : [{ range: exactDemand!.range, groups: [] }];
-            for (const { range, groups } of reads) {
-                history = undefined;
-                admitted = undefined;
-                pageFacts = undefined;
-                const read = await readExact({ ...displayDemand, range }).catch(error => {
-                    if (!active) return;
-                    const onViewFailure = options.readAllHistory?.onViewFailure;
-                    if (!onViewFailure || !groups.length || exactReads.size === 1 && exactGroups.length === viewGroups.size) throw error;
-                    onViewFailure(request.source, groups.flatMap(group => group.keys), error);
-                    return undefined;
-                });
+            await readExact().catch(error => {
                 if (!active) return;
-                if (read) {
-                    for (const group of groups) {
-                        const viewRange = group.range!;
-                        group.history = range.startAtMs === viewRange.startAtMs && range.endAtMs === viewRange.endAtMs ? read
-                            : { entries: read.entries.filter(entry => viewRange.startAtMs <= entry.observedAtMs
-                                && entry.observedAtMs < viewRange.endAtMs), nextCursor: null };
-                    }
-                    publish();
-                }
-            }
+                const onViewFailure = options.readAllHistory?.onViewFailure;
+                const groups = [...viewGroups.values()];
+                if (!onViewFailure || groups.every(group => group.exact)) throw error;
+                onViewFailure(request.source, groups.flatMap(group => group.exact ? group.keys : []), error);
+            });
+            if (active && history) publish();
         })()]);
         const result = (viewGroups.size ? projectViews().values().next().value : undefined) ?? project();
         assertCurrent();
