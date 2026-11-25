@@ -2818,7 +2818,10 @@ describe('UI Workflow Action front door', () => {
             storage.setState({ settingsScope: h.account.accountLifetime.scope, settings: settingsParse({}) });
             await expect(h.createUiWorkflowAction({ account: h.account, transport: h.transport })({
                 actionId: 'workflow.run.get', input: { runId }, context: h.context,
-            })).resolves.toEqual({ ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' });
+            })).resolves.toEqual({
+                ok: false, errorCode: 'content_unavailable', error: 'content_unavailable',
+                failureCause: { phase: 'workflow.run.get', errorClass: 'Error', errorCode: null, httpStatus: null },
+            });
             // The authorized read supplies the Run owner's mode and opaque
             // envelopes. Locked material must prevent opening or returning them,
             // and must stop before recipient census/preparation or mutation.
