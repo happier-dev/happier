@@ -432,7 +432,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("t
         }
     });
 
-    it("rejects a credential binding if its source authority changes after admission", async () => {
+    it.each([
+        { change: "the resource is disabled", patch: { enabled: false }, enabled: false, reason: "disabled" },
+        { change: "personal use is withdrawn while the resource remains enabled",
+            patch: { sessionUsePolicy: "team_context_required" }, enabled: true, reason: "resource_changed" },
+    ] as const)("rolls back Session creation when $change after binding admission", async ({ patch, enabled, reason }) => {
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const team = await db.team.create({ data: { name: "Session birth credential currentness" } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: account.id, role: "owner" } });
@@ -454,8 +458,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("t
                         if (!withdrawal) {
                             withdrawal = inTx(peer => updateTeamCredentialResourceInTx(peer, { actorAccountId: account.id,
                                 authentication: { authenticationAuthority: "present_user", env: {} },
-                                patch: { resourceId: credential.resource.id, expectedRevision: credential.resource.revision, enabled: false } }));
-                            await expect(withdrawal).resolves.toMatchObject({ ok: true });
+                                patch: { resourceId: credential.resource.id, expectedRevision: credential.resource.revision, ...patch } }));
+                            await expect(withdrawal).resolves.toMatchObject({ ok: true, revision: credential.resource.revision + 1 });
                         }
                         return Reflect.apply(operation, model, values);
                     };
@@ -465,8 +469,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("t
         vi.stubEnv("HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED", "1");
         try {
             expect(await createOrRejoinLayout1SessionByTag(input, authentication)).toMatchObject({ kind: "rejected",
-                rejection: { reason: "team-credential-binding-invalid", code: "resource_changed" } });
+                rejection: { reason: "team-credential-binding-invalid", code: reason } });
             expect(withdrawal).toBeDefined();
+            await expect(db.teamCredentialResource.findUniqueOrThrow({
+                where: { id: credential.resource.id }, select: { enabled: true, revision: true },
+            })).resolves.toEqual({ enabled, revision: credential.resource.revision + 1 });
             expect(await db.session.count({ where: { accountId: account.id } })).toBe(0);
             expect(await db.sessionTeamCredentialBinding.count({ where: { resourceId: credential.resource.id } })).toBe(0);
             expect(await db.accountChange.count({ where: { accountId: account.id, kind: "session" } })).toBe(0);
