@@ -17620,7 +17620,7 @@ settingsSession: {
             linksReadAt: ({ time }: { time: string }) => `Links gelesen um ${time}`,
             emptyTitle: "Keine Arbeit in diesem Zeitraum",
             emptyReason: "Sitzungen auf jedem Gerät erscheinen hier.",
-            valueCaption: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'Sitzung' : 'Sitzungen'}`,
+            valueCaption: ({ count, shown }: { count: string | number; shown?: string }) => `${shown ?? count} ${Number(count) === 1 ? 'Sitzung' : 'Sitzungen'}`,
             largestTurn: "Größter Turn",
             largestFirst: "Größte zuerst",
             noSessionLine: "Keiner Happier-Sitzung zugeordnet",

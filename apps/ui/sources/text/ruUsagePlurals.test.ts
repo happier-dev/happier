@@ -17,6 +17,8 @@ describe('Russian Usage plurals', () => {
 
     it('declines the Session count caption and the PR line', () => {
         expect(work.valueCaption({ count: 3 })).toBe('3 сессии');
+        // J-B56: the plural comes from the integer, the grouped figure is only what is shown.
+        expect(work.valueCaption({ count: 1021, shown: '1 021' })).toBe('1 021 сессия');
         expect(work.prLine({ sessions: 22, state: 'открыт' })).toBe('22 сессии · открыт');
     });
 });

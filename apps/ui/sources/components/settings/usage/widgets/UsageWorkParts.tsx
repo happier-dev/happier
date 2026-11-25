@@ -344,10 +344,6 @@ export function UsageWorkSessionRows(
     <View style={styles.group}>
       <UsageWorkSectionTitle quiet caption={[outcomeOnce ? t('usage.board.work.noOutcome') : null, partsSaidOnce]
         .filter(Boolean).join(' · ') || undefined}>{props.title}</UsageWorkSectionTitle>
-      {/* An opened long list can be folded from its top too, not only after its last row (r225 #60). */}
-      {expanded && leadingUsageRows(props.parts, false).hidden > 0
-        ? <UsageShowAllRows label={props.title} total={props.parts.length} hidden={0} expanded onToggle={() => setExpanded(false)}
-          testID={`${props.testID}.lessTop`} /> : null}
       {rows}
       {more}
     </View>

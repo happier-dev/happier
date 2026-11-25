@@ -259,16 +259,19 @@ export function UsageRunLength(props: UsageChartBaseProps & Readonly<{ agents: r
         const x = (ms: number) => label + ((Math.log(Math.max(RUN_MIN_MS, Math.min(RUN_MAX_MS, ms))) - lo) / (hi - lo)) * plot;
         const ticks = [[60_000, props.labels.ticks.minute], [600_000, props.labels.ticks.tenMinutes], [3_600_000, props.labels.ticks.hour], [RUN_MAX_MS, props.labels.ticks.fourHours]] as const;
         // A tick label that would print into a kept one keeps its rule and leaves its words: on a phone "1 h" and "4 h" sit
-        // 27 px apart and read "1 h4 h" (USAGE-ACCEPT 1121 #17). The two outer ticks always keep theirs, so the narrowest
-        // axis still reads from its shortest run to its longest (r227 #77); the middle ones fill in where they fit.
+        // 27 px apart and read "1 h4 h" (USAGE-ACCEPT 1121 #17). Both outer ticks keep theirs where they fit, so a narrow axis
+        // still reads from its shortest run to its longest (r227 #77); the middle ones fill in where they fit.
         const tickSpan = (ms: number, text: string) => {
           const reach = textWidth(text, svgText.fontSize);
           return ms === RUN_MAX_MS ? [x(ms) - reach, x(ms)] : [x(ms) - reach / 2, x(ms) + reach / 2];
         };
         const spans = ticks.map(([ms, text]) => tickSpan(ms, text));
         const last = ticks.length - 1;
-        const labelled = ticks.map((_, at) => at === 0 || at === last);
-        for (let at = 1, kept = 0; at < last; at++) {
+        // The end tick always keeps its label; the first keeps its own where it fits beside the end, and otherwise leaves
+        // its words to its rule as before (J-B61).
+        const labelled = ticks.map((_, at) => at === last || (at === 0 && spans[0]![1]! + 4 <= spans[last]![0]!));
+        for (let at = 1, kept = labelled[0] ? 0 : -1; at < last; at++) {
+          if (kept < 0) { if (spans[at]![1]! + 4 <= spans[last]![0]!) { labelled[at] = true; kept = at; } continue; }
           if (spans[kept]![1]! + 4 <= spans[at]![0]! && spans[at]![1]! + 4 <= spans[last]![0]!) { labelled[at] = true; kept = at; }
         }
         // A name wider than its column is cut to it, so it never runs into the distribution; the values keep it whole.

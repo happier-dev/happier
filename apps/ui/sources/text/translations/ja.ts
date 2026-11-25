@@ -17754,7 +17754,7 @@ settingsSession: {
             linksReadAt: ({ time }: { time: string }) => `リンク読み取り ${time}`,
             emptyTitle: "この期間の作業はありません",
             emptyReason: "どのマシンで実行したセッションもここに表示されます。",
-            valueCaption: ({ count }: { count: string | number }) => `${count} セッション`,
+            valueCaption: ({ count, shown }: { count: string | number; shown?: string }) => `${shown ?? count} セッション`,
             largestTurn: "最大のターン",
             largestFirst: "大きい順",
             noSessionLine: "Happier セッションに紐付いていません",

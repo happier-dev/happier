@@ -17583,7 +17583,7 @@ settingsSession: {
             linksReadAt: ({ time }: { time: string }) => `ligações lidas às ${time}`,
             emptyTitle: "Nenhum trabalho neste período",
             emptyReason: "As sessões de qualquer máquina aparecem aqui.",
-            valueCaption: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'sessão' : 'sessões'}`,
+            valueCaption: ({ count, shown }: { count: string | number; shown?: string }) => `${shown ?? count} ${Number(count) === 1 ? 'sessão' : 'sessões'}`,
             largestTurn: "Maior turno",
             largestFirst: "Do maior para o menor",
             noSessionLine: "Sem sessão Happier associada",

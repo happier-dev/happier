@@ -17422,7 +17422,7 @@ settingsSession: {
             linksReadAt: ({ time }: { time: string }) => `ссылки прочитаны в ${time}`,
             emptyTitle: "За этот период работы нет",
             emptyReason: "Здесь появятся сессии с любой машины.",
-            valueCaption: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), one: 'сессия', few: 'сессии', many: 'сессий' })}`,
+            valueCaption: ({ count, shown }: { count: string | number; shown?: string }) => `${shown ?? count} ${plural({ count: Number(count), one: 'сессия', few: 'сессии', many: 'сессий' })}`,
             largestTurn: "Самый большой ход",
             largestFirst: "Сначала самые большие",
             noSessionLine: "Не связано с сессией Happier",

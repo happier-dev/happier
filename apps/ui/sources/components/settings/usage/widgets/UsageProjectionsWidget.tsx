@@ -312,8 +312,10 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
   if (list) {
     // The list is where each live window lands. A used-up window has no projection left to make: its meter and its
     // return are Limits' and Resets', so here it is one count (acceptance 11-18 #7).
+    // An older reading that is used up keeps its row, so the freshness owner's age stays beside it (J-B57); only
+    // current used-up windows fold into the count.
     const live = rows.map(row => ({ ...row, statement: planWindowStatement(row.window, nowMs) }))
-      .filter(row => row.statement.kind !== 'used_up');
+      .filter(row => row.statement.kind !== 'used_up' || row.window.paceUnavailable === 'stale');
     const spent = rows.length - live.length;
     const lead = leadingUsageRows(live, expanded);
     // One cause, said once: when every listed window lacks a projection for the same reason ("reading is
@@ -754,11 +756,13 @@ function ProjectionRow(
   const label = `${props.name.title} · ${window.label}`;
   const text = usePlanText();
   const expired = window.paceUnavailable === 'stale';
-  const statusText = !props.resetOnly && statement.kind === 'unavailable' ? statement.text : null;
+  const statusText = !props.resetOnly && statement.kind === 'unavailable' || statement.kind === 'used_up' ? statement.text : null;
   // One kind of fact per row (acceptance 11-22 #40): the column says where this pace lands and nothing else; when the
   // window resets, and why it has no projection, are its caption.
   const projected = !expired && (statement.kind === 'at_reset' || statement.kind === 'depletes');
-  const caption = [formatPlanResetPhrase(window.resetAtMs, props.nowMs), statusText].filter(Boolean).join(' · ');
+  // Used up already says when it comes back; its reset is not said twice.
+  const caption = [statement.kind === 'used_up' ? null : formatPlanResetPhrase(window.resetAtMs, props.nowMs), statusText]
+    .filter(Boolean).join(' · ');
   const projection = projected ? statement.text : '';
   const locale = getPreferredLanguage();
   const exact = window.remainingFraction === null ? null : formatHappierDataExactShare(window.remainingFraction, locale);

@@ -106,3 +106,22 @@ it('keeps a phone Run length readable: long names cut to their column, crowded t
     expect(chart.container.querySelector('[role="table"]')?.textContent).toContain('Custom ACP Agent');
   } finally { chart.unmount(); }
 });
+
+it('keeps both outer Run length labels where they fit and drops the first when they would collide (r227 #77, J-B61)', () => {
+  const draw = (width: number) => {
+    const chart = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={renderDatum}>
+      <UsageRunLength {...common} width={width} agents={[{ id: 'custom-acp', name: 'Custom ACP Agent', color: '#888' }]} label="Run-length"
+        model={{ openCount: 0, croppedCount: 0, rows: [{ agentId: 'custom-acp', samples: 3, medianMs: 60000, p90Ms: 120000, durationsMs: [30000, 60000, 120000] }] }}
+        labels={{ duration: ms => `${ms / 1000} s`, unknownAgent: 'Unknown', detail: (ms, n) => `p90 ${ms / 60000} min · ${n} closed turns`,
+          ticks: { minute: '1 min', tenMinutes: '10 min', hour: '1 h', fourHours: '4 h' }, caption: 'Closed turns',
+          values: { show: 'Exact values', hide: 'Hide values', agentColumn: 'Agent', medianColumn: 'Median', p90Column: 'p90', samplesColumn: 'Samples', formatCount: String } }} />
+    </ChartInteractionProvider>);
+    try { return [...chart.container.querySelectorAll('svg text')].map(node => node.textContent); } finally { chart.unmount(); }
+  };
+  const roomy = draw(358);
+  expect(roomy).toContain('1 min');
+  expect(roomy).toContain('4 h');
+  const tight = draw(260);
+  expect(tight).toContain('4 h');
+  expect(tight).not.toContain('1 min');
+});

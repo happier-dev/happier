@@ -17747,7 +17747,7 @@ settingsSession: {
         linksReadAt: ({ time }: { time: string }) => `linki odczytane o ${time}`,
         emptyTitle: "Brak pracy w tym okresie",
         emptyReason: "Sesje uruchamiane na dowolnej maszynie pojawią się tutaj.",
-        valueCaption: ({ count }: { count: string | number }) => `Sesje: ${count}`,
+        valueCaption: ({ count, shown }: { count: string | number; shown?: string }) => `Sesje: ${shown ?? count}`,
         largestTurn: "Największa tura",
         largestFirst: "Od największej",
         noSessionLine: "Niepowiązane z sesją Happier",

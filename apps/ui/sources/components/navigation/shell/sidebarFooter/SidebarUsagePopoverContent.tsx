@@ -449,7 +449,7 @@ export function SidebarUsagePopoverView(props: Readonly<{
                 <Text style={styles.title}>{t('settings.usage')}</Text>
                 {scoped ? <Text style={styles.headerScope} numberOfLines={1}>{t('sidebarFooter.usageThisSession')}</Text> : null}
                 <View style={styles.headerEnd}>
-                    {shownAsOf !== null ? <SurfaceAsOfLabel at={shownAsOf} testID="sidebar-usage-as-of" /> : null}
+                    {shownAsOf !== null ? <SurfaceAsOfLabel at={shownAsOf} testID="sidebar-usage-as-of" yieldsFirst /> : null}
                     {refresh && refreshKeys.length > 0 ? (
                         <IconButton
                             testID="sidebar-usage-refresh"

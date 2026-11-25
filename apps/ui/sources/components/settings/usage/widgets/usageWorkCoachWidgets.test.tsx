@@ -57,6 +57,7 @@ import { getMachineContributionRegistryProjectionRevision } from '@/sync/ops/mac
 import { UsageWorkMarks, UsageWorkSectionTitle, usageWorkLinksNotice } from './UsageWorkParts';
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import { UsageSessionValueWidget } from './UsageSessionValueWidget';
+import { UsageSessionPageHost } from './usageBodyKit';
 import { UsageWorkAutopsy } from './UsageWorkAutopsy';
 import { UsageHumanLoopWidget } from './UsageHumanLoopWidget';
 import { UsageParallelWidget } from './UsageParallelWidget';
@@ -553,8 +554,13 @@ describe('Work and Coach widget bodies', () => {
     const footer = screen.findByTestId('ledger.project.p1.session.more');
     expect(footer?.findAll(node => typeof node.props.children === 'string' || typeof node.props.children === 'number')
       .map(node => String(node.props.children)).join(' ')).toContain('10');
+    // One disclosure in both states (J-B59): opening never adds a second "Show less".
+    const toggles = () => screen.findAll(node => typeof node.type === 'string'
+      && /^ledger\.project\.p1\.session\..*toggle$/.test(String(node.props.testID ?? ''))).length;
+    expect(toggles()).toBe(1);
     await screen.pressByTestIdAsync('ledger.project.p1.session.more.toggle');
     expect(sessions()).toHaveLength(10);
+    expect(toggles()).toBe(1);
     expect(total()).toBe(145);
   });
   it.each(['linked PR', 'nested branch', 'standalone branch'] as const)(
@@ -1247,9 +1253,9 @@ describe('Work and Coach widget bodies', () => {
       <UsageSessionValueWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
         slice={{ ...slice, work }} id="usage_session_value" testID="value" />
     </WidgetFrameBodyCaptionContext.Provider>);
-    const grouped = (1001).toLocaleString();
-    expect(caption).toBe(t('usage.board.work.valueCaption', { count: grouped }));
-    expect(screen.getTextContent()).toContain(`· ${grouped}`);
+    // The app language (English here) groups the count; the copy owner still decides the plural from the integer (J-B56).
+    expect(caption).toBe('1,001 sessions');
+    expect(screen.getTextContent()).toContain('· 1,001');
     expect(screen.getTextContent()).not.toContain('· 1001');
   });
 
@@ -1422,9 +1428,15 @@ describe('Work and Coach widget bodies', () => {
       const text = screen.getTextContent();
       expect.soft(text.includes(t('usage.board.page.sessionRecipientFigure'))).toBe(level === 'view');
       expect.soft(text.includes(t('usage.board.page.thisSession'))).toBe(level === 'owner');
-      // A Session's own page never draws the dashboard's empty line, for its owner either (r230 #83).
-      expect.soft(text.includes(t('usage.board.work.emptyReason'))).toBe(false);
+      // Outside a Session's own page (a Session-pinned widget on the Account Work view), only the recipient's zero
+      // drops the empty line (J-B58).
+      expect.soft(text.includes(t('usage.board.work.emptyReason'))).toBe(level === 'owner');
       await screen.unmount();
+      // On the Session's own page the empty line never shows, for its owner either (r230 #83).
+      const hosted = await renderScreen(<UsageSessionPageHost value="s1"><UsageSessionValueWidget {...props} query={sessionQuery}
+        slice={{ ...slice, shownQuery: sessionQuery, work: none }} id="usage_session_value" testID="value" /></UsageSessionPageHost>);
+      expect.soft(hosted.getTextContent().includes(t('usage.board.work.emptyReason'))).toBe(false);
+      await hosted.unmount();
     } finally { storage.setState(previous, true); }
   });
   it('says only the PR is missing for a turn whose commit is linked, and keeps the broad absence for a turn with no git evidence', async () => {

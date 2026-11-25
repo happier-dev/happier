@@ -18,7 +18,7 @@ import {
   type UsageAgentCalendar,
 } from './usageChartModels';
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
-import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { normalizeUsageQuery, resolveUsageQueryPeriod } from '@happier-dev/protocol/inputs/usageQuery';
 import { projectUsagePlanetFamilyModels } from './usageChartModels';
 
 const DAY = 86_400_000;
@@ -790,6 +790,19 @@ describe('Usage chart models', () => {
     const running = projectUsageSkyModel(calendar({ days }), 'tokens', 'intensity', START + 4 * DAY + 11 * HOUR);
     expect(running.days.map(day => day.partial === true)).toEqual([false, false, false, false, true]);
     const ended = projectUsageSkyModel(calendar({ days }), 'tokens', 'intensity', START + 5 * DAY + HOUR);
+    expect(ended.days.some(day => day.partial)).toBe(false);
+  });
+  // J-B55: a "Last 7 days" read ends at its read clock; the render comes later. Today stays partial on that calendar.
+  it('marks today partial for a normal relative read rendered after it was read', () => {
+    const readAt = START + 6 * DAY + 11 * HOUR;
+    const period = resolveUsageQueryPeriod(normalizeUsageQuery({ period: { relative: '7days' }, timeZoneOffsetMinutes: 0 }), readAt);
+    const days = [bucket(5, { tokens: 900, eventCount: 3 }), bucket(6, { tokens: 10, eventCount: 1 })];
+    const model = projectUsageSkyModel(calendar({ period: { startMs: period.startMs!, endMs: period.endMs }, days }), 'tokens', 'intensity',
+      readAt + 4 * MINUTE);
+    expect(model.days.map(day => day.partial === true)).toEqual([false, false, false, false, false, false, true]);
+    // A closed day stays closed, even when its read and render fall on a later day.
+    const ended = projectUsageSkyModel(calendar({ period: { startMs: START, endMs: START + 5 * DAY }, days }), 'tokens', 'intensity',
+      START + 5 * DAY + HOUR);
     expect(ended.days.some(day => day.partial)).toBe(false);
   });
   it('does not turn an absent day of partial evidence into measured inactivity', () => {

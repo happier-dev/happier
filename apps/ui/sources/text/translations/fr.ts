@@ -17349,7 +17349,7 @@ settingsSession: {
             linksReadAt: ({ time }: { time: string }) => `liens lus à ${time}`,
             emptyTitle: "Aucun travail sur cette période",
             emptyReason: "Les sessions de chaque machine apparaissent ici.",
-            valueCaption: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'session' : 'sessions'}`,
+            valueCaption: ({ count, shown }: { count: string | number; shown?: string }) => `${shown ?? count} ${Number(count) === 1 ? 'session' : 'sessions'}`,
             largestTurn: "Plus gros tour",
             largestFirst: "Du plus grand au plus petit",
             noSessionLine: "Non liée à une session Happier",

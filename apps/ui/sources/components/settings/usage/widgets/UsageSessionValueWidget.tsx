@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import {
+  formatHappierDataValue,
   HappierPressable,
   OutcomeScatter,
   RankedRows,
@@ -14,7 +15,7 @@ import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFram
 import { useUsageAgentColor, usageOtherColor, usageSeriesColor } from '../usageAccent';
 import { usageTokensFromPartsNote } from '../usageCostPresentation';
 import { useUnistyles } from 'react-native-unistyles';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import {
   UsageBodyInsufficient,
   UsageCoverageLine,
@@ -24,6 +25,9 @@ import {
   type UsageBodyProps,
   leadingUsageRows,
   UsageShowAllRows,
+  useUsageSessionPageHost,
+  useUsageSessionRecipient,
+  usageQuerySingleSession,
 } from './usageBodyKit';
 import { useUsageWork } from './useUsageWork';
 import { partitionUsageWorkMoneyRows, projectUsageSessionValuePlots, type UsageWorkSessionRow } from './usageWorkPresentation';
@@ -52,6 +56,9 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
   const agentColor = useUsageAgentColor();
   const presentation = useWidgetPresentation();
   const rowMetrics = usePageRowMetrics('list');
+  // The host page decides it is a Session's own page; a Session filter on the query does not (J-B58).
+  const sessionPage = useUsageSessionPageHost() !== null;
+  const viewerOwn = useUsageSessionRecipient(usageQuerySingleSession(props.query), props.serverId);
   const outside = <UsageOutsideSessions serverId={props.serverId} query={props.query} testID={`${props.testID}.outside`} />;
   const { summary, format, datum, basisLabel, captioned, sessionLabel, openSession } = useUsageWork(
     props.slice,
@@ -62,8 +69,9 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
   useWidgetFrameBodyCaption(
     props.query.session !== null ? null
       : summary
-        // Grouped by locale like every other Usage count ("1,325 sessions", r230 #86).
-        ? t('usage.board.work.valueCaption', { count: summary.sessions.length.toLocaleString() })
+        // Grouped in the app's language ("1,325 sessions", r230 #86); the copy owner takes the plural from the integer (J-B56).
+        ? t('usage.board.work.valueCaption', { count: summary.sessions.length,
+          shown: formatHappierDataValue(summary.sessions.length, getPreferredLanguage()) })
         : usagePeriodPhrase(props.query),
   );
   if (!summary) {
@@ -90,9 +98,9 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
   }
   if (summary.sessions.length === 0)
     return (
-      // A Session's own page (its owner, or a viewer given access reading their own zero) answers in the autopsy's
-      // figures: not with a dashboard's empty state (r226 #62, r230 #83).
-      <View>{props.query.session !== null ? null : <UsageBodyInsufficient
+      // A Session's own page, and a viewer given access reading their own zero, answer in the autopsy's figures: not with a
+      // dashboard's empty state (r226 #62, r230 #83). A Session-pinned widget elsewhere keeps the empty line (J-B58).
+      <View>{sessionPage || viewerOwn ? null : <UsageBodyInsufficient
         testID={`${props.testID}.empty`}
         replacesContent={false}
         title={t('usage.board.work.emptyTitle')}

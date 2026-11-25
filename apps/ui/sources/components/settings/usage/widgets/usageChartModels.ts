@@ -89,9 +89,11 @@ export function projectUsageSkyModel(calendar: UsageAgentCalendar, metric: Usage
   const byDate = new Map(calendar.days.map((bucket) => [bucket.date, bucket]));
   const dates = periodDates(calendar);
   const field = METRIC_FIELDS[metric];
-  // The day the reference falls in, while the period still runs: drawn as partial, never as a finished day (r227 #76).
-  const running = referenceMs >= calendar.period.startMs && referenceMs < calendar.period.endMs
-    ? resolveUsageCalendarInstant(referenceMs, calendar.timeZoneOffsetMinutes).date : null;
+  // The calendar's last day is partial while it is still today on that calendar: a relative read ends at its read
+  // clock and is drawn later, so the last included instant (not the render clock) names the day (r227 #76, J-B55).
+  // A last day before today is closed.
+  const lastDay = resolveUsageCalendarInstant(calendar.period.endMs - 1, calendar.timeZoneOffsetMinutes).date;
+  const running = lastDay === resolveUsageCalendarInstant(referenceMs, calendar.timeZoneOffsetMinutes).date ? lastDay : null;
   const days: UsageSkyDay[] = dates.map((date) => {
     const bucket = byDate.get(date);
     if (!bucket) return { date, state: emptyCalendarMetric(calendar, metric) === 0 ? 'inactive' : 'unknown' };

@@ -17119,7 +17119,7 @@ settingsSession: {
             linksReadAt: ({ time }: { time: string }) => `链接读取于 ${time}`,
             emptyTitle: "本期没有工作",
             emptyReason: "在任何机器上运行的会话都会显示在这里。",
-            valueCaption: ({ count }: { count: string | number }) => `${count} 个会话`,
+            valueCaption: ({ count, shown }: { count: string | number; shown?: string }) => `${shown ?? count} 个会话`,
             largestTurn: "最大的轮次",
             largestFirst: "按用量从大到小",
             noSessionLine: "未关联到 Happier 会话",

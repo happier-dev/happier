@@ -20885,7 +20885,7 @@ const enUsage = {
       linksReadAt: ({ time }: { time: string }) => `links read ${time}`,
       emptyTitle: "No work in this period",
       emptyReason: "Sessions you run on any machine show up here.",
-      valueCaption: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'session' : 'sessions'}`,
+      valueCaption: ({ count, shown }: { count: string | number; shown?: string }) => `${shown ?? count} ${Number(count) === 1 ? 'session' : 'sessions'}`,
       largestTurn: "Largest turn",
       largestFirst: "Largest first",
       noSessionLine: "Not tied to a Happier session",

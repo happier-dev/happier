@@ -1036,10 +1036,14 @@ it('counts a used-up window by its value, even when its reading is past the read
     footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' }, geometry: { width: 520, height: 260 } }}>
     <UsageProjectionsWidget {...bodyProps([spent, renewed, live])} id="usage_projections" testID="proj" />
   </WidgetPresentationProvider>);
-  // Nothing comes back before the reset: an older 0% with its reset ahead is still used up, never an "old" row.
-  expect(screen.findByTestId('proj.window.spent.weekly')).toBeFalsy();
-  expect(screen.findByTestId('proj.usedUp')).toBeTruthy();
-  expect(screen.getTextContent()).toContain(t('usage.board.plans.projectionsUsedUp', { count: 1 }));
+  // Nothing comes back before the reset: an older 0% with its reset ahead reads as used up, never as "reading is old",
+  // and it keeps its row with the reading's age (J-B57), rather than vanishing into the used-up count.
+  expect(screen.findByTestId('proj.window.spent.weekly')).toBeTruthy();
+  expect(screen.findByTestId('proj.window.spent.weekly.freshness')).toBeTruthy();
+  expectProjectionRowReading(screen, 'proj.window.spent.weekly', 'freshness', [
+    'Weekly', '0% left', t('surfaceState.asOf', { time: formatAsOfTime(now - 2 * 60_000, now) }), t('usage.board.plans.cellUsedUp'),
+  ]);
+  expect(screen.findByTestId('proj.usedUp')).toBeFalsy();
   // Its reset has passed, so the old 0% says nothing about now: it stays listed with its age.
   expect(screen.findByTestId('proj.window.renewed.weekly')).toBeTruthy();
 });

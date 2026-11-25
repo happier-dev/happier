@@ -83,6 +83,20 @@ export function useUsagePluginTheme(): PluginUiThemeV1 {
   return usePluginUiTheme(theme);
 }
 
+/**
+ * The Session whose own usage page hosts these bodies (the route's Session), decided once by the page. A Session filter
+ * on a query is not that fact: a Session-pinned widget can sit on the Account Work view (J-B58).
+ */
+const UsageSessionPageHostContext = React.createContext<string | null>(null);
+
+export function UsageSessionPageHost(props: Readonly<{ value: string | null; children: React.ReactNode }>) {
+  return <UsageSessionPageHostContext.Provider value={props.value}>{props.children}</UsageSessionPageHostContext.Provider>;
+}
+
+export function useUsageSessionPageHost(): string | null {
+  return React.useContext(UsageSessionPageHostContext);
+}
+
 /** The one Session a query reads, when it reads exactly one. */
 export function usageQuerySingleSession(query: Partial<Pick<UsageQuery, 'session'>>): string | null {
   return typeof query.session === 'string' ? query.session : query.session?.length === 1 ? query.session[0]! : null;

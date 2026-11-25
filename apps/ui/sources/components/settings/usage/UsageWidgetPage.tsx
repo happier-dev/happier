@@ -80,7 +80,7 @@ import {
 } from './widgets/usageWidgetBatch';
 import { useOpenNewSession } from '@/components/sessions/new/navigation/newSessionEntry';
 import type { UsagePageHistoryFact } from './useUsageWidgetPageContext';
-import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageFailure, readUsagePageFreshness, readUsagePageWorkOffline, UsageScopeRefusalLine, usageSourceTitle, useUsageSessionRecipient } from './widgets/usageBodyKit';
+import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageFailure, readUsagePageFreshness, readUsagePageWorkOffline, UsageScopeRefusalLine, UsageSessionPageHost, usageSourceTitle, useUsageSessionRecipient } from './widgets/usageBodyKit';
 
 const PRESET_ICON: Readonly<Record<UsageWidgetPresetId, IconName>> = {
   overview: 'squares-four',
@@ -248,7 +248,8 @@ function UsagePageDocument(props: UsagePageDocumentProps) {
     [queryOverrides, visitMetric]);
   return <UsageWidgetBatchProvider enabled={layout.state.status === 'ready'} clauses={clauses} inventoryQuery={inventoryQuery} inventoryOnly={inventoryOnly} callerContext={callerContext} callerQuery={callerContext ? props.page.callerQuery : undefined}
     queryWidgetIds={queryWidgetIds}>
-    <UsagePageDocumentContent {...props} layout={layout} />
+    {/* The route's Session is the host fact bodies read; a widget's Session pin is not (J-B58). */}
+    <UsageSessionPageHost value={props.sessionId ?? null}><UsagePageDocumentContent {...props} layout={layout} /></UsageSessionPageHost>
   </UsageWidgetBatchProvider>;
 }
 

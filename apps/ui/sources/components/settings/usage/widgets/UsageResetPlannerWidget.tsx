@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { ChartDatum, HAPPIER_DATA_METRICS, IntervalTimeline, formatHappierDataExactShare, type HappierChartDatum } from '@happier-dev/plugin-ui/presentation';
 import { AccountUsageResetsLine } from '@/components/settings/connectedServices/usage/AccountUsageFacts';
-import { useWidgetFrameBodyCaption, useWidgetFrameBodyMeta } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -97,19 +97,6 @@ export function UsageResetPlannerWidget(props: UsageBodyProps) {
   const sessions = props.query.session;
   const sessionId = Array.isArray(sessions) ? (sessions.length === 1 ? sessions[0]! : null) : (sessions ?? null);
   useWidgetFrameBodyCaption(t('usage.board.plans.resetsCaption'));
-  const selectedEvents = React.useMemo(() => projection.events.flatMap<UsageCalendarExportInput['selectedEvents'][number]>(event => {
-    const account = projection.accounts.find(account => account.key === event.accountKey)?.source.ref;
-    if (!account) return [];
-    if (event.kind === 'renews') return [{ account, kind: 'renewal' as const }];
-    if (event.kind === 'reset' && event.window) return [{ account, kind: 'reset' as const, meterId: event.window.meterId }];
-    return [];
-  }), [projection.events, projection.accounts]);
-  // Export acts on the whole widget: it sits in the frame's header, as the lab draws it, never a bar under the axis
-  // (r223 #56). An identity-stable node, lent once per change of what it exports.
-  const exportAction = React.useMemo(() => selectedEvents.length > 0 ? <UsageCalendarExportButton
-    input={{ query: props.query, selectedEvents }} serverId={props.serverId} testID={`${props.testID}.calendarExport`} /> : null,
-  [selectedEvents, props.query, props.serverId, props.testID]);
-  useWidgetFrameBodyMeta(exportAction);
   if (projection.accounts.length === 0) {
     return (
       <View style={styles.body}>
@@ -130,6 +117,13 @@ export function UsageResetPlannerWidget(props: UsageBodyProps) {
       ? account.read.waitingWork.entries.map((entry) => ({ account, entry }))
       : [],
   );
+  const selectedEvents = projection.events.flatMap<UsageCalendarExportInput['selectedEvents'][number]>(event => {
+    const account = projection.accounts.find(account => account.key === event.accountKey)?.source.ref;
+    if (!account) return [];
+    if (event.kind === 'renews') return [{ account, kind: 'renewal' as const }];
+    if (event.kind === 'reset' && event.window) return [{ account, kind: 'reset' as const, meterId: event.window.meterId }];
+    return [];
+  });
   return (
     <View style={styles.body} testID={`${props.testID}.resets`}>
       {projection.events.length === 0 ? projection.accounts.some(account => !account.read?.current) ? null : (
@@ -164,6 +158,8 @@ export function UsageResetPlannerWidget(props: UsageBodyProps) {
           })()}
         </>
       )}
+      {selectedEvents.length > 0 ? <UsageCalendarExportButton input={{ query: props.query, selectedEvents }}
+        serverId={props.serverId} testID={`${props.testID}.calendarExport`} /> : null}
       {withCredits.length > 0 ? (
         <View style={styles.waiting} testID={`${props.testID}.wallet`}>
           <UsagePlanSectionHead title={t('usage.board.plans.walletTitle')} meta={t('usage.board.plans.walletMeta')} />
