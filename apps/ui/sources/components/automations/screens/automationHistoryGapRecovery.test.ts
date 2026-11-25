@@ -45,6 +45,7 @@ import { createActivePluginAccountAvailabilityProjectionHydrator } from '@/sync/
 import { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionInputs, readCachedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { resetMachineProjectionReadsForTests } from '@/sync/ops/machineContributionRegistryProjection';
 import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { chooseDropdownMenuItem } from '@/dev/testkit/harness/dropdownMenuHarness';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -788,8 +789,7 @@ describe('AutomationHistoryGapRecoveryAction', () => {
             onChangeDraft: () => {}, status: 'ready', onRetry: () => {},
             stepsUnsaved: false, whereTarget: null, whereSummary: null, inputs: [],
         }));
-        await screen.pressByTestIdAsync(`gap-workflow-trigger:saved:${TRIGGER_ID}-more`);
-        await screen.pressByTestIdAsync(`gap-workflow-trigger:saved:${TRIGGER_ID}-history`);
+        await chooseDropdownMenuItem(screen, `gap-workflow-trigger:saved:${TRIGGER_ID}-more`, 'history');
         await waitForHomeGovernance(() => expect(screen.findByTestId('automation-history-gap-recovery')).not.toBeNull());
         await waitForHomeGovernance(() => expect(screen.findAll(row =>
             row.props.testID === 'automation-history-gap-recovery-run' && typeof row.props.onPress === 'function').length).toBeGreaterThan(0));
