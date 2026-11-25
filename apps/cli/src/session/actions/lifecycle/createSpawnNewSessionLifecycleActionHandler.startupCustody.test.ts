@@ -37,6 +37,8 @@ const sessionChanges = createSessionLiveWorkProducer({
 describe('Session startup operation custody', () => {
   it.each([
     { code: 'agent_session_error', message: 'PRIVATE_CONSTRUCTION_BODY', expectedCode: 'agent_session_error', reason: 'unclassified_provider_error' },
+    { code: 'pi_rpc_unexpected_exit', message: 'Pi RPC process exited with code 1: PRIVATE_STDERR',
+      expectedCode: 'agent_session_error', reason: 'unclassified_provider_error' },
     { code: 'agent_startup_failed', message: 'PRIVATE_CONSTRUCTION_BODY', expectedCode: 'agent_startup_failed', reason: 'unclassified_provider_error' },
     { code: 'mcp_tool_catalog_unavailable', message: '', expectedCode: 'mcp_tool_catalog_unavailable', reason: 'unclassified_provider_error' },
     { code: 'agent_session_error', message: 'Authentication required PRIVATE_DEVICE_CODE', expectedCode: 'provider_endpoint_auth_required', reason: 'authentication_required' },
@@ -44,7 +46,7 @@ describe('Session startup operation custody', () => {
     { code: 'model_selection_required', message: 'The selected Muse model is unavailable in the native catalog. PRIVATE_MODEL', expectedCode: 'agent_startup_model_reconciliation_failed', reason: 'model_selection_required' },
     { code: 'agent_session_error', message: 'OpenCode model "PRIVATE_MODEL" is not selectable', expectedCode: 'agent_startup_model_reconciliation_failed', reason: 'model_selection_required' },
   ] as const)(
-    'settles and retires rejected construction ($expectedCode/$reason)', async ({ code, message, expectedCode, reason }) => {
+    'settles and retires rejected construction ($code → $expectedCode/$reason)', async ({ code, message, expectedCode, reason }) => {
     const sessionId = 'construction-failed-child';
     // Only process liveness and marker persistence are substituted boundaries.
     // The recorder, observer, spawn handler and durable settlement remain real.
@@ -65,6 +67,7 @@ describe('Session startup operation custody', () => {
       createSessionHostServiceOwners,
       runtime: { sessions: { open: async () => {
         if (code === 'agent_session_error') throw new Error(message);
+        if (code === 'pi_rpc_unexpected_exit') throw Object.assign(new Error(message), { code });
         if (code === 'mcp_tool_catalog_unavailable') throw new Error('MCP catalog must refuse before native open');
         throw new PluginError({ code, message, ...(code === 'model_selection_required' ? {} : { details: { failureCause } }) });
       } } },
@@ -113,11 +116,13 @@ describe('Session startup operation custody', () => {
         if (result.type !== 'error') throw new Error('Expected conclusive construction failure');
         return { ok: true, result: projectSessionSpawnFailure(result) };
       } });
+    const expectedCause = { phase: 'client_start', failureReason: reason,
+      ...(code === 'pi_rpc_unexpected_exit' ? { providerErrorCode: code } : {}) };
     expect(response).toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed',
-      launchError: { code: expectedCode, failureCause: { phase: 'client_start', failureReason: reason } } } });
+      launchError: { code: expectedCode, failureCause: expectedCause } } });
     expect(await operations.handlers.getV2({ operationId: 'construction-failed', waitForTerminal: true }))
       .toMatchObject({ kind: 'found', operation: { state: 'failed', result: { type: 'error', code: 'spawn_failed',
-        launchError: { code: expectedCode, failureCause: { phase: 'client_start', failureReason: reason } } } } });
+        launchError: { code: expectedCode, failureCause: expectedCause } } } });
     expect(child.exitCode).toBeNull();
     expect(tracked.stopRequestedAtMs).toBeTypeOf('number');
     expect(JSON.stringify(response)).not.toContain('PRIVATE_');
