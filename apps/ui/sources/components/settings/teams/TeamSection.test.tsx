@@ -110,6 +110,26 @@ describe('TeamSection Account binding', () => {
 
     afterEach(() => standardCleanup());
 
+    it.each([
+        { status: 400, code: 'invalid_team_input', message: 'teams.errors.invalidTeamLink', action: 'teams.title' },
+        { status: 404, code: 'team_not_found', message: 'teams.errors.notFound', action: 'teams.title' },
+        { status: 404, code: 'teams_unavailable', message: 'teams.unavailable.disabled', action: null },
+        { status: 503, code: 'team_authentication_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable', action: null },
+        { status: 503, code: null, message: 'teams.errors.loadFailed', action: 'teams.unavailable.retry' },
+    ])('presents the Team read refusal $code with only a working next step', async ({ status, code, message, action }) => {
+        const serverId = await addTeamHome();
+        harness.answer(serverId, TEAM_GET_PATH, { status, body: code ? { error: code } : {} });
+        const screen = await renderScreen(<TeamSection serverId={serverId} teamId="team-1">
+            {(context) => <ChildProbe context={context} />}
+        </TeamSection>);
+
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        const findNotice = () => screen.findAllByType(SurfaceStateCard).find((node) => node.props.testID === 'team-unavailable');
+        await waitForHomeGovernance(() => expect(findNotice()?.props.reason).toContain(message));
+        expect(findNotice()?.props.action?.label ?? null).toBe(action);
+        expect(screen.findByTestId('team-section-child-probe')).toBeNull();
+    });
+
     it('remounts section-local state and rejects a stale approval registration after AccountChange', async () => {
         const serverId = await addTeamHome();
         const staleArtifactId = await openTeamRenameApproval(serverId, 'team-rename-stale');

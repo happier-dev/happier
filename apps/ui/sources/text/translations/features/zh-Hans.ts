@@ -7638,6 +7638,8 @@ const zhHans: typeof en = {
     errorErasureTransitionCleanupPending: '账户删除正在等待加密数据清理完成。请再次尝试删除账户。',
     errorErasureUploadPending: '仍有上传正在进行。请等待上传完成后，再尝试删除账户。',
     errorErasureDeploymentCleanupRequired: '某个部署仍需清理或存在共享依赖。请完成拆除并解决这些依赖后，再尝试删除账户。',
+    erasureSharedEnvironment: ({ name, memberCount }: { name: string; memberCount: number }) =>
+        `${name}将被删除，另有${memberCount}位成员将失去访问权限。`,
     errorGeneric: '此 Home 无法完成更改。未做任何更改。',
     errorConflict: '此处已先被其他更改修改。请刷新此 Home 后重试。',
     changeFailedTitle: '更改未完成',
@@ -16835,6 +16837,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
             conflict: '有人先一步做了更改。请查看当前值后重试。',
             offline: '此 Home 无法连接，更改未发送。',
             invalidName: '请输入 1 到 80 个字符的名称。',
+            invalidTeamLink: '请从“团队”打开该团队，以使用当前的链接。',
             invalidDescription: '请输入不超过 500 个字符的描述。',
             invalidNameCharacters: "请从团队名称中移除不可打印的字符。",
             invalidDescriptionCharacters: "请从团队说明中移除不可打印的字符。",

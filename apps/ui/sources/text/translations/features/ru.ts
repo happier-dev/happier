@@ -7766,6 +7766,13 @@ const ru: typeof en = {
     errorErasureTransitionCleanupPending: 'Удаление учётной записи ожидает завершения очистки данных шифрования. Попробуйте удалить учётную запись ещё раз.',
     errorErasureUploadPending: 'Загрузка ещё не завершена. Дождитесь её окончания, затем повторите попытку удаления аккаунта.',
     errorErasureDeploymentCleanupRequired: 'Развёртывание ещё требует очистки или имеет общие зависимости. Завершите демонтаж и устраните эти зависимости, затем повторите попытку удаления аккаунта.',
+    erasureSharedEnvironment: ({ name, memberCount }: { name: string; memberCount: number }) => {
+        const ending = memberCount % 10;
+        const lastTwo = memberCount % 100;
+        const members = ending === 1 && lastTwo !== 11 ? 'участник потеряет' :
+            ending >= 2 && ending <= 4 && (lastTwo < 12 || lastTwo > 14) ? 'участника потеряют' : 'участников потеряют';
+        return `${name} будет удалено. Ещё ${memberCount} ${members} доступ.`;
+    },
     errorGeneric: 'Этот Home не смог применить изменение. Ничего не изменено.',
     errorConflict: 'Здесь раньше изменили что-то другое. Обновите этот Home и повторите попытку.',
     changeFailedTitle: 'Изменение не выполнено',
@@ -16984,6 +16991,7 @@ const russian: TeamsTranslationRoot = {
             conflict: 'Кто-то изменил это раньше вас. Проверьте текущие значения и повторите.',
             offline: 'Этот Home недоступен, поэтому изменение не отправлено.',
             invalidName: 'Введите название длиной от 1 до 80 символов.',
+            invalidTeamLink: 'Откройте команду в разделе «Команды», чтобы использовать актуальную ссылку.',
             invalidDescription: 'Введите описание длиной не более 500 символов.',
             invalidNameCharacters: "Удалите непечатаемые символы из названия команды.",
             invalidDescriptionCharacters: "Удалите непечатаемые символы из описания команды.",

@@ -7638,6 +7638,8 @@ const zhHant: typeof en = {
     errorErasureTransitionCleanupPending: '帳戶刪除正在等待加密資料清理完成。請再次嘗試刪除帳戶。',
     errorErasureUploadPending: '仍有上傳正在進行。請等待上傳完成後，再嘗試刪除帳戶。',
     errorErasureDeploymentCleanupRequired: '某個部署仍需清理或存在共用相依項目。請完成拆除並解決這些相依項目後，再嘗試刪除帳戶。',
+    erasureSharedEnvironment: ({ name, memberCount }: { name: string; memberCount: number }) =>
+        `${name}將被刪除，另有${memberCount}位成員將失去存取權限。`,
     errorGeneric: '這個 Home 無法完成變更。未做任何變更。',
     errorConflict: '這裡已先被其他變更修改。請重新載入這個 Home 後再試一次。',
     changeFailedTitle: '變更未完成',
@@ -16835,6 +16837,7 @@ const traditionalChinese: TeamsTranslationRoot = {
             conflict: '有人搶先做了變更。請檢視目前的值後再試一次。',
             offline: '此 Home 無法連線，變更並未送出。',
             invalidName: '請輸入 1 到 80 個字元的名稱。',
+            invalidTeamLink: '請從「團隊」開啟該團隊，以使用目前的連結。',
             invalidDescription: '請輸入不超過 500 個字元的描述。',
             invalidNameCharacters: "請從團隊名稱中移除不可列印的字元。",
             invalidDescriptionCharacters: "請從團隊描述中移除不可列印的字元。",

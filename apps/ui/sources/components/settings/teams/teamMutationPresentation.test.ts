@@ -15,8 +15,19 @@ describe('teamReadFailureLabel', () => {
         expect(teamReadFailureLabel({ kind: 'unreachable', retryable: true, code: null })).toBe('teams.unavailable.offline');
         expect(teamReadFailureLabel({ kind: 'unknown', retryable: true, code: null })).toBe('teams.errors.loadFailed');
         expect(teamReadFailureLabel({ kind: 'invalid', retryable: false, code: null })).toBe('teams.errors.loadFailed');
-        expect(teamReadFailureLabel({ kind: 'forbidden', retryable: false, code: 'team_not_found' })).toBe('teams.errors.forbidden');
         expect(teamReadFailureLabel({ kind: 'unsupported', retryable: false, code: null })).toBe('teams.unavailable.updateRequired');
+    });
+
+    it.each([
+        { code: 'team_not_found', kind: 'unsupported', retryable: false, message: 'teams.errors.notFound' },
+        { code: 'teams_unavailable', kind: 'unsupported', retryable: false, message: 'teams.unavailable.disabled' },
+        { code: 'team_authentication_unavailable', kind: 'unknown', retryable: true, message: 'teams.credentials.externalApi.authenticationUnavailable' },
+        { code: 'team_archived', kind: 'conflict', retryable: false, message: 'teams.errors.archived' },
+        { code: 'group_archived', kind: 'conflict', retryable: false, message: 'teams.groups.archivedReadOnly' },
+    ] as const)('keeps the Team refusal $code specific with no futile Retry', ({ message, ...failure }) => {
+        expect(teamReadFailureLabel(failure)).toBe(message);
+        expect(teamReadFailureAction(failure, { onPress: vi.fn() }, vi.fn())).toBeUndefined();
+        expect(teamMutationFailureLabel(failure)).toBe(message);
     });
 });
 

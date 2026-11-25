@@ -7753,6 +7753,8 @@ const de: typeof en = {
     errorErasureTransitionCleanupPending: 'Das Löschen des Kontos wartet auf die Verschlüsselungsbereinigung. Versuche erneut, das Konto zu löschen.',
     errorErasureUploadPending: 'Ein Upload läuft noch. Warte, bis er abgeschlossen ist, und versuche dann erneut, das Konto zu löschen.',
     errorErasureDeploymentCleanupRequired: 'Ein Deployment muss noch bereinigt werden oder hat gemeinsam genutzte Abhängigkeiten. Schließe den Abbau ab und löse diese Abhängigkeiten auf. Versuche dann erneut, das Konto zu löschen.',
+    erasureSharedEnvironment: ({ name, memberCount }: { name: string; memberCount: number }) =>
+        `${name} wird gelöscht. ${memberCount} ${memberCount === 1 ? 'weiteres Mitglied verliert' : 'weitere Mitglieder verlieren'} den Zugriff.`,
     errorGeneric: 'Dieses Home konnte die Änderung nicht abschließen. Es wurde nichts geändert.',
     errorConflict: 'Hier wurde zuerst etwas anderes geändert. Lade dieses Home neu und versuche es erneut.',
     changeFailedTitle: 'Die Änderung wurde nicht ausgeführt',
@@ -16773,6 +16775,7 @@ const german: TeamsTranslationRoot = {
             conflict: 'Jemand anderes war schneller. Prüfe die aktuellen Werte und versuche es erneut.',
             offline: 'Dieses Home ist nicht erreichbar, die Änderung wurde nicht gesendet.',
             invalidName: 'Gib einen Namen mit 1 bis 80 Zeichen ein.',
+            invalidTeamLink: 'Öffne das Team über die Teamübersicht, um den aktuellen Link zu verwenden.',
             invalidDescription: 'Gib eine Beschreibung mit höchstens 500 Zeichen ein.',
             invalidNameCharacters: "Entferne nicht druckbare Zeichen aus dem Teamnamen.",
             invalidDescriptionCharacters: "Entferne nicht druckbare Zeichen aus der Teambeschreibung.",

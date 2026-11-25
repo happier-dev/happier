@@ -20,7 +20,7 @@ import { teamSignInReturnPath } from '@/components/teams/entry/teamSignInHome';
 import { t } from '@/text';
 
 import { teamPageHeaderMeta, type TeamSectionContext } from './teamSectionContext';
-import { teamSettingsPath } from './teamsRoutes';
+import { teamSettingsPath, teamsDirectoryPath } from './teamsRoutes';
 import { teamReadFailureLabel } from './teamMutationPresentation';
 import { useTeamReadFailureAction } from './useTeamReadFailureAction';
 import { isApprovalRequestV2InFlightStatus } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -311,12 +311,16 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
         // Account and `unsupported` is its settled answer about itself. None of
         // them is offered a retry that would ask the same question again.
         const denied = state.error.kind === 'forbidden' || state.error.kind === 'unauthorized';
+        const invalidLink = state.error.code === 'invalid_team_input';
+        const openTeams = invalidLink || state.error.code === 'team_not_found';
         return conditionPage(
             <TeamStateCard
                 kind={denied ? 'unavailable' : 'error'}
                 title={denied ? t('teams.denied.title') : t('teams.unavailable.title')}
-                body={teamReadFailureLabel(state.error)}
-                action={readFailureAction(state.error, { onPress: refresh })}
+                body={invalidLink ? t('teams.errors.invalidTeamLink') : teamReadFailureLabel(state.error)}
+                action={openTeams
+                    ? { label: t('teams.title'), onPress: () => router.push(teamsDirectoryPath()) }
+                    : readFailureAction(state.error, { onPress: refresh })}
                 testID="team-unavailable"
             />,
         );
@@ -357,9 +361,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
         const retry = { label: t('teams.unavailable.retry'), onPress: retryAll, testID: 'team-stale-retry' };
         const staleAction = failure === null
             ? retry
-            // The Team's own stale read always offers Retry, as it did; a page read follows the
-            // shared read-failure rule (the Action settings repair, Retry, or nothing for a refusal).
-            : readFailureAction(failure, { onPress: retryAll, testIDPrefix: 'team-stale' }) ?? (teamStale ? retry : null);
+            : readFailureAction(failure, { onPress: retryAll, testIDPrefix: 'team-stale' });
         return (
         <>
             {embedded || props.childRendersHeader ? null : props.renderHeader ? props.renderHeader(context) : renderPlainHeader(props.renderHeaderActions?.(context))}

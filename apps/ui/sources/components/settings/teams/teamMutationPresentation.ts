@@ -26,8 +26,10 @@ export function teamReadFailureLabel(failure: HomeDomainFailure<string> | Scoped
     // failure; the Action front door's own copy says so and where to turn it back on.
     if (isActionTurnedOffErrorCode(failure.code)) return t('actionConfirmations.turnedOffReadMessage');
     if (failure.kind === 'unreachable') return t('teams.unavailable.offline');
+    const refusal = teamRefusalLabel({ ...failure, code: failure.code ?? null });
+    if (refusal) return refusal;
     if (failure.kind === 'unknown' || failure.kind === 'invalid') return t('teams.errors.loadFailed');
-    return teamFailureLabel({ ...failure, code: failure.code ?? null });
+    return teamFailureKindLabel(failure.kind);
 }
 
 export type TeamReadFailureRetry = Readonly<{ onPress: () => void; testIDPrefix?: string }>;
@@ -49,7 +51,7 @@ export function teamReadFailureAction(
             testID: retry.testIDPrefix ? `${retry.testIDPrefix}-open-actions-settings` : undefined,
         };
     }
-    if (!failure.retryable) return undefined;
+    if (!failure.retryable || failure.code === 'team_authentication_unavailable') return undefined;
     return {
         label: t('teams.unavailable.retry'),
         onPress: retry.onPress,
@@ -63,8 +65,19 @@ export function teamMutationFailureLabel(failure: HomeDomainFailure<string>, con
 }
 
 function teamFailureLabel(failure: HomeDomainFailure<string>, context?: 'authentication_policy' | 'policy'): string {
+    return teamRefusalLabel(failure, context) ?? teamFailureKindLabel(failure.kind);
+}
+
+function teamRefusalLabel(failure: HomeDomainFailure<string>, context?: 'authentication_policy' | 'policy'): string | undefined {
     // Team routes refuse a released 0.2 sign-in; signing in again is the fix, not the person's role.
     if (isTeamLegacyCredentialRefusalV1(failure.code, failure.details)) return t('teams.errors.signInOutdated');
+    switch (failure.code) {
+        case 'team_not_found': return t('teams.errors.notFound');
+        case 'teams_unavailable': return t('teams.unavailable.disabled');
+        case 'team_authentication_unavailable': return t('teams.credentials.externalApi.authenticationUnavailable');
+        case 'team_archived': return t('teams.errors.archived');
+        case 'group_archived': return t('teams.groups.archivedReadOnly');
+    }
     if (failure.code === 'managed_default_machine_not_member_usable') return t('teams.settings.memberDefaults.machineNotMemberUsable');
     if (failure.code === 'team_authentication_required') return context === 'authentication_policy'
         ? t('teams.authentication.policy.authenticationRequired')
@@ -76,7 +89,11 @@ function teamFailureLabel(failure: HomeDomainFailure<string>, context?: 'authent
     // the pickers cannot know it, so the Home's typed refusal says it.
     if (failure.code === 'account_ineligible') return t('teams.members.accountInactive');
     if (context === 'policy' && failure.code === 'invalid_team_input') return t('teams.errors.policySaveFailed');
-    switch (failure.kind) {
+    return undefined;
+}
+
+function teamFailureKindLabel(kind: HomeDomainFailure<string>['kind']): string {
+    switch (kind) {
         case 'outcome_unknown':
             return t('teams.errors.outcomeUnknown');
         case 'unreachable':

@@ -7698,6 +7698,8 @@ const ja: typeof en = {
     errorErasureTransitionCleanupPending: '暗号化データのクリーンアップが完了するまで、アカウントの削除は保留されます。もう一度アカウントを削除してください。',
     errorErasureUploadPending: 'アップロードがまだ進行中です。完了するまで待ってから、アカウントの削除を再試行してください。',
     errorErasureDeploymentCleanupRequired: 'デプロイにまだクリーンアップが必要か、共有の依存関係があります。撤去を完了してこれらの依存関係を解消してから、アカウントの削除を再試行してください。',
+    erasureSharedEnvironment: ({ name, memberCount }: { name: string; memberCount: number }) =>
+        `${name}が削除されます。他のメンバー${memberCount}人がアクセスできなくなります。`,
     errorGeneric: 'この Home は変更を完了できませんでした。何も変更されていません。',
     errorConflict: 'ここでは先に別の変更が行われました。この Home を再読み込みしてからやり直してください。',
     changeFailedTitle: '変更は実行されませんでした',
@@ -16895,6 +16897,7 @@ const japanese: TeamsTranslationRoot = {
             conflict: '他の人が先に変更しました。現在の値を確認してからやり直してください。',
             offline: 'この Home に接続できないため、変更は送信されませんでした。',
             invalidName: '1〜80 文字の名前を入力してください。',
+            invalidTeamLink: '現在のリンクを使うには、「チーム」からチームを開いてください。',
             invalidDescription: '説明は 500 文字以内で入力してください。',
             invalidNameCharacters: "チーム名から印字できない文字を取り除いてください。",
             invalidDescriptionCharacters: "チームの説明から印字できない文字を取り除いてください。",

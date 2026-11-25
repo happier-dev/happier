@@ -7637,6 +7637,8 @@ const es: typeof en = {
     errorErasureTransitionCleanupPending: 'La eliminación de la cuenta está esperando la limpieza del cifrado. Intenta eliminar la cuenta de nuevo.',
     errorErasureUploadPending: 'Todavía hay una carga en curso. Espera a que termine y vuelve a intentar eliminar la cuenta.',
     errorErasureDeploymentCleanupRequired: 'Un despliegue todavía necesita limpieza o tiene dependencias compartidas. Completa el desmantelamiento y resuelve esas dependencias; después, vuelve a intentar eliminar la cuenta.',
+    erasureSharedEnvironment: ({ name, memberCount }: { name: string; memberCount: number }) =>
+        `${name} se eliminará. ${memberCount} ${memberCount === 1 ? 'miembro más perderá' : 'miembros más perderán'} el acceso.`,
     errorGeneric: 'Este Home no pudo completar el cambio. No se cambió nada.',
     errorConflict: 'Aquí ya se cambió otra cosa antes. Actualiza este Home e inténtalo de nuevo.',
     changeFailedTitle: 'El cambio no se realizó',
@@ -16895,6 +16897,7 @@ const spanish: TeamsTranslationRoot = {
             conflict: 'Otra persona lo cambió antes. Revisa los valores actuales e inténtalo de nuevo.',
             offline: 'Este Home no está accesible, así que el cambio no se envió.',
             invalidName: 'Introduce un nombre de entre 1 y 80 caracteres.',
+            invalidTeamLink: 'Abre el equipo desde Equipos para usar un enlace vigente.',
             invalidDescription: 'Introduce una descripción de 500 caracteres como máximo.',
             invalidNameCharacters: "Quita los caracteres no imprimibles del nombre del equipo.",
             invalidDescriptionCharacters: "Quita los caracteres no imprimibles de la descripción del equipo.",

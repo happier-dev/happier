@@ -215,6 +215,7 @@ export const english = {
             conflict: 'Someone else changed this first. Review the current values and try again.',
             offline: 'This Home is unreachable, so the change was not sent.',
             invalidName: 'Enter a name between 1 and 80 characters.',
+            invalidTeamLink: 'Open the Team from Teams to use a current link.',
             invalidDescription: 'Enter a description of 500 characters or fewer.',
             invalidNameCharacters: "Remove non-printing characters from the Team name.",
             invalidDescriptionCharacters: "Remove non-printing characters from the Team description.",

@@ -7765,6 +7765,12 @@ const pl: typeof en = {
     errorErasureTransitionCleanupPending: 'Usunięcie konta czeka na zakończenie czyszczenia danych szyfrowania. Spróbuj ponownie usunąć konto.',
     errorErasureUploadPending: 'Przesyłanie nadal trwa. Poczekaj na jego zakończenie, a następnie spróbuj ponownie usunąć konto.',
     errorErasureDeploymentCleanupRequired: 'Wdrożenie nadal wymaga uporządkowania lub ma współdzielone zależności. Zakończ demontaż i rozwiąż te zależności, a następnie spróbuj ponownie usunąć konto.',
+    erasureSharedEnvironment: ({ name, memberCount }: { name: string; memberCount: number }) => {
+        const ending = memberCount % 10;
+        const teens = memberCount % 100 >= 12 && memberCount % 100 <= 14;
+        const people = memberCount === 1 ? 'osobę' : ending >= 2 && ending <= 4 && !teens ? 'osoby' : 'osób';
+        return `${name} zostanie usunięte. Utrata dostępu obejmie jeszcze ${memberCount} ${people}.`;
+    },
     errorGeneric: 'Ten Home nie mógł dokończyć zmiany. Nic nie zostało zmienione.',
     errorConflict: 'Coś innego zostało tu zmienione wcześniej. Odśwież ten Home i spróbuj ponownie.',
     changeFailedTitle: 'Zmiana nie została wykonana',
@@ -16983,6 +16989,7 @@ const polish: TeamsTranslationRoot = {
             conflict: 'Ktoś zmienił to wcześniej. Sprawdź bieżące wartości i spróbuj ponownie.',
             offline: 'Ten Home jest nieosiągalny, więc zmiana nie została wysłana.',
             invalidName: 'Podaj nazwę o długości od 1 do 80 znaków.',
+            invalidTeamLink: 'Otwórz zespół z listy Zespoły, aby użyć aktualnego linku.',
             invalidDescription: 'Podaj opis o długości do 500 znaków.',
             invalidNameCharacters: "Usuń znaki niedrukowalne z nazwy zespołu.",
             invalidDescriptionCharacters: "Usuń znaki niedrukowalne z opisu zespołu.",

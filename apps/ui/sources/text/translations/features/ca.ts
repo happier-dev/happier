@@ -7742,6 +7742,8 @@ const ca: typeof en = {
     errorErasureTransitionCleanupPending: 'La supressió del compte espera la neteja del xifratge. Torna a provar de suprimir el compte.',
     errorErasureUploadPending: 'Encara hi ha una pujada en curs. Espera que acabi i torna a provar de suprimir el compte.',
     errorErasureDeploymentCleanupRequired: 'Un desplegament encara necessita neteja o té dependències compartides. Completa el desmantellament i resol aquestes dependències; després, torna a provar de suprimir el compte.',
+    erasureSharedEnvironment: ({ name, memberCount }: { name: string; memberCount: number }) =>
+        `${name} se suprimirà. ${memberCount} ${memberCount === 1 ? 'altre membre hi perdrà' : 'altres membres hi perdran'} l’accés.`,
     errorGeneric: 'Aquest Home no ha pogut completar el canvi. No s’ha canviat res.',
     errorConflict: 'Aquí s’ha canviat una altra cosa abans. Actualitza aquest Home i torna-ho a provar.',
     changeFailedTitle: 'El canvi no s’ha dut a terme',
@@ -16973,6 +16975,7 @@ const catalan: TeamsTranslationRoot = {
             conflict: 'Algú altre ho ha canviat abans. Revisa els valors actuals i torna-ho a provar.',
             offline: 'Aquest Home no és accessible, així que el canvi no s’ha enviat.',
             invalidName: 'Introdueix un nom d’entre 1 i 80 caràcters.',
+            invalidTeamLink: "Obre l’equip des d’Equips per fer servir un enllaç vigent.",
             invalidDescription: 'Introdueix una descripció de 500 caràcters com a màxim.',
             invalidNameCharacters: "Treu els caràcters no imprimibles del nom de l’equip.",
             invalidDescriptionCharacters: "Treu els caràcters no imprimibles de la descripció de l’equip.",

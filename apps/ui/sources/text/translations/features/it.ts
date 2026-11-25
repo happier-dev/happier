@@ -7749,6 +7749,8 @@ const it: typeof en = {
     errorErasureTransitionCleanupPending: 'L’eliminazione dell’account attende la pulizia della crittografia. Prova a eliminare di nuovo l’account.',
     errorErasureUploadPending: 'È ancora in corso un caricamento. Attendi che finisca, poi prova di nuovo a eliminare l’account.',
     errorErasureDeploymentCleanupRequired: 'Un deployment richiede ancora una pulizia o ha dipendenze condivise. Completa lo smantellamento e risolvi queste dipendenze, poi prova di nuovo a eliminare l’account.',
+    erasureSharedEnvironment: ({ name, memberCount }: { name: string; memberCount: number }) =>
+        `${name} verrà eliminato. ${memberCount} ${memberCount === 1 ? 'altro membro perderà' : 'altri membri perderanno'} l’accesso.`,
     errorGeneric: 'Questo Home non ha potuto completare la modifica. Non è stato cambiato nulla.',
     errorConflict: 'Qui è stato modificato prima qualcos’altro. Aggiorna questo Home e riprova.',
     changeFailedTitle: 'La modifica non è andata a buon fine',
@@ -16959,6 +16961,7 @@ const italian: TeamsTranslationRoot = {
             conflict: 'Qualcun altro ha modificato prima. Controlla i valori attuali e riprova.',
             offline: 'Questo Home non è raggiungibile, quindi la modifica non è stata inviata.',
             invalidName: 'Inserisci un nome da 1 a 80 caratteri.',
+            invalidTeamLink: 'Apri il team da Team per usare un link aggiornato.',
             invalidDescription: 'Inserisci una descrizione di massimo 500 caratteri.',
             invalidNameCharacters: "Rimuovi i caratteri non stampabili dal nome del team.",
             invalidDescriptionCharacters: "Rimuovi i caratteri non stampabili dalla descrizione del team.",
