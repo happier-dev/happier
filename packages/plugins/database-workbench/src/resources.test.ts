@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
 import type { PluginDynamicResourceInvocationOptionsV1 } from '@happier-dev/plugin-sdk/resources';
 import type { DatabaseDescriptorV1, DatabaseManualTargetV1, DatabaseWorktreeTargetV1 } from '@happier-dev/plugin-sdk/database';
@@ -128,11 +129,12 @@ describe('database connection Resource', () => {
                 .toEqual({ result: { ok: true, operation: 'describe', descriptor: published }, sourceScope: { serverId: 'server', machineId: 'machine' } });
             const read = { operation: 'statement.run' as const, target, mode: 'read' as const,
                 statement: { sql: 'SELECT label FROM selected', parameters: [] } };
-            for (const operation of [
+            const catalogReads: readonly (JsonValue & { operation: string })[] = [
                 { operation: 'schemas.list', target, page: { rows: 1 } },
                 { operation: 'relations.list', target, schema: 'main', page: { rows: 1 } },
                 { operation: 'relation.structure', target, relation: { schema: 'main', name: 'selected' } },
-            ] as const) {
+            ];
+            for (const operation of catalogReads) {
                 expect(await producer.invoke!(operation, { signal: controller.signal }))
                     .toMatchObject({ result: { ok: true, operation: operation.operation } });
             }
