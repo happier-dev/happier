@@ -5,6 +5,7 @@ import { ApprovalAutomaticChecksV1Schema, actionAutomationTriggerKeyV1, buildApp
 import { settleApprovalRequestReplayInputs, resolveApprovalRequestExecutionInput } from '../../approvals/approvalRequestTransition.js';
 import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from '../../approvals/approvalExecutionFailure.js';
 import { WorkflowFinalResultV1Schema, projectWorkflowFinalResultDeliverableTextV1 } from '../../workflows/workflowProgressV1.js';
+import { isTerminalAutomationRunStateV3 } from '../../automations/automationRunStateV3.js';
 import type { ActionExecutorContext, ActionExecuteFailure, ActionExecutorDeps } from './types.js';
 import { ActionExecuteFailureSchema } from '../actionExecutionResult.js';
 import { actionAutomationAdmissionUnavailableV1, type ActionAutomationPortV1, type ActionAutomationSelectionV1,
@@ -226,14 +227,19 @@ export function createApprovalAutomaticContinuationV1<Read extends AutomaticAppr
       const observed = await wait({ run, context }).catch((error: unknown) => {
         if (context.signal?.aborted) throw error;
         const { errorCode } = normalizeActionExecutorThrownError(error, 'approval.check.wait');
-        return { state: 'interrupted' as const, errorCode, finalResult: undefined, resultId: undefined };
+        return { state: undefined, errorCode, finalResult: undefined, resultId: undefined };
       });
       const finalResult = WorkflowFinalResultV1Schema.safeParse(observed.finalResult);
       const reason = finalResult.success ? projectWorkflowFinalResultDeliverableTextV1(finalResult.data) : null;
       const outcome = observed.state === 'succeeded' ? 'passed'
         : observed.state === 'failed' ? 'failed' : observed.state === 'cancelled' ? 'canceled' : 'unavailable';
       const selection = checks.selected.find(row => actionAutomationTriggerKeyV1(row) === actionAutomationTriggerKeyV1(run));
-      if (!refused && outcome !== 'passed' && (outcome !== 'failed' || selection?.onFailure !== 'ask')) {
+      // An observed settlement without a verdict can be overridden. A lost observation
+      // does not prove the check ended, and a person's Stop must still refuse.
+      const settled = observed.state === 'interrupted'
+        || (observed.state !== undefined && isTerminalAutomationRunStateV3(observed.state));
+      const mayOverride = settled && outcome !== 'canceled' && selection?.onFailure === 'ask';
+      if (!refused && outcome !== 'passed' && !mayOverride) {
         refused = true;
         await cancel(request, context, run.runId);
       }

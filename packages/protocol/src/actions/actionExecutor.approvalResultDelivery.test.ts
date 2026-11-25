@@ -33,6 +33,7 @@ async function askAndDecide(
     effectFails?: boolean;
     checkFailsWith?: 'refuse' | 'ask';
     checkObservationUnavailable?: boolean;
+    checkSettlement?: 'interrupted' | 'cancelled';
   }>,
 ) {
   let stored: ApprovalRequest | null = null;
@@ -50,6 +51,10 @@ async function askAndDecide(
       wait: async () => {
         if (options.checkObservationUnavailable) {
           throw createActionExecuteFailureError({ ok: false, errorCode: 'storage_unavailable', error: 'storage_unavailable' });
+        }
+        if (options.checkSettlement) {
+          return { state: options.checkSettlement,
+            errorCode: options.checkSettlement === 'interrupted' ? 'memory_doc_not_found' : null };
         }
         return { state: 'failed' as const, errorCode: 'command_failed' };
       },
@@ -424,6 +429,35 @@ describe('approval result delivery is a receipt beside the run record', () => {
           details: { message: 'command_failed' },
         },
       });
+  });
+
+  it('offers an explicit override when an ask check ends without a verdict', async () => {
+    const flow = await askAndDecide({ checkFailsWith: 'ask', checkSettlement: 'interrupted',
+      deliver: async input => ({ status: 'accepted', localId: input.localId }) });
+    expect(await flow.decide()).toMatchObject({ ok: true, result: { status: 'open' } });
+    expect(flow.read()).toMatchObject({ automaticChecks: { phase: 'override', results: [
+      { runId: 'failed-check', outcome: 'unavailable', reason: 'memory_doc_not_found' },
+    ] } });
+    expect(flow.effects).toEqual([]);
+    expect(flow.deliveries).toEqual([]);
+    expect(await flow.decide()).toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(flow.effects).toEqual(['origin-session']);
+  });
+
+  it.each([
+    { checkSettlement: 'interrupted', checkFailsWith: 'refuse', outcome: 'unavailable', reason: 'memory_doc_not_found' },
+    { checkSettlement: 'cancelled', checkFailsWith: 'ask', outcome: 'canceled', reason: 'workflow_failed' },
+  ] as const)('refuses a $checkSettlement Run with $checkFailsWith policy without executing the Action', async (scenario) => {
+    const flow = await askAndDecide({ ...scenario,
+      deliver: async input => ({ status: 'accepted', localId: input.localId }) });
+    expect(await flow.decide()).toMatchObject({ ok: true, result: { status: 'failed' } });
+    expect(flow.effects).toEqual([]);
+    expect(flow.read()).toMatchObject({ automaticChecks: { phase: 'refused', results: [
+      { runId: 'failed-check', outcome: scenario.outcome, reason: scenario.reason },
+    ] } });
+    expect(JSON.parse(flow.deliveries[0]!.message)).toMatchObject({ execution: {
+      errorCode: 'action_interception_rejected', effectAttempted: false, details: { message: scenario.reason },
+    } });
   });
 
   it('retains the Run observation refusal in the approval and requester result', async () => {
