@@ -22,6 +22,9 @@ import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/inpu
 import { MENTION_KIND_V1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 import { createWorkflowActionExecutor } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
 import { createWorkflowRunStorageTestkit } from './workflowRunStorage.testkit';
+import { bindWorkflowActionInputV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { ScmComparisonCaptureInputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { reviewReviewerIdForSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 
 const workspace = { machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' };
 const authorization = { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const };
@@ -47,6 +50,17 @@ function createTestActionExecutor(overrides: Partial<ActionExecutorDeps>) {
     serversList: unexpected,
     reviewEnginesList: unexpected,
     reviewRecords: () => reviewRecords,
+    // The Machine SCM transport supplies captured evidence; Review admission stays real.
+    scmActionExecute: async ({ actionId, input }) => {
+      if (actionId !== 'scm.diffSummary.capture') throw new Error(`Unexpected SCM boundary: ${actionId}`);
+      const capture = ScmComparisonCaptureInputSchema.parse(input);
+      if (!capture.source) throw new Error('Review fixture requires a comparison source');
+      const id = 'a'.repeat(64);
+      return { success: true, comparison: { id, source: capture.source,
+        repository: { rootPath: capture.cwd }, endpoints: { before: 'base-oid', after: 'head-oid' },
+        inventory: { state: 'complete', files: [], reasons: [] } },
+        metadata: { source: capture.source, sourceKey: id } };
+    },
     agentsBackendsList: unexpected,
     agentsModelsList: unexpected,
     sessionSendMessage: unexpected,
@@ -70,7 +84,8 @@ function frozen(leaf: WorkflowActionLeafV1): WorkflowMaterializedLeafV1 {
   const actionContract = freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(spec));
   if (!actionContract) throw new Error('action_fixture_requires_output_schema');
   return { authoredWorkspace: { kind: 'inherit' as const }, sourceKey: '$root', blockId: leaf.id, kind: 'action', selection: {}, executionTarget,
-    actionId: leaf.actionId, actionContract };
+    actionId: leaf.actionId, actionContract,
+    actionInput: bindWorkflowActionInputV1(leaf.input, { inputs: {} }, leaf.id, 'definition', undefined, actionContract.inputSchema) };
 }
 const goal: WorkflowActionLeafV1 = { kind: 'action', id: 'goal', actionId: 'session.goal.set',
   input: { sessionId: { kind: 'origin_session_id' }, status: { kind: 'literal', value: 'complete' } } };
@@ -403,6 +418,8 @@ describe('workflow Action leaves', () => {
     const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'panel', actionId: 'review.start', input: {
       target: { kind: 'literal', value: { kind: 'detached' } }, instructions: { kind: 'literal', value: 'Review' },
       reviewers: { kind: 'literal', value: [{ kind: 'engine', engineId: 'codex' }, { kind: 'engine', engineId: 'claude' }] },
+      // This case exercises an admitted native round; an unprepared panel composes a child Workflow.
+      reviewRound: { kind: 'literal', value: { reviewId: 'native-round', roundOrdinal: 1 } },
     } };
     const materialized = frozen(leaf);
     const completion = materialized.actionContract?.completion;
@@ -506,7 +523,8 @@ describe('workflow Action leaves', () => {
   });
   it('admits a named Action role from the frozen leaf selection without a live role lookup', async () => {
     let starts = 0;
-    const targetKey = buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' });
+    const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+    const targetKey = buildBackendTargetKeyV2(agentTarget);
     const requestIds: (string | undefined)[] = [];
     const executor = createTestActionExecutor({ executionRunCheckProtocolV2: async () => ({ ok: true }),
       executionRunStart: async (_sessionId, _request, options) => {
@@ -535,7 +553,7 @@ describe('workflow Action leaves', () => {
           externalActionTarget: { kind: 'machine', machineId: workspace.machineId, project: { machineId: workspace.machineId, directory: workspace.directory } } };
       }, observeRun: async () => ({ kind: 'completed', result: {}, commentIds: [], materialization: { kind: 'complete' } }) } });
     const result = await coordinator.run({ runId: 'role-action', definition: definition([leaf]), inputs: {}, executionTarget,
-      authorization, materializedLeaves: [{ ...frozen(leaf), role }] });
+      authorization, materializedLeaves: [{ ...frozen(leaf), role, selection: { agentTarget } }] });
     expect(result.state, result.reason).toBe('succeeded');
     expect(starts).toBe(1);
     const launch = store.list().find((row) => row.blockId === leaf.id)?.execution;
@@ -570,7 +588,7 @@ describe('workflow Action leaves', () => {
     release();
     await outcome;
     expect(store.list().find((row) => row.blockId === leaf.id)?.execution).toMatchObject({
-      kind: 'action', awaitedRuns: [{ key: 'codex', runId: 'interrupted-run' }], output: expect.any(Object),
+      kind: 'action', awaitedRuns: [{ key: reviewReviewerIdForSelectionV1(0), runId: 'interrupted-run' }], output: expect.any(Object),
     });
   });
   it('continues a held Action evaluator with human-supplied decisions inside its exact loop iteration', async () => {

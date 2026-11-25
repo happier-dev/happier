@@ -931,9 +931,13 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
       input: { instructions: { kind: 'literal', value: 'Review the changes' }, engineIds: { kind: 'literal', value: ['agent:happier.agent.codex/codex'] }, modelId: { kind: 'literal', value: 'native-model' } } }] },
       effects: { resolveTargetAvailability: available, readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) } });
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, agentStartLeaves: [{ engine: { agentTargetKey: 'agent:happier.agent.claude/claude' } }],
-      snapshot: { materializedLeaves: [{ actionInput: { engineIds: ['agent:happier.agent.claude/claude'] } }] } });
+      snapshot: { materializedLeaves: [{ actionInput: { reviewers: [{ kind: 'engine', engineId: 'agent:happier.agent.claude/claude' }] } }] } });
     if (!result.ok) throw new Error(result.error.code);
     expect(result.snapshot.materializedLeaves[0]?.actionInput?.modelId).toBeUndefined();
+    expect(result.agentStartLeaves[0]?.facts?.modelSelection).toBeUndefined();
+    expect(result.snapshot.materializedLeaves[0]?.actionInput?.reviewers).toEqual([
+      { kind: 'engine', engineId: 'agent:happier.agent.claude/claude' },
+    ]);
   });
 
   it('refuses inline input tokens with absent or nondecimal bindings at the token path', async () => {
@@ -1094,6 +1098,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
   it('retains a known Action fan-out member beside its future selection across accepted snapshot reads', async () => {
     const result = await materialize({ definition: { ...definition, blocks: [definition.blocks[0],
       { kind: 'action', id: 'review', actionId: 'review.start', input: {
+        reviewRound: { kind: 'literal', value: { reviewId: 'retained-round', roundOrdinal: 1 } },
         instructions: { kind: 'literal', value: 'Review the changes' }, engineIds: { kind: 'list', items: [
           { kind: 'literal', value: 'agent:happier.agent.codex/codex' },
           { kind: 'result', producer: { blockId: 'work', scope: { kind: 'current' } }, path: [] },

@@ -175,7 +175,8 @@ export function projectActionWorkflowSelectionInputV1(
         projected[profileField] = selected.profileId;
     if (projected.agentModeId === undefined && projected.acpSessionModeId === undefined && selected.acpSessionModeId !== undefined)
         projected.agentModeId = selected.acpSessionModeId;
-    if (projected.modelSelection === undefined && projected.modelId === undefined && projected.teamCredentialModel === undefined) {
+    // Review inherits model and config per reviewer through the native start projection below.
+    if (actionId !== 'review.start' && projected.modelSelection === undefined && projected.modelId === undefined && projected.teamCredentialModel === undefined) {
         const model = readAuthoredSessionModelSelection(selected);
         if (actionId === 'session.spawn_new') {
             const binding = selected.modelSelection?.v !== 2 && model?.v === 2
@@ -190,7 +191,7 @@ export function projectActionWorkflowSelectionInputV1(
         } else if (model === null) projected.modelSelection = null;
         else if (model) Object.assign(projected, projectSessionModelRefToExecutionModelSelection(model.ref));
     }
-    if (actionId !== 'session.spawn_new' && projected.sessionConfigOptionOverrides === undefined && projected.configOptions === undefined
+    if (actionId !== 'session.spawn_new' && actionId !== 'review.start' && projected.sessionConfigOptionOverrides === undefined && projected.configOptions === undefined
         && selected.sessionConfigOptionOverrides !== undefined) projected.sessionConfigOptionOverrides = selected.sessionConfigOptionOverrides;
     return projected;
 }
@@ -397,11 +398,15 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
                     backendTarget: readExecutionRunStartTargetV1(engineId), intent: 'review',
                 });
             }
+            const reviewerTarget = reviewer.kind === 'engine' ? readExecutionRunStartTargetV1(reviewer.engineId) : null;
+            const preservesReviewerModel = reviewer.kind === 'engine' && reviewerTarget && selected?.agentTarget
+                && buildBackendTargetKeyV2(reviewerTarget) === buildBackendTargetKeyV2(selected.agentTarget)
+                && (reviewer.modelId !== undefined || reviewer.modelSelection !== undefined || reviewer.teamCredentialModel !== undefined);
             const nativeSelection = selected ? { ...params.effectiveSelection, selection: {
                 ...selected,
                 ...(reviewer.kind === 'engine' && typeof nativeInput.launchProfileId === 'string'
                     ? { profileId: nativeInput.launchProfileId } : {}),
-            } } : undefined;
+            }, overrideEngine: preservesReviewerModel ? false : overrideEngine } : undefined;
             const resolved = resolveActionAgentStartRequestsV1({
                 actionId: reviewer.kind === 'model' ? 'session.spawn_new' : 'execution.run.start',
                 input: nativeInput, context, baseline, effectiveSelection: nativeSelection,
@@ -417,12 +422,13 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
                     .filter(key => resolved.effectiveInput[key] !== undefined)
                     .map(key => [key, resolved.effectiveInput[key]]));
                 const target = readAgentStartTargetV1(resolved.effectiveInput.backendTarget);
-                reviewers.push({ ...reviewer, ...effectiveSelection,
-                    ...(target ? { engineId: buildBackendTargetKeyV2(target) } : {}) });
+                reviewers.push({ ...effectiveSelection, kind: 'engine',
+                    engineId: target ? buildBackendTargetKeyV2(target) : reviewer.engineId,
+                    ...(reviewer.options === undefined ? {} : { options: reviewer.options }) });
             }
         }
         if (deferredTarget) return { ...deferredTarget, knownRequests: requests };
-        const effectiveInput: Record<string, unknown> = { ...selectedInput, reviewers };
+        const effectiveInput: Record<string, unknown> = { ...projectSelectedEngine(selectedInput, 'execution_run'), reviewers };
         delete effectiveInput.backendTarget;
         return { ok: true, requests, effectiveInput };
     }

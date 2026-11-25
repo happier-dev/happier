@@ -1,7 +1,7 @@
 import { sealWorkflowTriggerEventValuesV1, type WorkflowTriggerEventOccurrenceV1 } from './workflowTriggerEventReferenceV1.js';
 import { buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import type { AgentStartAdmissionV1, AgentStartRefusalV1, AgentStartRequestV1, MaterializedWorkflowLeafV1, Unresolved } from '../account/settings/admitAgentStartV1.js';
-import { isAgentStartActionV1, projectAgentStartSelectionV1, resolveActionAgentStartRequestsV1 } from '../actions/executor/agentStartAdmission.js';
+import { isAgentStartActionV1, projectActionWorkflowSelectionInputV1, projectAgentStartSelectionV1, resolveActionAgentStartRequestsV1 } from '../actions/executor/agentStartAdmission.js';
 import { sameStrictJsonValue, type JsonValue } from '../json/strictJsonValue.js';
 import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
 import type { ActionCaller } from '../actions/executor/types.js';
@@ -1065,7 +1065,8 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
       if (leaf.kind === 'action' && leaf.actionId === 'review.start' && (purpose === 'run' || input.effects.admitSessionAuthority)) {
         const targets: NonNullable<WorkflowMaterializedLeafV1['sessionAuthorityBindings']>[number]['targets'] = [];
         for (const inputs of sourceInputs.get(sourceKey) ?? []) {
-          for (const fields of bindWorkflowLeafInputsV1(authored, leaf, { ...input.context, inputs }, purpose, sidecar.actionContract?.inputSchema)) {
+          for (const bound of bindWorkflowLeafInputsV1(authored, leaf, { ...input.context, inputs }, purpose, sidecar.actionContract?.inputSchema)) {
+            const fields = projectActionWorkflowSelectionInputV1(leaf.actionId, bound, undefined);
             // An unselected optional branch or deferred roster confers no authority.
             if (hasUnresolvedValue(fields.reviewers) || hasUnresolvedValue(fields.steps) || hasUnresolvedValue(fields.sourceSession)) continue;
             const addresses = readReviewSessionScopeAddressesV1(fields);
