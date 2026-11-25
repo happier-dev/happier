@@ -1453,6 +1453,8 @@ describe('Environment → Settings: checks, backups, previews', () => {
       expect(screen.getTextContent()).not.toContain(t('projects.deployments.checksBackingUp'));
       expect(screen.getTextContent()).toContain(t('projects.deployments.checksFailing', { names: 'web' }));
       expect(screen.getTextContent()).toContain(t('projects.deployments.checksServices', { count: 1 }));
+      // The failing member's State renders (it crashed the page outside the plugin-ui scope, r28 live).
+      expect(screen.getTextContent()).toContain(t('projects.deployments.healthUnhealthy'));
     } finally { await screen.unmount(); controller.retire(); }
   });
 
