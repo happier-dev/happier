@@ -8,6 +8,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { finished } from 'node:stream/promises';
 import { readAgentIsolationMemberDirectories } from '@/daemon/agentIsolation/prepareNativeOperation';
+import { readPublishedMachineRow } from '@/api/machine/readPublishedMachineRow';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
@@ -2832,6 +2834,9 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
 
   const requesterAvailability = async (context?: RpcHandlerContext): Promise<WorkspaceSyncRequesterAvailabilityV1> => {
     if (!context || context.signal.aborted) return { kind: 'unavailable', reason: 'requester_authority_unavailable' };
+    if (context.directWorkspaceRequester) {
+      return { kind: 'available', homeDir: resolveMachineRpcWorkingDirectory(), workspaceRoot: null };
+    }
     const identity = selectRequesterIdentity(context);
     if (identity.kind === 'unknown') return { kind: 'unavailable', reason: 'requester_authority_unavailable' };
     const memberRequester = resolveHostRequesterAgentExecutionIdentity(identity);
@@ -2866,13 +2871,12 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         relationshipOwner: requesterRelationshipOwner(existingCapture),
         ...(existingCapture.input.targetWorkspaceRefId ? { targetWorkspaceRefId: existingCapture.input.targetWorkspaceRefId } : {}) }, request, signal);
     }
-    const selected = selectRequesterIdentity(context);
-    const executionIdentity = resolveHostRequesterAgentExecutionIdentity(selected);
+    const directRequester = context.directWorkspaceRequester;
+    const executionIdentity = directRequester ?? resolveHostRequesterAgentExecutionIdentity(selectRequesterIdentity(context));
     if (executionIdentity.kind !== 'isolated') {
       throw compositionError('agent_isolation_unavailable', 'Requester native Sync execution is unavailable');
     }
-    // The shared capture decider, not Agent placement: the custodian and Manage keep native placement.
-    const member = requiresRequesterWorkspaceCapture(admission);
+    const member = !directRequester && requiresRequesterWorkspaceCapture(admission);
     if (member && (!input.privateCheckout || resolveHostRequesterAgentPlacementForHost({ identity: executionIdentity,
       snapshot: input.agentIsolation?.read() }) !== 'member')) {
       throw compositionError('agent_isolation_unavailable', 'Requester native Sync execution is unavailable');
@@ -2917,6 +2921,13 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         const originalActionInput = getActionSpec(binding.actionId).inputSchema.safeParse(originalInput);
         if (!originalActionInput.success || !sameStrictJsonValue(originalActionInput.data, request.actionInput, { omitUndefinedObjectMembers: true })) {
           throw compositionError('project_requester_authority_unavailable', 'The original Sync input is unavailable');
+        }
+        if (directRequester) {
+          const target = localTarget ? null : await runWithServerHttpBaseUrl(requester.serverHttpBaseUrl,
+            () => readPublishedMachineRow(request.actionInput.targetMachineId, requester.credentials, { signal }));
+          if (target?.access?.custodian.accountId !== admission.actorAccountId) {
+            throw compositionError('target_unavailable', 'Choose a Machine you own for this Replica');
+          }
         }
         const requestedTargetReplacementApproval = request.targetReplacementApproval;
         if (requestedTargetReplacementApproval) {

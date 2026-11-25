@@ -379,6 +379,38 @@ it.skipIf(process.platform !== 'linux')('offers cold member Sync roots without p
   })).toMatchObject({ errorCode: 'RPC_FORBIDDEN', effectAttempted: false });
 });
 
+it.skipIf(process.platform !== 'linux').each([
+  ['manage', 'existing'], ['use', 'existing'],
+] as const)('creates a Git Replica from an isolation-off %s source into an own %s folder', async (role, gitReplica) => {
+  executionBoundary.member = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role, isolationOff: true, gitReplica,
+    remoteTarget: true, remoteSeed: true, originalActionHomeHttp: true, socketIo, allowRelationshipAction: true });
+  if (gitReplica === 'existing') runScmExecutable(setup.sourcePath, 'git', ['clone', '-q', '.', setup.targetPath]);
+  const result = await setup.executeNativeRelationshipAction();
+  expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { created: true } });
+  expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+  expect(await readdir(join(setup.targetPath, '.git'))).toContain('HEAD');
+});
+
+it.skipIf(process.platform !== 'linux').each(['foreign destination', 'foreign Project'] as const)(
+  'refuses a native Use Replica with a %s before materialization', async scenario => {
+    executionBoundary.member = false;
+    const setup = await createRequesterWorkspaceSyncFixture({ role: 'use', isolationOff: true, gitReplica: 'missing',
+      remoteTarget: true, remoteSeed: true, originalActionHomeHttp: true, socketIo, allowRelationshipAction: true,
+      ...(scenario === 'foreign destination' ? { targetCustodianAccountId: 'other-owner' } : {}) });
+    const request = scenario === 'foreign Project'
+      ? await setup.prepareInvocation({ ...setup.request, actionInput: {
+        ...setup.request.actionInput, sourceWorkspaceRefId: setup.custodianRef.id,
+      } })
+      : undefined;
+    const result = await setup.executeNativeRelationshipAction(request);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: scenario === 'foreign destination'
+      ? 'target_unavailable' : 'workspace_ref_not_ready' });
+    await expect(readdir(setup.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(setup.custodianRows).toEqual(setup.custodianBefore);
+  },
+);
+
 it.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)('enforces %s Sync admission through requester Account rows and filesystem authority', async role => {
   executionBoundary.member = role === 'use';
   const setup = await createRequesterWorkspaceSyncFixture({ role, socketIo });

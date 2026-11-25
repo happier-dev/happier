@@ -415,10 +415,12 @@ export function createCliMachineActionTransport(
           ...(input.signal ? { signal: input.signal } : {}),
           ...(hasLocalActionContext ? { localActionContext } : {}),
           ...(rpcContext ? { rpcContext } : {}),
-          // SCM has no native requester identity owner. Keep its exact local
+          // SCM has no native requester identity owner, and a Sync link places
+          // the requester's own work by Machine policy. Keep their exact local
           // custody, but let the receiving authorizer select or refuse that
           // identity instead of treating Action admission as execution identity.
           ...(admittedLocalAction && !input.method.startsWith('scm.')
+            && input.method !== RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE
             ? { admissionResult: { ok: true as const } } : {}),
         } : undefined,
       ));

@@ -125,6 +125,8 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   workerCleanCopy?: boolean;
   allowRelationshipAction?: boolean;
   remoteSeed?: boolean;
+  isolationOff?: boolean;
+  gitReplica?: 'existing' | 'missing';
   nativeCarrierHome?: Parameters<typeof composeBindChildSourcePhaseTestRuntime>[0]['nativeCarrierHome'];
   originalActionHomeHttp?: boolean;
   readRawMachineAdmission?: (payload: Readonly<{ machineId: string; method: string; params: unknown; token?: string }>) => Promise<NonNullable<RpcRequest['machineAdmission']>>;
@@ -150,7 +152,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   let memberReads = 0;
   const agentIsolation: HostAgentIsolationLaunchContext = {
     managedHappierBinaryPath: '/opt/happier/cli/current/happier',
-    read: () => role === 'use' || options.separateUsers ? ({ enabled: true, memberProvisioning: 'linuxUsersV1',
+    read: () => !options.isolationOff && (role === 'use' || options.separateUsers) ? ({ enabled: true, memberProvisioning: 'linuxUsersV1',
       status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [workspaceRoot] })
       : ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }),
     readMember: async input => { memberReads++; if (!preparation) throw new Error('Native member fixture is not ready'); return preparation.members.read(input); },
@@ -166,6 +168,9 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   const agentSessionId = 'agent-session';
   const installed = await createInstalledFilesystemMachineFixture({ agentIsolation, credentials: installedCredentials,
     accountId: sourceCustodianAccountId,
+    // The SOURCE owner's published policy: a running daemon's admission reads it.
+    ...(options.isolationOff ? { metadata: { host: 'source-host', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/source',
+      happyHomeDir: '/home/source/.happier', agentIsolation: { enabled: false } } } : {}),
     readWorkspaceSync: () => workspaceSyncService,
     ...(sourceResourceKey ? { machineEncryption: { encryptionKey: sourceResourceKey.encryptionKey, encryptionVariant: 'dataKey' } } : {}),
     readAdditionalHttpResponse: async url => {
@@ -264,7 +269,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     ? { actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'workspace.sync.relationship.create': ['ui'] } } }
     : {}, envelopeKind: accountMode === 'e2ee' ? 'encrypted' : 'plain' });
   const originalHomePost = vi.mocked(axios.post).getMockImplementation();
-  const selectedRoot = role === 'use' ? member.workspaceRoot : installed.directory;
+  const selectedRoot = role === 'use' && !options.isolationOff ? member.workspaceRoot : installed.directory;
   const sourcePath = join(selectedRoot, 'source-parent-ref');
   const targetPath = join(options.remoteTarget ? installed.directory : selectedRoot, 'target-parent-ref');
   const targetKeys = tweetnacl.sign.keyPair();
@@ -405,6 +410,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     } }));
   const sourceSocket = Reflect.get(installed.machine, 'socket');
   const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, withScmRuntime: true, projectRowsFromHttp: true,
+    ...(options.gitReplica ? { gitWorktreeSeed: true } : {}),
     ...(options.nativeCarrierHome ? { nativeCarrierHome: options.nativeCarrierHome } : {}),
     serverId: installed.homeServerIdentityId, profileId: installed.serverId, managedHomeId: installed.homeServerIdentityId,
     ...(options.prepareActiveServerDirectory ? { prepareActiveServerDirectory: options.prepareActiveServerDirectory } : {}),
@@ -695,7 +701,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
       } });
     registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: targetRpc, service: fixture.targetParent.workspaceSync });
   }
-  await mkdir(targetPath);
+  if (options.gitReplica !== 'missing') await mkdir(targetPath);
   const targetRef = options.workerCleanCopy ? materializeWorkspaceRefForMachineRoot([fixture.sourceRef], {
     serverId: fixture.sourceRef.serverId, machineId: fixture.targetRef.machineId, rootPath: targetPath,
     parentWorkspace: { serverId: fixture.sourceRef.serverId, workspaceId: fixture.sourceRef.id,
@@ -710,14 +716,17 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     await runWithServerHttpBaseUrl(installed.serverHttpBaseUrl, () => readProjectAccountRows({
       credentials: installed.bootstrap.credentials, serverId: installed.serverId, publication: 'installed' }));
   }
-  if (role === 'use') {
+  if (role === 'use' && !options.isolationOff) {
     if (!options.remoteTarget) native.privateRoot = targetPath;
     native.privateRoots = [sourcePath];
   }
-  const content = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+  const content = { v: 1 as const, selection: options.gitReplica ? 'git_worktree' as const : 'all_files' as const,
+    extraIgnorePatterns: [], extraIncludePatterns: [] };
   const request = { v: 1 as const, operationId: 'member-sync-create', actionInput: { v: 1 as const, sourceWorkspaceRefId: fixture.sourceRef.id,
-    targetMachineId: fixture.targetRef.machineId, targetPath, mode: options.workerCleanCopy ? 'mirror_exactly' : 'keep_both_in_sync',
-    ...(options.workerCleanCopy ? { purpose: 'worker_clean_copy' as const } : {}), destinationIntent: 'materialize_from_source_workspace',
+    targetMachineId: fixture.targetRef.machineId, targetPath,
+    mode: options.gitReplica ? 'keep_synced' : options.workerCleanCopy ? 'mirror_exactly' : 'keep_both_in_sync',
+    ...(options.workerCleanCopy ? { purpose: 'worker_clean_copy' as const } : {}),
+    destinationIntent: options.gitReplica === 'existing' ? 'use_existing' : 'materialize_from_source_workspace',
     contentPolicy: { ...content, policyDigest: computeWorkspaceSyncPolicyDigest(content) } } } satisfies WorkspaceSyncRelationshipCreateRpcRequestV1;
   const prepareInvocation = async (input: WorkspaceSyncRelationshipCreateRpcRequestV1, original?: Readonly<{
     envelope: ExternalActionRequestEnvelope; authorization: ExternalActionExecutionAuthorizationV1;
@@ -763,6 +772,8 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     return authorizeMachineRpcRequest(request, {
       machineId: installed.machineId, resolveInstallationId: () => installed.installation.installationId,
       resolveCustodianAccountId: async () => sourceCustodianAccountId, resolveHomeServerIdentityId: async () => installed.homeServerIdentityId,
+      // The SOURCE daemon's own Agent isolation policy, as production admission reads it.
+      readAgentIsolation: () => agentIsolation.read(),
       resolvePrivateWorkspaceSyncTargetExecution: admission => resolvePrivateWorkspaceSyncTargetExecution(
         { resolvePrivateExecution: fixture.parent.handoffAdapter.resolvePrivateExecution,
           hasRetainedRecoveryAdmission: fixture.parent.workspaceSync.hasRetainedRecoveryAdmission }, admission),
@@ -995,7 +1006,8 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
           ...(confirmation ? { presentUserConfirmation: confirmation } : {}) },
         });
     const review = await dispatch();
-    if (review.ok && invocation.request.actionInput.mode !== 'mirror_exactly') return review;
+    if (invocation.request.actionInput.mode !== 'mirror_exactly'
+      && (review.ok || review.errorCode !== 'action_interactive_review_required')) return review;
     expect(review, JSON.stringify({ review, diagnostics: rpcDiagnostics, target: targetRpcDiagnostics }))
       .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
     if (review.ok || !review.details || typeof review.details !== 'object'

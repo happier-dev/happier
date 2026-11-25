@@ -237,7 +237,7 @@ export function registerScmHandlers(
         projectRoot: string | undefined, input: unknown, selected: WorkspaceSource, run: () => unknown,
         observeAsMember?: (context: RpcHandlerContext, identity: IsolatedRequester) => Promise<unknown>): Promise<unknown> => {
         if (!context) return await run();
-        const directRequester = context.directScmWorkspaceRequester;
+        const directRequester = context.directWorkspaceRequester;
         const requester = directRequester ? undefined : await deps?.resolveRequester?.(context);
         const identity = directRequester ?? requester?.identity;
         if (!identity) return await run();

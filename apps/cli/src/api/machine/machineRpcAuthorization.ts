@@ -87,6 +87,7 @@ import {
   WorkspaceSyncTargetFileReadV1Schema,
   type WorkspaceSyncTargetConflictRecoverV1,
   WorkspaceSyncSeedExportPrepareV1Schema,
+  WorkspaceSyncRelationshipCreateRpcRequestV1Schema,
   WorkspaceSyncPrepareBetweenRequestV1Schema,
 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { WorkspaceSyncCommittedCopyPreviewV1Schema, WorkspaceSyncCommittedCopyTargetV1Schema,
@@ -1875,6 +1876,19 @@ export async function authorizeMachineRpcRequest(
         { machineId: machine.machineId, installationId },
         request.workspaceSyncSourceExecution?.externalActionExecution.reviewedChild,
       );
+      const nativeRequesterControl =
+        context.machineId === machine.machineId &&
+        !sourceRouting &&
+        !targetRouting &&
+        !writerTargetRouting &&
+        !seedRouting;
+      const replica = rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE
+        ? WorkspaceSyncRelationshipCreateRpcRequestV1Schema.safeParse(request.params)
+        : undefined;
+      const nativeSyncRequester = nativeRequesterControl &&
+        (rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST ||
+          replica?.success && replica.data.actionInput.mode === 'keep_synced' &&
+            !('replaceRelationshipId' in replica.data.actionInput));
       // These registered owners already consume the P11 payload finalizer.
       // Session creation leaves the trusted runner unchanged and records birth
       // attribution before its payload; finite Project Exec carries ingress
@@ -1891,11 +1905,7 @@ export async function authorizeMachineRpcRequest(
         (writerTargetRouting && isWorkspaceSyncSourceWriterCleanupPhaseV1(writerTargetRouting.target.phase) &&
           isWorkspaceSyncSourceWriterTargetMethodV1(writerTargetRouting.target.phase, rpcMethod) &&
           !targetRouting && !seedRouting) ||
-        (context.machineId === machine.machineId &&
-        !sourceRouting &&
-        !targetRouting &&
-        !writerTargetRouting &&
-        !seedRouting &&
+        (nativeRequesterControl &&
         (finiteProjectMethods.includes(rpcMethod) ||
           // Workspace linking and read-back own native root mapping and copy
           // custody. Neither launches a requester command or needs raw Session authority.
@@ -1915,12 +1925,6 @@ export async function authorizeMachineRpcRequest(
           nativeSessionResume ||
           nativeSessionEffect === 'session.spawn_new' ||
           nativeSessionEffect === 'session.agent.transition'));
-      const nativeRequesterControl =
-        context.machineId === machine.machineId &&
-        !sourceRouting &&
-        !targetRouting &&
-        !writerTargetRouting &&
-        !seedRouting;
       const nativeTerminal = nativeRequesterControl && nativeTerminalMethods.includes(rpcMethod);
       const nativePersonalComputer = nativeRequesterControl && (rpcMethod === RPC_METHODS.DAEMON_COMPUTER_PERSONAL_ACTION_EXECUTE
         || rpcMethod === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT
@@ -1955,7 +1959,7 @@ export async function authorizeMachineRpcRequest(
         && requiresRequesterWorkspaceCapture(context)) return requesterWorkspaceCaptureRequired();
       if (
         !nativeManagedBindPhase &&
-        !nativeEffectOwner &&
+        (!nativeEffectOwner || nativeSyncRequester) &&
         // The scoped computer owner selects and verifies the requester's desktop.
         !nativePersonalComputer &&
         // The registered terminal owner selects native placement at creation
@@ -2028,8 +2032,8 @@ export async function authorizeMachineRpcRequest(
           && isRequesterOwnWorkPlacedOnDaemonForHost(identity, machine.readAgentIsolation);
         if (directRequester) {
           // Placement never substitutes for the method's remaining authorization checks.
-          authorized = { ok: true, directScmWorkspaceRequester: identity };
-        } else if (!receivingManager && !unrestricted && !personLocalRepositoryRead) {
+          authorized = { ok: true, directWorkspaceRequester: identity };
+        } else if (!nativeEffectOwner && !receivingManager && !unrestricted && !personLocalRepositoryRead) {
           const refuseExecution = (errorCode: string, error: string): RpcAuthorizationResult => ({
             ok: false, errorCode, error,
             failureCause: projectActionFailureCauseV1({ code: errorCode }, 'rpc.admission.requester_execution_isolation',
