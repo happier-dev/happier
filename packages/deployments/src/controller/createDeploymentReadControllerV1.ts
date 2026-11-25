@@ -20,7 +20,7 @@ import type {
     DeploymentReadSnapshotV1, DeploymentReadTransportV1, DeploymentHistoryPageV1,
     DeploymentEnvironmentReadDetailV1, DeploymentEnvironmentReadCollectionV1, DeploymentReceiptReadDetailV1,
     DeploymentDomainReadPageV1, DeploymentAccountDomainReadPageV1, DeploymentDataServiceReadPageV1,
-    DeploymentDataServiceQueryV1,
+    DeploymentDataServiceQueryV1, DeploymentDataServiceReadItemV1,
 } from './deploymentReadControllerTypes.js';
 
 type Resource = Readonly<{
@@ -395,7 +395,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         };
     }
     /** An Environment holds databases when its definition declares data services (the Databases page's rows). */
-    const holdsDatabases = (item: DeploymentDataServiceReadPageV1['items'][number]) => (item.content.template?.data?.length ?? 0) > 0;
+    const holdsDatabases = (item: DeploymentDataServiceReadItemV1) => (item.content.template?.data?.length ?? 0) > 0;
     function acquireAccountPage<T extends DeploymentAccountDomainReadPageV1 | DeploymentDataServiceReadPageV1>(
         kind: 'domainPage' | 'dataServicePage', query: DeploymentDataServiceQueryV1, demand: DeploymentReadDemandV1,
     ) {
