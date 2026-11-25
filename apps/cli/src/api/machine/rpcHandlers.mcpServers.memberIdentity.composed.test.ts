@@ -9,6 +9,7 @@ import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/proto
 import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogV1Schema, McpServerCatalogRowMutationV1Schema,
   McpServerCatalogRowMutationResponseV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { DaemonMcpServersTestResponseSchema } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -20,6 +21,7 @@ import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/ag
 import { buildAgentIsolationProvisioningSteps, deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 import { createAgentIsolationMemberPreparationBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
 import { writeAgentIsolationMemberBinding } from '@/daemon/agentIsolation/memberBindings';
+import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { configuration } from '@/configuration';
 import { writeStoredCredentialsForServerId } from '@/persistence';
 import { resolveCliTsxTsconfigPath, resolveTsxImportHookPath } from '@/utils/spawnHappyCLI';
@@ -164,12 +166,16 @@ process.stdin.on('data', chunk => {
 });
 `;
 
-async function fixture(options: Readonly<{ ownerAgentOff?: boolean; policySnapshotMissing?: true }> = {}) {
+async function fixture(options: Readonly<{ ownerAgentOff?: boolean; policySnapshotMissing?: true; isolationOff?: true }> = {}) {
   let memberPreparation: ReturnType<typeof createAgentIsolationMemberPreparationBoundary> | undefined;
-  const f = await createInstalledFilesystemMachineFixture({
+  // An installed daemon holds a terminal sign-in; an Account bearer is never read
+  // back as the daemon's credential (persistence readStoredCredentialsFile).
+  const daemonCredentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'requester',
+    provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`, encryption: null };
+  const f = await createInstalledFilesystemMachineFixture({ credentials: daemonCredentials,
     ...(options.ownerAgentOff ? { boundSessionId: 'owner-agent-mcp' } : {}), agentIsolation: {
     managedHappierBinaryPath: '/opt/happier/cli/current/happier',
-    read: () => options.policySnapshotMissing ? undefined : options.ownerAgentOff
+    read: () => options.policySnapshotMissing ? undefined : options.ownerAgentOff || options.isolationOff
       ? { enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }
       : { enabled: true, memberProvisioning: 'linuxUsersV1',
         status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [] },
@@ -184,6 +190,9 @@ async function fixture(options: Readonly<{ ownerAgentOff?: boolean; policySnapsh
       return prepared;
     },
   } });
+  // An installed daemon is signed in: the custodian's own Test reads the daemon's
+  // stored Account credentials (apiMachine readExecutionRunAccountCredentials).
+  await writeStoredCredentialsForServerId(f.serverId, f.bootstrap.credentials);
   const memberToken = `e30.${Buffer.from(JSON.stringify({ sub: 'member-a' })).toString('base64url')}.signature`;
   const secretRef = 'happier:shared-secret:v1:member-selected';
   const catalog = McpServerCatalogV1Schema.parse({ v: 1, servers: [{ id: 'member', name: 'member_server', transport: 'stdio',
@@ -192,7 +201,9 @@ async function fixture(options: Readonly<{ ownerAgentOff?: boolean; policySnapsh
   let memberCatalog = catalog;
   let memberCatalogRevision = 3;
   let memberCatalogCommits = 0;
-  let ownerCatalog = McpServerCatalogV1Schema.parse(catalog);
+  // A server that exists only in the custodian's catalog, bound to the custodian's secret.
+  let ownerCatalog = McpServerCatalogV1Schema.parse({ ...catalog, servers: [...catalog.servers,
+    { ...catalog.servers[0]!, id: 'owner-only', name: 'owner_only_server' }] });
   let ownerCatalogRevision = 3;
   let ownerCatalogCommits = 0;
   const homeGet = vi.mocked(axios.get).getMockImplementation();
@@ -207,12 +218,17 @@ async function fixture(options: Readonly<{ ownerAgentOff?: boolean; policySnapsh
     if ((member || owner) && path === MCP_SERVER_CATALOG_ROWS_ROUTE_V1) return { status: 200, data: {
       status: 'present', revision: member ? memberCatalogRevision : ownerCatalogRevision, content: { t: 'plain', v: member ? memberCatalog : ownerCatalog },
     } };
+    const entry = { ref: secretRef, source: 'shared_resource', relationship: 'owner', name: member ? 'Member' : 'Owner', kind: 'token',
+      ownerAccountId: member ? 'member-a' : 'requester', revision: 1, materialStatus: 'ready',
+      capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } };
+    // The catalog write-back admits its references against the Account's shared list (captureSavedSecretReferencesForOperation).
+    if ((member || owner) && path === '/v1/account/saved-secrets/resources') {
+      return { status: 200, data: SharedSavedSecretListOutputV1Schema.parse({ resources: [entry] }) };
+    }
     if ((member || owner) && path === '/v1/account/saved-secrets/resources/materials') {
       return { status: 200, data: SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [{
       resourceId: 'member-selected', encryptionMode: 'plain', recipientEnvelope: null,
-      entry: { ref: secretRef, source: 'shared_resource', relationship: 'owner', name: member ? 'Member' : 'Owner', kind: 'token',
-        ownerAccountId: member ? 'member-a' : 'requester', revision: 1, materialStatus: 'ready',
-        capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+      entry,
       storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'member-selected', mode: 'plain',
         content: { v: 1, name: member ? 'Member' : 'Owner', kind: 'token', value: member ? 'fixture-member-selected' : 'fixture-owner-selected' } }),
       }] }) };
@@ -286,7 +302,10 @@ async function fixture(options: Readonly<{ ownerAgentOff?: boolean; policySnapsh
   });
   const actualProcess = await vi.importActual<typeof import('node:child_process')>('node:child_process');
   const launcherSource = join(projectPath(), 'src/mcp/launchers/stdioMcpServerLauncher.ts');
+  // Every OS process start, daemon-side stdio servers included.
+  const spawned: string[] = [];
   os.spawn = (command, args, options) => {
+    spawned.push(command);
     if (command !== 'sudo') return undefined;
     expect(args).toEqual(['-n', '-u', identity.username, '--', '/opt/happier/cli/current/happier', 'agent-launch']);
     const hook = resolveTsxImportHookPath();
@@ -320,20 +339,41 @@ async function fixture(options: Readonly<{ ownerAgentOff?: boolean; policySnapsh
       const closed = new Promise<void>(resolve => child.once('close', () => resolve())); child.kill('SIGKILL'); await closed;
     }
   } });
-  const invoke = (options: Readonly<{ actor?: string; signal?: AbortSignal; noAuth?: boolean; ownerById?: boolean; memberById?: boolean; rawMember?: boolean }> = {}) => {
+  const invoke = (options: Readonly<{ actor?: string; signal?: AbortSignal; noAuth?: boolean; ownerById?: boolean; memberById?: boolean;
+    rawMember?: boolean; serverId?: string; directory?: string }> = {}) => {
     const signal = options.signal ?? new AbortController().signal;
+    const actorAccountId = options.actor ?? (options.ownerById ? 'requester' : 'member-a');
     const ingress: RpcHandlerContext = { signal, callerAuthority: 'present_user',
       ...(options.noAuth || options.ownerById || options.rawMember ? {} : { callerInputAuthorization: account.authorization }),
-      machineAdmission: { actorAccountId: options.actor ?? (options.ownerById ? 'requester' : 'member-a'), custodianAccountId: 'requester', machineId: 'machine',
-        installationId: f.installation.installationId, role: 'manage', encryptionMode: 'plain' },
+      // A member is a Use grantee: Manage is full control of the Machine (448e136f325) and never separated.
+      machineAdmission: { actorAccountId, custodianAccountId: 'requester', machineId: 'machine',
+        installationId: f.installation.installationId, role: actorAccountId === 'requester' ? 'manage' : 'use', encryptionMode: 'plain' },
       verifyMachineAdmissionCurrent: async () => f.isHomeCurrent(),
     };
     return f.rpcHandlerManager.invokeLocal(RPC_METHODS.DAEMON_MCP_SERVERS_TEST,
-      options.ownerById || options.memberById ? { t: 'byId', serverId: 'member', machineId: 'machine', directory: f.directory }
+      options.ownerById || options.memberById ? { t: 'byId', serverId: options.serverId ?? 'member', machineId: 'machine', directory: f.directory }
         : { t: 'draft', server: options.noAuth ? { ...catalog.servers[0]!, env: {} } : catalog.servers[0]!, binding: null,
-          machineId: 'machine', directory: options.noAuth ? f.directory : identity.home }, { signal, rpcContext: ingress });
+          machineId: 'machine', directory: options.directory ?? (options.noAuth ? f.directory : identity.home) }, { signal, rpcContext: ingress });
   };
-  return { ...f, invoke, frames, children, reads, account,
+  // The member operation lease retires its runtime home through one more native
+  // frame (prepareNativeOperation dispose). The OS boundary acknowledges it.
+  const retired: string[] = [];
+  os.execFile = (command, args) => {
+    if (command !== 'sudo') return undefined;
+    expect(args).toEqual(['-n', '-u', identity.username, '--', '/opt/happier/cli/current/happier', 'agent-launch']);
+    const child = Object.assign(new actualProcess.ChildProcess(), {
+      stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() });
+    const settle = (code: number) => {
+      child.stdout.end(); child.stderr.end(); child.exitCode = code;
+      child.emit('exit', code, null); child.emit('close', code, null);
+    };
+    void readAgentLaunchFrame(child.stdin, undefined, true).then(payload => {
+      if (!('action' in payload) || payload.action !== 'retire_operation') return settle(1);
+      retired.push(payload.runtimeHome); settle(0);
+    }, () => settle(1));
+    return child;
+  };
+  return { ...f, invoke, frames, children, reads, account, retired, spawned,
     memberSetupLaunches: () => memberPreparation?.launches.length ?? 0,
     memberCatalogState: () => ({ revision: memberCatalogRevision, commits: memberCatalogCommits,
       usefulToolsSnapshot: memberCatalog.servers[0]?.toolsSnapshot?.tools.some(tool => tool.name === 'member_ready') === true }),
@@ -469,5 +509,42 @@ describe.skipIf(process.platform !== 'linux')('installed Machine MCP requester m
       expect(f.ownerCatalogState().commits).toBe(0);
     }
     expect(f.children.every(child => child.exitCode !== null || child.signalCode !== null)).toBe(true);
+    expect(f.retired).toEqual([f.frames[0]?.runtimeHome]);
   });
+
+  // a5e573ee885 admits a Use guest's Home-signed mcp.servers.test as own work; the
+  // daemon decides whose server it is and where it runs (owner ruling 2026-11-23).
+  it.each(['draft', 'byId'] as const)("runs a Use guest's own %s server on the daemon when the owner turned isolation off", async kind => {
+    const f = await fixture({ isolationOff: true });
+    const result = await f.invoke(kind === 'byId' ? { memberById: true } : { directory: f.directory });
+    expect(result, closedProbeFailure(result)).toMatchObject({ ok: true });
+    const parsed = DaemonMcpServersTestResponseSchema.parse(result);
+    if (parsed.ok) expect(parsed.tools?.map(tool => tool.name)).toEqual(['member_ready']);
+    // Daemon placement: no member-identity launch, one daemon-side stdio start.
+    expect(f.frames).toEqual([]);
+    expect(f.children).toEqual([]);
+    expect(f.spawned.length).toBeGreaterThan(0);
+    expect(f.spawned).not.toContain('sudo');
+    const materialReads = f.reads.filter(read => read.path === MCP_SERVER_CATALOG_ROWS_ROUTE_V1
+      || read.path.startsWith('/v1/account/saved-secrets/resources'));
+    expect(materialReads.length > 0 && materialReads.every(read => read.member && !read.owner)).toBe(true);
+    if (kind === 'byId') expect(f.memberCatalogState()).toEqual({ revision: 4, commits: 1, usefulToolsSnapshot: true });
+    expect(f.ownerCatalogState().commits).toBe(0);
+  });
+
+  // An unread policy still refuses the guest's own server (agent_isolation_unavailable, above);
+  // the owner-only id is refused earlier, at the guest's own catalog, whatever the policy.
+  it.each([['isolation off', { isolationOff: true }], ['isolation on', {}], ['unread policy', { policySnapshotMissing: true }]] as const)(
+    "refuses a Use guest's Test of a server only in the owner's catalog (%s) before any process or owner secret", async (_label, options) => {
+      const f = await fixture(options);
+      const result = await f.invoke({ memberById: true, serverId: 'owner-only' });
+      expect(result).toMatchObject({ ok: false, errorCode: 'server_not_found' });
+      expect(f.spawned).toEqual([]);
+      expect(f.frames).toEqual([]);
+      const ownerMaterialReads = f.reads.filter(read => read.owner && (read.path === MCP_SERVER_CATALOG_ROWS_ROUTE_V1
+        || read.path.startsWith('/v1/account/saved-secrets/resources')));
+      expect(ownerMaterialReads).toEqual([]);
+      expect(f.ownerCatalogState().commits).toBe(0);
+      expect(f.memberCatalogState().commits).toBe(0);
+    });
 });
