@@ -59,6 +59,7 @@ import {
   type StarterCreateOutcome,
   type StarterCreateInput,
 } from './newAppDraft';
+import { useOpenProject } from '../useOpenProject';
 import { projectCheckoutParentPath } from '../activation/projectOpenChoices';
 import type { ProjectSourceRepositorySelectorV1, ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { StoreItemMark } from '@/components/store/catalog/StoreItemMark';
@@ -77,6 +78,7 @@ import { useNewAppForges, type ForgeOwnerFact } from './useNewAppForges';
 import { isRepositoryAddressCandidate } from '@/components/projects/sources/projectSourceAddress';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { QualifiedMachineV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
 import type { MachineCreationContinuationDraft } from '@/components/machines/add/MachineCreationContinuation';
@@ -155,6 +157,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
 ) {
   const { theme } = useUnistyles();
   const router = useRouter();
+  const openProject = useOpenProject();
   const devicePhone = useDeviceType() === 'phone';
   // Narrow is the body's measured width, not the device: 200% text or a narrow pane recomposes like a phone (tiles in
   // one column, the summary's facts beneath their labels, the footer's actions stacked) (DESIGN-ACCEPT R1).
@@ -444,17 +447,15 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const startSession = React.useCallback(
     async (
       outcome: Extract<StarterCreateOutcome, { kind: 'created' }>,
-    ): Promise<boolean> => {
-      const lifetime = captureActiveServerAccountScopeLifetime();
-      if (!scope || !lifetime) return false;
-      return openStarterBuildSession(outcome.handoff, scope.serverId, name, lifetime);
-    },
-    [name, scope],
+      lifetime: ServerAccountScopeLifetime | null = captureActiveServerAccountScopeLifetime(),
+    ): Promise<boolean> => lifetime ? openStarterBuildSession(outcome, name, lifetime, openProject) : false,
+    [name, openProject],
   );
 
   const submit = React.useCallback(async (retry = false) => {
     const reviewedInput = retry ? submittedInput.current ?? input : input;
-    if (!reviewedInput || !scope) return;
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!reviewedInput || !scope || !lifetime) return;
     const actionInput = retry && create?.kind === 'failed' && create.resume
       ? { ...reviewedInput, resume: create.resume }
       : reviewedInput;
@@ -462,18 +463,15 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     submittedInput.current = actionInput;
     setStep('create');
     setCreate({ kind: 'running' });
-    const lifetime = suggestion ? captureActiveServerAccountScopeLifetime() : null;
-    if (suggestion && lifetime) {
-      // Use this setup: the suggestion owner creates through the same Action with the plan brief, then opens the Session.
-      const { serverId: _serverId, starterId: _starterId, source: _source, description: _description, ...createInput } = actionInput;
-      // The brief names the forge the person kept, which the validator admitted with this target.
+    if (suggestion) {
+      const { serverId: _serverId, starterId: _starterId, source: _source, description: submittedDescription, ...createInput } = actionInput;
+      // The reviewed setup names the forge the person kept.
       const applied = await applyDeploySuggestion({ serverId: scope.serverId,
         suggestion: { ...suggestion.recommendation, repositoryProviderKind: actionInput.repository.providerKind },
-        // The words the person reviewed on this step lead the brief, byte for byte (decision 5).
-        catalog: suggestion.catalog, description,
-        create: { input: createInput, lifetime, ...(name.trim() ? { sessionName: name.trim() } : {}) } });
+        catalog: suggestion.catalog, description: submittedDescription,
+        create: { input: createInput, lifetime } });
       if (applied.kind === 'created') {
-        settleCreated(applied.creation, applied.sessionOpened);
+        settleCreated(applied.creation, await startSession(applied.creation, lifetime));
         return;
       }
       const settled = applied.kind === 'failed' && applied.creation
@@ -513,8 +511,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       setStep('describe');
       return;
     }
-    if (outcome.kind === 'created') settleCreated(outcome, await startSession(outcome));
-  }, [create, description, forge.markNeedsAccount, input, name, scope, settleCreated, startSession, suggestion]);
+    if (outcome.kind === 'created') settleCreated(outcome, await startSession(outcome, lifetime));
+  }, [create, forge.markNeedsAccount, input, scope, settleCreated, startSession, suggestion]);
 
   // Use this setup (journey-deploy F4): the suggestion owner routes it. A starter continues in this flow's review, which
   // creates through the owner with the plan brief; a catalog app continues in this dialog's Where it runs.

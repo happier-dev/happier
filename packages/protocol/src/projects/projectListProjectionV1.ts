@@ -116,7 +116,8 @@ export function projectProjectListV1(input: Readonly<{
       workspaceAddress: workspaceAddressFromRefV2(ref), hidden: group.hidden, pinned: group.pinned, listed: group.listed,
       serverId: ref.serverId, rootPath: ref.rootPath,
       ...(!isManagedWorkspaceRefV2(ref) ? { machineId: ref.machineId } : {}),
-      ...(ref.label ? { label: ref.label } : {}) })));
+      ...(ref.label ? { label: ref.label } : {}),
+      ...(ref.source ? { sourceId: ref.source.sourceId } : {}) })));
   const items = input.limit === undefined ? leaves : leaves.slice(0, input.limit);
   const truncated = items.length < leaves.length || (input.coverage ?? 'complete') !== 'complete';
   return { projectGroups, hiddenProjectGroups, listedProjectGroups, unlistedProjectGroups, items, truncated,

@@ -16,15 +16,6 @@ const input = { serverId: 'home', machineId: 'machine', requestKey: 'starter-1',
     stack: { framework: 'html', output: 'static' }, data: { kind: 'none' }, variables: [],
   }), destinationParentPath: '/projects', destinationDirectoryName: 'bakery',
   repository: { owner: 'alice', name: 'bakery' } };
-/**
- * The build Session reads its own Project from the handoff (AUTO-LIVE W15 finding 2: the agent deployed into another
- * Project's Source). The person's words lead the message byte for byte; the created Project, Source and repository follow.
- */
-const namesCreatedProject = (expected: Readonly<{ projectId: string; sourceId: string; repositoryUrl: string }>) => ({
-  asymmetricMatch: (message: unknown) => typeof message === 'string' && message.startsWith(input.description)
-    && [expected.projectId, expected.sourceId, expected.repositoryUrl].every(fact => message.slice(input.description.length).includes(`"${fact}"`)),
-  toString: () => `the description followed by ${JSON.stringify(expected)}`,
-});
 const starter = RegistryStarterV1Schema.parse({ repository: 'https://github.com/mdn/beginner-html-site-styled', title: 'Static website', description: 'A small HTML and CSS website starter.', tags: ['website'], buildGoal: 'Build a website.' });
 const starterSelector = { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
   repository: { nameWithOwner: 'mdn/beginner-html-site-styled', cloneUrl: starter.repository, webUrl: starter.repository }, protocol: 'https' };
@@ -122,7 +113,7 @@ describe('starter creation public Action', () => {
     { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'created', repositoryUrl: hostedRepository.webUrl,
       sessionHandoff: { directory: '/projects/bakery',
-        initialMessage: namesCreatedProject({ projectId: 'project', sourceId: 'source', repositoryUrl: hostedRepository.webUrl }) } } });
+        initialMessage: input.description } } });
     if (kind === 'scratch') {
       expect(effects).not.toContain('scm.repository.clone');
       expect(result).not.toHaveProperty('result.commit');
@@ -224,7 +215,7 @@ it.each([{ surface: 'ui', sourceFailure: false, publishFailure: false }, { surfa
   } else {
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'created', projectId: 'project', sourceId: 'source', commit: snapshot.branch.headOid,
       sessionHandoff: { directory: '/projects/bakery',
-        initialMessage: namesCreatedProject({ projectId: 'project', sourceId: 'source', repositoryUrl: hostedRepository.webUrl }) } } });
+        initialMessage: input.description } } });
     expect(approvals).toBe(0);
     // F6: one creation publishes one repository and one Source, then hands off;
     // validation and Production are later effects, never part of create.
@@ -336,7 +327,7 @@ it.each(['source', 'project'] as const)('resumes the exact created repository an
   const retried = await executor.execute('projects.starters.create', { ...input, resume: partial.resume }, context);
   expect(retried).toMatchObject({ ok: true, result: { kind: 'created', projectId: 'project', sourceId: source.id,
     repositoryUrl: hostedRepository.webUrl, commit: snapshot.branch.headOid,
-    sessionHandoff: { initialMessage: namesCreatedProject({ projectId: 'project', sourceId: source.id, repositoryUrl: hostedRepository.webUrl }) } } });
+    sessionHandoff: { initialMessage: input.description } } });
   expect(scmCalls).toEqual(effectsBeforeRetry);
   expect(sourceWrites).toHaveLength(failingPhase === 'source' ? 2 : 1);
   expect(sourceReads).toEqual(failingPhase === 'project' ? [{ serverId: 'home', sourceId: source.id }] : []);

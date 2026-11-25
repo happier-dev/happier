@@ -117,8 +117,8 @@ and the reviewed plan. A catalog app is a pure deploy and continues to Where it
 runs without a build Session.
 
 In the build Session, inspect repository instructions and existing files, then
-build or customize the selected setup. Follow its target, data, named variables
-and selected forge. Keep credentials out of source, transcripts and logs.
+build or customize the selected setup. Read the reviewed setup attached to the
+first message for its target, data, named variables and selected forge. Keep credentials out of source, transcripts and logs.
 
 ${DEPLOYMENT_VALIDATION_RULES_V1}
 

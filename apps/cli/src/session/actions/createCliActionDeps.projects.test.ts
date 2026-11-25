@@ -284,7 +284,7 @@ describe('projects.list through the real CLI Account composition', () => {
       }, reachable: null }),
       expect.objectContaining({ workspaceAddress: {
         workspaceId: 'visible', serverId: key.serverId, machineId: 'machine-a', rootPath: '/work/visible',
-      }, machineId: 'machine-a', reachable: true }),
+      }, machineId: 'machine-a', sourceId: 'visible-source', reachable: true }),
     ]) } });
     if (listed.ok) {
       const managed = (listed.result as { items: { workspaceAddress: { workspaceId: string } }[] }).items

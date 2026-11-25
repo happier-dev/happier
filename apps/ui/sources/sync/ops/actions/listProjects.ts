@@ -92,7 +92,6 @@ export async function listProjectsForActions(params: Readonly<{
         const forge = readProjectRepositoryIdentityV1({ checkout: ref, snapshot });
         items.push({
             ...item,
-            ...(ref.source ? { sourceId: ref.source.sourceId } : {}),
             reachable: scope ? isWorkspaceScopeReachableFromState(state, scope, activeServerId, rows?.scope ?? null) : null,
             ...(forge ? { forge } : {}),
             worktrees: worktreesOf(snapshot),

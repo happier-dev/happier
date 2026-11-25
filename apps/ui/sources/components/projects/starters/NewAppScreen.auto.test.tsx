@@ -1342,8 +1342,7 @@ it('a Session suggestion without the person\u2019s words opens with the descript
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.create')?.props.disabled).toBe(false));
     await screen.pressByTestIdAsync('newApp.create');
     await waitForHomeGovernance(() => expect(calls('projects.starters.create')).toHaveLength(1));
-    const brief = (calls('projects.starters.create')[0]![1] as { description: string }).description;
-    expect(brief.startsWith('  A page for my bakery\n\n'), brief).toBe(true);
+    expect(calls('projects.starters.create')[0]![1]).toMatchObject({ description: '  A page for my bakery\n' });
     await screen.unmount();
   } finally {
     await standardCleanup();
@@ -1351,14 +1350,14 @@ it('a Session suggestion without the person\u2019s words opens with the descript
   }
 });
 
-it('as a page, Use this setup settles once the build Session’s first message is open: the page says the agent starts when it is sent (F-MAKING-STUCK)', async () => {
+it.each(['dialog', 'page'] as const)('opens the created Project with the build composer from a %s', async (host) => {
   suggestionBoundary({ registryActionExecute: async () => ({ pages: [] }),
     sessionAuthoringOpen: async () => ({ kind: 'opened', draftId: 'draft', destination: 'newSession' }) });
   // The create Action's own effects (clone, publish, Source, Project) are its tests'; here it answers with its published result.
   const delegate = execute.getMockImplementation()!;
   execute.mockImplementation(async (actionId: string, input: unknown, context: unknown) => actionId === 'projects.starters.create'
     ? { ok: true, result: { kind: 'created', projectId: 'project', sourceId: 'source', repositoryUrl: 'https://github.example.test/alice/bakery',
-        workspace: { serverId: 'home', machineId: 'devbox', workspaceId: 'workspace', rootPath: '/home/alice/src/bakery' },
+        workspace: { serverId: scope.serverId, machineId: 'devbox', workspaceId: 'workspace', rootPath: '/home/alice/src/bakery' },
         sessionHandoff: { machineId: 'devbox', directory: '/home/alice/src/bakery', initialMessage: (input as { description: string }).description } } }
     : delegate(actionId as never, input as never, context as never));
   const { storage } = await import('@/sync/domains/state/storageStore');
@@ -1382,8 +1381,14 @@ it('as a page, Use this setup settles once the build Session’s first message i
   const scope = storage.getState().settingsScope;
   if (!scope) throw new Error('Expected admitted Home Account');
   await publishMachineInventoryForTest(scope, [createMachineFixture({ activeAt: Date.now() })]);
-  // The projects/new-app route renders the screen with no modal host to step aside.
-  const screen = await renderScreen(<NewAppScreen
+  storage.getState().activateProjectAccountRowsScope(scope);
+  storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
+    workspaceRefs: [{ id: 'workspace', serverId: scope.serverId, machineId: 'devbox', rootPath: '/home/alice/src/bakery',
+      projectKey: 'project', createdAtMs: 1, source: { sourceId: 'source', revision: 1 } }],
+    relationships: [], organizations: [], revisionsByPhysicalKey: {} });
+  const onClose = vi.fn();
+  routerMock.spies.push.mockClear();
+  const screen = await renderScreen(<NewAppScreen onClose={host === 'dialog' ? onClose : undefined}
     suggestion={{ description: 'A page for my bakery', recommendation: recommendation as never, catalog }} />);
   try {
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.useSetup')?.props.disabled).toBe(false));
@@ -1393,10 +1398,19 @@ it('as a page, Use this setup settles once the build Session’s first message i
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.create')?.props.disabled).toBe(false));
     await screen.pressByTestIdAsync('newApp.create');
     await waitForHomeGovernance(() => expect(calls('session.authoring.open')).toHaveLength(1));
-    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.creating'), 'no spinner once the draft is open').toBeNull());
-    expect(screen.getTextContent()).toContain('Project ready');
-    expect(screen.getTextContent()).toContain('Your agent starts building when you send its first message.');
-    expect(screen.findByTestId('newApp.startBuilding'), 'the open draft is the way on; a second one would start twice').toBeNull();
+    expect(routerMock.spies.push).toHaveBeenCalledWith(expect.stringContaining('/projects/workspace'));
+    if (host === 'dialog') {
+      await waitForHomeGovernance(() => expect(onClose).toHaveBeenCalledOnce());
+      expect(routerMock.spies.push.mock.invocationCallOrder[0]).toBeLessThan(onClose.mock.invocationCallOrder[0]!);
+    } else {
+      await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Project ready'));
+      expect(screen.findByTestId('newApp.creating')).toBeNull();
+      expect(screen.findByTestId('newApp.startBuilding')).toBeNull();
+      expect(screen.getTextContent()).toContain('Your agent starts building when you send its first message.');
+    }
+    expect(calls('session.authoring.open')[0]?.[1]).toMatchObject({
+      seed: { prompt: 'A page for my bakery', origin: { kind: 'project', workspace: { workspaceId: 'workspace' } } },
+    });
     await screen.unmount();
   } finally {
     await standardCleanup();

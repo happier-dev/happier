@@ -288,19 +288,16 @@ release check for account plan lines.
 `Use this setup` routes through `applyDeploySuggestion`. A starter or scratch
 recommendation uses the existing forge compatibility read, defaults to GitHub
 when it is an offered choice, and creates the repository, Source, and Project
-through `projects.starters.create`. That Action receives the description the
-person reviewed in the dialog, byte-for-byte, followed by `renderDeployPlanBriefV1`.
-`renderStarterSessionMessageV1` appends the Project this creation made, by
-`projectId`, `projectSourceId` and `repositoryUrl`, and says that deployment
-Actions take that `projectSourceId`, so the build Session deploys its own Source
-rather than another Project's. Then the existing
-`sessionHandoff` opens the build Session's first message in New session, where
-the person's Send starts it (`session.authoring.open`). A modal New app steps
-aside; the page settles on Project ready and says the agent starts when that
-message is sent. The Session runs the project's own scripts, creates a preview
-Environment, deploys the preview, and checks health. The brief's preview step
-(`DEPLOY_BUILD_PREVIEW_RULES_V1`, also in `references/create-app.md`) asks for a
-non-production, standard-purpose Environment with the Project's Source. Only when
+through `projects.starters.create`. The Project opens at the accepted checkout.
+The existing `sessionHandoff` seeds the ordinary New Session composer with
+the person's description, byte for byte. `renderDeployPlanBriefV1` provides the
+reviewed setup in the composer's evidence attachment. The person starts the
+Session by sending the message. The Session runs the Project's scripts, creates
+and deploys a preview Environment, and checks health. The preview guidance
+(`DEPLOY_BUILD_PREVIEW_RULES_V1`, also in `references/create-app.md`) uses
+`projects.list` on the Session's Home to find the checkout for the Session's
+Machine and working directory. The checkout's `sourceId` becomes the
+`projectSourceId` for the non-production, standard-purpose Environment. Only when
 the chosen target is Own server does the brief add
 `DEPLOY_BUILD_PREVIEW_OWN_SERVER_RULES_V1` (the guide labels it Own server): an
 own server deploys the repository's Compose file, so the agent adds

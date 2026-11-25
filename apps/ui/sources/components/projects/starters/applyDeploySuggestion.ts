@@ -5,34 +5,46 @@ import type { ProjectStarterCreateInputV1 } from '@happier-dev/protocol/projects
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
-import { readStarterCreateOutcome, type StarterCreateOutcome, type StarterSessionHandoff } from './newAppDraft';
+import { buildProjectNewSessionOrigin, buildProjectNewSessionSeed } from '../detail/projectRouteState';
+import type { OpenProject } from '../useOpenProject';
+import { readStarterCreateOutcome, type StarterCreateOutcome } from './newAppDraft';
 
 const executeAction = createFrontDoorActionExecute();
 
 export type DeploySuggestionCreateOperands = Readonly<{
     input: Omit<ProjectStarterCreateInputV1, 'serverId' | 'source' | 'starterId' | 'starterSourceId' | 'description'>;
     lifetime: ServerAccountScopeLifetime;
-    sessionName?: string;
 }>;
 
 export type ApplyDeploySuggestionOutcome =
     | Readonly<{ kind: 'where'; app: Readonly<{ sourceId: string; itemId: string }>; targetId: string }>
     | Readonly<{ kind: 'needsCreateInput' }>
-    | Readonly<{ kind: 'created'; creation: Extract<StarterCreateOutcome, { kind: 'created' }>; sessionOpened: boolean }>
+    | Readonly<{ kind: 'created'; creation: Extract<StarterCreateOutcome, { kind: 'created' }> }>
     | Readonly<{ kind: 'failed'; code: string; creation?: StarterCreateOutcome }>;
 
-/** Opens the first-message draft in the new checkout for every starter creation path. */
 export async function openStarterBuildSession(
-    handoff: StarterSessionHandoff,
-    serverId: string,
-    sessionName: string | undefined,
+    creation: Extract<StarterCreateOutcome, { kind: 'created' }>,
+    sessionName: string,
     lifetime: ServerAccountScopeLifetime,
+    openProject: OpenProject,
 ): Promise<boolean> {
-    const name = sessionName?.trim();
+    const { workspace, handoff, reviewedSetup } = creation;
+    const origin = buildProjectNewSessionOrigin({ scope: lifetime.scope, workspace, page: 'overview', routeParams: {} });
+    if (!origin || !lifetime.isCurrent()) return false;
+    const focused = await openProject(workspace.workspaceId, {
+        workspaceAddress: workspace, activeRootPath: handoff.directory,
+    });
+    if (!focused) return false;
+    const name = sessionName.trim();
     const opened = await openSessionAuthoringAction({ seed: {
-        placement: { kind: 'exactTarget', serverId, machineId: handoff.machineId, directory: handoff.directory },
+        ...buildProjectNewSessionSeed({ serverId: workspace.serverId, machineId: handoff.machineId, rootPath: handoff.directory }, origin),
         prompt: handoff.initialMessage,
         ...(name ? { sessionName: name } : {}),
+        ...(reviewedSetup ? { forgeEvidence: { v: 1 as const, items: [{
+            source: { kind: 'entry' as const, label: 'Reviewed app setup' },
+            author: { kind: 'process' as const },
+            text: reviewedSetup,
+        }] } } : {}),
     } }, lifetime);
     return opened.kind === 'opened';
 }
@@ -64,8 +76,9 @@ export async function applyDeploySuggestion(params: Readonly<{
 
     const input: ProjectStarterCreateInputV1 = { ...create.input, serverId: params.serverId,
         source: creationSource,
-        description: renderDeployPlanBriefV1(params.description, params.suggestion, create.input.repository,
-            params.catalog.targets.find(target => target.id === params.suggestion.targetId)) };
+        description: params.description };
+    const reviewedSetup = renderDeployPlanBriefV1('', params.suggestion, create.input.repository,
+        params.catalog.targets.find(target => target.id === params.suggestion.targetId));
     const result = await executeAction.confirmed(PROJECT_STARTER_CREATE_ACTION_ID_V1, input, { surface: 'ui', authority: 'present_user',
         actionCaller: { kind: 'host' }, serverId: params.serverId, expectedAccountId: create.lifetime.scope.accountId });
     if (!result.ok) return { kind: 'failed', code: result.errorCode };
@@ -73,6 +86,5 @@ export async function applyDeploySuggestion(params: Readonly<{
     if (creation.kind !== 'created') return { kind: 'failed', creation,
         code: creation.kind === 'failed' ? creation.code : creation.kind };
 
-    const sessionOpened = await openStarterBuildSession(creation.handoff, params.serverId, create.sessionName, create.lifetime);
-    return { kind: 'created', creation, sessionOpened };
+    return { kind: 'created', creation: { ...creation, reviewedSetup } };
 }

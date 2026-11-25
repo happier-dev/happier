@@ -1,4 +1,5 @@
 import { DEFAULT_PROJECT_REPOSITORY_PROVIDER_KIND_V1, type ProjectStarterCreateInputV1, type ProjectStarterCreateResumeV1 } from '@happier-dev/protocol/projects/starters/createV1';
+import { WorkspaceAddressV1Schema, type WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { projectCheckoutParentPath } from '../activation/projectOpenChoices';
 import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
 import { ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm';
@@ -20,6 +21,8 @@ export type StarterCreateOutcome =
   | Readonly<{
       kind: 'created';
       projectId: string;
+      workspace: WorkspaceAddressV1;
+      reviewedSetup?: string;
       repositoryUrl: string | null;
       handoff: StarterSessionHandoff;
     }>
@@ -81,7 +84,6 @@ export function buildStarterCreateInput(
 ): StarterCreateInput | null {
   if (starterCreateNeed(draft, facts) !== null) return null;
   // starterCreateNeed settled every fact below as present.
-  const description = draft.description.trim();
   const name = deriveRepositoryName(draft.name);
   const machineId = draft.machineId!;
   const homeDir = facts.homeDir!;
@@ -91,7 +93,7 @@ export function buildStarterCreateInput(
     machineId,
     requestKey: facts.requestKey,
     ...(draft.scratch ? { source: { kind: 'scratch' as const } } : { starterId: draft.starterId! }),
-    description,
+    description: draft.description,
     destinationParentPath: projectCheckoutParentPath(homeDir),
     destinationDirectoryName: name,
     repository: {
@@ -123,10 +125,12 @@ export function readStarterCreateOutcome(
     const directory = text(handoff.directory);
     const initialMessage = text(handoff.initialMessage);
     const projectId = text(value.projectId);
-    if (machineId && directory && initialMessage && projectId) {
+    const workspace = WorkspaceAddressV1Schema.safeParse(value.workspace);
+    if (machineId && directory && initialMessage && projectId && workspace.success) {
       return {
         kind: 'created',
         projectId,
+        workspace: workspace.data,
         repositoryUrl: text(value.repositoryUrl),
         handoff: { machineId, directory, initialMessage },
       };

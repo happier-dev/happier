@@ -3,7 +3,6 @@ import { createActionExecutor } from '@happier-dev/protocol/actions';
 import type { DeploySuggestionCatalogV1, DeploySuggestionRecommendationV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
 import { renderDeployPlanBriefV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
 import { DEPLOY_BUILD_PREVIEW_OWN_SERVER_RULES_V1 } from '@happier-dev/protocol/deployments/deploymentValidationV1';
-import { renderStarterSessionMessageV1 } from '@happier-dev/protocol/projects/starters/createV1';
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
@@ -15,7 +14,7 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOrigin
                 runtimeAccountId: 'alice', actionRequestId: 'reviewed-create' })),
     }) };
 });
-import { applyDeploySuggestion } from './applyDeploySuggestion';
+import { applyDeploySuggestion, openStarterBuildSession } from './applyDeploySuggestion';
 
 const catalog: DeploySuggestionCatalogV1 = { starters: [{ id: '["starters","website"]', title: 'Website', sourceId: 'starters', itemId: 'website' }], apps: [
     { id: 'analytics', title: 'Analytics', sourceId: 'apps', itemId: 'analytics' }],
@@ -51,8 +50,7 @@ it('sends the original description through the real starter Action and retains t
     expect(result).toMatchObject({ kind: 'failed', code: 'starter_unavailable', creation: { kind: 'failed', phase: 'starter' } });
     expect(execute.mock.calls.map(row => row[0])).toEqual(['projects.starters.create']);
     expect(execute.mock.calls[0]![1]).toMatchObject({ source: { kind: 'starter', starterId: 'website', sourceId: 'starters' },
-        description: renderDeployPlanBriefV1('  Bakery\n', { ...suggestion, source: { kind: 'starter', starterId: '["starters","website"]' } },
-            { providerKind: 'github', owner: 'alice', name: 'bakery', visibility: 'private' }, catalog.targets[0]) });
+        description: '  Bakery\n' });
 });
 
 it.each(['starter', 'scratch'] as const)('resumes %s creation and opens ordinary Session authoring with the returned handoff', async (kind) => {
@@ -69,23 +67,30 @@ it.each(['starter', 'scratch'] as const)('resumes %s creation and opens ordinary
         sessionAuthoringOpen: async () => ({ kind: 'opened', draftId: 'draft', destination: 'newSession' }),
     });
     execute.mockImplementation(executor.execute);
-    expect(await applyDeploySuggestion({ serverId: 'home', suggestion: { ...suggestion,
+    const lifetime = { scope: { serverId: 'home', accountId: 'alice' }, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const applied = await applyDeploySuggestion({ serverId: 'home', suggestion: { ...suggestion,
         source: kind === 'starter' ? { kind, starterId: '["starters","website"]' } : { kind } }, description: '  Bakery\n', catalog,
         create: { input: { machineId: 'machine', requestKey: 'retry', destinationParentPath: '/projects',
             destinationDirectoryName: 'bakery', repository: { providerKind: 'github', owner: 'alice', name: 'bakery', visibility: 'private' },
             resume: { directory: '/projects/bakery', repositoryUrl: 'https://github.com/alice/bakery', repository, commit: 'abc' } },
-        lifetime: { scope: { serverId: 'home', accountId: 'alice' }, isCurrent: () => true, onRetire: () => ({ dispose() {} }) } },
-    })).toMatchObject({ kind: 'created', sessionOpened: true, creation: { projectId: 'project' } });
+        lifetime },
+    });
+    expect(applied).toMatchObject({ kind: 'created', creation: { projectId: 'project' } });
+    if (applied.kind !== 'created') throw new Error('Expected a created Project');
+    const openProject = Object.assign(vi.fn(async () => true), { resolution: null, dismissResolution: vi.fn() });
+    expect(await openStarterBuildSession(applied.creation, 'Bakery', lifetime, openProject)).toBe(true);
     expect(execute.mock.calls.map(row => row[0])).toEqual(['projects.starters.create', 'session.authoring.open']);
     expect(execute.mock.calls[0]![2]).toMatchObject({ presentUserConfirmation: { actionId: 'projects.starters.create',
         inputDigest: expect.any(String) } });
-    const expectedBrief = renderDeployPlanBriefV1('  Bakery\n', { ...suggestion,
+    const expectedBrief = renderDeployPlanBriefV1('', { ...suggestion,
         source: kind === 'starter' ? { kind, starterId: '["starters","website"]' } : { kind } },
         { providerKind: 'github', owner: 'alice', name: 'bakery', visibility: 'private' }, catalog.targets[0]);
     // The chosen target is Own server, so its brief carries the Compose and own-server input.
     expect(expectedBrief).toContain(DEPLOY_BUILD_PREVIEW_OWN_SERVER_RULES_V1);
-    // The Session's first message is the brief plus the Project this creation made (the starter Action's handoff).
-    expect(execute.mock.calls[1]![1]).toMatchObject({ seed: { prompt: renderStarterSessionMessageV1(expectedBrief,
-        { projectId: 'project', sourceId: 'source', repositoryUrl: 'https://github.com/alice/bakery' }), placement: {
+    expect(execute.mock.calls[1]![1]).toMatchObject({ seed: {
+        prompt: '  Bakery\n',
+        origin: { kind: 'project', workspace: { workspaceId: 'workspace' } },
+        forgeEvidence: { items: [{ text: expectedBrief }] },
+        placement: {
         kind: 'exactTarget', serverId: 'home', machineId: 'machine', directory: '/projects/bakery' } } });
 });

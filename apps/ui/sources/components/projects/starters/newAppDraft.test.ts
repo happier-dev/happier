@@ -35,7 +35,7 @@ describe('New app draft (projects.starters.create operands)', () => {
       machineId: 'm1',
       requestKey: 'k1',
       starterId: 'static-website',
-      description: 'An order page for my bakery.',
+      description: draft.description,
       destinationParentPath: '/home/alice/src',
       destinationDirectoryName: 'rye-co-orders',
       repository: {
@@ -75,7 +75,7 @@ describe('New app draft (projects.starters.create operands)', () => {
       repositoryUrl: 'https://github.com/alice/rye-co-orders',
       starterId: 'static-website',
       commit: 'c',
-      workspace: { machineId: 'm1' },
+      workspace: { serverId: 'home', machineId: 'm1', workspaceId: 'checkout', rootPath: '/home/alice/src/rye-co-orders' },
       sessionHandoff: {
         machineId: 'm1',
         directory: '/home/alice/src/rye-co-orders',
