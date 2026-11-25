@@ -3438,6 +3438,16 @@ describe('workflow trigger Automation composition', () => {
     expect(storedRequest).toMatchObject({ actionArgs: { inputs: { reviewSession: address } }, executionOriginV1: {
       caller: { kind: 'session', sessionId: 'session-one' },
     } });
+    expect(await executor.execute('approval.request.decide', { artifactId: 'review-target-approval', decision: 'reject' }, {
+      surface: 'ui', authority: 'present_user', runtimeAccountId: 'owner', serverId: 'home', actionCaller: { kind: 'host' },
+    })).toMatchObject({ ok: true });
+    expect(storedRequest).toMatchObject({ status: 'rejected' });
+    expect(f.rows.size).toBe(0);
+    expect(publishedResults).toEqual([{ sessionId: 'session-one', accountId: 'owner' }]);
+    publishedResults.length = 0;
+    expect(await executor.execute('workflow.trigger.add', request, { ...caller, actionRequestId: 'review-target-reproposal' }))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(f.rows.size).toBe(0);
     expect(await executor.execute('approval.request.decide', { artifactId: 'review-target-approval', decision: 'approve' }, caller))
       .toMatchObject({ ok: false });
     expect(f.rows.size).toBe(0);
