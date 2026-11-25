@@ -38,6 +38,7 @@ import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readProjectServiceMoveReviewedStopInput } from '@/daemon/local/services/actions/projectServiceMoveChildren';
+import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import {
   createExternalActionAuthorizedRequestHeaders,
   resolveExternalActionRequesterServerRequestHeaders,
@@ -273,7 +274,7 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
   const requesterHeaders = !moveChildRead || requesterProjection?.ok && requesterProjection.machineRpcAuthorization === 'account'
     ? requesterProjection : undefined;
   if (requesterHeaders && !requesterHeaders.ok) {
-    throw new MachineRpcTargetNotCurrentError(params.machineId, 'requester_unavailable');
+    throw createExternalActionHeaderRefusalError(requesterHeaders);
   }
   const headers = {
         ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),

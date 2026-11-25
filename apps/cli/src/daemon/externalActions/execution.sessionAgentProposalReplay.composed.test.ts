@@ -1,4 +1,6 @@
 import axios from 'axios';
+import * as actionAuthorization from '@/api/externalActionExecutionAuthorization';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import {
@@ -47,7 +49,10 @@ const homeUrl = 'https://session-home.test';
  * Home mints the proposal root (`approval.request.create`, Session origin); the
  * replayed model write is refused before any Home effect and its receipt names why.
  */
-it('names the refusal when an approved Agent proposal cannot spend its Home write', async () => {
+it.each([
+  { actionId: 'session.model.set', failureMessage: 'External Action authorization unavailable: approval_replay_mismatch' },
+  { actionId: 'machines.services.list', failureMessage: 'External Action authorization unavailable: approval_replay_mismatch' },
+] as const)('names the refusal when an approved Agent proposal cannot dispatch $actionId', async ({ actionId, failureMessage }) => {
   onTestFinished(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -144,8 +149,30 @@ it('names the refusal when an approved Agent proposal cannot spend its Home writ
   });
   const artifacts = new Map<string, Record<string, unknown>>();
   const sessionWrites: string[] = [];
+  const observations: Array<{
+    rootAction: string;
+    sourceMachine: string | undefined;
+    boundMachine: string;
+    credentialAvailable: boolean;
+    reason: string | null;
+  }> = [];
+  const resolveHeaders = actionAuthorization.resolveExternalActionServerRequestHeaders;
+  vi.spyOn(actionAuthorization, 'resolveExternalActionServerRequestHeaders').mockImplementation(args => {
+    const result = resolveHeaders(args);
+    const authorization = args.context?.externalActionExecutionAuthorization;
+    if (args.path === '/v1/machines/effect-machine' && authorization) {
+      observations.push({ rootAction: authorization.binding.actionId,
+        sourceMachine: authorization.binding.sessionActionSource?.machineId,
+        boundMachine: authorization.binding.machineId,
+        credentialAvailable: Boolean(readRequesterAccountActionContext(authorization)),
+        reason: result.ok ? null : result.reason });
+    }
+    return result;
+  });
+  let effectMachineReads = 0;
   vi.mocked(axios.get).mockImplementation(async (...args) => {
     const path = new URL(String(args[0])).pathname;
+    if (path === '/v1/machines/effect-machine') effectMachineReads++;
     if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1)
       return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
     if (path.startsWith('/v1/artifacts/')) {
@@ -244,11 +271,13 @@ it('names the refusal when an approved Agent proposal cannot spend its Home writ
     surface: 'agent',
     actionId: 'approval.request.create',
     requestId: h.operationBase().requestId,
-    toolCallId: 'tool-propose-model',
+    toolCallId: 'tool-propose-effect',
     input: {
-      actionId: 'session.model.set',
-      actionArgs: { sessionId: h.sessionId, modelId: 'default' },
-      summary: 'Change model',
+      actionId,
+      actionArgs: actionId === 'session.model.set'
+        ? { sessionId: h.sessionId, modelId: 'default' }
+        : { serverId: homeId, machineId: 'effect-machine' },
+      summary: 'Review this Action',
       createdBy: { surface: 'session_agent', sessionId: h.sessionId },
     },
     witness: {
@@ -330,15 +359,22 @@ it('names the refusal when an approved Agent proposal cannot spend its Home writ
           execution: {
             ok: false,
             errorCode: 'action_failed',
+            error: failureMessage,
+            requestId: expect.any(String),
             effectAttempted: false,
-            failureCause: {
-              phase: 'execution_authorization',
-              errorCode: 'approval_replay_mismatch',
-            },
+            failureCause: { phase: 'execution_authorization', errorCode: 'approval_replay_mismatch' },
           },
         },
       },
     },
   });
   expect(sessionWrites).toEqual([]);
+  expect(effectMachineReads).toBe(0);
+  expect(observations).toEqual(actionId === 'session.model.set' ? [] : [{
+    rootAction: 'approval.request.create',
+    sourceMachine: 'machine',
+    boundMachine: 'machine',
+    credentialAvailable: true,
+    reason: 'approval_replay_mismatch',
+  }]);
 });
