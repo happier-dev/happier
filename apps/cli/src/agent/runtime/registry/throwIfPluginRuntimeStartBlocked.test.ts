@@ -14,17 +14,14 @@ function createExternalResolution(diagnostic: Readonly<{
 }
 
 describe('throwIfPluginRuntimeStartBlocked', () => {
-  it.each([
-    ['plugin_trust_approval_required', /trust approval is required/i],
-    ['plugin_untrusted', /untrusted source/i],
-  ] as const)(
+  it.each(['plugin_trust_approval_required', 'plugin_untrusted'] as const)(
     'blocks activation-registry %s diagnostics before a missing runtime can execute',
-    (detailCode, expected) => {
+    (detailCode) => {
       expect(() => throwIfPluginRuntimeStartBlocked(createExternalResolution({
         code: 'engine_plugin_registry_diagnostic',
         detailCode,
         message: 'activation was blocked',
-      }))).toThrow(expected);
+      }))).toThrow(expect.objectContaining({ code: detailCode }));
     },
   );
 
@@ -33,6 +30,6 @@ describe('throwIfPluginRuntimeStartBlocked', () => {
       code: 'engine_plugin_daemon_module_load_failed',
       detailCode: 'plugin_trust_approval_required',
       message: 'surface load was blocked',
-    }))).toThrow(/trust approval is required/i);
+    }))).toThrow(expect.objectContaining({ code: 'plugin_trust_approval_required', message: 'surface load was blocked' }));
   });
 });
