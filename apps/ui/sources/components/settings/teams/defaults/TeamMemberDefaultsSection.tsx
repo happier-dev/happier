@@ -939,14 +939,15 @@ export const ProjectSessionDefaultsLoadingSection = React.memo(function ProjectS
     fieldSpan: 'column',
     loading: true,
   });
-  const fieldRow = (testID: string, title: React.ReactNode, subtitle: React.ReactNode) => (
+  const fieldRow = (testID: string, title: React.ReactNode, subtitle?: React.ReactNode) => (
     <Item testID={testID} title={title} subtitle={subtitle} subtitleLines={0} accessoryLayout="adaptive" fieldAccessory
       rightElementPassive showChevron={false} rightElement={field} />
   );
   return (
     <ItemGroup testID={props.testID} accessibilityLabel={t('common.loading')}>
       {fieldRow(`${props.testID}-machine`, t('teams.settings.memberDefaults.machine'), line)}
-      {fieldRow(`${props.testID}-agent`, t('projects.sessionDefaults.agent'), line)}
+      {/* The Agent row has a description only when an inherited Agent leads, and then its group joins below anyway. */}
+      {fieldRow(`${props.testID}-agent`, t('projects.sessionDefaults.agent'))}
       {fieldRow(`${props.testID}-approvalProfile`, t('teams.settings.memberDefaults.approvalProfile'),
         props.shared ? t('teams.settings.memberDefaults.approvalProfileProject') : line)}
       <Item testID={`${props.testID}-otherAgents`} icon={<Icon name="stack" />}
