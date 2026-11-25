@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { DatabaseCaptureCoverageV1 } from '@happier-dev/database-protocol';
 import type { PluginUiResourceClient } from '@happier-dev/plugin-ui/advanced';
 import { computeSha256HexDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { projectTelemetryCaptureResourceDemandV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
@@ -349,7 +350,10 @@ export function createTelemetryCaptureFixtureInvoke(
 }
 
 /** A fixture collector implements the real store's transport contract, including explicit change delivery. */
-export function createTelemetryCaptureFixtureTransport(invoke: TelemetryCaptureInvoke) {
+export function createTelemetryCaptureFixtureTransport(
+  invoke: TelemetryCaptureInvoke,
+  readCoverage?: () => DatabaseCaptureCoverageV1,
+) {
   type Listener = Parameters<NonNullable<PluginUiResourceClient['watchResource']>>[1];
   const listeners = new Set<Listener>();
   const createResourceClient: MachineResourceClientFactory = ({ machineId: collectorMachineId, scope }) => {
@@ -368,7 +372,7 @@ export function createTelemetryCaptureFixtureTransport(invoke: TelemetryCaptureI
         const window = { since: Math.max(0, until - reference.windowMs), until };
         reading = invoke({ scope, collectorMachineId, actionId: formatQualifiedPluginActionId(reference.input.action) as TelemetryCaptureActionId,
           input: { ...selected.input, ...window }, ...(options?.signal ? { signal: options.signal } : {}) }).then(result => {
-          const bytes = new TextEncoder().encode(JSON.stringify({ view: selected.view, result, window }));
+          const bytes = new TextEncoder().encode(JSON.stringify({ view: selected.view, result, window, coverage: readCoverage?.() }));
           digest = `sha256:${computeSha256HexDigest(bytes)}`;
           return { contentType: 'application/json', digest, bytes };
         });

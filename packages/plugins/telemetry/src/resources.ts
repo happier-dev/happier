@@ -83,7 +83,8 @@ function isRollingCaptureDemand(demand: database.DatabaseCaptureResourceInputV1)
 }
 
 async function readRollingCapturePage(demand: RollingCaptureDemand,
-    readers: ReturnType<typeof createCaptureSelectedSourceReaders>, windowMs: number): Promise<database.DatabaseCaptureResourceSnapshotV1> {
+    readers: ReturnType<typeof createCaptureSelectedSourceReaders>, windowMs: number):
+    Promise<Extract<database.DatabaseCaptureResourceSnapshotV1, { view: RollingCaptureDemand['view'] }>> {
     const until = Date.now();
     const window = { since: Math.max(0, until - windowMs), until };
     switch (demand.view) {
@@ -127,16 +128,17 @@ export function createCaptureResourceRuntime(options: Readonly<{
                             throw new PluginError({ code: 'plugin_resource_aborted' });
                         }
                         stop = options.subscribe([admission.partition], () => invalidate?.());
-                        return { readers: createCaptureSelectedSourceReaders(admission), release: admission.release };
+                        return { readers: createCaptureSelectedSourceReaders(admission), admission };
                     });
                 // The host calls observe before its baseline read. Keep the first typed failure for that read.
                 void binding.catch(() => {});
                 return {
                     async read(invocation) {
                         invocation.signal.throwIfAborted();
-                        const { readers } = await binding;
+                        const { readers, admission } = await binding;
                         invocation.signal.throwIfAborted();
-                        return JSON.stringify(await readRollingCapturePage(selected, readers, windowMs));
+                        const page = await readRollingCapturePage(selected, readers, windowMs);
+                        return JSON.stringify({ ...page, coverage: admission.runtime.ingest.coverage(admission.partition) });
                     },
                     observe(callback) {
                         invalidate = callback;
@@ -148,7 +150,7 @@ export function createCaptureResourceRuntime(options: Readonly<{
                         invalidate = undefined;
                         stop?.();
                         const held = await binding.catch(() => null);
-                        await held?.release();
+                        await held?.admission.release();
                     },
                 };
             }

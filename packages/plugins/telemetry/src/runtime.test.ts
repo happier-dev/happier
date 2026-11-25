@@ -4,6 +4,8 @@ import { createCaptureRuntime } from './runtime.js';
 import { captureMigrations } from './store/capture.js';
 import { createCaptureSqliteFixture } from './testing/sqlite.js';
 
+import { setTimeout as delay } from 'node:timers/promises';
+
 const partition = 'account/machine/project/worktree';
 const traceId = '1234567890abcdef1234567890abcdef';
 const spanId = '1234567890abcdef';
@@ -84,6 +86,38 @@ describe('capture runtime through real HTTP and SQLite', () => {
         }
     });
 
+    it('keeps sequential log exports when a store commit spans the export interval', async () => {
+        const f = await fixture();
+        const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition } });
+        const held = f.holdNextCommit();
+        const count = 8;
+        const statuses: number[] = [];
+        const release = held.entered.then(() => delay(1_000)).then(held.release);
+        try {
+            for (let index = 0; index < count; index++) {
+                const response = await post(receiver.endpoint, 'logs', { resourceLogs: [{
+                    resource: { attributes: [{ key: 'service.name', value: { stringValue: 'api' } }] },
+                    scopeLogs: [{ logRecords: [{ severityNumber: 9,
+                        timeUnixNano: String(1_700_000_000_000_000_000n + BigInt(index) * 1_000_000n),
+                        body: { stringValue: `request ${index} completed` } }] }],
+                }] });
+                statuses.push(response.status);
+                await response.json();
+                if (index + 1 < count) await delay(200);
+            }
+            await f.runtime.ingest.settled();
+            expect(statuses).toEqual(Array(count).fill(200));
+            expect(await f.runtime.store.list({ worktree: partition, kind: 'log', limit: count })).toHaveLength(count);
+            expect(f.publications).toEqual(Array.from({ length: count }, () => [partition]));
+        } finally {
+            held.release();
+            await receiver.release();
+            await release;
+            await f.runtime.ingest.settled();
+            f.close();
+        }
+    });
+
     it('retains concurrent trace and log exports without counting the retryable batch as lost', async () => {
         const f = await fixture();
         const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition } });
@@ -93,21 +127,19 @@ describe('capture runtime through real HTTP and SQLite', () => {
             const logs = () => post(receiver.endpoint, 'logs', { resourceLogs: [{ scopeLogs: [{ logRecords: [{
                 traceId, spanId, timeUnixNano: '1700000000001000000', body: { stringValue: 'request completed' },
             }] }] }] });
-            const responses = Promise.all([traces(), logs()]);
+            const tracesPending = traces();
             await held.entered;
-            const [traceResponse, logResponse] = await responses;
-            const traceAcceptedFirst = traceResponse.status === 200;
-            const accepted = traceAcceptedFirst ? traceResponse : logResponse;
-            const busy = traceAcceptedFirst ? logResponse : traceResponse;
-            expect(await accepted.json()).toEqual({});
+            const busy = await logs();
             expect(busy.status).toBe(503);
             expect(await busy.json()).toMatchObject({ code: 14, message: expect.any(String) });
             expect(f.runtime.ingest.coverage(partition)).toEqual({ lostObservations: 0, reason: null });
             expect(f.publications).toEqual([]);
 
             held.release();
-            await f.runtime.ingest.settled();
-            const replay = await (traceAcceptedFirst ? logs() : traces());
+            const accepted = await tracesPending;
+            expect(accepted.status).toBe(200);
+            expect(await accepted.json()).toEqual({});
+            const replay = await logs();
             expect(replay.status).toBe(200);
             expect(await replay.json()).toEqual({});
             await f.runtime.ingest.settled();
@@ -132,8 +164,10 @@ describe('capture runtime through real HTTP and SQLite', () => {
         const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition } });
         try {
             f.failWrites('daemon_database_quota_exceeded');
-            expect((await post(receiver.endpoint, 'traces', traceRequest())).status).toBe(200);
-            await f.runtime.ingest.settled();
+            const failedCommit = await post(receiver.endpoint, 'traces', traceRequest());
+            expect(failedCommit.status).toBe(200);
+            expect(await failedCommit.json()).toMatchObject({ partialSuccess: { rejectedSpans: '1' } });
+            expect(f.runtime.ingest.coverage(partition)).toEqual({ lostObservations: 1, reason: 'daemon_database_quota_exceeded' });
             const dropped = await post(receiver.endpoint, 'traces', traceRequest('2234567890abcdef'));
             expect(dropped.status).toBe(200);
             expect(await dropped.json()).toMatchObject({ partialSuccess: { rejectedSpans: '1' } });
@@ -164,7 +198,7 @@ describe('capture runtime through real HTTP and SQLite', () => {
         }, { partition: worktree });
         const held = f.holdNextCommit();
         try {
-            expect((await post(first.endpoint, 'traces', traceRequest())).status).toBe(200);
+            const tracesPending = post(first.endpoint, 'traces', traceRequest());
             await held.entered;
             observeTransaction(otherPartition);
             expect(f.runtime.ingest.coverage(otherPartition)).toMatchObject({ lostObservations: 1, reason: 'store_busy' });
@@ -176,6 +210,8 @@ describe('capture runtime through real HTTP and SQLite', () => {
             expect(f.runtime.ingest.coverage(otherPartition)).toMatchObject({ lostObservations: 1, reason: 'store_busy' });
             expect(f.runtime.ingest.coverage('unaffected-partition')).toMatchObject({ lostObservations: 0 });
             expect(f.publications).toEqual([[otherPartition], [partition]]);
+            held.release();
+            expect((await tracesPending).status).toBe(200);
         } finally {
             held.release();
             await first.release();

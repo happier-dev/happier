@@ -223,9 +223,8 @@ export function LocalServiceCaptureView(
     if (lifetime?.isCurrent()) retry();
   }, [lifetime, reads, retry]);
 
-  const coverageReason =
-    status?.kind === 'ready' ? status.status.coverage.reason : null;
   const ready = status?.kind === 'ready' ? status.status : null;
+  const coverage = state.coverage ?? ready?.coverage;
   const restartRequired =
     status?.kind === 'ready' && status.status.restartRequired === true;
 
@@ -234,11 +233,9 @@ export function LocalServiceCaptureView(
   // The capture's state is said once: an unanswered read says it in the body, gaps and a needed restart in their own
   // line with the next step beside it; the bar says only "Preparing" or "Capture on". The gap's cause is a store
   // code, so the line says what it means for the person (events weren't kept) and offers Retry.
-  const gaps = coverageReason
-    ? ready && ready.coverage.lostObservations > 0
-      ? t('deploymentTelemetry.local.missed', { count: new Intl.NumberFormat(locale).format(ready.coverage.lostObservations) })
-      : ''
-    : null;
+  const gaps = coverage && coverage.lostObservations > 0
+    ? t('deploymentTelemetry.local.missed', { count: new Intl.NumberFormat(locale).format(coverage.lostObservations) })
+    : coverage?.reason ? '' : null;
   // One decision for what the view shows: the body draws it, and the time window and status follow it.
   const bodyKind: CaptureBodyKind = status === null
     ? 'reading'

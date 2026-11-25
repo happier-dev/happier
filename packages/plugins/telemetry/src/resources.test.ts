@@ -193,10 +193,18 @@ describe('capture demanded Resource through real public Actions', () => {
                 expect(await Promise.all(snapshots)).toMatchObject([{ view: 'logs', window: { since: 950, until: 1_050 },
                     result: { source: selected, items: [{ id: 'new' }] } }]);
                 expect(fixture.queryRows).toHaveLength(queryCount + 1);
+                lease.runtime.recordCoverage('environment:unrelated', 'invalid_telemetry');
+                expect(snapshots).toHaveLength(1);
+                lease.runtime.recordCoverage(partition, 'invalid_telemetry');
+                expect(await snapshots.at(-1)).toMatchObject({
+                    coverage: { lostObservations: 1, reason: 'invalid_telemetry' },
+                    result: { source: selected, items: [{ id: 'new' }] },
+                });
+                expect(fixture.queryRows).toHaveLength(queryCount + 2);
                 expect(admitTelemetryRead).toHaveBeenCalledTimes(kind === 'environment' ? 1 : 0);
                 await observation.dispose(); await producer.dispose();
                 await lease.runtime.store.write([log('after-close', 1_040)]);
-                expect(snapshots).toHaveLength(1);
+                expect(snapshots).toHaveLength(2);
             } finally { await observation.dispose(); await producer.dispose(); }
         } finally { vi.useRealTimers(); consumer.abort(); lifetime.abort(); await host.dispose(); await lease.release(); fixture.close(); }
     });

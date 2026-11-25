@@ -20,14 +20,6 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     process.exit(0);
   }
 
-  if (daemonSubcommand === 'database-worker') {
-    // Hidden subcommand: one daemon-database entry owns this child while its
-    // synchronous SQLite driver runs here. It never joins daemon control flow.
-    const { runDaemonDatabaseWorkerChild } = await import('@/plugins/runtime/context/daemonDatabaseWorkerEntry');
-    await runDaemonDatabaseWorkerChild();
-    process.exit(0);
-  }
-
   if (daemonSubcommand === 'plugin-author-materialize-worker') {
     const { runPluginAuthorMaterializationChild } = await import('@/plugins/authoring/materializationProcess');
     await runPluginAuthorMaterializationChild();

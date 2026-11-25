@@ -20,6 +20,7 @@ import {
   DatabaseCaptureStatusResultV1Schema,
   DatabaseCaptureTraceGetResultV1Schema,
   DatabaseCaptureTracesListResultV1Schema,
+  type DatabaseCaptureCoverageV1,
   type DatabaseCaptureEndpointCursorV1,
   type DatabaseCaptureEndpointV1,
   type DatabaseCaptureCursorV1,
@@ -131,6 +132,7 @@ export type TelemetryCaptureListPage =
 export type TelemetryCaptureListSnapshot = Readonly<{
   page: TelemetryCaptureListPage;
   window: Readonly<{ since: number; until: number }>;
+  coverage: DatabaseCaptureCoverageV1 | undefined;
 }>;
 
 function unreadableCapture() {
@@ -148,14 +150,14 @@ export function readTelemetryCaptureListSnapshot(list: TelemetryCaptureList, byt
   const parsed = DatabaseCaptureResourceSnapshotV1Schema.safeParse(raw);
   if (!parsed.success || parsed.data.view !== list) throw unreadableCapture();
   const snapshot = parsed.data;
+  if (!snapshot.window) throw unreadableCapture();
+  const { window, coverage } = snapshot;
   if (snapshot.view === 'endpoints') {
     const { items, nextCursor } = settle({ success: true, data: snapshot.result });
-    if (!snapshot.window) throw unreadableCapture();
-    return { page: { list: snapshot.view, items, nextCursor: nextCursor ?? null }, window: snapshot.window };
+    return { page: { list: snapshot.view, items, nextCursor: nextCursor ?? null }, window, coverage };
   }
   const { items, nextCursor } = settle({ success: true, data: snapshot.result });
-  if (!snapshot.window) throw unreadableCapture();
-  return { page: { list: snapshot.view, items, nextCursor: nextCursor ?? null }, window: snapshot.window };
+  return { page: { list: snapshot.view, items, nextCursor: nextCursor ?? null }, window, coverage };
 }
 
 /** The place whose capture is read: an Environment on its collector, or one worktree checkout on its own Machine. */

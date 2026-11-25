@@ -117,16 +117,19 @@ export const DatabaseCaptureResourceInputV1Schema = z.discriminatedUnion('view',
     z.strictObject({ view: z.literal('logs'), windowMs: z.optional(z.number().check(z.int(), z.positive())), input: DatabaseCaptureLogsListInputV1Schema }),
     z.strictObject({ view: z.literal('endpoints'), windowMs: z.optional(z.number().check(z.int(), z.positive())), input: DatabaseCaptureEndpointsListInputV1Schema }),
 ]);
-const captureResourceWindow = z.strictObject({ since: time, until: time });
+const captureResourcePageMetadata = {
+    window: z.optional(z.strictObject({ since: time, until: time })),
+    coverage: z.optional(DatabaseCaptureCoverageV1Schema),
+};
 export const DatabaseCaptureResourceSnapshotV1Schema = z.discriminatedUnion('view', [
     z.strictObject({ view: z.literal('costs'), result: DatabaseCaptureCostsReadResultV1Schema }),
     z.strictObject({ view: z.literal('status'), result: DatabaseCaptureStatusResultV1Schema }),
-    z.strictObject({ view: z.literal('queries'), window: z.optional(captureResourceWindow), result: DatabaseCaptureQueriesListResultV1Schema }),
+    z.strictObject({ view: z.literal('queries'), ...captureResourcePageMetadata, result: DatabaseCaptureQueriesListResultV1Schema }),
     z.strictObject({ view: z.literal('query'), result: DatabaseCaptureQueryGetResultV1Schema }),
-    z.strictObject({ view: z.literal('traces'), window: z.optional(captureResourceWindow), result: DatabaseCaptureTracesListResultV1Schema }),
+    z.strictObject({ view: z.literal('traces'), ...captureResourcePageMetadata, result: DatabaseCaptureTracesListResultV1Schema }),
     z.strictObject({ view: z.literal('trace'), result: DatabaseCaptureTraceGetResultV1Schema }),
-    z.strictObject({ view: z.literal('logs'), window: z.optional(captureResourceWindow), result: DatabaseCaptureLogsListResultV1Schema }),
-    z.strictObject({ view: z.literal('endpoints'), window: z.optional(captureResourceWindow), result: DatabaseCaptureEndpointsListResultV1Schema }),
+    z.strictObject({ view: z.literal('logs'), ...captureResourcePageMetadata, result: DatabaseCaptureLogsListResultV1Schema }),
+    z.strictObject({ view: z.literal('endpoints'), ...captureResourcePageMetadata, result: DatabaseCaptureEndpointsListResultV1Schema }),
 ]);
 export type DatabaseCaptureResourceInputV1 = z.infer<typeof DatabaseCaptureResourceInputV1Schema>;
 export const DatabaseCaptureResourceInputV1ProtocolSchema: ProtocolComposableSchema<z.input<typeof DatabaseCaptureResourceInputV1Schema>, DatabaseCaptureResourceInputV1 & ProtocolJsonValue> = projectZodProtocolSchema(DatabaseCaptureResourceInputV1Schema);

@@ -249,6 +249,7 @@ export function useTelemetryCaptureList(
     state: {
       data,
       window: snapshot?.window,
+      coverage: snapshot?.coverage,
       readAt: snapshot?.window.until ?? null,
       // A push refresh keeps the last admitted page, including an empty page.
       reading: data === null && reading,

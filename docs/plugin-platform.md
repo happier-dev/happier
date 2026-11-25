@@ -3403,8 +3403,9 @@ In 0.3 development, the daemon prepares declared databases and releases each
 SQLite child when its preparation queue drains. A role can hold the prepared
 database binding without keeping a process or SQLite connection open. The host
 opens a child on admitted SQL work, can reuse it for already queued operations on
-that database, and closes it when the queue drains. The database file and its
-prepared migration contract survive that close.
+that database, and closes it when the queue drains. The child enters the SQLite
+stdin protocol directly before CLI bootstrap. The database file and its prepared
+migration contract survive that close.
 
 When the daemon prepares a retained database without a running incumbent, it
 uses the SQLite migration ledger to identify the applied migration prefix.

@@ -4,6 +4,8 @@ export type CaptureCoverage = Readonly<{ lostObservations: number; reason: strin
 type WorktreeIdentity = Pick<CaptureEvent, 'physicalRootIdentity'>;
 type PartitionCoverage = Readonly<{ coverage: CaptureCoverage }> & WorktreeIdentity;
 type ObservationLoss = Readonly<{ count: number }> & WorktreeIdentity;
+type CaptureWriteResult = { accepted: true } | { accepted: false; code: string };
+type CaptureOffer = { kind: 'busy' | 'failed' } | { kind: 'accepted'; settled: Promise<CaptureWriteResult> };
 /** One persistence batch, no replay queue and no awaited store call on the wire relay. */
 export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => Promise<void>, publish: (coverage: CaptureCoverage, partitions: readonly string[]) => void = () => {}) {
  let pending: Promise<void> | null = null;
@@ -35,7 +37,7 @@ export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => 
   }
   lose(counts, cause);
  }
- async function persist(events: readonly CaptureEvent[]): Promise<{ accepted: true } | { accepted: false; code: string }> {
+ async function persist(events: readonly CaptureEvent[]): Promise<CaptureWriteResult> {
   if (!events.length) return { accepted: true };
   if (failure) { loseEvents(events, failure); return { accepted: false, code: failure }; }
   const snapshots = [...dirtyPartitions].map(partition => ({ partition, snapshot: partitions.get(partition)! }));
@@ -54,12 +56,13 @@ export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => 
    return { accepted: false, code };
   }
  }
- function tryOffer(events: readonly CaptureEvent[]): 'accepted' | 'busy' | 'failed' {
-  if (!events.length) return 'accepted';
-  if (failure) { loseEvents(events, failure); return 'failed'; }
-  if (pending) return 'busy';
-  pending = Promise.resolve().then(() => persist(events)).then(() => {}).finally(() => { pending = null; });
-  return 'accepted';
+ function tryOffer(events: readonly CaptureEvent[]): CaptureOffer {
+  if (!events.length) return { kind: 'accepted', settled: Promise.resolve({ accepted: true }) };
+  if (failure) { loseEvents(events, failure); return { kind: 'failed' }; }
+  if (pending) return { kind: 'busy' };
+  const settled = Promise.resolve().then(() => persist(events)).finally(() => { pending = null; });
+  pending = settled.then(() => {}, () => {});
+  return { kind: 'accepted', settled };
  }
  return {
   /** Called inside exclusive admission; local observation offers use the same persistence owner. */
@@ -68,8 +71,8 @@ export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => 
   tryOffer,
   offer(events: readonly CaptureEvent[]): boolean {
    const result = tryOffer(events);
-   if (result === 'busy') loseEvents(events, 'store_busy');
-   return result === 'accepted';
+   if (result.kind === 'busy') loseEvents(events, 'store_busy');
+   return result.kind === 'accepted';
   },
   coverage,
   recordLoss(partition: string, cause: string, count = 1, physicalRootIdentity?: string) {

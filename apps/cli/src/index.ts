@@ -28,6 +28,12 @@ if (!isCliDistIntegrityProbe && isTopLevelVersionRequest(readCliProcessArgs())) 
     process.stdout.write(JSON.stringify(record) + '\n');
     process.exitCode = 1;
   });
+} else if (!isCliDistIntegrityProbe && readCliProcessArgs()[0] === 'daemon' && readCliProcessArgs()[1] === 'database-worker' && readCliProcessArgs().length === 2) {
+  // SQLite workers are restarted on demand. They only serve the parent's stdin protocol.
+  void import('./plugins/runtime/context/daemonDatabaseWorkerEntry').then(async ({ runDaemonDatabaseWorkerChild }) => {
+    await runDaemonDatabaseWorkerChild();
+    process.exit(0);
+  }).catch(() => { process.stderr.write('daemon_database_worker_unavailable\n'); process.exitCode = 1; });
 } else if (!isCliDistIntegrityProbe && readCliProcessArgs()[0] === 'workspace-effect') {
   // Native private pipe only; never enter Account/daemon/bootstrap under member UID.
   void import('./cli/commands/workspaceEffect').then(({ runWorkspaceEffectCommand }) =>

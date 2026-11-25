@@ -1,4 +1,4 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/cli-common/plugins/errors';
 
 /**
  * Plugin context service failures cross the plugin ABI, so they ARE canonical

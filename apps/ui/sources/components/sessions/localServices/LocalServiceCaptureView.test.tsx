@@ -105,6 +105,34 @@ function view(
 }
 
 describe('LocalServiceCaptureView', () => {
+  it('shows loss and recovery pushed after the status read, without another status request', async () => {
+    const finite = machine(call => call.actionId.endsWith('/capture/status')
+      ? { ok: true, source, coverage, enabled: true }
+      : { ok: true, source, items: [] });
+    const capture = machine(() => ({ ok: true, source, items: [] }));
+    let current: { lostObservations: number; reason: string | null } = coverage;
+    const transport = createTelemetryCaptureFixtureTransport(capture.invoke, () => current);
+    const screen = await renderScreen(view(finite.invoke, 'logs', transport));
+    const statusReads = () => finite.calls.filter(call => call.actionId.endsWith('/capture/status')).length;
+    try {
+      await settle();
+      expect(statusReads()).toBe(1);
+      expect(screen.findByTestId('capture-gaps')).toBeNull();
+      current = { lostObservations: 1, reason: 'store_busy' };
+      await act(async () => transport.invalidate());
+      await settle();
+      expect(screen.findByTestId('capture-gaps')).not.toBeNull();
+      current = coverage;
+      await act(async () => transport.invalidate());
+      await settle();
+      expect(screen.findByTestId('capture-gaps')).toBeNull();
+      expect(statusReads()).toBe(1);
+      expect(capture.calls).toHaveLength(3);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('does not use finite first-page reads while following collector capture', async () => {
     const finite = machine(call => call.actionId.endsWith('/capture/status')
       ? { ok: true, source, coverage, enabled: true }

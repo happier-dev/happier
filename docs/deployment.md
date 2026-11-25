@@ -3266,10 +3266,12 @@ the collector receives only its SHA-256 hash after a successful runtime launch.
 Changing collectors requires confirmation before deleting the old Environment
 partition, including reconciliation when that Machine next comes online.
 
-In 0.3 development, the workspace-local OTLP receiver returns HTTP 503 when its
-capture writer is busy. The exporter can retry the batch. Capture counts
-discarded observations, including PostgreSQL wire observations dropped during
-a held write. The counter excludes OTLP batches refused for retry.
+In 0.3 development, the workspace-local OTLP receiver acknowledges an accepted
+batch after its capture write settles. If another batch holds the writer, the
+receiver returns HTTP 503 so the exporter can retry. Capture counts discarded
+observations, including PostgreSQL wire observations dropped during a held
+write. Dev servers shows that count through the selected checkout’s live
+capture list. An OTLP batch refused for retry stays with the exporter.
 [OTLP/HTTP retry rules](https://opentelemetry.io/docs/specs/otlp/#retryable-response-codes)
 
 The same Action independently selects Metrics, App LLM cost and Exceptions in

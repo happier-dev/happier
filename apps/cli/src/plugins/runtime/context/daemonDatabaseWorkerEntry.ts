@@ -8,7 +8,7 @@ import {
     type WorkerRequest as DaemonDatabaseWorkerRequest,
     type WorkerResponse as DaemonDatabaseWorkerResponse,
 } from './daemonDatabaseWorkerProtocol';
-import { openSqliteDatabaseSync, type SqliteDatabaseSync } from '@/daemon/persistence/sqliteSync';
+import { openSqliteDatabaseSync, type SqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
 import { PluginContextServiceError } from './errors';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -123,7 +123,7 @@ export async function runDaemonDatabaseWorkerChild(): Promise<void> {
                     write({
                         id: request.id,
                         ok: true,
-                        result: { kind: 'row', row: row === undefined ? null : encodeDaemonDatabaseWorkerRow(row) },
+                        result: { kind: 'row', row: row == null ? null : encodeDaemonDatabaseWorkerRow(row) },
                     });
                     return;
                 }
