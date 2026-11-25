@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 import { SessionEnvOverlayEntryV1Schema } from '../../spawn/envOverlay.js';
-import { AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1, AgentProviderRequirementsV1Schema } from '../compatibility/v1.js';
+import { AgentProviderRequirementsV1Schema } from '../compatibility/v1.js';
 import { ProviderAdapterBindingKeyV1Schema } from '../sessions/adapterBindingKeyV1.js';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema } from '../ids.js';
 import { ProviderModelDescriptorV1Schema } from '../../models/descriptor.js';
@@ -68,10 +68,6 @@ export type AgentProviderBindingPreparedV1 = z.infer<typeof AgentProviderBinding
 export type AgentProviderBindingResolvedFactsV1 = z.infer<typeof AgentProviderBindingResolvedFactsV1Schema>;
 
 export const PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1 = Object.freeze({
-  env: Object.freeze({
-    maxRows: AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1.maxRequiredEnvKeys + AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1.maxOptionalEnvKeys,
-    maxNameBytes: 128, maxValueBytes: 32 * 1024, maxAggregateBytes: 256 * 1024,
-  }),
   config: Object.freeze({ maxDepth: 24, maxNodes: 8_192, maxKeyBytes: 256, maxStringBytes: 256 * 1024, maxAggregateBytes: 1024 * 1024 }),
   files: Object.freeze({ maxFiles: 16, maxPathBytes: 512, maxContentBytes: 1024 * 1024, maxAggregateBytes: 4 * 1024 * 1024 }),
   redaction: Object.freeze({ maxValues: 32, maxValueBytes: 16 * 1024, maxAggregateBytes: 128 * 1024 }),
@@ -102,69 +98,49 @@ const PlainDataObjectV1Schema = lazyZodSchema(() => z.unknown().check(z.superRef
   }
 })));
 
-function boundedArrayPreflight(maxItems: number, label: string) {
+function dataArrayPreflight(label: string, maxItems?: number) {
   return z.unknown().check(z.superRefine((value, ctx) => {
     if (!Array.isArray(value)) {
       ctx.addIssue({ code: 'custom', message: `${label} must be an array` });
       return;
     }
-    if (value.length > maxItems) {
+    if (maxItems !== undefined && value.length > maxItems) {
       ctx.addIssue({ code: 'custom', message: `${label} exceeds the item limit` });
       return;
     }
     const descriptors = Object.getOwnPropertyDescriptors(value);
-    const allowedKeys = new Set([...value.keys()].map(String).concat('length'));
-    const hasUnsafeDescriptor = Object.getOwnPropertySymbols(value).length > 0
-      || Object.keys(descriptors).some((key) => !allowedKeys.has(key))
-      || [...value.keys()].some((index) => {
+    if (Reflect.ownKeys(descriptors).length === value.length + 1) {
+      let index = 0;
+      for (; index < value.length; index += 1) {
         const descriptor = descriptors[String(index)];
-        return !descriptor || !('value' in descriptor)
-          || descriptor.get !== undefined || descriptor.set !== undefined;
-      });
-    if (hasUnsafeDescriptor) {
-      ctx.addIssue({ code: 'custom', message: `${label} must be a dense array of plain data values` });
+        if (!descriptor || !('value' in descriptor)) break;
+      }
+      if (index === value.length) return;
     }
+    ctx.addIssue({ code: 'custom', message: `${label} must be a dense array of plain data values` });
   }));
 }
 
-const ProviderEnvEntryV1Schema = lazyZodSchema(() => z.pipe(z.unknown().check(z.superRefine((value, ctx) => {
-  if (!isPlainDataObject(value)) {
-    ctx.addIssue({ code: 'custom', message: 'Provider environment entries must be plain data objects' });
-  }
-})), (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(SessionEnvOverlayEntryV1Schema, { source: z.literal('provider') }))));
+const ProviderEnvEntryV1Schema = lazyZodSchema(() => z.pipe(PlainDataObjectV1Schema, z.strictObject({
+  ...SessionEnvOverlayEntryV1Schema.shape,
+  source: z.literal('provider'),
+})));
 
-export const ProviderBindingEnvOverlayV1Schema = z.pipe(boundedArrayPreflight(
-  PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.env.maxRows,
-  'Provider environment',
-), z.array(ProviderEnvEntryV1Schema).check(z.maxLength(PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.env.maxRows), z.superRefine((entries, ctx) => {
+export const ProviderBindingEnvOverlayV1Schema = z.pipe(
+  dataArrayPreflight('Provider environment'),
+  z.array(ProviderEnvEntryV1Schema).check(z.superRefine((entries, ctx) => {
     const seen = new Set<string>();
-    let aggregate = 0;
-    entries.forEach((entry, index) => {
-      const nameBytes = utf8Bytes(entry.name);
-      const valueBytes = entry.value === null ? 0 : utf8Bytes(entry.value);
-      aggregate += nameBytes + valueBytes;
-      if (nameBytes > PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.env.maxNameBytes) {
-        ctx.addIssue({ code: 'custom', path: [index, 'name'], message: 'Provider environment name exceeds the byte limit' });
-      }
-      if (valueBytes > PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.env.maxValueBytes) {
-        ctx.addIssue({ code: 'custom', path: [index, 'value'], message: 'Provider environment value exceeds the byte limit' });
-      }
-      const normalizedName = entry.name.toUpperCase();
-      if (seen.has(normalizedName)) {
+    entries.forEach(({ name }, index) => {
+      if (seen.has(name)) {
         ctx.addIssue({ code: 'custom', path: [index, 'name'], message: 'Duplicate provider environment operation' });
       }
-      seen.add(normalizedName);
+      seen.add(name);
     });
-    if (aggregate > PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.env.maxAggregateBytes) {
-      ctx.addIssue({ code: 'custom', message: 'Provider environment exceeds the aggregate byte limit' });
-    }
-  })));
+  })),
+);
 export type ProviderBindingEnvOverlayV1 = z.infer<typeof ProviderBindingEnvOverlayV1Schema>;
 
-const SupplementalRedactionValuesV1Schema = z.pipe(boundedArrayPreflight(
-  PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.redaction.maxValues,
-  'Redaction values',
-), z.array(z.string()).check(z.maxLength(PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.redaction.maxValues), z.superRefine((values, ctx) => {
+const SupplementalRedactionValuesV1Schema = z.pipe(dataArrayPreflight('Redaction values', PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.redaction.maxValues), z.array(z.string()).check(z.maxLength(PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.redaction.maxValues), z.superRefine((values, ctx) => {
     let aggregate = 0;
     values.forEach((value, index) => {
       const bytes = utf8Bytes(value);
@@ -304,10 +280,7 @@ const ProviderBindingFileV1Schema = lazyZodSchema(() => z.pipe(PlainDataObjectV1
   merge: z.optional(z.literal('jsonObject')),
 })));
 
-const ProviderBindingFilesV1Schema = z.pipe(boundedArrayPreflight(
-  PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.files.maxFiles,
-  'Provider files',
-), z.array(ProviderBindingFileV1Schema).check(z.minLength(1), z.maxLength(PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.files.maxFiles), z.superRefine((files, ctx) => {
+const ProviderBindingFilesV1Schema = z.pipe(dataArrayPreflight('Provider files', PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.files.maxFiles), z.array(ProviderBindingFileV1Schema).check(z.minLength(1), z.maxLength(PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.files.maxFiles), z.superRefine((files, ctx) => {
     const seen = new Set<string>();
     let aggregate = 0;
     files.forEach((file, index) => {
@@ -359,10 +332,7 @@ const HostMaterializedRootPathV1Schema = lazyZodSchema(() => z.string().check(z.
   }
 })));
 
-const ProviderBindingLaunchRelativePathsV1Schema = z.pipe(boundedArrayPreflight(
-  PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.files.maxFiles,
-  'Provider launch file paths',
-), z.array(ProviderBindingRelativePathV1Schema).check(z.minLength(1), z.maxLength(PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.files.maxFiles), z.superRefine((paths, ctx) => {
+const ProviderBindingLaunchRelativePathsV1Schema = z.pipe(dataArrayPreflight('Provider launch file paths', PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.files.maxFiles), z.array(ProviderBindingRelativePathV1Schema).check(z.minLength(1), z.maxLength(PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.files.maxFiles), z.superRefine((paths, ctx) => {
     const seen = new Set<string>();
     paths.forEach((path, index) => {
       const normalized = path.toLocaleLowerCase('en-US');

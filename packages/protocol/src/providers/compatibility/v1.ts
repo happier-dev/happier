@@ -3,6 +3,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { AgentModelOptionValueIdSchema } from '../../models/descriptor.js';
 
 import { ConnectedAccountServiceKeyIngressSchema } from '../../connect/connectedServiceBindings.js';
+import { SessionEnvOverlayEntryV1Schema } from '../../spawn/envOverlay.js';
 import { ProviderCredentialFormatKindV1Schema } from '../credentials/v1.js';
 import {
   PROVIDER_WIRE_PROTOCOL_LIMITS_V1,
@@ -62,11 +63,6 @@ export const AgentCredentialTransportSupportV1Schema = lazyZodSchema(() => z.str
 })));
 export type AgentCredentialTransportSupportV1 = z.infer<typeof AgentCredentialTransportSupportV1Schema>;
 
-export const AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1 = Object.freeze({
-  maxRequiredEnvKeys: 64,
-  maxOptionalEnvKeys: 64,
-} as const);
-
 export const AgentProviderRequirementsV1Schema = lazyZodSchema(() => z.strictObject({
   acceptsProtocols: z.array(ProviderWireProtocolSchema).check(z.minLength(1), z.maxLength(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration)),
   required: z.strictObject({
@@ -93,9 +89,9 @@ export const AgentProviderRequirementsV1Schema = lazyZodSchema(() => z.strictObj
   }),
   authIsolation: z.strictObject({
     suppressConnectedServiceIds: z.array(ConnectedAccountServiceKeyIngressSchema).check(z.maxLength(32)),
-    ownedEnvKeys: z.array(z.string().check(z.minLength(1), z.maxLength(256), z.regex(/^[A-Z_][A-Z0-9_]*$/u))).check(z.maxLength(AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1.maxRequiredEnvKeys)),
+    ownedEnvKeys: z.array(SessionEnvOverlayEntryV1Schema.shape.name),
     /** Declared session configuration keys emitted only when this binding consumes them. */
-    optionalOwnedEnvKeys: z.optional(z.array(z.string().check(z.minLength(1), z.maxLength(256), z.regex(/^[A-Z_][A-Z0-9_]*$/u))).check(z.maxLength(AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1.maxOptionalEnvKeys))),
+    optionalOwnedEnvKeys: z.optional(z.array(SessionEnvOverlayEntryV1Schema.shape.name)),
   }),
   materialization: z.enum(['spawnEnv', 'engineConfig', 'configFile']),
   applyPolicy: ModelSelectionApplyPolicySchema,

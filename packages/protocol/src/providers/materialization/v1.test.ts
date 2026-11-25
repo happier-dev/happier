@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1, AgentProviderRequirementsV1Schema } from '../compatibility/v1.js';
+import { AgentProviderRequirementsV1Schema } from '../compatibility/v1.js';
 
 import {
   AgentProviderBindingLaunchMaterializationV1Schema,
@@ -14,17 +14,29 @@ const envRow = (name = 'TOKEN', value: string | null = 'secret') => ({
 });
 
 describe('provider binding materialization V1', () => {
-  it('accepts the full environment key count admitted by the Provider auth-isolation declaration', () => {
+  it.each([129, 257])('round-trips set and unset for a %i-byte declared name', (length) => {
+    const key = 'K'.repeat(length);
+    const isolation = AgentProviderRequirementsV1Schema.shape.authIsolation.parse({
+      suppressConnectedServiceIds: [], ownedEnvKeys: [key],
+    });
+    for (const value of ['provider-value', null]) {
+      const env = [envRow(isolation.ownedEnvKeys[0], value)];
+      const wire = JSON.stringify({ v: 1, kind: 'spawnEnv', env });
+      expect(AgentProviderBindingMaterializationV1Schema.parse(JSON.parse(wire)).env).toEqual(env);
+    }
+  });
+
+  it('accepts the full set of declared environment keys and string values', () => {
     const isolation = AgentProviderRequirementsV1Schema.shape.authIsolation.parse({
       suppressConnectedServiceIds: [],
-      ownedEnvKeys: Array.from({ length: AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1.maxRequiredEnvKeys }, (_, index) => `REQUIRED_${index}`),
-      optionalOwnedEnvKeys: Array.from({ length: AGENT_PROVIDER_AUTH_ISOLATION_LIMITS_V1.maxOptionalEnvKeys }, (_, index) => `OPTIONAL_${index}`),
+      ownedEnvKeys: Array.from({ length: 65 }, (_, index) => `REQUIRED_${index}`),
+      optionalOwnedEnvKeys: Array.from({ length: 65 }, (_, index) => `OPTIONAL_${index}`),
     });
-    expect(AgentProviderBindingMaterializationV1Schema.safeParse({
-      v: 1, kind: 'spawnEnv',
-      env: [...isolation.ownedEnvKeys, ...(isolation.optionalOwnedEnvKeys ?? [])].map(name => envRow(name, null)),
-    }).success).toBe(true);
+    const env = [...isolation.ownedEnvKeys, ...(isolation.optionalOwnedEnvKeys ?? [])].map((name, index) =>
+      envRow(name, index < 9 ? 'é'.repeat(17 * 1024) : null));
+    expect(AgentProviderBindingMaterializationV1Schema.parse({ v: 1, kind: 'spawnEnv', env }).env).toEqual(env);
   });
+
   it('accepts each strict materialization shape and rejects unknown fields', () => {
     expect(AgentProviderBindingMaterializationV1Schema.parse({
       v: 1, kind: 'spawnEnv', env: [envRow()], additionalRedactionValues: ['redact-me'],
@@ -75,35 +87,19 @@ describe('provider binding materialization V1', () => {
     expect(getterCalls).toBe(0);
   });
 
-  it('enforces exact env and redaction byte/count limits', () => {
-    const limits = PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1;
-    expect(AgentProviderBindingMaterializationV1Schema.safeParse({
-      v: 1,
-      kind: 'spawnEnv',
-      env: Array.from({ length: limits.env.maxRows + 1 }, (_, index) => envRow(`K${index}`)),
-    }).success).toBe(false);
-    expect(AgentProviderBindingMaterializationV1Schema.safeParse({
-      v: 1, kind: 'spawnEnv', env: [envRow('K', 'x'.repeat(limits.env.maxValueBytes + 1))],
-    }).success).toBe(false);
+  it('retains the supplemental redaction count limit', () => {
     expect(AgentProviderBindingMaterializationV1Schema.safeParse({
       v: 1,
       kind: 'spawnEnv',
       env: [envRow()],
-      additionalRedactionValues: Array.from({ length: limits.redaction.maxValues + 1 }, () => 'x'),
+      additionalRedactionValues: Array.from({ length: PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.redaction.maxValues + 1 }, () => 'x'),
     }).success).toBe(false);
+  });
 
-    const overLimitEnv = Array.from({ length: limits.env.maxRows + 1 }, (_, index) => envRow(`K${index}`));
-    Object.defineProperty(overLimitEnv, 0, {
-      get() {
-        throw new Error('over-limit environment elements must not be parsed');
-      },
-    });
-    expect(() => AgentProviderBindingMaterializationV1Schema.safeParse({
-      v: 1, kind: 'spawnEnv', env: overLimitEnv,
-    })).not.toThrow();
-    expect(AgentProviderBindingMaterializationV1Schema.safeParse({
-      v: 1, kind: 'spawnEnv', env: overLimitEnv,
-    }).success).toBe(false);
+  it('rejects invalid names, duplicate operations, and non-data environment arrays', () => {
+    for (const env of [[envRow('lowercase')], [envRow(), envRow('TOKEN', null)], Array(2)]) {
+      expect(AgentProviderBindingMaterializationV1Schema.safeParse({ v: 1, kind: 'spawnEnv', env }).success).toBe(false);
+    }
 
     let getterCalls = 0;
     const accessorEnv = [envRow()];

@@ -17,13 +17,15 @@ An older daemon without the selected-purpose materialization result requires a
 restart; the host refuses that unavailable result instead of inferring an account
 from environment values. No persisted account format changes.
 
-## Provider environment capacity (unreleased 0.3)
+## Provider environment validation (unreleased 0.3)
 
-Provider environment materialization accepts the full key count admitted by the
-Agent auth-isolation declaration: 64 required plus 64 optional keys. Its row
-capacity derives from those declaration limits; byte limits and closed shapes
-are unchanged. Match 0.3 producers and readers for overlays above 32 rows;
-earlier 0.3 readers refuse them. No epoch, migration or shim is introduced.
+Agent auth-isolation declarations and Provider materialization use the Session
+environment overlay grammar for names. A string sets a variable and null unsets
+it. The Provider schemas impose no environment name, value or row sizes. The
+native launch applies platform limits to the assembled child environment.
+Older 0.3 development readers may reject declarations or overlays outside their
+former limits. Use matching development hosts and clients for these inputs.
+The closed shapes and existing persisted records need no migration or epoch.
 The inspected `../0.2` basis `ba3670d22d5bb36b0c92f4bd627ef790f0ce03de`
 has neither of the corresponding Provider schema paths.
 
