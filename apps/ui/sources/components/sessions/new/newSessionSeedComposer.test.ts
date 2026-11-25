@@ -78,6 +78,23 @@ describe('seedAndOpenNewSession', () => {
             createDraftId: () => draftId, navigateToNewSession: () => {} }).kind).toBe('opened');
         expect(readPluginNewSessionSeedV1({ forgeEvidence: { ...forgeEvidence, trusted: true } })).toBeNull();
     });
+    it('carries the Triage link intent with the seeded draft through authoring edits', () => {
+        const postCreateAction = {
+            action: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: 'sessions/link-entry-v1' },
+            input: { v: 1, entryRef: { kind: 'issue', id: 'entry-a' } },
+            sessionIdPath: 'sessionId',
+        };
+        expect(seedAndOpenNewSession({
+            seed: { prompt: 'Address this issue', postCreateAction }, scope,
+            isCurrent: () => true, createDraftId: () => draftId, navigateToNewSession: () => undefined,
+        }).kind).toBe('opened');
+        const owner = createNewSessionComposerDocumentOwner({ scope, ref: { kind: 'newSession', instanceId: draftId } });
+        owner.replaceDocument({ ...owner.read().document, text: 'Address this issue and add a test' });
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({ postCreateAction });
+        owner.clear();
+        expect(readNewSessionDraftFromRepository({ scope, draftId })?.postCreateAction).toBeUndefined();
+    });
+
     it('retains the configured action on the scoped draft through authoring edits', () => {
         const actionDefault = { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, configuredActionId: 'fix-check', label: 'Fix check', launchMode: 'start' as const };
         const outcome = seedAndOpenNewSession({

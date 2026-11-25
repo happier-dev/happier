@@ -10809,6 +10809,16 @@ require matching Protocol, SDK and UI source under the development direct cut.
 The inspected `../0.2` frontier at `24731ff73c` has no New Session Host API
 request. Draft storage and the wire epoch stay the same.
 
+Unreleased 0.3 mounted `openNewSession` requests may include one strict
+`postCreateAction` intent. The host retains it in the draft's device-local
+supplement and invokes it under the creator's Account after creation returns
+a Session ID. Earlier strict mounted readers require matching development
+Protocol, SDK and UI source for the new field. The common
+`session.authoring.open` Action retains its existing closed seed contract and
+older draft supplements may omit the field. The inspected `../0.2` frontier
+at `ba3670d22d5` has no corresponding Plugin UI host request module. The
+additive supplement field needs no migration or wire epoch change.
+
 Unreleased 0.3 targeted plugin Action form results carry the shared Connected
 Account selection in the existing closed `connectedAccount.ref` field. Personal
 refs keep their existing shape. Actions that declare a Team-capable credential

@@ -1025,7 +1025,7 @@ export function createTriageEntrySessionStartController(
                     // including a Start whose Agent or placement is unsettled.
                     setPhase(CHOOSING);
                     const seeded = await requestTriageNewSessionAuthoringV1(host, {
-                        entries: [request], promptText, profileId: action.profileId,
+                        entries: [request], linkEntry: request, promptText, profileId: action.profileId,
                         actionDefault: triageActionDefaultSeedV1(request.savedAction ?? action),
                         attachments: request.forgeEvidence === undefined ? [] : [buildTriageForgeEvidenceAttachmentDraftV1(request.forgeEvidence)],
                         ...(explicitAgent?.status === 'resolved' ? { agentTarget: explicitAgent.agentTarget } : {}),

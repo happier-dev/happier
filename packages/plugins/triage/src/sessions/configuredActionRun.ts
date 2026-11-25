@@ -346,6 +346,7 @@ export async function runTriageConfiguredHandoffV1(
             || (directSettlement === undefined && action.workspaceMode !== 'pull_request'))) {
             const composed = await requestTriageNewSessionAuthoringV1(host, {
                 entries: options.entries, attachments: attachment, promptText, profileId: action.profileId,
+                ...(primary === undefined ? {} : { linkEntry: primary }),
                 // The configurator shows the record as saved, not this handoff's delivery or Profile choice.
                 actionDefault: triageActionDefaultSeedV1(configured.action), checkoutIntent: checkout, signal: options.signal,
                 ...(agent?.status === 'resolved' ? { agentTarget: agent.agentTarget } : {}),

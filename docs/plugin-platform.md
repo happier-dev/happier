@@ -9791,6 +9791,19 @@ callers preserve the result without opening another draft. Health investigation
 seeds carry the selected Agent/profile, exact Machine and managed-directory
 intent into that same draft.
 
+In 0.3 development source, a mounted plugin can declare one optional
+`postCreateAction` on `openNewSession`. The declaration contains a qualified
+`action`, an `input` JSON object and the `sessionIdPath` in that object.
+New Session retains the intent with the seeded draft's device-local state.
+When the person submits the draft and creation returns the Session ID, the
+existing post-create checkpoint writes that ID at the declared path and makes
+one ordinary Action invocation under the creator's Account. An Action refusal
+surfaces its typed cause in the existing follow-up notice. Clearing the draft
+discards the intent. If the create acknowledgement is lost, the Action is
+skipped and the person can link the entry from the recovered Session.
+Triage declares its `sessions/link-entry-v1` Action on both its single-entry
+Create session and Add instructions drafts.
+
 Session reads expose that exact `agentTarget` independently of the catalog's
 display identity. Their optional `acceptedWorkspace` contains an accepted
 `checkout` address and known `repository` from the invoking Account's admitted

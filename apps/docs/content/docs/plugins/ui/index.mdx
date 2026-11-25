@@ -295,6 +295,21 @@ authors do not supply currentness flags or destination callbacks. See the
 generated [host Action reference](/plugins/api/host-actions#sessionauthoringopen)
 for the current input and outcome contracts.
 
+### Run an Action after creating the Session (development)
+
+In unreleased 0.3, mounted plugins can include one `postCreateAction` in
+`host.openNewSession(seed)`. Supply a qualified `action` with `pluginId` and
+`localId`, an `input` JSON object, and the `sessionIdPath` where the Action
+expects the created Session ID. Use a path such as `sessionId` or
+`target.sessionId`.
+
+The person creates the Session from the editable draft. Once the host receives
+the Session ID, it fills the input path and makes one attempt through normal
+Action admission under the creator's Account. Clearing the draft also clears
+the intent. An Action refusal appears in the post-create notice. If the host
+loses the create acknowledgement, it skips the Action. Use matching 0.3
+development versions of the SDK and host for this field.
+
 ## Approval for a direct UI write (development)
 
 The unreleased 0.3 host API lets a direct Account write respect the same approval

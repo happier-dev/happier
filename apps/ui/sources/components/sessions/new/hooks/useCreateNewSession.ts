@@ -79,6 +79,9 @@ import { executeSessionComposerResolution } from '@/sync/domains/input/slashComm
 import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashCommands/expandPromptTemplateInvocation';
 import { resolvePromptInvocationComposerSendAction } from '@/sync/domains/input/slashCommands/promptInvocationBehavior';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { bindPluginUiNewSessionPostCreateActionV1 } from '@happier-dev/protocol/plugins/ui';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { formatActionFailureDetails } from '@/utils/errors/alertActionFailure';
 import {
     classifyLaunchRetryFailure,
     promptDaemonUnavailableRetry,
@@ -200,7 +203,7 @@ import type { SessionInstructionsAuthoringDraft } from '@/sync/domains/state/ses
 import { NewSessionInstructionsPreparationError } from '@/components/sessions/new/modules/newSessionInstructionsPreparation';
 import { SessionPromptStackV1Schema, writeSessionContextIntentV1ToMetadata, type SessionPromptStackV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import { buildSessionInstructionsContextIntentV1 } from '@happier-dev/protocol/actions/sessionStateFieldActions';
-import { readNewSessionDraftFromRepository, writeNewSessionInstructionsToRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
+import { readNewSessionDraftFromRepository, takeNewSessionDraftPostCreateAction, writeNewSessionInstructionsToRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
 import { machinePageHref } from '@/components/settings/machines/collection/machineCollectionModel';
 export type CreatedSessionFollowUpContext = Readonly<{
     sessionId: string;
@@ -760,6 +763,32 @@ export function useCreateNewSession(params: Readonly<{
             ? current.getInstructionsPromptStack() : current.authoringDraft?.promptStack;
         const submittedDraftScope = current.draftScope;
         const submittedDraftId = current.draftId;
+        const runSeededPostCreateAction = async (input: Readonly<{
+            scope: ServerAccountScope;
+            sessionId: string;
+            requestId: string;
+            signal: AbortSignal;
+            alert: typeof Modal.alert;
+        }>, draftScope = submittedDraftScope): Promise<void> => {
+            if (!draftScope || !submittedDraftId || input.signal.aborted) return;
+            // A lost create acknowledgement never reaches this checkpoint. The
+            // entry can still be linked manually once the Session is found.
+            const intent = takeNewSessionDraftPostCreateAction({ scope: draftScope, draftId: submittedDraftId });
+            if (!intent) return;
+            const failure = await createDefaultActionExecutor().execute(
+                'action.invoke',
+                bindPluginUiNewSessionPostCreateActionV1(intent, input.sessionId),
+                { surface: 'ui', serverId: input.scope.serverId, expectedAccountId: input.scope.accountId,
+                    defaultSessionId: input.sessionId, signal: input.signal },
+            ).then(result => result.ok ? null : result, normalizeActionExecutorThrownError);
+            if (!failure || input.signal.aborted) return;
+            const message = [
+                t('inbox.actionOperations.followUpNeedsAttention'),
+                formatActionFailureDetails({ code: failure.failureCause?.errorCode ?? failure.errorCode }),
+            ].join('\n');
+            actionOperationStore.markFollowUpNeedsAttention({ ...input.scope, requestId: input.requestId, message });
+            input.alert(t('common.error'), message);
+        };
         const prepareSubmittedInstructions = async (): Promise<void> => {
             if (!submittedInstructionsDraft) return;
             if (!submittedDraftScope || !submittedDraftId) throw new NewSessionInstructionsPreparationError('instructions_draft_unavailable');
@@ -1131,6 +1160,10 @@ export function useCreateNewSession(params: Readonly<{
                                         preuploadedAttachments,
                                         signal,
                                     });
+                                    await runSeededPostCreateAction({
+                                        scope: capturedTargetScope, sessionId, requestId: launchAttempt.attemptId,
+                                        signal, alert: Modal.alert,
+                                    }, capturedDraftScope);
                                 });
                             } }
                             : {}),
@@ -1301,9 +1334,11 @@ export function useCreateNewSession(params: Readonly<{
             current.flushComposerInput?.();
             current.flushAuthoringDraft?.();
             const submittedIntent = admitLaunchIntent();
-            const sourceDraftExisted = current.draftScope && current.draftId
-                ? getSessionDraftSnapshot(current.draftScope, { kind: 'newSession', draftId: current.draftId }) !== null
-                : false;
+            const sourceDraft = current.draftScope && current.draftId
+                ? getSessionDraftSnapshot(current.draftScope, { kind: 'newSession', draftId: current.draftId })
+                : null;
+            const sourceDraftExisted = sourceDraft !== null;
+            const hasSeededPostCreateAction = sourceDraft?.localSupplement.newSessionLocalState?.postCreateAction !== undefined;
             submittedDraftCurrentness = current.draftScope && current.draftId
                 ? captureNewSessionDraftWorkflowCurrentness({
                     scope: current.draftScope,
@@ -2490,6 +2525,16 @@ export function useCreateNewSession(params: Readonly<{
                             effectiveSpawnServerId: resolvedTargetServerId,
                             launchAttempt,
                         });
+                        if (hasSeededPostCreateAction) {
+                            await runSeededPostCreateAction({
+                                scope: executionAccountScope,
+                                sessionId: createdSessionId,
+                                requestId: readManualSessionSpawnOperation(executionAccountScope, launchAttempt.attemptId)?.requestId
+                                    ?? launchAttempt.attemptId,
+                                signal: cancellation.signal,
+                                alert: launchDialogs.alert,
+                            });
+                        }
                     } catch (error) {
                         postSpawnFollowUpError = error;
                         postSpawnFollowUpRetryRef.current = runAfterCreatedFollowUp;
@@ -2499,8 +2544,9 @@ export function useCreateNewSession(params: Readonly<{
                         sourceDraftCancellation.signal.removeEventListener('abort', abortFromHost);
                     }
                 };
+                const hasPostCreateFollowUp = current.authoringOrigin || opts?.afterCreated || hasSeededPostCreateAction;
                 const createdSessionCompletion = createCreatedNewSessionCompletion({
-                    ...(current.authoringOrigin || opts?.afterCreated ? { followUp: runAfterCreatedFollowUp } : {}),
+                    ...(hasPostCreateFollowUp ? { followUp: runAfterCreatedFollowUp } : {}),
                     present: () => presentCreatedSessionRoute(),
                 });
 
@@ -2568,7 +2614,7 @@ export function useCreateNewSession(params: Readonly<{
                     storage.getState().updateSessionModelMode(createdSessionId, current.modelMode);
                 }
 
-                if (!postSpawnFollowUpError && (current.authoringOrigin || opts?.afterCreated)) {
+                if (!postSpawnFollowUpError && hasPostCreateFollowUp) {
                     try {
                         await createdSessionCompletion.followUp();
                     } catch (error) {

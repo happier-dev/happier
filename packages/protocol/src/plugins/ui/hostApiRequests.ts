@@ -23,6 +23,8 @@ import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js'
 import { AgentSessionCompactionAvailabilityV1Schema } from '../../sessions/control/sessionCompactionAvailabilityV1.js';
 import { ActionSessionAddressV1Schema } from '../../actions/sessionTargetV1.js';
 import { SessionIdSchema } from '../../sessions/idsV1.js';
+import { InputPathSchema, readInputPath } from '../../inputs/inputPredicates.js';
+import { writeInputPath } from '../../inputs/inputFieldRuntime.js';
 import { NativePermissionChoicesV1Schema, NativePermissionChoiceAnswerV1Schema, NativePermissionChoiceAvailabilityV1Schema } from '../../sessions/permissions/respondRpcParamsV1.js';
 import { NativePermissionChoiceV1Schema } from '../../sessions/permissions/nativeChoicesV1.js';
 import { AgentPermissionIntentV1Schema } from '../../runtime/permissionIntentV1.js';
@@ -804,7 +806,25 @@ export const PluginUiNewSessionActionDefaultV1Schema = lazyZodSchema(() => z.str
 }));
 export type PluginUiNewSessionActionDefaultV1 = z.infer<typeof PluginUiNewSessionActionDefaultV1Schema>;
 
-export const PluginUiNewSessionSeedV1Schema = lazyZodSchema(() => z.strictObject({
+const PluginUiNewSessionPostCreateActionV1Schema = lazyZodSchema(() => z.strictObject({
+  action: asProtocolZod(PluginUiQualifiedActionReferenceV1Schema),
+  input: PluginUiJsonObjectV1Schema,
+  /** Dot-separated Action input path that receives the settled Session ID. */
+  sessionIdPath: InputPathSchema,
+}).check(z.refine(intent =>
+  readInputPath(writeInputPath(intent.input, intent.sessionIdPath, null), intent.sessionIdPath) === null,
+  { message: 'The Action input path must address a writable field.', path: ['sessionIdPath'] },
+)));
+
+/** Bind the admitted intent without mutating the draft input. */
+export function bindPluginUiNewSessionPostCreateActionV1(
+  intent: z.infer<typeof PluginUiNewSessionPostCreateActionV1Schema>,
+  sessionId: string,
+) {
+  return { action: intent.action, input: writeInputPath(intent.input, intent.sessionIdPath, sessionId) };
+}
+
+const SessionAuthoringOpenSeedV1Schema = lazyZodSchema(() => z.strictObject({
   actionDefault: z.optional(PluginUiNewSessionActionDefaultV1Schema),
   /** An empty name requests the ordinary Session's automatic name. */
   sessionName: z.optional(z.string()),
@@ -866,6 +886,9 @@ export const PluginUiNewSessionSeedV1Schema = lazyZodSchema(() => z.strictObject
   z.refine(seed => !seed.directoryIntent || seed.placement?.directory === undefined
     && (seed.directoryIntent.kind !== 'managed' || seed.checkoutIntent === undefined || seed.checkoutIntent === 'none'),
   { message: 'A directory intent cannot compete with a placement path or request a managed checkout.' })));
+export const PluginUiNewSessionSeedV1Schema = lazyZodSchema(() => z.safeExtend(SessionAuthoringOpenSeedV1Schema, {
+  postCreateAction: z.optional(PluginUiNewSessionPostCreateActionV1Schema),
+}));
 export type PluginUiNewSessionSeedV1 = z.infer<typeof PluginUiNewSessionSeedV1Schema>;
 
 const SessionNewSessionSeedFailureV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
@@ -885,12 +908,14 @@ export const SessionNewSessionSeedOutcomeSchema = lazyZodSchema(() => z.union([
 ]));
 export type SessionNewSessionSeedOutcome = z.infer<typeof SessionNewSessionSeedOutcomeSchema>;
 
+// The general authoring Action can be called by agents. Executable seed
+// intent is authored through the mounted plugin's New Session Host API.
 export const SessionAuthoringOpenV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ seed: PluginUiNewSessionSeedV1Schema }),
+  z.strictObject({ seed: SessionAuthoringOpenSeedV1Schema }),
   z.strictObject({
     sourceSession: VoiceTrackedSessionAddressV1Schema,
     /** Editable changes to the copied setup, not an execution request. */
-    seed: z.optional(PluginUiNewSessionSeedV1Schema),
+    seed: z.optional(SessionAuthoringOpenSeedV1Schema),
     replay: z.optional(SessionForkPointSchema),
     connectedServices: z.optional(z.nullable(ConnectedServiceBindingsV2IngressSchema)),
   }),

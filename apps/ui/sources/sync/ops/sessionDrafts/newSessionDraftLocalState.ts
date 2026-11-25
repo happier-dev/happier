@@ -32,6 +32,7 @@ export type NewSessionDraftLocalState = Readonly<Pick<NewSessionDraft,
     | 'composerAttachmentSeeds'
     | 'authoringOrigin'
     | 'actionDefault'
+    | 'postCreateAction'
     | 'spaceMembership'
     | 'managedMachineSelection'
     | 'managedMachineAcquisition'
@@ -72,6 +73,7 @@ export function buildNewSessionDraftLocalState(draft: NewSessionDraft): NewSessi
         ...(draft.actionDefault === undefined ? {} : {
             actionDefault: PluginUiNewSessionActionDefaultV1Schema.parse(draft.actionDefault),
         }),
+        ...(draft.postCreateAction === undefined ? {} : { postCreateAction: draft.postCreateAction }),
         ...(draft.authoringOrigin === undefined ? {} : {
             authoringOrigin: PluginUiNewSessionSeedOriginV1Schema.parse(draft.authoringOrigin),
         }),

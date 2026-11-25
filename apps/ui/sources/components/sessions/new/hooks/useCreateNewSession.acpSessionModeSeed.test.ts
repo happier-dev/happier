@@ -40,6 +40,17 @@ installDisconnectedServerSocketBoundary(socket => { configureConnectedServerSock
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => false));
 const scopedSocketEmitWithAckSpy = vi.hoisted(() => vi.fn());
+const nativeTriageActionHost = vi.hoisted(() => ({ enabled: false }));
+
+vi.mock('@/utils/platform/tauri/transferFetch', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/utils/platform/tauri/transferFetch')>();
+  return {
+    ...actual,
+    resolveTauriRuntimeFetch: async (...args: Parameters<typeof actual.resolveTauriRuntimeFetch>) =>
+      nativeTriageActionHost.enabled ? (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init)
+        : actual.resolveTauriRuntimeFetch(...args),
+  };
+});
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient', async () => {
   // The canonical socket boundary stub keeps the client's lifecycle surface (on/off/disconnect);
@@ -585,6 +596,118 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     }));
     expect(sessionSpawnNewRpcSpy.mock.calls[0]?.[0].creationKey).toMatch(/^manual:.+/);
     expect(sendMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it.each(['linked', 'refused', 'plain'] as const)('settles a New Session draft with an ordinary Triage Action (%s)', async scenario => {
+    const { useCreateNewSession, sessionSpawnNewRpcSpy } = await setupHarness();
+    const { seedAndOpenNewSession } = await import('../newSessionSeedComposer');
+    const { readNewSessionDraftFromRepository } = await import('../../composer/newSessionDraftRepositoryAdapter');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+    const { TRIAGE_PLUGIN } = await import('../../../../../../../packages/plugins/triage/src/definition');
+    const { requestTriageNewSessionAuthoringV1 } = await import('../../../../../../../packages/plugins/triage/src/sessions/newSessionAuthoring');
+    const { TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1, TriageLinkEntryToSessionInputV1Schema } =
+      await import('../../../../../../../packages/plugins/triage/src/actions/sessionLinksProtocol');
+    const { createTestkitCorpusCollections } = await import('../../../../../../../packages/plugins/triage/src/corpus/testkit/corpusCollections.test-support');
+    const { testkitEntryRef } = await import('../../../../../../../packages/plugins/triage/src/corpus/testkit/observations.test-support');
+    const { testkitConfiguredInstance, testkitReadOnlySourceSnapshot, TESTKIT_LINK_DISPLAY } =
+      await import('../../../../../../../packages/plugins/triage/src/sessions/testkit/entrySessionTestkit.test-support');
+    const { CORPUS_SOURCE_INSTANCES_COLLECTION_ID, CORPUS_SOURCE_INSTANCE_LIFECYCLE,
+      CORPUS_SESSION_LINKS_COLLECTION_ID, CORPUS_SESSION_LINKS_INDEX_ID, CORPUS_USER_MARKS_COLLECTION_ID } =
+      await import('../../../../../../../packages/plugins/triage/src/corpus/collections/ids');
+    const { toCorpusStoredValue } = await import('../../../../../../../packages/plugins/triage/src/corpus/collections/rowCodec');
+
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    if (!accountLifetime) throw new Error('Expected creator Account custody');
+    const scope = accountLifetime.scope;
+    const draftId = '00000000-0000-4000-8000-000000000058';
+    const { collections, control } = createTestkitCorpusCollections();
+    const entryRef = testkitEntryRef();
+    const configured = testkitConfiguredInstance();
+    if (scenario === 'linked') {
+      control.sourceInstances.seed(toCorpusStoredValue({ instanceTag: 'a'.repeat(43),
+        lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1,
+        sourceQualifiedId: entryRef.source.pluginId + '/' + entryRef.source.localId, configured }));
+    }
+
+    const invocations: unknown[] = [];
+    const actionId = TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1;
+    const installed = await installPortableAccountPluginReleaseForTest({
+      manifest: TRIAGE_PLUGIN.manifest,
+      accountLifetime,
+      publishProjection: true,
+      activate(api) {
+        return TRIAGE_PLUGIN.activateAccount({ ...api, actions: {
+          register(id, handler, options) {
+            if (id !== actionId) {
+              api.actions.register(id, handler, options);
+              return;
+            }
+            api.actions.register(id, (value, context) => {
+              const input = TriageLinkEntryToSessionInputV1Schema.parse(value);
+              invocations.push({ sessionId: input.sessionId, accountScope: context.accountScope });
+              // Supply the source census and Account Collections at their service boundaries.
+              const collection = ((definition: { id: string }) => {
+                if (definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION_ID) return collections.sourceInstances;
+                if (definition.id === CORPUS_SESSION_LINKS_COLLECTION_ID) return collections.sessionLinks;
+                if (definition.id === CORPUS_USER_MARKS_COLLECTION_ID) return collections.userMarks;
+                throw new Error('Unexpected Collection ' + definition.id);
+              }) as typeof context.services.storage.account.collection;
+              return handler(value, { ...context, services: { ...context.services, storage: {
+                account: { ...context.services.storage.account, collection },
+              }, targetedContributions: { ...context.services.targetedContributions, observeForSelf: (() => ({
+                readCurrent: async () => testkitReadOnlySourceSnapshot(), dispose() {},
+              })) as typeof context.services.targetedContributions.observeForSelf } } });
+            }, options);
+          },
+        } });
+      },
+    });
+
+    try {
+      // Exercise the normal desktop Account Action placement at its platform boundary.
+      nativeTriageActionHost.enabled = true;
+      const open = (seed: unknown) => {
+        expect(seedAndOpenNewSession({ scope, seed, isCurrent: () => true,
+          createDraftId: () => draftId, navigateToNewSession: () => {} }).kind).toBe('opened');
+      };
+      if (scenario === 'plain') open({ prompt: 'Address this entry' });
+      else {
+        expect(await requestTriageNewSessionAuthoringV1({
+          version: () => ({ methods: ['openNewSession'] }),
+          openNewSession: async seed => open(seed),
+          selectActionInput: async () => { throw new Error('No preparation is requested'); },
+        }, { entries: [], linkEntry: { entryRef, display: TESTKIT_LINK_DISPLAY, sourceInstance: configured.instance },
+          promptText: 'Address this entry', profileId: null, checkoutIntent: 'none', placement: null, candidates: [] }))
+          .toEqual({ status: 'seeded' });
+      }
+      expect(invocations).toEqual([]);
+      expect(Boolean(readNewSessionDraftFromRepository({ scope, draftId })?.postCreateAction)).toBe(scenario !== 'plain');
+      const params = buildCreateSessionHookParams({ draftId, draftScope: scope, targetServerId: scope.serverId });
+      const hook = await renderHook(() => useCreateNewSession(params as never));
+      try {
+        await act(async () => { await hook.getCurrent().handleCreateSession(); });
+        expect(sessionSpawnNewRpcSpy).toHaveBeenCalledTimes(1);
+        expect(invocations, JSON.stringify({ alerts: modalAlertSpy.mock.calls, confirms: modalConfirmSpy.mock.calls,
+          retainedIntent: Boolean(readNewSessionDraftFromRepository({ scope, draftId })?.postCreateAction) }))
+          .toEqual(scenario === 'plain' ? [] : [{ sessionId: 'sess_new', accountScope: scope }]);
+        const rows = await collections.sessionLinks.query({
+          index: CORPUS_SESSION_LINKS_INDEX_ID.bySession, prefix: ['sess_new'], order: 'asc',
+        });
+        expect(rows.rows).toHaveLength(scenario === 'linked' ? 1 : 0);
+        expect(readNewSessionDraftFromRepository({ scope, draftId })?.postCreateAction).toBeUndefined();
+        if (scenario === 'refused') {
+          expect(modalAlertSpy).toHaveBeenCalledWith(
+            expect.any(String), expect.stringContaining('sessionLinksSourceInstanceUnavailable'), undefined,
+          );
+        }
+      } finally {
+        await hook.unmount();
+      }
+    } finally {
+      nativeTriageActionHost.enabled = false;
+      await installed.dispose();
+    }
   });
 
   it('preserves the authored Team context and access in the final spawn payload', async () => {

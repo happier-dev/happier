@@ -32,7 +32,7 @@ import {
 import { buildNewSessionDraftLocalState } from '@/sync/ops/sessionDrafts/newSessionDraftLocalState';
 import { sanitizeNewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { PluginUiNewSessionActionDefaultV1Schema, StoredPluginUiNewSessionSeedOriginV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiNewSessionActionDefaultV1Schema, PluginUiNewSessionSeedV1Schema, StoredPluginUiNewSessionSeedOriginV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { readSessionInstructionsAuthoringDraft } from '@/sync/domains/state/sessionInstructionsDraft';
 import { ManagedMachineAcquisitionDraftReadSchema, ManagedMachineSelectionDraftReadSchema } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { getSessionDraftAuthoringFieldValues } from '@/sync/ops/sessionDrafts/sessionDraftDocumentFields';
@@ -114,6 +114,7 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
     const promptStack = Object.prototype.hasOwnProperty.call(fields, 'promptStack') ? authoring.promptStack : retainedAuthoring.promptStack;
     const instructionsDraft = readSessionInstructionsAuthoringDraft(localState?.instructionsDraft);
     const authoringOrigin = StoredPluginUiNewSessionSeedOriginV1Schema.safeParse(localState?.authoringOrigin);
+    const postCreateAction = PluginUiNewSessionSeedV1Schema.shape.postCreateAction.safeParse(localState?.postCreateAction);
     const actionDefault = createStoredReadSchema(PluginUiNewSessionActionDefaultV1Schema).safeParse(localState?.actionDefault);
     const spaceMembership = nullable(SessionSpaceMembershipTargetV1Schema).safeParse(localState?.spaceMembership);
     const managedMachineSelection = nullable(ManagedMachineSelectionDraftReadSchema).safeParse(localState?.managedMachineSelection);
@@ -138,6 +139,7 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
             : '',
         ...(authoringOrigin.success ? { authoringOrigin: authoringOrigin.data } : {}),
         ...(actionDefault.success ? { actionDefault: actionDefault.data } : {}),
+        ...(postCreateAction.success && postCreateAction.data !== undefined ? { postCreateAction: postCreateAction.data } : {}),
         ...(spaceMembership.success ? { spaceMembership: spaceMembership.data } : {}),
         ...(attachments.length > 0 ? { composerAttachments: attachments } : {}),
         ...(Array.isArray(localState?.composerAttachmentSeeds) && localState.composerAttachmentSeeds.length > 0
@@ -224,6 +226,20 @@ function projectNewSessionDraftAuthoring(draft: NewSessionDraft, scopeServerId: 
     return projectNewSessionDraftSyncedAuthoringFields({ draft, scopeServerId });
 }
 
+/** Consume a draft's local intent before dispatch so later completion cannot replay it. */
+export function takeNewSessionDraftPostCreateAction(input: Readonly<{
+    scope: ServerAccountScope;
+    draftId: string;
+}>): NewSessionDraft['postCreateAction'] {
+    const address = { kind: 'newSession', draftId: input.draftId } as const;
+    const localState = getSessionDraftSnapshot(input.scope, address)?.localSupplement.newSessionLocalState;
+    if (localState?.postCreateAction === undefined) return undefined;
+    const { postCreateAction, ...remaining } = localState;
+    writeSessionDraftLocalSupplement({ scope: input.scope, address, patch: { newSessionLocalState: remaining } });
+    const parsed = PluginUiNewSessionSeedV1Schema.shape.postCreateAction.safeParse(postCreateAction);
+    return parsed.success ? parsed.data : undefined;
+}
+
 /** An explicit Inherit edit removes the authored reference through the repository's existing clear owner. */
 function clearExplicitlyUnsetApprovalProfile(input: Readonly<{ scope: ServerAccountScope; draftId: string; draft: NewSessionDraft }>) {
     if (!Object.prototype.hasOwnProperty.call(input.draft, 'approvalProfileId') || input.draft.approvalProfileId !== undefined) return;
@@ -288,6 +304,8 @@ export function writeNewSessionAuthoringDraftToRepository(input: Readonly<{
         composerAttachmentSeeds: live?.composerAttachmentSeeds,
         // Action name and launch edits are committed by their leaf control.
         actionDefault: live?.actionDefault ?? input.draft.actionDefault,
+        // The post-create checkpoint consumes this seed field. Autosave cannot restore it.
+        postCreateAction: live?.postCreateAction,
         ...(input.preserveLiveSessionName && live ? {
             sessionName: live.sessionName,
             instructionsDraft: live.instructionsDraft,

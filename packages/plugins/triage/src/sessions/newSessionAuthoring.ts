@@ -1,6 +1,7 @@
 import type { PluginUiHostApi, PluginUiSessionPlacementCandidateV1 } from '@happier-dev/plugin-sdk/ui';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import { hasTriageActionInstructionSourceV1, readTriageActionLaunchModeV1, type TriageActionV1 } from '../settings/actions.js';
+import { TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1 } from '../actions/sessionLinksProtocol.js';
 import { planTriageActionDeliveryV1 } from './actionDelivery.js';
 import type { TriageActionCheckoutResolutionV1, TriageActionExecutionPlacementV1 } from './actionLaunch.js';
 import type { TriageEntrySessionStartRequestV1 } from './entrySessionStartController.js';
@@ -30,6 +31,7 @@ export async function requestTriageNewSessionAuthoringV1(
     host: TriageNewSessionSeedHostV1 & Pick<PluginUiHostApi, 'selectActionInput'>,
     input: Readonly<{
         entries: readonly AuthoringEntry[];
+        linkEntry?: Pick<TriageEntrySessionStartRequestV1, 'entryRef' | 'sourceInstance' | 'display'>;
         actionDefault?: TriageNewSessionSeedV1['actionDefault'];
         attachments?: readonly TriageEntryAttachmentDraftV1[];
         promptText: string | null;
@@ -83,7 +85,13 @@ export async function requestTriageNewSessionAuthoringV1(
         const directoryIntent = input.directoryIntent
             ?? (input.checkoutIntent === 'preparedReviewWorkspace' ? undefined : placement?.directoryIntent);
         if (input.requestId !== undefined) input.onRequest?.(input.requestId);
+        const entry = input.linkEntry;
         return await requestTriageNewSessionSeed(host, {
+            ...(entry === undefined ? {} : { postCreateAction: {
+                action: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1 },
+                input: { v: 1, entryRef: entry.entryRef, sourceInstanceId: entry.sourceInstance.sourceInstanceId, display: entry.display },
+                sessionIdPath: 'sessionId',
+            } }),
             ...(delivery.kind === 'compose' && delivery.text !== undefined ? { prompt: delivery.text } : {}),
             ...(input.actionDefault === undefined ? {} : { actionDefault: input.actionDefault }),
             ...(input.profileId === null ? {} : { profileId: input.profileId }),

@@ -342,6 +342,8 @@ export type PluginUiSelectActionInputHostRequestV1 = ProtocolPluginUiSelectActio
  * the reader already chose.
  */
 export type PluginUiNewSessionSeedV1 = DeepReadonly<{
+    /** The host invokes this Action after the person creates the seeded Session. */
+    postCreateAction?: import('@happier-dev/protocol/plugins/ui').PluginUiNewSessionSeedV1['postCreateAction'];
     actionDefault?: PluginUiNewSessionActionDefaultV1;
     sessionName?: string;
     initialSessionFacts?: SessionServerStartSpawnDraftV1['identity'];

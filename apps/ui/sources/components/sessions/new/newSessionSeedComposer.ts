@@ -176,6 +176,7 @@ export function seedAndOpenNewSession(params: Readonly<{
     const seededDraftId = (params.seedDraft ?? seedNewSessionDraftV1)({
         seed: {
             ...(seed.actionDefault === undefined ? {} : { actionDefault: seed.actionDefault }),
+            ...(seed.postCreateAction === undefined ? {} : { postCreateAction: seed.postCreateAction }),
             ...(seed.sessionName === undefined ? {} : { sessionName: seed.sessionName }),
             ...(seed.initialSessionFacts === undefined ? {} : { initialSessionFacts: seed.initialSessionFacts }),
             ...(seed.promptStack === undefined ? {} : { promptStack: seed.promptStack }),
