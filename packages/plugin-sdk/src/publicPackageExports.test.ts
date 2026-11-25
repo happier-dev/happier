@@ -861,6 +861,10 @@ describe('CORE-A curated package exports', () => {
 
     it('keeps the normal testing path limited to daemon-independent testkits and bounded UI semantics', () => {
         expect(Object.keys(testingPublicApi).sort()).toEqual([
+            'PROVIDER_CONFORMANCE_MANAGED_ID',
+            'PROVIDER_CONFORMANCE_NATIVE_EXPIRY',
+            'PROVIDER_CONFORMANCE_PRIVATE_BINDING',
+            'PROVIDER_CONFORMANCE_PUBLIC_KEY',
             'PluginUiSemanticAdapterSnapshotSchema',
             'PluginUiSemanticRoleSchema',
             'PluginUiSemanticStateSchema',
@@ -869,13 +873,17 @@ describe('CORE-A curated package exports', () => {
             'SURFACE_CONTEXT_THEME_FIXTURE',
             'createAgentLaunchObserver',
             'createAgentSessionRuntimeHarness',
+            'createMachineProvisionerConformanceFixture',
             'createPluginActionHandlerUnavailableFixture',
             'createPluginClientTestkit',
             'createPluginHttpFixture',
             'createPluginTestkit',
+            'createPluginUiActionControlTestHost',
             'createPluginUiTestkit',
             'createSurfaceContextFixture',
             'createTestResourceInvocationContext',
+            'matchesTestCollectionNumericRange',
+            'parseTestCollectionQueryLimit',
             'readPluginUiTestkitTargetedSurfaceAdmission',
             'runAgentMcpToolPolicyContract',
             'runAgentSkillDeliveryContract',
