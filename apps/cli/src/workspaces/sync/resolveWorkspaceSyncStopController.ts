@@ -21,9 +21,9 @@ export async function resolveWorkspaceSyncStopController(input: Readonly<{
       ...(input.signal ? { signal: input.signal } : {}),
     }));
   const relationship = relationships.find(row => row.relationshipId === input.relationshipId);
-  // Retain the addressed controller's existing idempotent handling when this
-  // observation does not have a committed route.
-  if (relationship?.committedAtMs == null || relationship.controllerMachineId === input.nominatedMachineId) {
+  // Keep the addressed controller's idempotent handling when the relationship
+  // is absent. The controller owns the live decision, including paused links.
+  if (!relationship || relationship.controllerMachineId === input.nominatedMachineId) {
     return input.nominatedMachineId;
   }
   const isEndpoint = [relationship.alphaWorkspaceRefId, relationship.betaWorkspaceRefId].some(id => {

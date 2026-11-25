@@ -22,7 +22,7 @@ it('addresses Stop to the committed controller when invoked from the linked Work
       { key, revision: 1, content: { t: 'plain', v: { key, value: { relationships: [{
         v: 1, relationshipId, controllerMachineId: 'source',
         alphaWorkspaceRefId: 'source-ref', betaWorkspaceRefId: 'target-ref',
-        mode: 'keep_synced', enabled: true, createdAtMs: 1, updatedAtMs: 2, committedAtMs: 2,
+        mode: 'keep_synced', enabled: true, createdAtMs: 1, updatedAtMs: 2,
         contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) },
       }] } } } },
     ]);
@@ -39,7 +39,9 @@ it('addresses Stop to the committed controller when invoked from the linked Work
     const executor = createCliActionExecutorFromCredentials({
       credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
       externalActionClient: true, serverId, serverIdentityId: serverId, serverApiUrl: 'https://sync-cli.test',
-      machineId: 'worker', actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) },
+      machineId: 'worker', actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({
+        v: 1, approvalWaivedSurfaces: { 'workspace.sync.relationship.terminate': ['cli'] },
+      }) },
     });
     const result = await executor.execute('workspace.sync.relationship.terminate',
       { relationshipId, controllerMachineId: 'worker' }, { surface: 'cli', authority: 'present_user' });
