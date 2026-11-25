@@ -1761,12 +1761,18 @@ describe('WorkflowEditorHostScreen composition', () => {
         const editedSection = readBodyProps()!.triggersSection;
         if (!React.isValidElement<React.ComponentProps<typeof WorkflowTriggerSection>>(editedSection)) throw new Error('Missing trigger editor');
         expect(editedSection.props.incomplete?.state.pending).toEqual([]);
-        // The Live events companion hands unconfigured intent through the same mounted editor intake.
+        // The live companion admits the deployment Environment through the mounted draft Action.
+        const { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } = await import('@happier-dev/protocol/deployments/deploymentReceiptEventsV1');
+        const deploymentEvent = { environment: { serverId: lifetime.scope.serverId,
+            projectSourceId: 'project-a', environmentId: 'production' }, filter: null };
         await act(async () => readBodyProps()!.onAddTriggerWhen?.({ kind: 'pluginEvent', value: null,
-            eventRef: eventSeed.eventRef }, { eventSeed }));
+            eventRef: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed }, { deploymentEvent }));
         const liveSection = readBodyProps()!.triggersSection;
         if (!React.isValidElement<React.ComponentProps<typeof WorkflowTriggerSection>>(liveSection)) throw new Error('Missing live trigger editor');
-        expect(liveSection.props.incomplete?.state.pending).toMatchObject([{ eventSeed }]);
+        expect(liveSection.props.incomplete?.state.pending).toMatchObject([{
+            when: { kind: 'pluginEvent', value: null, eventRef: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed },
+            deploymentEvent,
+        }]);
         await act(async () => liveSection.props.incomplete!.onChange(() => ({ pending: [], edits: {} })));
         const nativeEvent = { key: 'presence', kind: 'machine', machineId: 'offline-machine', event: 'offline',
             sourceRevision: 999_999, occurredAt: 10, coverage: 'live' } as const;

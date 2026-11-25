@@ -68,11 +68,13 @@ describe('native log viewer authority withdrawal', () => {
             return React.createElement('Text', null, line.plainText);
         });
         let current: ReturnType<typeof useNativeLogViewer> | undefined;
+        let credentialBinding: ReturnType<typeof useServerCredentialAccountScopeBinding>['binding'] = null;
         // A scale-shaped, all-row consumer deliberately makes identity loss visible:
         // even without virtualization an append must render only the changed/new lines.
         function Consumer({ text }: { text: string }) {
             useRenderCommitCounter(modelRenders);
             const { binding } = useServerCredentialAccountScopeBinding(serverId);
+            credentialBinding = binding;
             const first = React.useMemo(() => ({ kind: 'read' as const, readAt: 1,
                 value: { kind: 'page' as const, page: { sourceRevision: 'source', text, nextCursor: null, truncated: false } } }), [text]);
             current = useNativeLogViewer({ first, read, accountLifetime: binding, reference: null,
@@ -83,7 +85,10 @@ describe('native log viewer authority withdrawal', () => {
         }
         const text = Array.from({ length: 1000 }, (_, i) => `row ${i}`).join('\n');
         const screen = await renderScreen(React.createElement(Consumer, { text }));
-        expect(current!.viewer!.lines).toHaveLength(1000);
+        await vi.waitFor(() => {
+            expect(credentialBinding?.isCurrent()).toBe(true);
+            expect(current!.viewer!.lines).toHaveLength(1000);
+        });
         rows.reset();
         await act(async () => current!.navigation.setAtLatest(false));
         expect(rows.read().renders).toBe(0);
