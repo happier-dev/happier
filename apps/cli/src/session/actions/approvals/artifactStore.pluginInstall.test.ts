@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
+import { AxiosHeaders, type AxiosRequestConfig } from 'axios';
 
 import { ApprovalRequestV2Schema, artifactIdScopeMatchesAccountV1, deriveAccountScopedArtifactIdV1, type ApprovalRequest, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
@@ -7,6 +8,8 @@ import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/appr
 import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactBodyEnvelopeV1Schema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -25,7 +28,7 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { normalizeActionExecutorThrownError, settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import { createDaemonApprovalExecutionOriginCurrentness, createDaemonApprovalExecutionOriginCurrentnessFromCredentials, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createCliActionDeps } from '../createCliActionDeps';
 import { createCliActionExecutorFromCredentials } from '../createCliActionExecutorFromCredentials';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
@@ -43,9 +46,20 @@ import * as daemonHttp from '@/daemon/controlHttp';
 import { createDaemonControlApp } from '@/daemon/controlServer';
 import { createTestNpmTarball } from '@/plugins/distribution/testkit/npmTarball';
 import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
-import { ExternalActionMachineBootstrapV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, bindExternalActionExecutionAuthorizationHttpPathV1, projectExternalActionApprovalDecisionAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { ExternalActionMachineBootstrapV1Schema, ExternalActionDaemonDispatchRequestSchema } from '@happier-dev/protocol/actions/externalActionApi';
+import { AccountSelfProfileV1Schema } from '@happier-dev/protocol/account/profile';
+import { ChangesResponseSchema } from '@happier-dev/protocol/changes';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
+import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
+import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
+import { registerExternalActionRpcHandler } from '@/rpc/handlers/externalAction';
+import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
+import { fetchAccountProfile } from '@/api/accountProfile';
+import { prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
+import { createExternalActionHomeProcessForTests } from '../../../../../server/sources/testkit/externalActionExecution.testkit.mjs';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 
@@ -55,7 +69,7 @@ import { createCliApprovalsArtifactStore } from './artifactStore';
 
 // Only the Account HTTP boundary is replaced; the real Artifact codec, header
 // binding, approval parser, and lifecycle transition owner remain in the path.
-const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), defaults: {} }));
+const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), request: vi.fn(), defaults: {} }));
 vi.mock('axios', async (importOriginal) => {
   const actual = await importOriginal<typeof import('axios')>();
   return { ...actual, default: { ...http, isAxiosError: actual.default.isAxiosError } };
@@ -114,6 +128,7 @@ beforeEach(() => {
   rows.clear();
   http.get.mockReset();
   http.post.mockReset();
+  http.request.mockReset();
   http.get.mockImplementation(async (url: string) => {
     if (url.endsWith('/v1/account/encryption')) return { status: 200,
       data: AccountEncryptionModeResponseSchema.parse({ mode: accountMode, updatedAt: 0 }) };
@@ -379,6 +394,9 @@ describe('plugin install approval Artifact rejoin', () => {
     const happyHomeDir = join(root, 'home');
     const source = join(root, entry === 'archive' ? 'plugin.tgz' : 'plugin.mjs');
     const publicationErrors: unknown[] = [];
+    const homeActions: Array<{ path: string; status?: number; error?: string }> = [];
+    const controlPaths: string[] = [];
+    onTestFailed(() => console.info({ homeActions, controlPaths, approvals: rows.size }));
     let publications = 0;
     const pluginId = 'acme.saved-home-review';
     await mkdir(happyHomeDir, { recursive: true });
@@ -401,17 +419,58 @@ describe('plugin install approval Artifact rejoin', () => {
       });
       await writeFile(source, `export const manifest = ${JSON.stringify(manifest)};\nexport function activate() {}\n`);
     }
-    const storedCredentials: StoredCredentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'account-1',
-      tokenEpoch: 0, provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`,
-      encryption: credentials().encryption, credentialProvenance: 'stored_session' };
+    const origin = { machineId: 'machine-1', serverIdentityId: 'srv_saved_home' };
+    const installationIdentityFile = join(root, 'installation.json');
+    const installation = await readOrCreateInstallationIdentity(installationIdentityFile);
+    const encryption = credentials().encryption;
+    const installationPublicKey = Buffer.from(installation.publicKey, 'base64url');
+    const machineContentKey = new Uint8Array(32).fill(13);
+    const machineContent = {
+      metadata: createMachineContentCodec(encryption ? {
+        encryptionKey: machineContentKey, encryptionVariant: 'dataKey',
+      } : { encryptionMode: 'plain' }).encodeStored({
+        host: 'Saved Home receiver', platform: process.platform, happyCliVersion: 'test',
+        homeDir: root, happyHomeDir, installationPublicKey: installation.publicKey,
+      }),
+      dataEncryptionKey: encryption?.type === 'dataKey' ? Buffer.from(sealEncryptedDataKeyEnvelopeV1({
+        dataKey: machineContentKey, recipientPublicKey: encryption.publicKey,
+        randomBytes: length => new Uint8Array(length).fill(9),
+      })).toString('base64') : MACHINE_PLAIN_DATA_KEY_MARKER,
+    };
+    const admissionBoundary = {
+      machineId: origin.machineId,
+      resolveCustodianAccountId: async () => 'account-1',
+      resolveInstallationId: () => installation.installationId,
+      verifyMachineAdmission: async () => {
+        throw new Error('The installed receiver must consume the Home-issued Action admission');
+      },
+    };
+    const rpc = new RpcHandlerManager({ scopePrefix: origin.machineId,
+      localMachineId: origin.machineId, encryptionMode: 'plain',
+      authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, admissionBoundary, source) });
+    const home = await createExternalActionHomeProcessForTests({
+      ...origin, accountId: 'account-1', accountEncryptionMode: accountMode,
+      // This command includes the person's --yes decision. The real issuer,
+      // rather than a schema-shaped terminal grant, supplies that authority.
+      ...(entry === 'archive' ? { authentication: 'present_user' as const } : {}),
+      installationId: installation.installationId, installationPublicKey, machineStoredContent: machineContent,
+      dispatch: async (packet, { signal }) => {
+        const request = ExternalActionDaemonDispatchRequestSchema.parse(packet.params);
+        expect(request.executionAuthorization?.binding.accountEncryptionMode).toBe(accountMode);
+        expect(request.envelope.v).toBe(encryption ? 2 : 1);
+        return rpc.handleRequest({ ...packet, signal }, undefined, 'authenticated_home_socket');
+      },
+    });
+    onTestFinished(() => home.close());
+    const storedCredentials: StoredCredentials = { token: home.token, encryption, credentialProvenance: 'stored_session' };
     const store = createCliApprovalsArtifactStore({ credentials: storedCredentials, getAccountEncryptionMode: async () => accountMode });
     const reloadController = createPluginReloadController({ happyHomeDir });
-    const origin = { machineId: 'machine-1', serverIdentityId: 'srv_saved_home' };
     const previousConfiguration = { happyHomeDir: configuration.happyHomeDir,
-      settingsFile: configuration.settingsFile, serversDir: configuration.serversDir };
+      settingsFile: configuration.settingsFile, serversDir: configuration.serversDir,
+      installationIdentityFile: configuration.installationIdentityFile };
     Object.assign(configuration, { happyHomeDir, settingsFile: join(happyHomeDir, 'settings.json'),
-      serversDir: join(happyHomeDir, 'servers') });
-    const installation = await readOrCreateInstallationIdentity(join(root, 'installation.json'));
+      serversDir: join(happyHomeDir, 'servers'), installationIdentityFile });
+    onTestFinished(installAxiosRequestMethodAdapter());
     const accountChanges = await createRequesterCurrentnessSocketHarness();
     const canonical = await seedTestServerProfile({ id: 'env-home', homeId: origin.serverIdentityId,
       serverUrl: 'https://plugin-approval.invalid' });
@@ -437,10 +496,11 @@ describe('plugin install approval Artifact rejoin', () => {
           publications += 1;
         } catch (error) { publicationErrors.push(error); throw error; }
       } } : {}) });
-    const isApprovalExecutionOriginCurrent = createDaemonApprovalExecutionOriginCurrentness({ accountId: 'account-1',
-      ...origin, serverId: 'home-1', resolveCurrentMachineExecutionOriginContext: async () => origin,
-      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: storedCredentials }),
-      isAccountCurrent: async () => true, listAccountApiTokens: async () => ({ tokens: [] }) });
+    const isApprovalExecutionOriginCurrent = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
+      credentials: storedCredentials, machineId: origin.machineId, serverId: 'home-1',
+      serverApiUrl: 'http://plugin-approval.invalid', resolveCurrentMachineExecutionOriginContext: async () => origin,
+    });
+    if (!isApprovalExecutionOriginCurrent) throw new Error('Missing installed approval currentness owner');
     const replayExecutor = createActionExecutor({ ...createCliActionDeps({ token: storedCredentials.token,
       credentials: storedCredentials, sessionId: 'cli-global', mode: 'plain', ctx: null, serverId: 'home-1',
       serverHttpBaseUrl: 'http://plugin-approval.invalid', happyHomeDir, pluginChangeService: owner.changeService }), ...store,
@@ -450,6 +510,52 @@ describe('plugin install approval Artifact rejoin', () => {
       happyHomeDir, pluginChangeService: owner.changeService,
       isApprovalExecutionOriginCurrent,
       pluginActionExecutionOwner: 'current_process' });
+    registerExternalActionRpcHandler(rpc, {
+      machineId: origin.machineId, currentServerId: 'home-1', currentServerHttpBaseUrl: 'http://plugin-approval.invalid',
+      resolveAccountId: async signal => (await fetchAccountProfile({ token: storedCredentials.token,
+        projection: 'self', ...(signal ? { signal } : {}) })).id,
+      resolveInstallationId: () => installation.installationId,
+      verifyExecutionAuthorization: request => verifyExternalActionExecutionAuthorizationCurrent({ ...request,
+        privateKey: installation.privateKey, installationId: installation.installationId,
+        serverHttpBaseUrl: 'http://plugin-approval.invalid' }),
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: storedCredentials }),
+      resolveEncryption: async () => encryption?.type === 'dataKey'
+        ? { serverIdentityId: origin.serverIdentityId, material: encryption } : null,
+      executor: daemonExecutor, externalActionMachineRequestPrivateKey: installation.privateKey,
+      resolvePluginExecutionOriginContext: async () => origin,
+      prepareRequesterAccountContext: async request => {
+        const prepared = await prepareInstalledRequesterAccountActionContext({ ...request,
+          ownCredentials: storedCredentials, purpose: request.purpose ?? { kind: 'external_action' },
+          machineId: origin.machineId, serverId: 'home-1', serverHttpBaseUrl: 'http://plugin-approval.invalid',
+          resolveCurrentMachineExecutionOriginContext: async () => origin,
+          createExecutor: (admitted, receivingInstallation) => createCliActionExecutorFromCredentials({
+            credentials: admitted.credentials, admittedAccountEncryptionMode: admitted.accountEncryptionCurrentness.mode,
+            savedSecretOperationContext: admitted.savedSecretOperationContext,
+            serverId: 'home-1', serverApiUrl: 'http://plugin-approval.invalid', serverIdentityId: origin.serverIdentityId,
+            machineId: origin.machineId, happyHomeDir, pluginChangeService: owner.changeService,
+            externalActionMachineRequestPrivateKey: receivingInstallation.privateKey,
+            externalActionMachineInstallationId: receivingInstallation.installationId,
+            isApprovalExecutionOriginCurrent, pluginActionExecutionOwner: 'current_process',
+            actionsSettingsProvider: createActionSettingsProvider({
+              getAccountSettings: () => admitted.accountSettingsContext.settings, allowEnvironmentOverride: false,
+            }),
+          }),
+        });
+        expect(prepared?.invocation).toMatchObject({ surface: 'cli', authority: 'present_user', caller: { kind: 'host' } });
+        return prepared;
+      },
+    });
+    registerApprovalRpcHandlers({ rpcHandlerManager: rpc, actionExecutor: daemonExecutor });
+    // Retained plugin reviews use the exact-Machine approval RPC for the
+    // decision. The Home process fixture relays original Actions only.
+    const replay = vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => {
+      expect(request).toMatchObject({ machineId: origin.machineId, method: RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED });
+      return rpc.handleRequest({ method: `${request.machineId}:${request.method}`, params: request.request,
+        callerAuthority: 'present_user', machineAdmission: { actorAccountId: 'account-1', custodianAccountId: 'account-1',
+          machineId: origin.machineId, installationId: installation.installationId, role: 'manage', encryptionMode: accountMode },
+        ...(request.signal ? { signal: request.signal } : {}) }, undefined, 'authenticated_home_socket');
+    });
+    onTestFinished(() => { replay.mockRestore(); });
     // OS publication and local HTTP are the process boundaries. Keep CLI routing,
     // daemon ingress, candidate preparation, Artifact custody and execution real.
     const publication = vi.spyOn(daemonPublication, 'resolveLiveDaemonControlTargetForServer').mockImplementation(async serverId =>
@@ -463,57 +569,61 @@ describe('plugin install approval Artifact rejoin', () => {
         resolvePluginExecutionOriginContext: async () => origin, resolveInstallationId: () => installation.installationId,
         verifyPat: async () => { throw new Error('Unexpected PAT'); } } });
     const control = vi.spyOn(daemonHttp, 'daemonPost').mockImplementation(async (path, body) => {
+      controlPaths.push(path);
       const response = await app.inject({ method: 'POST', url: path,
         headers: { 'x-happier-daemon-token': 'test-control' }, ...(body == null ? {} : { payload: body }) });
       return response.json();
     });
     const accountGet = http.get.getMockImplementation()!;
     const accountPost = http.post.getMockImplementation()!;
+    const settingsContent = sealAccountSettingsV2RawContent({
+      credentials: storedCredentials, raw: {}, envelopeKind: 'plain',
+      randomBytes: length => new Uint8Array(length).fill(9),
+    });
     http.get.mockImplementation(async (url: string, ...args: unknown[]) => {
-      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+      if (url.endsWith('/v1/account/profile')) return { status: 200,
+        data: AccountSelfProfileV1Schema.parse({ id: 'account-1' }) };
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200,
+        data: createAccountEncryptionCurrentnessFixture({ mode: accountMode, settingsVersion: 1 }) };
+      if (new URL(url).pathname === '/v2/changes') return { status: 200,
+        data: ChangesResponseSchema.parse({ changes: [], nextCursor: 0 }) };
+      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: settingsContent, version: 1 } };
       if (url.endsWith(`/v1/machines/${origin.machineId}`)) return { status: 200, data: {
         machine: { ...ExternalActionMachineBootstrapV1Schema.parse({ id: origin.machineId,
           managedMachineRef: null, active: true, revokedAt: null, replacedByMachineId: null,
           kind: 'persistent', installationId: installation.installationId, access: {
             custodian: { accountId: 'account-1', displayName: 'Fixture owner' }, role: 'manage',
-            resourceMode: 'plain', accessState: 'ready',
-          } }), installationPublicKey: Buffer.from(installation.publicKey, 'base64url').toString('base64') },
+            resourceMode: accountMode, accessState: 'ready',
+          } }), ...machineContent, installationPublicKey: installationPublicKey.toString('base64') },
       } };
       return accountGet(url, ...args);
     });
-    http.post.mockImplementation(async (url: string, body: Record<string, unknown>, ...args: unknown[]) => {
-      if (url.endsWith(bindExternalActionExecutionAuthorizationHttpPathV1('approval.request.decide'))) {
-        const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-        if (request.envelope.v !== 1) throw new Error('Expected plain Account request');
-        return { status: 200, data: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1,
-          token: 'fixture-home-admission', binding: { accountId: 'account-1', custodianAccountId: 'account-1',
-            authentication: { kind: 'terminal', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
-            serverIdentityId: origin.serverIdentityId, machineId: origin.machineId,
-            installationId: installation.installationId, actionId: 'approval.request.decide',
-            requestId: request.envelope.requestId,
-            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
-            target: request.envelope.target,
-            approvalDecisionAdmission: projectExternalActionApprovalDecisionAdmissionV1(request.envelope.input),
-          } }) };
+    http.post.mockImplementation(async (url: string, body: Record<string, unknown>, options?: AxiosRequestConfig) => {
+      const path = new URL(url).pathname;
+      if (path.startsWith('/v1/actions/')) {
+        const action: (typeof homeActions)[number] = { path };
+        homeActions.push(action);
+        // Only transport is substituted: real Home authentication, issuance,
+        // signature/currentness verification and socket relay reach the receiver.
+        const headers: Record<string, string> = {};
+        for (const [key, value] of new AxiosHeaders(options?.headers)) {
+          if (typeof value === 'string') headers[key] = value;
+        }
+        const response = await home.request('POST', path, body, headers,
+          options?.signal instanceof AbortSignal ? options.signal : undefined);
+        action.status = response.status;
+        if (response.data && typeof response.data === 'object' && 'error' in response.data
+          && typeof response.data.error === 'string') action.error = response.data.error;
+        return response;
       }
-      if (url.endsWith(`${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}approval.request.decide`)) {
-        // Model the remote Home/installed executor boundary, retaining the
-        // actual sealed CLI requester rather than inventing approving authority.
-        const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-        const requester = openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
-          purpose: { kind: 'external_action' }, ...origin, installationId: installation.installationId,
-          installationPrivateKey: Buffer.from(installation.privateKey, 'base64url'), includeInvocation: true });
-        expect(requester?.invocation).toMatchObject({ surface: 'cli', authority: 'present_user', caller: { kind: 'host' } });
-        if (!requester?.invocation || request.envelope.v !== 1) throw new Error('Missing original CLI requester');
-        const execution = await replayExecutor.execute('approval.request.decide', request.envelope.input, {
-          surface: requester.invocation.surface, authority: requester.invocation.authority,
-          actionCaller: requester.invocation.caller, runtimeAccountId: 'account-1',
-          serverId: 'home-1', serverIdentityId: origin.serverIdentityId,
-          actionRequestId: request.envelope.requestId, externalActionTarget: request.envelope.target });
+      const response = await accountPost(url, body, options);
+      // The Artifact HTTP double owns persistence, so it also supplies Home's
+      // commit notification at the write, including while an Action is waiting.
+      if (response.status === 200 && (path === '/v1/artifacts'
+        || path.startsWith('/v1/artifacts/') && typeof body.body === 'string')) {
         await accountChanges.hintAccountChange();
-        return { status: 200, data: { v: 1, actionId: 'approval.request.decide', requestId: request.envelope.requestId, execution } };
       }
-      return accountPost(url, body, ...args);
+      return response;
     });
     try {
       const output = captureConsoleJsonOutput<unknown>();
@@ -539,12 +649,12 @@ describe('plugin install approval Artifact rejoin', () => {
           readCredentialsFn: async () => storedCredentials,
           readCredentialsForServerIdFn: async () => storedCredentials,
           getServerProfileFn: getServerProfile,
-          createExecutorFn: params => createCliActionExecutorFromCredentials({ ...params,
-            actionsSettingsProvider: createActionSettingsProvider() }),
         });
         const result = output.json();
-        expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+        expect(result, JSON.stringify({ result, homeActions, controlPaths, approvals: rows.size }))
+          .toMatchObject({ ok: true });
       } finally { output.restore(); process.exitCode = 0; }
+      expect(rows.size).toBe(1);
       const artifactId = [...rows.keys()][0]!;
       expect(await store.approvalsGet({ artifactId, serverId: 'home-1' })).toMatchObject({ status: 'executed',
         executionOriginV1: { ...origin, accountId: 'account-1', target: { kind: 'machine', machineId: origin.machineId } } });
@@ -553,7 +663,7 @@ describe('plugin install approval Artifact rejoin', () => {
         serverId: 'home-1', serverIdentityId: origin.serverIdentityId });
       expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins[pluginId]?.install.manifestVersion).toBe('1.0.0');
       expect(await decision()).toMatchObject({ ok: true, result: { status: 'executed' } });
-      expect(control).toHaveBeenCalledTimes(1);
+      expect(replay).toHaveBeenCalledTimes(1);
     } finally {
       control.mockRestore(); publication.mockRestore();
       vi.unstubAllGlobals();
@@ -563,7 +673,7 @@ describe('plugin install approval Artifact rejoin', () => {
       await owner.changeService.shutdown(); await reloadController.shutdown();
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, 120_000);
   it.each([['install', 'plain'], ['install', 'e2ee'], ['cancel', 'plain'], ['unmounted', 'plain']] as const)(
     'uses product confirmation for the exact Machine candidate: %s in %s', async (outcome, mode) => {
       accountMode = mode;
