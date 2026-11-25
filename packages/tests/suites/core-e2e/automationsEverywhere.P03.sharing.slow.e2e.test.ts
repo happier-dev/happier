@@ -6,7 +6,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { connectUiActionClient, connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 
 import { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
-import { ActionExecuteResultSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
@@ -174,7 +175,7 @@ describe('Shared approval profiles: recipients', () => {
     if (!spawned.ok) throw new Error(spawned.errorCode);
     const session = SessionSpawnNewActionResultV1Schema.parse(spawned.result);
     if (session.type !== 'success') throw new Error('Revocation Session did not start');
-    await connectRecipient();
+    const context = await connectRecipient();
     expect(await profiles(recipient)).toEqual(expect.arrayContaining([expect.objectContaining({ id: profile.id })]));
     expect(await uiProfiles()).toEqual(expect.arrayContaining([expect.objectContaining({ id: profile.id })]));
     const reviewDir = await mkdtemp(join(tmpdir(), 'ae-p03-owner-review-'));
@@ -207,8 +208,14 @@ describe('Shared approval profiles: recipients', () => {
       approvalProfile: { status: 'missing', requestedId: profile.id } } };
     const cliAdmission = await recipient.execute('session.stop', { sessionId: session.sessionId }, caller);
     expect(cliAdmission, JSON.stringify(cliAdmission)).toMatchObject(expectedMissing);
-    const uiAdmission = await ui!.execute('session.stop', { sessionId: session.sessionId }, { ...caller, serverId: ui!.serverId });
-    expect(uiAdmission, JSON.stringify(uiAdmission)).toMatchObject(expectedMissing);
+    if (!cliAdmission.ok) throw createActionExecuteFailureError(cliAdmission);
+    const { artifactId } = ActionApprovalRequestCreatedResultSchema.parse(cliAdmission.result);
+    // The live recipient UI reads the Ask created by the Session invocation.
+    const uiRequest = await ui!.execute('approval.request.get', { artifactId }, context);
+    if (!uiRequest.ok) throw createActionExecuteFailureError(uiRequest);
+    expect(ApprovalRequestGetResultV1Schema.parse(uiRequest.result).request).toMatchObject({
+      actionId: 'session.stop', status: 'open', actionArgs: { sessionId: session.sessionId },
+    });
     // Confirm the read so an approval request cannot stand in for the access result.
     // The Artifact owner withholds inaccessible documents through its nullable read.
     const refusedRead = await ui!.executeConfirmed('artifact.get', { artifactId: profile.id }, {
