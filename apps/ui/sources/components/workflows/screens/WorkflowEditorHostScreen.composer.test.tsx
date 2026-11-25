@@ -1333,8 +1333,18 @@ describe('editor workflow composer', () => {
             try {
                 const readEngines = () => panel.root.findAll(node => node.props.field?.path === 'engines'
                     && node.props.optionsStatus !== undefined)[0];
-                await waitForHomeGovernance(() => expect(readEngines()?.props.optionsStatus).toMatch(/^(ready|failed)$/u));
-                expect(readEngines()?.props.optionsNotice.props.diagnosticCode).toBe('action_disabled');
+                await waitForHomeGovernance(() => expect(readEngines()?.props.optionsStatus).toBe('failed'));
+                const notice = readEngines()?.props.optionsNotice;
+                if (!React.isValidElement(notice)) throw new Error('Expected the failed options notice');
+                const { SurfaceStateCard } = await import('@/components/ui/surfaces');
+                const failure = await renderScreen(notice);
+                try {
+                    expect(failure.root.findByType(SurfaceStateCard).props).toMatchObject({
+                        kind: 'error', diagnosticCode: 'action_disabled',
+                    });
+                } finally {
+                    await failure.unmount();
+                }
             } finally {
                 await panel.unmount();
             }
