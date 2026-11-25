@@ -630,6 +630,11 @@ describe('signed Project clean preparation', () => {
       // Parity: the SOURCE's own Account keeps today's installed-owner selection and never the signed path.
       expect(signed, evidence).toEqual([]);
       expect(graphWriters.filter(writer => writer !== 'owner'), evidence).toEqual([]);
+      // Characterization of an unshipped shape: same-Account ingress reaches the coordinator without a requester
+      // bootstrap (sessionLifecycle passes it through; only another person's custody is lent), so the shipped
+      // handoff prepares with no context and takes the installed owner. With a bootstrap and no currentness, refused.
+      expect(refusal, evidence).toMatchObject({ code: 'workspace_sync_requester_link_unavailable',
+        failureCause: { phase: 'workspace_sync.relationship_owner.select' } });
       return;
     }
     // The link is never written into the SOURCE owner's rows.
