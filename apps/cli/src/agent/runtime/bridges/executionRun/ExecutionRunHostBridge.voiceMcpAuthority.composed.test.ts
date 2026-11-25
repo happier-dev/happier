@@ -69,7 +69,7 @@ import { ExecutionRunHostBridge } from './ExecutionRunHostBridge';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '../../../../../../../apps/ui/sources/dev/testkit/harness/homeGovernanceHarness';
 import { answerExternalActionAccountForHome } from '../../../../../../../apps/ui/sources/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '../../../../../../../apps/ui/sources/dev/testkit/fixtures/featureFixtures';
-import { createSessionFixture, createPlainV2SessionRecordFixture } from '../../../../../../../apps/ui/sources/dev/testkit/fixtures/sessionFixtures';
+import { createSessionFixture, createPlainSessionByIdResponseFixture } from '../../../../../../../apps/ui/sources/dev/testkit/fixtures/sessionFixtures';
 import { settingsDefaults } from '../../../../../../../apps/ui/sources/sync/domains/settings/settings';
 import type { VoiceAgentHandle } from '../../../../../../../apps/ui/sources/voice/agent/types';
 import { installLocalStorageMock, installWebLockManagerMock } from '../../../../../../../apps/ui/sources/auth/storage/tokenStorage.web.testHelpers';
@@ -317,9 +317,8 @@ describe('OpenCode Voice authority through shared MCP', () => {
         const block = Array.isArray(result.content) ? result.content.find(item => item.type === 'text') : undefined;
         if (!block || block.type !== 'text') throw new Error('Missing Action result');
         executed = JSON.parse(block.text);
-        if (canApprove) {
-          expect(readBacks).toEqual([]);
-        }
+        // A fresh request needs a tap if the current preference or the Run's admission disallows spoken approval.
+        expect(readBacks).toHaveLength(1);
         return 'Setting updated.';
       } finally { await client.close(); }
     });
@@ -512,8 +511,7 @@ describe('OpenCode Voice authority through shared MCP', () => {
         }));
       const uiSession = createSessionFixture({ id: session.sessionId, serverId, active: true, metadata: { machineId: 'voice-machine', path: home, flavor: 'opencode' } });
       storage.getState().applySessions([uiSession]);
-      homes.answer(serverId, 'POST /v2/sessions/read-batch', { body: { results: [{ sessionId: uiSession.id, detail: { status: 200,
-        body: { session: createPlainV2SessionRecordFixture({ id: uiSession.id, metadata: uiSession.metadata }) } } }] } });
+      homes.answer(serverId, `GET /v2/sessions/${uiSession.id}`, { body: createPlainSessionByIdResponseFixture(uiSession) });
       daemon = await createSessionDaemonAuthorityFixture({ sessionId: session.sessionId, lifecycleHookRegistry: fixture.registry, execute: async operation => {
         expect(operation.surface).toBe('agent');
         if (!operation.executionRun || !execute) throw new Error('Missing Run binding');
