@@ -235,7 +235,7 @@ describe('deployment children retain their controller Action authority', () => {
         return;
     }
 
-    async function expectHttpRefusalWarning(expected: Readonly<{ phase: string; method: string; path: string }>,
+    async function expectHttpRefusalWarning(expected: Readonly<{ phase: string; method: string; path: string; reason?: string }>,
         run: () => Promise<unknown>, secrets: readonly string[] = []) {
         const records: Array<Record<string, unknown>> = [];
         // Only the log output boundary is replaced; signatures, admission and Pino filtering stay real.
@@ -9104,6 +9104,63 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
         await db.deploymentDomain.update({ where: { id: input.domainId }, data: { deletedAt: new Date() } });
         expect(await verify()).toBeNull();
+    });
+
+    it.each(['plain', 'e2ee'] as const)('keeps a %s Domain discovery child on a joined successor Link to its own reads and names each refusal', async mode => {
+        const { f, input, envelope, target, authorization } = await domainRootFixture(mode);
+        // A fleet join replaces the runtime Link with a successor naming the Link it replaced (live #213).
+        const predecessor = await db.deploymentTargetLink.create({ data: { environmentId: f.environment.id,
+            createdByAccountId: f.account.id, role: 'runtime', state: 'deployed', sourceKind: 'host', hostTargetId: 'own-server',
+            targetKind: 'ownServer', machines: { create: [{ machineId: f.controller.id, installationId: f.controller.installationId,
+                position: 0, state: 'active' }] }, ...await f.content('deployment-target-link.v1') } });
+        await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { predecessorTargetLinkId: predecessor.id } });
+        const foreign = await fixture();
+        const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'domainDiscover', actionId: 'deployments.domains.add',
+            input, machineId: f.member.id, installationId: f.member.installationId });
+        const method = `${job.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`, childRequestId = crypto.randomUUID();
+        const deploymentChildRouting = projectDeploymentChildRoutingV1(job);
+        const source = { method, requestId: childRequestId, params: job, originalActionEnvelope: envelope, externalActionExecution: {
+            v: 1 as const, authorization, effectActionId: job.actionId, target, installationId: f.controller.installationId,
+            deploymentChildRouting, machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+                effectActionId: job.actionId, target, installationId: f.controller.installationId, method, requestId: childRequestId,
+                params: job, deploymentChildRouting, privateKey: f.controller.keys.secretKey }) } };
+        const read = (app: Parameters<Parameters<typeof withAuthenticatedTestApp>[1]>[0], artifactId: string,
+            signer: Pick<typeof f.member, 'installationId' | 'keys'> = f.member) => {
+            const path = `/v1/artifacts/${artifactId}`;
+            return app.inject({ method: 'GET', url: path, headers: { ...currentAccountStoredContentCompatibilityHeaders,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: job.actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER]: encodeDeploymentChildExecutionV1(source),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: job.actionId, target, installationId: signer.installationId, requestId: authorization.binding.requestId,
+                    method: 'GET', path, body: undefined, deploymentChildExecution: source, privateKey: signer.keys.secretKey }),
+            } });
+        };
+        const refused = { error: 'invalid_token', authorizationRefusal: 'deployment_child_http' };
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            // The discovery child's own reads: its Domain operand, its Environment and its own Link.
+            for (const artifactId of [input.contentArtifactId, f.environment.contentArtifactId, f.link.contentArtifactId]) {
+                const opened = await read(app, artifactId);
+                expect(opened.statusCode, opened.body).toBe(200);
+            }
+            // The caller-visible refusal stays the typed phase; the Home warning names the refusing predicate.
+            for (const [artifactId, reason] of [[predecessor.contentArtifactId, 'child_purpose'],
+                [foreign.link.contentArtifactId, 'child_purpose']] as const) {
+                await expectHttpRefusalWarning({ phase: 'deployment_child_http', reason, method: 'GET',
+                    path: `/v1/artifacts/${artifactId}` }, async () => {
+                    const denied = await read(app, artifactId);
+                    expect(denied.statusCode, denied.body).toBe(401);
+                    expect(denied.json()).toEqual(refused);
+                });
+            }
+            await expectHttpRefusalWarning({ phase: 'deployment_child_http', reason: 'receiver_signature', method: 'GET',
+                path: `/v1/artifacts/${f.environment.contentArtifactId}` }, async () => {
+                const denied = await read(app, f.environment.contentArtifactId, f.outsider);
+                expect(denied.statusCode, denied.body).toBe(401);
+                expect(denied.json()).toEqual(refused);
+            });
+        }, { authentication: 'real' });
     });
 
     it.each(['plain', 'e2ee'] as const)('continues only the captured %s Domain job through Home and target installation admission after requester departure', async mode => {

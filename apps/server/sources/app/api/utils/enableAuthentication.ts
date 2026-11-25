@@ -48,6 +48,7 @@ import {
     verifyExternalActionDomainExecutionRequest,
     verifyExternalActionExecutionAuthorizationCurrentness,
     refuseExternalActionExecutionRequest,
+    type DeploymentChildHttpRefusalReason,
 } from "@/app/auth/externalActionExecutionAuthorization";
 
 /** Account and declared Session-purpose routes without custom restricted-error configuration. */
@@ -164,9 +165,9 @@ export function enableAuthentication(app: Fastify) {
             // Account bearer. Clients retire Account credentials only on 401.
             let authorizationRefusal: ExternalActionAuthorizationRefusalPhase | undefined;
             let authorizationFailure: ActionExecuteFailure | undefined;
-            const refuseExecution = (phase?: ExternalActionAuthorizationRefusalPhase) => {
+            const refuseExecution = (phase?: ExternalActionAuthorizationRefusalPhase, reason?: DeploymentChildHttpRefusalReason) => {
                 if (phase) refuseExternalActionExecutionRequest(phase, { method: request.method, path: request.url,
-                    onRefusal: refusal => { authorizationRefusal = refusal; } });
+                    onRefusal: refusal => { authorizationRefusal = refusal; } }, undefined, undefined, reason);
                 return requesterVerification?.status === 'verified' || authorizationFailure?.errorCode === 'credential_scope_denied'
                     ? reply.code(403).send({ error: 'credential_scope_denied', ...(authorizationRefusal ? { authorizationRefusal } : {}),
                         ...(authorizationFailure?.details === undefined ? {} : { details: authorizationFailure.details }),
@@ -184,7 +185,7 @@ export function enableAuthentication(app: Fastify) {
             }
             const deploymentChildExecution = encodedDeploymentChild === null ? undefined
                 : decodeDeploymentChildExecutionV1(encodedDeploymentChild, executionAuthorization);
-            if (encodedDeploymentChild !== null && !deploymentChildExecution) return refuseExecution('deployment_child_http');
+            if (encodedDeploymentChild !== null && !deploymentChildExecution) return refuseExecution('deployment_child_http', 'packet_decode');
             const reviewedChild = encodedReviewedChild === null ? undefined : decodeReviewedActionChildHttpProofV1(encodedReviewedChild);
             if (encodedReviewedChild !== null && !reviewedChild) return refuseExecution('reviewed_child');
             const sessionBinding = request.routeOptions?.config?.restrictedCredentialBinding;

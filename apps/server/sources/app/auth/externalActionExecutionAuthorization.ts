@@ -1551,6 +1551,12 @@ function isSessionArchiveStopEffect(rootActionId: string, effectActionId: string
     return rootActionId === 'session.archive' && effectActionId === 'session.stop';
 }
 
+/** The distinct predicates that share the caller-visible `deployment_child_http` phase. */
+export type DeploymentChildHttpRefusalReason = 'packet_decode' | 'reviewed_child_read' | 'authorization_token'
+    | 'reference_review_continuation' | 'root_execution' | 'child_root' | 'effect_action' | 'resolved_target'
+    | 'receiver_installation' | 'receiver_signature' | 'controller_signature' | 'child_purpose'
+    | 'platform_material_receipt' | 'continuation_receipt';
+
 /** Log only the refusal branch and redacted request address, never proofs or content. */
 export function refuseExternalActionExecutionRequest(phase: ExternalActionAuthorizationRefusalPhase,
     request: Pick<ExternalActionExecutionRequestProof, 'method' | 'path' | 'onRefusal'>
@@ -1562,10 +1568,13 @@ export function refuseExternalActionExecutionRequest(phase: ExternalActionAuthor
      * yet covered by the machine-signature check. Neither carries tokens, inputs or content.
      */
     actionIds?: Readonly<{ rootActionId: string; effectActionId: string }>,
+    /** Log-only predicate name inside one phase; the caller-visible refusal stays `phase`. */
+    reason?: DeploymentChildHttpRefusalReason,
 ): null {
     warn({ module: 'external-action-authorization-refusal', phase,
         ...('rpc' in request ? { rpc: request.rpc } : { method: request.method, path: redactHttpRequestUrlForLog(request.path) }),
-        ...(actionIds ? { rootActionId: actionIds.rootActionId, effectActionId: actionIds.effectActionId } : {}) });
+        ...(actionIds ? { rootActionId: actionIds.rootActionId, effectActionId: actionIds.effectActionId } : {}),
+        ...(reason ? { reason } : {}) });
     if ('onRefusal' in request) request.onRefusal?.(phase, failure);
     return null;
 }
@@ -1909,13 +1918,15 @@ async function verifyCommon(
     if (proof.deploymentChildExecution) {
         const packet = proof.deploymentChildExecution;
         const routing = packet.externalActionExecution.deploymentChildRouting;
+        const refuseChildHttp = (reason: DeploymentChildHttpRefusalReason) =>
+            refuseExternalActionExecutionRequest('deployment_child_http', proof, undefined, undefined, reason);
         // Review and activation may forward the exact saved-reference read.
         if (proof.reviewedChild && ((routing?.kind !== 'member' && routing?.kind !== 'review')
             || proof.reviewedChild.role !== DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1
             || effectActionId.data !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
                 && !readDeploymentReferenceServiceListEnvironmentIdV1(packet.externalActionExecution.authorization.binding.actionId, effectActionId.data, proof.reviewedChild)))
-            return refuseExternalActionExecutionRequest('deployment_child_http', proof);
-        if (packet.externalActionExecution.authorization.token !== proof.authorizationToken) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
+            return refuseChildHttp('reviewed_child_read');
+        if (packet.externalActionExecution.authorization.token !== proof.authorizationToken) return refuseChildHttp('authorization_token');
         const referenceReview = routing?.kind === 'review' && proof.reviewedChild !== undefined;
         const admittedReadReceiver = routing && (routing.kind === 'dataRole' || routing.kind === 'domainDns' || referenceReview)
             ? await db.machine.findUnique({ where: { id: routing.machineId }, select: {
@@ -1931,20 +1942,22 @@ async function verifyCommon(
                 ...(proof.idempotencyKey === undefined ? {} : { idempotencyKey: proof.idempotencyKey }),
                 ...(proof.reviewedChild ? { reviewedChild: proof.reviewedChild } : {}),
                 publicKey: admittedReadReceiver.installationPublicKey, signature: proof.machineSignature });
-        if (referenceReview && !admittedReadContinuation) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
+        if (referenceReview && !admittedReadContinuation) return refuseChildHttp('reference_review_continuation');
         const verified = await verifyExternalActionMachineRpcExecution(packet.externalActionExecution, {
             method: packet.method, requestId: packet.requestId, paramsPresent: packet.paramsPresent, paramsDigest: packet.paramsDigest,
             ...(admittedReadContinuation ? { admittedReadContinuation: true } : {}),
             onRefusal: proof.onRefusal,
             resolveCurrentSessionMachine: proof.resolveCurrentSessionMachine });
-        if (!verified || !routing || !(verified.binding.deploymentChildRoot === true)
-            || effectActionId.data !== routing.actionId && !isDeploymentReadPreparation(verified.binding, effectActionId.data)
-                && !readDeploymentReferenceServiceListEnvironmentIdV1(verified.binding.actionId, effectActionId.data, proof.reviewedChild)
-            || !sameStrictJsonValue(target, verified.target)) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
+        if (!verified) return refuseChildHttp('root_execution');
+        if (!routing || !(verified.binding.deploymentChildRoot === true)) return refuseChildHttp('child_root');
+        if (effectActionId.data !== routing.actionId && !isDeploymentReadPreparation(verified.binding, effectActionId.data)
+            && !readDeploymentReferenceServiceListEnvironmentIdV1(verified.binding.actionId, effectActionId.data, proof.reviewedChild))
+            return refuseChildHttp('effect_action');
+        if (!sameStrictJsonValue(target, verified.target)) return refuseChildHttp('resolved_target');
         const receiver = admittedReadReceiver ?? await db.machine.findUnique({ where: { id: routing.machineId }, select: {
             accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true } });
         if (!receiver?.installationPublicKey || receiver.installationId !== routing.installationId
-            || classifyMachineAvailabilityState(receiver) !== 'available') return refuseExternalActionExecutionRequest('deployment_child_http', proof);
+            || classifyMachineAvailabilityState(receiver) !== 'available') return refuseChildHttp('receiver_installation');
         const verifySignature = (installationId: string, publicKey: Uint8Array) => verifyExternalActionMachineRequestV1({
                 authorizationToken: proof.authorizationToken, effectActionId: effectActionId.data, target, installationId,
                 requestId: verified.binding.requestId, method: proof.method, path: proof.path, body: proof.body,
@@ -1964,12 +1977,12 @@ async function verifyCommon(
                 // only the exact recipient codec. This is not receiver/byte authority.
                 if (packet.archiveOrigin || effectActionId.data !== routing.actionId
                     || proof.method.toUpperCase() !== 'GET' || proof.body !== undefined
-                    || proof.path !== `/v1/machines/${encodeURIComponent(routing.machineId)}`) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
+                    || proof.path !== `/v1/machines/${encodeURIComponent(routing.machineId)}`) return refuseChildHttp('receiver_signature');
                 const controller = await db.machine.findFirst({ where: { id: verified.binding.machineId,
                     accountId: verified.binding.custodianAccountId, installationId: verified.binding.installationId }, select: {
                     installationPublicKey: true, revokedAt: true, replacedByMachineId: true } });
                 if (!controller?.installationPublicKey || classifyMachineAvailabilityState(controller) !== 'available'
-                    || !verifySignature(verified.binding.installationId, controller.installationPublicKey)) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
+                    || !verifySignature(verified.binding.installationId, controller.installationPublicKey)) return refuseChildHttp('controller_signature');
                 signer = { machineId: verified.binding.machineId, installationId: verified.binding.installationId,
                     custodianAccountId: verified.binding.custodianAccountId };
             }
@@ -1988,8 +2001,8 @@ async function verifyCommon(
 
     const binding = await auth.verifyExternalActionExecutionAuthorization(proof.authorizationToken);
     if (!binding) return refuseExternalActionExecutionRequest('authorization_token', proof);
-    const refuse =(phase: ExternalActionAuthorizationRefusalPhase) => refuseExternalActionExecutionRequest(phase, proof, undefined,
-        { rootActionId: binding.actionId, effectActionId: effectActionId.data });
+    const refuse =(phase: ExternalActionAuthorizationRefusalPhase, reason?: DeploymentChildHttpRefusalReason) => refuseExternalActionExecutionRequest(phase, proof, undefined,
+        { rootActionId: binding.actionId, effectActionId: effectActionId.data }, reason);
     let requesterOperationRead: VerifiedSignedChildRequest['signedChildPurpose']['requesterOperationRead'];
     if (binding.requesterOperationRead) {
         if (effectActionId.data !== binding.actionId) return refuse('verification_purpose');
@@ -2223,7 +2236,7 @@ async function verifyCommon(
     if (isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
         && isDeploymentDomainMetadataReadActionIdV1(effectActionId.data)
         && !acceptedPreparationRead) return refuse('deployment_metadata_environment');
-    if (platformMaterial && !acceptedDeployment) return refuse('deployment_child_http');
+    if (platformMaterial && !acceptedDeployment) return refuse('deployment_child_http', 'platform_material_receipt');
     if (domainContinuation?.kind === 'secret-facts') {
         const input = domainContinuation.input;
         const materialization = domainContinuation.materialization;
@@ -2281,7 +2294,7 @@ async function verifyCommon(
             ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}) } : refuse('principal');
     }
     // A signed deployment continuation without its accepted receipt, as for platform material above.
-    if (deploymentContinuation) return refuse('deployment_child_http');
+    if (deploymentContinuation) return refuse('deployment_child_http', 'continuation_receipt');
     if (!purpose && !nativeTransition && !domainContinuation && !admittedFiniteOperation && !await hasCurrentExternalActionSessionSource(binding, proof.resolveCurrentSessionMachine, retainedCreationAdmission)) return refuse('source_before_principal');
 
     // The installed generic issuer carries reviewed child consent on the original
@@ -4481,8 +4494,8 @@ export async function verifyExternalActionDomainExecutionRequest(
 ): Promise<VerifiedExternalActionExecutionRequest | null> {
     const verified = await verifyCommon(proof);
     if (!verified) return null;
-    const refuse = (phase: ExternalActionAuthorizationRefusalPhase, failure?: ActionExecuteFailure) => refuseExternalActionExecutionRequest(phase, proof, failure,
-        { rootActionId: verified.binding.actionId, effectActionId: verified.effectActionId });
+    const refuse = (phase: ExternalActionAuthorizationRefusalPhase, failure?: ActionExecuteFailure, reason?: DeploymentChildHttpRefusalReason) =>
+        refuseExternalActionExecutionRequest(phase, proof, failure, { rootActionId: verified.binding.actionId, effectActionId: verified.effectActionId }, reason);
     const snapshotBatch = readSessionSnapshotBatchHttpDemand(proof);
     if (proof.path === '/v2/sessions/read-batch' && !snapshotBatch) return refuse('verification_purpose');
     // All reachable roots spend the same resolved private phase, including
@@ -4655,7 +4668,7 @@ export async function verifyExternalActionDomainExecutionRequest(
                     // receipt admission. Publication owns that exact identity.
                     || routing.kind === 'prepare' && proof.method.toUpperCase() === 'GET'
                         && await isDeploymentCandidatePublicationHttpPurposeInTx(db, verified.binding, verified.effectActionId, proof);
-                if (!purpose) return refuse('deployment_child_http');
+                if (!purpose) return refuse('deployment_child_http', undefined, 'child_purpose');
                 if (typeof purpose === 'object') {
                     if ('artifactContentReference' in purpose) deploymentChildArtifactRead = {
                         content: purpose.artifactContentReference, requesterAccountId: verified.binding.accountId,
