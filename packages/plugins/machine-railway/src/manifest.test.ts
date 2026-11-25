@@ -3,9 +3,23 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
 import { MachineProvisionerCheckResultV1Schema, MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { railwayVendor } from '../testkit/vendor.js';
+import { unselectedConnectedAccount } from '../../../../apps/cli/src/plugins/testkit/unselectedConnectedAccount';
+import { ACCOUNT_ID, ACCOUNT_PURPOSE } from './account.js';
 import * as entry from './index.js';
 
-it.each(['network', 'credential'] as const)('settles network loss and preserves typed credential refusals on %s failure', async failure => {
+it('carries the purpose owner refusal through Railway options', async () => {
+  const connectedAccounts = unselectedConnectedAccount({
+    service: { pluginId: entry.manifest.id, localId: ACCOUNT_ID },
+    purpose: ACCOUNT_PURPOSE, version: entry.manifest.version, action: 'options',
+  });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry.PLUGIN, services: { connectedAccounts } });
+  try {
+    await expect(kit.invokeAction('options', {}, { surface: 'plugin' }))
+      .rejects.toMatchObject({ code: 'plugin_host_access_resource_not_selected' });
+  } finally { await kit.dispose(); }
+});
+
+it.each(['network', 'credential'] as const)('classifies %s failures during the Railway access check', async failure => {
   // Captured credentials fail at the host HTTP boundary before vendor dispatch.
   const services = {
     http: { request: async () => {
@@ -17,21 +31,20 @@ it.each(['network', 'credential'] as const)('settles network loss and preserves 
   try {
     if (failure === 'credential') {
       await expect(kit.invokeAction('check', {}, { surface: 'plugin' })).rejects.toMatchObject({ code: 'credential_unavailable' });
-      await expect(kit.invokeAction('options', {}, { surface: 'plugin' })).rejects.toMatchObject({ code: 'credential_unavailable' });
       return;
     }
-    expect(MachineProvisionerCheckResultV1Schema.parse(await kit.invokeAction('check', {}, { surface: 'plugin' })))
-      .toMatchObject({ available: false, code: 'railway_unavailable' });
-    const options = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', {}, { surface: 'plugin' }));
-    expect(options).toEqual({ dimensions: { size: [], location: [], network: [], image: [], duration: [] }, code: 'provider_unavailable' });
-    expect(JSON.stringify(options)).not.toContain('private-');
+    const result = MachineProvisionerCheckResultV1Schema.parse(await kit.invokeAction('check', {}, { surface: 'plugin' }));
+    expect(result).toMatchObject({ available: false, code: 'railway_unavailable' });
+    expect(JSON.stringify(result)).not.toContain('private-');
   } finally { await kit.dispose(); }
 });
 
 it('requires a selected Railway environment and retains correlation-only recovery without purchasing', async () => {
   const vendor = railwayVendor();
   const services = {
-    connectedAccounts: { materialize: async () => ({ kind: 'httpHeaders', headers: { authorization: 'Bearer private-token' } }) },
+    connectedAccounts: { materialize: async (_purpose: string, request: { kind: string }) => request.kind === 'environment'
+      ? { kind: 'environment', env: {} }
+      : { kind: 'httpHeaders', headers: { authorization: 'Bearer private-token' } } },
     http: { request: async (request: { url: string; method: string; headers?: Record<string, string>; body?: Uint8Array }) => {
       const response = await vendor.request(request.url, { method: request.method, headers: request.headers,
         body: request.body === undefined ? undefined : new TextDecoder().decode(request.body) });
@@ -41,7 +54,7 @@ it('requires a selected Railway environment and retains correlation-only recover
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry.PLUGIN, services });
   try {
     const missing = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', {}, { surface: 'plugin' }));
-    expect(missing.base).toBeUndefined();
+    expect(missing).toEqual({ dimensions: { size: [], location: [], network: [], image: [], duration: [] } });
     const selected = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', { environmentId: 'environment-one' }, { surface: 'plugin' }));
     expect(selected.base).toMatchObject({ launch: { environmentId: 'environment-one' }, guestPlatform: 'linux', retention: { supportedIntents: ['delete'] } });
     const recovered = await kit.invokeAction('reconcile', { correlation: { managedId: 'managed-one', requestId: 'request-one', launch: { environmentId: 'environment-one' } } }, { surface: 'plugin' });

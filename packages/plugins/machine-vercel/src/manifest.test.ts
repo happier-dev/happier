@@ -13,10 +13,12 @@ import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRu
 import { describeManagedSize } from '@happier-dev/protocol/machines/managed/configurationPresentation';
 import { PluginActionContributionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { deliverManagedNativeFile } from '../../../../apps/cli/src/machines/managed/nativeFileDelivery';
+import { unselectedConnectedAccount } from '../../../../apps/cli/src/plugins/testkit/unselectedConnectedAccount';
 import { PLUGIN, PLUGIN_MANIFEST, MACHINE_PROVISIONER, ROLE_SCHEMAS } from './index.js';
 import { activateAccount } from './manifest.js';
 import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { activate as activateAuthentication } from './account.js';
+import { ACCOUNT_PURPOSE } from './machine/credentials.js';
 import { reference, RECONCILIATION, VercelLaunchSchema, VercelOptionsSchema } from './machine/schemas.js';
 
 const scope = { teamId: 'team_one', projectId: 'prj_one' };
@@ -158,6 +160,32 @@ async function vendor(home?: string, status: { project?: number; team?: number; 
 }
 
 describe('public Vercel provisioner composition', () => {
+  it.each(['check', 'acquire'] as const)('carries an unselected account through %s with the account picker remediation', async action => {
+    const service = { pluginId: PLUGIN_MANIFEST.id, localId: 'vercel-account' };
+    const connectedAccounts = unselectedConnectedAccount({ service, purpose: ACCOUNT_PURPOSE, version: PLUGIN_MANIFEST.version, action });
+    const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: PLUGIN, services: { connectedAccounts } });
+    try {
+      await expect(kit.invokeAction(action, action === 'check' ? {} : { managedId: resource.managedId, launch }, { surface: 'plugin' }))
+        .rejects.toMatchObject({
+          code: 'plugin_host_access_resource_not_selected',
+          remediation: { kind: 'selectAccount', service },
+        });
+    } finally { await kit.dispose(); }
+  });
+
+  it('cancels Check while the host is reading the stored purpose', async () => {
+    const controller = new AbortController();
+    const service = { pluginId: PLUGIN_MANIFEST.id, localId: 'vercel-account' };
+    const connectedAccounts = unselectedConnectedAccount({
+      service, purpose: ACCOUNT_PURPOSE, version: PLUGIN_MANIFEST.version, action: 'check', signal: controller.signal,
+      async read() { controller.abort(); return { v: 1, bindings: [] }; },
+    });
+    const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: PLUGIN, services: { connectedAccounts } });
+    try {
+      await expect(kit.invokeAction('check', {}, { surface: 'plugin', signal: controller.signal }))
+        .rejects.toMatchObject({ code: 'plugin_action_aborted' });
+    } finally { await kit.dispose(); }
+  });
   it('admits the complete HTTP bootstrap recipe on a browser host', () => {
     expect(readMachineProvisionerHostAvailability({ host: 'browser', provisioner: MACHINE_PROVISIONER }))
     .toEqual({ available: true, executionTarget: 'account', requiresController: false });

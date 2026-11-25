@@ -100,6 +100,7 @@ export const PLUGIN = definePlugin({
         try { const result = await (await runtime(context)).check();
           return MachineProvisionerCheckResultV1Schema.parse({ ...result, status: label(result.available ? 'checkStatus' : 'checkUnavailable') }); }
         catch (error) {
+          context.signal.throwIfAborted();
           // A connection without a project is a typed setup finding, not a missing account.
           if (isPluginError(error) && error.code === PROJECT_REQUIRED) return MachineProvisionerCheckResultV1Schema.parse(error.details);
           return projectMachineProvisionerActionFailure(error, () => MachineProvisionerCheckResultV1Schema.parse({ available: false, code: errorCode(error), status: label('checkUnavailable') }));
@@ -152,7 +153,10 @@ export const PLUGIN = definePlugin({
         if (!input.managedId) return { kind: 'rejected', code: 'invalid_request' };
         let scope;
         try { scope = await readAccountScope(context); }
-        catch (error) { return projectMachineProvisionerActionFailure(error, () => RECONCILIATION.result.parse({ kind: 'rejected', code: 'credential_unavailable' })); }
+        catch (error) {
+          context.signal.throwIfAborted();
+          return projectMachineProvisionerActionFailure(error, () => RECONCILIATION.result.parse({ kind: 'rejected', code: 'credential_unavailable' }));
+        }
         try {
           return await createVercelNativeClient(scope, nativeFetch(context), context.signal, context.invokedAtMs).acquire(input.launch, input.managedId);
         } catch (error) {

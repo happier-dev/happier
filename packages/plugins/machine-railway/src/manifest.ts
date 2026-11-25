@@ -78,11 +78,10 @@ export const PLUGIN = definePlugin({
         const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
         let environmentId = input.environmentId;
         if (environmentId === undefined) {
-          try {
-            const material = await context.services.connectedAccounts.materialize(ACCOUNT_PURPOSE,
-              { kind: 'environment', keys: [RAILWAY_ENVIRONMENT_KEY] }, { signal: context.signal });
-            if (material.kind === 'environment') environmentId = material.env[RAILWAY_ENVIRONMENT_KEY];
-          } catch { context.signal.throwIfAborted(); }
+          const material = await context.services.connectedAccounts.materialize(ACCOUNT_PURPOSE,
+            { kind: 'environment', keys: [RAILWAY_ENVIRONMENT_KEY] }, { signal: context.signal });
+          context.signal.throwIfAborted();
+          if (material.kind === 'environment') environmentId = material.env[RAILWAY_ENVIRONMENT_KEY];
         }
         if (environmentId === undefined) return { dimensions };
         return { base: { launch: { environmentId }, guestPlatform: 'linux', retention }, dimensions: { ...dimensions,
