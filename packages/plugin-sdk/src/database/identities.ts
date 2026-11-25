@@ -50,4 +50,8 @@ export {
     DATABASE_ACTION_IDS_V1,
 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 export type { DatabaseActionIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
-export { DATABASE_CONNECTION_RESOURCE_ID_V1 } from '@happier-dev/protocol/databases/databaseResourceIdentityV1';
+export {
+    DATABASE_CAPTURE_RESOURCE_ID_V1,
+    DATABASE_CAPTURE_RESOURCE_REF_V1,
+    DATABASE_CONNECTION_RESOURCE_ID_V1,
+} from '@happier-dev/protocol/databases/databaseResourceIdentityV1';

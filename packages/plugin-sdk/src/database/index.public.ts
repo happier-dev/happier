@@ -226,6 +226,7 @@ export {
     DatabaseCaptureConfigureResultV1ProtocolSchema as DatabaseCaptureConfigureResultV1Schema,
     DatabaseCaptureResourceInputV1ProtocolSchema as DatabaseCaptureResourceInputV1Schema,
     DatabaseCaptureResourceSnapshotV1ProtocolSchema as DatabaseCaptureResourceSnapshotV1Schema,
+    readProductionCaptureFindingGroupKeyV1,
 } from './databaseCapture.js';
 export type {
     DatabaseCaptureResourceInputV1,
@@ -309,6 +310,8 @@ export {
     TELEMETRY_EXCEPTION_ISSUE_TRANSITION_ACTION_ID_V1,
     TELEMETRY_EXCEPTION_ISSUES_REFRESH_ACTION_ID_V1,
     DATABASE_ACTION_IDS_V1,
+    DATABASE_CAPTURE_RESOURCE_ID_V1,
+    DATABASE_CAPTURE_RESOURCE_REF_V1,
     DATABASE_CONNECTION_RESOURCE_ID_V1,
 } from './identities.js';
 export type { DatabaseActionIdV1 } from './identities.js';

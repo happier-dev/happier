@@ -1714,6 +1714,8 @@
 | `./database` | `DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1` | value | any |
 | `./database` | `DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1` | value | any |
 | `./database` | `DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1` | value | any |
+| `./database` | `DATABASE_CAPTURE_RESOURCE_ID_V1` | value | any |
+| `./database` | `DATABASE_CAPTURE_RESOURCE_REF_V1` | value | any |
 | `./database` | `DATABASE_CAPTURE_STATUS_ACTION_ID_V1` | value | any |
 | `./database` | `DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1` | value | any |
 | `./database` | `DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1` | value | any |
@@ -1995,6 +1997,7 @@
 | `./database` | `UI_DATABASE_NAVIGATE_ACTION_ID_V1` | value | any |
 | `./database` | `UI_DATABASE_OPEN_ACTION_ID_V1` | value | any |
 | `./database` | `projectTelemetryMetricsActionReadResultV1` | value | any |
+| `./database` | `readProductionCaptureFindingGroupKeyV1` | value | any |
 | `./deployment-targets` | `DeploymentTargetOwnedVariableV1` | type | any |
 | `./deployment-targets` | `DeploymentTargetVariableMetadataV1` | type | any |
 | `./deployment-targets` | `DeploymentTargetVariablesSyncInputV1` | type | any |

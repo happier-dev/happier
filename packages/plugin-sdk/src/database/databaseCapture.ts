@@ -14,11 +14,22 @@ import {
     DatabaseCaptureTraceGetInputV1Schema,
     DatabaseCaptureTracesListInputV1Schema,
 } from './databaseCaptureOperands.js';
-import { DatabaseCaptureFindingDetailV1Schema } from './schemas/databaseFindings.js';
+import { computeCanonicalDomainSeparatedDigest } from '../identity.js';
+import { DatabaseCaptureFindingDetailV1Schema, type DatabaseCaptureFindingDetailV1 } from './schemas/databaseFindings.js';
 
 export { DatabaseCaptureProjectV1Schema, DatabaseCaptureSourceV1Schema, DatabaseCaptureCoverageV1Schema } from './databaseCaptureSource.js';
 export { DatabaseCaptureCursorV1Schema, DatabaseCapturePageV1Schema, DatabaseCaptureTraceGetInputV1Schema,
     DatabaseCaptureTracesListInputV1Schema } from './databaseCaptureOperands.js';
+
+/** Only findings the collector can qualify share a production Event group. */
+export function readProductionCaptureFindingGroupKeyV1(finding: DatabaseCaptureFindingDetailV1): string | undefined {
+    if (finding.kind !== 'failing_endpoint' && finding.kind !== 'suspected_n_plus_one') return undefined;
+    const group = finding.environmentObservation;
+    if (!group) return undefined;
+    return computeCanonicalDomainSeparatedDigest('happier.telemetry.production-finding-shape-service.v1', [
+        group.shapeKey, group.reportedService?.name ?? '',
+    ]);
+}
 
 const id = z.string().check(z.minLength(1));
 const count = z.number().check(z.int(), z.nonnegative());

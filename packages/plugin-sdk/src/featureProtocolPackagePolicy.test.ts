@@ -414,6 +414,8 @@ const FEATURE_PROTOCOL_SDK_IMPORT_ALLOWLIST: Readonly<Record<string, ReadonlySet
         'DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1',
         'DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1',
         'DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1',
+        'DATABASE_CAPTURE_RESOURCE_ID_V1',
+        'DATABASE_CAPTURE_RESOURCE_REF_V1',
         'DATABASE_CAPTURE_STATUS_ACTION_ID_V1',
         'DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1',
         'DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1',
@@ -544,7 +546,9 @@ const FEATURE_PROTOCOL_SDK_IMPORT_ALLOWLIST: Readonly<Record<string, ReadonlySet
         'UI_DATABASE_DRAFT_READ_ACTION_ID_V1',
         'UI_DATABASE_NAVIGATE_ACTION_ID_V1',
         'UI_DATABASE_OPEN_ACTION_ID_V1',
+        'readProductionCaptureFindingGroupKeyV1',
     ]),
+    [`${SDK_PACKAGE_NAME}/reviews`]: new Set(['ReviewFindingSeverityProtocolSchema']),
     // Canonical portable target identity only; Agent operations remain outside
     // reusable feature protocols. Triage's Session handoff consumes this parser.
     [`${SDK_PACKAGE_NAME}/agents`]: new Set(['AgentTargetKeyV2Schema']),
