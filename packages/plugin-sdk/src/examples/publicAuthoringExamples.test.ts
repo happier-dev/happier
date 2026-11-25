@@ -1035,19 +1035,13 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             await testkit.dispose();
         }
 
-        // Caller rejection is host-owned: the daemon dispatcher returns
-        // `plugin_action_unavailable` for any caller surface an Action does
-        // not declare. These roles are protocol-owned and never admit the
-        // autonomous caller surfaces, so the projected manifest must not
-        // widen them either.
         const actions = module.manifest.contributes.actions;
-        expect(actions).toBeDefined();
-        if (actions === undefined) throw new Error('operation-only provider must declare Actions');
-        for (const action of actions) {
-            expect(action.surfaces).not.toContain('cli');
-            expect(action.surfaces).not.toContain('mcp');
-            expect(action.surfaces).not.toContain('agent');
-        }
+        expect(Object.fromEntries(actions.map(action => [action.id, action.surfaces]))).toEqual({
+            'acme/connect': ['plugin', 'ui', 'agent'],
+            'acme/check-connection': ['plugin', 'ui', 'agent'],
+            'acme/send-message': ['plugin'],
+            'acme/stop-socket': ['plugin'],
+        });
 
         expect(source).toContain("from '@happier-dev/channels-protocol/v1'");
         expect(source).toContain('CONVERSATION_CORE_PLUGIN_ID_V1');
