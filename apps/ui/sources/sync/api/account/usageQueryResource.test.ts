@@ -10536,6 +10536,61 @@ describe('usage query Work composition', () => {
       sessions.filter(target => target.answer !== 'offline').map(target => target.machineId));
   });
 
+  it('updates the Work cause when inventory confirms a route-failed Machine offline', async () => {
+    const machineId = 'route-failed-work-machine';
+    const contribution = { ...workContribution, sessionId: 'route-failed-work-session' };
+    const captured = await context(request => request.path === '/v2/usage/query'
+      ? Response.json({ ...value, contributions: [contribution] }) : undefined);
+    const scope = captured.accountLifetime.scope;
+    storage.getState().applySessions([createSessionFixture({ id: contribution.sessionId, active: true,
+      serverId: scope.serverId, metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' } })]);
+    const activeAt = Date.now();
+    const publishPresence = (active: boolean) => publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({
+      id: machineId, accountId: 'account-a', machine: { active, activeAt, presenceProtocolVersion: 1 },
+    })]);
+    await publishPresence(true);
+    recordMachineRequestFailed({ ...scope, machineId });
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota: false, includeQuotaHistory: false,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: true, includeComparison: false });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const readWork = () => {
+      const content = entry.getSnapshot().value;
+      return content && decodeUsageQueryResource(content).results[0]?.sources.find(source => source.source === 'work');
+    };
+    const release = entry.subscribe(() => {}, true);
+    try {
+      await expect.poll(() => readWork()?.status).toBe('unknown');
+      expect(readWork()).toMatchObject({ unreadSessions: { machine_unavailable: 1 } });
+      expect(readWork()).not.toHaveProperty('errorCode');
+      expect(scmTransport).not.toHaveBeenCalled();
+
+      await publishPresence(false);
+      publishHomeAccountChange(scope.serverId, [], {
+        changeKinds: ['account', 'automation', 'pluginDomain'], sessionReadinessChanges: { sessionIds: [], machineIds: [] },
+        feedPageConsumed: true, usageAccountingAffects: false,
+      });
+      const fresh = await readUiUsageQueryBatch(captured, { queries: [query] });
+      const expected = { status: 'unknown', errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 1 } };
+      expect(fresh.results[0]?.sources.find(source => source.source === 'work')).toMatchObject(expected);
+      await expect.poll(() => readWork()?.errorCode).toBe('machine_offline');
+      expect(readWork()).toMatchObject(expected);
+
+      const account = await captureLazyActionAccountContext(scope.serverId);
+      const executor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(account) }));
+      const response = await executor.execute('usage.query', { queries: [query] }, {
+        surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      });
+      if (!response.ok) throw new Error(response.errorCode);
+      const action = UsageQueryBatchResultSchema.parse(response.result);
+      expect(action.results[0]?.sources.find(source => source.source === 'work')).toMatchObject(expected);
+      expect(scmTransport).not.toHaveBeenCalled();
+    } finally {
+      release();
+      clearMachineRequestReachabilityForMachine(scope, machineId);
+    }
+  });
+
   it('shares an unavailable Machine verdict across concurrent disjoint Work slices without reusing Session results', async () => {
     const sessionIds = ['cold-work-a', 'cold-work-b', 'cold-work-c'];
     const laterAccounting = createDeferred<void>();

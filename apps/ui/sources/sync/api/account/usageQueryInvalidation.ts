@@ -177,19 +177,30 @@ export type UsageQueryMachineConsumers = Readonly<{
 
 const NO_MACHINE_CONSUMERS: UsageQueryMachineConsumers = { poolMachineFilters: [], sessionMachineIds: [] };
 
+/** Work acquisition and reuse consume the same scoped Machine verdict. */
+export function readUsageWorkMachineReadiness(
+    scope: ServerAccountScope | null | undefined,
+    machineId: string,
+    machine: Machine | null | undefined,
+    nowMs = Date.now(),
+) {
+    const reachability = resolveMachineReachability(scope, machine ?? { id: machineId, active: false }, nowMs);
+    if (reachability !== 'unreachable') return reachability;
+    return machine && isMachineOnline(machine, nowMs) === false ? 'machine_offline' : 'target_unavailable';
+}
+
 function readUsageMachineFacts(machines: Readonly<Record<string, Machine>>, nowMs: number, scope?: ServerAccountScope | null) {
-    return Object.values(machines).map(machine => {
-        const reachability = resolveMachineReachability(scope, machine, nowMs);
-        return { id: machine.id, name: readMachineName(machine), replaced: isMachineReplaced(machine),
-            reachability,
-            // A withdrawn observation or failed route is not a confirmed offline daemon.
-            unavailable: reachability === 'unknown' || reachability === 'unreachable' && isMachineOnline(machine, nowMs) !== false };
-    })
+    return Object.values(machines).map(machine => ({
+        id: machine.id,
+        name: readMachineName(machine),
+        replaced: isMachineReplaced(machine),
+        readiness: readUsageWorkMachineReadiness(scope, machine.id, machine, nowMs),
+    }))
         .sort((left, right) => left.id.localeCompare(right.id));
 }
 
 function readUsagePoolSelectorMachines(facts: ReturnType<typeof readUsageMachineFacts>, machineIds: readonly string[]) {
-    return facts.filter(machine => !machine.replaced && machine.reachability === 'reachable'
+    return facts.filter(machine => !machine.replaced && machine.readiness === 'reachable'
         && (machineIds.length === 0 || machineIds.includes(machine.id)));
 }
 
@@ -197,7 +208,8 @@ function selectUsagePoolMachine(facts: ReturnType<typeof readUsageMachineFacts>,
     const eligible = readUsagePoolSelectorMachines(facts, machineIds);
     if (eligible.length === 1) return { status: 'pending' as const, machineId: eligible[0]!.id };
     if (eligible.length > 1) return { status: 'unknown' as const };
-    const unavailable = facts.filter(machine => !machine.replaced && machine.unavailable
+    const unavailable = facts.filter(machine => !machine.replaced
+        && (machine.readiness === 'unknown' || machine.readiness === 'target_unavailable')
         && (machineIds.length === 0 || machineIds.includes(machine.id)));
     return unavailable.length > 0 ? { status: 'error' as const, errorCode: 'MACHINE_RPC_UNREACHABLE',
         ...(unavailable.length === 1 ? { machineId: unavailable[0]!.id } : {}) }
@@ -211,14 +223,14 @@ export function getUsageQueryPoolMachineSelection(machines: Readonly<Record<stri
 }
 
 function consumedMachineKey(facts: ReturnType<typeof readUsageMachineFacts>, consumers: UsageQueryMachineConsumers,
-    readMissingReachability?: (machineId: string) => ReturnType<typeof resolveMachineReachability>): string {
+    readMissingReadiness?: (machineId: string) => ReturnType<typeof readUsageWorkMachineReadiness>): string {
     const byId = new Map(facts.map(machine => [machine.id, machine]));
     return JSON.stringify([
         consumers.includeMachineNames === false ? [] : facts.map(machine => [machine.id, machine.name]),
         consumers.poolMachineFilters.map(ids => selectUsagePoolMachine(facts, ids)),
         [...new Set(consumers.sessionMachineIds)].sort().map(id => {
             const machine = byId.get(id);
-            return [id, machine?.replaced, machine?.reachability ?? readMissingReachability?.(id)];
+            return [id, machine?.replaced, machine?.readiness ?? readMissingReadiness?.(id)];
         }),
     ]);
 }
@@ -226,7 +238,7 @@ function consumedMachineKey(facts: ReturnType<typeof readUsageMachineFacts>, con
 export function getUsageQueryMachineInvalidationKey(machines: Readonly<Record<string, Machine>>, nowMs = Date.now(),
     scope?: ServerAccountScope | null, consumers: UsageQueryMachineConsumers = NO_MACHINE_CONSUMERS): string {
     return consumedMachineKey(readUsageMachineFacts(machines, nowMs, scope), consumers,
-        id => resolveMachineReachability(scope, { id, active: false }, nowMs));
+        id => readUsageWorkMachineReadiness(scope, id, undefined, nowMs));
 }
 
 type QuotaAccount = Profile['connectedAccountsV4'][number];
@@ -346,10 +358,11 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQu
             const state = readRegisteredStorageState();
             const scope = state?.profileScope;
             if (!state || !scope || !areServerProfileIdentifiersEquivalent(scope.serverId, serverId)) return;
+            const nowMs = Date.now();
             if (machineIds.some(id => {
                 const machine = state.machines[id];
                 const previous = observedMachineFacts.byId.get(id);
-                return machine && previous && previous.reachability !== resolveMachineReachability(scope, machine);
+                return machine && previous && previous.readiness !== readUsageWorkMachineReadiness(scope, id, machine, nowMs);
             })) reconcile(true);
         });
         const unwatchRegistry = subscribeConnectedServiceRegistry(() => {

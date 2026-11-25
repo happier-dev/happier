@@ -18,8 +18,6 @@ import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServiceP
 import { readRpcErrorCode, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
-import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
-import { resolveMachinePresence } from '@/sync/domains/machines/reachability/machinePresence';
 import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 import { computePluginUiArtifactSha256Digest } from '@/sync/domains/plugins/ui/artifactIntegrity';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -75,7 +73,7 @@ import { isTransientConnectivityError, RetryableServerResponseError } from '@/sy
 import { UsageModelPriceCatalogSchema, type UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { HappyError } from '@/utils/errors/errors';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
-import { getUsageQueryMachineInvalidationKey, getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, readUsageQuotaAccounts, readUsageQuotaBindingServiceKeys, readUsageQuotaChangedRecordIds, usageQuotaRecordChangeAffects, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries, type UsageQueryStateInvalidation } from './usageQueryInvalidation';
+import { getUsageQueryMachineInvalidationKey, getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, readUsageQuotaAccounts, readUsageQuotaBindingServiceKeys, readUsageQuotaChangedRecordIds, readUsageWorkMachineReadiness, usageQuotaRecordChangeAffects, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries, type UsageQueryStateInvalidation } from './usageQueryInvalidation';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ProviderAccountUsageProjectionDocuments, ProviderAccountUsageQuotaViewDemand } from './apiProviderAccountUsage';
 import type { ProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
@@ -1397,10 +1395,8 @@ function createUsageWorkMachineReader(context: UsageQueryAccountContext, signal?
             requireCurrent(context, signal);
         } else {
             const machine = resolveServerScopedMachine(getStorage().getState(), scope.serverId, machineId);
-            // An absent inventory row is unanswered, while the reachability owner
-            // still retains an explicit failed connection for this exact scope.
-            if (resolveMachineReachability(scope, machine ?? { id: machineId, active: false }) === 'unreachable') {
-                const blocker = machine && resolveMachinePresence(machine) === 'offline' ? 'machine_offline' : 'target_unavailable';
+            const blocker = readUsageWorkMachineReadiness(scope, machineId, machine);
+            if (blocker === 'machine_offline' || blocker === 'target_unavailable') {
                 availability.set(machineId, Promise.resolve(blocker));
                 throw unavailable(blocker);
             }
