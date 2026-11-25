@@ -2317,8 +2317,8 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await waitFor(() => expect(screen.findByTestId('roles-rail-option:scout')).not.toBeNull());
         await screen.pressByTestIdAsync('roles-rail-option:scout');
         await settle();
-        const roleLabels = screen.findAllByType(TextLinkButton)
-            .filter(node => node.props.testID === 'contextual-start-who-accessory').map(node => node.props.label);
+        const roleLabels = screen.findAllHostsByTestId('contextual-start-who-accessory')
+            .map(node => node.props.accessibilityLabel);
         expect(roleLabels).toEqual(['Reviewer', 'Scout']);
         expect(emittedStarts).toEqual([]);
     });
