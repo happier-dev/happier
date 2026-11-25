@@ -36,6 +36,12 @@ import { setArtifactAccessGrantInTx } from '@/app/artifacts/artifactAccessServic
 import { setTeamPolicyInTx } from '@/app/teams/policy';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1,
+    sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1,
+    type WorkflowDefinitionV1, type WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol';
+import { createProductionWorkflowRunCoordinator } from '../../../../cli/src/daemon/workflows/production';
+import { createWorkflowRunStorageTestkit } from '../../../../cli/src/daemon/workflows/workflowRunStorage.testkit';
+import { createCliActionExecutor } from '../../../../cli/src/session/actions/createCliActionExecutor';
 
 describe('Review read Actions through authenticated HTTP', () => {
     let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
@@ -60,7 +66,7 @@ describe('Review read Actions through authenticated HTTP', () => {
     }, 180_000);
     afterAll(async () => { await app?.close(); await harness?.close(); });
 
-    it('starts a clean engine Review through the Action and reloads its completed empty record through authenticated HTTP', async () => {
+    it.each(['completed', 'failed', 'cancelled'] as const)('reloads a direct %s empty Review after actual terminal settlement through authenticated HTTP', async outcome => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', seq: 7 } });
         const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -110,25 +116,128 @@ describe('Review read Actions through authenticated HTTP', () => {
                 scope: { workspace: { machineId: 'clean-review-machine', path: harness.baseDir } }, reviewRecords: records,
                 execute: async () => { throw new Error('A clean result must not create a Review comment'); } });
             const payload = { reviewOutcome: 'complete', summary: 'No findings.', findings: [] };
-            const completion = ReviewProfile.onBoundedComplete({ start: run, rawText: JSON.stringify(payload), finishedAtMs: Date.now() });
-            expect(completion.status).toBe('succeeded');
+            const completion = outcome === 'completed'
+                ? ReviewProfile.onBoundedComplete({ start: run, rawText: JSON.stringify(payload), finishedAtMs: Date.now() }) : null;
+            if (completion) expect(completion.status).toBe('succeeded');
+            const status = outcome === 'completed' ? 'succeeded' : outcome;
             const runs = new Map([[run.runId, run]]);
             expect(await finishExecutionRun({ runId: run.runId,
-                next: { status: completion.status, summary: completion.summary, finishedAtMs: Date.now() },
-                toolResult: { output: completion.toolResultOutput, meta: completion.toolResultMeta }, structuredMeta: completion.structuredMeta,
+                next: { status, summary: completion?.summary ?? outcome, finishedAtMs: Date.now(),
+                    ...(outcome === 'failed' ? { error: { code: 'resource_forbidden', message: 'The native reviewer refused access.' } } : {}) },
+                toolResult: { output: completion?.toolResultOutput ?? {}, meta: completion?.toolResultMeta ?? {} },
+                structuredMeta: completion?.structuredMeta,
                 runs, controllers: new Map(), budgetRegistry: null, parentProvider: 'claude', sendAcp: async () => {},
                 enqueueMarkerWrite: async (_id, write) => { await write(); }, terminalMarkerWritePromises: new Map(),
                 reviewComments: comments })).toBe(true);
-            expect(runs.get(run.runId)?.status).toBe('succeeded');
+            expect(runs.get(run.runId)?.status).toBe(status);
+            if (outcome === 'failed') expect(runs.get(run.runId)?.error?.code).toBe('resource_forbidden');
             expect(await db.reviewComment.count({ where: { reviewId: binding.reviewId } })).toBe(0);
             // Discard the port and Action executor: all following reads cross HTTP from fresh transport owners.
             expect(await recordsFor().read(binding.reviewId)).toMatchObject({ reviewId: binding.reviewId,
-                rounds: [{ ordinal: 1, state: 'completed', runs: [{ kind: 'execution', runId: run.runId }] }] });
+                rounds: [{ ordinal: 1, state: outcome, runs: [{ kind: 'execution', runId: run.runId }] }] });
             const reloaded = createActionExecutor(createAccountServerActionDeps({ token, serverId: origin, serverHttpBaseUrl: origin }));
             expect(await reloaded.execute('review.get', { reviewId: binding.reviewId },
                 { surface: 'cli', authority: 'present_user', serverId: origin, bypassApprovals: true }))
-                .toMatchObject({ ok: true, result: { review: { reviewId: binding.reviewId, state: 'completed',
+                .toMatchObject({ ok: true, result: { review: { reviewId: binding.reviewId, state: outcome,
                     sourceSessionId: session.id, sourceSessionSeq: 7, counts: { total: 0, needsDecision: 0 } } } });
+        });
+    });
+
+    it.each(['failed', 'cancelled'] as const)('reloads a Workflow %s empty Review after actual coordinator terminal settlement', async outcome => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}' } });
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        const runId = randomUUID();
+        const machineId = 'workflow-review-machine';
+        const rootRecordId = randomUUID();
+        const witness = { mode: 'plain', version: 1, contentKeyFingerprint: null } as const;
+        await runWithServerHttpBaseUrl(origin, async () => {
+            const recordsFor = () => createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(
+                createCredentialedAccountArtifactStore({ token, encryption: null })));
+            const records = recordsFor();
+            const reviewRound = await records.start({ reviewId: randomUUID(), title: 'Workflow terminal Review',
+                subjectKind: 'repository', sourceKind: 'workflow', reviewerIds: ['reviewer'], startedAt: 1 });
+            const definition: WorkflowDefinitionV1 = { version: 1,
+                inputs: [{ name: 'reviewRound', valueType: 'json', required: true }], defaults: {},
+                blocks: outcome === 'failed'
+                    ? [{ kind: 'step', id: 'review', document: { text: 'Review', references: [], attachments: [] }, input: [] }]
+                    : [{ kind: 'wait', id: 'review', document: { text: 'Continue', references: [], attachments: [] } }],
+            };
+            const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+                binding: { v: 1, purpose: 'accepted_snapshot', accountId: owner.id, runId }, acceptedSnapshot: {
+                    definition, authoredDefinition: definition, startedBy: 'user', workDepth: 0, frozenChildren: {}, metadata: null,
+                    inputs: { reviewRound }, machineId, executionTarget: { kind: 'session' },
+                    workspaceTarget: { project: { machineId, directory: harness.baseDir, checkoutRootPath: harness.baseDir } },
+                    authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+                    materializedLeaves: [{ authoredWorkspace: { kind: 'inherit' }, sourceKey: '$root', blockId: 'review',
+                        kind: outcome === 'failed' ? 'step' : 'wait', selection: {}, executionTarget: { kind: 'session' } }],
+                    source: { kind: 'inline' }, origin: { kind: 'direct' },
+                } }));
+            // The canonical fake stores opaque Workflow envelopes/indexes at the
+            // remote storage boundary. Review writes below still cross real HTTP/SQL.
+            const storage = createWorkflowRunStorageTestkit({ runId, accountId: owner.id, machineId, acceptedEnvelope,
+                origin: { kind: 'direct' }, invocationPageSize: 1 });
+            const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain',
+                binding: { v: 1, purpose: 'checkpoint', accountId: owner.id, runId }, checkpoint: {
+                    kind: 'happier.workflow-checkpoint.v1', rootRecordId, nextSequence: '2',
+                    frontier: { nextBlockOrdinal: 0, paused: false },
+                } }));
+            const progress = (recordId: string, sequence: string, parentRecordId: string | null,
+                value: Omit<WorkflowProgressEnvelopeV1, 'logicalInvocationRecordId'>) =>
+                serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+                    binding: { v: 1, purpose: 'invocation_progress', accountId: owner.id, runId, recordId,
+                        sequence, parentRecordId, memberOrdinal: '0', attempt: '0' },
+                    progress: { ...value, logicalInvocationRecordId: recordId } }));
+            await storage.execute({ operation: 'initialize', runId, expectedRevision: 0, parentAttempt: 0,
+                accountCurrentness: witness, checkpointEnvelope, rootInvocation: { id: rootRecordId,
+                    contentEnvelope: progress(rootRecordId, '0', null, { kind: 'happier.workflow-progress.v1',
+                        invocationPath: { blockId: '$root', scope: [] }, blockKind: 'root', attempt: '0' }) } });
+            if (outcome === 'failed') {
+                const contentEnvelope = progress('reviewer', '1', rootRecordId, { kind: 'happier.workflow-progress.v1',
+                    invocationPath: { blockId: 'review', scope: [] }, blockKind: 'step', attempt: '0',
+                    input: { document: { text: 'Review', references: [], attachments: [] }, input: [
+                        { reviewRound }, { kind: 'review_session.v1', reviewerId: 'reviewer' }] },
+                    // A missing reference is a terminal Workflow input failure; ordinary
+                    // access refusals retain the invocation for explicit recovery.
+                    reason: { code: 'missing_reference' },
+                });
+                await storage.execute({ operation: 'invocations.admit', runId, parentAttempt: 0, accountCurrentness: witness,
+                    expectedRevision: storage.run().revision, checkpointEnvelope,
+                    invocations: [{ id: 'reviewer', sequence: '1', parentRecordId: rootRecordId, memberOrdinal: '0', contentEnvelope }] });
+                const admitted = storage.rowById('reviewer')!.index;
+                await storage.execute({ operation: 'invocations.fact', runId, invocationId: admitted.id, invocationAttempt: admitted.attempt,
+                    expectedLifecycle: admitted.lifecycle, expectedContentRevision: admitted.contentRevision,
+                    lifecycle: 'failed', contentEnvelope });
+            } else storage.requestControl('cancel_requested');
+            const executor = createCliActionExecutor({ token,
+                credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
+                sessionId: session.id, mode: 'plain', ctx: null, serverId: origin, serverHttpBaseUrl: origin });
+            const coordinate = createProductionWorkflowRunCoordinator({ token, accountId: owner.id, machineId, storage,
+                workspaceScm: { inspectLocation: async () => ({ inspection: { rootPath: harness.baseDir } }),
+                    verifyRecordedWorkspace: async () => 'available' },
+                resolveAccountEncryption: async () => ({ kind: 'available', witness }), isAcceptedAuthorizationCurrent: async () => true,
+                resolveControllerContext: async () => ({ surface: 'cli', authority: 'present_user' }),
+                execution: { credentials: { token, encryption: null }, serverId: origin,
+                    machineAdmissionTransport: async () => { throw new Error('Terminal recovery must not admit native input'); },
+                    sessionInput: { enqueue: async () => { throw new Error('Terminal recovery must not enqueue input'); },
+                        observe: async () => { throw new Error('The persisted terminal invocation needs no conversation read'); } },
+                    detachedRun: { actionExecutor: executor,
+                        buildActionContext: () => ({ surface: 'cli', authority: 'present_user' }) } },
+            });
+            const coordinated = await coordinate({ runId, attempt: 0, expectedRevision: storage.run().revision,
+                accountCurrentness: witness, acceptedEnvelope });
+            expect(coordinated, JSON.stringify(coordinated)).toMatchObject({ state: outcome });
+            expect((await recordsFor().read(reviewRound.reviewId))?.rounds)
+                .toMatchObject([{ ordinal: 1, state: outcome, runs: [{ kind: 'workflow', runId }],
+                    ...(outcome === 'failed' ? { reviewerOutcomes: [{ reviewerId: 'reviewer', outcome: 'failed',
+                        reason: { run: 'failed', errorCode: 'missing_reference' } }] } : {}),
+                }]);
+            expect(await db.reviewComment.count({ where: { reviewId: reviewRound.reviewId } })).toBe(0);
+            const reloaded = createActionExecutor(createAccountServerActionDeps({ token, serverId: origin, serverHttpBaseUrl: origin }));
+            expect(await reloaded.execute('review.get', { reviewId: reviewRound.reviewId },
+                { surface: 'cli', authority: 'present_user', serverId: origin, bypassApprovals: true }))
+                .toMatchObject({ ok: true, result: { review: { reviewId: reviewRound.reviewId, state: outcome,
+                    counts: { total: 0, needsDecision: 0 } } } });
         });
     });
 
