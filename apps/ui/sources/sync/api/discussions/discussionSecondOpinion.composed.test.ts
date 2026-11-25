@@ -108,11 +108,12 @@ it('retains explicit Require on a UI preview before disclosing the selected sour
     homes.answer(serverId, 'POST /v1/discussions/second-opinion/preview', { body: { ok: true, value: selectedPreview } });
     const input = { intent: 'preview' as const, source, title: 'Review', question: 'What changes?', reviewers,
         retry: { creationLocalId: 'creation', quoteLocalId: 'quote', questionLocalId: 'question' } };
-    const executor = createDefaultActionExecutor();
-    const context = { surface: 'ui' as const, serverId, expectedAccountId: 'alice' };
+    const executor = createDefaultActionExecutor({ presentUserActionConfirmation: async () => false });
+    const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
+        serverId, expectedAccountId: 'alice' };
     await homes.requireUiApproval(serverId, 'discussion.second_opinion.start');
     expect(await executor.execute('discussion.second_opinion.start', input, context))
-        .toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId: 'discussion.second_opinion.start' } });
+        .toMatchObject({ ok: false, errorCode: 'approval_canceled' });
     expect(homes.requestsFor('/v1/sessions/source-session/messages')).toHaveLength(0);
     expect(homes.requestsFor('/v1/discussions/second-opinion/preview')).toHaveLength(0);
     expect(homes.requestsFor('/v1/discussions')).toHaveLength(0);
