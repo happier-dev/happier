@@ -44,11 +44,14 @@ export type DiscussionStorageSource = Readonly<{
 const formatBytes = (bytes: number) => formatHappierDataBytes(bytes, { kind: 'storage' });
 
 /** The Discussion's scoped storage read (`storage.inventory.read`, scope `discussion`): one Action read per page. */
-export function useDiscussionStorageRead(scope: ServerAccountScope, discussionId: string): StorageInventoryRead {
+export function useDiscussionStorageRead(
+    scope: ServerAccountScope, discussionId: string, view: 'items' | 'summary' = 'items',
+): StorageInventoryRead {
     const selection = React.useMemo(() => ({
         home: scope, followStorageRevision: false,
         scope: { kind: 'discussion', discussionId } satisfies NonNullable<StorageInventoryInputV1['scope']>,
-    }), [discussionId, scope]);
+        kinds: view === 'summary' ? [] : undefined,
+    }), [discussionId, scope, view]);
     return useStorageInventoryRead(selection);
 }
 
@@ -103,7 +106,7 @@ export function DiscussionStoragePane(props: Readonly<{ source: DiscussionStorag
 }
 
 function OwnedDiscussionStoragePane(props: Readonly<{ source: DiscussionStorageSource; read: StorageInventoryRead }>): React.ReactElement {
-    const accountSelection = React.useMemo(() => ({ home: props.source.scope, followStorageRevision: false }), [props.source.scope]);
+    const accountSelection = React.useMemo(() => ({ home: props.source.scope, followStorageRevision: false, kinds: [] }), [props.source.scope]);
     const account = useStorageInventoryRead(accountSelection);
     const retryAccount = account.retry;
     const retryScope = props.read.retry;

@@ -32,8 +32,8 @@ export function DiscussionDetailsPanel(
   const phone = useSurfaceStateSize() === 'phone';
   const router = useRouter();
   const { scope, discussionId } = props.storage;
-  // One scoped read for the row's total and the view it opens.
-  const read = useDiscussionStorageRead(scope, discussionId);
+  // The pane reuses this item page. The separate phone page loads items when opened.
+  const read = useDiscussionStorageRead(scope, discussionId, phone ? 'summary' : 'items');
   const [storageOpen, setStorageOpen] = React.useState(false);
   const closeStorage = React.useCallback(() => setStorageOpen(false), []);
   const inPane = storageOpen && !phone;

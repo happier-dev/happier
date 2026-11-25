@@ -269,5 +269,5 @@ export function useStorageInventoryRead(selection?: StorageInventorySelection): 
 
 /** The Account's stored numbers alone (the Artifacts page header), from the same read. */
 export function useArtifactStorageUsage(): StorageInventoryV1 | null {
-    return useStorageInventoryRead().inventory;
+    return useStorageInventoryRead({ kinds: [] }).inventory;
 }

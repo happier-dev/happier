@@ -42,6 +42,8 @@ describe('Artifacts storage meter', () => {
         const hook = await renderHook(useArtifactStorageUsage);
         const countReads = () => served.requests.filter(request => request.path === '/v1/artifacts/storage/usage').length;
         expect(countReads()).toBe(1);
+        expect(served.requests.find(request => request.path === '/v1/artifacts/storage/usage')
+            ?.url.searchParams.get('kinds')).toBe('');
         const opened = { ...header, body: 'Notes' };
         await act(async () => { getStorage().getState().updateArtifact(opened); });
         await flushHookEffects();

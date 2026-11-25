@@ -203,7 +203,7 @@ const WIRE_MESSAGES = MESSAGES.map((message, index) => toWire(message, index + 2
 const OFF_WINDOW_MESSAGE = toWire(fileMessage('message-9', 'mika', ORPHAN, 'load-test-results.csv', 3.6 * MB), 1);
 
 let scopedReads: URL[] = [];
-let accountReads = 0;
+let accountReads: URL[] = [];
 let removals: string[] = [];
 /** Every exact message read (`POST /v1/discussions/messages/read`), with the pairs it asked for. */
 let exactReads: Array<ReadonlyArray<Readonly<{ discussionId: string; messageId: string }>>> = [];
@@ -211,7 +211,7 @@ let exactReads: Array<ReadonlyArray<Readonly<{ discussionId: string; messageId: 
 async function serve(options: Readonly<{ offWindowReadable?: boolean }> = {}) {
   const readable = options.offWindowReadable ? [...WIRE_MESSAGES, OFF_WINDOW_MESSAGE] : WIRE_MESSAGES;
   scopedReads = [];
-  accountReads = 0;
+  accountReads = [];
   removals = [];
   exactReads = [];
   const served = await serveActionHomes({
@@ -239,7 +239,7 @@ async function serve(options: Readonly<{ offWindowReadable?: boolean }> = {}) {
       }
       if (request.path === '/v1/artifacts/storage/usage') {
         if (request.url.searchParams.get('discussionId') !== DISCUSSION) {
-          accountReads += 1;
+          accountReads.push(request.url);
           return Response.json({ ...summary(1_840 * MB), page: { items: [] } });
         }
         scopedReads.push(request.url);
@@ -248,9 +248,9 @@ async function serve(options: Readonly<{ offWindowReadable?: boolean }> = {}) {
           ...summary(77.6 * MB),
           // The scope's whole count, across both pages.
           kinds: { discussionAttachments: { storedSizeBytes: 77.6 * MB, itemCount: 3 } },
-          page: second
-            ? { items: PAGE_2 }
-            : { items: PAGE_1, nextCursor: 'page-2' },
+          page: request.url.searchParams.get('kinds') === ''
+            ? { items: [] }
+            : second ? { items: PAGE_2 } : { items: PAGE_1, nextCursor: 'page-2' },
         });
       }
       if (request.path === '/v1/discussions/messages/read' && request.method === 'POST') {
@@ -385,7 +385,7 @@ describe('Storage from a Discussion’s Details (storage-view lab scene 5 A)', (
           ),
         );
         expect(scopedReads).toHaveLength(1);
-        expect(accountReads).toBe(0);
+        expect(accountReads).toHaveLength(0);
 
         await act(async () => {
           invokeTestInstanceHandler(
@@ -406,6 +406,7 @@ describe('Storage from a Discussion’s Details (storage-view lab scene 5 A)', (
           ).toContain(storage(1_840 * MB)),
         );
         expect(scopedReads).toHaveLength(1);
+        expect(accountReads.map(url => url.searchParams.get('kinds'))).toEqual(['']);
         await layOut(screen);
         // Names come from the loaded messages by the item's triple.
         await vi.waitFor(() =>
@@ -518,7 +519,7 @@ describe('Storage from a Discussion’s Details (storage-view lab scene 5 A)', (
         expect(textOf(screen.findHostByTestId('storage:discussion:say'))).not.toContain(
           'artifacts.browser.storageView.discussion.sayBody',
         );
-        expect(accountReads).toBe(0);
+        expect(accountReads).toHaveLength(0);
         expect(scopedReads).toHaveLength(1);
       } finally {
         await screen.unmount();
@@ -552,6 +553,7 @@ describe('Storage from a Discussion’s Details (storage-view lab scene 5 A)', (
           );
         });
         expect(details.findHostByTestId('storage:discussion')).toBeNull();
+        expect(scopedReads.map(url => url.searchParams.get('kinds'))).toEqual(['']);
         href = String(routerMock.spies.push.mock.calls.at(-1)?.[0] ?? '');
       } finally {
         await details.unmount();
@@ -578,6 +580,7 @@ describe('Storage from a Discussion’s Details (storage-view lab scene 5 A)', (
           ).not.toBeNull(),
         );
         expect(scopedReads).toHaveLength(1);
+        expect(scopedReads[0]!.searchParams.has('kinds')).toBe(false);
         // This device holds no thread for it: one exact read names the page's files, their senders and the Discussion.
         await vi.waitFor(() => expect(textOf(page.findHostByTestId(`storage:discussion:file:${VIDEO}`))).toContain('checkout-bug-repro.mov'));
         expect(textOf(page.findHostByTestId(`storage:discussion:file:${VIDEO}`))).toContain('Mika Tanaka');
