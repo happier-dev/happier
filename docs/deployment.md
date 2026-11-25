@@ -5176,9 +5176,10 @@ when invoked by a template. Home consumes the accepted Domain job and captured
 target identity; it neither grants target secret use to the controller nor
 repeats Source or Team admission. Home refusals retain their typed phase and
 HTTP status through the Domain Action result.
-Signed `verification_purpose` refusals retain that required fact and a remedy to
-update Home and the Machine before retrying; the projection exposes no operands
-or signed carrier content.
+Signed `verification_purpose` and `deployment_child_http` refusals retain the
+phase as the required fact. The default explanation says Home refused a request
+outside the approved Action's scope and asks the caller to report the Action ID
+if it repeats. The projection exposes no operands or signed carrier content.
 When no active Domain members can supply a route, the same typed failure names
 `activeDomainMembers` and asks the caller to deploy the app on that Machine
 before adding the Domain.

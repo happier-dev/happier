@@ -12,7 +12,7 @@ export function readHomeAuthorizationRefusalDetails(phase: string): Readonly<{
     requiredFact: 'verification_purpose' | 'deployment_child_http'; remedy: string;
 }> | undefined {
     return phase === 'verification_purpose' || phase === 'deployment_child_http' ? { requiredFact: phase,
-        remedy: 'Update the Home server and this Machine, then retry the action' } : undefined;
+        remedy: 'Home refused a request outside the scope of this approved Action. If the refusal repeats, report the Action ID.' } : undefined;
 }
 
 const forbidden = (reason: string): ActionExecuteFailure => ({ ok: false, errorCode: 'action_forbidden',
@@ -77,7 +77,7 @@ export function projectRelayedHomeAuthorizationFailure(failure: ActionExecuteFai
         || (cause.httpStatus !== 401 && cause.httpStatus !== 403)) return failure;
     const phase = ExternalActionAuthorizationRefusalPhaseSchema.safeParse(cause.phase.slice(homeAuthorizationPhasePrefix.length));
     const refusal = forbidden(signedRefusalReason(cause.httpStatus, phase.success ? phase.data : undefined));
-    const details = phase.success ? readHomeAuthorizationRefusalDetails(phase.data) : undefined;
+    const details = failure.details === undefined && phase.success ? readHomeAuthorizationRefusalDetails(phase.data) : undefined;
     return { ...failure, ...refusal, ...(details ? { details } : {}) };
 }
 

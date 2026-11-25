@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions';
+import { projectRelayedHomeAuthorizationFailure, readSignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import { createCliDeploymentActionDeps } from './createCliDeploymentActionDeps';
 import { readDeploymentAuthorizationFailure, refuseDeploymentAuthorization } from './deploymentAuthorizationFailure';
 import { projectDeploymentFailure } from './deploymentFailure';
@@ -30,7 +31,7 @@ it('names a local signed-header refusal through the native adapter and public CL
     } });
 });
 
-it('keeps the signed purpose requirement and remedy through the Home and parent Action projections', async () => {
+it('keeps the signed purpose requirement through the Home and parent Action projections', async () => {
     vi.spyOn(axios, 'request').mockResolvedValue({ status: 401,
         data: { error: 'invalid_token', authorizationRefusal: 'verification_purpose' } });
     const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
@@ -38,9 +39,14 @@ it('keeps the signed purpose requirement and remedy through the Home and parent 
         dispatchReceipt: async () => { throw new Error('A refused read cannot issue a deploy effect'); } });
     const child = await deps.deploymentAction!('deployments.receipts.list', { serverId: 'home', environmentId: 'retained' }, {});
     const expected = { errorCode: 'action_forbidden', details: {
-        requiredFact: 'verification_purpose', remedy: expect.any(String),
+        requiredFact: 'verification_purpose',
     }, failureCause: { phase: 'home.authorization.verification_purpose', httpStatus: 401 } };
     expect(child).toMatchObject(expected);
+    if (child.ok) throw new Error('A rejected signed purpose cannot become success');
+    const relayed = projectRelayedHomeAuthorizationFailure({ ...child, details: undefined });
+    expect.soft(child).not.toHaveProperty('details.remedy', expect.stringMatching(/\b(?:update|upgrade)\b/i));
+    expect(relayed).toMatchObject({ details: expected.details });
+    expect(relayed).not.toHaveProperty('details.remedy', expect.stringMatching(/\b(?:update|upgrade)\b/i));
     const parent = projectDeploymentFailure('action_forbidden', Object.assign(new Error('Private transport context'), { cause: child }));
     expect(parent).toMatchObject(expected);
     const normalized = normalizeActionExecuteResult(parent);
@@ -63,7 +69,7 @@ it.each([[401, true], [403, true], [401, false], [403, false]] as const)(
     expect(parent).toMatchObject({ errorCode: 'action_forbidden',
         failureCause: { phase, errorClass: 'HttpStatusError', httpStatus: status } });
     if (classified) expect(parent).toMatchObject({ details: {
-        requiredFact: 'deployment_child_http', remedy: expect.any(String),
+        requiredFact: 'deployment_child_http',
     } });
     else expect(parent).toMatchObject({ details: { requiredFact: 'deploymentActionResult', remedy: expect.stringMatching(/\S/) } });
     const retained = readDeploymentAuthorizationFailure(Object.assign(new Error('private content'), { cause: parent }));
@@ -75,9 +81,13 @@ it.each([[401, true], [403, true], [401, false], [403, false]] as const)(
         : status === 401 ? 'home_signed_authorization_rejected' : 'home_deployment_http_forbidden';
     expect(output).toMatchObject({ code: 'action_forbidden', message: `action_forbidden (${reason})`,
         failureCause: { phase, errorClass: 'HttpStatusError', httpStatus: status } });
-    if (classified) expect(output).toMatchObject({ details: {
-        requiredFact: 'deployment_child_http', remedy: expect.any(String),
-    } });
+    if (classified) {
+        expect(output).toMatchObject({ details: { requiredFact: 'deployment_child_http' } });
+        expect.soft(output).not.toHaveProperty('details.remedy', expect.stringMatching(/\b(?:update|upgrade)\b/i));
+        const relayed = projectRelayedHomeAuthorizationFailure({ ...retained, details: undefined });
+        expect(relayed).toMatchObject({ details: { requiredFact: 'deployment_child_http' } });
+        expect(relayed).not.toHaveProperty('details.remedy', expect.stringMatching(/\b(?:update|upgrade)\b/i));
+    }
     expect(JSON.stringify(output)).not.toMatch(/never-record-proof|private content/u);
 });
 
@@ -92,4 +102,14 @@ it('carries every phase Home refuses with, including the managed bound-Session s
     const child = await deps.deploymentAction!('deployments.receipts.list', { serverId: 'home', environmentId: 'retained' }, {});
     expect(child).toMatchObject({ errorCode: 'action_forbidden',
         failureCause: { phase: 'home.authorization.managed_bound_session_setup', httpStatus: 401 } });
+});
+
+it('preserves Home-authored details through HTTP and daemon relay projection', () => {
+    const details = { requiredFact: 'recorded_controller', remedy: 'Use the recorded controller.' };
+    const response = readSignedHomeAuthorizationHttpError(401, {
+        error: 'invalid_token', authorizationRefusal: 'deployment_child_http', details,
+    });
+    if (!response) throw new Error('Expected a signed Home refusal');
+    expect(response.failure.details).toEqual(details);
+    expect(projectRelayedHomeAuthorizationFailure(response.failure).details).toEqual(details);
 });
