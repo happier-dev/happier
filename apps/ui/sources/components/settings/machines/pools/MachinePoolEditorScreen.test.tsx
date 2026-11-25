@@ -851,6 +851,32 @@ describe('MachinePoolEditorScreen', () => {
         await vi.waitFor(() => expect(screen.findByTestId('settings.machinePools.editor.name')?.props.value).toBe('Remote'));
     });
 
+    it.each(['save', 'delete'] as const)('keeps the unavailable Pool refusal after %s', async operation => {
+        getStorage().getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+            approvalWaivedSurfaces: { 'machines.pools.delete': ['ui'] },
+        }) });
+        const pool = poolView(1);
+        boundaries.pools = [pool];
+        await publishBoundaryState();
+        const [{ MachinePoolEditorScreen }, { MachinePoolActionError }] = await Promise.all([
+            import('./MachinePoolEditorScreen'),
+            import('@/sync/api/machines/machinePoolActions'),
+        ]);
+        const missing = new MachinePoolActionError(404, { code: 'pool_not_found' });
+        const screen = await renderScreen(<MachinePoolEditorScreen serverId={boundaries.serverId} poolId={pool.pool.id} />);
+        await vi.waitFor(() => expect(screen.findByTestId('settings.machinePools.editor.name')?.props.value).toBe('Development'));
+        if (operation === 'save') {
+            boundaries.update.mockRejectedValue(missing);
+            await act(async () => screen.changeTextByTestId('settings.machinePools.editor.name', 'Local'));
+            await screen.pressByTestIdAsync('settings.machinePools.editor.save');
+        } else {
+            boundaries.remove.mockRejectedValue(missing);
+            await chooseDelete(screen);
+        }
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('machinePools.poolNotFound')));
+        expect(screen.findByTestId('settings.machinePools.editor.retry')).toBeNull();
+    });
+
     it('renders the server-observed offline member state even when the local Machine snapshot is active', async () => {
         const offline = poolView(1, 'offline');
         boundaries.pools = [offline];

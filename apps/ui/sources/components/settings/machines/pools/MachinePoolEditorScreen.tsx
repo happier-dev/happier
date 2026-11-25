@@ -175,7 +175,8 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
     React.useEffect(() => () => {
         if (isNew) publishMachinePoolDraftTitle('');
     }, [isNew, publishMachinePoolDraftTitle]);
-    const [saving, setSaving] = React.useState(false); const [error, setError] = React.useState<string | null>(null);
+    const [saving, setSaving] = React.useState(false);
+    const [error, setError] = React.useState<string | Readonly<{ code: 'pool_not_found' }> | null>(null);
     const [loadingEligibility, setLoadingEligibility] = React.useState(false);
     const [approvalId, setApprovalId] = React.useState<string | null>(null);
     const {
@@ -242,7 +243,7 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
     }, [props.serverId, retrying]);
     const featurePending = poolProjection === null || poolProjection.featureStatus === 'loading';
     const waitingForExisting = !isNew && pools === null && !featurePending && !refreshFailed;
-    const existingMissing = !isNew && pools !== null && !existing;
+    const existingMissing = (error !== null && typeof error !== 'string') || (!isNew && pools !== null && !existing);
     const featureUnavailable = poolProjection?.ready === true && !poolProjection.featureEnabled;
     // A direct route must never turn an unknown, malformed, or disabled feature decision into
     // write authority. The shared projection is the decision owner; the editor only consumes its
@@ -474,7 +475,8 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
             else if (cause instanceof MachinePoolActionError && cause.detail?.code === 'member_machine_not_eligible') {
                 setInvalidMemberIds(new Set(cause.detail.machineIds));
                 setError(t('machinePools.memberNotEligible'));
-            } else setError(t('machinePools.saveFailed'));
+            } else if (cause instanceof MachinePoolActionError && cause.detail?.code === 'pool_not_found') setError(cause.detail);
+            else setError(t('machinePools.saveFailed'));
         } finally { if (lifetimeCurrentRef.current) setSaving(false); }
     }, [draft, existing?.pool.revision, formDisabled, isNew, navigation, props.poolId, props.serverId, router]);
     const remove = React.useCallback(async () => {
@@ -501,6 +503,7 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
                 setApprovalId(cause.artifactId);
             }
             else if (cause instanceof MachinePoolActionError && cause.detail?.code === 'pool_changed') setConflict(cause.currentView ?? null);
+            else if (cause instanceof MachinePoolActionError && cause.detail?.code === 'pool_not_found') setError(cause.detail);
             else setError(t('machinePools.deleteFailed'));
         }
         finally { if (lifetimeCurrentRef.current) setSaving(false); }
@@ -561,7 +564,7 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
                 meta={pageMeta.length ? pageMeta : undefined}
                 // One primary (with Cancel while new): in the page on wide layouts, in the native header
                 // on phones. The page header owns that placement.
-                primaryAction={readOnly ? undefined : primaryAction}
+                primaryAction={readOnly || existingMissing ? undefined : primaryAction}
                 cancelAction={cancelAction ?? undefined}
                 menu={!isNew && !featureUnavailable && !existingMissing && existing?.access?.canManage !== false ? (
                     <PageHeaderMenu
@@ -598,7 +601,8 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
                     onPress: () => safeRouterBack({ router, navigation, fallbackHref: '/settings/machines' }),
                 }}
             /> : null}
-            {existingMissing ? <AttentionBanner testID="settings.machinePools.editor.missing" title={t('machinePools.poolNotFound')} /> : null}
+            {existingMissing ? <AttentionBanner testID="settings.machinePools.editor.missing" title={t('machinePools.poolNotFound')}
+                action={{ label: t('common.back'), onPress: leave }} /> : null}
             {conflict !== undefined ? <AttentionBanner
                 testID="settings.machinePools.editor.conflict"
                 title={t('machinePools.conflictTitle')}
@@ -609,7 +613,7 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
                     onPress: () => { void reloadConflict(); },
                 } : null}
             /> : null}
-            {error ? <AttentionBanner testID="settings.machinePools.editor.error" title={error} /> : null}
+            {typeof error === 'string' ? <AttentionBanner testID="settings.machinePools.editor.error" title={error} /> : null}
             {approvalId ? <ItemGroup><Item
                 testID="settings.machinePools.editor.approval"
                 title={t('approvals.title')}
