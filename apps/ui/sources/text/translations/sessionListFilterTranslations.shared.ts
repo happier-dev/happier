@@ -42,6 +42,7 @@ export const en = {
     requestPeekReplaced: 'This request changed. Review the new one before answering.',
     requestPeekReviewNew: 'Review the new request',
     requestPeekUnavailable: 'This request can’t be opened right now.',
+    spacesMissingHomes: 'This space includes a Home that isn’t on this device.',
     spacesTitle: 'Spaces', spacesSelectedTitle: 'Selected space on this device',
     querySpaceEmptyTitle: ({ name }: { name: string }) => `Nothing in ${name}`,
     querySpaceEmptyDescription: "Add sessions from a row's menu, or change what this space shows.",

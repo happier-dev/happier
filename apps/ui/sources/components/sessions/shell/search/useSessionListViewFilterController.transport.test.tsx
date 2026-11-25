@@ -6,7 +6,7 @@ import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/cont
 import { createCompactSessionListRowFixture, createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { encodeV2SessionListCursorV2 } from '@happier-dev/protocol/sessions/listing/cursor';
-import { SESSION_LIST_PAGE_DEFAULT_LIMIT } from '@happier-dev/protocol/sessions/listing/query';
+import { SESSION_LIST_PAGE_DEFAULT_LIMIT, SessionListQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { CollectionSpacesV1Schema } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -31,6 +31,7 @@ import { useSessionListViewFilterController } from './useSessionListViewFilterCo
 import { useSessionListSpaceNavigation } from './useSessionListSpaceNavigation';
 import { clearSessionListViewFilterRetentionForTests } from './useSessionListViewFilters';
 import { SessionListFilterControl } from './SessionListFilterControl';
+import { resolveSessionListViewEmptyState } from '../sessionListViewEmptyStateModel';
 import { useSessionListRowsByServerId, useSessionOrganizationProjections } from '@/sync/domains/state/storage';
 import { useSessionListSpaceChrome } from './useSessionListSpaceChrome';
 import type { SessionSpaceDrop } from './SessionSpaceTabDropZone';
@@ -65,6 +66,84 @@ vi.mock('socket.io-client', async importOriginal =>
 afterEach(() => { standardCleanup(); clearSessionListViewFilterRetentionForTests(); });
 
 describe('saved Session spaces through the mounted query transport', () => {
+    it.each(['matching', 'empty'] as const)('keeps the My work clauses when its only saved Home is gone (%s)', async outcome => {
+        const boundary = await createSessionListQuerySourceHarness();
+        const home = boundary.serverIds[0]!;
+        const homes = [home];
+        const missingHome = 'removed-space-home';
+        const settingsPath = '/v2/account/settings';
+        try {
+            await boundary.http.selectHomes(homes);
+            const features = createRootLayoutFeaturesResponse({ features: { sessions: { enabled: true,
+                filteredListing: { enabled: true, membershipSelectorVersion: 1 } } } });
+            for (const path of ['/v1/features', '/v1/features/authenticated']) boundary.http.answer(home, path, { body: features });
+            await getServerFeaturesSnapshot({ serverId: home, force: true });
+            const filter = normalizeSessionListFilterV1({
+                homeServerIds: [missingHome], scope: 'my_work', includeInactive: true, show: 'sessions',
+                tagIds: [{ serverId: home, tagId: 'work-tag' }],
+            });
+            const settings = settingsParse({ ...storage.getState().settings, collectionSpacesV1: { v: 1, spaces: [{
+                entityKind: 'sessionWork', id: 'my-work', name: 'My work', icon: { kind: 'icon', name: 'list' },
+                filter, includeNeedsYouEverywhere: false, membership: { mode: 'filter_or_manual', tags: [] },
+            }] } });
+            boundary.http.answer(home, settingsPath, { body: AccountSettingsV2GetResponseSchema.parse({
+                content: { t: 'plain', v: settings }, version: 2,
+            }) });
+            storage.setState({ settings, settingsVersion: 2, settingsScope: { serverId: home, accountId: boundary.accountId(home) } });
+            const row = createSessionFixture({ id: 'matching-my-work-session', ownerAccountId: boundary.accountId(home), active: true });
+            boundary.http.answer(home, '/v2/sessions/query', { select(input) {
+                const smart = SessionListQueryV1Schema.parse(input).membership?.filter;
+                const matches = outcome === 'matching' && smart?.scope === 'my_work' && smart.tagIds.includes('work-tag');
+                return { body: createSessionListSourceFixture({
+                    sessions: matches ? [{ ...createPlainSessionCurrentProjectionRecordFixture({
+                        id: row.id, active: true, activeAt: Date.now(), metadata: row.metadata,
+                    }), viewer: { ...createSessionOwnerViewerFixture(row), tagIds: ['work-tag'] } }] : [],
+                    nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+                }) };
+            } });
+            const beforeMount = boundary.http.requests.length;
+            let current!: { controller: ReturnType<typeof useSessionListViewFilterController>; state: ReturnType<typeof useVisibleSessionListPaneState> };
+            function MountedSpace() {
+                const controller = useSessionListViewFilterController('active', undefined, 'sessions');
+                const state = useVisibleSessionListPaneState('all', {
+                    queryHomes: controller.pagingHomes, workFilter: controller.displayFilters, spaceMembership: controller.spaceMembership,
+                });
+                current = { controller, state };
+                const drop = React.useRef<SessionSpaceDrop | null>(null);
+                const organization = useSessionOrganizationProjections(homes);
+                const chrome = useSessionListSpaceChrome({ controller, organizationProjectionsByServerId: organization, spaceDropRef: drop });
+                return <SessionListFilterControl controller={controller} spaceChrome={chrome} organizationProjectionsByServerId={organization} />;
+            }
+            const screen = await renderScreen(<MountedSpace />);
+            try {
+                await waitForSessionListQueryState(() => expect(current.state.queryPresentation).toMatchObject({ kind: 'ready', complete: true }));
+                const { controller, state } = current;
+                expect(controller.filters.homeServerIds).toEqual([]);
+                expect(controller.activeSpace?.filter.homeServerIds).toEqual([missingHome]);
+                expect(controller.isSpaceModified).toBe(false);
+                const requests = boundary.http.requests.slice(beforeMount);
+                expect(requests.filter(request => request.path === settingsPath && request.method !== 'GET')).toEqual([]);
+                expect.soft(requests.filter(request => request.path === '/v2/sessions/query')).toEqual(expect.arrayContaining([
+                    expect.objectContaining({ serverId: home, input: expect.objectContaining({ membership: {
+                        mode: 'filter_or_manual', tagIds: [], filter: expect.objectContaining({ scope: 'my_work', tagIds: ['work-tag'] }),
+                    } }) }),
+                ]));
+                expect.soft(state.visibleSessionListIndex?.flatMap(item => item.type === 'session'
+                    ? [{ serverId: item.serverId, sessionId: item.sessionId }] : []) ?? []).toEqual(outcome === 'matching'
+                    ? [{ serverId: home, sessionId: row.id }] : []);
+                if (outcome === 'empty') {
+                    expect.soft(resolveSessionListViewEmptyState({
+                        presentation: state.queryPresentation!, visibleSessionCount: 0, filters: controller.filters,
+                        defaults: controller.defaultFilters, viewContext: controller.viewContext,
+                        includeInactive: controller.includeInactive, hasHiddenInactiveSessions: false,
+                    })).toMatchObject({ mode: 'empty', titleKey: 'sessionsList.queryMyWorkEmptyTitle' });
+                }
+                expect.soft(screen.findByTestId('session-list-space-missing-homes')).not.toBeNull();
+                expect.soft(screen.findByTestId('session-list-space-missing-homes-edit')).not.toBeNull();
+            } finally { await screen.unmount(); }
+        } finally { await boundary.dispose(); }
+    });
+
     it('keeps qualified manual membership from both Homes before pagination without draining pages', async () => {
         const boundary = await createSessionListQuerySourceHarness();
         const home = boundary.serverIds[0]!;

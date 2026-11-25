@@ -74,6 +74,8 @@ export function useCollectionSpaceEditing<K extends CollectionEntityKindV1>(
     selectedSpace: CollectionSpaceV1<K> | null;
     /** The stored shape of what the list shows now (the space plus its transient conditions). */
     currentFilter: CollectionFilterMapV1[K];
+    /** The displayed filter is a local fallback for a saved selection. */
+    preserveFilterOnEdit?: boolean;
     /** A new space's prefill, from the conditions on screen. */
     suggestion: Readonly<{ name: string; icon: CollectionSpaceIconV1 }>;
     /** What the space keeps, one short phrase per condition. */
@@ -85,7 +87,7 @@ export function useCollectionSpaceEditing<K extends CollectionEntityKindV1>(
     onWillOpenForm?: () => void;
   }>,
 ) {
-  const { entityKind, selectedSpace, currentFilter } = input;
+  const { entityKind, selectedSpace, currentFilter, preserveFilterOnEdit } = input;
   // Session and Review spaces carry manual membership; TypeScript cannot narrow a generic K.
   const membershipKind = entityKind === 'sessionWork' || entityKind === 'review';
   const spaceMembership = membershipKind
@@ -170,7 +172,11 @@ export function useCollectionSpaceEditing<K extends CollectionEntityKindV1>(
             ? await invoke({
                 op: 'edit',
                 spaceId: selectedSpace.id,
-                changes: { ...fields, ...(membership.edit ? { membership: membership.edit } : {}), filter: currentFilter },
+                changes: {
+                  ...fields,
+                  ...(membership.edit ? { membership: membership.edit } : {}),
+                  ...(preserveFilterOnEdit ? {} : { filter: currentFilter }),
+                },
               })
             : false;
       setForm((current) =>
@@ -185,7 +191,7 @@ export function useCollectionSpaceEditing<K extends CollectionEntityKindV1>(
               },
       );
     },
-    [currentFilter, entityKind, form, invoke, selectedSpace],
+    [currentFilter, entityKind, form, invoke, preserveFilterOnEdit, selectedSpace],
   );
   const deleteSelected = React.useCallback(async () => {
     if (!selectedSpace) return;

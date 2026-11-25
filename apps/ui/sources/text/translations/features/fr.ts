@@ -15500,6 +15500,7 @@ const sessionListFilterTranslations = { fr: translated({
         requestPeekReplaced: 'Cette demande a changé. Examinez la nouvelle avant de répondre.',
         requestPeekReviewNew: 'Examiner la nouvelle demande',
         requestPeekUnavailable: 'Impossible d’ouvrir cette demande pour le moment.',
+        spacesMissingHomes: 'Cet espace inclut un Home absent de cet appareil.',
         spacesTitle: 'Espaces', spacesSelectedTitle: 'Espace sélectionné sur cet appareil',
         querySpaceEmptyTitle: ({ name }: { name: string }) => `Rien dans ${name}`,
         querySpaceEmptyDescription: "Ajoutez des sessions depuis le menu d’une ligne ou modifiez ce que cet espace affiche.",

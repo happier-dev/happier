@@ -15507,6 +15507,7 @@ const sessionListFilterTranslations = { pl: translated({
         requestPeekReplaced: 'Ta prośba się zmieniła. Przejrzyj nową przed odpowiedzią.',
         requestPeekReviewNew: 'Przejrzyj nową prośbę',
         requestPeekUnavailable: 'Nie można teraz otworzyć tej prośby.',
+        spacesMissingHomes: 'Ta przestrzeń obejmuje Home, którego nie ma na tym urządzeniu.',
         spacesTitle: 'Przestrzenie', spacesSelectedTitle: 'Przestrzeń wybrana na tym urządzeniu',
         querySpaceEmptyTitle: ({ name }: { name: string }) => `Nic w ${name}`,
         querySpaceEmptyDescription: "Dodaj sesje z menu wiersza lub zmień, co pokazuje ta przestrzeń.",

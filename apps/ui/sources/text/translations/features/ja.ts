@@ -15429,6 +15429,7 @@ const sessionListFilterTranslations = { ja: translated({
         requestPeekReplaced: 'このリクエストは変更されました。回答する前に新しいリクエストを確認してください。',
         requestPeekReviewNew: '新しいリクエストを確認',
         requestPeekUnavailable: '現在このリクエストを開けません。',
+        spacesMissingHomes: 'このスペースには、このデバイスにない Home が含まれています。',
         spacesTitle: 'スペース', spacesSelectedTitle: 'このデバイスで選択したスペース',
         querySpaceEmptyTitle: ({ name }: { name: string }) => `${name} には何もありません`,
         querySpaceEmptyDescription: "行のメニューからセッションを追加するか、このスペースの表示内容を変更してください。",

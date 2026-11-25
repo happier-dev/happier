@@ -15488,6 +15488,7 @@ const sessionListFilterTranslations = { it: translated({
         requestPeekReplaced: 'Questa richiesta è cambiata. Rivedi quella nuova prima di rispondere.',
         requestPeekReviewNew: 'Rivedi la nuova richiesta',
         requestPeekUnavailable: 'Al momento non è possibile aprire questa richiesta.',
+        spacesMissingHomes: 'Questo spazio include un Home che non è su questo dispositivo.',
         spacesTitle: 'Spazi', spacesSelectedTitle: 'Spazio selezionato su questo dispositivo',
         querySpaceEmptyTitle: ({ name }: { name: string }) => `Niente in ${name}`,
         querySpaceEmptyDescription: "Aggiungi sessioni dal menu di una riga o cambia ciò che mostra questo spazio.",

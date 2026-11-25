@@ -15481,6 +15481,7 @@ const sessionListFilterTranslations = { ca: translated({
         requestPeekReplaced: 'Aquesta sol·licitud ha canviat. Revisa la nova abans de respondre.',
         requestPeekReviewNew: 'Revisa la nova sol·licitud',
         requestPeekUnavailable: 'Ara mateix no es pot obrir aquesta sol·licitud.',
+        spacesMissingHomes: 'Aquest espai inclou un Home que no és en aquest dispositiu.',
         spacesTitle: 'Espais', spacesSelectedTitle: 'Espai seleccionat en aquest dispositiu',
         querySpaceEmptyTitle: ({ name }: { name: string }) => `Res a ${name}`,
         querySpaceEmptyDescription: "Afegeix sessions des del menú d’una fila o canvia què mostra aquest espai.",

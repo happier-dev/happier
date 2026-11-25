@@ -45,6 +45,10 @@ function sameHomeSelection(a: readonly string[], b: readonly string[]): boolean 
     return b.every((serverId) => known.has(serverId));
 }
 
+function listUnavailableHomes(homeServerIds: readonly string[], authoritativeHomes: ReadonlySet<string> | null): readonly string[] {
+    return authoritativeHomes ? homeServerIds.filter((serverId) => !authoritativeHomes.has(serverId)) : [];
+}
+
 const retainedFiltersByKey = new Map<string, RetainedEntry>();
 /** The one Sessions list: `global` is its retained view, whichever surface opens it. */
 const GLOBAL_SESSION_LIST_CONTEXT_KEY = 'global';
@@ -247,6 +251,8 @@ export type UseSessionListViewFiltersInput = Readonly<{
 export function useSessionListViewFilters(input: UseSessionListViewFiltersInput): Readonly<{
     filters: SessionListViewFilters;
     savedLens: SessionListViewFilters | null;
+    savedMembershipFilter: SessionListFilterV1 | null;
+    savedSpaceHasUnavailableHomes: boolean;
     refinements: SessionListViewFilters;
     updateFilters: React.Dispatch<React.SetStateAction<SessionListViewFilters>>;
     setSearchQuery: React.Dispatch<React.SetStateAction<string>>;
@@ -287,23 +293,36 @@ export function useSessionListViewFilters(input: UseSessionListViewFiltersInput)
         resetRetainedEntry(retained, defaults);
         retained.savedSpace = undefined;
     }
-    if (savedSpace && (
-        retained.savedSpace?.accountScopeKey !== savedSpace.accountScopeKey
-        || retained.savedSpace.id !== savedSpace.id
-    )) {
-        retained.filters = normalizeSessionListViewFilters({ ...savedSpace.filter, searchQuery: '' }, input.viewContext, input.fixedShow, input.fixedIncludeInactive);
-        retained.defaultHomeServerIds = retained.filters.homeServerIds;
-    } else if (savedSpace && retained.savedSpace && savedSpace.filter !== retained.savedSpace.filter) {
-        const previousSavedFilter = normalizeSessionListViewFilters({ ...retained.savedSpace.filter, searchQuery: '' }, input.viewContext, input.fixedShow, input.fixedIncludeInactive);
-        const nextSavedFilter = normalizeSessionListViewFilters({ ...savedSpace.filter, searchQuery: '' }, input.viewContext, input.fixedShow, input.fixedIncludeInactive);
-        if (!sameStrictJsonValue(nextSavedFilter, previousSavedFilter)
-            && sameStrictJsonValue(toStoredSessionListFilter(retained.filters), toStoredSessionListFilter(previousSavedFilter))) {
-            retained.filters = { ...nextSavedFilter, searchQuery: retained.filters.searchQuery };
+    const authoritativeHomes = React.useMemo(() => input.authoritativeHomeServerIds
+        ? new Set(input.authoritativeHomeServerIds) : null, [input.authoritativeHomeServerIds]);
+    const storedSavedFilter = (savedSpace ?? retained.savedSpace)?.filter;
+    const unavailableSavedHomes = React.useMemo(() => storedSavedFilter
+        ? listUnavailableHomes(storedSavedFilter.homeServerIds, authoritativeHomes) : [],
+    [authoritativeHomes, storedSavedFilter]);
+    const savedMembershipFilter = React.useMemo(() => {
+        if (!storedSavedFilter) return null;
+        if (unavailableSavedHomes.length === 0) return storedSavedFilter;
+        const unavailable = new Set(unavailableSavedHomes);
+        return {
+            ...storedSavedFilter,
+            homeServerIds: storedSavedFilter.homeServerIds.filter((serverId) => !unavailable.has(serverId)),
+        };
+    }, [storedSavedFilter, unavailableSavedHomes]);
+    const nextSavedLens = React.useMemo(() => savedMembershipFilter
+        ? normalizeSessionListViewFilters({ ...savedMembershipFilter, searchQuery: '' }, input.viewContext, input.fixedShow, input.fixedIncludeInactive)
+        : undefined, [input.fixedIncludeInactive, input.fixedShow, input.viewContext, savedMembershipFilter]);
+    if (nextSavedLens) {
+        const previousSavedLens = retained.savedLens;
+        const changedSpace = savedSpace && (retained.savedSpace?.accountScopeKey !== savedSpace.accountScopeKey
+            || retained.savedSpace.id !== savedSpace.id);
+        if (changedSpace) {
+            retained.filters = nextSavedLens;
+            retained.defaultHomeServerIds = nextSavedLens.homeServerIds;
+        } else if (previousSavedLens && !sameStrictJsonValue(nextSavedLens, previousSavedLens)
+            && sameStrictJsonValue(toStoredSessionListFilter(retained.filters), toStoredSessionListFilter(previousSavedLens))) {
+            retained.filters = { ...nextSavedLens, searchQuery: retained.filters.searchQuery };
         }
-    }
-    if (savedSpace) {
-        const baseline = normalizeSessionListViewFilters({ ...savedSpace.filter, searchQuery: '' }, input.viewContext, input.fixedShow, input.fixedIncludeInactive);
-        if (!sameStrictJsonValue(retained.savedLens, baseline)) retained.savedLens = baseline;
+        if (!sameStrictJsonValue(retained.savedLens, nextSavedLens)) retained.savedLens = nextSavedLens;
     }
     // A settings echo may update the saved baseline; it must not overwrite this context's draft.
     if (savedSpace) retained.savedSpace = savedSpace;
@@ -329,19 +348,11 @@ export function useSessionListViewFilters(input: UseSessionListViewFiltersInput)
         setState(currentState);
     }
 
-    if (input.authoritativeHomeServerIds) {
-        const authoritativeHomeServerIds = new Set(input.authoritativeHomeServerIds);
-        const deletedHomeServerIds = currentState.filters.homeServerIds
-            .filter((serverId) => !authoritativeHomeServerIds.has(serverId));
-        if (deletedHomeServerIds.length > 0) {
-            const filters = removeAuthoritativelyDeletedHomes(
-                retained,
-                currentState.filters,
-                deletedHomeServerIds,
-            );
-            currentState = { key, filters };
-            setState(currentState);
-        }
+    const deletedHomeServerIds = listUnavailableHomes(currentState.filters.homeServerIds, authoritativeHomes);
+    if (deletedHomeServerIds.length > 0) {
+        const filters = removeAuthoritativelyDeletedHomes(retained, currentState.filters, deletedHomeServerIds);
+        currentState = { key, filters };
+        setState(currentState);
     }
 
     const mountedDefaultHomeServerIds = input.followDefaultHomeSelection === true
@@ -397,10 +408,8 @@ export function useSessionListViewFilters(input: UseSessionListViewFiltersInput)
     latestInput.current = input;
     const resetFilters = React.useCallback(() => {
         const latest = latestInput.current;
-        const savedSpace = latest.savedSpace ?? retained.savedSpace;
-        const defaults = savedSpace
-            ? normalizeSessionListViewFilters({ ...savedSpace.filter, searchQuery: '' }, latest.viewContext, latest.fixedShow, latest.fixedIncludeInactive)
-            : normalizeSessionListViewFilters(createSessionListViewFilterDefaults(retained.defaults), latest.viewContext, latest.fixedShow, latest.fixedIncludeInactive);
+        const defaults = retained.savedLens
+            ?? normalizeSessionListViewFilters(createSessionListViewFilterDefaults(retained.defaults), latest.viewContext, latest.fixedShow, latest.fixedIncludeInactive);
         // Clearing re-enters default-following: the restored selection becomes the
         // new baseline, so Homes mounting after this point join again.
         retained.defaultHomeServerIds = defaults.homeServerIds;
@@ -431,6 +440,8 @@ export function useSessionListViewFilters(input: UseSessionListViewFiltersInput)
     return React.useMemo(() => ({
         filters: currentState.filters,
         savedLens,
+        savedMembershipFilter,
+        savedSpaceHasUnavailableHomes: unavailableSavedHomes.length > 0,
         refinements,
         updateFilters,
         setSearchQuery,
@@ -438,5 +449,5 @@ export function useSessionListViewFilters(input: UseSessionListViewFiltersInput)
         resetFilters,
         showCoordinatorsRequest,
         acknowledgeShowCoordinatorsRequest,
-    }), [acknowledgeShowCoordinatorsRequest, currentState.filters, refinements, savedLens, removeAuthoritativelyDeletedSelections, resetFilters, setSearchQuery, showCoordinatorsRequest, updateFilters]);
+    }), [acknowledgeShowCoordinatorsRequest, currentState.filters, refinements, savedLens, savedMembershipFilter, unavailableSavedHomes.length, removeAuthoritativelyDeletedSelections, resetFilters, setSearchQuery, showCoordinatorsRequest, updateFilters]);
 }

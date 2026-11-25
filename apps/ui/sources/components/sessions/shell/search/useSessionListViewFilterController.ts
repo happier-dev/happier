@@ -71,6 +71,7 @@ export type SessionListViewFilterController = Readonly<{
     filters: SessionListViewFilters;
     displayFilters: SessionListViewFilters;
     spaceMembership?: SessionListSpaceMembership;
+    savedSpaceHasUnavailableHomes?: boolean;
     defaultFilters: SessionListViewFilters;
     contextDefaultFilters: SessionListViewFilters;
     updateFilters: React.Dispatch<React.SetStateAction<SessionListViewFilters>>;
@@ -174,9 +175,6 @@ export function useSessionListViewFilterController(
     const activeSpace = spaces.find(space => space.id === catalogActiveSpace?.id) ?? null;
     const contextDefaultFilters = React.useMemo(() => normalizeSessionListViewFilters(context.defaults, viewContext, fixedShow,
         corpusStorage === 'archived' ? true : undefined), [context.defaults, corpusStorage, fixedShow, teamId, teamServerId, viewContext.kind]);
-    const defaultFilters = React.useMemo(() => activeSpace
-        ? normalizeSessionListViewFilters({ ...activeSpace.filter, searchQuery: '' }, viewContext, fixedShow, corpusStorage === 'archived' ? true : undefined)
-        : contextDefaultFilters, [activeSpace, contextDefaultFilters, corpusStorage, fixedShow, teamId, teamServerId, viewContext.kind]);
     const retainedContextKey = corpusStorage === 'archived' ? `${context.contextKey}:archived` : context.contextKey;
     const participatingServerIds = viewContext.kind === 'team'
         ? [viewContext.team.serverId]
@@ -200,14 +198,17 @@ export function useSessionListViewFilterController(
         savedSpace: spacesReady ? savedSpace ?? null : undefined,
         spaceSettingsAccountScopeKey: spaceSettingsScope ? spaceAccountScopeKey : null,
     });
+    const defaultFilters = (activeSpace && retained.savedLens) || contextDefaultFilters;
     // Archived Sessions are inactive by definition, so the active list's
     // `Hide inactive sessions` preference cannot narrow this corpus: applying it
     // would make the archived destination authoritatively empty.
     const includeInactive = corpusStorage === 'archived'
         ? true
         : retained.filters.includeInactive ?? (hideInactiveSessions !== true);
-    const spaceMembership = React.useMemo<SessionListSpaceMembership | undefined>(() => activeSpace?.membership
-        ? { filter: activeSpace.filter, membership: activeSpace.membership } : undefined, [activeSpace]);
+    const membership = activeSpace?.membership;
+    const { savedMembershipFilter } = retained;
+    const spaceMembership = React.useMemo<SessionListSpaceMembership | undefined>(() => membership && savedMembershipFilter
+        ? { filter: savedMembershipFilter, membership } : undefined, [membership, savedMembershipFilter]);
     const displayFilters = spaceMembership ? retained.refinements : retained.filters;
     // Admission is decided per exact Home. One capable Home mounts the filtered
     // corpus for the whole surface; the remaining Homes contribute their own
@@ -329,7 +330,7 @@ export function useSessionListViewFilterController(
         isSpaceModified: !sameStrictJsonValue(toStoredSessionListFilter(retained.filters), toStoredSessionListFilter(defaultFilters)),
         // All accessible broadens the default corpus; other edits still need
         // their controls when empty, including conditions stored in a Space.
-        filterControlsRequired: corpusStorage === 'archived' || retained.filters.searchQuery.trim().length > 0
+        filterControlsRequired: corpusStorage === 'archived' || retained.savedSpaceHasUnavailableHomes || retained.filters.searchQuery.trim().length > 0
             || !sameStrictJsonValue({ ...retained.filters, searchQuery: '',
                 scope: retained.filters.scope === 'all_accessible' ? contextDefaultFilters.scope : retained.filters.scope,
             }, contextDefaultFilters),

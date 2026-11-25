@@ -64,6 +64,7 @@ function Host(
   props: Readonly<{
     selectedSpace: CollectionSpaceV1<'sessionWork'> | null;
     scope: AccountSettingsScope | null;
+    preserveFilterOnEdit?: boolean;
   }>,
 ) {
   editing = useCollectionSpaceEditing({
@@ -73,6 +74,7 @@ function Host(
     spaces: [base, release],
     selectedSpace: props.selectedSpace,
     currentFilter: base.filter,
+    preserveFilterOnEdit: props.preserveFilterOnEdit,
     suggestion: { name: 'Work', icon: base.icon },
     summary: [],
     anchorRef,
@@ -83,6 +85,7 @@ async function renderForm(
   input: Readonly<{
     selectedSpace?: CollectionSpaceV1<'sessionWork'>;
     scope?: AccountSettingsScope | null;
+    preserveFilterOnEdit?: boolean;
   }>,
 ) {
   const screen = await renderScreen(
@@ -92,6 +95,7 @@ async function renderForm(
       <Host
         selectedSpace={input.selectedSpace ?? null}
         scope={input.scope === undefined ? ACCOUNT : input.scope}
+        preserveFilterOnEdit={input.preserveFilterOnEdit}
       />
     </HappierUiPlatformProvider>,
   );
@@ -111,6 +115,16 @@ describe('space form writes', () => {
   beforeEach(() => {
     execute.mockClear();
     confirm.mockReset();
+  });
+
+  it('keeps the saved Home filter when editing the Space details from a local fallback', async () => {
+    const saved = { ...release, filter: { ...release.filter, homeServerIds: ['removed-space-home'] } };
+    const screen = await renderForm({ selectedSpace: saved, preserveFilterOnEdit: true });
+    await screen.pressByTestIdAsync('space-submit');
+    const command = execute.mock.calls.at(-1)?.[1];
+    expect(command).toHaveProperty('input.mutation.op', 'edit');
+    expect(command).toHaveProperty('input.mutation.changes.name', saved.name);
+    expect(command).not.toHaveProperty('input.mutation.changes.filter');
   });
 
   it('asks once before deleting a space and keeps it when the person cancels', async () => {

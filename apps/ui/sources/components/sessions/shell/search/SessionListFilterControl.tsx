@@ -1,4 +1,8 @@
 import * as React from 'react';
+import { Pressable, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+
+import { Text } from '@/components/ui/text/Text';
 import type { SessionListScopeV1 } from '@happier-dev/protocol/sessions/listing/query';
 import type { EntityListFilterResultV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
 import type { CollectionConditionValueCountRequest, CollectionConditionValueCounts } from '@happier-dev/plugin-ui/components';
@@ -26,6 +30,12 @@ import { collectionSpaceSettingRefs } from '@/components/settings/session/collec
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import type { SessionListConditionCopy } from './sessionListConditionFields';
 import { buildSessionListFacets } from './sessionListFacets';
+
+const styles = StyleSheet.create((theme) => ({
+    missingHomes: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 8, paddingHorizontal: 8 },
+    missingHomesReason: { color: theme.colors.text.secondary, flexShrink: 1 },
+    missingHomesEdit: { color: theme.colors.text.link },
+}));
 
 /** The collapsed control's name for a scope ("My work"). Shared with any surface that edits a Sessions filter. */
 export function readSessionListScopeLabel(scope: SessionListScopeV1): string {
@@ -359,6 +369,14 @@ export const SessionListFilterControl = React.memo(function SessionListFilterCon
                 onEdit={spaceChrome.openEdit}
             />
             </SettingAnchor>
+            {controller.activeSpace && controller.savedSpaceHasUnavailableHomes && (
+                <View style={styles.missingHomes} testID="session-list-space-missing-homes">
+                    <Text variant="meta" style={styles.missingHomesReason}>{t('sessionsList.spacesMissingHomes')}</Text>
+                    <Pressable accessibilityRole="button" onPress={spaceChrome.openEdit} testID="session-list-space-missing-homes-edit">
+                        <Text variant="meta" style={styles.missingHomesEdit}>{t('sessionsList.spacesEdit')}</Text>
+                    </Pressable>
+                </View>
+            )}
             {editorControl}
         </>
     );

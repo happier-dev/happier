@@ -353,6 +353,12 @@ Settings Actions, but are device navigation state rather than searchable Setting
 rows. Session defaults use source `all`; the list controller owns temporary source
 conditions and the tablet empty pane consumes that same projection.
 
+In 0.3 development source, Sessions applies a saved Space's Home selection using the
+Homes registered on the device. When none of the selected Homes are present, its
+remaining filters and membership apply across the available Homes. The Space
+header explains missing Homes next to Edit space. Viewing the Space or editing
+its details keeps the saved Home selection.
+
 Space enablement is an Account preference in 0.3 development source. The
 `spaces.enabled` declaration controls the master preference;
 `session.list.spacesEnabled`, `workflow.list.spacesEnabled` and

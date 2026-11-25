@@ -31,6 +31,44 @@ afterEach(() => {
 });
 
 describe('useSessionListViewFilters', () => {
+    it.each([[[]], [['home-a']]])('uses the same admitted Home selections for a saved lens and its draft (%j)', async availableSelection => {
+        const defaults = resolveSessionListViewContextDefaults({ kind: 'global' }, ['home-a', 'home-b'], 'all').defaults;
+        const savedHomeServerIds = [...availableSelection, 'removed-space-home'];
+        const savedSpace = { accountScopeKey: 'account-a', id: 'smart', filter: {
+            ...defaults, scope: 'my_work' as const, homeServerIds: savedHomeServerIds,
+            tagIds: [{ serverId: 'home-a', tagId: 'work-tag' }, { serverId: 'removed-space-home', tagId: 'other-tag' }],
+        } };
+        const localHomes = ['home-a', 'home-b'];
+        const accountScopeResolutions = boundAccountScopes(
+            { serverId: 'home-a', accountId: 'account-a' }, { serverId: 'home-b', accountId: 'account-b' },
+        );
+        const hook = await renderHook((authoritativeHomeServerIds: readonly string[]) => useSessionListViewFilters({
+            contextKey: 'global', defaults, savedSpace, authoritativeHomeServerIds, accountScopeResolutions,
+        }), { initialProps: localHomes as readonly string[] });
+        const checkScope = () => {
+            const { filters, savedLens, savedMembershipFilter, savedSpaceHasUnavailableHomes, refinements } = hook.getCurrent();
+            expect(filters.homeServerIds).toEqual(availableSelection);
+            expect(savedLens?.homeServerIds).toEqual(availableSelection);
+            expect(savedLens?.tagIds).toEqual(savedSpace.filter.tagIds);
+            expect(savedSpaceHasUnavailableHomes).toBe(true);
+            expect(savedMembershipFilter?.homeServerIds).toEqual(availableSelection);
+            const membership = { filter: savedMembershipFilter!, membership: { mode: 'filter_or_manual' as const, tags: [] } };
+            const homeQueries = buildSessionListFilterQueryHomes(refinements, {
+                spaceMembership: membership, storage: 'active', includeInactive: true, mountedHomeServerIds: ['home-a', 'home-b'],
+            });
+            expect(homeQueries.find(home => home.serverId === 'home-a')?.query.membership?.filter)
+                .toMatchObject({ scope: 'my_work', tagIds: ['work-tag'] });
+            expect(savedSpace.filter.homeServerIds).toEqual(savedHomeServerIds);
+        };
+        checkScope();
+        await act(async () => hook.getCurrent().resetFilters());
+        checkScope();
+        const restored = await hook.rerender([...localHomes, 'removed-space-home']);
+        expect(restored.savedSpaceHasUnavailableHomes).toBe(false);
+        expect(restored.savedMembershipFilter).toBe(savedSpace.filter);
+        expect(restored.filters.homeServerIds).toEqual(savedHomeServerIds);
+    });
+
     it('keeps the saved lens separate from temporary narrowing and resets that narrowing', async () => {
         const defaults = resolveSessionListViewContextDefaults({ kind: 'global' }, ['home-a'], 'all').defaults;
         const savedSpace = { accountScopeKey: 'account-a', id: 'smart', filter: { ...defaults, source: 'persisted' as const } };

@@ -15369,6 +15369,7 @@ const sessionListFilterTranslations = { zhHant: translated({
         requestPeekReplaced: '此請求已變更。回覆前請先檢視新請求。',
         requestPeekReviewNew: '檢視新請求',
         requestPeekUnavailable: '目前無法開啟此請求。',
+        spacesMissingHomes: '此空間包含一個不在此裝置上的 Home。',
         spacesTitle: '空間', spacesSelectedTitle: '此裝置上選取的空間',
         querySpaceEmptyTitle: ({ name }: { name: string }) => `${name} 中沒有內容`,
         querySpaceEmptyDescription: "從列選單加入工作階段，或變更此空間顯示的內容。",

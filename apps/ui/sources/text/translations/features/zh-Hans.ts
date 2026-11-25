@@ -15369,6 +15369,7 @@ const sessionListFilterTranslations = { zhHans: translated({
         requestPeekReplaced: '此请求已更改。回复前请先查看新请求。',
         requestPeekReviewNew: '查看新请求',
         requestPeekUnavailable: '暂时无法打开此请求。',
+        spacesMissingHomes: '此空间包含一个不在此设备上的 Home。',
         spacesTitle: '空间', spacesSelectedTitle: '此设备上选择的空间',
         querySpaceEmptyTitle: ({ name }: { name: string }) => `${name} 中没有内容`,
         querySpaceEmptyDescription: "从行菜单添加会话，或更改此空间显示的内容。",

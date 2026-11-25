@@ -15507,6 +15507,7 @@ const sessionListFilterTranslations = { ru: translated({
         requestPeekReplaced: 'Этот запрос изменился. Просмотрите новый перед ответом.',
         requestPeekReviewNew: 'Просмотреть новый запрос',
         requestPeekUnavailable: 'Сейчас не удаётся открыть этот запрос.',
+        spacesMissingHomes: 'В этом пространстве есть Home, которого нет на этом устройстве.',
         spacesTitle: 'Пространства', spacesSelectedTitle: 'Выбранное пространство на этом устройстве',
         querySpaceEmptyTitle: ({ name }: { name: string }) => `В ${name} пусто`,
         querySpaceEmptyDescription: "Добавьте сессии через меню строки или измените, что показывает это пространство.",

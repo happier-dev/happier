@@ -163,6 +163,7 @@ export function useSessionListSpaceChrome(
     spaces: controller.spaces,
     selectedSpace: controller.activeSpace,
     currentFilter: storedFilter,
+    preserveFilterOnEdit: controller.savedSpaceHasUnavailableHomes,
     suggestion,
     summary,
     everywhereChoice: true,
