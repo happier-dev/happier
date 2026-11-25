@@ -65,7 +65,7 @@ it('keeps host Review services on their captured Home with refreshed Account cre
         })).toString('base64url')}.signature`,
         encryption: null, credentialProvenance: 'stored_session' as const,
     });
-    const installed = credential('installed-account', 1);
+    const installed = credential('requester-account', 1);
     let current: ReturnType<typeof credential> | null = credential('requester-account', 1);
     const reads: Array<{ url: string; authorization: unknown }> = [];
     // HTTP is the boundary; credential selection, host context and Review ports remain real.
@@ -101,6 +101,9 @@ it('keeps host Review services on their captured Home with refreshed Account cre
                 .rejects.toMatchObject({ code: 'review_comment_encryption_material_unavailable' });
         });
     }
+    expect(reads).toHaveLength(4);
+    current = credential('foreign-account', 1);
+    await expect(resolve(context)).resolves.toEqual({});
     expect(reads).toHaveLength(4);
     current = null;
     await expect(resolve(context)).resolves.toEqual({});
