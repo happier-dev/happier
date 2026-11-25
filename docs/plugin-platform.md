@@ -14895,6 +14895,22 @@ The [plugin execution-run guide](../apps/docs/content/docs/plugins/agent-runtime
 shows the authoring shape.
 
 
+### Review runner presentation (0.3 development)
+
+Public Plugin UI `ReviewRunnerPicker` delegates to the same native runner-row
+presenter consumed by `ExecutionRunEngineRunnerPicker`.
+`ConnectedAccountPurposeTargetChooser` delegates to the existing connected-account
+purpose chooser. Neither facade owns Agent discovery, readiness, account
+eligibility, credentials or launch admission; they carry offered rows and account
+references through optional presentation-host ports. Unsupported hosts render an
+unavailable state. SDK account-purpose declaration and binding types remain
+projections of their canonical Protocol owners.
+The public chooser's optional `teamCredentialScope` names a consumer's execution
+Home and Machine. Its native adapter delegates demand and reload to
+`useHomeTeamCredentialModelCatalog`, behind the canonical Team-credentials
+feature decision. Other consumers retain personal targets; `teamResourcesOnly`
+preserves the native chooser's Team-default editing semantics.
+
 ### Review contextual plugin presentation (0.3 development)
 
 The opened Review owner supplies read-only `mount.review` context to existing

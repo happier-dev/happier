@@ -1,6 +1,9 @@
 export type {
     ConnectedAccountPurposeDeclarationsV1 as ConnectedAccountPurposeDeclarations,
 } from '@happier-dev/protocol/connect/connected-account-purposes';
+export type {
+    AgentConnectedAccountPurposeTeamResourceDefault,
+} from '@happier-dev/protocol/account/settings/connected-services';
 
 import type {
     AuthCallbackCreateInput,

@@ -68,6 +68,8 @@ export type { PluginConnectedAccountOAuthCompletion as ConnectedAccountOAuthComp
 export type { ConnectedAccountProviderIdentity } from '../services/connectedAccounts.js';
 export type { ConnectedAccountPurposeDeclaration } from '../connectedAccounts.js';
 export type { ConnectedAccountPurposeDeclarations } from './projections.js';
+export type { AgentConnectedAccountPurposeTeamResourceDefault } from './projections.js';
+export type { QualifiedConnectedAccountPurposeBindingTarget } from '../connectedAccounts.js';
 export type { ConnectedAccountPurposeId } from '../connectedAccounts.js';
 export type { PluginConnectedAccountReadContext as ConnectedAccountReadContext } from '../services/connectedAccounts.js';
 export type { PluginConnectedAccountReconciliationResult as ConnectedAccountReconciliationResult } from '../services/connectedAccounts.js';

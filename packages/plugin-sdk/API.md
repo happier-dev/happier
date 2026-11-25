@@ -1523,6 +1523,7 @@
 | `./collections` | `createInMemoryAccountCollection` | value | any |
 | `./collections` | `defineAccountCollection` | value | daemon |
 | `./collections` | `projectPluginAccountCollectionDeclaration` | value | any |
+| `./connected-accounts` | `AgentConnectedAccountPurposeTeamResourceDefault` | type | any |
 | `./connected-accounts` | `AuthCallbackCreateInput` | type | any |
 | `./connected-accounts` | `AuthCallbackCreateResult` | type | any |
 | `./connected-accounts` | `AuthCallbackMode` | type | any |
@@ -1627,6 +1628,7 @@
 | `./connected-accounts` | `ProviderLimitEvidenceProvenance` | type | any |
 | `./connected-accounts` | `ProviderResetTextEvidenceParser` | type | any |
 | `./connected-accounts` | `ProviderResetTiming` | type | any |
+| `./connected-accounts` | `QualifiedConnectedAccountPurposeBindingTarget` | type | any |
 | `./connected-accounts` | `QualifiedConnectedAccountPurposeV1` | type | any |
 | `./connected-accounts` | `QualifiedConnectedAccountRef` | type | any |
 | `./connected-accounts` | `QualifiedConnectedAccountRefJsonSchema` | value | any |

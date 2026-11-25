@@ -37,6 +37,8 @@ export { ApprovalFields, type ApprovalFieldRow, type ApprovalFieldsProps } from 
 export { ApprovalPendingNotice, type ApprovalPendingNoticeProps } from './ApprovalPendingNotice.js';
 export { ApprovalPrompt, type ApprovalPromptProps } from './ApprovalPrompt.js';
 export { AgentActionButton, type AgentActionButtonProps, type AgentActionLaunchMode } from './AgentActionButton.js';
+export { ReviewRunnerPicker, type ReviewRunnerPickerOption, type ReviewRunnerPickerProps } from './ReviewRunnerPicker.js';
+export { ConnectedAccountPurposeTargetChooser, type ConnectedAccountPurposeTargetChooserProps } from './ConnectedAccountPurposeTargetChooser.js';
 export {
   Button,
   IconButton,

@@ -45,6 +45,8 @@ import type { VoiceAttemptPresentation } from '@happier-dev/plugin-sdk/voice';
 import type { PluginUiScrollActivityTracker } from './scrollActivity.js';
 import type { FindSurfaceRegistrationHost } from '../presentation/find/useFindSurfaceRegistration.js';
 import type { ExecutableParticipantPickerProps } from '../components/ExecutableParticipantPicker.js';
+import type { ReviewRunnerPickerProps } from '../components/ReviewRunnerPicker.js';
+import type { ConnectedAccountPurposeTargetChooserProps } from '../components/ConnectedAccountPurposeTargetChooser.js';
 import type { SecretValueControlsProps, SecretValueTextProps } from '../components/SecretValueDisclosure.js';
 import type { SavedSecretChoiceListProps } from '../components/SavedSecretChoiceList.js';
 import type { DetailsPaneOpenAsPageButtonProps } from '../components/DetailsPaneOpenAsPageButton.js';
@@ -506,6 +508,10 @@ export type PluginUiPresentationHost = Readonly<{
   renderSessionPart?(input: PluginUiSessionPartPresentation): ReactNode;
   /** One controlled choice/search presenter; no participant inventory or execution authority. */
   renderExecutableParticipantPicker?(input: ExecutableParticipantPickerProps): ReactNode;
+  /** Shared Review runner rows; admission and the selected model/account controls stay with their owners. */
+  renderReviewRunnerPicker?(input: ReviewRunnerPickerProps): ReactNode;
+  /** The existing purpose-target chooser returns references, never credentials. */
+  renderConnectedAccountPurposeTargetChooser?(input: ConnectedAccountPurposeTargetChooserProps): ReactNode;
   /** The one secret value text and its reveal/Copy controls; the author's own value and callbacks, no host secret. */
   renderSecretValueText?(input: SecretValueTextProps): ReactNode;
   renderSecretValueControls?(input: SecretValueControlsProps): ReactNode;

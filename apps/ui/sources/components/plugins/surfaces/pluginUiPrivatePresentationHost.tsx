@@ -6,6 +6,8 @@ import { PluginModalCardFooterSlotContext } from './pluginModalCardFooterSlot';
 import { useShareGrantRowPresentation } from '@/components/sharing/sharePresentationHost';
 import type { PluginSurfaceActionControls } from './pluginSurfaceActionControls';
 import { PluginAutomationSubjectPicker } from './PluginAutomationSubjectPicker';
+import { renderReviewRunnerPicker } from '@/components/sessions/runs/launcher/ReviewRunnerPickerPresentation';
+import { PluginConnectedAccountPurposeTargetChooser } from './PluginConnectedAccountPurposeTargetChooser';
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { PluginSurfaceTarget } from '@happier-dev/plugin-sdk/ui';
@@ -123,6 +125,7 @@ import { HorizontalScrollEdgeMask } from '@/components/ui/scroll/HorizontalScrol
 import { useSheetDismiss } from '@/modal/components/card/sheetDragDismiss';
 import type { BotFaceProps, PageAsideColumnsProps, PagePinnedBarProps, KeyboardStickyFooterProps } from '@happier-dev/plugin-ui/components';
 import type { ExecutableParticipantPickerProps, SavedSecretChoiceListProps, SecretValueControlsProps, SecretValueTextProps } from '@happier-dev/plugin-ui/components';
+import type { ConnectedAccountPurposeTargetChooserProps } from '@happier-dev/plugin-ui/components';
 import { SecretValueControls, SecretValueText } from '@/components/ui/copy/SecretValueDisclosure';
 import { SavedSecretReferenceChoice } from '@/components/ui/forms/valueRefs/SavedSecretPickerModal';
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
@@ -440,6 +443,10 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
     collectionColumns: { useShownFieldKeys: useCollectionShownFieldKeys },
     renderExecutableParticipantPicker(input: ExecutableParticipantPickerProps) {
         return <ExecutableParticipantPickerPresentation {...input} />;
+    },
+    renderReviewRunnerPicker,
+    renderConnectedAccountPurposeTargetChooser(input: ConnectedAccountPurposeTargetChooserProps) {
+        return <PluginConnectedAccountPurposeTargetChooser {...input} />;
     },
     renderSecretValueText({ unavailableLabel: _unavailable, ...input }: SecretValueTextProps) {
         return <SecretValueText {...input} />;

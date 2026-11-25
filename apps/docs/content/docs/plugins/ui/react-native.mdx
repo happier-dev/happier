@@ -2635,6 +2635,34 @@ the surface environment. The words stay yours: a row says the owner's own state
 ("Waiting for approval"), never the bucket label. A row carries no answer
 controls; open the place where the request is answered once.
 
+## Review runner and account controls (0.3 development)
+
+Import `ReviewRunnerPicker` and `ConnectedAccountPurposeTargetChooser` from
+`@happier-dev/plugin-ui/components` in a mounted native plugin surface.
+`ReviewRunnerPicker` draws the same Agent rows as the built-in Review launcher;
+pass the owner's offered `options`, `selectedId`, and `onSelect`, with optional
+`children` for configuration and `addMember` for panel composition. It does not
+discover Agents or decide their availability.
+
+`ConnectedAccountPurposeTargetChooser` takes the declaring plugin's
+`localizedTextPluginId`, a public SDK account-purpose `declaration`, the selected
+`value`, and `onChange(target, teamResource)`. The host owns account eligibility,
+labels, group selection and connection. Use `accountsOnly` when the caller stores
+one exact account. Callbacks contain references, never credentials. Hosts without
+these presentation controls show an unavailable state.
+
+For a consumer that materializes the purpose inside an execution, pass
+`teamCredentialScope={{ serverId, machineId }}`. The native Home catalog then
+offers the viewer's entitled Team resources for that execution Machine, using
+the same feature decision and discovery owner as built-in surfaces. Omit the
+scope on consumers that cannot use Team credentials. `teamResourcesOnly` offers
+only Team choices when the selection is made for other people.
+
+These are unreleased 0.3 development exports. Runner declarations, account
+purposes, repository/change scopes, engine options and finding extensions use the
+same [execution-run SDK contracts](/docs/plugins/agent-runtimes/execution-runs)
+for bundled and third-party engines.
+
 ## Review findings (0.3 development)
 
 `HappierReviewFinding` and `HappierReviewFindingBody` draw the same finding
