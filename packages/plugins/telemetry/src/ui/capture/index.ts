@@ -18,6 +18,7 @@ export {
   CapturedRequestLogs,
   CapturedRequestSlowest,
   CapturedRequestWaterfall,
+  projectCapturedLogBody,
   type CapturedLogBodyReader,
   type CapturedTraceV1,
 } from './CapturedRequest.js';

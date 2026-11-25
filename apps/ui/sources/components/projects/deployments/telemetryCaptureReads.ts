@@ -34,6 +34,7 @@ import {
   type TelemetryMetricsReadInputV1,
 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
+import { projectCapturedLogBody } from '@happier-dev/plugins-telemetry/capture-views';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { PluginUiTelemetryCaptureReadReferenceV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
@@ -350,7 +351,7 @@ export function createTelemetryCaptureReads(
       ));
     },
     /** A cut log line's whole body, only when the person opens it. */
-    async logBody(id: string, signal?: AbortSignal): Promise<string | null> {
+    async logBody(id: string, signal?: AbortSignal) {
       const read = settle(
         DatabaseCaptureQueryGetResultV1Schema.safeParse(
           await call(
@@ -363,9 +364,7 @@ export function createTelemetryCaptureReads(
           ),
         ),
       );
-      const body = read.detail?.body;
-      if (body === undefined || body === null) return null;
-      return typeof body === 'string' ? body : JSON.stringify(body);
+      return projectCapturedLogBody(read.detail);
     },
   };
 }

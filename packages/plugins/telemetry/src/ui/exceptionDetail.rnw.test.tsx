@@ -222,7 +222,8 @@ const TRACE = {
 const collectorRead = (input: Record<string, unknown>, localId: string): Promise<JsonValue> => {
   if (localId === 'capture/trace/get') return Promise.resolve(TRACE as unknown as JsonValue);
   if (localId === 'capture/query/get')
-    return Promise.resolve({ ok: true, source: TRACE.source, detail: { body: `body of ${String(input.id)}` } } as JsonValue);
+    return Promise.resolve({ ok: true, source: TRACE.source,
+      detail: { log: { body: `body of ${String(input.id)}` }, secretMasking: 'incomplete' } } as JsonValue);
   return okRead(input);
 };
 
@@ -352,6 +353,7 @@ describe('the Happier exception detail', () => {
     // Open, the line reads its whole message in place of the cut start, never both.
     await vi.waitFor(() => {
       expect(document.body.textContent).toContain('body of log-2');
+      expect(document.body.textContent).toContain('Log text may contain secrets.');
     });
     expect(document.body.textContent).not.toContain('TypeError: Cannot read properties of undefined…');
     expect(calls.filter((call) => call.localId === 'capture/query/get').map((call) => call.input)).toEqual([

@@ -25,7 +25,7 @@ import {
   type ExceptionOccurrenceV1,
 } from './exceptionReads.js';
 import { projectWaterfall, requestLabelOf } from './traceWaterfall.js';
-import { CapturedRequestLogs, CapturedRequestWaterfall, type CapturedLogBodyReader } from './capture/CapturedRequest.js';
+import { CapturedRequestLogs, CapturedRequestWaterfall, projectCapturedLogBody, type CapturedLogBodyReader } from './capture/CapturedRequest.js';
 
 const TRACE_ACTION = Object.freeze({
   pluginId: TELEMETRY_PLUGIN_ID,
@@ -47,13 +47,6 @@ function failureCode(execution: PluginActionExecution<unknown>): string {
     : 'telemetry_trace_unreadable';
 }
 
-
-function bodyText(detail: unknown): string | null {
-  if (detail === null || typeof detail !== 'object') return null;
-  const body = (detail as Record<string, unknown>).body;
-  if (body === undefined || body === null) return null;
-  return typeof body === 'string' ? body : JSON.stringify(body);
-}
 
 function useOccurrenceTrace(
   source: DatabaseCaptureSourceV1,
@@ -161,7 +154,7 @@ function RequestLogs({
         ? DatabaseCaptureQueryGetResultV1Schema.safeParse(execution.result)
         : null;
     if (!parsed?.success || !parsed.data.ok) throw new Error('telemetry_log_unavailable');
-    return bodyText(parsed.data.detail);
+    return projectCapturedLogBody(parsed.data.detail);
   }, [execute, signal, trace.source]);
   return (
     <CapturedRequestLogs

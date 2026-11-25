@@ -231,7 +231,9 @@ removing an export require separate live verification.
 The unreleased telemetry integration connects an app that already exports
 OpenTelemetry traces, logs and selected metrics to a Machine with the **Telemetry** role. It does
 not instrument the app automatically. The collector stores telemetry on that
-Machine; the Home does not receive the captured SQL, traces, or log content.
+Machine. Captured SQL, traces, and log content stay on the collector. Happier
+masks known secret patterns in logs. Expanded log text may still contain
+secrets written by the app.
 
 The initial deployment path uses the app's own Machine with native Linux Docker.
 The receiver listens on localhost, and the deployment's private container bridge

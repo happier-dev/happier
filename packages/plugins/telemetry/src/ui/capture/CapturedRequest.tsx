@@ -26,6 +26,7 @@ import {
 } from '@happier-dev/plugin-ui/components';
 import type {
   DatabaseCaptureSummaryV1,
+  DatabaseCaptureQueryGetResultV1,
   DatabaseCaptureTraceGetResultV1,
 } from '@happier-dev/database-protocol';
 
@@ -38,12 +39,27 @@ export type CapturedTraceV1 = Extract<
   { ok: true }
 >;
 
+type CapturedLogBody = Readonly<{ text: string; secretMaskingIncomplete: boolean }>;
+
 /** Reads the whole body of one cut log line; resolves null for a line with no message, rejects when unavailable. */
-export type CapturedLogBodyReader = (logId: string) => Promise<string | null>;
+export type CapturedLogBodyReader = (logId: string) => Promise<CapturedLogBody | null>;
+
+export function projectCapturedLogBody(
+  detail: Extract<DatabaseCaptureQueryGetResultV1, { ok: true }>['detail'],
+): CapturedLogBody | null {
+  const log = detail?.log;
+  if (log === null || typeof log !== 'object' || Array.isArray(log) || !('body' in log)) return null;
+  const body = log.body;
+  if (body === undefined || body === null) return null;
+  return {
+    text: typeof body === 'string' ? body : JSON.stringify(body),
+    secretMaskingIncomplete: detail?.secretMasking === 'incomplete',
+  };
+}
 
 type BodyState =
   | Readonly<{ kind: 'loading' }>
-  | Readonly<{ kind: 'ready'; body: string | null }>
+  | Readonly<{ kind: 'ready'; body: CapturedLogBody | null }>
   | Readonly<{ kind: 'unavailable' }>;
 
 /** The log card keeps the sheet's row insets; its lines stack at the code line height, as the lab's log block. */
@@ -350,7 +366,7 @@ function CapturedLogLine({
         ? `${prefix ?? ''}…`
         : body.kind === 'unavailable'
           ? text('plugins.telemetry.exceptions.logUnavailable', 'The collector didn’t return this line.')
-          : (body.body ?? text('plugins.telemetry.exceptions.logEmpty', 'This line has no message.'));
+          : (body.body?.text ?? text('plugins.telemetry.exceptions.logEmpty', 'This line has no message.'));
   // Lines wrap rather than cut: on a phone the clock leaves the message room, so no line is a dead end.
   // The clock, level and service are the line's fixed lead; the message is its own column, so a long one wraps
   // under its own first word rather than back under the clock.
@@ -388,6 +404,9 @@ function CapturedLogLine({
       ) : (
         line
       )}
+      {body?.kind === 'ready' && body.body?.secretMaskingIncomplete ? (
+        <Text variant="meta" tone="secondary" value={text('plugins.telemetry.capture.logMaskingIncomplete', 'Log text may contain secrets.')} />
+      ) : null}
     </Stack>
   );
 }
