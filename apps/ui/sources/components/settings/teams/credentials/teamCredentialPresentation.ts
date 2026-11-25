@@ -15,8 +15,9 @@ import type {
 } from '@happier-dev/protocol/teams';
 
 import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
+import type { AttentionBannerAction } from '@/components/ui/lists/AttentionBanner';
 import { t } from '@/text';
-import { teamMutationFailureLabel } from '../teamMutationPresentation';
+import { teamMutationFailureLabel, teamReadFailureAction, teamReadFailureLabel, type TeamReadFailureRetry } from '../teamMutationPresentation';
 import type { ConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { getConnectedAccountNativeLoginConstraints } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { resolveQualifiedConnectedServiceMarkId } from '@/components/settings/connectedServices/model/resolveQualifiedConnectedServiceMarkId';
@@ -415,6 +416,33 @@ export function credentialDirectExportFailureMessage(
         ? source.target.account.service : source?.kind === 'connected_pool' ? source.target.service : undefined)
         ?? t('teams.credentials.edit.directUnsupported');
     return failure === undefined ? undefined : failure.message ?? t('common.unavailable');
+}
+
+export function presentCredentialListReadFailure(
+    failure: HomeDomainFailure<string>,
+    recovery: Readonly<{
+        retry: TeamReadFailureRetry;
+        openActionSettings: () => void;
+        signIn: AttentionBannerAction;
+    }>,
+): Readonly<{ message: string; action?: AttentionBannerAction }> {
+    switch (failure.code) {
+        case 'invalid_resource_input':
+            return { message: t('teams.credentials.errors.invalidResourceRead') };
+        case 'not_found_or_not_visible':
+            return { message: t('teams.credentials.detail.notFound') };
+        case 'feature_disabled':
+            return { message: t('teams.credentials.errors.featureDisabled') };
+        case 'team_authentication_policy_unavailable':
+            return { message: t('teams.credentials.externalApi.authenticationUnavailable') };
+        case 'team_authentication_required':
+            return { message: t('teams.credentials.errors.teamAuthenticationRequired'), action: recovery.signIn };
+        default:
+            return {
+                message: teamReadFailureLabel(failure),
+                action: teamReadFailureAction(failure, recovery.retry, recovery.openActionSettings),
+            };
+    }
 }
 
 export function credentialFailureMessage(failure: HomeDomainFailure<string>): string | null {

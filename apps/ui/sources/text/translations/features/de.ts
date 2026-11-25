@@ -17709,6 +17709,7 @@ const german: TeamsTranslationRoot = {
             },
             errors: {
                 featureDisabled: 'Dieses Home bietet keine geteilten Zugangsdaten an.',
+                invalidResourceRead: "Dieses Home hat die Anfrage nach Anmeldedatenoptionen abgelehnt.",
                 teamAuthenticationRequired: 'Melde dich zuerst bei diesem Team an.',
                 teamAuthenticationPolicyUnavailable: 'Die Anmelderichtlinie dieses Teams konnte nicht gelesen werden, daher wurde nichts ge\u00e4ndert.',
                 memberNotEligible: 'Diese Person kann diese Zugangsdaten nicht verwenden.',

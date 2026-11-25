@@ -17771,6 +17771,7 @@ const traditionalChinese: TeamsTranslationRoot = {
             },
             errors: {
                 featureDisabled: '\u6b64 Home \u4e0d\u63d0\u4f9b\u5171\u7528\u6191\u8b49\u3002',
+                invalidResourceRead: "此 Home 未接受取得憑證選項的要求。",
                 teamAuthenticationRequired: '\u8acb\u5148\u767b\u5165\u6b64\u5718\u968a\u518d\u7e7c\u7e8c\u3002',
                 teamAuthenticationPolicyUnavailable: '\u7121\u6cd5\u8b80\u53d6\u6b64\u5718\u968a\u7684\u767b\u5165\u653f\u7b56\uff0c\u56e0\u6b64\u6c92\u6709\u8b8a\u66f4\u4efb\u4f55\u5167\u5bb9\u3002',
                 memberNotEligible: '\u6b64\u4eba\u7121\u6cd5\u4f7f\u7528\u6b64\u6191\u8b49\u3002',

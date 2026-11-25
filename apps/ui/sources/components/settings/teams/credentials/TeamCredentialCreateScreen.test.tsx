@@ -15,6 +15,7 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const routerPush = vi.hoisted(() => vi.fn());
 const routerReplace = vi.hoisted(() => vi.fn());
 const routerBack = vi.hoisted(() => vi.fn());
 const confirmPolicyInvalidation = vi.hoisted(() => vi.fn(async () => true));
@@ -32,7 +33,7 @@ installProviderSettingsRpcBoundary(providerHarness);
 
 installSettingsViewCommonModuleMocks({
     router: async () => ({
-        useRouter: () => ({ push: vi.fn(), back: routerBack, replace: routerReplace }),
+        useRouter: () => ({ push: routerPush, back: routerBack, replace: routerReplace }),
         useNavigation: () => ({ setOptions: vi.fn() }),
         useLocalSearchParams: () => ({}),
     }),
@@ -200,6 +201,7 @@ beforeEach(async () => {
     resetTeamActionClientForTests();
     await harness.reset();
     await harness.selectHomes([]);
+    routerPush.mockReset();
     routerReplace.mockReset();
     routerBack.mockReset();
     confirmPolicyInvalidation.mockClear();
@@ -345,6 +347,36 @@ describe('TeamCredentialCreateScreen', () => {
         await screen.pressByTestIdAsync('team-credential-create-retry');
 
         await waitForTestId(screen, 'team-credential-create-source');
+    });
+
+    it.each([
+        { status: 400, error: 'invalid_resource_input', reason: 'teams.credentials.errors.invalidResourceRead' },
+        { status: 404, error: 'not_found_or_not_visible', reason: 'teams.credentials.detail.notFound' },
+        { status: 503, error: 'feature_disabled', reason: 'teams.credentials.errors.featureDisabled' },
+        { status: 503, error: 'team_authentication_policy_unavailable', reason: 'teams.credentials.externalApi.authenticationUnavailable' },
+    ])('shows a settled credential list refusal $error without Retry', async ({ status, error, reason }) => {
+        const serverId = await addHome();
+        harness.answer(serverId, LIST_PATH, { status, body: { error } });
+        const screen = await renderCreate(serverId);
+
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(reason));
+        expect(screen.findByTestId('team-credential-create-retry')).toBeNull();
+        expect(screen.findByTestId('team-credential-create-loading')).toBeNull();
+    });
+
+    it('offers sign-in to the exact Team after the credential assessment requires it', async () => {
+        const serverId = await addHome();
+        harness.answer(serverId, LIST_PATH, { status: 403, body: { error: 'team_authentication_required' } });
+        const screen = await renderCreate(serverId);
+
+        await waitForTestId(screen, 'team-credential-create-sign-in');
+        expect(screen.findByTestId('team-credential-create-retry')).toBeNull();
+        await screen.pressByTestIdAsync('team-credential-create-sign-in');
+
+        const [href] = routerPush.mock.lastCall ?? [];
+        const destination = new URL(href, 'https://app.example');
+        expect(destination.pathname).toBe('/teams/team-1/sign-in');
+        expect(destination.searchParams.get('serverId')).toBe(serverId);
     });
 
     it('lets a source-only member offer a bare resource without manager controls', async () => {

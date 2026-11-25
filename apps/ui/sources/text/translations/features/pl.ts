@@ -17923,6 +17923,7 @@ const polish: TeamsTranslationRoot = {
             },
             errors: {
                 featureDisabled: 'Ten Home nie udost\u0119pnia wsp\u00f3\u0142dzielonych po\u015bwiadcze\u0144.',
+                invalidResourceRead: "Ten Home odrzucił żądanie listy opcji poświadczeń.",
                 teamAuthenticationRequired: 'Zaloguj si\u0119 do tego zespo\u0142u, zanim przejdziesz dalej.',
                 teamAuthenticationPolicyUnavailable: 'Nie uda\u0142o si\u0119 odczyta\u0107 zasad logowania tego zespo\u0142u, wi\u0119c nic nie zosta\u0142o zmienione.',
                 memberNotEligible: 'Ta osoba nie mo\u017ce korzysta\u0107 z tego po\u015bwiadczenia.',

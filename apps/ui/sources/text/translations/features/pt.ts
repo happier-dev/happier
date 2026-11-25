@@ -17881,6 +17881,7 @@ const portuguese: TeamsTranslationRoot = {
             },
             errors: {
                 featureDisabled: 'Este Home n\u00e3o oferece credenciais partilhadas.',
+                invalidResourceRead: "Este Home recusou o pedido de opções de credenciais.",
                 teamAuthenticationRequired: 'Inicie sess\u00e3o nesta equipa antes de continuar.',
                 teamAuthenticationPolicyUnavailable: 'N\u00e3o foi poss\u00edvel ler a pol\u00edtica de in\u00edcio de sess\u00e3o desta equipa, por isso nada foi alterado.',
                 memberNotEligible: 'Esta pessoa n\u00e3o pode usar esta credencial.',

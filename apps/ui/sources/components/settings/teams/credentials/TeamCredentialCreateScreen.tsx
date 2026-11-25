@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type { TeamCredentialRouteV1, TeamCredentialSessionUsePolicyV1, TeamCredentialUsageLimitDefinitionV1 } from '@happier-dev/protocol/teams';
+import { teamSignInReturnPath } from '@/components/teams/entry/teamSignInHome';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -26,8 +27,8 @@ import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelC
 import { getPreferredLanguage, t } from '@/text';
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
-import { teamCredentialDetailPath } from '../teamsRoutes';
-import { credentialApprovalFailureMessage, credentialDirectExportFailureMessage, credentialFailureMessage, deliveryModeLabel, limitMetricLabel, limitPeriodLabel, limitSubjectKindLabel, requestProtocolKindLabel, sessionUsePolicyLabel, sourceKindLabel } from './teamCredentialPresentation';
+import { teamCredentialCreatePath, teamCredentialDetailPath } from '../teamsRoutes';
+import { credentialApprovalFailureMessage, credentialDirectExportFailureMessage, credentialFailureMessage, deliveryModeLabel, limitMetricLabel, limitPeriodLabel, limitSubjectKindLabel, presentCredentialListReadFailure, requestProtocolKindLabel, sessionUsePolicyLabel, sourceKindLabel } from './teamCredentialPresentation';
 import { TeamCredentialAudiencePicker } from './TeamCredentialAudiencePicker';
 import { useOpenedTeamCredentialBrokerPoolNames } from './teamCredentialPrivateLabels';
 import { TeamCredentialSourcePicker } from './TeamCredentialSourcePicker';
@@ -266,10 +267,29 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
     });
     const busy = submitting || context.approvalPending;
     if (!featureEnabled) return <ItemGroup description={t('teams.credentials.unavailable')}><Item testID="team-credential-create-unavailable" title={t('teams.credentials.create.title')} showChevron={false} /></ItemGroup>;
-    // A first credential read that failed is not "still loading": the viewer is
-    // null for both, and the source and provider retries further down are
-    // unreachable behind this return, so the screen used to spin forever.
-    if (projection.viewer === null && projection.error !== null) return <ItemGroup description={credentialFailureMessage(projection.error)}><Item testID="team-credential-create-retry" title={t('teams.unavailable.retry')} onPress={() => void projection.retry()} showChevron={false} /></ItemGroup>;
+    if (projection.viewer === null && projection.error !== null) {
+        const { message, action } = presentCredentialListReadFailure(projection.error, {
+            retry: {
+                onPress: () => void projection.retry(),
+                testIDPrefix: 'team-credential-create',
+            },
+            openActionSettings: () => router.push('/settings/actions'),
+            signIn: {
+                label: t('teams.entry.signInToTeam'),
+                onPress: () => router.push(teamSignInReturnPath({
+                    teamId: context.address.teamId,
+                    serverId: context.address.serverId,
+                    returnTo: teamCredentialCreatePath(context.address),
+                })),
+                testID: 'team-credential-create-sign-in',
+            },
+        });
+        return (
+            <ItemGroup description={message}>
+                {action ? <Item testID={action.testID} title={action.label} onPress={action.onPress} showChevron={false} /> : null}
+            </ItemGroup>
+        );
+    }
     if (projection.viewer === null) return <ItemGroup><Item testID="team-credential-create-loading" title={t('teams.credentials.create.title')} loading showChevron={false} /></ItemGroup>;
     if (!mayOffer || (!context.canMutate && !context.approvalPending)) return <ItemGroup description={t('teams.credentials.create.notAllowed')}><Item testID="team-credential-create-forbidden" title={t('teams.denied.title')} showChevron={false} /></ItemGroup>;
     const directExportSupported = selected?.candidate.directExportSupport !== 'unsupported'

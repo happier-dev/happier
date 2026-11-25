@@ -17895,6 +17895,7 @@ const italian: TeamsTranslationRoot = {
             },
             errors: {
                 featureDisabled: 'Questo Home non offre credenziali condivise.',
+                invalidResourceRead: "Questo Home non ha accettato la richiesta delle opzioni per le credenziali.",
                 teamAuthenticationRequired: 'Accedi a questo team prima di continuare.',
                 teamAuthenticationPolicyUnavailable: 'Non \u00e8 stato possibile leggere la politica di accesso di questo team, quindi non \u00e8 cambiato nulla.',
                 memberNotEligible: 'Questa persona non pu\u00f2 usare questa credenziale.',
