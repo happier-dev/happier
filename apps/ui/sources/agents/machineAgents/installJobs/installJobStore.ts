@@ -104,7 +104,7 @@ function stopObserving(record: JobRecord): void {
     observation?.controller.abort();
 }
 
-function updateDemand(state: MachineJobs, record?: JobRecord): void {
+function updateRecoverySubscription(state: MachineJobs): void {
     if (state.controller.signal.aborted) return;
     if (state.listeners.size || state.agentListeners.size) {
         state.detachRecovery ??= subscribeMachineRpcRecovery({ ...state.target, expectedAccountId: state.target.accountId }, () => {
@@ -114,36 +114,43 @@ function updateDemand(state: MachineJobs, record?: JobRecord): void {
         state.detachRecovery?.();
         state.detachRecovery = undefined;
     }
-    if (!record) return;
-    if (hasReaders(state, record)) void observe(state, record);
-    else if (record.observation?.follow) stopObserving(record);
 }
 
 export function subscribeAgentInstallJob(target: AgentInstallJobTarget, listener: () => void): () => void {
     const state = machine(target);
     const targetKey = buildMachineAgentInventoryKey(target);
     let listeners = state.agentListeners.get(targetKey);
+    const firstReader = !listeners && state.listeners.size === 0;
     if (!listeners) {
         listeners = new Set();
         state.agentListeners.set(targetKey, listeners);
     }
     listeners.add(listener);
-    updateDemand(state, state.records.get(targetKey));
+    updateRecoverySubscription(state);
+    const record = state.records.get(targetKey);
+    if (firstReader && record) void observe(state, record);
     return () => {
         listeners.delete(listener);
         if (listeners.size === 0) state.agentListeners.delete(targetKey);
-        updateDemand(state, state.records.get(targetKey));
+        updateRecoverySubscription(state);
+        const current = state.records.get(targetKey);
+        if (current?.observation?.follow && !hasReaders(state, current)) stopObserving(current);
     };
 }
 
 export function subscribeMachineAgentInstallJobs(target: MachineAgentInstallJobTarget, listener: () => void): () => void {
     const state = machine(target);
+    const firstMachineReader = state.listeners.size === 0;
     state.listeners.add(listener);
-    updateDemand(state);
-    for (const record of state.records.values()) void observe(state, record);
+    updateRecoverySubscription(state);
+    if (firstMachineReader) {
+        for (const [key, record] of state.records) {
+            if (!state.agentListeners.has(key)) void observe(state, record);
+        }
+    }
     return () => {
         state.listeners.delete(listener);
-        updateDemand(state);
+        updateRecoverySubscription(state);
         for (const record of state.records.values()) {
             if (record.observation?.follow && !hasReaders(state, record)) stopObserving(record);
         }

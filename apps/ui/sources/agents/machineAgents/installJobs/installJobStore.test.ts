@@ -189,6 +189,9 @@ describe('agent install job owner', () => {
         const disconnected = createDeferred<void>();
         const release = createDeferred<unknown>();
         const progress = { t: 'progress', stepId: 'cli', bytesDone: 8, bytesTotal: 10 };
+        const missed = { ...progress, bytesDone: 9 };
+        const sibling = { ...target, agentId: 'claude' };
+        const siblingUpdates = vi.fn();
         let push: ((frame: unknown) => Promise<unknown>) | undefined;
         const wrapper = ({ children }: React.PropsWithChildren) => React.createElement(PluginSurfaceFocusEligibilityProvider,
             { active: presented, children });
@@ -196,16 +199,20 @@ describe('agent install job owner', () => {
             method: string; payload: { cursor?: number };
             onContinuation?: (frame: unknown) => Promise<unknown>; signal?: AbortSignal;
         }) => {
-            if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST) return { ok: true, jobs: [wireJob('codex', 'pf58-job')] };
+            if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST) return { ok: true, jobs: [
+                wireJob('codex', 'pf58-job'),
+                { ...wireJob('claude', 'sibling-job'), done: true, outcome: { kind: 'succeeded', version: '1.0' } },
+            ] };
             if (method !== RPC_METHODS.DAEMON_AGENTS_INSTALL_READ) throw new Error('Unexpected PF-58 fixture RPC');
             if (!onContinuation) return { ok: true, steps: [], progress: [], events: [], nextCursor: 0, done: false, outcome: null };
             push = onContinuation;
             const cursor = payload.cursor ?? 0;
-            await push({ events: [], nextCursor: cursor });
             if (cursor === 0) {
+                await push({ events: [], nextCursor: cursor });
                 await disconnected.promise;
                 throw new Error('Socket disconnected');
             }
+            await push(cursor === 3 ? { events: [missed], nextCursor: 4 } : { events: [], nextCursor: cursor });
             return await Promise.race([release.promise, new Promise<never>((_resolve, reject) => {
                 signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
             })]);
@@ -215,21 +222,35 @@ describe('agent install job owner', () => {
         try {
             const first = await renderHook(useCountedJob, { wrapper });
             const second = await renderHook(() => useAgentInstallJob(target), { wrapper });
+            subscribeAgentInstallJob(sibling, siblingUpdates);
+            const siblingBefore = readAgentInstallJob(sibling);
             expect(reads()).toHaveLength(1);
             const beforeTick = renderCount;
-            await act(async () => { await vi.advanceTimersByTimeAsync(MACHINE_RPC_POLL_INTERVAL_MS); });
-            expect(reads()).toHaveLength(1);
+            await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+            expect.soft(reads().length - 1, 'additional cursor reads per active idle minute').toBe(0);
             expect(renderCount).toBe(beforeTick);
-            await act(async () => { await push?.({ events: [progress], nextCursor: 1 }); });
+            for (const [index, bytesDone] of [4, 6, 8].entries()) {
+                await act(async () => { await push?.({ events: [{ ...progress, bytesDone }], nextCursor: index + 1 }); });
+            }
             expect(first.getCurrent().job?.steps[0]?.bytesDone).toBe(8);
-            expect(renderCount - beforeTick).toBe(1);
-            await act(async () => { await push?.({ events: [progress], nextCursor: 1 }); });
-            expect(renderCount - beforeTick).toBe(1);
+            expect(renderCount - beforeTick).toBe(3);
+            await act(async () => { await push?.({ events: [progress], nextCursor: 3 }); });
+            expect(renderCount - beforeTick).toBe(3);
+            expect(readAgentInstallJob(sibling)).toBe(siblingBefore);
+            expect(siblingUpdates).not.toHaveBeenCalled();
+            expect(reads()).toHaveLength(1);
             expect(reads().at(-1)?.[0]).toMatchObject({ accountId, machineId: target.machineId });
             await act(async () => { disconnected.resolve(); });
+            await act(async () => {
+                // An additional selector briefly joins while the first two still own demand.
+                subscribeAgentInstallJob(target, () => {})();
+                subscribeMachineAgentInstallJobs(target, () => {})();
+            });
+            expect.soft(reads()).toHaveLength(1);
             await act(async () => { clearMachineRequestReachabilityForMachine(target, target.machineId); });
             expect(reads()).toHaveLength(2);
-            expect(reads().at(-1)?.[0].payload).toEqual({ jobId: 'pf58-job', cursor: 1 });
+            expect(reads().at(-1)?.[0].payload).toEqual({ jobId: 'pf58-job', cursor: 3 });
+            expect(first.getCurrent().job?.steps[0]?.bytesDone).toBe(9);
             presented = false;
             await first.rerender();
             await second.rerender();
@@ -241,9 +262,9 @@ describe('agent install job owner', () => {
             const remounted = await renderHook(useCountedJob, { wrapper });
             expect(remounted.getCurrent().job?.jobId).toBe('pf58-job');
             expect(reads()).toHaveLength(3);
-            await act(async () => { release.resolve({ ok: true, steps: [], progress: [], events: [], nextCursor: 1, done: true,
+            await act(async () => { release.resolve({ ok: true, steps: [], progress: [], events: [], nextCursor: 4, done: true,
                 outcome: { kind: 'failed', code: 'cancelled', stepId: 'cli', message: 'Fixture settled' } }); });
-            expect(remounted.getCurrent().job).toMatchObject({ steps: [{ bytesDone: 8 }],
+            expect(remounted.getCurrent().job).toMatchObject({ steps: [{ bytesDone: 9 }],
                 outcome: { kind: 'failed', code: 'cancelled' } });
             const terminalReads = reads().length;
             await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
