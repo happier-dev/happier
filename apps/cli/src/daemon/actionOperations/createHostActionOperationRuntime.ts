@@ -594,7 +594,10 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         signal,
         operationProgress: { update: updateProgress },
         operationAcceptance,
-        operationOwnerUpdate: { update: publishOwnerUpdate },
+        operationOwnerUpdate: { update: update => {
+          publishOwnerUpdate(update);
+          if (update.progress) operationContext.operationOwnerUpdate?.update({ progress: update.progress });
+        } },
       }),
     });
   };

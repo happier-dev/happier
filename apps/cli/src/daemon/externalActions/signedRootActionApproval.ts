@@ -21,7 +21,7 @@ export function createSignedRootActionApprovalAcknowledgement() {
         // Report Ask for every retained invocation, independently of result
         // custody. The original request still owns completion and its result.
         return await args.run(args.signal, { update: ({ progress }) => {
-          if (progress?.phase === 'waiting_for_approval' && progress.approval?.actionId === args.actionId) {
+          if (progress?.phase === 'waiting_for_approval' && progress.approval) {
             args.onApprovalRequested?.(progress.approval);
           }
         } });

@@ -1203,9 +1203,10 @@ export async function executeContributedAction(params: Readonly<{
       const heldArtifactId = 'artifactId' in admitted ? admitted.artifactId : undefined;
       const observing = observeOperation({ actionId, title: resolvePluginLocalizedStringV2Text(rawTitle),
         operation: trackedOperation, input: targetInvocation.input,
-        // An admitted SDK child consumes its handler result; its approval stays
-        // visible through the retained operation while the caller waits.
-        ...(actionSurface === 'plugin'
+        ...(params.approvalContext ? { actionContext: params.approvalContext } : {}),
+        // CLI and SDK callers consume the outer handler result. A child's
+        // approval stays progress, rather than completing that invocation.
+        ...(actionSurface === 'plugin' || invocationSurface === 'cli'
           ? { response: 'terminal' as const }
           : admissionResponse ? { response: 'admission' as const } : {}),
         failureResult: contributedActionFailureResult,

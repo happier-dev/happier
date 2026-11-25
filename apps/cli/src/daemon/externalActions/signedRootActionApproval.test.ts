@@ -77,17 +77,21 @@ it.each(['teams.invitations.create', 'teams.invitations.reissue', 'connectedServ
   }
 });
 
-it.each(['account.apiTokens.revoke', 'connectedServices.authentication.beginConnect', 'connectedServices.authentication.submitManual', 'connectedServices.authentication.completeOAuth'] as const)(
-  'reports %s approval while retaining its live result on the original request', async actionId => {
+it.each([
+  ...(['account.apiTokens.revoke', 'connectedServices.authentication.beginConnect', 'connectedServices.authentication.submitManual', 'connectedServices.authentication.completeOAuth'] as const)
+    .map(actionId => ({ actionId, approvalActionId: actionId })),
+  { actionId: 'action.invoke', approvalActionId: 'scm.reviewWorkspace.materializePrepared' },
+] as const)(
+  'reports $approvalActionId approval while retaining $actionId result on the original request', async ({ actionId, approvalActionId }) => {
   const owner = createSignedRootActionApprovalAcknowledgement();
   const approval = { kind: 'approval_request_created' as const, artifactId: 'manual-approval',
-    actionId };
+    actionId: approvalActionId };
   let release!: () => void;
   const completion = new Promise<void>(resolve => { release = resolve; });
   const notices: unknown[] = [];
   let settled = false;
   const result: ActionExecuteResult = { ok: true, result: { status: 'connected', attemptId: 'manual-attempt' } };
-  const execution = owner.execute({ actionId: approval.actionId, surface: 'cli', signal: new AbortController().signal,
+  const execution = owner.execute({ actionId, surface: 'cli', signal: new AbortController().signal,
     onApprovalRequested: notice => { notices.push(notice); },
     // The injected execution port represents admitted native work. Keep its
     // approval publication and effect completion in their real order.
