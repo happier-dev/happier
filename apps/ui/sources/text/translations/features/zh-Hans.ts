@@ -17228,7 +17228,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
         archive: {
             confirmShort: '归档',
             archivedTitle: ({ name }: { name: string }) => `${name} 已归档`,
-            archivedBody: "团队访问已停止，这里无法更改任何内容。成员、群组和历史均已保留。",
+            archivedBody: "归档后，团队变为只读，团队访问权限暂停。会话、群组和成员关系保留归档时的状态。成员仍可退出，团队管理员可以恢复团队。",
             confirm: {
                 keptCounted: ({ members, groups }: { members: number; groups: number }) => `${members} 位成员、${groups} 个群组及其历史将保留。`,
                 kept: "成员、群组及其历史将保留。",

@@ -17228,7 +17228,7 @@ const traditionalChinese: TeamsTranslationRoot = {
         archive: {
             confirmShort: '封存',
             archivedTitle: ({ name }: { name: string }) => `${name} 已封存`,
-            archivedBody: "團隊存取已停止，這裡無法變更任何內容。成員、群組與紀錄皆已保留。",
+            archivedBody: "封存後，團隊會變成唯讀，團隊存取權限會暫停。工作階段、群組和成員資格會保留封存當下的狀態。成員仍可退出，團隊管理員可以還原團隊。",
             confirm: {
                 keptCounted: ({ members, groups }: { members: number; groups: number }) => `${members} 位成員、${groups} 個群組及其紀錄將保留。`,
                 kept: "成員、群組及其紀錄將保留。",

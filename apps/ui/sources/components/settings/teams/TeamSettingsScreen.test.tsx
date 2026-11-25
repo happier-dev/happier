@@ -831,6 +831,7 @@ describe('TeamSettingsScreen', () => {
         // modal-confirmed action reaches the Home once without an Artifact.
         expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
         expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(Modal.confirm).mock.calls[0]?.[1]).toContain('teams.archive.archivedBody');
         await vi.waitFor(() => expect(routerBack).toHaveBeenCalled());
     });
 
@@ -908,7 +909,7 @@ describe('TeamSettingsScreen', () => {
         expect(ids).not.toContain('team-settings-archive');
         const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
         expect(screen.tree.findByType(AttentionBanner).props.action.display).toBe('default');
-        // Nothing can change, so nothing is drawn as a control: the values read as text.
+        // Archived Team settings are read-only. The values read as text.
         expect(ids).toContain('team-settings-session-creation');
         expect(ids.filter((id) => id.startsWith('team-settings-session-creation:'))).toEqual([]);
         expect(ids).not.toContain('team-settings-name');

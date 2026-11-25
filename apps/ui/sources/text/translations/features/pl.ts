@@ -17376,7 +17376,7 @@ const polish: TeamsTranslationRoot = {
         archive: {
             confirmShort: 'Archiwizuj',
             archivedTitle: ({ name }: { name: string }) => `${name} jest zarchiwizowany`,
-            archivedBody: "Dostęp do zespołu jest wstrzymany i nic tu nie można zmienić. Członkowie, grupy i historia zostają zachowane.",
+            archivedBody: "Archiwizacja przełącza zespół w tryb tylko do odczytu i wstrzymuje dostęp przez zespół. Sesje, grupy i członkostwa pozostają w stanie z chwili archiwizacji. Członkowie nadal mogą odejść, a osoba zarządzająca zespołem może go przywrócić.",
             confirm: {
                 keptCounted: ({ members, groups }: { members: number; groups: number }) => `Członkowie (${members}), grupy (${groups}) i ich historia zostają zachowane.`,
                 kept: "Członkowie, grupy i ich historia zostają zachowane.",

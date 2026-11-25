@@ -614,7 +614,7 @@ export const english = {
         archive: {
             confirmShort: 'Archive',
             archivedTitle: ({ name }: { name: string }) => `${name} is archived`,
-            archivedBody: "Team access is stopped and nothing here can change. Members, Groups and history are kept.",
+            archivedBody: "Archiving makes the Team read-only and pauses Team access. Its Sessions, Groups and memberships stay as they are when it’s archived. Members can still leave, and a manager can restore the Team.",
             confirm: {
                 keptCounted: ({ members, groups }: { members: number; groups: number }) => `${members === 1 ? '1 member' : `${members} members`}, ${groups === 1 ? '1 Group' : `${groups} Groups`} and their history are kept.`,
                 kept: "Members, Groups and their history are kept.",

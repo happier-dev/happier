@@ -78,6 +78,9 @@ export function formatGovernanceSummary(summary: GovernanceApprovalSummary, phas
             return formatGovernanceChange(phase, t('actionConfirmations.governance.homeLayout.groupCreate', { group, widgets: joinList(widgets) }));
         }
         case 'teamArchive':
+            return phase === 'pending'
+                ? [t('teams.archive.archivedBody'), t('actionConfirmations.governance.teamArchive')].join(' ')
+                : formatGovernanceChange(phase, t('actionConfirmations.governance.change.teamArchive'));
         case 'nativeCredentialDelivery':
         case 'machinePresetPrepare':
             return phase === 'pending' ? t(`actionConfirmations.governance.${summary.kind}`)

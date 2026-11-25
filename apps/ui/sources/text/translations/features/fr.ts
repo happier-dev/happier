@@ -17409,7 +17409,7 @@ const french: TeamsTranslationRoot = {
         archive: {
             confirmShort: 'Archiver',
             archivedTitle: ({ name }: { name: string }) => `${name} est archivée`,
-            archivedBody: "L’accès à l’équipe est arrêté et rien ne peut changer ici. Les membres, les groupes et l’historique sont conservés.",
+            archivedBody: "L’archivage met l’équipe en lecture seule et suspend l’accès à l’équipe. Les sessions, les groupes et les adhésions restent tels qu’au moment de l’archivage. Les membres peuvent toujours quitter l’équipe, et une personne qui la gère peut la restaurer.",
             confirm: {
                 keptCounted: ({ members, groups }: { members: number; groups: number }) => `${members === 1 ? '1 membre' : `${members} membres`}, ${groups === 1 ? '1 groupe' : `${groups} groupes`} et leur historique sont conservés.`,
                 kept: "Les membres, les groupes et leur historique sont conservés.",

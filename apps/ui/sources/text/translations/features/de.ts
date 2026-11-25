@@ -17167,7 +17167,7 @@ const german: TeamsTranslationRoot = {
         archive: {
             confirmShort: 'Archivieren',
             archivedTitle: ({ name }: { name: string }) => `${name} ist archiviert`,
-            archivedBody: "Der Team-Zugriff ist gestoppt und hier lässt sich nichts ändern. Mitglieder, Gruppen und Verlauf bleiben erhalten.",
+            archivedBody: "Beim Archivieren wird das Team schreibgeschützt und der Teamzugriff pausiert. Sitzungen, Gruppen und Mitgliedschaften bleiben auf dem Stand der Archivierung. Mitglieder können weiterhin austreten, und wer das Team verwaltet, kann es wiederherstellen.",
             confirm: {
                 keptCounted: ({ members, groups }: { members: number; groups: number }) => `${members === 1 ? '1 Mitglied' : `${members} Mitglieder`}, ${groups === 1 ? '1 Gruppe' : `${groups} Gruppen`} und ihr Verlauf bleiben erhalten.`,
                 kept: "Mitglieder, Gruppen und ihr Verlauf bleiben erhalten.",

@@ -17338,7 +17338,7 @@ const portuguese: TeamsTranslationRoot = {
         archive: {
             confirmShort: 'Arquivar',
             archivedTitle: ({ name }: { name: string }) => `${name} está arquivada`,
-            archivedBody: "O acesso à equipa está parado e nada aqui pode mudar. Os membros, os grupos e o histórico são mantidos.",
+            archivedBody: "Arquivar a equipa coloca-a em modo só de leitura e suspende o acesso pela equipa. As sessões, os grupos e as adesões ficam como estavam no momento do arquivo. Os membros ainda podem sair e quem gere a equipa pode restaurá-la.",
             confirm: {
                 keptCounted: ({ members, groups }: { members: number; groups: number }) => `${members === 1 ? '1 membro' : `${members} membros`}, ${groups === 1 ? '1 grupo' : `${groups} grupos`} e o respetivo histórico são mantidos.`,
                 kept: "Os membros, os grupos e o respetivo histórico são mantidos.",

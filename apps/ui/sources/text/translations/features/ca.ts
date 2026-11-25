@@ -17366,7 +17366,7 @@ const catalan: TeamsTranslationRoot = {
         archive: {
             confirmShort: 'Arxiva',
             archivedTitle: ({ name }: { name: string }) => `${name} està arxivat`,
-            archivedBody: "L’accés a l’equip està aturat i aquí no es pot canviar res. Es conserven els membres, els grups i l’historial.",
+            archivedBody: "Arxivar l’equip fa que sigui de només lectura i en suspèn l’accés. Les sessions, els grups i les pertinences es mantenen tal com eren en arxivar-lo. Els membres encara poden marxar i una persona que gestiona l’equip el pot restaurar.",
             confirm: {
                 keptCounted: ({ members, groups }: { members: number; groups: number }) => `${members === 1 ? '1 membre' : `${members} membres`}, ${groups === 1 ? '1 grup' : `${groups} grups`} i el seu historial es conserven.`,
                 kept: "Els membres, els grups i el seu historial es conserven.",

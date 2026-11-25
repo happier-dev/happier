@@ -11,7 +11,7 @@ const teamId = '3d703df7-5a51-4be7-91ec-dc877ae861ab';
 const workspaceId = '71e59706-1817-4d58-99aa-890ac15b5ad5';
 
 it.each([
-    { actionId: 'teams.archive', input: { v: 1, teamId }, words: /invitations.*révoquées/ },
+    { actionId: 'teams.archive', input: { v: 1, teamId }, words: /lecture seule.*peuvent toujours quitter.*invitations.*révoquées/s },
     { actionId: 'teams.policy.set', input: { v: 1, teamId, managedDefaults: null }, words: /paramètres par défaut.*groupes/ },
     { actionId: 'teams.policy.set', input: { v: 1, teamId, authenticationPolicy: null, previousAuthenticationPolicy: null }, words: /connexion.*Home/ },
     { actionId: 'machines.presets.prepare', input: { homeId: 'home', id: teamId, expectedRevision: 1, machineId: 'machine' }, words: /image.*frais/ },

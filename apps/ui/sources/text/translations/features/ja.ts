@@ -17288,7 +17288,7 @@ const japanese: TeamsTranslationRoot = {
         archive: {
             confirmShort: 'アーカイブ',
             archivedTitle: ({ name }: { name: string }) => `${name}はアーカイブ済みです`,
-            archivedBody: "チームへのアクセスは停止しており、ここでは何も変更できません。メンバー、グループ、履歴は保持されます。",
+            archivedBody: "チームをアーカイブすると読み取り専用になり、チームとしてのアクセスが停止します。セッション、グループ、メンバーシップはアーカイブ時の状態で保持されます。メンバーは引き続き脱退でき、チームの管理者は復元できます。",
             confirm: {
                 keptCounted: ({ members, groups }: { members: number; groups: number }) => `メンバー ${members} 人、グループ ${groups} 個とその履歴は保持されます。`,
                 kept: "メンバー、グループとその履歴は保持されます。",
