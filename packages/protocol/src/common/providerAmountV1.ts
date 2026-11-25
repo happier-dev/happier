@@ -19,7 +19,7 @@ export const ProviderAmountV1Schema = lazyZodSchema(() =>
 export type ProviderAmountV1 = z.infer<typeof ProviderAmountV1Schema>;
 
 // A currency code beside a numeric prefix is not a price in text such as "CAD 3D" or "CAD 2.5D".
-const amount = String.raw`\d+(?:[.,]\d+)?`;
+const amount = String.raw`\d+(?:[.,]\d+)*`;
 const amountEnd = String.raw`\b(?![.,]\d)`;
 const commonPriceText = new RegExp(
   String.raw`\b(?:USD|EUR|GBP|CAD|CHF|JPY)\s*${amount}${amountEnd}|\b${amount}\s*(?:USD|EUR|GBP|CAD|CHF|JPY|dollars?)\b`,
