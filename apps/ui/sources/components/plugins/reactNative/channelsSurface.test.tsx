@@ -2579,7 +2579,7 @@ describe('Channels settings surface (real source, mounted)', () => {
         integrationPrincipalLabel: 'Alpha',
       }),
       connectionFixture({
-        connectionId: 'connection-warning-zinnia',
+        connectionId: 'connection-live-zinnia',
         integrationPrincipalLabel: 'Zinnia',
         attention: { bestEffortBeforeDurableAdmission: true },
       }),
@@ -2615,8 +2615,8 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(rowOrder).toEqual([
       'channels-connection-connection-danger-bravo',
       'channels-connection-connection-warning-charlie',
-      'channels-connection-connection-warning-zinnia',
       'channels-connection-connection-alpha',
+      'channels-connection-connection-live-zinnia',
       'channels-connection-connection-zulu',
     ]);
 
@@ -2637,7 +2637,7 @@ describe('Channels settings surface (real source, mounted)', () => {
         },
       }),
       connectionFixture({
-        connectionId: 'connection-warning-zinnia',
+        connectionId: 'connection-live-zinnia',
         integrationPrincipalLabel: 'Zinnia',
         attention: { bestEffortBeforeDurableAdmission: true },
       }),
@@ -2667,8 +2667,8 @@ describe('Channels settings surface (real source, mounted)', () => {
       expect(refreshedRowOrder).toEqual([
         'channels-connection-connection-alpha',
         'channels-connection-connection-warning-charlie',
-        'channels-connection-connection-warning-zinnia',
         'channels-connection-connection-danger-bravo',
+        'channels-connection-connection-live-zinnia',
         'channels-connection-connection-zulu',
       ]);
     });
@@ -4115,7 +4115,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(bestEffortDisclosure.length).toBeGreaterThan(0);
     expect(historyGapDisclosure.length).toBeGreaterThan(0);
     expect(bestEffortDisclosure.some((instance) => (
-      instance.props?.role === 'alert' && instance.props?.accessibilityLiveRegion === 'assertive'
+      instance.props?.role === 'status' && instance.props?.accessibilityLiveRegion === 'polite'
     ))).toBe(true);
     // A reported historical gap is informational, not a new actionable failure.
     expect(historyGapDisclosure.some((instance) => instance.props?.role === 'alert')).toBe(false);
@@ -4124,7 +4124,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     ))).toBe(true);
 
     const rendered = JSON.stringify(renderer.toJSON());
-    expect(rendered).toContain('Messages received through this live connection can be lost before Happier records their admission.');
+    expect(rendered).toContain('Messages that arrive while the selected machine is offline or restarting may not reach Happier.');
     // OWNER-RULINGS TRI-05: reportedAt is observation time, not an imported-history cutoff.
     expect(rendered).toContain('Older messages may not have been imported');
     expect(rendered).not.toContain(new Intl.DateTimeFormat(undefined, {
