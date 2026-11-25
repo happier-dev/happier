@@ -5,8 +5,6 @@ import { EventEmitter } from 'node:events';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { logger } from '@/ui/logger';
-
 import type { VoiceInferenceRuntimeSynthesizeInput, VoiceInferenceRuntimeTranscribeInput } from '../voiceInferenceRuntimeTypes';
 
 const spawnMock = vi.hoisted(() => vi.fn());
@@ -627,6 +625,7 @@ describe('packagedVoiceInferenceRuntime', () => {
 
     it('creates true streaming STT sessions with partial, endpoint, and final events', async () => {
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
+        const { logger } = await import('@/ui/logger');
         const log = vi.spyOn(logger, 'debugLocalFile');
         const rootDir = await createTempDir();
         const sttManifest = {
