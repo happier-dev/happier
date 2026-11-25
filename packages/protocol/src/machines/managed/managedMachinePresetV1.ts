@@ -18,11 +18,13 @@ import {
 } from '../../account/settings/savedSecretCatalogV1.js';
 import {
   ManagedMachinePresetStoredContentCarrierV1Schema,
-  createManagedMachinePresetStoredContentV1Schema,
   ManagedMachinePresetRecipientsV1Schema,
-  ManagedMachinePresetContentV1Schema,
   projectAdmittedManagedMachinePresetForRecipientV1,
-} from './managedMachinePresetContentV1.js';
+} from './managedMachinePresetContentCarrierV1.js';
+import {
+  createManagedMachinePresetStoredContentV1Schema,
+  ManagedMachinePresetContentV1Schema,
+} from './managedMachinePresetContentSchemaV1.js';
 export { MachineSetupV1Schema, MachineSetupV1ReadSchema, MachineSetupScriptV1Schema, mergeMachineSetupsV1, type MachineSetupV1, type MachineSetupScriptV1 } from './machineSetupV1.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));

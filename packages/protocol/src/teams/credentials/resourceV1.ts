@@ -9,7 +9,7 @@ import {
   PrivateLabelReadV1Schema,
   PrivateLabelStoredV1Schema,
   type PrivateLabelBindingV1,
-} from '../../crypto/privateLabelV1.js';
+} from '../../crypto/privateLabelSchemaV1.js';
 import { TeamCredentialExternalApiKeyIdV1Schema } from './externalApiKeyV1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 

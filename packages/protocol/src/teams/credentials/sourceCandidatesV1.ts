@@ -1,7 +1,7 @@
 import { ConnectedAccountDirectExportProjectionV1Schema } from '../../connect/pluginConnectedAccountAuthenticationV2.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
-import { PrivateLabelReadV1Schema } from '../../crypto/privateLabelV1.js';
+import { PrivateLabelReadV1Schema } from '../../crypto/privateLabelSchemaV1.js';
 
 import { TeamCredentialSourceBindingV1Schema } from './sourceBindingV1.js';
 import {

@@ -5,7 +5,7 @@ import { declareDeploymentPreparationScopeV1 } from './deploymentPreparationScop
 import { ActionOperationCompletionOutputV1Schema, type ActionCompletionDeclaration } from '../actionCompletion.js';
 import { MachineSetupApplyResultV1Schema } from '../../machines/setup/machineSetupOperationV1.js';
 import { ActionOperationAcceptedResultSchema } from '../actionExecutionResult.js';
-import { PrivateLabelStoredV1Schema } from '../../crypto/privateLabelV1.js';
+import { PrivateLabelStoredV1Schema } from '../../crypto/privateLabelSchemaV1.js';
 import { MachinePoolAudienceV1Schema } from '../../machines/pools/v1.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { MACHINE_POOL_ACTION_IDS_V1, MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, machinePoolActionEndpointPathV1, type MachinePoolActionIdV1 } from '../../machines/pools/actionsV1.js';

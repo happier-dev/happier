@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { PrivateLabelReadV1Schema } from '../../crypto/privateLabelV1.js';
+import { PrivateLabelReadV1Schema } from '../../crypto/privateLabelSchemaV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 import { KEYSET_CURSOR_MAX_LENGTH_V1 } from '../../pagination/keysetCursorV1.js';

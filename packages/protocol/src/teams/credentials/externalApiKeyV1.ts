@@ -3,7 +3,7 @@ import {
   PrivateLabelReadV1Schema,
   PrivateLabelStoredV1Schema,
   type PrivateLabelBindingV1,
-} from '../../crypto/privateLabelV1.js';
+} from '../../crypto/privateLabelSchemaV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 /** Client-generated so a sealed label can bind itself to the persisted key id. */

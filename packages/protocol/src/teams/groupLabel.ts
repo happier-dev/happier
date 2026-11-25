@@ -1,4 +1,4 @@
-import { PrivateLabelReadV1Schema, PrivateLabelStoredV1Schema } from '../crypto/privateLabelV1.js';
+import { PrivateLabelReadV1Schema, PrivateLabelStoredV1Schema } from '../crypto/privateLabelSchemaV1.js';
 import { SavedSecretResourceEnvelopeCensusRecipientV1Schema } from '../account/settings/savedSecretCatalogV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';

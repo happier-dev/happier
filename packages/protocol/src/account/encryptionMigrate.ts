@@ -110,7 +110,7 @@ import {
 import { AccountSettingsStoredContentEnvelopeSchema } from './settings/accountSettingsStoredContentEnvelope.js';
 import { AccountEncryptionMigrateSavedSecretResourcesDirectiveV1Schema, type AccountEncryptionMigrateSavedSecretResourcesDirectiveV1 } from './settings/savedSecretResourceActionsV1.js';
 import { AccountEncryptionMigrateManagedMachinePresetsDirectiveV1Schema, type AccountEncryptionMigrateManagedMachinePresetsDirectiveV1 } from '../machines/managed/managedMachinePresetV1.js';
-import { PrivateLabelReadV1Schema, PrivateLabelStoredV1Schema } from '../crypto/privateLabelV1.js';
+import { PrivateLabelReadV1Schema, PrivateLabelStoredV1Schema } from '../crypto/privateLabelSchemaV1.js';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";

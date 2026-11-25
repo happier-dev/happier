@@ -6,7 +6,7 @@ import { EmbedConfigV1Schema } from '../embed/embedConfigV1.js';
 import { decodeBase64, encodeBase64, type Base64Variant } from '../crypto/base64.js';
 import { SERVER_IDENTITY_ID_PATTERN } from '../features/payload/capabilities/serverIdentityCapabilities.js';
 import { DeploymentDeploySemanticInputV1Schema } from '../deployments/deploymentDeployIntentV1.js';
-import { PrivateLabelReadV1Schema, PrivateLabelStoredV1Schema, parsePrivateLabelStoredV1 } from '../crypto/privateLabelV1.js';
+import { PrivateLabelReadV1Schema, PrivateLabelStoredV1Schema, parsePrivateLabelStoredV1 } from '../crypto/privateLabelSchemaV1.js';
 import { ACCOUNT_API_TOKEN_BEARER_V1_SOURCE, ACCOUNT_API_TOKEN_CREDENTIAL_V1_PREFIX } from './accountApiTokenFormatV1.js';
 
 const AccountApiTokenIdV1Schema = lazyZodSchema(() => z.string().check(z.uuid()));

@@ -4,7 +4,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { AccountDisplayProfileV1Schema } from '../account/accountDisplayProfileV1.js';
 import {
   PrivateLabelStoredV1Schema, type PrivateLabelStoredV1,
-} from '../crypto/privateLabelV1.js';
+} from '../crypto/privateLabelSchemaV1.js';
 import { TeamGroupNameProjectionV1Schema, TeamGroupLabelProjectionV1Schema, teamGroupLabelBinding } from './groupLabel.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from '../actions/executor/types.js';
 import { createActionExecuteFailureError } from '../actions/actionExecutionResult.js';

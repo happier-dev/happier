@@ -1,6 +1,6 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { z } from '../../zodRuntimePolicy.js';
-import { PrivateLabelStoredV1Schema } from '../../crypto/privateLabelV1.js';
+import { PrivateLabelStoredV1Schema } from '../../crypto/privateLabelSchemaV1.js';
 
 import { TEAM_IDENTITY_ACTION_IDS_V1, type TeamIdentityActionIdV1 } from '../../teams/identity/actionIds.js';
 import { TEAM_DIRECTORY_ACTION_IDS_V1, type TeamDirectoryActionIdV1 } from '../../teams/directory/actionIds.js';

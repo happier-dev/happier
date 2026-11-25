@@ -10,7 +10,7 @@ import {
   PrivateLabelReadV1Schema,
   PrivateLabelStoredV1Schema,
   type PrivateLabelStoredV1,
-} from '../../crypto/privateLabelV1.js';
+} from '../../crypto/privateLabelSchemaV1.js';
 
 /** Closed purpose model: automation and Boards remain own-Machine destinations. */
 export const MachineDestinationPurposeV1Schema = lazyZodSchema(() => z.enum([

@@ -1,4 +1,4 @@
-import tweetnacl from 'tweetnacl';
+import { ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES, ACCOUNT_SCOPED_SECRETBOX_OVERHEAD_BYTES } from '../../crypto/accountScopedCipherEnvelope.js';
 import { SavedSecretResourceRecipientEnvelopeV1Schema } from '../../account/settings/savedSecretCatalogV1.js';
 
 import { decodeBase64, encodeBase64, readCanonicalPaddedBase64DecodedLength } from '../../crypto/base64.js';
@@ -8,7 +8,7 @@ import { z } from '../../zodRuntimePolicy.js';
 function isCanonicalCiphertext(value: string): boolean {
   try {
     const decodedLength = readCanonicalPaddedBase64DecodedLength(value);
-    if (decodedLength === null || decodedLength < tweetnacl.secretbox.nonceLength + tweetnacl.secretbox.overheadLength) return false;
+    if (decodedLength === null || decodedLength < ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES + ACCOUNT_SCOPED_SECRETBOX_OVERHEAD_BYTES) return false;
     return encodeBase64(decodeBase64(value, 'base64'), 'base64') === value;
   } catch {
     return false;
@@ -67,3 +67,30 @@ export const ManagedAdmissionPresetContentV1Schema = lazyZodSchema(() => z.stric
   recipients: ManagedMachinePresetRecipientsV1Schema,
 }));
 export type ManagedAdmissionPresetContentV1 = z.infer<typeof ManagedAdmissionPresetContentV1Schema>;
+
+/** GET/LIST presentation projection: disclose at most the requesting Account's envelope. */
+export const ManagedMachinePresetRecipientProjectionV1Schema = lazyZodSchema(() => z.strictObject({
+  content: ManagedMachinePresetStoredContentCarrierV1Schema,
+  recipientEnvelope: z.nullable(SavedSecretResourceRecipientEnvelopeV1Schema),
+}).check(z.superRefine((value, context) => {
+  if (value.content.t === 'plain' && value.recipientEnvelope !== null) {
+    context.addIssue({ code: 'custom', message: 'Plain managed preset content cannot carry a reader envelope' });
+  }
+})));
+export type ManagedMachinePresetRecipientProjectionV1 = Readonly<
+  z.infer<typeof ManagedMachinePresetRecipientProjectionV1Schema>
+>;
+
+/** Select one Account's envelope from content and recipients already validated at admission. */
+export function projectAdmittedManagedMachinePresetForRecipientV1(params: Readonly<{
+  content: ManagedMachinePresetStoredContentCarrierV1;
+  recipients: ManagedMachinePresetRecipientsV1;
+  recipientAccountId: string;
+}>): ManagedMachinePresetRecipientProjectionV1 {
+  return {
+    content: params.content,
+    recipientEnvelope: params.content.t === 'encrypted'
+      ? params.recipients.find(recipient => recipient.accountId === params.recipientAccountId)?.envelope ?? null
+      : null,
+  };
+}

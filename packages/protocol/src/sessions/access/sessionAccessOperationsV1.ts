@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { TeamCredentialRouteV1Schema } from '../../teams/credentials/deliveryV1.js';
-import { PrivateLabelReadV1Schema } from '../../crypto/privateLabelV1.js';
+import { PrivateLabelReadV1Schema } from '../../crypto/privateLabelSchemaV1.js';
 import { PrincipalRefV1Schema, TeamPrincipalRefV1Schema, GroupPrincipalRefV1Schema } from '../../teams/principal.js';
 import { TeamGroupNameProjectionV1Schema } from '../../teams/groupLabel.js';
 import { SessionAccessGrantV1Schema, SessionAccessLevelV1Schema, SessionGrantMutationV1Schema, type SessionAccessLevelV1 } from './sessionAccessGrantV1.js';

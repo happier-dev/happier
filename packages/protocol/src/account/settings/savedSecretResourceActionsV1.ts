@@ -10,7 +10,7 @@ import { SavedSecretResourceStoredContentV1Schema } from './savedSecretResourceC
 import {
   ManagedMachinePresetRecipientsV1Schema,
   ManagedMachinePresetStoredContentCarrierV1Schema,
-} from '../../machines/managed/managedMachinePresetContentV1.js';
+} from '../../machines/managed/managedMachinePresetContentCarrierV1.js';
 import { readCanonicalPaddedBase64DecodedLength } from '../../crypto/base64.js';
 import { ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES } from '../../crypto/encryptedDataKeyEnvelopeFormatV1.js';
 import { ProfileRecordIdV1Schema, ProfileReferenceGuardRevisionV1Schema, ProfileRowMutationV1Schema, ProfileRowRevisionV1Schema } from '../../profiles/profileRecordSchemaV1.js';
