@@ -104,8 +104,8 @@ describe('SCM batched work evidence', () => {
     });
 
     it('discovers branches once per distinct resolved cwd and does no work for an unlisted Session', async () => {
-        const cwd = createGitWorkspace('happier-work-batch-');
-        const other = createGitWorkspace('happier-work-batch-other-');
+        const cwd = realpathSync(createGitWorkspace('happier-work-batch-'));
+        const other = realpathSync(createGitWorkspace('happier-work-batch-other-'));
         try {
             runGit(cwd, ['commit', '--allow-empty', '-m', 'initial']);
             runGit(other, ['commit', '--allow-empty', '-m', 'initial']);
@@ -117,16 +117,31 @@ describe('SCM batched work evidence', () => {
                 { sessionId: 'third', cwd: other, turnIds: [] },
                 { sessionId: 'unlisted', cwd: join(other, 'does-not-exist'), turnIds: [] },
             ];
-            const result = await runWithScmCommandRunner(recordCommands(commands), () => call(RPC_METHODS.SCM_WORK_EVIDENCE_READ,
-                { sessions }, { kind: 'scm.workEvidence.admitted', admissions: sessions.slice(0, 3)
-                    .map(({ sessionId }) => ({ kind: 'session.write' as const, sessionId })) }));
+            const read = (selected: typeof sessions, admitted: typeof sessions) =>
+                runWithScmCommandRunner(recordCommands(commands), () => call(RPC_METHODS.SCM_WORK_EVIDENCE_READ,
+                    { sessions: selected }, { kind: 'scm.workEvidence.admitted',
+                        admissions: admitted.map(({ sessionId }) => ({ kind: 'session.write' as const, sessionId })) }));
+            const oneCheckout = await read(sessions.slice(0, 1), sessions.slice(0, 1));
+            expect(oneCheckout).toMatchObject({ sessions: [{ sessionId: 'first', status: 'partial' }] });
+            const singleCheckoutCommands = commands.splice(0);
+            const result = await read(sessions, sessions.slice(0, 3));
             expect(result).toMatchObject({ sessions: [
                 { sessionId: 'first', status: 'partial' }, { sessionId: 'second', status: 'partial' },
                 { sessionId: 'third', status: 'partial' }, { sessionId: 'unlisted', status: 'error', evidence: [], branchEvidence: [] },
             ] });
-            expect(commands.filter(command => command.args.includes('--format=%(refname:short)\t%(HEAD)\t%(upstream:short)'))).toHaveLength(2);
-            // One branch and three PR states per repository, never per Session.
-            expect(commands.filter(command => command.args.includes('--is-inside-work-tree'))).toHaveLength(8);
+            // Scope the count to checkout discovery and the provider snapshot. Receipt
+            // provenance and graph commands remain per Session.
+            const setupLaunches = (reads: readonly ScmCommandInput[], cwd: string) => reads.filter(command =>
+                command.cwd === cwd && (command.args.includes('--is-inside-work-tree')
+                    || command.args.includes('--format=%(refname:short)\t%(HEAD)\t%(upstream:short)')
+                    || command.args.includes('--show-stash') || command.args.includes('--numstat')
+                    || command.args.includes('worktree') || command.args.includes('remote')
+                    || command.args.includes('refs/remotes/*/HEAD') || command.args.includes('MERGE_HEAD')));
+            // Main checkouts without an upstream or active operation: X = X′ = 0.
+            expect.soft(setupLaunches(singleCheckoutCommands, cwd)).toHaveLength(9);
+            expect.soft(setupLaunches(commands, cwd)).toHaveLength(9);
+            expect.soft(setupLaunches(commands, other)).toHaveLength(9);
+            expect(commands.filter(command => command.args.includes('--is-inside-work-tree'))).toHaveLength(2);
             expect(commands.some(command => command.cwd === sessions[3].cwd)).toBe(false);
         } finally { rmSync(cwd, { recursive: true, force: true }); rmSync(other, { recursive: true, force: true }); }
     });

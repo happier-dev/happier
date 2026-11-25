@@ -3301,6 +3301,7 @@
 | `./scm/backend` | `createScmCapabilitiesFromBackendCapabilities` | value | any |
 | `./scm/backend` | `mapGitScmErrorCode` | value | any |
 | `./scm/backend` | `mapSaplingScmErrorCode` | value | any |
+| `./scm/backend` | `projectScmBackendFailure` | value | daemon |
 | `./scm/backend` | `readCurrentBackendRuntimeServices` | value | daemon |
 | `./scm/backend` | `readUntrackedFileStats` | value | daemon |
 | `./scm/backend` | `resolveBackendCommandMaxOutputBytes` | value | daemon |

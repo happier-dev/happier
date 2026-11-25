@@ -286,6 +286,10 @@ export function createGitScmBackendRuntimeRegistration(): ScmBackendRuntimeRegis
                 repositoryDescribePublishTargets: backend.hostingRepositoryDescribePublishTargets,
                 repositoryPublish: backend.hostingRepositoryPublish,
                 pullRequestList: backend.pullRequestList,
+                async pullRequestListStates(input) {
+                    const { gitPullRequestListStates } = await import('./operations/pullRequestReadOperations.js');
+                    return await gitPullRequestListStates(input);
+                },
                 pullRequestGet: backend.pullRequestGet,
                 pullRequestOpenCompose: backend.pullRequestOpenCompose,
                 pullRequestOpenOrReuse: backend.pullRequestOpenOrReuse,

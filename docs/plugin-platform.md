@@ -14659,6 +14659,16 @@ keeps its existing error projection. Other command operations remain available. 
 its process environment. This additive method is not serialized and changes no
 wire epoch, persisted format or capability gate.
 
+### SCM pull request states (unreleased 0.3)
+
+A backend can implement the optional `hosting.pullRequestListStates` handler for
+several state listings of one admitted checkout. It observes the checkout once
+and returns one typed outcome per requested state in input order. Failed states
+carry the same SCM error as a single-state listing, including a typed refusal
+when present. Work projects each outcome through the single-state response path.
+Backends without the handler use ordinary state listings. The observation
+belongs to that operation.
+
 ### Installed update discovery (unreleased 0.3)
 
 The CLI registry update checker includes installed plugins on its existing check

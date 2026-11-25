@@ -39,6 +39,7 @@ import type {
     ScmLogListResponse,
     ScmHistoryEntriesRequest,
     ScmHistoryEntriesResponse,
+    ScmPullRequestErrorResponse,
     ScmPullRequestGetRequest,
     ScmPullRequestGetResponse,
     ScmPullRequestListRequest,
@@ -100,7 +101,26 @@ import type {
 } from './projections.js';
 import type { PluginJsonValueV2 } from '../identity.js';
 import type { PluginLocalizedStringV2 } from '../manifest.js';
+import { SCM_OPERATION_ERROR_CODES, ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm/operationError';
 import type { ScmCredentialFreeRepositorySelectorV1 } from '@happier-dev/protocol/scm/repositoryClone';
+
+/** Preserve a thrown backend's typed failure, including an execution refusal. */
+export function projectScmBackendFailure(error: unknown): Readonly<{
+    success: false;
+    error: string;
+    errorCode: ScmOperationErrorCode;
+    actionErrorCode?: string;
+}> {
+    const carried = error as { errorCode?: unknown; actionErrorCode?: unknown } | null | undefined;
+    const code = ScmOperationErrorCodeSchema.safeParse(carried?.errorCode);
+    const actionErrorCode = carried?.actionErrorCode;
+    return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        errorCode: code.success ? code.data : SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+        ...(typeof actionErrorCode === 'string' ? { actionErrorCode } : {}),
+    };
+}
 
 export type ScmReviewWorkspaceMaterializePreparedRequest = Readonly<{
     cwd: string;
@@ -697,6 +717,18 @@ export type BackendRuntimeHandlers = Readonly<{
             input: BackendRuntimeHandlerInput<ScmHostingRepositoryPublishRequest>
         ) => Promise<ScmHostingRepositoryPublishResponse> | ScmHostingRepositoryPublishResponse;
         pullRequestList?: (input: BackendRuntimeHandlerInput<ScmPullRequestListRequest>) => Promise<ScmPullRequestListResponse> | ScmPullRequestListResponse;
+        /**
+         * Read states in input order using one observation of the admitted checkout.
+         * Each entry retains the outcome of its ordinary state listing.
+         */
+        pullRequestListStates?: (input: BackendRuntimeHandlerInput<Readonly<{
+            states: readonly NonNullable<ScmPullRequestListRequest['state']>[];
+        }>>) => Promise<Readonly<{
+            results: readonly (
+                | Readonly<{ ok: true; response: Extract<ScmPullRequestListResponse, { success: true }> }>
+                | Readonly<{ ok: false; error: ScmPullRequestErrorResponse & { actionErrorCode?: string } }>
+            )[];
+        }>>;
         pullRequestGet?: (input: BackendRuntimeHandlerInput<ScmPullRequestGetRequest>) => Promise<ScmPullRequestGetResponse> | ScmPullRequestGetResponse;
         pullRequestOpenCompose?: (
             input: BackendRuntimeHandlerInput<ScmPullRequestOpenComposeRequest>

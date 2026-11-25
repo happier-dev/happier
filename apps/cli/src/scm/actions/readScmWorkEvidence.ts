@@ -4,11 +4,13 @@ import {
     type ScmBranchListResponse,
     type ScmBranchListRequest,
     type ScmBranchWorkEvidence,
+    type ScmPullRequestListResponse,
     type ScmPullRequestWorkEvidence,
     type ScmWorkEvidenceReadRequest,
     type ScmWorkEvidenceReadResponse,
     type ScmWorkEvidenceSessionResult,
 } from '@happier-dev/protocol/scm';
+import { projectScmBackendFailure } from '@happier-dev/plugin-sdk/scm/backend';
 import { SCM_OPERATION_ERROR_CODES, ScmNativeOperationRefusalSchema } from '@happier-dev/protocol/scm/operationError';
 
 import { resolveCwd } from '@/scm/runtime';
@@ -16,6 +18,7 @@ import { resolveFilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessP
 import { joinRepositoryCheckpointPullRequestEvidence, readRepositoryCheckpointBranchEvidence } from '../checkpoints/sessionEvidence';
 import { notRepositoryResponse, runScmRoute } from '../rpc/dispatch';
 import { executeScmActionOperation, type ExecuteScmActionOperationParams } from './executeScmActionOperation';
+import { projectScmLegacyRpcResponse } from './scmRpcCompatibility';
 
 type SourceResult = Readonly<{
     status: 'partial' | 'unsupported' | 'error';
@@ -94,22 +97,44 @@ export async function readScmWorkEvidence(input: Readonly<{
     const discover = async (cwd: string) => {
         let git = false;
         const request = { cwd, ...(input.request.backendPreference ? { backendPreference: input.request.backendPreference } : {}) };
-        const branch = parseWorkReply(ScmBranchListResponseSchema, await runScmRoute<ScmBranchListRequest, ScmBranchListResponse>({
+        const states = ['open', 'closed', 'merged'] as const;
+        const { prStateReplies, ...branchReply } = await runScmRoute<ScmBranchListRequest, ScmBranchListResponse & {
+            prStateReplies?: readonly ScmPullRequestListResponse[];
+        }>({
             ...route, request, onNonRepository: () => notRepositoryResponse<ScmBranchListResponse>(),
-            runWithBackend: async ({ context, selection }) => {
+            runWithBackend: async ({ context, selection: { backend } }) => {
                 git = context.detection.mode === '.git';
-                return selection.backend.branchList ? selection.backend.branchList({ context, request })
-                    : { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED };
+                const branch = backend.branchList ? await backend.branchList({ context, request })
+                    : { success: false as const, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED };
+                if (!backend.pullRequestListStates || (!branch.success && branch.errorCode === SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY)) {
+                    return branch;
+                }
+
+                // The branch list and all three states can use this checkout's one admitted route.
+                let replies: readonly ScmPullRequestListResponse[];
+                try {
+                    const { results } = await backend.pullRequestListStates({ context, request: { states } });
+                    replies = results.map(result => result.ok ? result.response : result.error);
+                } catch (error) {
+                    const failure = projectScmBackendFailure(error);
+                    replies = states.map(() => failure);
+                }
+                return { ...branch, prStateReplies: replies };
             },
-        }));
+        });
+        const branch = parseWorkReply(ScmBranchListResponseSchema, branchReply);
         // A real non-repository has no hosting evidence and needs no PR calls.
         if ('data' in branch && !branch.data.success && branch.data.errorCode === SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY) {
             return { branch, pullRequests: [], git };
         }
-        const pullRequests = await Promise.all((['open', 'closed', 'merged'] as const).map(async state =>
-            parseWorkReply(ScmPullRequestListResponseSchema, await executeScmActionOperation({
-                ...route, actionId: 'scm.pullRequest.list', input: { ...request, state },
-            }))));
+        const actionId = 'scm.pullRequest.list';
+        const pullRequests = await Promise.all(states.map(async (state, index) => {
+            const stateRequest = { ...request, state };
+            const response = prStateReplies
+                ? projectScmLegacyRpcResponse({ actionId, request: stateRequest, response: prStateReplies[index] })
+                : await executeScmActionOperation({ ...route, actionId, input: stateRequest });
+            return parseWorkReply(ScmPullRequestListResponseSchema, response);
+        }));
         return { branch, pullRequests, git };
     };
     // This request owns discovery sharing; no retained cache or freshness policy.

@@ -89,9 +89,15 @@ function useHandler<TInput extends object, TResult>(
     handler: ((input: TInput & Readonly<{ signal: AbortSignal }>) => Promise<TResult> | TResult) | undefined,
     input: TInput,
 ): Promise<TResult | UnsupportedResult> {
-    if (!handler) {
-        return unsupportedOperation();
-    }
+    return handler ? useRegisteredHandler(services, hostingServices, handler, input) : unsupportedOperation();
+}
+
+function useRegisteredHandler<TInput extends object, TResult>(
+    services: ScmBackendRuntimeServices,
+    hostingServices: ScmHostingProviderRuntimeServices | null,
+    handler: (input: TInput & Readonly<{ signal: AbortSignal }>) => Promise<TResult> | TResult,
+    input: TInput,
+): Promise<TResult> {
     const operationInput = withOperationSignal(input);
     return runWithScmBackendRuntimeServices(
         services,
@@ -345,6 +351,7 @@ export function createRegisteredScmBackendAdapter(input: Readonly<{
     const preferredMode = input.executableDefinition.repoModes[0] ?? '.git';
     const runtimeServices = createScmBackendRuntimeServices(input.executableDefinition, input.scmCommandRunner);
     const hostingProviderRuntimeServices = input.hostingProviderRuntimeServices ?? null;
+    const pullRequestListStates = input.registration.handlers.hosting?.pullRequestListStates;
     const captureTarget = input.registration.handlers.commit?.captureTarget;
     const commitCaptureTarget: ScmBackend['commitCaptureTarget'] = captureTarget
         ? ({ context }) => useHandler(runtimeServices, hostingProviderRuntimeServices, captureTarget, { context })
@@ -603,6 +610,10 @@ export function createRegisteredScmBackendAdapter(input: Readonly<{
         async pullRequestList({ context, request }) {
             return useHandler(runtimeServices, hostingProviderRuntimeServices, input.registration.handlers.hosting?.pullRequestList, { context, request });
         },
+        ...(pullRequestListStates ? {
+            pullRequestListStates: ({ context, request }) =>
+                useRegisteredHandler(runtimeServices, hostingProviderRuntimeServices, pullRequestListStates, { context, request }),
+        } : {}),
         async pullRequestGet({ context, request }) {
             return useHandler(runtimeServices, hostingProviderRuntimeServices, input.registration.handlers.hosting?.pullRequestGet, { context, request });
         },

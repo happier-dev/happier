@@ -3,8 +3,8 @@ import { runWithScmCommandOperation } from '../commandOperation';
 
 import { createScmCapabilities } from '@happier-dev/protocol/scm/capabilities';
 import type { ScmBackendPreference } from '@happier-dev/protocol';
-import { SCM_OPERATION_ERROR_CODES, ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm/operationError';
-import type { ScmOperationErrorCode } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
+import { projectScmBackendFailure } from '@happier-dev/plugin-sdk/scm/backend';
 
 import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
 import {
@@ -31,30 +31,6 @@ type ScmErrorResponse = {
     error?: string;
     errorCode?: string;
 };
-
-/**
- * A backend that rejects with its own classification keeps it. Detection failures use this to
- * surface as `BACKEND_UNAVAILABLE` — the code the source-control surfaces already render as
- * "Source control is unavailable for this session" — instead of the generic command failure
- * (`F-SCM-1`).
- */
-function readCarriedScmErrorCode(error: unknown): ScmOperationErrorCode | null {
-    const raw = (error as { errorCode?: unknown } | null | undefined)?.errorCode;
-    const parsed = ScmOperationErrorCodeSchema.safeParse(raw);
-    return parsed.success ? parsed.data : null;
-}
-
-function fallbackError<TResponse extends ScmErrorResponse>(error: unknown): TResponse {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    // A host refusal before any command ran keeps its typed cause (e.g. Agent isolation).
-    const actionErrorCode = (error as { actionErrorCode?: unknown } | null | undefined)?.actionErrorCode;
-    return {
-        success: false,
-        error: message,
-        errorCode: readCarriedScmErrorCode(error) ?? SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
-        ...(typeof actionErrorCode === 'string' ? { actionErrorCode } : {}),
-    } as TResponse;
-}
 
 function invalidPathResponse<TResponse extends ScmErrorResponse>(error: string): TResponse {
     return {
@@ -122,7 +98,7 @@ export async function runScmRoute<TRequest extends ScmRequestBase, TResponse ext
             // domain fact "this is not a repository" (`F-SCM-1`). The detector's own carried code
             // makes this the source-control-unavailable surface rather than the non-repository one.
             if (outcome.kind === 'undetermined') {
-                return fallbackError<TResponse>(outcome.error);
+                return projectScmBackendFailure(outcome.error) as TResponse;
             }
             if (outcome.kind === 'not_a_repository') {
                 return await input.onNonRepository({
@@ -163,7 +139,7 @@ export async function runScmRoute<TRequest extends ScmRequestBase, TResponse ext
             });
         }));
     } catch (error) {
-        return fallbackError<TResponse>(error);
+        return projectScmBackendFailure(error) as TResponse;
     }
 }
 

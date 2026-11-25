@@ -16,6 +16,8 @@ import {
 import { type HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
 import { readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting/runtime';
 
+import { projectScmBackendFailure, type BackendRuntimeHandlers } from '@happier-dev/plugin-sdk/scm/backend';
+
 import type { ScmBackendContext } from '../types.js';
 import { getGitSnapshot } from '../repository.js';
 import { defaultPrStatusCache, type PrStatusCache, type PrStatusCacheKey } from '../hostingProviders/prStatusCache.js';
@@ -31,7 +33,13 @@ import {
 type PullRequestReadRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getPullRequests' | 'buildCompareUrl' | 'detectRemote'>
     & Partial<Pick<ResolvedScmHostingProviderRegistry, 'getRepositoryPublishing'>>;
 
+type PullRequestListStates = NonNullable<NonNullable<BackendRuntimeHandlers['hosting']>['pullRequestListStates']>;
+
 export type GitPullRequestReadOperations = Readonly<{
+    listStates(input: Readonly<{
+        context: ScmBackendContext;
+        request: Parameters<PullRequestListStates>[0]['request'];
+    }>): ReturnType<PullRequestListStates>;
     list(input: Readonly<{
         context: ScmBackendContext;
         request: ScmPullRequestListRequest;
@@ -165,10 +173,16 @@ export function createGitPullRequestReadOperations(
         request: ScmPullRequestListRequest;
     }>): Promise<ScmPullRequestListResponse> {
         const { context, request } = input;
-        const resolved = await readProviderContext({
-            context,
-            providerId: request.providerId,
-        });
+        const resolved = await readProviderContext({ context, providerId: request.providerId });
+        return listWithProviderContext({ context, request, resolved });
+    }
+
+    async function listWithProviderContext(input: Readonly<{
+        context: ScmBackendContext;
+        request: ScmPullRequestListRequest;
+        resolved: Awaited<ReturnType<typeof readProviderContext>>;
+    }>): Promise<ScmPullRequestListResponse> {
+        const { context, request, resolved } = input;
         if ('error' in resolved) return resolved.error;
 
         const headBranch = resolveHeadBranch(resolved.snapshot, request.head);
@@ -260,6 +274,19 @@ export function createGitPullRequestReadOperations(
 
     return Object.freeze({
         list,
+        async listStates({ context, request }) {
+            const resolved = await readProviderContext({ context });
+            return {
+                results: await Promise.all(request.states.map(async state => {
+                    try {
+                        const response = await listWithProviderContext({ context, request: { state }, resolved });
+                        return response.success ? { ok: true, response } : { ok: false, error: response };
+                    } catch (error) {
+                        return { ok: false, error: projectScmBackendFailure(error) };
+                    }
+                })),
+            };
+        },
         async get({ context, request }) {
             const resolved = await readProviderContext({ context });
             if ('error' in resolved) return resolved.error;
@@ -314,5 +341,6 @@ export function createGitPullRequestReadOperations(
 const gitPullRequestReadOperations = createGitPullRequestReadOperations();
 
 export const gitPullRequestList = gitPullRequestReadOperations.list;
+export const gitPullRequestListStates = gitPullRequestReadOperations.listStates;
 export const gitPullRequestGet = gitPullRequestReadOperations.get;
 export const gitPullRequestOpenCompose = gitPullRequestReadOperations.openCompose;

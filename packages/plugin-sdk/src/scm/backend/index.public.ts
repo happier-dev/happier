@@ -40,6 +40,7 @@ export type { WorkspaceTransferResult } from '../backend.js';
 export { createScmCapabilitiesFromBackendCapabilities } from '../backend.js';
 export { mapGitScmErrorCode } from '../backend.js';
 export { mapSaplingScmErrorCode } from '../backend.js';
+export { projectScmBackendFailure } from '../backend.js';
 export { readCurrentBackendRuntimeServices } from '../backend.js';
 export { resolveBackendCommandMaxOutputBytes } from '../backend.js';
 export { resolveScmBackendCapabilities } from '../backend.js';

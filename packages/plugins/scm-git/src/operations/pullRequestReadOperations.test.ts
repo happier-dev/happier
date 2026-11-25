@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,11 +14,16 @@ import type {
   ScmWorkingSnapshot,
 } from '@happier-dev/plugin-sdk/scm';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ScmNativeOperationRefusalSchema } from '@happier-dev/protocol/scm/operationError';
+import { createScmBackendRegistry } from '@/scm/registry';
+import { createTestGitScmBackendRegistry, createTestRpcManager } from '@/scm/rpc/__tests__/testRpcHarness';
 
 import type { ScmBackendContext } from '../types.js';
 import { createPrStatusCache } from '../hostingProviders/prStatusCache.js';
 import { createGitPullRequestReadOperations } from './pullRequestReadOperations.js';
 import { createGithubRestAdapter } from '../../../scm-github/src/pullRequests/restAdapter.js';
+import { createGithubForgeHttpFixture } from '../../../../../apps/cli/src/testkit/scm/githubForgeHttp';
 import { createRealGitScmBackendRuntimeServices, runWithGitScmCommandRunner } from '../testkit/scmRuntime.test-support.js';
 
 const provider: ScmHostingProviderRef = {
@@ -146,6 +151,156 @@ describe('git pull request read operations', () => {
                     request: { base: 'main', head: 'feature/local' } })))
                 .resolves.toMatchObject({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED });
         } finally { await rm(root, { recursive: true, force: true }); }
+    });
+
+    it('returns the single-state typed failure in place while both sibling states succeed', async () => {
+        const adapter = createGithubRestAdapter({
+            resolveToken: async () => ({ kind: 'available', token: 'fixture' }),
+            fetcher: async url => {
+                const open = new URL(url).searchParams.get('state') === 'open';
+                return {
+                    ok: !open,
+                    status: open ? 404 : 200,
+                    statusText: open ? 'Not Found' : 'OK',
+                    json: async () => [],
+                    text: async () => open ? '{"message":"Not Found"}' : '[]',
+                };
+            },
+        });
+        const operations = createGitPullRequestReadOperations({
+            registry: createRegistry(adapter), cache: createPrStatusCache(), readSnapshot: async () => createSnapshot(),
+        });
+        const states = ['closed', 'open', 'merged'] as const;
+        const singleFailure = await operations.list({ context, request: { state: 'open' } });
+        expect(singleFailure).toMatchObject({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND });
+
+        await expect(operations.listStates({ context, request: { states } })).resolves.toEqual({
+            results: [
+                { ok: true, response: { success: true, pullRequests: [] } },
+                { ok: false, error: singleFailure },
+                { ok: true, response: { success: true, pullRequests: [] } },
+            ],
+        });
+    });
+
+    it('keeps an empty-message refusal from the auth-profile boundary as the same typed error as the single-state RPC', async () => {
+        const cwd = await realpath(await mkdtemp(join(tmpdir(), 'happier-pr-state-refusal-')));
+        try {
+            execFileSync('git', ['init', '--quiet'], { cwd });
+            const refusal = Object.assign(new Error(''), {
+                errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+                actionErrorCode: 'agent_isolation_unavailable',
+            });
+            let authReads = 0;
+            let refuseOnRead = 1;
+            const operations = createGitPullRequestReadOperations({
+                registry: createRegistry({
+                    getPullRequestAuthProfileKey: () => {
+                        if (++authReads === refuseOnRead) throw refusal;
+                        return null;
+                    },
+                }),
+                cache: createPrStatusCache(),
+                readSnapshot: async () => createSnapshot(),
+            });
+            const [git] = createTestGitScmBackendRegistry().listBackends();
+            const registry = createScmBackendRegistry([{
+                ...git,
+                pullRequestList: ({ request }) => operations.list({ context, request }),
+            }]);
+            const { call } = createTestRpcManager({ workingDirectory: cwd, registry });
+            const singleFailure = await call(RPC_METHODS.SCM_PULL_REQUEST_LIST, { cwd, state: 'open' });
+            expect(ScmNativeOperationRefusalSchema.parse(singleFailure)).toEqual({
+                success: false,
+                error: '',
+                errorCode: refusal.errorCode,
+                actionErrorCode: refusal.actionErrorCode,
+            });
+
+            authReads = 0;
+            refuseOnRead = 2;
+            const states = ['closed', 'open', 'merged'] as const;
+            const { results } = await operations.listStates({ context, request: { states } });
+            expect(results).toEqual([
+                { ok: true, response: { success: true, pullRequests: [] } },
+                { ok: false, error: singleFailure },
+                { ok: true, response: { success: true, pullRequests: [] } },
+            ]);
+        } finally {
+            await rm(cwd, { recursive: true, force: true });
+        }
+    });
+
+    it('lists each state from the same checkout facts as standalone lists', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-pr-states-')));
+        const main = join(root, 'main');
+        const linked = join(root, 'linked');
+        const detached = join(root, 'detached');
+        const nonForge = join(root, 'non-forge');
+        const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, stdio: 'pipe' });
+        try {
+            for (const cwd of [main, nonForge]) {
+                git(root, 'init', '--quiet', '-b', 'trunk', cwd);
+                git(cwd, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '--allow-empty', '-m', 'base');
+            }
+            const nameWithOwner = 'example/state-parity';
+            const cloneUrl = `https://github.com/${nameWithOwner}.git`;
+            git(main, 'remote', 'add', 'origin', cloneUrl);
+            git(main, 'update-ref', 'refs/remotes/origin/trunk', 'HEAD');
+            git(main, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk');
+            git(main, 'worktree', 'add', '-b', 'feature', linked);
+            git(main, 'worktree', 'add', '--detach', detached);
+            git(nonForge, 'remote', 'add', 'origin', 'https://example.test/anonymous/project.git');
+            const forge = createGithubForgeHttpFixture({ nameWithOwner, cloneUrl, listPullRequests: query => {
+                if (query.get('state') === 'open') return [];
+                const head = query.get('head');
+                if (head !== 'example:feature' && head !== 'example:trunk') return [];
+                const number = head === 'example:feature' ? 2 : 1;
+                return [{ ...pullRequest, provider: forge.provider, state: 'closed', number,
+                    url: `https://github.com/${nameWithOwner}/pull/${number}`,
+                    baseBranch: 'trunk', headBranch: head.slice('example:'.length) }];
+            } });
+            const states = ['open', 'closed', 'merged'] as const;
+            const createOperations = () => createGitPullRequestReadOperations({
+                registry: forge.hosting, cache: createPrStatusCache(), runtimeServices: {},
+            });
+            const run = createRealGitScmBackendRuntimeServices().runCommand;
+            for (const [cwd, expected] of [[main, 1], [linked, 2], [detached, 'INVALID_REQUEST'],
+                [nonForge, 'FEATURE_UNSUPPORTED']] as const) {
+                const checkout = { ...context, cwd, projectKey: cwd, detection: { ...context.detection, rootPath: cwd } };
+                const ordinary = createOperations();
+                let launches = 0;
+                const count: typeof run = async command => {
+                    launches += 1;
+                    return run(command);
+                };
+                const independent = await runWithGitScmCommandRunner(count, () => Promise.all(
+                    states.map(state => ordinary.list({ context: checkout, request: { state } }))));
+                const snapshotLaunches = cwd === linked || cwd === detached ? 8 : 7;
+                expect(launches).toBe(3 * snapshotLaunches);
+                launches = 0;
+                const batch = await runWithGitScmCommandRunner(count, () => createOperations().listStates({
+                    context: checkout, request: { states },
+                }));
+                expect(launches).toBe(snapshotLaunches);
+                expect(JSON.stringify(batch.results)).toBe(JSON.stringify(independent.map(response => response.success
+                    ? { ok: true, response } : { ok: false, error: response })));
+                if (typeof expected === 'number') {
+                    expect(independent).toMatchObject([
+                        { success: true, pullRequests: [] },
+                        { success: true, pullRequests: [{ number: expected, baseBranch: 'trunk' }] },
+                        { success: true, pullRequests: [{ number: expected, baseBranch: 'trunk' }] },
+                    ]);
+                } else {
+                    expect(independent).toEqual(states.map(() => expect.objectContaining({ success: false, errorCode: expected })));
+                }
+            }
+            // The non-main default branch came from the checkout, with no branch metadata fetch.
+            expect(forge.httpRequests.length).toBeGreaterThan(0);
+            expect(forge.httpRequests.every(request => request.path.endsWith('/pulls'))).toBe(true);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
     });
 
     it('retains the forge throttle through list and get without another HTTP read', async () => {

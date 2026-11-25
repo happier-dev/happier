@@ -125,6 +125,8 @@ export type ScmRepoDetection = {
 
 export type ScmCommitTargetCaptureResponse = Awaited<ReturnType<NonNullable<NonNullable<BackendRuntimeHandlers['commit']>['captureTarget']>>>;
 
+type PullRequestListStatesHandler = NonNullable<NonNullable<BackendRuntimeHandlers['hosting']>['pullRequestListStates']>;
+
 export type ScmBackendContext = {
     cwd: string;
     projectKey: string;
@@ -402,6 +404,10 @@ export interface ScmBackend {
         context: ScmBackendContext;
         request: ScmPullRequestListRequest;
     }): Promise<ScmPullRequestListResponse>;
+    pullRequestListStates?(input: {
+        context: ScmBackendContext;
+        request: Parameters<PullRequestListStatesHandler>[0]['request'];
+    }): ReturnType<PullRequestListStatesHandler>;
     pullRequestGet?(input: {
         context: ScmBackendContext;
         request: ScmPullRequestGetRequest;
