@@ -2,6 +2,7 @@ import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 export { PROJECT_SOURCE_ACTION_IDS_V1 } from './projectSourcesActionIdsV1.js';
 import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from '../actionSpecs.js';
 import { actionInputServerId } from './definition.js';
+import { withoutClientActionInput } from '../clientActionInput.js';
 import {
   ProjectSourcesListInputV1Schema, ProjectSourcesListOutputV1Schema,
   ProjectSourcesReadInputV1Schema, ProjectSourcesReadOutputV1Schema,
@@ -68,7 +69,7 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
     ...common, id: 'projects.sources.moveToTeam', executionPlacement: 'client', approval: { result: 'required' },
     automationPrimarySubject: { kind: 'app', field: 'sourceId' },
     approvalScope: { subjectKinds: ['app'], project: (input) => {
-      const target = ProjectSourcesMoveToTeamInputV1Schema.parse(input);
+      const target = ProjectSourcesMoveToTeamInputV1Schema.parse(withoutClientActionInput(input));
       return { subjects: [{ kind: 'app', serverId: target.serverId, projectSourceId: target.sourceId }] };
     } },
     title: 'Move Source to Team',
@@ -139,7 +140,7 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
     ...common, id: 'projects.sources.update', approval: {result: 'required'}, title: 'Update repository source',
     automationPrimarySubject: { kind: 'app', field: 'sourceId' },
     approvalScope: { subjectKinds: ['app'], project: (input) => {
-      const target = ProjectSourcesUpdateInputV1Schema.parse(input);
+      const target = ProjectSourcesUpdateInputV1Schema.parse(withoutClientActionInput(input));
       return { subjects: [{ kind: 'app', serverId: target.serverId, projectSourceId: target.sourceId }] };
     } },
     description: 'Edit Source metadata or one exact context/dashboard attachment under the current Source revision. Artifact content and grants are independent.',
@@ -155,7 +156,7 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
     ...common, id: 'projects.sources.delete', approval: {result: 'required'}, title: 'Delete repository source',
     automationPrimarySubject: { kind: 'app', field: 'sourceId' },
     approvalScope: { subjectKinds: ['app'], project: (input) => {
-      const target = ProjectSourcesDeleteInputV1Schema.parse(input);
+      const target = ProjectSourcesDeleteInputV1Schema.parse(withoutClientActionInput(input));
       return { subjects: [{ kind: 'app', serverId: target.serverId, projectSourceId: target.sourceId }] };
     } },
     irreversible: true,

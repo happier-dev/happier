@@ -9,7 +9,7 @@ describe('declared Action operands', () => {
     { actionId: 'projects.sources.update', input: { patch: { name: 'QA-C resumed resource App' } } },
     { actionId: 'projects.sources.delete', input: {} },
     { actionId: 'projects.sources.moveToTeam', input: { teamId: 'team', requestKey: 'move-source' } },
-  ] as const)('matches exact App and any App checks for $actionId', async ({ actionId, input }) => {
+  ] as const)('matches exact App and any App checks with a client selector for $actionId', async ({ actionId, input }) => {
     const subject = { kind: 'app' as const, serverId: 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN',
       projectSourceId: 'cmwl4o0x2000kpnm2cardo97i' };
     const spec = getActionSpec(actionId);
@@ -21,7 +21,7 @@ describe('declared Action operands', () => {
         ownerAccountId: 'actor', actionIds: [actionId], phase: 'after' },
     ] }), settle: async () => {} });
     const select = async (sourceId: string) => {
-      const request = { serverId: subject.serverId, sourceId, expectedRevision: 1, ...input };
+      const request = { serverId: subject.serverId, sourceId, expectedRevision: 1, clientId: 'answering-client', ...input };
       const admission = await readActionApprovalScopeAdmissionV1({ actionId, spec, input: request, context,
         deps: {}, phase: 'prepare', isSameHome: (left, right) => left === right });
       if ('ok' in admission) throw new Error(admission.errorCode);
