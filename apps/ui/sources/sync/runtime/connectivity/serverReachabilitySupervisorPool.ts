@@ -13,6 +13,8 @@ import {
 import { probeAuthenticatedServerAuthPingEndpoint } from '@/sync/api/capabilities/probeAuthenticatedServerAuthPingEndpoint';
 import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { isServerRuntimeTransportPublished } from '@/sync/runtime/nativeLoopbackTunnels/runtimeOrigin';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
@@ -288,6 +290,23 @@ function getOrCreateEntry(serverUrlRaw: string, token: string | null = null): Re
     return entry;
 }
 
+/**
+ * The Account bearer goes only to an address the carrier policy selected. An entry with
+ * no selected origin or carrier for the active descriptor-backed Home whose policy has
+ * published no transport would probe the canonical URL, so it stays unstarted; the
+ * publication's own start supplies the selected transport and runs the probe.
+ */
+function awaitsSelectedTransport(entry: ReachabilitySupervisorEntry): boolean {
+    if (!entry.token || entry.runtimeOrigin || entry.homeCarrier) return false;
+    const snapshot = getActiveServerSnapshot();
+    return canonicalizeServerUrl(snapshot.serverUrl) === entry.serverUrl && !isServerRuntimeTransportPublished(snapshot);
+}
+
+async function startEntrySupervisor(entry: ReachabilitySupervisorEntry): Promise<void> {
+    if (awaitsSelectedTransport(entry)) return;
+    await entry.supervisor.start();
+}
+
 function entryHasConsumers(entry: ReachabilitySupervisorEntry): boolean {
     return entry.ownerCount > 0 || entry.pendingStartCount > 0 || entry.subscribers.size > 0;
 }
@@ -303,7 +322,7 @@ async function stopEntryIfUnused(entry: ReachabilitySupervisorEntry): Promise<vo
         await entry.supervisor.stop();
         if (entriesByScopeKey.get(entry.scopeKey) !== entry) return;
         if (entryHasConsumers(entry)) {
-            await entry.supervisor.start();
+            await startEntrySupervisor(entry);
             return;
         }
         entriesByScopeKey.delete(entry.scopeKey);
@@ -630,16 +649,16 @@ export async function invalidateServerReachabilitySupervisor(params: Readonly<{
             // Explicit invalidation is used after out-of-band evidence such as a Socket.IO transport drop.
             // Force a fresh probe even if the synthetic reachability transport still thinks it is online.
             await entry.supervisor.stop();
-            await entry.supervisor.start();
+            await startEntrySupervisor(entry);
             return;
         }
         if (entry.state.phase === 'idle' || entry.state.phase === 'shutting_down') {
-            await entry.supervisor.start();
+            await startEntrySupervisor(entry);
             return;
         }
         if (entry.state.phase === 'auth_failed' && tokenChanged) {
             await entry.supervisor.stop();
-            await entry.supervisor.start();
+            await startEntrySupervisor(entry);
             return;
         }
     })();
@@ -788,17 +807,17 @@ export async function startServerReachabilitySupervisor(params: Readonly<{
         }
 
         if (entry.state.phase === 'idle' || entry.state.phase === 'shutting_down') {
-            await entry.supervisor.start();
+            await startEntrySupervisor(entry);
         } else if (transportChanged && entry.state.phase === 'online') {
             await recheckOnlineEntry(entry);
         } else if (transportChanged || (entry.state.phase === 'auth_failed' && tokenChanged)) {
             await entry.supervisor.stop();
             throwIfAborted(params.signal);
-            await entry.supervisor.start();
+            await startEntrySupervisor(entry);
         } else if (entry.state.phase === 'connecting') {
             // A start publishes connecting before its readiness probe, so a concurrent owner
             // joins that in-flight start; during a retry probe start() returns at once.
-            await entry.supervisor.start();
+            await startEntrySupervisor(entry);
         }
     })();
     try {
