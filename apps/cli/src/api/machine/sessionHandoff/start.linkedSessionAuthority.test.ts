@@ -90,11 +90,12 @@ const enabledServerFeaturesSnapshot = {
 
 describe('session handoff start — source-derived transcript-storage authority', () => {
   it.each([
-    { strategy: 'server_routed_stream', sameMachine: false, sameDirectory: false },
-    { strategy: 'direct_peer', sameMachine: false, sameDirectory: false },
-    { strategy: 'direct_peer', sameMachine: true, sameDirectory: false },
-    { strategy: 'direct_peer', sameMachine: true, sameDirectory: true },
-  ] as const)('exports supported native source state once after its single stop ($strategy, sameMachine=$sameMachine, sameDirectory=$sameDirectory)', async ({ strategy, sameMachine, sameDirectory }) => {
+    { strategy: 'server_routed_stream', sameMachine: false, sameDirectory: false, missingTranscript: false },
+    { strategy: 'direct_peer', sameMachine: false, sameDirectory: false, missingTranscript: false },
+    { strategy: 'direct_peer', sameMachine: true, sameDirectory: false, missingTranscript: false },
+    { strategy: 'direct_peer', sameMachine: true, sameDirectory: true, missingTranscript: false },
+    { strategy: 'server_routed_stream', sameMachine: false, sameDirectory: false, missingTranscript: true },
+  ] as const)('exports supported native source state once after its single stop ($strategy, sameMachine=$sameMachine, sameDirectory=$sameDirectory, missingTranscript=$missingTranscript)', async ({ strategy, sameMachine, sameDirectory, missingTranscript }) => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'handoff-supported-source-'));
     const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
       runtimeOptions: { pluginIds: ['happier.agent.claude'] } });
@@ -109,7 +110,8 @@ describe('session handoff start — source-derived transcript-storage authority'
       const transcriptPath = join(projectDir, 'native-claude.jsonl');
       await writeFile(transcriptPath, '{"type":"assistant","text":"before_stop"}\n');
       const stop = vi.fn(async () => {
-        await writeFile(transcriptPath, '{"type":"assistant","text":"after_stop"}\n');
+        if (missingTranscript) await rm(transcriptPath);
+        else await writeFile(transcriptPath, '{"type":"assistant","text":"after_stop"}\n');
         return 'stopped' as const;
       });
       // Native transcript IO and all admission/export/storage owners remain real.
@@ -137,6 +139,14 @@ describe('session handoff start — source-derived transcript-storage authority'
       if (sameDirectory) {
         expect(result).toMatchObject({ ok: false, errorCode: 'invalid_target_path' });
         expect(stop).not.toHaveBeenCalled();
+        return;
+      }
+      if (missingTranscript) {
+        expect(result).toMatchObject({ ok: false, errorCode: 'source_export_failed',
+          failureCause: { phase: 'session_handoff.source_export', errorClass: 'Error', errorCode: 'handoff_failed', httpStatus: null },
+          status: { status: 'awaiting_recovery', recoveryActions: ['restart_on_source', 'keep_stopped'] } });
+        expect(JSON.stringify(Reflect.get(result as object, 'failureCause'))).not.toContain(configDir);
+        expect(stop).toHaveBeenCalledTimes(1);
         return;
       }
       expect(result).toMatchObject({ handoffId: 'handoff_test', status: { status: 'pending' } });

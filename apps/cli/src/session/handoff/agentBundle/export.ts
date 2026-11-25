@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { SessionHandoffAgentBundle } from '../types';
 import {
   projectSessionMetadataForAgentHandoff,
@@ -68,7 +69,13 @@ export async function prepareSessionHandoffAgentBundleExport(params: Readonly<{
       directory: params.activeServerDir,
     });
     if (!agentBundle.ok) {
-      throw new Error(agentBundle.message ?? `Session handoff export failed: ${agentBundle.code}`);
+      throw createActionExecuteFailureError({
+        ok: false,
+        errorCode: agentBundle.code,
+        error: agentBundle.message ?? `Session handoff export failed: ${agentBundle.code}`,
+        failureCause: { phase: 'session_handoff.source_export', errorClass: 'Error',
+          errorCode: agentBundle.code, httpStatus: null },
+      });
     }
     return {
       agentBundle: agentBundle.value.bundle as SessionHandoffAgentBundle,

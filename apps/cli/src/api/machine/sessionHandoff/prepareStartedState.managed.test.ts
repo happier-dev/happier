@@ -110,7 +110,8 @@ describe('managed handoff source ownership', () => {
       expect(await handler({ sessionId: 'session', operationId: 'operation', targetDirectory: { kind: 'managed' },
         sourceMachineId: 'a', targetMachineId: 'b', sessionStorageMode: 'persisted',
         preferredTransportStrategies: ['server_routed_stream'], negotiatedTransportStrategy: 'server_routed_stream',
-      })).toMatchObject({ ok: false, errorCode: 'SESSION_DIRECTORY_MISSING' });
+      })).toMatchObject({ ok: false, errorCode: 'SESSION_DIRECTORY_MISSING',
+        failureCause: { phase: 'session_handoff.source_export', errorCode: 'SESSION_DIRECTORY_MISSING' } });
     } finally { await rm(activeServerDir, { recursive: true, force: true }); }
   });
 });

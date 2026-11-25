@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveSessionHandoffLocalDirectory } from '../../../session/handoff/paths/sessionHandoffPathNormalization';
 import { resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
@@ -272,7 +273,8 @@ export function createSessionHandoffStartActionHandler(
       try {
         preparedExport = await params.prepareSessionBundleExport(metadata);
       } catch (error) {
-        return { ok: false, errorCode: 'source_export_failed', error: error instanceof Error ? error.message : 'Failed to prepare session handoff export' } as const;
+        return { ok: false, errorCode: 'source_export_failed', error: error instanceof Error ? error.message : 'Failed to prepare session handoff export',
+          failureCause: projectActionFailureCauseV1(error, 'session_handoff.source_export', { allowUnknownErrorCode: true }) } as const;
       }
     }
     const prepareAdmittedState = (callInput: Parameters<typeof prepareStartedState>[0]) => prepareStartedState({
@@ -351,6 +353,7 @@ export function createSessionHandoffStartActionHandler(
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to export session handoff state';
+      const failureCause = projectActionFailureCauseV1(error, 'session_handoff.source_export', { allowUnknownErrorCode: true });
       const errorCode = error !== null && typeof error === 'object' && 'code' in error
         && error.code === 'SESSION_DIRECTORY_MISSING' ? error.code : 'source_export_failed';
       if (!exportAfterStop) {
@@ -359,6 +362,7 @@ export function createSessionHandoffStartActionHandler(
           ok: false,
           errorCode,
           error: errorMessage,
+          failureCause,
         } as const;
       }
       const status = buildStartRecoveryStatus(handoffId);
@@ -366,6 +370,7 @@ export function createSessionHandoffStartActionHandler(
         ok: false,
         errorCode,
         error: errorMessage,
+        failureCause,
         handoffId,
         status,
       } as const;
