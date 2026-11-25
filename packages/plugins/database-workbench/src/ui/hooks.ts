@@ -290,11 +290,21 @@ export function useStatementsLastLook(targetKey: string, observation: WorkbenchS
 
 const noActivity = { value: null, loading: true, error: null } as const;
 const useManualActivityRefreshInterval = () => 0;
+type ActivityRead = Extract<DatabaseStatsReadV1, { group: 'activity' }>;
+
 /** Live activity: the host's presented-demand owner refreshes it only while this view is shown. */
-export function useDatabaseActivity(targetKey: string, request: Extract<DatabaseStatsReadV1, { group: 'activity' }>, presented: boolean) {
-    const instance = useWorkbenchInstance();
+export function useDatabaseActivity(targetKey: string, request: ActivityRead, presented: boolean) {
     const useInterval = useHostDatabaseWorkbench()?.useActivityRefreshIntervalMs ?? useManualActivityRefreshInterval;
-    const intervalMs = useInterval();
+    return useRetainedDatabaseActivity(targetKey, request, presented, useInterval());
+}
+
+/** Overview reads Connections from the same resource with the scheduler's manual cadence. */
+export function useDatabaseActivitySnapshot(targetKey: string, request: ActivityRead, presented: boolean) {
+    return useRetainedDatabaseActivity(targetKey, request, presented, 0);
+}
+
+function useRetainedDatabaseActivity(targetKey: string, request: ActivityRead, presented: boolean, intervalMs: number) {
+    const instance = useWorkbenchInstance();
     const resource = useMemo(() => {
         if (!presented) return null;
         try { return instance.activity(targetKey, request); } catch { return null; }

@@ -37,6 +37,7 @@ import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/
 import { renderSurface as renderPage } from '../WorkbenchPage.js';
 import { renderSurface as renderRail } from '../DatabaseRailTab.js';
 import { WORKBENCH_PAGE_VIEW_ID } from '../views.js';
+import { formatMoment } from './format.js';
 import { statementByKey } from './statements.js';
 
 (
@@ -193,7 +194,7 @@ function pageContext() {
 }
 
 describe('Database Insights surfaces', () => {
-  it('refreshes the selected Activity when the Account preference is manual', async () => {
+  it('refreshes the selected Activity and shows its sample time in manual mode', async () => {
     const activityReads = vi.fn((): DatabaseStatsObservationV1 => ({
       v: 1, engineId: 'postgresql', observedAtMs: Date.parse('2026-11-17T14:05:00Z'),
       scope: { database: 'billing_dev' }, intervalBasis: { ...basis, selectionKey: 'activity' },
@@ -207,10 +208,19 @@ describe('Database Insights surfaces', () => {
       databaseWorkbench: {
         useActivityRefreshIntervalMs: () => 0,
         activityResource: source => {
-          const snapshot = { value: null, loading: true, error: null };
+          let snapshot = { value: null as Awaited<ReturnType<typeof source.read>> | null, loading: true, error: null };
+          const listeners = new Set<() => void>();
           return {
-            getSnapshot: () => snapshot, subscribe: () => () => {},
-            refresh: async () => { await source.read({ signal: new AbortController().signal }); },
+            getSnapshot: () => snapshot,
+            subscribe: listener => {
+              listeners.add(listener);
+              return () => { listeners.delete(listener); };
+            },
+            refresh: async () => {
+              const value = await source.read({ signal: new AbortController().signal });
+              snapshot = { value, loading: false, error: null };
+              for (const listener of listeners) listener();
+            },
             retainAutoRefresh: () => () => {}, invalidate: () => {}, dispose: () => {},
           };
         },
@@ -241,6 +251,7 @@ describe('Database Insights surfaces', () => {
       await page.press(await page.getByRole('button', { name: 'Refresh' }));
       await settle();
       expect(activityReads).toHaveBeenCalledTimes(1);
+      expect(await page.getByText(`as of ${formatMoment(activityReads.mock.results[0].value.observedAtMs)}`)).toBeTruthy();
     } finally { await page.dispose(); }
   });
 

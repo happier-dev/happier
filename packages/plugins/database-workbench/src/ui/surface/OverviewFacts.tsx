@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { DatabaseStatsObservationV1, DatabaseStatsReadV1 } from '@happier-dev/plugin-sdk/database';
 import { Metric, Row, usePluginTranslation } from '@happier-dev/plugin-ui';
 import { usePluginSurfaceActivity } from '@happier-dev/plugin-ui/hostApi';
-import { useDatabaseActivity, useDatabaseInsights } from '../hooks.js';
+import { useDatabaseActivitySnapshot, useDatabaseInsights } from '../hooks.js';
 import { ACTIVITY_READ, ConnectionsMetric } from './insights/ActivityView.js';
 import { isStatsSetupReason } from './insights/InsightsSetup.js';
 import { STATEMENTS_BY_TOTAL_TIME } from './insights/statements.js';
@@ -22,7 +22,7 @@ type Activity = Extract<
 /**
  * The database at a glance (lab directory header): its size, its connections and whether statement statistics are
  * on. Each fact is the Insights owner's own read (the same resources Insights opens), so nothing is read twice;
- * Connections refreshes while the Overview is on screen, as Activity does. A fact the database does not share says
+ * Overview takes one Connections sample. A fact the database does not share says
  * so in its tile rather than disappearing, so the row never reflows as reads land.
  */
 export function OverviewFacts(props: Readonly<{ targetKey: string }>) {
@@ -34,7 +34,7 @@ export function OverviewFacts(props: Readonly<{ targetKey: string }>) {
     props.targetKey,
     STATEMENTS_BY_TOTAL_TIME,
   ).observation as DatabaseStatsObservationV1 | undefined;
-  const activity = useDatabaseActivity(props.targetKey, ACTIVITY_READ, usePluginSurfaceActivity().active);
+  const activity = useDatabaseActivitySnapshot(props.targetKey, ACTIVITY_READ, usePluginSurfaceActivity().active);
   const sessions =
     (activity.observation as DatabaseStatsObservationV1 | undefined)?.status ===
     'available'

@@ -37,7 +37,7 @@ import { encodeBase64, formatSharedSavedSecretRefV1, projectNativeJsonValueForTr
 import { Button } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { HappierPageChromeProvider } from '@happier-dev/plugin-ui/presentation';
-import { PluginUiHostPresentationScope } from '@happier-dev/plugin-ui/advanced';
+import { PluginUiHostPresentationScope, type PluginUiPresentationHost } from '@happier-dev/plugin-ui/advanced';
 import { projectHappierUiEnvironment } from '@happier-dev/plugin-ui/environment';
 import { renderSurface as renderPanel } from './DatabasesPanel.js';
 import { activate, openWorkbenchPage, renderSurface as renderPage } from './WorkbenchPage.js';
@@ -820,8 +820,40 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
-  it('leads the Overview with the database size and whether statement statistics are on', async () => {
+  it('shows Overview facts with a single Activity sample even when the Account enables auto-refresh', async () => {
     const basis = { bindingKey: 'binding', databaseIdentity: 'billing_dev', selectionKey: 'overview' };
+    const retainAutoRefresh = vi.fn<(demand: { intervalMs: number }) => void>();
+    const presentationHost: PluginUiPresentationHost = {
+      renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, renderPopover: () => null,
+      databaseWorkbench: {
+        useActivityRefreshIntervalMs: () => 5_000,
+        activityResource: source => {
+          let snapshot = { value: null as Awaited<ReturnType<typeof source.read>> | null, loading: true, error: null };
+          const listeners = new Set<() => void>();
+          const refresh = async () => {
+            const value = await source.read({ signal: new AbortController().signal });
+            snapshot = { value, loading: false, error: null };
+            for (const listener of listeners) listener();
+          };
+          return {
+            getSnapshot: () => snapshot,
+            subscribe: listener => {
+              listeners.add(listener);
+              return () => { listeners.delete(listener); };
+            },
+            retainAutoRefresh: demand => {
+              retainAutoRefresh(demand);
+              void refresh();
+              return () => {};
+            },
+            refresh, invalidate: () => {}, dispose: () => {},
+          };
+        },
+        lastLook: () => ({
+          observe: () => ({ comparison: { status: 'unavailable', reason: 'previous_sample_required' }, persistenceError: null }),
+        }),
+      },
+    };
     const answers = daemonAnswers([descriptor]);
     const executeAction = vi.fn(async (input: PluginUiTestkitExecuteActionInput) => {
       if (input.action !== databaseActionLocalIdV1(DATABASE_STATS_READ_ACTION_ID_V1)) return answers(input);
@@ -833,13 +865,18 @@ describe('Database workbench surfaces', () => {
           ? { v: 1, observedAtMs: 1, engineId: 'postgresql', scope: { database: 'billing_dev' }, intervalBasis: basis,
               status: 'available', group: 'size', coverage: { status: 'complete' }, completeness: { complete: true },
               data: { bytes: '412000000', measurement: 'database_bytes' } }
-          : { v: 1, observedAtMs: 1, engineId: 'postgresql', scope: { database: 'billing_dev' }, intervalBasis: basis,
+          : group === 'activity'
+            ? { v: 1, observedAtMs: 1, engineId: 'postgresql', scope: { database: 'billing_dev' }, intervalBasis: basis,
+                status: 'available', group: 'activity', coverage: { status: 'complete' }, completeness: { complete: true }, data: [] }
+            : { v: 1, observedAtMs: 1, engineId: 'postgresql', scope: { database: 'billing_dev' }, intervalBasis: basis,
               status: 'unavailable', group: group ?? 'statements', reason: 'extension_missing' },
       });
     });
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'page-overview-tiles', mountNonce: 'page-overview-tiles' },
-      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: context => <PluginUiHostPresentationScope environment={projectHappierUiEnvironment(context.surface)}
+        presentationHost={presentationHost}>{renderPage(context)}</PluginUiHostPresentationScope>,
       launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'overview',
       surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { ...connectionResourceHandlers(), executeAction, replacePageLocation: async ({ subPath }) => subPath },
@@ -848,6 +885,8 @@ describe('Database workbench surfaces', () => {
       await settle(20);
       expect(await fixture.getByRole('group', { name: 'Size: 412 MB' })).toBeTruthy();
       expect(await fixture.getByRole('group', { name: 'Statement statistics: Off, Needs pg_stat_statements' })).toBeTruthy();
+      expect(retainAutoRefresh.mock.calls).toEqual([[{ intervalMs: 0 }]]);
+      expect(await fixture.getByRole('group', { name: 'Connections: 0' })).toBeTruthy();
     } finally { await fixture.dispose(); }
   });
 

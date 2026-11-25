@@ -144,18 +144,23 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
   const facts: PageHeaderMetaFact[] = [
     { key: 'database', text: descriptor.label },
     ...(tab === 'statements' ? statementsFacts(translate, statements) : []),
-    ...(tab === 'activity' && activity.supported && activity.autoRefreshEnabled && !activity.error
-      ? [
-          {
-            key: 'live',
-            text: translate(
-              'plugins.database.activity.live',
-              'refreshing while this is open',
-            ),
-          },
-        ]
-      : []),
   ];
+  if (tab === 'activity' && activity.supported && !activity.error) {
+    if (activity.observation?.status === 'available') {
+      facts.push({
+        key: 'asOf',
+        text: translate('plugins.database.insights.asOf', 'as of {time}', {
+          time: formatMoment(activity.observation.observedAtMs),
+        }),
+      });
+    }
+    if (activity.autoRefreshEnabled) {
+      facts.push({
+        key: 'live',
+        text: translate('plugins.database.activity.live', 'refreshing while this is open'),
+      });
+    }
+  }
   return (
     <Stack gap="large" grow>
       <PageHeader
