@@ -31,6 +31,7 @@ import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/action
 import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { prepareSessionAgentReadiness } from '@/session/creation/prepareSessionAgentReadiness';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import type { CapabilitiesDetectRequest } from '@happier-dev/protocol/capabilities';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -172,13 +173,17 @@ it('delivers the reviewed Agent install operand to Home and retains the receivin
 
 describe('Machine capability observation during unsigned approval replay', () => {
   it.each([
-    { signed: false, includeDisabled: true },
-    { signed: false, includeDisabled: undefined },
-    { signed: true, includeDisabled: true },
-    { signed: true, includeDisabled: undefined },
-  ])('preserves unavailable Review engines through Machine readiness (signed=$signed, includeDisabled=$includeDisabled)', async ({ signed, includeDisabled }) => {
+    { signed: false, includeDisabled: true, selectedIndex: undefined },
+    { signed: false, includeDisabled: undefined, selectedIndex: undefined },
+    { signed: true, includeDisabled: true, selectedIndex: undefined },
+    { signed: true, includeDisabled: undefined, selectedIndex: undefined },
+    { signed: false, includeDisabled: true, selectedIndex: 0 },
+    { signed: true, includeDisabled: true, selectedIndex: 1 },
+    { signed: false, includeDisabled: true, selectedIndex: 0, external: true },
+  ])('probes only demanded Review engines through Machine readiness (signed=$signed, selected=$selectedIndex, external=$external)', async ({ signed, includeDisabled, selectedIndex, external }) => {
     const agents = ['coderabbit', 'deepsec'].map(id => projectManifestAgentContribution({
-      pluginId: `happier.review.${id}`, provenance: 'first_party', source: { kind: 'bundled' },
+      pluginId: `${external ? 'acme.review' : 'happier.review'}.${id}`, provenance: external ? 'external' : 'first_party',
+      source: external ? { kind: 'path' } : { kind: 'bundled' },
       definition: PluginAgentContributionV2Schema.parse({ id, title: id, primary: 'executionRuns', runtime: { kind: 'custom' },
         capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } } }),
     }));
@@ -195,18 +200,23 @@ describe('Machine capability observation during unsigned approval replay', () =>
         externalActionExecutionAuthorization: authorization, externalActionTarget: target } : {}),
     } satisfies RpcActionExecutorContext;
     const methods: string[] = [];
+    const detectedAgentIds: string[] = [];
     // Installed Machine RPC is the boundary. Keep the Action, transport,
     // Machine projection and Review readiness producers real beneath it.
-    const invoke: MachineActionDirectTargetTransport['invoke'] = async method => {
+    const invoke: MachineActionDirectTargetTransport['invoke'] = async (method, request) => {
       methods.push(method);
       if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
         protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: Object.fromEntries(agents.map(agent =>
           [agent.id, { id: agent.identity?.localId ?? agent.id, title: agent.id, capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } } }])) },
       };
-      if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: Object.fromEntries(agents.map(agent =>
+      if (method === RPC_METHODS.CAPABILITIES_DETECT) {
+        // Installed RPC is the wire boundary; record each requested executable probe.
+        detectedAgentIds.push(...((request as CapabilitiesDetectRequest).requests ?? []).map(probe => probe.id));
+        return { protocolVersion: 1, results: Object.fromEntries(agents.map(agent =>
         [`cli.${agent.id}`, { ok: true, checkedAt: 1, data: { installed: false, version: null, latestVersion: null,
           update: { supported: false, command: null }, signIn: { status: 'signedOut', loginSupport: 'login_terminal' },
           platform: { supported: true }, install: { available: true, mode: 'manual', sizeBytes: null, guideUrl: null }, dependencies: [] } }])) };
+      }
       throw new Error(`Unexpected native inventory method: ${method}`);
     };
     vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(async input => {
@@ -220,8 +230,8 @@ describe('Machine capability observation during unsigned approval replay', () =>
     const inventoryDeps = createCliActionInventoryDeps({ ...params, token: 'fixture', sessionId: '', mode: 'plain', ctx: null });
     const catalog = { status: 'ready', revision: 1, record: { v: 1, definitions: [] } } satisfies AcpCatalogSnapshotV1;
     const machineDeps = createCliMachineInventoryActionDeps(params, { inventoryDeps, callMachineAction: transport.callMachineAction });
-    const executor = createActionExecutor({ reviewEnginesList: async ({ machineId, includeDisabled }, actionContext) =>
-      buildReviewEngineInventory({ acpCatalogSnapshot: catalog, includeDisabled,
+    const executor = createActionExecutor({ reviewEnginesList: async ({ machineId, includeDisabled, engineIds }, actionContext) =>
+      buildReviewEngineInventory({ acpCatalogSnapshot: catalog, includeDisabled, engineIds,
         registrySnapshot: { agentDefinitionsById: new Map(agents.map(agent => [agent.id, agent])), executionRunProfiles: [] },
         readReadiness: targets => readAgentTargetReadinessV1({ machinesAgentsList: (args, ctx) => machineDeps.machinesAgentsList(args, ctx, catalog) },
           machineId ?? 'machine', targets.map(parseBackendTargetKeyV2), actionContext ?? {}),
@@ -230,9 +240,15 @@ describe('Machine capability observation during unsigned approval replay', () =>
     const result = await executor.execute('review.engines.list', {
       ...(signed ? { sessionId: null, machineId: 'machine' } : { sessionId: 'source-session' }),
       ...(includeDisabled !== undefined ? { includeDisabled } : {}),
+      ...(selectedIndex === undefined ? {} : { engineIds: [agents[selectedIndex]!.id] }),
     }, context);
-    expect(result).toMatchObject({ ok: true, result: { items: agents.map(agent => ({ engineId: agent.id,
+    const demandedAgents = selectedIndex === undefined ? agents : [agents[selectedIndex]!];
+    expect(result).toMatchObject({ ok: true, result: { items: demandedAgents.map(agent => ({ engineId: agent.id,
       available: false, enabled: false, readiness: 'notInstalled', unavailableCode: 'notInstalled' })) } });
+    expect(detectedAgentIds).toEqual([
+      ...demandedAgents.map(agent => `cli.${agent.id}`),
+      ...(selectedIndex === undefined ? ['tool.acpAgentInventory'] : []),
+    ]);
     expect(methods).toEqual([RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, RPC_METHODS.CAPABILITIES_DETECT]);
   });
   it('preserves a confirmed original-account refusal through thrown Action normalization', async () => {

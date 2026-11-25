@@ -564,28 +564,27 @@ describe('ACP Action inventory row authority', () => {
   it('reuses the admitted ACP row for detached Review readiness and refuses a changed row', async () => {
     const initialRecord = { v: 1, definitions: [{ ...record.definitions[0],
       launch: { kind: 'command', command: process.execPath, args: [] },
+    }, { ...record.definitions[0], id: 'unrelated-review', name: 'unrelated-review',
+      launch: { kind: 'command', command: process.execPath, args: [] },
     }] } satisfies AcpCatalogRecordV1;
     const { deps, credentials, operationContext, requests, setRow } = await createInventory('ready', { initialRecord });
     const service = createCapabilitiesService({ capabilities: [createAcpAgentInventoryCapability({ accountId: 'custodian' })],
       checklists: { 'machine-details': [], 'new-session': [] }, buildContext: async () => ({ cliSnapshot: null }) });
-    const engines = expect.arrayContaining([
-      expect.objectContaining({ engineId: 'muse', available: true }),
-      expect.objectContaining({ engineId: targetKey, available: true }),
-    ]);
-    expect(await deps.reviewEnginesList!({ sessionId: 'requester-session' })).toMatchObject({
-      items: engines,
-    });
+    expect(await deps.readAccountAcpCatalog({})).toMatchObject({ status: 'ready', revision: 4 });
     requests.length = 0;
+    const capabilityRequests: CapabilitiesDetectRequest[] = [];
     let changeDuringProbe = false;
     const executor = createActionExecutor(createCliActionDeps({
       token: credentials.token, savedSecretOperationContext: operationContext,
-      sessionId: '', mode: 'plain', ctx: null,
+      sessionId: '', mode: 'plain', ctx: null, runtimeActionMachineId: 'requester-machine',
       // Keep Account reads on the captured holder and supply the Machine RPC boundary directly.
       machineActionDirectTargetTransport: { machineId: 'machine', invoke: async (method, request) => {
         if (method === 'daemon.extensions.contributionRegistryProjection.describe') {
           return { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {} } };
         }
+        if (method === 'capabilities.invoke') return { ok: false, error: { code: 'unsupported', message: 'No native model catalog' } };
         if (method !== 'capabilities.detect') throw new Error('Unexpected Machine RPC');
+        capabilityRequests.push(request as CapabilitiesDetectRequest);
         if (changeDuringProbe) {
           setRow({ ...initialRecord, definitions: [] });
           const changed = await refreshActiveAcpCatalog({ credentials, operationContext });
@@ -594,11 +593,14 @@ describe('ACP Action inventory row authority', () => {
         return service.detect(request as CapabilitiesDetectRequest);
       } },
     }));
-    const list = () => executor.execute('review.engines.list', { sessionId: null, machineId: 'machine' },
+    const list = () => executor.execute('review.engines.list', { sessionId: null, machineId: 'machine', engineIds: [targetKey] },
       { surface: 'cli', authority: 'account_automation' });
     const result = await list();
     expect(result.ok, result.ok ? undefined : JSON.stringify(result)).toBe(true);
-    expect(result).toMatchObject({ ok: true, result: { items: engines } });
+    expect(result).toMatchObject({ ok: true, result: { items: [{ engineId: targetKey, available: true }] } });
+    expect(capabilityRequests).toMatchObject([{ requests: [{ id: 'tool.acpAgentInventory', params: {
+      definitions: [expect.objectContaining({ definitionId: record.definitions[0]!.id })],
+    } }] }]);
     expect(requests.filter(request => request === `GET ${ACP_CATALOG_ROWS_ROUTE_V1}`)).toHaveLength(1);
 
     changeDuringProbe = true;

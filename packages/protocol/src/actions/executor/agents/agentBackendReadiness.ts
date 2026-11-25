@@ -1,4 +1,6 @@
-import { buildBackendTargetKeyV2, parseBackendTargetKeyV2, PersistedBackendTargetRefV2Schema } from '../../../backends/targets/backendTargetRefV2.js';
+import { buildBackendTargetKeyV2, parseBackendTargetKeyV2, PersistedBackendTargetRefV2Schema, resolveBundledAgentRoutingIdV1 } from '../../../backends/targets/backendTargetRefV2.js';
+import { buildConfiguredAcpAgentSelectionV1 } from '../../../agents/executionTargetV1.js';
+import { buildQualifiedPluginContributionKey } from '../../../plugins/contributionIdentity.js';
 import {
   findMachineAgentInventoryItemForTargetV1,
   MachinesAgentsListOutputSchema,
@@ -40,9 +42,17 @@ export async function readAgentTargetReadinessV1(
   ctx: ActionExecutorContext,
 ): Promise<readonly (MachineAgentExecutionStateV1 | undefined)[] | null> {
   if (!deps.machinesAgentsList) return null;
+  // The existing inventory query can select one executable or configured definition.
+  // Keep the ordinary batched inventory when several targets are demanded.
+  const target = targets.length === 1 ? targets[0] : undefined;
+  const definitionId = target?.kind === 'agent' ? target.definitionId : target?.configuredBackendId;
+  const agentId = definitionId ? buildConfiguredAcpAgentSelectionV1(definitionId).agentId
+    : target?.kind === 'agent' ? resolveBundledAgentRoutingIdV1(target.identity) ?? buildQualifiedPluginContributionKey(target.identity)
+    : target?.backendId;
   let inventory;
   try {
     inventory = MachinesAgentsListOutputSchema.safeParse(await deps.machinesAgentsList({ machineId,
+      ...(agentId ? { agentId } : {}), ...(definitionId ? { definitionId } : {}),
       ...(ctx.serverId ? { serverId: ctx.serverId } : {}) }, ctx));
   } catch {
     ctx.signal?.throwIfAborted();
