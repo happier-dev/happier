@@ -3778,7 +3778,12 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
                     : { kind: 'create_relationship', mode: request.mode,
                       contentPolicy,
                       flushBeforeCommit: true } } };
-          const opened = await request.openProject(projectRequest);
+          const opened = await request.openProject(projectRequest).catch(async (error: unknown) => {
+            if (error instanceof Error && 'effectAttempted' in error && error.effectAttempted === false) {
+              return await endpoints.withdrawTarget(error);
+            }
+            throw error;
+          });
           if (opened.kind === 'refused') {
             const refusal = compositionError(opened.code, 'Project target Open refused');
             if (opened.failureCause) Object.assign(refusal, { failureCause: opened.failureCause });

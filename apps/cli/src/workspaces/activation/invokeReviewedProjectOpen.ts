@@ -6,7 +6,8 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 export async function invokeReviewedProjectOpen(input: Readonly<{
   request: OpenProjectInputV1; role: string; invokeReviewedChild?: HostReviewedChildPortV1['invoke']; signal?: AbortSignal;
 }>): Promise<Readonly<{ ok: true; opened: Extract<OpenProjectResultV1, { kind: 'opened' }> }> | ActionExecuteFailure> {
-  if (!input.invokeReviewedChild) return { ok: false as const, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' };
+  if (!input.invokeReviewedChild) return { ok: false, errorCode: 'credential_scope_denied',
+    error: 'credential_scope_denied', effectAttempted: false };
   input.signal?.throwIfAborted();
   const action = await input.invokeReviewedChild({ action: 'projects.open', role: input.role,
     input: projectNativeJsonValueForTransport(input.request) });

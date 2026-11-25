@@ -22,6 +22,7 @@ import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requ
 import { listRequesterSessionCredentialBindings } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
 import { openProject } from '@/workspaces/activation/openProject';
+import { invokeReviewedProjectOpen } from '@/workspaces/activation/invokeReviewedProjectOpen';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import type { OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
@@ -46,7 +47,13 @@ it('refuses another Account before opening managed relationship channels', async
     requesterAccountId: 'other' })).rejects.toMatchObject({ code: 'project_requester_authority_unavailable' });
 });
 
-it.each(['released', 'cleanup refused'] as const)('withdraws the managed destination on a typed Project Open refusal (%s)', async cleanup => {
+it.each([
+  { scenario: 'returned refusal', cleanupRefused: false, childOutcome: 'returned', retained: false },
+  { scenario: 'cleanup refused', cleanupRefused: true, childOutcome: 'returned', retained: false },
+  { scenario: 'reviewed refusal before effect', cleanupRefused: false, childOutcome: 'refused', retained: false },
+  { scenario: 'reviewed refusal after effect started', cleanupRefused: false, childOutcome: 'started', retained: true },
+  { scenario: 'reviewed refusal without a port', cleanupRefused: false, childOutcome: 'missing', retained: false },
+] as const)('settles the published destination on Project Open failure ($scenario)', async ({ cleanupRefused, childOutcome, retained }) => {
   const directory = await mkdtemp(join(tmpdir(), 'managed-sync-open-refusal-'));
   const targetRootPath = join(directory, 'target');
   await mkdir(targetRootPath);
@@ -83,16 +90,24 @@ it.each(['released', 'cleanup refused'] as const)('withdraws the managed destina
     releaseCustody: async () => {
       if (custodyReleased) return;
       custodyReleased = true;
-      if (cleanup === 'cleanup refused') throw new Error('Home refused requester custody release');
+      if (cleanupRefused) throw new Error('Home refused requester custody release');
     },
-    openProject: async () => {
+    openProject: async request => {
       expect((await readRows()).workspaceRefs).toContainEqual(expect.objectContaining({ rootPath: targetRootPath }));
-      return { kind: 'refused', code: 'workspace_root_in_use', failureCause };
+      const refusal = { kind: 'refused', code: 'workspace_root_in_use', failureCause } as const;
+      if (childOutcome === 'returned') return refusal;
+      const result = await invokeReviewedProjectOpen({ request, role: 'target', ...(childOutcome === 'missing' ? {} : {
+        invokeReviewedChild: async () => ({ ok: true, result: { ...refusal, effectAttempted: childOutcome === 'started' } }),
+      }) });
+      if (!result.ok) throw Object.assign(new Error(result.error, { cause: result }), {
+        code: result.errorCode, failureCause: result.failureCause, details: result.details, effectAttempted: result.effectAttempted,
+      });
+      return result.opened;
     },
   });
-  await expect(outcome).rejects.toMatchObject({ code: 'workspace_root_in_use' });
-  expect((await readRows()).workspaceRefs).not.toContainEqual(expect.objectContaining({ rootPath: targetRootPath }));
-  await expect(outcome).rejects.toMatchObject({ failureCause });
+  await expect(outcome).rejects.toMatchObject(childOutcome === 'missing' ? { code: 'credential_scope_denied' }
+    : { code: 'workspace_root_in_use', failureCause });
+  expect((await readRows()).workspaceRefs.some(ref => ref.rootPath === targetRootPath)).toBe(retained);
   expect(custodyReleased).toBe(true);
   await expect(readFile(join(targetRootPath, 'keep'), 'utf8')).resolves.toBe('existing payload');
 });
