@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createWorkspaceState, reduceWorkspaceState, type WorkspaceTab } from './workspaceState';
 import { projectWorkspacePhoneTabs, resolvePhoneWorkspaceTabHref } from './workspacePhoneProjection';
 import { resolveCompactAppDestinations, resolveDestinationRefFromHref } from '../destinations/compactAppDestinationCatalog';
+import { buildSessionCollaborationRouteHref } from '@/components/sessions/collaboration/useOpenSessionCollaboration';
 import { buildWorkspaceFileLink } from '@/utils/url/sessionFileDeepLink';
 import { parseWorkspaceLayout, serializeWorkspaceLayout } from './workspacePersistence';
 import { createSessionScmReviewDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
@@ -11,10 +12,22 @@ const tab = (id: string, kind: string): WorkspaceTab => ({ id, target: { kind, p
     pinned: false, preview: false });
 
 describe('workspace phone projection', () => {
-    it.each(['chat', 'files', 'git'])('keeps the unaddressed Session on its existing instance (%s)', surface => {
+    it.each([undefined, 'home-a'])('retains the explicit Share surface and Access focus (Home %s)', serverId => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, friends: false, workflows: false } });
-        expect(resolvePhoneWorkspaceTabHref(catalog, `/session/s1?serverId=home-a&mobileSurface=${surface}`))
-            .toBe('/session/s1?serverId=home-a');
+        const href = buildSessionCollaborationRouteHref({
+            sessionId: 's1', serverId, cockpitEnabled: true, focusTarget: 'access',
+        });
+        const projected = resolvePhoneWorkspaceTabHref(catalog, href);
+        expect(projected).toBe(href);
+        expect(resolveDestinationRefFromHref(catalog, projected!)).toEqual({ kind: 'session', params: {
+            id: 's1', ...(serverId ? { serverId } : {}), mobileSurface: 'collaboration', collaborationFocus: 'access',
+        } });
+    });
+    it('preserves scalar Session route parameters and leaves their interpretation to the destination', () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, friends: false, workflows: false } });
+        const href = '/session/s1?serverId=home-a&right=git&bottom=terminal&extra=value';
+        expect(resolvePhoneWorkspaceTabHref(catalog, href)).toBe(href);
+        expect(resolvePhoneWorkspaceTabHref(catalog, href + '&extra=other')).toBeNull();
     });
     it('presents the canonical file intent as its own phone Details page, preserving the addressed file and Home', () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, friends: false, workflows: false } });
@@ -34,7 +47,7 @@ describe('workspace phone projection', () => {
             id: 's1', serverId: 'home-a', details: 'scmReview',
         } });
     });
-    it.each(['info', 'follow', 'permissions', 'runs', 'triggers', 'automations', 'runs/run-a'])('retains the requested Session leaf %s and Home', leaf => {
+    it.each(['sharing', 'info', 'follow', 'permissions', 'runs', 'triggers', 'automations', 'runs/run-a'])('retains the requested Session leaf %s and Home', leaf => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: true, friends: false, workflows: true } });
         const href = `/session/session-a/${leaf}?serverId=home-a`;
         expect(resolvePhoneWorkspaceTabHref(catalog, href)).toBe(href);

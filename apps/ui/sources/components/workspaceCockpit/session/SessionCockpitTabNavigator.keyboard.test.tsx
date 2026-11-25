@@ -1093,18 +1093,29 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
         const { SessionCockpitTabNavigator } = await import('./SessionCockpitTabNavigator');
         const navigation = { push: vi.fn(), replace: vi.fn(), back: vi.fn(), setParams: vi.fn() };
 
-        return (surface?: SessionMobileSurface, experience: 'cockpit' | 'classic' = 'cockpit', initialSurface = surface ?? 'chat') => (
-            <DestinationInstanceHost tabId="session-test" pathname="/session/s1" focused visible navigation={navigation}
-                ref={{ kind: 'session', params: {
-                    id: 's1',
-                    ...(serverId ? { serverId } : {}),
-                    ...(surface ? { mobileSurface: surface } : {}),
-                    ...(surface === 'collaboration' ? { collaborationFocus: 'access' } : {}),
-                } }}>
-                <SessionCockpitTabNavigator experience={experience} initialSurface={initialSurface}
-                    routeServerId="server-session" scopeId="session:s1" sessionId="s1" terminalTabAvailable />
-            </DestinationInstanceHost>
-        );
+        const { resolveCompactAppDestinations, resolveDestinationRefFromHref } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
+        const { resolvePhoneWorkspaceTabHref } = await import('@/components/appShell/workspace/workspacePhoneProjection');
+        const { buildSessionCollaborationRouteHref } = await import('@/components/sessions/collaboration/useOpenSessionCollaboration');
+        const { resolveSessionCockpitRouteFromPathname, resolveSessionRoutePathForSurface } = await import('./sessionCockpitState');
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, friends: false, workflows: false } });
+
+        return (surface?: SessionMobileSurface, experience: 'cockpit' | 'classic' = 'cockpit', initialSurface?: SessionMobileSurface) => {
+            const route = { sessionId: 's1', serverId };
+            const href = surface === 'collaboration'
+                ? buildSessionCollaborationRouteHref({ ...route, cockpitEnabled: experience === 'cockpit', focusTarget: 'access' })
+                : surface ? resolveSessionRoutePathForSurface(route.sessionId, surface, route)
+                    : serverId ? `/session/s1?serverId=${serverId}` : '/session/s1';
+            const projected = experience === 'cockpit' ? resolvePhoneWorkspaceTabHref(catalog, href) : href;
+            const target = resolveDestinationRefFromHref(catalog, projected!)!;
+            const pathname = projected!.split('?')[0];
+            const routeSurface = resolveSessionCockpitRouteFromPathname(pathname, null, true, target.params.mobileSurface)?.surface;
+            return (
+                <DestinationInstanceHost tabId="session-test" pathname={pathname} focused visible navigation={navigation} ref={target}>
+                    <SessionCockpitTabNavigator experience={experience} initialSurface={initialSurface ?? routeSurface ?? 'chat'}
+                        routeServerId="server-session" scopeId="session:s1" sessionId="s1" terminalTabAvailable />
+                </DestinationInstanceHost>
+            );
+        };
     }
 
     it.each([undefined, 'server-session'])('follows a late Share target once (Home %s)', async (serverId) => {
