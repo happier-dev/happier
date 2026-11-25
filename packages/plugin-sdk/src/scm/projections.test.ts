@@ -121,6 +121,7 @@ const ROOT_RUNTIME_EXPORTS = [
     'encodeCompareRef',
     'evaluateScmRemoteMutationPolicy',
     'evaluateScmRemoteMutationPreconditions',
+    'gitlabRepositoryEventSourceInstanceId',
     'hasForbiddenGitRefName',
     'isScmPatchBoundToPath',
     'normalizeScmBranchSourceRef',
@@ -631,7 +632,10 @@ describe('SCM package-local projections', () => {
 
     it('exposes exactly the approved source surface', () => {
         const program = createSdkProgram();
-        expect(moduleExportNames(program, 'src/scm/projections.ts')).toEqual(ROOT_EXPORTS);
+        expect(moduleExportNames(program, 'src/scm/projections.ts')).toEqual([
+            ...ROOT_EXPORTS,
+            'ScmCredentialFreeRepositorySelectorV1',
+        ].sort());
         expect(moduleExportNames(program, 'src/scm/index.ts')).toEqual([...ROOT_EXPORTS,
             'GitFileLineage', 'parseGitComparisonOutput',
             'IDLE_SCM_FILE_VIEWED', 'UNKNOWN_SCM_FILE_VIEWED', 'ScmFileViewedFile',
