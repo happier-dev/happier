@@ -12,14 +12,15 @@ import type { ForgeCiLogLineV1 } from '@happier-dev/forge-ci/runtime';
 import { renderHook, renderScreen, flushHookEffects, standardCleanup, createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { installHostResourceWatchSocket } from '@/components/projects/deployments/resourceWatchSocket.testFixture';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 
 // The log viewport's recycler depends on native layout; render its rows deterministically at that boundary.
 vi.mock('@legendapp/list/react-native', async () =>
     (await import('@/dev/testkit/mocks/legendList')).createLegendListModuleMock({ renderItems: true }));
 
-// Only the Home HTTP/credential boundary is substituted. The viewer, first Action,
-// Resource store, continuation transport and Forge index/Find model remain real.
+// The Home HTTP, socket and credential boundaries serve the real viewer,
+// Actions, Resource store and Forge index/Find model.
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { useServiceOccurrenceLogViewer } = await import('./useMachineServiceLogViewer');
@@ -192,38 +193,27 @@ describe('native log viewer authority withdrawal', () => {
             return { contentType: 'application/json', bytesBase64: bytes.toString('base64'),
                 digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` };
         };
-        homes.answer(serverId, actionPath, { select: (body, request) => {
+        homes.answer(serverId, actionPath, { select: body => {
             const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
             const envelope = ExternalActionRequestEnvelopeV1Schema.parse(authorized.success ? authorized.data.envelope : body);
-            const continuation = envelope.resourceContinuation;
-            if (!continuation) throw new Error('Runtime view must acquire demand through Resource');
-            const reply = (result: unknown): HomeDomainAnswer => ({ body: {
-                v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result },
-            } });
-            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
-                reads++;
-                return reply({ ok: true, resource: reference, ...content(current) });
+            if (envelope.resourceContinuation?.method !== RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
+                throw new Error('Expected a finite Runtime Resource read');
             }
-            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN) {
-                opens++;
-                return reply({ ok: true, subscriptionId: continuation.params.subscriptionId, digest: content(current).digest });
-            }
-            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE) {
-                closes++;
-                return reply({ ok: true, closed: true });
-            }
-            return new Promise<HomeDomainAnswer>(resolve => {
-                deliver = results => {
-                    deliver = undefined;
-                    resolve(reply({ ok: true, status: 'event', event: results ? { version: 1, kind: 'pages',
-                        subscriptionId: continuation.params.subscriptionId, pages: results.map(content) }
-                        : { version: 1, kind: 'complete', subscriptionId: continuation.params.subscriptionId, diagnostics: [] } }));
-                };
-                const abort = () => { deliver = undefined; resolve(reply({ ok: true, status: 'idle' })); };
-                request.signal?.addEventListener('abort', abort, { once: true });
-                if (request.signal?.aborted) abort();
-            });
+            reads++;
+            return { body: { v: 1, actionId, requestId: envelope.requestId, execution: { ok: true,
+                result: { ok: true, resource: reference, ...content(current) } },
+            } };
         } });
+        installHostResourceWatchSocket({ actionId, digest: () => content(current).digest,
+            onOpen(watch) {
+                opens++;
+                deliver = results => {
+                    if (results) watch.pages(results.map(content));
+                    else watch.complete();
+                };
+            },
+            onDisconnect() { closes++; deliver = undefined; },
+        });
         const { DeploymentRuntimeLogs } = await import('@/components/projects/deployments/DeploymentRuntimeLogs');
         const { NativeLogLines } = await import('./MachineServiceLogs');
         const screen = await renderScreen(React.createElement(DeploymentRuntimeLogs, { serverId, reference, active: false }));
@@ -267,8 +257,9 @@ describe('native log viewer authority withdrawal', () => {
         expect(reads).toBe(initialReads);
         deliver!([{ kind: 'unavailable', reason: 'unavailable' }]);
         await vi.waitFor(() => expect(screen.findHostByTestId('deployment-runtime-logs-stale')).not.toBeNull());
+        const beforePauseCloses = closes;
         await screen.pressByTestIdAsync('deployment-runtime-logs-follow');
-        await vi.waitFor(() => expect(closes).toBe(1));
+        await vi.waitFor(() => expect(closes).toBe(beforePauseCloses + 1));
         await flushHookEffects();
         expect(reads).toBe(initialReads);
         const pausedCounts = [reads, opens];
@@ -280,8 +271,9 @@ describe('native log viewer authority withdrawal', () => {
         expect(reads).toBe(initialReads);
         expect(screen.getTextContent()).toContain('first');
         expect(screen.getTextContent()).toContain('second');
+        const beforeHideCloses = closes;
         await screen.update(React.createElement(DeploymentRuntimeLogs, { serverId, reference, active: false }));
-        await vi.waitFor(() => expect(closes).toBe(2));
+        await vi.waitFor(() => expect(closes).toBe(beforeHideCloses + 1));
         const hiddenCounts = [reads, opens];
         await flushHookEffects();
         expect([reads, opens]).toEqual(hiddenCounts);
@@ -336,10 +328,7 @@ describe('native log viewer authority withdrawal', () => {
                     v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result },
                 } });
                 const continuation = envelope.resourceContinuation;
-                // READ/OPEN/NEXT acquire work; CLOSE releases an admitted watch
-                // and is expected when follow pauses or the surface hides.
-                if (continuation?.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE) watchCloses++;
-                else acquisitions.push(continuation?.method ?? 'first-action');
+                acquisitions.push(continuation?.method ?? 'first-action');
                 if (!continuation) {
                     firstReads++;
                     if (!terminal) return reply(page);
@@ -355,52 +344,37 @@ describe('native log viewer authority withdrawal', () => {
                         if (request.signal?.aborted) aborted();
                     });
                 }
-                const reference = continuation.params.resource;
-                if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
-                    if (transportUnavailable) return { status: 503, body: { error: 'home_unreachable' } };
-                    if (terminal && !freshAdmission) {
-                        pendingReplacementReads++;
-                        return new Promise<HomeDomainAnswer>(resolve => {
-                            const aborted = () => resolve(reply({ ok: false, code: 'service_unavailable', reason: 'unavailable' }));
-                            request.signal?.addEventListener('abort', aborted, { once: true });
-                            if (request.signal?.aborted) aborted();
-                        });
-                    }
-                    return reply({ ok: true, resource: reference, ...content() });
+                if (continuation.method !== RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
+                    throw new Error('Expected a finite log Resource read');
                 }
-                if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN) {
-                    if (!terminal || freshAdmission) return reply({ ok: true, subscriptionId: continuation.params.subscriptionId, digest: content().digest });
-                    pendingReplacementOpens++;
-                    // A genuinely expired observation cannot restore bytes from
-                    // a replacement until that replacement has been admitted.
+                if (transportUnavailable) return { status: 503, body: { error: 'home_unreachable' } };
+                if (terminal && !freshAdmission) {
+                    pendingReplacementReads++;
                     return new Promise<HomeDomainAnswer>(resolve => {
                         const aborted = () => resolve(reply({ ok: false, code: 'service_unavailable', reason: 'unavailable' }));
                         request.signal?.addEventListener('abort', aborted, { once: true });
                         if (request.signal?.aborted) aborted();
                     });
                 }
-                if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE)
-                    return reply({ ok: true, closed: true });
-                expect(continuation.method).toBe(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT);
-                return new Promise<HomeDomainAnswer>(resolve => {
-                    const finish = (value: unknown) => {
-                        if (deliver === notify) deliver = undefined;
-                        request.signal?.removeEventListener('abort', abort);
-                        resolve(reply(value));
-                    };
-                    const notify = () => {
-                        finish({ ok: true, status: 'event', event: terminal && !freshAdmission
-                            ? { version: 1, kind: 'error', code: reason === 'expired_resource' ? 'expired_resource' : 'unavailable',
-                                subscriptionId: continuation.params.subscriptionId, diagnostics: [reason] }
-                            : { version: 1, kind: 'invalidated',
-                                subscriptionId: continuation.params.subscriptionId, digest: content().digest } });
-                    };
-                    const abort = () => finish({ ok: true, status: 'idle' });
-                    deliver = notify;
-                    request.signal?.addEventListener('abort', abort, { once: true });
-                    if (request.signal?.aborted) abort();
-                });
+                return reply({ ok: true, resource: continuation.params.resource, ...content() });
             } });
+            installHostResourceWatchSocket(() => ({
+                actionId,
+                digest: () => content().digest,
+                holdOpen: terminal && !freshAdmission,
+                onOpen(watch) {
+                    acquisitions.push(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN);
+                    if (terminal && !freshAdmission) pendingReplacementOpens++;
+                    deliver = () => {
+                        if (terminal && !freshAdmission) {
+                            watch.error(reason === 'expired_resource' ? 'expired_resource' : 'unavailable', [reason]);
+                        } else {
+                            watch.invalidate(transportUnavailable ? `sha256:${'0'.repeat(64)}` : content().digest);
+                        }
+                    };
+                },
+                onDisconnect() { watchCloses++; deliver = undefined; },
+            }));
             // Controlled presentation state belongs to this native host. No view or Find owner is mocked.
             const view: LogViewerControlsV1['view'] = {
                 getSnapshot: () => state, subscribe: () => () => {}, invoke() {},

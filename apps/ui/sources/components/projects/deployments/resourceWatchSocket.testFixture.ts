@@ -1,14 +1,24 @@
 import { expect, vi } from 'vitest';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import type { PluginUiResourceSubscriptionEventV1 } from '@happier-dev/protocol/plugins/ui/subscriptions';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 import * as scopedSocket from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
 
+type ResourceWatch = {
+    invalidate(digest: string): void;
+    pages(pages: Extract<PluginUiResourceSubscriptionEventV1, { kind: 'pages' }>['pages']): void;
+    complete(): void;
+    error(code: Extract<PluginUiResourceSubscriptionEventV1, { kind: 'error' }>['code'], diagnostics: string[]): void;
+    refuse(code: string): void;
+};
+
 type ResourceWatchFixture = {
     actionId: string;
     digest(): string;
-    onOpen?(watch: { invalidate(digest: string): void; refuse(code: string): void }): void;
+    holdOpen?: boolean;
+    onOpen?(watch: ResourceWatch): void;
     onDisconnect?(): void;
 };
 
@@ -31,7 +41,8 @@ export function installHostResourceWatchSocket(input: ResourceWatchFixture | Sel
             deliver?.({ requestId, selectedSocketId: 'daemon-socket' });
             const publish = (result: unknown) => deliver?.({ requestId, senderSocketId: 'daemon-socket', callId: 'a'.repeat(32),
                 params: { v: 1, actionId: watch.actionId, requestId: envelope.requestId, execution: { ok: true, result } } });
-            publish({ ok: true, subscriptionId, digest: watch.digest() });
+            if (!watch.holdOpen) publish({ ok: true, subscriptionId, digest: watch.digest() });
+            const publishEvent = (event: PluginUiResourceSubscriptionEventV1) => publish({ ok: true, status: 'event', event });
             onDisconnect = watch.onDisconnect;
             return await new Promise(resolve => {
                 const refuse = (code: string) => resolve({ ok: false, errorCode: code, error: code });
@@ -39,7 +50,16 @@ export function installHostResourceWatchSocket(input: ResourceWatchFixture | Sel
                 watch.onOpen?.({
                     refuse,
                     invalidate(digest) {
-                        publish({ ok: true, status: 'event', event: { version: 1, subscriptionId, kind: 'invalidated', digest } });
+                        publishEvent({ version: 1, subscriptionId, kind: 'invalidated', digest });
+                    },
+                    pages(pages) {
+                        publishEvent({ version: 1, subscriptionId, kind: 'pages', pages });
+                    },
+                    complete() {
+                        publishEvent({ version: 1, subscriptionId, kind: 'complete', diagnostics: [] });
+                    },
+                    error(code, diagnostics) {
+                        publishEvent({ version: 1, subscriptionId, kind: 'error', code, diagnostics });
                     },
                 });
             });
