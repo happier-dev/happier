@@ -16,6 +16,27 @@ import { ExternalActionExecutionAuthorizationV1Schema, createDeploymentCandidate
 import { computeExternalActionRequestEnvelopeDigestV1, isExternalActionAuthorizationBoundToEnvelope,
   signExternalActionApprovalInputV1, verifyExternalActionApprovalInputV1 } from '../externalActionExecutionAuthorization.js';
 
+import { getActionDefinitionForCatalogSurface } from '../actionCatalog.js';
+import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_SUGGESTION_ACTION_IDS_V1,
+  DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
+
+const DEPLOYMENT_DISCOVERY_ACTION_IDS = [
+  ...DEPLOYMENT_ACTION_IDS_V1,
+  ...DEPLOYMENT_SUGGESTION_ACTION_IDS_V1,
+  DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1,
+] as const;
+
+describe('Deployment Action discovery', () => {
+  it.each(DEPLOYMENT_DISCOVERY_ACTION_IDS)('advertises the effect, input and approval for %s to agents', id => {
+    const action = getActionDefinitionForCatalogSurface({ surface: 'agent', id });
+    expect(action).not.toBeNull();
+    expect(action?.description).toEqual(expect.any(String));
+    expect(action?.description?.trim()).toBeTruthy();
+    expect(action?.inputSchema).toBeDefined();
+    expect(action?.approval).toEqual(expect.objectContaining({ result: expect.any(String) }));
+  });
+});
+
 it.each(['cli', 'agent', 'mcp', 'ui'] as const)('routes Environment update previews to their installed owner on %s', surface => {
   const spec = getActionSpec('deployments.environments.update');
   const input = { serverId: 'srv_B9Y0FjUw17MU4Rqng6KUK6mB5JYXri0G',
