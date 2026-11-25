@@ -210,6 +210,11 @@ and paths in `details.issues`. Rejected values are omitted. Use matching 0.3
 development daemon and App builds when the daemon sends the correlation field.
 Older strict App builds reject that field.
 
+In unreleased 0.3, the authenticated local plugin control route attaches the
+daemon's signed-in Account to reverse Client Action dispatch. The Home selects
+the answering App from its live RPC registrations. That App admits the Action
+through its usual dispatcher.
+
 ## Channel message observation demand (unreleased 0.3)
 
 Channels combines enabled binding policies, pairing and armed message Event

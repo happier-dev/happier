@@ -1562,6 +1562,7 @@ export function createDaemonControlApp({
     : { status: 'unavailable' as const });
 
   if (pluginChangeService) {
+    const runtimeAccountId = externalActionApi?.currentAccountId;
     registerDaemonPluginChangeRoutes(app, {
       service: pluginChangeService,
       requireAuth,
@@ -1578,6 +1579,7 @@ export function createDaemonControlApp({
               signal,
               authority: resolveInvocationAuthority({ credential: 'terminal', surface: request.surface }),
               actionCaller: { kind: 'host' },
+              ...(runtimeAccountId ? { runtimeAccountId } : {}),
               ...(request.requiredDangerLevel ? { requiredContributedActionDangerLevel: request.requiredDangerLevel } : {}),
               ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
               ...(request.actionRequestId ? { actionRequestId: request.actionRequestId } : {}),
@@ -1602,7 +1604,7 @@ export function createDaemonControlApp({
           };
         }
         return await executeAppliedDaemonPluginActionWithController(
-          request, pluginReloadController, pluginActionCurrentIntent, signal,
+          request, pluginReloadController, pluginActionCurrentIntent, signal, runtimeAccountId,
         );
       },
       ...(pluginActionCurrentIntent ? { requestCurrentIntent: pluginActionCurrentIntent } : {}),

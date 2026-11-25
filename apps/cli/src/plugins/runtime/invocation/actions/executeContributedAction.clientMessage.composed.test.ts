@@ -7,11 +7,18 @@ import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/act
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 } from '@happier-dev/triage-sources/runtime';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
 import { UiContributedActionExecuteRequestV1Schema } from '@happier-dev/protocol/plugins/actions/clientInvocationV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { ANSWERING_CLIENT_RPC_PREFIX_V1, SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { PLUGIN_MANIFEST } from '@happier-dev/plugins-triage/manifest';
 
+import { ApiMachineClient } from '@/api/apiMachine';
+import { createDaemonControlApp } from '@/daemon/controlServer';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
-import { executeAppliedDaemonPluginActionWithController } from '@/plugins/daemon/controlRoutes';
+import { executeAppliedDaemonPluginActionWithController, PLUGIN_ACTION_EXECUTE_PATH } from '@/plugins/daemon/controlRoutes';
 import { createDaemonPluginActionExecutor } from '@/session/actions/createDaemonPluginActionExecutor';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
@@ -149,5 +156,93 @@ it('returns the mounted saved-view receipt to the Agent and reports malformed re
     })]);
   } finally {
     await client.close(); await server.close(); await fixture.dispose();
+  }
+});
+
+it('delivers an Agent saved-view Action through authenticated daemon control while its browser mount is live', async () => {
+  const action = { pluginId: PLUGIN_MANIFEST.id, localId: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 };
+  const actionId = formatQualifiedPluginActionId(action);
+  const mountId = '_r_16_';
+  const input = { mountId, operation: { kind: 'selectSavedView', viewId: 'c6027590-2b4c-42ea-8528-0d16be2a4d98' } };
+  const accountId = 'signed-in-account';
+  const machineId = 'agent-machine';
+  const sessionId = 'current-session';
+  const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+  const machine = new ApiMachineClient(token, { id: machineId, encryptionMode: 'plain', metadata: null, metadataVersion: 0,
+    daemonState: null, daemonStateVersion: 0 });
+  let browserMount: string | null = mountId;
+  let selectedView: string | null = null;
+  // Socket boundary: the registered browser acknowledges only the mount it holds.
+  const socket = createApiSessionSocketStub({ connected: true, emitWithAck: async (event, payload) => {
+    expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
+    expect(payload).toMatchObject({ method: `${machineId}:${ANSWERING_CLIENT_RPC_PREFIX_V1}${RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE}`,
+      answeringClient: { requireSingle: true } });
+    const request = UiContributedActionExecuteRequestV1Schema.parse(Reflect.get(payload as object, 'params'));
+    expect(request).toMatchObject({ action, input, surface: 'agent', defaultSessionId: sessionId });
+    if (browserMount === null) return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
+    expect(request.input).toMatchObject({ mountId: browserMount });
+    selectedView = input.operation.viewId;
+    return { ok: true, result: { ok: true, result: { status: 'applied' } } };
+  } });
+  Reflect.set(machine, 'socket', socket);
+  const executeClientAction = createClientActionMachineRpcExecutor(() => machine);
+  const bundled = loadCurrentBundledPluginLocatorResult();
+  const contributes = createResolvedContributionRegistry(projectLoadedPluginContributes({ loadResult: {
+    loadedPlugins: bundled.loadedPlugins.filter(plugin => plugin.pluginId === action.pluginId)
+      .map(plugin => ({ ...plugin, manifest: normalizePluginManifestV2(PLUGIN_MANIFEST) })), diagnosticsByPluginId: {},
+  }, provenance: 'first_party' }));
+  const fixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+    runtimeOptions: { contributes, pluginIds: [action.pluginId], executeClientAction } });
+  const list = createCommittedContributedActionDefinitionLister({ tryAcquireRuntimeRegistryLease: () => fixture.controller.tryAcquireRuntimeRegistry() });
+  const executeInDaemon = createActionExecutor({ ...createUnavailableActionTransportDeps(), listContributedActionDefinitions: list,
+    readContributedActionSchemas: createCommittedContributedActionSchemaReader(list),
+    invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: () => fixture.controller.acquireRuntimeRegistry() }),
+  });
+  const controlToken = 'fixture-control';
+  const app = createDaemonControlApp({
+    getChildren: () => [], machineId, controlToken,
+    stopSession: async () => ({ status: 'not_found' }),
+    spawnSession: async () => ({ type: 'success', sessionId }),
+    requestShutdown() {}, onHappySessionWebhook() {},
+    pluginChangeService: { requestPluginChange: vi.fn(), decidePluginChange: vi.fn(),
+      statusPluginChange: async () => ({ kind: 'expired' }), listPendingPluginChanges: async () => ({ changes: [] }), shutdown: async () => {} },
+    externalActionApi: { currentServerId: 'test-home', currentAccountId: accountId, verifyPat: vi.fn(),
+      executor: executeInDaemon, resolveTarget: vi.fn() },
+  });
+  const executor = createDaemonPluginActionExecutor({ base: executeInDaemon, requestPluginActionExecution: async request => {
+    const response = await app.inject({ method: 'POST', url: PLUGIN_ACTION_EXECUTE_PATH, payload: request,
+      headers: { 'x-happier-daemon-token': controlToken } });
+    expect(response.statusCode).toBe(200);
+    return response.json();
+  } });
+  const tools = createActionToolExecutorBridge({ executor, surface: 'agent' });
+  const invoke = () => tools.executeActionByToolName('action_execute', { actionId, input: JSON.stringify(input) }, sessionId);
+  try {
+    // Control for the registered browser path with an already attributed call.
+    expect(await executeClientAction({ v: 1, action, input, surface: 'agent', defaultSessionId: sessionId,
+      expectedContributorOccurrenceId: fixture.registry.readPluginOccurrenceId?.(action.pluginId) ?? '' }, { principalAccountId: accountId }))
+      .toEqual({ ok: true, result: { status: 'applied' } });
+    selectedView = null;
+
+    const receipt = await invoke();
+    expect(receipt, JSON.stringify(receipt)).toMatchObject({ ok: true, result: { status: 'applied' } });
+    expect(selectedView).toBe(input.operation.viewId);
+
+    selectedView = null;
+    const wrappedReceipt = await executor.execute('action.invoke', { action, input }, {
+      surface: 'agent', defaultSessionId: sessionId,
+    });
+    expect(wrappedReceipt, JSON.stringify(wrappedReceipt)).toMatchObject({ ok: true, result: { status: 'applied' } });
+    expect(selectedView).toBe(input.operation.viewId);
+
+    browserMount = null;
+    selectedView = null;
+    socket.emitWithAck.mockClear();
+    expect(await invoke()).toMatchObject({ ok: false, errorCode: 'plugin_action_client_target_unavailable' });
+    expect(socket.emitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.CALL, expect.anything());
+    expect(selectedView).toBeNull();
+  } finally {
+    await app.close();
+    await fixture.dispose();
   }
 });

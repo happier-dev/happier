@@ -155,6 +155,7 @@ export async function executeAppliedDaemonPluginActionWithController(
     request: TargetActionCurrentIntentRequest
   ) => Promise<TargetActionCurrentIntentResult>,
   signal?: AbortSignal,
+  runtimeAccountId?: string,
 ): Promise<PluginActionExecutionAttempt> {
   const { executeContributedAction } = await import('@/plugins/runtime/invocation/actions/executeContributedAction');
   const lease = await reloadController.acquireExecutableRuntimeRegistry(signal, { recoverAccountCensus: true });
@@ -171,6 +172,7 @@ export async function executeAppliedDaemonPluginActionWithController(
   try {
     return await executeContributedAction({
       daemonHoldsApprovalWaiter: true,
+      ...(runtimeAccountId ? { approvalContext: { runtimeAccountId } } : {}),
       runtimeRegistry: lease.registry,
       actionId: request.actionId,
       input: request.input,
