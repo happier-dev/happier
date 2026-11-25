@@ -44,7 +44,7 @@ import {
   type ExecutionRunIntent,
 } from './runPrimitives.js';
 import { ExecutionRunResultContractV1Schema } from './resultContractV1.js';
-import { TeamCredentialProviderModelSelectionV1Schema } from '../../teams/credentials/resourceV1.js';
+import { TeamCredentialProviderModelSelectionV1Schema } from '../../teams/credentials/providerModelCatalogV1.js';
 import { SecretReferenceOverlayV1Schema } from '../../profiles/secretReferenceOverlayV1.js';
 import { HappierStructuredInputV1Schema } from '../../runtime/input/structuredInputV1.js';
 import { PluginSourceCustodyV1Schema } from '../../plugins/runtime/sourceCustody.js';

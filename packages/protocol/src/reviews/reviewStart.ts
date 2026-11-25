@@ -7,7 +7,7 @@ import {
   ScmPullRequestReviewScopeV1Schema,
 } from './scmPullRequestScope.js';
 import { ReviewScmScopeV1Schema, ReviewScopeSchema } from './scope.js';
-import { TeamCredentialProviderModelSelectionV1Schema } from '../teams/credentials/resourceV1.js';
+import { TeamCredentialProviderModelSelectionV1Schema } from '../teams/credentials/providerModelCatalogV1.js';
 import { ExecutionRunStartRequestBaseSchema, ExecutionRunTeamCredentialSessionBindingConsentV1Schema } from '../execution/runs/startRequest.js';
 import { SecretReferenceOverlayV1Schema } from '../profiles/secretReferenceOverlayV1.js';
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';

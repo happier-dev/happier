@@ -3,7 +3,7 @@ import { z } from '../../zodRuntimePolicy.js';
 
 import type { AcpConfigOptionOverridesV1 } from '../../sessions/metadata/metadataOverridesV1.js';
 import { PersonalSessionModelRefSchema, type PersonalSessionModelRef } from '../../providers/selection/v2.js';
-import { TeamCredentialProviderModelSelectionV1Schema, type TeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/resourceV1.js';
+import { TeamCredentialProviderModelSelectionV1Schema, type TeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/providerModelCatalogV1.js';
 import { ConnectedServiceBindingsV2Schema, type ConnectedServiceBindingsV2 } from '../../connect/connectedServiceBindings.js';
 
 /** Safe projection of the host-admitted child choice, never an input or a credential materialization. */
