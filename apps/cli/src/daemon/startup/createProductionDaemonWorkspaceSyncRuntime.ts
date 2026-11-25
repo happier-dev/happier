@@ -1759,10 +1759,12 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       && !runtime?.handoffAdapter.resolvePrivateExecution?.({ operationId: request.operationId })
       && !canUseInstalledRelationshipOwner(context)) {
       const handoff = handoffRoot.binding.handoffAdmission;
+      // The link outlives this handoff and the handed-off Session's SOURCE runtime, so it keeps the
+      // person's custody this installation admitted for the root, as an Open's link keeps its Open's.
       const requester = handoff && handoff.sourceMachineId === input.localMachineId
         && handoff.targetMachineId === request.targetMachineId
         && handoffRoot.binding.accountId === handoffRequester.attribution.accountId
-        ? await handoffRequester.projectHandoffCaptureAccountContext(handoffRoot, semanticServerId, request.signal) : null;
+        ? readRequesterAccountActionContext(handoffRoot) : null;
       if (!handoff || !requester || !context.machineAdmission) {
         throw compositionError('project_requester_authority_unavailable', 'Requester Sync custody is unavailable');
       }

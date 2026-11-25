@@ -478,7 +478,8 @@ describe('signed Project clean preparation', () => {
   // creates from another Account's SOURCE is the PERSON's. It is written to their rows and prepared at their own
   // TARGET over the signed writer → target path, under the admitted session.handoff root and routed by the handoff's
   // operation id. On an owner TARGET, Home's admission of that root is the whole admission.
-  it.each(['own TARGET', 'another handoff root', "SOURCE owner's own handoff", 'custody retired before finalize'] as const)(
+  it.each(['own TARGET', 'another handoff root', "SOURCE owner's own handoff", 'custody retired before finalize',
+    'Session runtime retired after the handoff'] as const)(
     'creates the link a person hands off with in their own rows, signed with the handoff root (%s)', async scenario => {
     const person = scenario === "SOURCE owner's own handoff" ? 'owner' : 'target-owner';
     const token = (sub: string) => [Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
@@ -616,11 +617,20 @@ describe('signed Project clean preparation', () => {
         serverHttpBaseUrl: 'https://bind-child-home.invalid', isCurrent: async () => sessionCustodyLive,
         isRetainedCustodyCurrent: async () => sessionCustodyLive }),
     } as unknown as AdmittedRequesterSessionBootstrap;
+    // The person's session.handoff as this installation's ingress admitted it (real requester Account admission);
+    // the installed host owns its retained lifetime.
+    let hostCustodyLive = true;
+    const dispatch = person === 'owner' ? null : await runWithServerHttpBaseUrl('https://bind-child-home.invalid',
+      () => admitRequesterAccountActionContext({ authorization: admittedRoot, credentials: requesterCredentials,
+        serverId: fixture.serverId, serverIdentityId: fixture.serverId, serverHttpBaseUrl: 'https://bind-child-home.invalid',
+        isCurrent: async () => true, isRetainedCustodyCurrent: async () => hostCustodyLive }));
+    if (person !== 'owner' && !dispatch) throw new Error('The person handoff root must be admitted at this installation');
+    onTestFinished(() => dispatch?.dispose());
     // The coordinator's context: its admitted root and the ingress's admission currentness ride only for
     // another person's handoff; the SOURCE owner's own handoff keeps today's context.
     const context: RpcHandlerContext = { signal: new AbortController().signal, requesterSessionBootstrap,
-      machineAdmission: admission, ...(person === 'owner' ? {} : { verifyMachineAdmissionCurrent: async () => true,
-        localActionContext: { externalActionExecutionAuthorization: admittedRoot } }) };
+      machineAdmission: admission, ...(dispatch ? { verifyMachineAdmissionCurrent: async () => true,
+        localActionContext: { externalActionExecutionAuthorization: dispatch.authorization } } : {}) };
     const settled = await runWithServerHttpBaseUrl('https://bind-child-home.invalid',
       () => fixture.parent.handoffAdapter.prepare(input, undefined, context)).then(value => ({ value }), (error: unknown) => ({ error }));
     const refusal = 'error' in settled && settled.error && typeof settled.error === 'object' ? settled.error : undefined;
@@ -654,9 +664,49 @@ describe('signed Project clean preparation', () => {
       request: { bootstrapOperationId: deriveWorkspaceSyncRelationshipId(operationId),
         owner: { kind: 'relationship', relationshipId: deriveWorkspaceSyncRelationshipId(operationId) } } });
     expect(signed, evidence).toEqual([{ phase: 'prepare' }]);
+    if (scenario === 'Session runtime retired after the handoff') {
+      // The completed handoff releases the handed-off Session's SOURCE runtime and ends its dispatch.
+      // The link it created is the person's and outlives both (journey 2, 2026-11-25: the person's next
+      // Sync write on this SOURCE was refused at project_rows.requester_custody).
+      sessionCustodyLive = false;
+      await dispatch!.dispose();
+      const link = fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId })?.execution;
+      expect(await link?.accountRowsCustody.isCurrent(), evidence).toBe(true);
+      // The person then asks this SOURCE for a Fresh copy through the registered entry, which reads their
+      // rows through their links here before its own work.
+      const copyInput = { v: 1 as const, sourceWorkspaceRefId: fixture.sourceRef.id, targetMachineId: fixture.targetRef.machineId,
+        targetPath: `${fixture.targetPath}-worker-copy`, mode: 'keep_synced' as const, purpose: 'worker_clean_copy' as const,
+        destinationIntent: 'materialize_from_source_workspace' as const, contentPolicy };
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'person-fresh-copy',
+        target: { kind: 'machine', machineId: fixture.sourceRef.machineId }, input: copyInput });
+      const copyRoot = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-person-copy', binding: {
+        accountId: person, authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: fixture.serverId,
+        accountEncryptionMode: 'plain', actionId: 'workspace.sync.relationship.create', machineId: fixture.sourceRef.machineId,
+        installationId: 'parent-installation', custodianAccountId: 'owner', requestId: envelope.requestId, target: envelope.target,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } });
+      const copy = await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () => admitRequesterAccountActionContext({
+        authorization: copyRoot, credentials: requesterCredentials, serverId: fixture.serverId, serverIdentityId: fixture.serverId,
+        serverHttpBaseUrl: 'https://bind-child-home.invalid', isCurrent: async () => true, isRetainedCustodyCurrent: async () => true }));
+      onTestFinished(() => copy?.dispose());
+      const create = fixture.parentRpcHandlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE);
+      if (!copy || !create) throw new Error('The person copy request and the registered create entry must exist');
+      const copied = await runWithServerHttpBaseUrl('https://bind-child-home.invalid', async () => await create(
+        { v: 1, operationId: envelope.requestId, actionInput: copyInput },
+        { signal: new AbortController().signal, machineAdmission: admission, callerInputAuthorization: copy.authorization,
+          originalActionEnvelope: envelope, verifyMachineAdmissionCurrent: async () => true }))
+        .then(() => null, (error: unknown) => error && typeof error === 'object'
+          ? { code: Reflect.get(error, 'code'), failureCause: Reflect.get(error, 'failureCause') } : { thrown: String(error) });
+      expect(copied, JSON.stringify(copied)).not.toMatchObject({ failureCause: { phase: 'project_rows.requester_custody' } });
+      // Past the person's rows and custody the copy reaches its own signed TARGET step, which this
+      // Home stand-in refuses because it admits only the handoff root.
+      expect(signed.slice(1), JSON.stringify(copied)).toContainEqual(expect.objectContaining({ refused: true }));
+      expect(copied).toMatchObject({ failureCause: { errorCode: RPC_ERROR_CODES.FORBIDDEN } });
+      return;
+    }
     if (scenario !== 'custody retired before finalize' || !('value' in settled)) return;
-    // The finalize transfer consumes the retained custody; once it is retired the person sees that step.
-    sessionCustodyLive = false;
+    // The finalize transfer consumes the retained custody; once the person's admitted custody at this
+    // installation retires, the person sees that step.
+    hostCustodyLive = false;
     // The link's transfer admission and the commit's row write each name their own step.
     const transfer = await fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId })?.execution.assertTransferCurrent()
       .then(() => undefined, (error: unknown) => error);
