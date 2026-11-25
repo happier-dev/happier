@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
+import { buildExecutionRunProfileCatalog } from '@/agent/executionRuns/profiles/intentRegistry';
+import type { BackendRuntimeOwnerResolution, ResolvedCliEngineRegistry } from '../engineRegistryTypes';
+import type { HostAgentNativeLaunchPreparation } from '@/plugins/runtime/invocation/services/exec';
 import { accountSettingsParse, ActionsSettingsV1Schema, createActionExecutor, FeaturesResponseSchema, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol';
 import { buildSessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { ServerBoundPermissionRpcHandlerManager } from '@/agent/permissions/testkit/serverBoundPermissionRpcHandlerManager';
@@ -39,6 +46,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createManifestAgentCatalogEntry } from '@/plugins/projection/registry/agentCliMetadata';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { resolveContributedAgentRoutingId } from '@/plugins/projection/registry/agentRoutingIdentity';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
@@ -84,25 +92,28 @@ vi.mock('node:fs', async (importOriginal) => {
 function createContributions(delivery: AgentSessionCapabilities['delivery'] = ['newTurn'], policy?: Readonly<{
   primary: 'sessions' | 'executionRuns';
   workspaceWrites?: 'deny';
+  localId?: string;
 }>) {
+  const identity = { pluginId: AGENT_ID, localId: policy?.localId ?? AGENT_ID };
+  const agentId = policy?.localId ? resolveContributedAgentRoutingId({ ...identity, provenance: 'external' }) : AGENT_ID;
   const backend = {
-    id: AGENT_ID,
-    agentId: AGENT_ID,
+    id: agentId,
+    agentId,
     provenance: 'external',
     source: { kind: 'path' },
-    definition: { kindVersion: 1, id: AGENT_ID, agentId: AGENT_ID },
+    definition: { kindVersion: 1, id: agentId, agentId },
     pluginId: AGENT_ID,
   } as unknown as ResolvedAgentRuntimeContribution;
   const agent = {
-    id: AGENT_ID,
-    identity: { pluginId: AGENT_ID, localId: AGENT_ID },
+    id: agentId,
+    identity,
     provenance: 'external',
     source: { kind: 'path' },
-    definition: { kindVersion: 1, id: AGENT_ID, ownedBackendIds: [AGENT_ID] },
+    definition: { kindVersion: 1, id: agentId, ownedBackendIds: [agentId] },
     richDefinition: {
       provenance: 'external',
       definition: {
-        id: AGENT_ID,
+        id: identity.localId,
         title: { key: 'agents.acme.title', fallback: 'Acme' },
         description: { key: 'agents.acme.description', fallback: 'Acme' },
         runtime: { kind: 'custom' },
@@ -127,15 +138,95 @@ function createContributions(delivery: AgentSessionCapabilities['delivery'] = ['
   } as unknown as ResolvedAgentContribution;
   if (agent.richDefinition?.provenance !== 'external') throw new Error('Expected external Agent fixture');
   const catalogEntry = createManifestAgentCatalogEntry({
-    agentId: AGENT_ID, pluginId: AGENT_ID, definition: agent.richDefinition.definition,
+    agentId, pluginId: AGENT_ID, definition: agent.richDefinition.definition,
     cli: null, provenance: 'external',
   });
   const projectedAgent = { ...agent, catalogEntry };
   const contributes = createResolvedContributionRegistry({ agents: [projectedAgent] });
-  return { backend, agent: projectedAgent, contributes };
+  return { backend, agent: projectedAgent, contributes, identity };
 }
 
 describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
+
+  it('binds detached Project preparation to the Run signal through Start and Stop', async () => {
+    const { agent, backend, contributes, identity } = createContributions(['newTurn'], { primary: 'executionRuns', localId: 'agent' });
+    const agentId = agent.id;
+    const startRequest = new AbortController();
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture', binding: {
+      accountId: 'runner', custodianAccountId: 'custodian', authentication: { kind: 'account', tokenEpoch: 1 },
+      accountEncryptionMode: 'plain', serverIdentityId: 'fixture-home', machineId: 'machine', installationId: 'installation',
+      actionId: 'execution.run.start', admittedMachineRole: 'use', requestId: 'start',
+      requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+    } });
+    const opened = Promise.withResolvers<void>();
+    const preparation = Promise.withResolvers<{ signal: AbortSignal; prepare: HostAgentNativeLaunchPreparation }>();
+    const executionSurfaces = createEmptyBackendExecutionSurfaces();
+    const runtimeOwner: BackendRuntimeOwnerResolution = { backendId: agentId,
+      selected: { kind: 'plugin_engine', ownerId: AGENT_ID, provenance: 'external', pluginId: AGENT_ID }, candidates: [] };
+    const engineAdapter = await resolveBackendRuntimeCore({
+      backend, agent, executionSurfaces, runtimeOwner,
+      nativeAgentRuntime: { executionRuns: { open: async () => {
+        opened.resolve();
+        return {
+          async send() { return { status: 'admitted' }; },
+          async stop() { return { status: 'requested' }; },
+          watch: () => ({ dispose() {} }),
+          async dispose() {},
+        };
+      } } },
+      nativeAgentRuntimeIdentity: { pluginId: AGENT_ID, pluginVersion: '1.0.0', agentId,
+        localAgentId: identity.localId, occurrenceId: 'detached-project', isCurrent: () => true },
+      createNativeAgentInvocationServices: async ({ signal, prepareAgentNativeLaunch }) => {
+        if (!prepareAgentNativeLaunch) throw new Error('Expected the host Project service');
+        preparation.resolve({ signal, prepare: prepareAgentNativeLaunch });
+        return createUnavailablePluginServices();
+      },
+    });
+    if (!engineAdapter) throw new Error('Expected a native Run adapter');
+    const profileCatalog = buildExecutionRunProfileCatalog();
+    const resolution = { backendId: agentId, agentId, provenance: 'external' as const,
+      runtimeOwner, backend, agent, engineAdapter, executionSurfaces, diagnostics: [] };
+    const engineRegistry: ResolvedCliEngineRegistry = {
+      contributions: contributes,
+      resolveExecutionRunProfileCatalog: async () => profileCatalog,
+      resolveForBackendId: async () => resolution,
+      resolveForAgentTarget: async () => resolution,
+      resolveExecutionSurfaces: async () => executionSurfaces,
+    };
+    const directory = await mkdtemp(join(tmpdir(), 'happier-run-project-lifetime-'));
+    const read = async () => null;
+    const bridge = new ExecutionRunHostBridge({ parentProvider: agentId, cwd: directory, happyHomeDir: directory,
+      machineId: 'machine', sendAcp: async () => {},
+      resolveExecutionRunProfileCatalog: () => ({ profileCatalog, engineRegistry }),
+      resolveAccountSettingsSnapshot: Object.assign(read, {
+        captureForDetachedRun: async () => ({ read, authorization, release: async () => {} }),
+      }),
+    });
+    const resolveRuntime = vi.fn(async (_ingress: { signal: AbortSignal }) => null);
+    try {
+      const started = await bridge.start({ sessionId: null, cwd: directory, intent: 'agent',
+        backendTarget: { kind: 'agent', identity },
+        signal: startRequest.signal, modelSelection: null, instructions: 'Inspect the Project.',
+        permissionMode: 'read_only', runClass: 'bounded', retentionPolicy: 'ephemeral', ioMode: 'request_response',
+        projectLaunchContext: { ingress: { signal: startRequest.signal }, isCurrent: () => true, resolveRuntime },
+      });
+      const [{ signal, prepare }] = await Promise.race([
+        Promise.all([preparation.promise, opened.promise]),
+        bridge.waitForTerminal(started.runId).then(() => { throw new Error('Run ended before Project preparation was bound'); }),
+      ]);
+      await expect(prepare(startRequest.signal, directory, {})).rejects.toMatchObject({ code: 'project_finite_execution_unavailable' });
+      expect(resolveRuntime.mock.calls[0]?.[0].signal).toBe(signal);
+      expect(signal).not.toBe(startRequest.signal);
+      await expect(bridge.stop(started.runId)).resolves.toMatchObject({ ok: true });
+      expect(signal.aborted).toBe(true);
+      expect(startRequest.signal.aborted).toBe(false);
+      await expect(prepare(startRequest.signal, directory, {})).rejects.toBe(signal.reason);
+      expect(resolveRuntime).toHaveBeenCalledTimes(1);
+    } finally {
+      await bridge.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 
   it.each([
     { primary: 'executionRuns', supported: true, configured: true },
