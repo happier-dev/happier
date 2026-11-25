@@ -738,7 +738,9 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 outcome = await executeManagedDeclaration(selected, request, acceptedIngress, { ...context, ...operation,
                     signal: acceptedSignal, verifyMachineAdmissionCurrent: acceptedIngress.verifyMachineAdmissionCurrent }, executeCanonicalAction);
                 return outcome.status === 'succeeded' ? { ok: true, result: outcome }
-                    : { ok: false, errorCode: outcome.reasonCode, error: outcome.reasonCode };
+                    : { ok: false, errorCode: outcome.reasonCode, error: outcome.reasonCode,
+                        ...(outcome.failureCause ? { failureCause: outcome.failureCause } : {}),
+                        ...(outcome.establishmentFailure ? { details: { establishmentFailure: outcome.establishmentFailure } } : {}) };
             } catch (error) {
                 if (isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError) {
                     uncertainError = error;

@@ -70,7 +70,7 @@ import { LOCAL_SERVICE_LAUNCHER_START_ACTION_ID_V1 } from '../local/services/act
 import {
   DaemonLocalServiceLauncherStartRequestV1Schema,
   DaemonLocalServiceLauncherStartResponseV1Schema,
-  LocalServiceEstablishmentFailureV1Schema,
+  LocalServiceStartFailureDetailsV1Schema,
 } from '../local/services/launcher/v1.js';
 import type {
   ApprovalExecutionV2,
@@ -85,7 +85,6 @@ import { RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1 } from '../deployments/deployme
 export { ApprovalStaleReasonSchema, ApprovalStaleFailureDetailsSchema, type ApprovalStaleReason } from './approvalStaleReason.js';
 
 const ApprovalReplayOutcomeUnknownDetailsSchema = z.strictObject({ reasonCode: z.string().check(z.minLength(1)) });
-const LocalServiceStartFailureDetailsSchema = z.strictObject({ establishmentFailure: LocalServiceEstablishmentFailureV1Schema });
 
 function isSameApprovalHome(request: Readonly<{ executionOriginV1: Pick<ApprovalRequestV2['executionOriginV1'], 'serverId' | 'serverIdentityId'> }>, left: string, right: string): boolean {
   const origin = request.executionOriginV1;
@@ -119,7 +118,7 @@ function parseStrictApprovalFailure(input: Readonly<{
     }
   }
   if (input.request.actionId === LOCAL_SERVICE_LAUNCHER_START_ACTION_ID_V1) {
-    const schema = storedRead ? createStoredReadSchema(LocalServiceStartFailureDetailsSchema) : LocalServiceStartFailureDetailsSchema;
+    const schema = storedRead ? createStoredReadSchema(LocalServiceStartFailureDetailsV1Schema) : LocalServiceStartFailureDetailsV1Schema;
     const details = schema.safeParse(input.failure.details);
     if (details.success) {
       const args = storedRead ? createStoredReadSchema(DaemonLocalServiceLauncherStartRequestV1Schema) : DaemonLocalServiceLauncherStartRequestV1Schema;

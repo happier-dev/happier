@@ -951,3 +951,11 @@ describe('Action operation v1 contract', () => {
   });
 
 });
+
+
+it('retains the established Service failure facts on a failed Start operation', () => {
+  const error = { errorCode: 'plugin_managed_service_establishment_failed', error: 'plugin_managed_service_establishment_failed',
+    failureCause: { phase: 'managed_service.establishment', errorClass: 'Error', errorCode: 'plugin_managed_server_process_exited', httpStatus: null },
+    details: { establishmentFailure: { cause: 'port_in_use', port: 33239, sameProject: true, exitCode: 1 } } };
+  expect(ActionOperationFailureV1Schema.parse(error)).toEqual(error);
+});

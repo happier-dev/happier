@@ -1,6 +1,7 @@
 import { isMachineSetupCombinedActionIdV1, MACHINE_SETUP_APPLY_ACTION_ID_V1, MANAGED_EXEC_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 import { randomUUID } from 'node:crypto';
+import { LOCAL_SERVICE_LAUNCHER_START_ACTION_ID_V1 } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { raceWithAbort } from '@happier-dev/cli-common/plugins/http';
 import { isProjectCheckoutRemovalActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { createPendingSessionBirth } from './pendingSessionBirth';
@@ -615,7 +616,8 @@ export function createActionOperationRunner(deps: Readonly<{
               ...(isMachineSetupCombinedActionIdV1(action.actionId) && executionResult.setupRetry
                 ? { setupRetry: executionResult.setupRetry } : {}) };
             // Only named producers carry validated public facts. Arbitrary executor details remain private.
-            const reviewedFailure = isFiniteProjectCommand(action.actionId) || isProjectCheckoutRemovalActionIdV1(action.actionId)
+            const reviewedFailure = action.actionId === LOCAL_SERVICE_LAUNCHER_START_ACTION_ID_V1
+              || isFiniteProjectCommand(action.actionId) || isProjectCheckoutRemovalActionIdV1(action.actionId)
               || action.actionId.startsWith('machines.managed.')
               || action.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1
               || MACHINE_REACHABILITY_ACTION_IDS_V1.some(actionId => actionId === action.actionId)

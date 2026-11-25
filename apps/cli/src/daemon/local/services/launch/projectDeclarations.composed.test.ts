@@ -1764,7 +1764,9 @@ describe('accepted Project Service declaration starter', () => {
         ]);
         expect(f.operationRuntime.store.list({ accountId: 'owner', machineId: f.targetWorkspace.machineId }).items
             .find(item => item.actionId === 'localServices.launcher.start')).toMatchObject({ state: 'failed',
-                error: { errorCode: 'plugin_managed_service_establishment_failed' } });
+                error: { errorCode: 'plugin_managed_service_establishment_failed',
+                    failureCause: result.failureCause,
+                    details: { establishmentFailure: result.establishmentFailure } } });
         expect(occupant.exitCode).toBeNull();
     });
 

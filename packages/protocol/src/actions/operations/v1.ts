@@ -1,4 +1,5 @@
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
+import { LocalServiceStartFailureDetailsV1Schema } from '../../local/services/launcher/v1.js';
 import { HomeApplicationOriginV1Schema } from '../../auth/accountDirectory.js';
 import { DeploymentReceiptSettlementFailureDetailsV1Schema, readDeploymentReceiptFailureCodeV1 } from '../../deployments/deploymentReceiptResultV1.js';
 import { DeploymentExecutionFailureDetailsV1Schema } from '../../deployments/deploymentReceiptEventsV1.js';
@@ -279,7 +280,7 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
   failureCause: z.optional(ActionFailureCauseV1Schema),
   setupRetry: ActionExecuteFailureSchema.shape.setupRetry,
   handoffRecovery: z.optional(SessionHandoffSourceStoppedV1Schema),
-  details: z.optional(z.union([ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema,
+  details: z.optional(z.union([LocalServiceStartFailureDetailsV1Schema, ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema,
     ProjectWorkerNoAcceptanceFailureDetailsV1Schema, ApprovalStaleFailureDetailsSchema, ManagedMachineFailureDetailsV1Schema,
     MachineSetupFailureDetailsV1Schema, FiniteCommandFailureDetailsV1Schema, HomeAuthorityMismatchFailureDetailsV1Schema,
     DeploymentTemplateInstantiationPartialV1Schema, OpenProjectRefusalV1Schema, DeploymentDomainFailureDetailsV1Schema, DeploymentFailureRecoveryV1Schema,
@@ -290,7 +291,7 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
 }).check(z.refine(failure => !failure.details || ('type' in failure.details
   ? failure.details.type === 'error' && failure.details.code === failure.errorCode
   : !('kind' in failure.details)
-  ? 'domainId' in failure.details || ('state' in failure.details ? readDeploymentReceiptFailureCodeV1(failure.details.state) === failure.errorCode
+  ? 'establishmentFailure' in failure.details || 'domainId' in failure.details || ('state' in failure.details ? readDeploymentReceiptFailureCodeV1(failure.details.state) === failure.errorCode
     : 'failure' in failure.details ? (!!failure.details.failure && ('kind' in failure.details.failure
       ? DeploymentDomainCaddyFailureDetailsV1Schema.safeParse(failure.details).success
         ? failure.errorCode === failure.details.failure.reason

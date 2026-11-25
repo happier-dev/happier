@@ -321,6 +321,9 @@ export const LocalServiceEstablishmentFailureV1Schema = lazyZodSchema(() => z.st
   }
 })));
 export type LocalServiceEstablishmentFailureV1 = z.infer<typeof LocalServiceEstablishmentFailureV1Schema>;
+export const LocalServiceStartFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  establishmentFailure: LocalServiceEstablishmentFailureV1Schema,
+}));
 
 export const DaemonLocalServiceLauncherStartResponseV1Schema = lazyZodSchema(() => z.strictObject({
     failureCause: z.optional(ActionFailureCauseV1Schema),

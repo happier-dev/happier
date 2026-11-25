@@ -5041,8 +5041,9 @@ admission does not interrupt it; the next Start refuses, and explicit Stop remai
 available. These owner-test contracts do not certify a loaded service journey.
 
 In unreleased 0.3, refused declared-Service Starts retain the supervisor's
-content-free `failureCause` through the launcher response and approved Action
-replay. The Action failure carries it at the top level, alongside `errorCode`;
+content-free `failureCause` through the launcher response, retained Start operation and approved Action
+replay. The native Start observer carries the supervisor's same failure facts
+into operation settlement, including when the RPC completes successfully. The Action failure carries it at the top level, alongside `errorCode`;
 `details.establishmentFailure` remains the structured process/bind diagnosis.
 Use matching development Protocol and daemon/client sources for the closed
 launcher response. Earlier responses without a cause remain readable.
