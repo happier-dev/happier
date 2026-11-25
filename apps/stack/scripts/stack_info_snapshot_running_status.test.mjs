@@ -903,6 +903,31 @@ test('readStackInfoSnapshot fails closed without throwing when Windows cannot pr
   }
 });
 
+test('named stack info never advertises an inherited foreign Home while its own ingress is absent', async (t) => {
+  const storageDir = await mkdtemp(join(tmpdir(), 'hstack-info-foreign-home-'));
+  t.after(() => rm(storageDir, { recursive: true, force: true }));
+  const stackName = 'qa-reloading-home';
+  const baseDir = join(storageDir, stackName);
+  await mkdir(baseDir);
+  await writeFile(join(baseDir, 'env'), `HAPPIER_STACK_STACK=${stackName}\nHAPPIER_STACK_DAEMON=0\n`);
+  const foreignHome = await withHappierHealthServer();
+  t.after(() => foreignHome.close());
+  withPatchedProcessEnv(t, {
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_STACK: 'caller-home',
+    HAPPIER_STACK_SERVER_PORT: String(foreignHome.port),
+    HAPPIER_SERVER_URL: `http://127.0.0.1:${foreignHome.port}`,
+  });
+  const unavailable = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
+  assert.equal(unavailable.urls.canonicalServerUrl, null);
+  assert.equal(unavailable.urls.internalServerUrl, null);
+
+  // The named Stack's explicit endpoint remains authoritative.
+  await writeFile(join(baseDir, 'env'), `HAPPIER_STACK_STACK=${stackName}\nHAPPIER_STACK_DAEMON=0\nHAPPIER_STACK_SERVER_PORT=3016\n`);
+  const configured = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
+  assert.equal(new URL(configured.urls.canonicalServerUrl).port, '3016');
+});
+
 test('readStackInfoSnapshot does not report running when only an unrelated server port is occupied', async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-info-running-port-'));
   const storageDir = join(tmp, 'storage');

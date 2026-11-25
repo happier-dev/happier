@@ -173,6 +173,8 @@ export async function readStackInfoSnapshot({
         ...process.env,
         // A named Stack owns its sign-in origin, including when it has no override.
         HAPPIER_CANONICAL_SERVER_URL: undefined,
+        HAPPIER_STACK_SERVER_PORT: undefined,
+        HAPPIER_SERVER_URL: undefined,
         ...stackEnv,
         HAPPIER_STACK_STACK: stackName,
         HAPPIER_STACK_ENV_FILE: envPath,
