@@ -263,7 +263,10 @@ export function useSessionForkStrategyFlow(params: Readonly<{
                 // A creator refusal reads the refused-start sentence, never the daemon's diagnostic text.
                 setFailure({ route, kind: outcome.kind,
                     message: resolveSessionSpawnErrorDetailFailureMessage(outcome.errorDetail) ?? outcome.message,
-                    ...(outcome.errorDetail ? { errorDetail: outcome.errorDetail } : {}) });
+                    ...(outcome.errorDetail ? { errorDetail: outcome.errorDetail } : {}),
+                    // The Action's typed refusal (code, cause phase, request) stays whole for the shared presenter.
+                    ...(!action.ok && outcome.kind === 'error'
+                        ? { actionFailure: { ...action, requestId: action.requestId ?? requestId } } : {}) });
             }
             applyPhase({ type: 'choosing' });
         } catch {

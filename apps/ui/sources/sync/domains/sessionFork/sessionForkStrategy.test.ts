@@ -56,6 +56,13 @@ describe('classifySessionForkRpcOutcome', () => {
         } as any)).toEqual({ type: 'unknown', errorCode: 'UNEXPECTED' });
     });
 
+    // The signed Action transport reports an issued request whose answer was lost with the Action codes.
+    it.each(['outcome_unknown', 'action_outcome_unknown', 'RPC_OUTCOME_UNKNOWN'])(
+        'treats an issued signed Fork with an unknown outcome (%s) as outcome-unknown, never a retryable failure', errorCode => {
+            expect(classifySessionForkRpcOutcome({ ok: false, errorCode, errorMessage: errorCode }))
+                .toEqual({ type: 'unknown', errorCode });
+        });
+
     it('treats a daemon domain rejection as a definite failure', () => {
         expect(classifySessionForkRpcOutcome({
             ok: false,

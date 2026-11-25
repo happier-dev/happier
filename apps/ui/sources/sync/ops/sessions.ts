@@ -11,6 +11,8 @@ import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { publishDisplayTitleToMetadata } from '@/sync/state/displayTitlePublish';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { createRpcCallError, isRpcMethodNotAvailableError, readRpcErrorCode as readSessionRpcErrorCode } from '../runtime/rpcErrors';
+import { isRpcError } from '@happier-dev/protocol/rpcErrors';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { assertRpcResponseWithSuccess } from '../runtime/assertRpcResponseWithSuccess';
 import { buildResumeHappySessionRpcParams, ResumeSessionInputValidationError, type ResumeHappySessionRpcParams } from '../domains/session/resume/resumeSessionPayload';
 import { resolveTerminalSpawnOptions } from '../domains/settings/terminalSettings';
@@ -710,7 +712,11 @@ export type ForkSessionOptions = Readonly<{
     requestId?: string;
 }>;
 
-export async function forkSession(options: ForkSessionOptions): Promise<SessionForkRpcResult> {
+/** A fork result, or the signed transport's typed refusal kept whole (code, cause, request id). */
+export type ForkSessionResult = SessionForkRpcResult | ActionExecuteFailure
+    | (Extract<SessionForkRpcResult, { ok: false }> & Pick<ActionExecuteFailure, 'failureCause'>);
+
+export async function forkSession(options: ForkSessionOptions): Promise<ForkSessionResult> {
     const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
     const parentTarget = readMachineControlTargetForSession(options.parentSessionId);
     const explicitMachineId = typeof options.machineId === 'string' ? options.machineId.trim() : '';
@@ -744,6 +750,28 @@ export async function forkSession(options: ForkSessionOptions): Promise<SessionF
             : { state: 'unknown' },
     });
     try {
+        // The same owner decision Session resume makes: another person's Machine takes the signed
+        // original-Account session.fork, which Home admits as the requester's own work; its raw fork
+        // RPCs stay custodian-only. An own Machine keeps the incumbent RPC below (null).
+        const account = await captureLazyActionAccountContext(serverId ?? getActiveServerSnapshot().serverId);
+        const execution = await (async () => {
+            try {
+                return await executeOriginalAccountMachineAction({ account, actionId: 'session.fork',
+                    requestId: options.requestId?.trim() || randomUUID(), machineId, foreignTargetOnly: true,
+                    timeoutMs: readSpawnSessionRpcTimeoutMsFromEnv(),
+                    input: { sessionId: options.parentSessionId, serverId: account.serverId, forkPoint: options.forkPoint,
+                        ...(options.strategy ? { strategy: options.strategy } : {}),
+                        ...(options.replaySummaryRunner ? { replaySummaryRunner: options.replaySummaryRunner } : {}),
+                        ...(options.replayMaxSeedChars !== undefined ? { replayMaxSeedChars: options.replayMaxSeedChars } : {}),
+                        ...(options.requestId?.trim() ? { requestId: options.requestId } : {}) } });
+            } finally { account.dispose(); }
+        })();
+        if (execution) {
+            if (!execution.ok) return execution;
+            const parsed = SessionForkRpcResultSchema.safeParse(execution.result);
+            return parsed.success ? parsed.data
+                : { ok: false, errorCode: 'UNEXPECTED', errorMessage: 'Unsupported fork response from daemon' };
+        }
         const raw = await machineRpcWithServerScope<unknown, unknown>({
             machineId,
             method: providerSafeRpcRequired
@@ -797,6 +825,8 @@ export async function forkSession(options: ForkSessionOptions): Promise<SessionF
             errorCode: setupErrorCode ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
             errorMessage: error instanceof Error ? error.message : 'Failed to fork session',
             ...(notSent ? { effectAttempted: false as const } : {}),
+            // Home's typed refusal phase reaches the person's Technical details.
+            ...(isRpcError(error) && error.failureCause ? { failureCause: error.failureCause } : {}),
         };
     }
 }

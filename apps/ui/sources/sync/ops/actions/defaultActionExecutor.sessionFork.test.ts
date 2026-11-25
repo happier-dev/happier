@@ -545,6 +545,95 @@ describe('default Action executor Session lifecycle contracts', () => {
     expect(outgoing).toEqual([]);
   });
 
+  // A Use guest's own Session on another person's Machine: Home refuses the raw fork RPCs custodian_only by
+  // design and admits the signed own-work session.fork, the same original-Account path Session resume uses.
+  async function installGuestOwnSessionOnSharedMachine(receiver: (input: unknown) => unknown) {
+    const shared = createMachineFixture({ id: 'machine_shared' });
+    storage.setState({ machines: { ...storage.getState().machines, [shared.id]: shared },
+      machineListByServerId: { [serverId]: [...storage.getState().machineListByServerId[serverId]!, shared] } });
+    const received: unknown[] = [];
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: shared.id, actionId: 'session.fork', tokenEpoch: 0,
+      custodian: { accountId: 'bob', displayName: 'Bob' }, requesterInvocation: 'credentials',
+      execute: input => { received.push(input); return receiver(input); } });
+    installSession({ metadata: { path: '/repo', host: 'shared.local', machineId: shared.id, flavor: 'codex' } });
+    installSession({ id: 'sess_child', metadata: { path: '/repo', host: 'shared.local', machineId: shared.id,
+      flavor: 'codex', forkV1: { v: 1, parentSessionId: 'sess_parent', createdAtMs: 1, strategy: 'replay', parentCutoffSeqInclusive: 12 } } });
+    return received;
+  }
+  const signedForkRequests = () => homes.requests.filter(({ method, path }) => method === 'POST'
+    && (path === '/v1/actions/session.fork/execution-authorization' || path === '/v1/actions/session.fork'));
+  const rawForkRequests = () => outgoing.filter(request => request.method.endsWith(`:${RPC_METHODS.SESSION_FORK}`)
+    || request.method.endsWith(`:${RPC_METHODS.SESSION_FORK_PROVIDER_SAFE}`));
+
+  it.each(['replay', 'native'] as const)("forks a guest's own Session on a shared Machine through the signed path (%s), never a raw fork RPC", async route => {
+    const received = await installGuestOwnSessionOnSharedMachine(() => ({ ok: true, childSessionId: 'sess_child' }));
+    const { harness, navigate } = await mountForkFlow();
+    await act(async () => { await harness.getCurrent().submit(route); });
+    expect(harness.getCurrent().failure, JSON.stringify(harness.getCurrent().failure)).toBeNull();
+    expect(signedForkRequests().map(({ path }) => path)).toEqual([
+      '/v1/actions/session.fork/execution-authorization', '/v1/actions/session.fork']);
+    expect(received).toEqual([expect.objectContaining({ sessionId: 'sess_parent', strategy: route,
+      forkPoint: { type: 'seq', upToSeqInclusive: 12 }, replayMaxSeedChars: 12_345 })]);
+    expect(rawForkRequests()).toEqual([]);
+    expect(navigate).toHaveBeenCalledExactlyOnceWith('sess_child', { serverId });
+  });
+
+  it('sends the provider-safe Fork variant of a guest\'s own Session through the same signed path', async () => {
+    await installGuestOwnSessionOnSharedMachine(() => ({ ok: true, childSessionId: 'sess_child' }));
+    // A persisted Provider binding makes the raw path pick the provider-safe RPC; the signed Action covers both.
+    installSession({ metadata: { path: '/repo', host: 'shared.local', machineId: 'machine_shared', flavor: 'codex',
+      providerBindingV1: { v: 1, connectionId: 'pc_work', contributionKey: 'plugin/p', connectionRevision: 1,
+        protocol: 'openai-responses', materialization: 'engineConfig', adapterBindingKey: 'p_pc_work',
+        compatibilityFingerprint: 'compatibility:v1:work', bindingSecurityFingerprint: 'binding-security:v1:work',
+        displaySnapshot: { providerName: 'Provider', connectionName: 'Work', connectionRole: 'named', connectionDisplayNameMode: 'custom' } },
+    } as Session['metadata'] });
+    const result = await executor().execute('session.fork', { sessionId: 'sess_parent', strategy: 'replay' }, context());
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true, childSessionId: 'sess_child' } });
+    expect(signedForkRequests()).toHaveLength(2);
+    expect(rawForkRequests()).toEqual([]);
+  });
+
+  it("carries Home's refusal of a guest's signed Fork to the dialog's failure with its code, phase and request", async () => {
+    await installGuestOwnSessionOnSharedMachine(() => { throw new Error('A refused mint must not dispatch'); });
+    const failureCause = { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: 409 };
+    homes.answer(serverId, 'POST /v1/actions/session.fork/execution-authorization', { select: body => ({ status: 409, body: {
+      error: 'invalid_request', code: 'target_unavailable',
+      requestId: (body as { envelope: { requestId: string } }).envelope.requestId, failureCause } }) });
+    const { harness, navigate } = await mountForkFlow();
+    await act(async () => { await harness.getCurrent().submit('replay'); });
+    expect(harness.getCurrent().phase).toEqual({ type: 'choosing' });
+    expect(harness.getCurrent().failure).toMatchObject({ route: 'replay', kind: 'error', actionFailure: {
+      ok: false, errorCode: 'target_unavailable', failureCause, effectAttempted: false,
+      requestId: expect.stringMatching(/:replay$/u) } });
+    expect(rawForkRequests()).toEqual([]);
+    expect(navigate).not.toHaveBeenCalled();
+
+    // The dialog says it in one sentence and keeps the code, phase and request in Technical details.
+    const { SessionForkStrategyModal } = await import('@/components/sessions/fork/SessionForkStrategyModal');
+    const { Modal } = await import('@/modal');
+    const { t } = await import('@/text');
+    const alert = vi.spyOn(Modal, 'alert');
+    const screen = await renderScreen(React.createElement(SessionForkStrategyModal, {
+      onClose: vi.fn(), navigate: vi.fn(), navigation: { push: vi.fn() },
+      request: { parentSessionId: 'sess_parent', serverId, machineId: 'machine_shared', forkPoint: { type: 'latest' } },
+      availability: { native: true, replay: true, configure: false, nativeUnavailableReason: null },
+    }));
+    await vi.waitFor(() => expect(screen.findByTestId('session-fork-strategy-replay')?.props.disabled).not.toBe(true));
+    await act(async () => { await screen.findByTestId('session-fork-strategy-replay')?.props.onPress(); });
+    await vi.waitFor(() => expect(screen.findByTestId('session-fork-strategy-failure')).toBeTruthy());
+    const sentence = screen.getTextContent();
+    expect(sentence).not.toContain('Forbidden');
+    expect(sentence).not.toContain('target_unavailable');
+    // The shared presenter names the refusal's typed cause in the person's terms.
+    expect(sentence).toContain(t('errors.custodianOnly'));
+    await act(async () => { screen.findByTestId('session-fork-strategy-failure-details')?.props.onPress(); });
+    const details = String(alert.mock.calls.at(-1)?.[1] ?? '');
+    expect(details).toContain('target_unavailable');
+    expect(details).toContain('execution_authorization');
+    expect(details).toMatch(/:replay/u);
+    expect(rawForkRequests()).toEqual([]);
+  });
+
   it.each(['session.fork', 'session.handoff'] as const)('uses the reachable machine when metadata names a replaced one (%s)', async (actionId) => {
     const stale = createMachineFixture({ id: 'machine_stale', active: false, replacedByMachineId: 'machine_1' });
     machineCensus = [...machineCensus, stale];

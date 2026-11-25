@@ -1,6 +1,7 @@
 import type { SessionForkPoint, SessionForkRpcResult } from '@happier-dev/protocol/sessions/fork';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 /**
  * The three routes the fork strategy modal offers. `native` and `replay` are
@@ -40,7 +41,6 @@ const UNKNOWN_OUTCOME_ERROR_CODES: ReadonlySet<string> = new Set<string>([
     // transport errors and undecodable replies may follow issuance, so they
     // cannot claim the source is untouched.
     SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-    RPC_ERROR_CODES.OUTCOME_UNKNOWN,
 ]);
 
 function normalizeNonEmptyString(value: unknown): string | null {
@@ -59,7 +59,9 @@ export function classifySessionForkRpcOutcome(result: SessionForkRpcResult): Ses
     }
 
     const errorCode = normalizeNonEmptyString(result.errorCode) ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED;
-    if (result.effectAttempted !== false && UNKNOWN_OUTCOME_ERROR_CODES.has(errorCode)) {
+    // Issued RPC and signed Action transports name an unknown outcome through the Action owner's predicate.
+    if (result.effectAttempted !== false
+        && (UNKNOWN_OUTCOME_ERROR_CODES.has(errorCode) || isActionOutcomeUnknownErrorCodeV1(errorCode))) {
         return { type: 'unknown', errorCode };
     }
     return {

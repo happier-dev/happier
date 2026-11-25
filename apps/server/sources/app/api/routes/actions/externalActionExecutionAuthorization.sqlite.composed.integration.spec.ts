@@ -12825,6 +12825,48 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
+    it("admits a Use guest's signed Fork Machine-wide, while the Session read its requester carrier makes refuses another person's Session", async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" } });
+        await db.machine.update({ where: { id: fixture.machine.id }, data: {
+            accountId: custodian.id,
+            metadata: encodePlainMachineStoredContent({ host: 'shared', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/shared', happyHomeDir: '/home/shared/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+            active: true,
+        } });
+        await db.machineGrant.create({ data: { principalKind: 'account',
+            machineId: fixture.machine.id, accountId: fixture.account.id,
+            accessLevel: "view", createdByAccountId: custodian.id,
+        } });
+        const createSession = (accountId: string) => db.session.create({ data: { accountId, tag: crypto.randomUUID(),
+            encryptionMode: 'plain', metadata: JSON.stringify({ machineId: fixture.machine.id }), active: true } });
+        const own = await createSession(fixture.account.id);
+        const owners = await createSession(custodian.id);
+        const { app } = await createApp(fixture.team.id);
+        try {
+            const guestToken = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+            const mintFork = (sessionId: string) => app.inject({ method: 'POST',
+                url: bindExternalActionExecutionAuthorizationHttpPathV1('session.fork'),
+                headers: { authorization: `Bearer ${guestToken}` },
+                payload: { v: 1, machineId: fixture.machine.id, envelope: { v: 1, requestId: crypto.randomUUID(),
+                    target: { kind: 'machine', machineId: fixture.machine.id }, input: { sessionId, forkPoint: { type: 'latest' } } } } });
+            // Machine admission is Machine-wide (owner ruling 2026-11-23 ~15:10Z); it cannot read an E2EE input,
+            // so it does not decide whose Session this is.
+            for (const sessionId of [own.id, owners.id]) {
+                const minted = await mintFork(sessionId);
+                expect(minted.statusCode, minted.body).toBe(200);
+                expect(ExternalActionExecutionAuthorizationV1Schema.parse(minted.json()).binding).toMatchObject({
+                    accountId: fixture.account.id, custodianAccountId: custodian.id, actionId: 'session.fork' });
+            }
+            // The receiving daemon reads the parent with the requester's own credentials: this route decides.
+            const readParent = (sessionId: string) => app.inject({ method: 'GET', url: `/v2/sessions/${sessionId}`,
+                headers: { authorization: `Bearer ${guestToken}`, ...currentAccountStoredContentCompatibilityHeaders } });
+            expect((await readParent(own.id)).statusCode).toBe(200);
+            expect((await readParent(owners.id)).statusCode).toBe(404);
+        } finally { await app.close(); }
+    });
+
     it("originates managed execution from the actual ordinary Account credential and rechecks its epoch", async () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const token = await auth.createToken(fixture.account.id, undefined, {

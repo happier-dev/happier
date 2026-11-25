@@ -699,10 +699,14 @@ describe('session resume and fork routing through the Home and Account boundary'
         boundary.setSocketConfigurator(({ socket }) => { physicalSocket = socket; });
         let releaseRow!: () => void;
         const row = new Promise<void>(resolve => { releaseRow = resolve; });
+        let custodyRead = false;
         boundary.setHttpResponder(createSessionReadBatchFetchBoundary(async (input, init) => {
             const path = new URL(String(input)).pathname;
             if (path !== '/v1/machines/machine-1' && path !== '/v1/machines/read-batch') return respondHttp(input, init);
-            await row;
+            // Fork first reads the Machine's custody (own or another person's) through the signed-transport
+            // owner, before any socket; only the RPC transport's own row reads are held behind the socket.
+            if (kind === 'fork' && path === '/v1/machines/read-batch' && !custodyRead) custodyRead = true;
+            else await row;
             if (path === '/v1/machines/read-batch') return machineFixtures.createMachineReadBatchResponseFixture(init?.body,
                 id => id === 'machine-1' ? machineFixtures.createPlainMachineRowFixture({ id, accountId: home.accountId }) : null);
             return Response.json({ machine: machineFixtures.createPlainMachineRowFixture({ id: 'machine-1', accountId: home.accountId }) });

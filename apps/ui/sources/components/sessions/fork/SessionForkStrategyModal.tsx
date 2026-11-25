@@ -14,7 +14,8 @@ import { Typography } from '@/constants/Typography';
 import type { CustomModalInjectedProps } from '@/modal';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { readSafeFailureDetails, showActionFailureDetails } from '@/utils/errors/alertActionFailure';
+import { showActionFailureDetails, type ActionFailureContext } from '@/utils/errors/alertActionFailure';
+import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import type {
     SessionForkNativeUnavailableReason,
     SessionForkStrategyAvailability,
@@ -22,6 +23,7 @@ import type {
 import type { SessionForkOperationRoute } from '@/sync/domains/sessionFork/sessionForkStrategy';
 import {
     useSessionForkStrategyFlow,
+    type SessionForkStrategyFailure,
     type SessionForkStrategyRequest,
 } from '@/sync/domains/sessionFork/useSessionForkStrategyFlow';
 
@@ -145,6 +147,28 @@ function resolveNativeUnavailableCopy(
     }
 }
 
+/**
+ * A definite failure's one sentence and its Technical details. The shared Action failure presenter
+ * owns both; this surface adds no reason taxonomy of its own. A creator refusal already carries its
+ * refused-start sentence from the flow.
+ */
+function presentSessionForkFailure(failure: SessionForkStrategyFailure): Readonly<{
+    sentence: string;
+    technicalDetails: Readonly<{ code: string; context: ActionFailureContext }> | null;
+}> {
+    if (failure.kind === 'update_required') {
+        return { sentence: t('session.forking.strategy.failure.updateRequired'), technicalDetails: null };
+    }
+    const action = failure.actionFailure;
+    const presented = action ? presentActionFailureOutcome(action, undefined, failure.message ?? undefined) : null;
+    return {
+        sentence: (failure.errorDetail ? failure.message : null) || presented?.reason || failure.message
+            || t('session.forking.strategy.failure.generic'),
+        technicalDetails: action && presented ? { code: action.errorCode, context: Object.fromEntries(presented.technicalDetails
+            .filter(line => line.key !== 'failure-code').map(line => [line.label, line.value])) } : null,
+    };
+}
+
 export function SessionForkStrategyModal(props: SessionForkStrategyModalProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -221,11 +245,8 @@ export function SessionForkStrategyModal(props: SessionForkStrategyModalProps) {
     // an unconfirmed outcome — would be silent. Route every transition through
     // the one canonical announcer instead of publishing a second, partial
     // announcement channel next to it.
-    const failureAnnouncement = failure && phase.type === 'choosing'
-        ? (failure.kind === 'update_required'
-            ? t('session.forking.strategy.failure.updateRequired')
-            : failure.message ?? t('session.forking.strategy.failure.generic'))
-        : null;
+    const failurePresentation = failure && phase.type === 'choosing' ? presentSessionForkFailure(failure) : null;
+    const failureAnnouncement = failurePresentation?.sentence ?? null;
     const announcement = failureAnnouncement
         ?? (phase.type === 'awaiting_approval' ? t('approvals.status.open')
             : statusLine ? [statusLine.title, statusLine.body].filter(Boolean).join('. ') : null);
@@ -307,25 +328,16 @@ export function SessionForkStrategyModal(props: SessionForkStrategyModalProps) {
                 </ItemGroup>
             ) : null}
 
-            {failure && phase.type === 'choosing' ? (
+            {failurePresentation ? (
                 <View style={styles.notice} testID="session-fork-strategy-failure">
                     <Icon name="warning" size={16} color={theme.colors.state.danger.foreground} />
                     <View style={styles.noticeCopy}>
-                        <Text style={styles.noticeBody}>
-                            {failure.kind === 'update_required'
-                                ? t('session.forking.strategy.failure.updateRequired')
-                                : failure.actionFailure
-                                    ? t('common.disabled')
-                                    : failure.message ?? t('session.forking.strategy.failure.generic')}
-                        </Text>
-                        {failure.actionFailure ? (
-                            <RoundButton size="small" title={t('approvals.technicalDetails')} onPress={() => {
-                                const action = failure.actionFailure;
-                                if (!action) return;
-                                showActionFailureDetails({ code: action.errorCode, context: {
-                                    ...readSafeFailureDetails(action.details), requestId: action.requestId ?? null,
-                                } });
-                            }} />
+                        <Text style={styles.noticeBody}>{failurePresentation.sentence}</Text>
+                        {failurePresentation.technicalDetails ? (
+                            <RoundButton size="small" testID="session-fork-strategy-failure-details"
+                                title={t('approvals.technicalDetails')} onPress={() => {
+                                    if (failurePresentation.technicalDetails) showActionFailureDetails(failurePresentation.technicalDetails);
+                                }} />
                         ) : null}
                     </View>
                 </View>
