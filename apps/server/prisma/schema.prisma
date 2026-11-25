@@ -1580,6 +1580,8 @@ model Session {
     publisherGenerationLastActiveAt DateTime?
     /// Exact nonsecret placement committed by the admitted runtime publisher; retained when it closes.
     runtimeMachineTarget Json?
+    /// Non-content profile digest fixed at Session birth for lifecycle triggers.
+    launchProfileDigest String?
     meaningfulActivityAt DateTime?
     /// Released compatibility storage only. Current viewer state is owned by AccountSessionReadState.
     unreadSince       DateTime?

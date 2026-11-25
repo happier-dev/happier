@@ -72,6 +72,7 @@ export type FreshBoundLayout1SessionCreateRejection =
 export type Layout1SessionCreateRequest = Readonly<SessionCreateOriginFieldsV1 & {
     managedCreation?: SessionManagedCreationV1;
     enrolledManagedBirth?: ManagedSessionBirthProofV1 & { body: unknown };
+    launch?: import('@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1').SessionLaunchHeaderV1;
     manager?: SessionManagerV1;
     accountId: string;
     tag: string;
@@ -100,6 +101,7 @@ export type Layout1SessionCreateRequest = Readonly<SessionCreateOriginFieldsV1 &
 export type PreparedLayout1SessionCreate = Readonly<SessionCreateOriginFieldsV1 & {
     managedCreation?: SessionManagedCreationV1;
     enrolledManagedBirth?: Layout1SessionCreateRequest['enrolledManagedBirth'];
+    launch?: Layout1SessionCreateRequest['launch'];
     manager?: SessionManagerV1;
     accountId: string;
     tag: string;
@@ -274,6 +276,7 @@ export function prepareLayout1SessionCreate(
         prepared: {
             ...(managedCreation.data ? { managedCreation: managedCreation.data } : {}),
             ...(request.enrolledManagedBirth ? { enrolledManagedBirth: request.enrolledManagedBirth } : {}),
+            ...(request.launch ? { launch: request.launch } : {}),
             ...origin.data,
             ...(manager.data ? { manager: manager.data } : {}),
             accountId: request.accountId,

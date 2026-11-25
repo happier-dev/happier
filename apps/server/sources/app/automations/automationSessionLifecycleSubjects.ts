@@ -21,6 +21,9 @@ export type AutomationSessionLifecycleSourceFacts = Readonly<{
     accountId: string;
     projectKey: string | null;
     runtimeMachineTarget: unknown;
+    /** Available only to the atomic birth producer, on the current Home. */
+    birthMachineId?: string;
+    launchProfileDigest?: string | null;
 }>;
 
 /** Consume the producer's existing Session row, without re-reading its write. */
@@ -28,15 +31,17 @@ export function projectAutomationSessionLifecycleSourceSubjects(
     serverId: string | null,
     session: AutomationSessionLifecycleSourceFacts,
 ): AutomationSessionLifecycleSourceSubjects {
-    const placement = readRetainedCommittedSessionInputMachineTarget(session);
+    const placement = session.birthMachineId === undefined
+        ? readRetainedCommittedSessionInputMachineTarget(session) : undefined;
+    const machineId = session.birthMachineId ?? (placement?.homeId === serverId ? placement?.machineId : undefined);
     return { sessionId: session.id,
         ownerAccountId: session.accountId,
         contexts: serverId === null ? [] : [
                 { role: 'operand' as const, subject: { kind: 'session' as const, serverId, sessionId: session.id } },
                 ...(session.projectKey === null ? [] : [{ role: 'context' as const,
                     subject: { kind: 'project' as const, serverId, projectKey: session.projectKey } }]),
-                ...(placement?.homeId !== serverId ? [] : [{ role: 'context' as const,
-                    subject: { kind: 'machine' as const, serverId, machineId: placement.machineId } }]),
+                ...(machineId === undefined ? [] : [{ role: 'context' as const,
+                    subject: { kind: 'machine' as const, serverId, machineId } }]),
             ],
     };
 }

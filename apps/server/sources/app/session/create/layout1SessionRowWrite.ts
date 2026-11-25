@@ -21,6 +21,7 @@ import type { AutomationTriggerCreateRequest } from '@happier-dev/protocol/autom
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { publishSessionCreationInTx } from "./publishSessionCreationInTx";
 import type { SessionCreationExecutionAuthorization } from './apiTokenSessionCreationAuthorization';
+import { resolveMachineAdmissionInTx } from "@/app/machines/machineAccess";
 import { readSessionCreationApiTokenIdInTx } from "./apiTokenSessionCreationAuthorization";
 import { beforeAccountChangePublication } from "@/app/changes/markAccountChanged";
 import {
@@ -33,7 +34,7 @@ import {
     scheduleReleasedDirectShareEvent,
 } from "@/app/session/access/publishSessionAccessChange";
 import { ACCOUNT_DISPLAY_PROFILE_SELECT } from "@/app/account/profile/accountDisplayProfile";
-import { bindManagedCreationScopeRetentionInTx, recordManagedPresetSessionBirthInTx, readEnrolledManagedSessionBirthInTx, validateManagedCreationBirthInTx } from "@/app/machines/managed/managedCreationBirth";
+import { bindManagedCreationScopeRetentionInTx, recordManagedPresetSessionBirthInTx, readSignedSessionBirthInTx, validateManagedCreationBirthInTx } from "@/app/machines/managed/managedCreationBirth";
 import { validateDiscussionParticipantBirthInTx, bindDiscussionParticipantSessionInTx } from "@/app/discussions/accessService";
 import {
     validatePlannedSessionTeamCredentialBindingIntentInTx,
@@ -244,12 +245,28 @@ export async function insertLayout1SessionRowInTx(
         birth: prepared.managedCreation }) : undefined;
     if (managedBirth === false) throw new SessionCreationOriginError();
     const createdByApiTokenId = await readSessionCreationApiTokenIdInTx(tx, prepared.accountId, params.sessionCreationAuthorization);
+    const signedBirth = !managedBirth && prepared.enrolledManagedBirth
+        ? await readSignedSessionBirthInTx(tx, prepared.accountId, prepared.enrolledManagedBirth)
+        : null;
+    const authorization = params.sessionCreationAuthorization;
+    // The verified spawn binding already names the admitted Machine. An ordinary
+    // Account request can name a target only through Home's Machine admission.
+    const authorizedMachineId = authorization && ('modelBirth' in authorization
+        ? authorization.modelBirth.proof.machineAdmission.machineId
+        : 'binding' in authorization ? authorization.binding.machineId : authorization.machineId);
+    let birthMachineId = managedBirth?.enrolledMachineId ?? authorizedMachineId ?? signedBirth?.machineId;
+    if (!birthMachineId && prepared.launch?.machineId && !authorization && !prepared.enrolledManagedBirth) {
+        const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: prepared.accountId,
+            machineId: prepared.launch.machineId, requiredRole: 'use' });
+        if (admission.kind === 'admitted') birthMachineId = admission.machineId;
+    }
     const session = await tx.session.create({
         data: encodeSessionStoredContent({
             ...(params.sessionId ? { id: params.sessionId } : {}),
             accountId: prepared.accountId,
             managedCreationId: prepared.managedCreation?.managedId ?? null,
             createdByApiTokenId,
+            launchProfileDigest: birthMachineId ? prepared.launch?.profileDigest : undefined,
             originKind: prepared.originKind ?? "none",
             originSessionId: prepared.originSessionId ?? null,
             originRunId: prepared.originRunId ?? null,
@@ -274,9 +291,7 @@ export async function insertLayout1SessionRowInTx(
         }),
     }).then(decodeSessionStoredContent);
     if (managedBirth) await bindManagedCreationScopeRetentionInTx(tx, managedBirth, { kind: 'session', sessionId: session.id });
-    const presetBirth = managedBirth ?? (prepared.enrolledManagedBirth
-        ? await readEnrolledManagedSessionBirthInTx(tx, prepared.accountId, prepared.enrolledManagedBirth)
-        : null);
+    const presetBirth = managedBirth ?? signedBirth?.preset;
     if (presetBirth) await recordManagedPresetSessionBirthInTx(tx, presetBirth, now);
     // The owner is an ordinary recipient of their own Session key, so their
     // envelope lands in the one canonical tuple inside this same transaction. A
@@ -393,7 +408,8 @@ export async function insertLayout1SessionRowInTx(
         }
     }
     const lifecycleAdmissions = await admitSessionLifecycleAutomationRunsTx({
-        tx, accountId: prepared.accountId, sourceSession: session,
+        tx, accountId: prepared.accountId,
+        sourceSession: { ...session, birthMachineId },
         recipientAccountIds: [prepared.accountId, ...accessResult.effects.accountCursors.keys()],
         occurrence: { v: 1, kind: "sessionLifecycle", event: "sessionStarted",
             sourceSessionId: session.id, occurredAt: session.createdAt.getTime() },

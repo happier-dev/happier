@@ -742,6 +742,8 @@ async function createSeededSpawnedSession(args: Readonly<{
         ...pickSessionCreateOriginFields(params),
         credentials: params.credentials,
         tag,
+        launchMachineId: params.machineId,
+        launchProfileId: params.profileId ?? undefined,
         metadata: applyInitialSessionCreationFactsToMetadata({
           tag,
           ...(params.directory !== undefined ? { path: params.directory, host: os.hostname() } : {}),

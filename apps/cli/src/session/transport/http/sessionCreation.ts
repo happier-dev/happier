@@ -23,7 +23,8 @@ import { encodeBase64 } from '@/api/encryption';
 import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { addSessionInitialAccessTeamShareStatement, buildSessionInitialAccessCreateFields, materializeSessionInitialAccessCreateFields, prepareSessionInitialAccessDataKeyEnvelopes, readSessionTeamCredentialBindingRejectedError, readSessionTeamCredentialBindingUpdateRequiredError, readSessionInitialAccessServerError } from '@/api/session/sessionCreationInitialAccess';
 import type { SessionCreationAuthorizationV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
-import { buildManagedSessionBirthProofPayloadV1, MANAGED_SESSION_BIRTH_HEADER_V1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { buildManagedSessionBirthProofPayloadV1, MANAGED_SESSION_BIRTH_HEADER_V1, SESSION_LAUNCH_HEADER_V1, type SessionLaunchHeaderV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { projectAutomationSessionLifecycleLaunchProfileId } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
@@ -53,6 +54,8 @@ export async function postSessionCreationRequest<T>(params: Readonly<{
   token: string;
   body: Readonly<Record<string, unknown>>;
   localBirthMachineId?: string;
+  launchMachineId?: string;
+  launchProfileId?: string;
   creationAuthorizationToken?: string;
   /** Binds the admitted Action's child-creation proof to the exact birth body posted here. */
   prepareCreationAuthorizationProof?: SessionCreationAuthorizationV1['prepareRequestProof'];
@@ -65,6 +68,10 @@ export async function postSessionCreationRequest<T>(params: Readonly<{
   const creationAuthorizationProof = await params.prepareCreationAuthorizationProof?.(params.body);
   const body = creationAuthorizationProof ? { ...params.body, creationAuthorizationProof } : params.body;
   const managedBirthHeader = readManagedSessionBirthHeader(params.localBirthMachineId, params.token, body);
+  const launch: SessionLaunchHeaderV1 = {
+    ...(params.launchMachineId ? { machineId: params.launchMachineId } : {}),
+    ...(params.launchProfileId ? { profileDigest: projectAutomationSessionLifecycleLaunchProfileId(params.launchProfileId) } : {}),
+  };
   const bindings = params.body.teamCredentialBindings;
   const hasTeamCredentialBindings = Array.isArray(bindings) && bindings.length > 0;
   const refuseConfirmedCreationFailure = (status: number, data: unknown): void => {
@@ -82,6 +89,7 @@ export async function postSessionCreationRequest<T>(params: Readonly<{
     headers: {
       ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
       ...(managedBirthHeader ? { [MANAGED_SESSION_BIRTH_HEADER_V1]: managedBirthHeader } : {}),
+      ...(launch.machineId || launch.profileDigest ? { [SESSION_LAUNCH_HEADER_V1]: JSON.stringify(launch) } : {}),
       ...(params.creationAuthorizationToken ? { [SESSION_CREATION_AUTHORIZATION_HEADER_V1]: params.creationAuthorizationToken } : {}),
       ...(params.authorizeRequest ? params.authorizeRequest({ method: 'POST', path: '/v1/sessions', body })
         : { Authorization: `Bearer ${params.token}` }),
@@ -118,6 +126,8 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
   tag: string;
   metadata: Record<string, unknown>;
   agentState: Record<string, unknown> | null;
+  launchMachineId?: string;
+  launchProfileId?: string;
   currentStorageState?: 'machine_only';
   externalSourceDates?: ExternalSessionSourceDatesV1;
   organizationPlacement?: SessionOrganizationPlacementV1;
@@ -231,6 +241,10 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
     serverUrl,
     token: params.credentials.token,
     body,
+    ...('sharedMetadata' in body ? {
+      launchMachineId: params.launchMachineId,
+      launchProfileId: params.launchProfileId,
+    } : {}),
     ...(params.creationAuthorizationToken ? { creationAuthorizationToken: params.creationAuthorizationToken } : {}),
     ...(params.prepareCreationAuthorizationProof ? { prepareCreationAuthorizationProof: params.prepareCreationAuthorizationProof } : {}),
     ...(params.authorizeRequest ? { authorizeRequest: params.authorizeRequest } : {}),

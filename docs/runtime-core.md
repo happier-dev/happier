@@ -4741,6 +4741,8 @@ The [layout-1 Session row writer](../apps/server/sources/app/session/create/layo
 
 For signed Session archives, the [archive route](../apps/server/sources/app/api/routes/session/registerSessionArchiveRoutes.ts) authenticates the claimed originating Run against its publisher, Account access and assigned Machine before passing it into the transactional lifecycle occurrence. The [Run cause codec](../apps/server/sources/app/automations/automationRunCauseCodec.ts) retains this optional archive-origin fact in the nullable `AutomationRun.causeOriginRunId` column, separate from private Account evidence and Session creation origin. The existing [trigger cause-chain owner](../apps/server/sources/app/automations/automationTriggerCauseChain.ts) follows that retained ancestry to suppress a trigger already responsible for the archive before admitting another Run. An unsigned archive does not infer archive ancestry from Session birth. This is an unreleased 0.3 source contract.
 
+Session-start matching uses the authorized launch Machine on the current Home. The [create transport](../apps/cli/src/session/transport/http/sessionCreation.ts) carries the launch profile digest as optional non-content input, separately from the owner metadata envelope. The Session birth stores the digest for the lifecycle matcher to use at turn settlement, needs-you and archive. Publisher registration still owns the active runtime Machine target. Unplaced births, such as a local replay before any Machine takes placement, emit their single Session-start occurrence without a Machine or profile context.
+
 ## Prepared native input budget (0.3 development)
 
 An Agent's preflight contribution owns its runtime input-text limit independently

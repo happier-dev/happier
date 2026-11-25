@@ -105,9 +105,10 @@ export async function admitSessionLifecycleAutomationRunsTx(params: Readonly<{
     recipientAccountIds: readonly string[];
     /** Authenticated write actor, distinct from immutable turn admission facts. */
 }>): Promise<ReadonlyArray<SessionLifecycleAdmissionResult>> {
-    const occurrence = AutomationSessionLifecycleOccurrenceEvidenceV1Schema.parse(
-        params.occurrence,
-    );
+    const launchProfileId = params.sourceSession.launchProfileDigest;
+    const occurrence = AutomationSessionLifecycleOccurrenceEvidenceV1Schema.parse(launchProfileId
+        ? { ...params.occurrence, facts: { ...params.occurrence.facts, launchProfileId } }
+        : params.occurrence);
     return timeWebLatencyPhase(`automation.sessionLifecycle.admit.${occurrence.event}`, async () => {
         if (occurrence.event === "parentTurnStarted" || occurrence.event === "parentTurnCompleted" || occurrence.event === "parentTurnFailed"
             || occurrence.event === "parentTurnCancelled") {

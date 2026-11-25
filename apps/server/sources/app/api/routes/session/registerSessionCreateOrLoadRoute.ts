@@ -52,7 +52,7 @@ import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/pro
 import { readSessionCreationApiTokenIdInTx, type SessionCreationExecutionAuthorization } from "@/app/session/create/apiTokenSessionCreationAuthorization";
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { SessionCreateRequestSchema } from '@/app/session/create/sessionCreateRequest';
-import { MANAGED_SESSION_BIRTH_HEADER_V1, readManagedSessionBirthProofHeaderV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { MANAGED_SESSION_BIRTH_HEADER_V1, readManagedSessionBirthProofHeaderV1, readSessionLaunchHeaderV1, SESSION_LAUNCH_HEADER_V1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 
 export function registerSessionCreateOrLoadRoute(app: Fastify) {
     app.post('/v1/sessions', {
@@ -263,6 +263,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
         let resolvedOwnerAccountMode = accountEncryptionMode;
         let resolvedOrganizationPlacement: SessionOrganizationPlacement | undefined;
         if (isLayoutOneRequest) {
+            const launch = readSessionLaunchHeaderV1(request.headers[SESSION_LAUNCH_HEADER_V1]);
             const enrolledBirth = layoutOneRequest.managedCreation ? undefined
                 : readManagedSessionBirthProofHeaderV1(request.headers[MANAGED_SESSION_BIRTH_HEADER_V1]);
             const preparation = prepareLayout1SessionCreate({
@@ -283,6 +284,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
             preparedFinalSessionId: layoutOneRequest.preparedFinalSessionId,
                 managedCreation: layoutOneRequest.managedCreation,
                 ...(enrolledBirth ? { enrolledManagedBirth: { ...enrolledBirth, body: request.body } } : {}),
+                ...(launch ? { launch } : {}),
             primaryTeamId: layoutOneRequest.primaryTeamId,
             teamCredentialBindings: layoutOneRequest.teamCredentialBindings,
                 manager: layoutOneRequest.manager,

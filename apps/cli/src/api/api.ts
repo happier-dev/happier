@@ -709,6 +709,8 @@ export class ApiClient {
           token: this.credential.token,
           ...(!managedCreation && this.localMachineId && 'sharedMetadata' in metadataEnvelopeFields
             ? { localBirthMachineId: this.localMachineId } : {}),
+          ...('sharedMetadata' in metadataEnvelopeFields && typeof creationMetadata.profileId === 'string'
+            ? { launchProfileId: creationMetadata.profileId } : {}),
           body: {
             tag: opts.tag,
             ...pickSessionCreateOriginFields(opts),

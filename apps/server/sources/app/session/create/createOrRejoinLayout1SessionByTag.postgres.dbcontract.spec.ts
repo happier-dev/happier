@@ -20,6 +20,18 @@ import { revokeMachineInTx } from "@/app/machines/machineMutations";
 import { applyMachineReplacement } from "@/app/machines/applyMachineReplacement";
 import { AutomationTriggerIdSchema, type SessionInitialTriggerAdmissionV1 } from "@happier-dev/protocol";
 import { replaceAutomationAssignmentsTx } from "@/app/automations/automationAssignmentService";
+import { AutomationDefinitionCreateRequestSchema } from "@happier-dev/protocol/automations/automationApiV3";
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from "@happier-dev/protocol";
+import { decodeBase64 } from "privacy-kit";
+import { createAutomation } from "@/app/automations/automationCrudService";
+import nacl from "tweetnacl";
+import { signMachineInstallationProof } from "@happier-dev/protocol/machines/identity/installationIdentity";
+import { buildManagedSessionBirthProofPayloadV1, MANAGED_SESSION_BIRTH_HEADER_V1 } from "@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1";
+import { projectAutomationSessionLifecycleLaunchProfileId } from "@happier-dev/protocol/automations/automationSessionLifecycle";
+import { registerSessionCreateOrLoadRoute } from "@/app/api/routes/session/registerSessionCreateOrLoadRoute";
+import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
+import { applySessionTurnMutation, updateSessionMetadataEnvelopeTuple } from "@/app/session/sessionWriteService";
+import { transitionSessionArchiveStateInTx } from "@/app/session/archive/transitionSessionArchiveStateInTx";
 
 const authentication = createPresentUserSessionAccessAuthentication({ env: {} });
 
@@ -76,6 +88,95 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("t
         await db.$connect();
     });
     afterAll(async () => { await db.$disconnect(); });
+
+    it.each(["CLI", "Home", "unplaced"] as const)("commits the eligible Session-start Runs for a %s birth", async launch => {
+        // Server identity is cached for the process, so all launch cases share it.
+        const serverId = "srv_sessionstartscope";
+        vi.stubEnv("HAPPIER_SERVER_IDENTITY_ID", serverId);
+        vi.stubEnv("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
+        const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+        const keys = nacl.sign.keyPair();
+        const installationId = randomUUID();
+        const machine = await db.machine.create({ data: {
+            id: randomUUID(), accountId: account.id, installationId,
+            installationPublicKey: Buffer.from(keys.publicKey),
+            metadata: encodePlainMachineStoredContent({ host: "session-start", platform: "linux", happyCliVersion: "test",
+                homeDir: "/home/test", happyHomeDir: "/home/test/.happier" }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+        } });
+        try {
+            const profileId = "draft-parity-qa";
+            const template = initialTrigger(machine.id).triggers[0]!.trigger;
+            const subject = { kind: "machine", serverId, machineId: machine.id } as const;
+            const filter = { v: 1, all: [{ op: "eq", field: "/launchProfileId", value: profileId }] } as const;
+            const triggers = [template, { ...template, subject }, { ...template, filter }, { ...template, subject, filter },
+                { ...template, filter, events: ["sessionArchived"] },
+                { ...template, filter, events: ["userActionRequired"] },
+                { ...template, filter, events: ["parentTurnCompleted"] }];
+            const ids = [];
+            for (const trigger of triggers) {
+                const definition = initialTrigger(machine.id);
+                const triggerId = definition.triggers[0]!.triggerId;
+                await createAutomation({ accountId: account.id, input: AutomationDefinitionCreateRequestSchema.parse({
+                    ...definition, triggers: [{ triggerId, trigger }],
+                }) });
+                ids.push(triggerId);
+            }
+            await withAuthenticatedTestApp(registerSessionCreateOrLoadRoute, async app => {
+                const body = { tag: randomUUID(), metadataLayoutVersion: 1, encryptionMode: "plain",
+                    sharedMetadata: { ciphertext: JSON.stringify({ v: 1 }) },
+                    ownerMetadata: { t: "plain" as const, v: { v: 1 as const } }, dataEncryptionKey: null };
+                const proof = signMachineInstallationProof({ privateKey: keys.secretKey,
+                    payload: buildManagedSessionBirthProofPayloadV1({ accountId: account.id, machineId: machine.id, installationId, body }) });
+                const headers = { "x-test-user-id": account.id, "x-happier-account-stored-content-protocol": "4",
+                    "x-happier-session-launch-v1": JSON.stringify({
+                        ...(launch === "Home" ? { machineId: machine.id } : {}),
+                        profileDigest: projectAutomationSessionLifecycleLaunchProfileId(profileId),
+                    }),
+                    ...(launch === "CLI" ? { [MANAGED_SESSION_BIRTH_HEADER_V1]: JSON.stringify({ machineId: machine.id, proof }) } : {}),
+                };
+                const first = await app.inject({ method: "POST", url: "/v1/sessions", headers, payload: body });
+                expect(first.statusCode, first.body).toBe(200);
+                const sessionId: string = first.json().session.id;
+                const startRuns = () => db.automationRun.findMany({ where: { causeSourceSessionId: sessionId,
+                    causeSessionLifecycleEvent: "sessionStarted" }, select: { triggerId: true } });
+                const expected = (launch === "unplaced" ? ids.slice(0, 1) : ids.slice(0, 4)).sort();
+                expect.soft((await startRuns()).map(run => run.triggerId).sort()).toEqual(expected);
+                expect((await db.session.findUniqueOrThrow({ where: { id: sessionId } })).runtimeMachineTarget).toBeNull();
+                const repeated = await app.inject({ method: "POST", url: "/v1/sessions", headers, payload: body });
+                expect(repeated.json()).toMatchObject({ created: false, session: { id: sessionId } });
+                expect.soft((await startRuns()).map(run => run.triggerId).sort()).toEqual(expected);
+                const turn = { v: 1, sessionId, turnId: randomUUID() } as const;
+                const observedAt = Date.now();
+                await expect(applySessionTurnMutation({ actorUserId: account.id, authentication,
+                    mutation: { ...turn, mutationId: randomUUID(), action: "begin", observedAt, initiator: "user" },
+                })).resolves.toMatchObject({ ok: true, didApply: true });
+                const requestId = randomUUID();
+                await expect(updateSessionMetadataEnvelopeTuple({ actorUserId: account.id, sessionId,
+                    mode: "owner", metadataLayoutVersion: 1,
+                    expectedOwnerMetadata: body.ownerMetadata, ownerMetadata: body.ownerMetadata,
+                    sharedMetadata: { ...body.sharedMetadata, expectedVersion: 0 },
+                    agentState: { ciphertext: JSON.stringify({ requests: { [requestId]: {
+                        kind: "user_action", tool: "AskUserQuestion", arguments: {}, createdAt: observedAt,
+                    } } }), expectedVersion: 0 },
+                    activitySummaryV1: { pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 1,
+                        pendingRequestNewestCreatedAt: observedAt, newUserActionRequiredOccurrences: [
+                            { sourceTurnId: turn.turnId, requestId, requestKind: "user_action", occurredAt: observedAt },
+                        ] },
+                })).resolves.toMatchObject({ ok: true });
+                await expect(applySessionTurnMutation({ actorUserId: account.id, authentication,
+                    mutation: { ...turn, mutationId: randomUUID(), action: "complete", observedAt: observedAt + 1 },
+                })).resolves.toMatchObject({ ok: true, didApply: true });
+                await inTx(tx => transitionSessionArchiveStateInTx({ tx, sessionId, wasArchived: false, archivedAt: new Date() }));
+                const siblingRuns = await db.automationRun.findMany({ where: { causeSourceSessionId: sessionId,
+                    causeSessionLifecycleEvent: { in: ["sessionArchived", "userActionRequired", "parentTurnCompleted"] } },
+                select: { triggerId: true } });
+                expect(siblingRuns.map(run => run.triggerId).sort()).toEqual(launch === "unplaced" ? [] : ids.slice(4).sort());
+            });
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
 
     it.each(["grant", "primary-team", "credential-binding", "initial-trigger"] as const)("creates with %s admission while an independent publisher advances the Account cursor on every attempt", async admission => {
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });

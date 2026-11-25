@@ -64,25 +64,28 @@ export async function validateManagedCreationBirthInTx(tx: Tx, input: Readonly<{
 }
 
 
-/** Ordinary births can contribute usage when the current enrolled installation signed the exact request. */
-export async function readEnrolledManagedSessionBirthInTx(tx: Tx, accountId: string,
-    input: ManagedSessionBirthProofV1 & { body: unknown }): Promise<Pick<StoredManagedMachine, 'id' | 'homeId' | 'presetId'> | null> {
-    const row = await tx.managedMachine.findUnique({
-        where: { enrolledMachineId: input.machineId },
+/** Authenticate the installation once and reuse it for both launch placement and preset usage. */
+export async function readSignedSessionBirthInTx(tx: Tx, accountId: string,
+    input: ManagedSessionBirthProofV1 & { body: unknown }): Promise<Readonly<{
+        machineId: string;
+        preset: Pick<StoredManagedMachine, 'id' | 'homeId' | 'presetId'> | null;
+    }> | null> {
+    const machine = await tx.machine.findUnique({
+        where: { id: input.machineId },
         select: {
-            id: true, homeId: true, presetId: true, admittedInput: true, custodianAccountId: true,
-            archivedAt: true, allocation: true, creationState: true,
-            enrolledMachine: { select: { accountId: true, revokedAt: true, replacedByMachineId: true,
-                installationId: true, installationPublicKey: true } },
+            accountId: true, revokedAt: true, replacedByMachineId: true, installationId: true, installationPublicKey: true,
+            managedResource: { select: { id: true, homeId: true, presetId: true, admittedInput: true,
+                custodianAccountId: true, archivedAt: true, allocation: true, creationState: true } },
         },
     });
-    const machine = row?.enrolledMachine;
-    if (!row?.presetId || row.archivedAt !== null || row.allocation !== 'bound' || row.creationState !== 'active'
-        || !machine?.installationId || !machine.installationPublicKey
-        || !isCurrentMachineManagedEnrollment(row, machine, await readCurrentServerIdentityId(process.env, tx))) return null;
+    if (!machine?.installationId || !machine.installationPublicKey || machine.revokedAt || machine.replacedByMachineId) return null;
     const payload = buildManagedSessionBirthProofPayloadV1({ accountId, machineId: input.machineId,
         installationId: machine.installationId, body: input.body });
-    return verifyMachineInstallationProof({ payload, proof: input.proof, publicKey: machine.installationPublicKey }) ? row : null;
+    if (!verifyMachineInstallationProof({ payload, proof: input.proof, publicKey: machine.installationPublicKey })) return null;
+    const row = machine.managedResource;
+    const preset = row?.presetId && row.archivedAt === null && row.allocation === 'bound' && row.creationState === 'active'
+        && isCurrentMachineManagedEnrollment(row, machine, await readCurrentServerIdentityId(process.env, tx)) ? row : null;
+    return { machineId: input.machineId, preset };
 }
 
 /** Usage belongs to the retained allocation and advances only with a committed fresh Session. */

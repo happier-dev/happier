@@ -768,7 +768,7 @@ function buildLegacyThinkingProjectionWriteData(params: Readonly<{
 
 const SESSION_MUTATION_CONTEXT_SELECT = {
     tag: true, encryptionMode: true, agentStateVersion: true, latestTurnStatusObservedAt: true,
-    projectKey: true, runtimeMachineTarget: true, ...selectSessionActivityBadgeInputs(),
+    projectKey: true, runtimeMachineTarget: true, launchProfileDigest: true, ...selectSessionActivityBadgeInputs(),
 } as const;
 type SessionMutationContextState = Prisma.SessionGetPayload<{ select: typeof SESSION_MUTATION_CONTEXT_SELECT }>;
 

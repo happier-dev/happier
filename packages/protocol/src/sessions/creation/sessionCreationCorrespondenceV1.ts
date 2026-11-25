@@ -46,6 +46,25 @@ export const SessionManagedCreationV1Schema = lazyZodSchema(() => z.strictObject
 }));
 export type SessionManagedCreationV1 = z.infer<typeof SessionManagedCreationV1Schema>;
 
+// Optional sideband so a new creator can still use an older Home's strict create body.
+export const SESSION_LAUNCH_HEADER_V1 = 'x-happier-session-launch-v1';
+
+export const SessionLaunchHeaderV1Schema = lazyZodSchema(() => z.strictObject({
+    machineId: z.optional(z.string().check(z.minLength(1), z.maxLength(191))),
+    profileDigest: z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/))),
+}));
+export type SessionLaunchHeaderV1 = z.infer<typeof SessionLaunchHeaderV1Schema>;
+
+export function readSessionLaunchHeaderV1(raw: unknown): SessionLaunchHeaderV1 | undefined {
+    if (typeof raw !== 'string') return undefined;
+    try {
+        const parsed = SessionLaunchHeaderV1Schema.safeParse(JSON.parse(raw));
+        return parsed.success ? parsed.data : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
 export const MANAGED_SESSION_BIRTH_HEADER_V1 = 'x-happier-managed-session-birth';
 
 export const ManagedSessionBirthProofV1Schema = lazyZodSchema(() => z.strictObject({
