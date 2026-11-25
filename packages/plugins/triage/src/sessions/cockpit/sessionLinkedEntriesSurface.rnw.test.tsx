@@ -1017,6 +1017,23 @@ describe('the mounted Session cockpit', () => {
         expect(readNativeRelations).toHaveBeenCalledOnce();
     });
 
+    it('shows the native relation refusal in Details when no linked entries can be read', async () => {
+        const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
+        const readSourceLinks = async () => ({ kind: 'complete', links: [] });
+        const readNativeRelations = async (): Promise<SessionPullRequestBindingResultV1> => ({
+            kind: 'relations',
+            links: [],
+            failures: [{ sessionId: SESSION_ID, code: 'plugin_action_resource_placement_unavailable' }],
+        });
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID },
+            null, true, null, undefined, true, undefined, readSourceLinks, undefined, true, false,
+            renderSessionLinkedEntriesSurface, undefined, undefined, readNativeRelations);
+
+        await expect(fixture.getByText('Linked entries could not be read')).resolves.toBeDefined();
+        await openRow(fixture, 'Details');
+        await expect(fixture.getByText('plugin_action_resource_placement_unavailable')).resolves.toBeDefined();
+    });
+
     it('recovers a failed cold linked entry through the cockpit Refresh', async () => {
         const scope = createTriageEphemeralSharedScopeFixture();
         const link = linkRow();

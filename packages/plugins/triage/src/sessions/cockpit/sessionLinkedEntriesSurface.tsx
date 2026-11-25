@@ -714,6 +714,7 @@ function TriageSessionLinkedEntriesPanel(
                 {view.notice.sources.map((source, index) => <PullRequestFailureDetails key={index}
                     title={`${text('plugins.triage.surface.detail.tab.details', 'Details')}: ${source.label}`}
                     codes={[source.diagnostic?.code]} requestId={source.diagnostic?.requestId} />)}
+                {view.notice.readFailureCodes === undefined ? null : <PullRequestFailureDetails codes={view.notice.readFailureCodes} />}
             </Screen>
         );
     }
