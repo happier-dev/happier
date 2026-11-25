@@ -8,7 +8,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { API_TOKEN_FULL_GRANT_V1, ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, FeaturesResponseSchema, accountSettingsParse, normalizeActionsSettingsV1, projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
+import { API_TOKEN_FULL_GRANT_V1, ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1, ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, FeaturesResponseSchema, accountSettingsParse, normalizeActionsSettingsV1, projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
 import { projectSessionSummaryV1, SessionStatusActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
 
 import { configuration, reloadConfiguration } from '@/configuration';
@@ -19,7 +19,12 @@ import { SIGNED_ROOT_ACTION_EXECUTE_PATH } from '@/daemon/externalActions/signed
 import { createAccountEncryptionCurrentnessFixture, createCurrentSessionProjectionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { encodeBase64, encryptLegacy } from '@/api/encryption';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import {
+  bindExternalActionExecutionAuthorizationHttpPathV1,
+  ExternalActionExecutionAuthorizationRequestV1Schema,
+  ExternalActionExecutionAuthorizationV1Schema,
+  ExternalActionRequestEnvelopeV1Schema,
+} from '@happier-dev/protocol/actions/externalActionApi';
 import { createInMemoryReviewRecordPortV1 } from '../../../../../packages/protocol/src/reviews/reviewArtifactV1.testkit';
 import { ReviewHumanActionStateV1Schema, ReviewReviewersSetInputV1Schema } from '@happier-dev/protocol/reviews/reviewHumanV1';
 import { ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
@@ -29,9 +34,12 @@ import { ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { DiscussionSecondOpinionPreviewV1Schema } from '@happier-dev/protocol/discussions/secondOpinion';
 import { DiscussionInviteInputV1Schema } from '@happier-dev/protocol/discussions/actions';
-import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ActionExecuteResult, ActionExecutorDeps } from '@happier-dev/protocol';
 import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
 import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
+import { createMachineInstallationIdentityFixture } from '../../../../../packages/tests/src/testkit/machineIdentity';
 
 const {
   createCliActionExecutor,
@@ -158,6 +166,52 @@ let originalWebappUrl: string | undefined;
 
 function installPatActionTransportMock(fetch: FetchLike): void {
   patActionFetch = fetch;
+}
+
+// Home HTTP supplies one installed publication and returns a proof bound to
+// the exact envelope it received. The CLI still validates the binding.
+function installSignedMachineHomeFixture(params: Readonly<{
+  actionId: string;
+  serverIdentityId: string;
+  target: Readonly<{ machineId: string; accountId: string }>;
+  execute(envelope: ReturnType<typeof ExternalActionRequestEnvelopeV1Schema.parse>): Promise<ActionExecuteResult>;
+}>) {
+  const { actionId, serverIdentityId, target } = params;
+  const installation = createMachineInstallationIdentityFixture();
+  const publication = { id: target.machineId, kind: 'persistent', active: true, installationId: installation.installationId,
+    revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
+    installationPublicKey: Buffer.from(installation.publicKeyBase64, 'base64url').toString('base64'),
+    access: { custodian: { accountId: target.accountId, displayName: 'Owner' },
+      role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
+  const authorizations = new Map<string, ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>>();
+  const mintPath = bindExternalActionExecutionAuthorizationHttpPathV1(actionId);
+  installPatActionTransportMock(async (url, init) => {
+    if (url.pathname === '/v1/account/encryption') return { statusCode: 200, body: { mode: 'plain', updatedAt: 1 } };
+    if (url.pathname === `/v1/machines/${target.machineId}`) return { statusCode: 200, body: { machine: publication } };
+    if (url.pathname === '/v1/features/authenticated') return { statusCode: 200,
+      body: FeaturesResponseSchema.parse({ features: {}, capabilities: {} }) };
+    if (url.pathname !== mintPath && url.pathname !== `/v1/actions/${actionId}`) {
+      return { statusCode: 404, body: { error: 'fixture_route_not_found' } };
+    }
+    const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.envelope);
+    expect(request.machineId).toBe(target.machineId);
+    expect(envelope.target).toEqual({ kind: 'machine', machineId: target.machineId });
+    if (url.pathname === mintPath) {
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-home-proof', binding: {
+        accountId: target.accountId, authentication: { kind: 'account', tokenEpoch: 7 },
+        serverIdentityId, machineId: target.machineId, custodianAccountId: target.accountId,
+        installationId: installation.installationId, actionId, requestId: envelope.requestId, target: envelope.target,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), accountEncryptionMode: 'plain',
+      } });
+      authorizations.set(envelope.requestId, authorization);
+      return { statusCode: 200, body: authorization };
+    }
+    const authorization = authorizations.get(envelope.requestId);
+    expect(authorization).toBeDefined();
+    expect(request.executionAuthorization).toMatchObject(authorization!);
+    return { statusCode: 200, body: { v: 1, actionId, requestId: envelope.requestId, execution: await params.execute(envelope) } };
+  });
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<string> {
@@ -456,12 +510,22 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     resolveLiveDaemonControlTargetForServer.mockImplementation(daemon.resolveLiveDaemonControlTargetForServer);
     // Native Home HTTP is the boundary. Reaching its refusal proves that the
     // confirmed local caller retained execution; no fixture ever mints a secret.
-    const request = vi.spyOn(axios, 'request').mockResolvedValue({ status: 403, data: { error: 'present_user_required' } });
+    const request = vi.spyOn(axios, 'request').mockImplementation(async config => {
+      expect(new URL(String(config.url)).pathname).toBe(ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1);
+      return { status: 403, data: { error: 'present_user_required' } };
+    });
+    installPatActionTransportMock(url => {
+      if (url.pathname === '/v1/account/encryption/currentness') return { statusCode: 200,
+        body: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+      if (url.pathname === PRIVATE_LABEL_RECIPIENT_CENSUS_PATH) return { statusCode: 200,
+        body: { contentEncryptionMode: 'plain', recipients: [] } };
+      return { statusCode: 404, body: { error: 'fixture_route_not_found' } };
+    });
     const admission = vi.spyOn(axios, 'post').mockResolvedValue({ status: 503, data: { error: 'admission_unavailable' } });
     onTestFinished(() => { request.mockRestore(); admission.mockRestore(); });
     const executor = createCliActionExecutorFromCredentials({
       credentials: { token: syntheticAccountToken('account-1'), encryption: null, credentialProvenance: 'stored_session' },
-      machineId: 'machine-local', serverId: 'selected-home', serverApiUrl: 'https://selected-home.example.test', serverIdentityId: 'srv_selected',
+      machineId: 'machine-local', serverId: 'selected-home', serverApiUrl: patActionEndpoint!, serverIdentityId: 'srv_selected',
       ...(external ? { externalActionClient: true } : {}),
       actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
         actions: explicitAsk ? { 'account.apiTokens.create': { approvalRequiredSurfaces: ['cli'] } } : {} }) },
@@ -481,18 +545,21 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const raw = { status: 'awaitingManual', attemptId: 'attempt-connect' };
     // This callback is the terminal's human/--yes boundary. The daemon HTTP
     // boundary supplies the receipt; real CLI placement consumes its decision.
-    const onApprovalRequested = async (artifactId: string) => {
+    const onApprovalRequested = vi.fn(async (artifactId: string) => {
       expect(artifactId).toBe('root-connect-approval');
       return { ok: true as const,
         result: { ok: true, status: 'executed', liveExecution: { ok: true, result: raw } } };
-    };
+    });
     await withPublishedAccountDaemon(async ({ credentials, serverId, serverApiUrl, daemonTarget }) => {
       const executor = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl,
-        serverIdentityId: 'srv_home', machineId: daemonTarget.machineId, externalActionClient: true,
-        onApprovalRequested });
-      await expect(executor.execute('connectedServices.authentication.beginConnect', {
-        machineId: daemonTarget.machineId, service: { pluginId: 'example.accounts', localId: 'service' }, modeId: 'manual',
-      }, { surface: 'cli', authority: 'present_user' })).resolves.toEqual({ ok: true, result: raw });
+        serverIdentityId: 'srv_home', externalActionClient: true, onApprovalRequested });
+      const input = { service: { pluginId: 'example.accounts', localId: 'service' }, modeId: 'manual' };
+      await expect(executor.execute('connectedServices.authentication.beginConnect', input,
+        { surface: 'cli', authority: 'present_user' })).resolves.toEqual({ ok: true, result: raw });
+      expect(daemonPost).toHaveBeenCalledWith(SIGNED_ROOT_ACTION_EXECUTE_PATH,
+        { actionId: 'connectedServices.authentication.beginConnect', input },
+        expect.objectContaining({ target: daemonTarget, mutation: true }));
+      expect(onApprovalRequested).toHaveBeenCalledOnce();
     });
   });
 
@@ -519,22 +586,33 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     });
   });
 
-  it.each(['daemon_control', 'current_process'] as const)('routes an Account composite Machine child through signed daemon ingress (%s plugin owner)', async pluginActionExecutionOwner => {
+  it.each(['daemon_control', 'current_process'] as const)('routes an Account composite Machine child through scoped Home admission (%s plugin owner)', async pluginActionExecutionOwner => {
     const actual = await vi.importActual<typeof import('./createCliActionExecutor')>('./createCliActionExecutor');
     createCliActionExecutor.mockImplementation(actual.createCliActionExecutor);
-    daemonPost.mockResolvedValue({ ok: true, result: { kind: 'not_found' } });
     await withPublishedAccountDaemon(async ({ credentials, serverId, serverApiUrl, daemonTarget }) => {
-      const executor = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl, pluginActionExecutionOwner,
-        actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({}), getAccountSettings: () => accountSettingsParse({}) } });
+      const serverIdentityId = 'srv_home';
+      const mintPath = bindExternalActionExecutionAuthorizationHttpPathV1('action.operations.get');
+      const mint = vi.fn<FetchLike>((url, init) => {
+        if (url.pathname === '/v1/account/encryption') return { statusCode: 200, body: { mode: 'plain', updatedAt: 1 } };
+        expect(url.pathname).toBe(mintPath);
+        const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+        expect(request.machineId).toBe(daemonTarget.machineId);
+        expect(request.envelope).toMatchObject({ v: 2, requesterOperationRead: true,
+          target: { kind: 'machine', machineId: daemonTarget.machineId } });
+        return { statusCode: 409, body: { error: 'invalid_request', code: 'target_unavailable' } };
+      });
+      installPatActionTransportMock(mint);
+      const executor = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl, serverIdentityId,
+        pluginActionExecutionOwner, actionsSettingsProvider: {
+          getActionsSettings: () => normalizeActionsSettingsV1({}), getAccountSettings: () => accountSettingsParse({}),
+        } });
       const result = await executor.execute('wait', {
-        target: { kind: 'action_operation', serverId, machineId: daemonTarget.machineId, operationId: 'operation-1' },
+        target: { kind: 'action_operation', serverId: serverIdentityId, machineId: daemonTarget.machineId, operationId: 'operation-1' },
         condition: { kind: 'terminal' },
       }, { surface: 'cli', authority: 'present_user' });
       expect(result).toMatchObject({ ok: true, result: { disposition: 'target_unavailable' } });
-      expect(daemonPost).toHaveBeenCalledWith(SIGNED_ROOT_ACTION_EXECUTE_PATH, {
-        actionId: 'action.operations.get', input: { serverId, machineId: daemonTarget.machineId,
-          operationId: 'operation-1', waitForTerminal: true }, target: { kind: 'machine', machineId: daemonTarget.machineId },
-      }, expect.objectContaining({ target: daemonTarget, mutation: false }));
+      expect(mint.mock.calls.map(([url]) => url.pathname)).toEqual(['/v1/account/encryption', mintPath]);
+      expect(daemonPost).not.toHaveBeenCalled();
     });
   });
 
@@ -542,29 +620,35 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const actual = await vi.importActual<typeof import('./createCliActionExecutor')>('./createCliActionExecutor');
     createCliActionExecutor.mockImplementation(actual.createCliActionExecutor);
     await withPublishedAccountDaemon(async ({ credentials, serverId, serverApiUrl, daemonTarget }) => {
-      const transport = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl,
-        machineId: daemonTarget.machineId, externalActionClient: true });
+      const serverIdentityId = 'srv_home';
+      const actionsSettings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: {
+        'discussion.second_opinion.start': ['cli'], 'discussion.create': ['cli'], 'discussion.invite': ['cli'],
+        'discussion.post': ['cli'], 'session.spawn_new': ['cli'],
+      } });
+      const transport = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl, serverIdentityId,
+        machineId: daemonTarget.machineId, externalActionClient: true,
+        actionsSettingsProvider: { getActionsSettings: () => actionsSettings,
+          getAccountSettings: () => accountSettingsParse({ actionsSettingsV1: actionsSettings }) } });
       const nativeStarts: string[] = [], requestIds: Array<string | undefined> = [];
       const runner = createActionOperationRunner({ store: createActionOperationStore(), resolveAction: actionId => ({
         actionId, title: getActionSpec('session.spawn_new').title, operation: getActionSpec('session.spawn_new').operation,
       }) });
-      // Daemon HTTP and native process creation are system boundaries. The
-      // Protocol composite, credentialed CLI transport and operation dedupe stay real.
-      daemonPost.mockImplementation(async (_path, request: { actionId: string; input: unknown; actionRequestId?: string }) => {
-        expect(request.actionId).toBe('session.spawn_new');
-        requestIds.push(request.actionRequestId);
-        const input = SessionSpawnNewInputV2Schema.parse(request.input);
-        return runner.observe({ actionId: request.actionId, input, requestId: request.actionRequestId,
-          scope: { accountId: daemonTarget.accountId, machineId: daemonTarget.machineId }, execute: async () => {
-            nativeStarts.push(input.creationKey!);
-            return { ok: true, result: { type: 'success', disposition: 'created', sessionId: `session-${input.creationKey}`,
-              executionTarget: input.executionTarget, organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } } };
-          } });
-      });
+      installSignedMachineHomeFixture({ actionId: 'session.spawn_new', serverIdentityId, target: daemonTarget,
+        execute: async envelope => {
+          requestIds.push(envelope.requestId);
+          const input = SessionSpawnNewInputV2Schema.parse(envelope.input);
+          expect(input.executionTarget.machineId).toBe(daemonTarget.machineId);
+          return runner.observe({ actionId: 'session.spawn_new', input, requestId: envelope.requestId,
+            scope: { accountId: daemonTarget.accountId, machineId: daemonTarget.machineId }, execute: async () => {
+              nativeStarts.push(input.creationKey!);
+              return { ok: true, result: { type: 'success', disposition: 'created', sessionId: `session-${input.creationKey}`,
+                executionTarget: input.executionTarget, organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } } };
+            } });
+        } });
       const reviewers = ['reviewer-a', 'reviewer-b'].map(participantSlotId => ({ participantSlotId,
         selection: { kind: 'model' as const, launch: { executionTarget: { serverId, machineId: daemonTarget.machineId },
           directory: { kind: 'path' as const, path: '/repo' },
-          agentTarget: { kind: 'agent' as const, identity: { pluginId: 'example.agents', localId: 'reviewer' } }, permissionMode: 'read-only' as const } } }));
+          agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, permissionMode: 'read-only' as const } } }));
       const source = { kind: 'session' as const, message: { kind: 'session' as const, session: { serverId, sessionId: 'source' }, messageId: 'answer' } };
       const preview = DiscussionSecondOpinionPreviewV1Schema.parse({ source, sourceContentReady: true,
         sourceAudienceAccountIds: [daemonTarget.accountId], discussionAudienceAccountIds: [daemonTarget.accountId],
@@ -601,16 +685,16 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
         },
       };
       const executor = createActionExecutor(deps as ActionExecutorDeps);
-      const context = { surface: 'cli' as const, authority: 'present_user' as const, serverId, actionRequestId: 'two-reviewer-root',
-        actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: Object.fromEntries([
-          'discussion.second_opinion.start', 'discussion.create', 'discussion.invite', 'discussion.post', 'session.spawn_new',
-        ].map(id => [id, ['cli']])) }) };
+      const context = { surface: 'cli' as const, authority: 'present_user' as const, serverId, serverIdentityId,
+        actionRequestId: 'two-reviewer-root', actionsSettings };
       const input = { intent: 'ask', title: 'Two reviewers', question: 'Review this', source, reviewers, confirmedPreview: preview,
         retry: { creationLocalId: 'create-opinion', quoteLocalId: 'quote-opinion', questionLocalId: 'ask-opinion' },
         project: { machineId: daemonTarget.machineId, directory: '/repo' } };
       for (let retry = 0; retry < 2; retry++) {
         const result = await executor.execute('discussion.second_opinion.start', input, context);
-        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'pending', stage: 'ask', errorCode: 'fixture_after_invites' } });
+        expect(result, JSON.stringify(result)).toMatchObject({
+          ok: true, result: { status: 'pending', stage: 'ask', errorCode: 'fixture_after_invites' },
+        });
       }
       expect(nativeStarts).toEqual(['reviewer-a', 'reviewer-b']);
       expect(requestIds).toHaveLength(4);
@@ -620,10 +704,22 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     });
   });
 
-  it('keeps stored-session plugin installation on signed daemon control and refuses its excluded PAT Action transport', async () => {
-    daemonPost.mockResolvedValue({
-      ok: true,
-      result: { installed: true },
+  it('keeps stored-session plugin installation on signed Machine ingress and refuses its excluded PAT Action transport', async () => {
+    await withPublishedAccountDaemon(async ({ credentials, serverId, serverApiUrl, daemonTarget }) => {
+      const serverIdentityId = 'srv_home';
+      const installed = vi.fn(async () => ({ ok: true as const, result: { installed: true } }));
+      installSignedMachineHomeFixture({ actionId: 'plugins.install', serverIdentityId, target: daemonTarget,
+        execute: async envelope => {
+          expect(envelope.input).toEqual({ source: '/workspace/plugin' });
+          return await installed();
+        } });
+      const signedRoot = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl, serverIdentityId,
+        actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({}),
+          getAccountSettings: () => accountSettingsParse({}) } });
+      await expect(signedRoot.execute('plugins.install', { source: '/workspace/plugin' },
+        { surface: 'cli', authority: 'present_user' })).resolves.toEqual({ ok: true, result: { installed: true } });
+      expect(installed).toHaveBeenCalledOnce();
+      expect(daemonPost).not.toHaveBeenCalled();
     });
 
     const patRequests: URL[] = [];
@@ -633,15 +729,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       patRequests.push(url);
       return apiFailure('plugins.install', 'present_user_required');
     });
-    await withPublishedAccountDaemon(async ({ credentials, serverId, serverApiUrl, daemonTarget }) => {
-      const signedRoot = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl });
-      await expect(signedRoot.execute('plugins.install', { source: '/workspace/plugin' },
-        { surface: 'cli', authority: 'present_user' })).resolves.toEqual({ ok: true, result: { installed: true } });
-      expect(daemonPost).toHaveBeenCalledWith(SIGNED_ROOT_ACTION_EXECUTE_PATH, {
-        actionId: 'plugins.install', input: { source: '/workspace/plugin' },
-      }, expect.objectContaining({ target: daemonTarget, mutation: true }));
-    });
-
     const pat = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
