@@ -22,6 +22,13 @@ import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testki
 import { createRunDirs } from '../../src/testkit/runDir';
 import { waitFor } from '../../src/testkit/timing';
 
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { buildHomeHubArtifactIdV1 } from '@happier-dev/protocol/home';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_PLAN_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { encryptDataKeyBase64 } from '../../src/testkit/rpcCrypto';
+import { createSessionWithCiphertexts } from '../../src/testkit/sessions';
+import { resetRuntimeFetch, setRuntimeFetch } from '../../../../apps/ui/sources/utils/system/runtimeFetch';
+
 // Only native UI/platform APIs are substituted. Home, Team discovery, Actions,
 // Artifact persistence, socket delivery and the enrolled daemon stay real.
 vi.mock('react-native-unistyles', async () =>
@@ -35,6 +42,7 @@ let credentials: Awaited<ReturnType<TeamSetupFFixture['createAccount']>>['uiCred
 let machineId: string;
 let accountId: string;
 let memberAccount: Awaited<ReturnType<TeamSetupFFixture['createAccount']>>;
+let unmountHome: (() => Promise<void>) | undefined;
 
 beforeAll(async () => {
   fixture = await startTeamSetupFFixture({ testDir });
@@ -58,6 +66,10 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  await unmountHome?.();
+  unmountHome = undefined;
+  resetRuntimeFetch();
+  vi.restoreAllMocks();
   const client = ui;
   ui = undefined;
   await client?.close();
@@ -78,6 +90,25 @@ it('TS.D.homeDemand offers the latest joined Team with setup without demanding i
   const control = await ui.executeConfirmed('projects.open', openInput, context);
   expect(control).toMatchObject({ ok: true, result: { kind: 'opened', directory: folder,
     workspace: { machineId, rootPath: folder } } });
+  const teams = [];
+  // Seed the owner's observed census before measuring the returning Home.
+  for (let index = 0; index < 11; index++) {
+    const created = await ui.executeConfirmed('teams.create', { v: 1, name: 'Same team', initialOwnerAccountId: accountId,
+      requestKey: randomUUID() }, context);
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error(`Team creation refused (${created.errorCode})`);
+    teams.push(TeamSummaryV1Schema.parse(created.result));
+  }
+  const shareSetup = async (teamId: string) => {
+    const source = await ui!.executeConfirmed('projects.sources.create', {
+      serverId: context.serverId, requestKey: randomUUID(), name: `Setup for ${teamId}`,
+      owner: { kind: 'team', teamId },
+    }, context);
+    if (!source.ok) throw new Error(`Shared Source creation refused (${source.errorCode})`);
+    expect(ProjectSourcesReadOutputV1Schema.parse(source.result)).toMatchObject({ ok: true });
+  };
+  // Newer empty memberships must leave the latest eligible join visible.
+  for (const team of teams.slice(0, 2)) await shareSetup(team.id);
   const { renderScreen } = await import('../../../../apps/ui/sources/dev/testkit');
   const { InjectedAuthProvider } = await import('../../../../apps/ui/sources/auth/context/AuthContext');
   const { AppShellPluginUiProjectionValueProvider } = await import('../../../../apps/ui/sources/components/appShell/plugins/AppShellPluginUiProjection');
@@ -86,6 +117,7 @@ it('TS.D.homeDemand offers the latest joined Team with setup without demanding i
   const { apiSocket } = await import('../../../../apps/ui/sources/sync/api/session/apiSocket');
   const machineCalls = vi.spyOn(apiSocket, 'machineRPC');
   const { HubSetupSection } = await import('../../../../apps/ui/sources/components/hub/HubSetupSection');
+  const { presentReadyHome } = await import('../../../../apps/ui/sources/components/hub/homeArrival');
   const { WorkspaceNavigationProvider } = await import('../../../../apps/ui/sources/components/appShell/workspace/WorkspaceNavigationContext');
   const { createWorkspaceState } = await import('../../../../apps/ui/sources/components/appShell/workspace/workspaceState');
   const workspace = {
@@ -96,32 +128,38 @@ it('TS.D.homeDemand offers the latest joined Team with setup without demanding i
     navigationForTab: () => { throw new Error('Unexpected tab navigation'); },
     registerBackStep: () => () => {}, back: () => {}, forward: () => {},
   } satisfies import('../../../../apps/ui/sources/components/appShell/workspace/WorkspaceNavigationContext').WorkspaceNavigationContextValue;
-  const screen = await renderScreen(React.createElement(InjectedAuthProvider, { credentials,
+  function PresentedHomeSetup() {
+    React.useEffect(presentReadyHome, []);
+    return React.createElement(HubSetupSection);
+  }
+  const signedSetupPaths = new Set([MACHINE_SETUP_PLAN_ACTION_ID_V1, MACHINE_SETUP_APPLY_ACTION_ID_V1]
+    .map(actionId => `/v1/actions/${actionId}`));
+  const layoutId = buildHomeHubArtifactIdV1(accountId);
+  const layoutPath = `/v1/artifacts/${encodeURIComponent(layoutId)}`;
+  let signedSetup = 0;
+  const vaultReads: string[] = [];
+  let layoutWrites = 0;
+  setRuntimeFetch((input, init) => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (signedSetupPaths.has(path)) signedSetup++;
+    const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+    if (method === 'GET' && /\/(?:saved-secrets|credential-resources)(?:\/|$)/.test(path)) vaultReads.push(path);
+    const layoutCreate = path === '/v1/artifacts' && method === 'POST' && typeof init?.body === 'string'
+      && JSON.parse(init.body).id === layoutId;
+    if (layoutCreate || (path === layoutPath && method !== 'GET')) layoutWrites++;
+    return fetch(input, init);
+  });
+  const commits = vi.fn();
+  const element = () => React.createElement(InjectedAuthProvider, { credentials,
     children: React.createElement(AppShellPluginUiProjectionValueProvider, { value: {
       pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null, phase: 'current',
       interactionEnabled: true, machineId: null, serverId: ui.serverId, platform: 'web',
       accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' },
       reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {},
-    } }, React.createElement(WorkspaceNavigationProvider, { value: workspace }, React.createElement(HubSetupSection))) }));
-  const teams = [];
-  // Owner's live census: eleven memberships previously became eleven tiles.
-  for (let index = 0; index < 11; index++) {
-    const created = await ui.executeConfirmed('teams.create', { v: 1, name: 'Same team', initialOwnerAccountId: accountId,
-      requestKey: randomUUID() }, context);
-    expect(created.ok).toBe(true);
-    if (!created.ok) throw new Error(`Team creation refused (${created.errorCode})`);
-    teams.push(TeamSummaryV1Schema.parse(created.result));
-  }
-  // Only the two earliest joins share setup. Newer empty memberships must not
-  // displace their offer, and Source push must update the already-mounted Home.
-  for (const team of teams.slice(0, 2)) {
-    const source = await ui.executeConfirmed('projects.sources.create', {
-      serverId: ui.serverId, requestKey: randomUUID(), name: `Setup for ${team.id}`,
-      owner: { kind: 'team', teamId: team.id },
-    }, context);
-    if (!source.ok) throw new Error(`Shared Source creation refused (${source.errorCode})`);
-    expect(ProjectSourcesReadOutputV1Schema.parse(source.result)).toMatchObject({ ok: true });
-  }
+    } }, React.createElement(WorkspaceNavigationProvider, { value: workspace },
+      React.createElement(React.Profiler, { id: 'home-setup', onRender: commits }, React.createElement(PresentedHomeSetup)))) });
+  const screen = await renderScreen(element());
+  unmountHome = () => screen.unmount();
   const latest = teams[1]!;
   expect(latest.viewerJoinedAt).toBeGreaterThan(teams[0]!.viewerJoinedAt!);
   const offerTestId = (teamId: string) => `hub-setup.team:${ui!.serverId}:${teamId}`;
@@ -130,11 +168,38 @@ it('TS.D.homeDemand offers the latest joined Team with setup without demanding i
   for (const team of teams) if (team.id !== latest.id) {
     expect(screen.findByTestId(offerTestId(team.id))).toBeNull();
   }
-  expect(machineCalls.mock.calls.filter(([, method]) => method === 'machines.setup.plan' || method === 'machines.setup.apply')).toHaveLength(0);
+  const demand = () => ({ signedSetup, machineRpcs: machineCalls.mock.calls.length, vaultReads });
+  expect(demand()).toEqual({ signedSetup: 0, machineRpcs: 0, vaultReads: [] });
   const beforeDismiss = await ui.execute('home.hub.layout.get', {}, context);
   expect(beforeDismiss.ok).toBe(true);
   if (!beforeDismiss.ok) throw new Error(`Home layout unavailable (${beforeDismiss.errorCode})`);
   const beforeHidden = HomeHubLayoutResultSchema.parse(beforeDismiss.result).hiddenSetupStepIds;
+  const beforeWrites = layoutWrites;
+  await screen.update(element());
+  expect(layoutWrites).toBe(beforeWrites);
+  const { act } = await import('react-test-renderer');
+  const { storage } = await import('../../../../apps/ui/sources/sync/domains/state/storage');
+  const dataKey = randomBytes(32);
+  const wrapped = sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: memberAccount.credentials.encryption.publicKey,
+    randomBytes: length => randomBytes(length) });
+  const node = screen.findByTestId(offerTestId(latest.id));
+  if (!node) throw new Error('Rendered Team setup tile missing');
+  const tileProps = node.props;
+  const beforePushCommits = commits.mock.calls.length;
+  await act(async () => {
+    const { sessionId } = await createSessionWithCiphertexts({ baseUrl: fixture!.server.baseUrl, token: memberAccount.auth.token,
+      metadataCiphertextBase64: encryptDataKeyBase64({ path: '/unrelated', machineId, host: 'unrelated', flavor: 'claude' }, dataKey),
+      agentStateCiphertextBase64: encryptDataKeyBase64({ requests: {}, completedRequests: {} }, dataKey),
+      dataEncryptionKeyBase64: Buffer.from(wrapped).toString('base64') });
+    await waitFor(() => !!storage.getState().sessionListRowsByServerId[ui!.serverId]?.[sessionId],
+      { timeoutMs: 60_000, context: 'unrelated Session push reached the App' });
+  });
+  const sessionPushCommits = commits.mock.calls.length - beforePushCommits;
+  expect(screen.findByTestId(offerTestId(latest.id))?.props === tileProps,
+    'the unrelated Session push leaves the rendered Team setup tile unchanged').toBe(true);
+  const afterPush = await ui.execute('home.hub.layout.get', {}, context);
+  expect(afterPush).toMatchObject({ ok: true, result: { hiddenSetupStepIds: beforeHidden } });
+  expect(layoutWrites).toBe(beforeWrites);
   await screen.pressByTestIdAsync(`${offerTestId(latest.id)}.dismiss`);
   await waitFor(() => screen.findByTestId(offerTestId(latest.id)) === null,
     { context: 'Home setup tile dismissal persisted through PostgreSQL' });
@@ -143,6 +208,11 @@ it('TS.D.homeDemand offers the latest joined Team with setup without demanding i
   expect(hidden.ok).toBe(true);
   if (!hidden.ok) throw new Error(`Home layout unavailable (${hidden.errorCode})`);
   expect(HomeHubLayoutResultSchema.parse(hidden.result).hiddenSetupStepIds).toHaveLength(beforeHidden.length + 1);
+  expect(layoutWrites - beforeWrites).toBe(1);
+  expect(demand()).toEqual({ signedSetup: 0, machineRpcs: 0, vaultReads: [] });
+  console.info('TS.D.homeDemand growth measurements', { memberships: teams.length,
+    offered: 1, ...demand(), vaultReads: vaultReads.length, unrelatedSessionSectionCommits: sessionPushCommits,
+    unchangedTileProps: true, hiddenIntentsAdded: 1, layoutWrites: layoutWrites - beforeWrites });
   // Dismissal changes discovery only. An explicit Team read and selected native
   // project open still use their owning Actions after the tile has gone away.
   const reopened = await ui.execute('teams.get', { v: 1, teamId: latest.id }, context);
@@ -150,6 +220,10 @@ it('TS.D.homeDemand offers the latest joined Team with setup without demanding i
   const opened = await ui.executeConfirmed('projects.open', openInput, context);
   expect(opened).toMatchObject({ ok: true, result: { kind: 'opened', directory: folder,
     workspace: { machineId, rootPath: folder } } });
+  // A Source push can make a newly eligible Team visible while Home stays mounted.
+  const newest = teams.at(-1)!;
+  await shareSetup(newest.id);
+  await vi.waitFor(() => expect(screen.findByTestId(offerTestId(newest.id))).not.toBeNull(), { timeout: 10_000 });
   machineCalls.mockRestore();
 });
 

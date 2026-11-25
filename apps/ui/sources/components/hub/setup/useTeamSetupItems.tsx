@@ -29,9 +29,8 @@ export function useTeamSetupItems(
     () =>
       offers.length === 0
         ? NO_ITEMS
-        : offers.map((offer): SetupBlockItem => ({
-            id: offer.stepId,
-            renderTile: () => (
+        : offers.map((offer): SetupBlockItem => {
+            const tile = (
               <TeamSetupTile
                 offer={offer}
                 layout={layout}
@@ -42,8 +41,9 @@ export function useTeamSetupItems(
                   void dismiss(offer.address);
                 }}
               />
-            ),
-          })),
+            );
+            return { id: offer.stepId, renderTile: () => tile };
+          }),
     [dismiss, layout, offers, router],
   );
 }

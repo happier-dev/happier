@@ -37,6 +37,7 @@ installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { storage } = await import('@/sync/domains/state/storage');
+const { presentReadyHome } = await import('../homeArrival');
 const { useTeamSetupItems } = await import('./useTeamSetupItems');
 let connection:
   | Awaited<ReturnType<typeof restoreServerAccountForTest>>
@@ -103,7 +104,10 @@ it('draws the latest Team as one Set up block that opens its setup page and hide
     </InjectedAuthProvider>
   );
 
-  const hook = await renderHook(() => useTeamSetupItems({ layout: 'card' }), {
+  const hook = await renderHook(() => {
+    React.useEffect(presentReadyHome, []);
+    return useTeamSetupItems({ layout: 'card' });
+  }, {
     wrapper,
   });
   await vi.waitFor(() => expect(hook.getCurrent()).toHaveLength(1));
