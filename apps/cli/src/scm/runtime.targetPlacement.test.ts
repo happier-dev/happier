@@ -22,6 +22,8 @@ import { runRepositoryCheckpointPhase } from '@/scm/checkpoints/repositoryCheckp
 import { startGitSmartHttpFixture } from '@/testkit/scm/gitSmartHttpFixture';
 import { materializeManagedProjectClone, runScmRepositoryCloneRoute } from '@/scm/rpc/repositoryProvisioningDispatch';
 import { createScmBackendRegistry } from '@/scm/registry';
+import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
+import { ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol/scm';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
 import { createGitScmBackendRuntimeRegistration } from '../../../../packages/plugins/scm-git/src/backend';
 import { createScmHostingProviderRuntimeServicesForTest } from '../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
@@ -222,6 +224,44 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
         expect(await readFile(join(addressedRepository, 'README.md'), 'utf8')).toBe('controller unchanged\n');
         await expect(readFile(join(addressedRepository, 'muse-output.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
         await expect(readFile(join(addressedRepository, '.git/index'))).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('counts the Git commands for a summary read on the held workspace', async () => {
+        const repository = join(root, 'status-command-shape');
+        await mkdir(repository);
+        runGit(repository, ['init', '-q', '-b', 'main']);
+        runGit(repository, ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+            'commit', '--allow-empty', '-m', 'initial']);
+        const registration = createGitScmBackendRuntimeRegistration();
+        if (!registration.runtime) throw new Error('Git backend unavailable');
+        const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+            definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+            executableDefinition: registration.runtime, registration,
+            hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(),
+        })]);
+        const source = createHolderWorkspaceSource({ id: 'status-command-shape', rootPath: root,
+            holder, helperPath: helperExecutable! });
+        let toolLookups = 0;
+        const commands: Array<readonly string[]> = [];
+        const observedSource = { ...source,
+            resolveExecutable: (...args: Parameters<typeof source.resolveExecutable>) => {
+                toolLookups += 1;
+                return source.resolveExecutable(...args);
+            },
+            spawn: (request: Parameters<typeof source.spawn>[0]) => {
+                commands.push(request.args);
+                return source.spawn(request);
+            },
+        };
+        const response = ScmStatusSnapshotResponseSchema.parse(await runWithWorkspaceSource(observedSource,
+            () => executeScmActionOperation({
+                actionId: 'scm.status.snapshot', input: { cwd: repository, detail: 'summary' },
+                workingDirectory: root, registry, rpcCompatibility: true,
+            })));
+        expect(response).toMatchObject({ success: true, snapshot: { branch: { head: 'main' }, entries: [] } });
+        expect(commands.filter(args => args.includes('--porcelain=v2'))).toHaveLength(1);
+        expect(commands.filter(args => args.includes('--numstat'))).toHaveLength(2);
+        expect(toolLookups).toBeLessThanOrEqual(commands.length);
     });
 
     it('prepares and publishes the selected branch through the target filesystem', async () => {
