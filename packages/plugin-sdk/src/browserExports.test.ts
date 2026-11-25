@@ -276,6 +276,32 @@ describe('browser-safe package exports', () => {
             .toEqual(['client', 'neutral', 'speech']);
     }, 60_000);
 
+    it('keeps the public Event MCP Account identity out of retained catalog storage', async () => {
+        const moduleIds = new Set<string>();
+        await build({
+            configFile: false,
+            logLevel: 'silent',
+            plugins: [await protocolBrowserSources(), {
+                name: 'plugin-event-mcp-account-identity',
+                generateBundle() {
+                    for (const id of this.getModuleIds()) moduleIds.add(id);
+                },
+            }],
+            build: {
+                write: false,
+                rollupOptions: {
+                    input: resolve(import.meta.dirname, './events/accountFacts.ts'),
+                    preserveEntrySignatures: 'strict',
+                },
+            },
+        });
+        expect([...moduleIds].filter((id) => (
+            id.includes('/mcp/servers/serverRowsV1.')
+            || id.includes('/crypto/accountScopedCipher.')
+            || id.includes('/tweetnacl/')
+        ))).toEqual([]);
+    }, 60_000);
+
     it('keeps the public Event Automation setup-result schema out of Node-only Protocol branches', async () => {
         const packageJson = readPackageJson(new URL('../package.json', import.meta.url));
         const eventsEntry = resolve(import.meta.dirname, './events/index.browser.ts');

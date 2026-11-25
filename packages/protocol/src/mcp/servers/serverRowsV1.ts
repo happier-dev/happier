@@ -17,7 +17,7 @@ import { listValueRefSavedSecretRefsV1, remapValueRefSavedSecretReferencesV1, ty
 import { normalizeReachRulesV1 } from '../../reach/reachRulesChangeV1.js';
 import { splitRetainedMcpServerConfigurationV1 } from './splitRetainedMcpServerConfigurationV1.js';
 
-export const MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 = '@happier/account/mcp/v1/catalog' as const;
+export { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from './catalogIdentityV1.js';
 export const MCP_SERVER_CATALOG_ROWS_ROUTE_V1 = '/v1/account/entity-rows/mcp' as const;
 export const MCP_SERVER_CATALOG_ACCOUNT_CIPHER_KIND_V1 = 'account_mcp_catalog' as const;
 
