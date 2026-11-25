@@ -91,7 +91,7 @@ export function projectVoiceReadAloudAdmissionReadiness(input: Readonly<{
   if (!providerId) return failure('needs_setup', 'provider_unselected', 'select_provider');
   if (!resolveVoiceProviderId(providerId, input.registry)) return failure('unavailable', 'contribution_unavailable', 'select_provider');
   if (input.voiceAvailability === 'available') return null;
-  if (input.voiceAvailability === 'policy_disabled') return failure('needs_setup', 'voice_feature_policy_disabled', 'enable_voice');
+  if (input.voiceAvailability === 'policy_disabled') return failure('needs_setup', 'voice_feature_policy_disabled', 'open_features');
   if (input.voiceAvailability === 'server_disabled') return failure('unavailable', 'server_feature_disabled', 'none');
   if (input.voiceAvailability === 'unsupported' || input.voiceAvailability === 'unsupported_context') {
     return failure('unavailable', 'platform_unsupported', 'none');

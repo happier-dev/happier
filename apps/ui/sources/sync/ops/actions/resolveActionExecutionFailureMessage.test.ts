@@ -240,7 +240,7 @@ describe('Action failure presentation', () => {
         expect(resolveActionExecutionErrorMessage(Object.assign(new Error('role_policy_unenforceable'), { code: 'role_policy_unenforceable' }), 'fallback')).toBe(expected);
     });
     it('names the Account Voice feature repair', () => {
-        expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: 'feature_policy_disabled', details: { recovery: 'enable_voice_agent' } }, 'fallback')).toBe(t('settingsVoice.pages.conversations.agentFeatureRequired', { feature: t('settingsFeatures.expVoiceAgent') }));
+        expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: 'feature_policy_disabled', details: { recovery: 'open_features' } }, 'fallback')).toBe(t('settingsVoice.pages.conversations.agentFeatureRequired', { feature: t('settingsFeatures.expVoiceAgent') }));
     });
     it('keeps authored plugin reason and retry recovery across returned and thrown failures', () => {
         const failure = { ok: false, code: 'provider_unavailable', message: 'Provider is offline', remediation: { kind: 'retry' } };

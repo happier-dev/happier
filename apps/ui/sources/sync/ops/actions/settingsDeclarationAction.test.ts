@@ -2415,7 +2415,7 @@ describe('declared settings owner', () => {
     });
     it.each([
         { agentId: '', feature: true, machineId: null, code: 'settings_missing_required_setting', recoveryAction: 'open_provider_settings' },
-        { agentId: 'codex', feature: false, machineId: null, code: 'feature_policy_disabled', recoveryAction: 'enable_voice_agent' },
+        { agentId: 'codex', feature: false, machineId: null, code: 'feature_policy_disabled', recoveryAction: 'open_features' },
         { agentId: 'codex', feature: true, machineId: 'offline-machine', code: 'execution_machine_incompatible', recoveryAction: 'select_execution_machine' },
     ])('reads the canonical Think recovery for $code', async ({ agentId, feature, machineId, code, recoveryAction }) => {
         const before = storage.getState();

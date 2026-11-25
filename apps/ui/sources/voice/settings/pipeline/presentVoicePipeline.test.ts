@@ -20,7 +20,7 @@ const speak = { roles: ['speak'] as const, engine: { kind: 'speech' as const, ti
 describe('resolveVoiceReadinessTone', () => {
     it('reads a capability that is not set up quietly, chosen or not; only a step that cannot work speaks', () => {
         expect(resolveVoiceReadinessTone(readiness('needs_setup', 'settings_missing_required_setting', 'open_provider_settings'))).toBe('needs_setup');
-        expect(resolveVoiceReadinessTone(readiness('unavailable', 'feature_policy_disabled', 'enable_voice_agent'))).toBe('needs_setup');
+        expect(resolveVoiceReadinessTone(readiness('unavailable', 'feature_policy_disabled', 'open_features'))).toBe('needs_setup');
         // No machine chosen yet is setup; a chosen machine that is offline is waiting outside.
         expect(resolveVoiceReadinessTone(readiness('needs_setup', 'execution_machine_missing', 'select_execution_machine'))).toBe('needs_setup');
         expect(resolveVoiceReadinessTone(readiness('unavailable', 'execution_machine_unavailable'))).toBe('waiting');

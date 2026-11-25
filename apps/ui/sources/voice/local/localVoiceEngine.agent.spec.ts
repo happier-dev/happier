@@ -959,8 +959,7 @@ describe('local voice engine agent behavior', () => {
         const { localVoiceTtsController } = await import('@/voice/backends/tts/localVoiceTtsController');
         const { localVoiceSpeechOutputBoundary } = await import('./localVoiceEngine.testHarness');
         const playback = localVoiceSpeechOutputBoundary.holdNextPlayback('device');
-        const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep the selected answer playing.' },
-            storage.getState().settings);
+        const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep the selected answer playing.' });
         try {
             await playback.started;
             releaseWelcome.resolve();
@@ -1768,7 +1767,7 @@ describe('local voice engine agent behavior', () => {
             await liveStarted.promise;
             emitSpeechRecEvent('result', { isFinal: false, results: [{ transcript: 'Discard this partial', confidence: 0.9 }] });
             const stopsBefore = expoSpeechStop.mock.calls.length;
-            saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: sayText }, storage.getState().settings);
+            saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: sayText });
             await sayStarted.promise;
             expect(expoSpeechStop.mock.calls.length).toBeGreaterThan(stopsBefore);
             expect(speechRecStop).toHaveBeenCalled();
@@ -1849,8 +1848,7 @@ describe('local voice engine agent behavior', () => {
         let saying: ReturnType<typeof executeVoiceSpeechAction> | undefined;
         try {
             await readEntered.promise;
-            saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep reading the selected answer.' },
-                storage.getState().settings);
+            saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep reading the selected answer.' });
             await sayStarted.promise;
             finishAgent(); await turn;
             expect(cancelTurnRpc).not.toHaveBeenCalled();
@@ -1906,7 +1904,7 @@ describe('local voice engine agent behavior', () => {
         let saying: ReturnType<typeof executeVoiceSpeechAction> | undefined;
         try {
             await enqueueEntered.promise;
-            saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep this newer answer playing.' }, storage.getState().settings);
+            saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep this newer answer playing.' });
             await playback.started;
             releaseEnqueue.resolve();
             const result = await sending;

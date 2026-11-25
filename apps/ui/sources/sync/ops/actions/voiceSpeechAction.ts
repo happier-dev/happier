@@ -1,8 +1,6 @@
 import type { VoiceSayActionResult } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { toSpeechText } from '@happier-dev/protocol/voice/speechText';
-import type { Settings } from '@/sync/domains/settings/settings';
 import { localVoiceTtsController } from '@/voice/backends/tts/localVoiceTtsController';
-import { parseLocalVoiceTtsSettings, resolveLocalVoiceAdapterSettingsFromVoice } from '@/voice/local/localVoiceSettings';
 import { readSafeVoiceRuntimeFailureCode } from '@/voice/runtime/voiceRuntimeFailureCode';
 import type { VoiceReadAloudSource } from '@/voice/backends/tts/localVoiceTtsProviderControllers';
 
@@ -10,7 +8,6 @@ import type { VoiceReadAloudSource } from '@/voice/backends/tts/localVoiceTtsPro
 export async function executeVoiceSpeechAction(
     actionId: 'ui.voice_global.say.start' | 'ui.voice_global.say.stop',
     input: Readonly<{ text?: string }>,
-    settings: Pick<Settings, 'voice'>,
     signal?: AbortSignal,
     source?: VoiceReadAloudSource,
 ): Promise<VoiceSayActionResult> {
@@ -20,12 +17,8 @@ export async function executeVoiceSpeechAction(
     }
     const text = toSpeechText(input.text ?? '').trim();
     if (!text) return { status: 'completed' };
-    const { config } = resolveLocalVoiceAdapterSettingsFromVoice(settings.voice);
     try {
-        return await localVoiceTtsController.say({ text, settings, signal, source,
-            tts: parseLocalVoiceTtsSettings(config.tts), networkTimeoutMs: config.networkTimeoutMs,
-            onSpeaking: () => {},
-        });
+        return await localVoiceTtsController.say({ text, signal, source, onSpeaking: () => {} });
     } catch (error) {
         return { status: 'unavailable', code: readSafeVoiceRuntimeFailureCode(error) ?? 'tts_failed' };
     }

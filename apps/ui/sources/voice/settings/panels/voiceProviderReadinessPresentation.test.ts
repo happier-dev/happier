@@ -60,7 +60,7 @@ describe('resolveVoiceProviderReadinessPresentation', () => {
       status: 'needs_setup',
       code: 'feature_policy_disabled',
       reasonKey: 'voice.readiness.feature_policy_disabled',
-      recoveryAction: 'enable_voice_agent',
+      recoveryAction: 'open_features',
     }, tLoose);
     expect(presentation.action).toBe(tLoose('voice.readiness.actions.open_features'));
     expect(presentation.action).not.toMatch(/^settingsVoice\./);
@@ -72,7 +72,7 @@ describe('resolveVoiceProviderReadinessPresentation', () => {
       feature: t('settingsFeatures.voice'),
     }));
     expect(resolveVoiceProviderReadinessPresentation({ status: 'needs_setup', code: 'voice_feature_policy_disabled',
-      reasonKey, recoveryAction: 'enable_voice' }, translateVoiceReadiness)).toMatchObject({
+      reasonKey, recoveryAction: 'open_features' }, translateVoiceReadiness)).toMatchObject({
       action: tLoose('voice.readiness.actions.open_features'), short: tLoose('voice.readiness.short.needsSetup'),
     });
   });

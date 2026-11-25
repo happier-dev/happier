@@ -166,7 +166,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
   });
 
   it.each([
-    { arm: 'policy_disabled', code: 'feature_policy_disabled', tone: 'needs_setup', recovery: 'enable_voice_agent' },
+    { arm: 'policy_disabled', code: 'feature_policy_disabled', tone: 'needs_setup', recovery: 'open_features' },
     { arm: 'server_disabled', code: 'server_feature_disabled', tone: 'waiting', recovery: 'switch_provider' },
     { arm: 'checking', code: 'server_feature_unknown', tone: 'unknown', recovery: 'switch_provider' },
     { arm: 'available', code: 'ready', tone: 'ready', recovery: 'none' },
@@ -294,7 +294,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
   it.each([
     ['available', 'ready', 'ready', 'none'],
     ['server_disabled', 'unavailable', 'server_feature_disabled', 'none'],
-    ['policy_disabled', 'needs_setup', 'voice_feature_policy_disabled', 'enable_voice'],
+    ['policy_disabled', 'needs_setup', 'voice_feature_policy_disabled', 'open_features'],
     ['unknown', 'unavailable', 'server_feature_unknown', 'none'],
     ['checking', 'unavailable', 'server_feature_unknown', 'none'],
   ] as const)('admits configured device read-aloud only when global Voice is available (%s)', (availability, status, code, recoveryAction) => {
@@ -507,7 +507,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
     expect(accountDisabled).toMatchObject({
       status: 'needs_setup',
       code: 'feature_policy_disabled',
-      recoveryAction: 'enable_voice_agent',
+      recoveryAction: 'open_features',
     });
     const unknownModel = {
       role: 'conversation_stt', providerId: 'local_conversation', status: 'unavailable',
@@ -515,7 +515,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
     } as const;
     expect(projectLocalConversationProviderReadiness({ daemonRouteReadiness: accountDisabled,
       thinkReadiness: unknownModel }, unknownModel)).toMatchObject({
-      code: 'feature_policy_disabled', recoveryAction: 'enable_voice_agent',
+      code: 'feature_policy_disabled', recoveryAction: 'open_features',
     });
   });
 });

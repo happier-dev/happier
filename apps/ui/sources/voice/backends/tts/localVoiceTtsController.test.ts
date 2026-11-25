@@ -387,9 +387,7 @@ describe('localVoiceTtsController', () => {
         const settings = storage.getState().settings;
         const controller = createLocalVoiceTtsController();
         const reading = speechBoundary.holdNextPlayback('device');
-        const saying = controller.say({ text: 'Chosen readout.', settings, tts: readLocalConversationVoiceSettings(settings.voice).tts,
-            networkTimeoutMs: 15_000, onSpeaking: () => {},
-        });
+        const saying = controller.say({ text: 'Chosen readout.', onSpeaking: () => {} });
         let speaking: Promise<void> | undefined;
         let ordinary: ReturnType<typeof speechBoundary.holdNextPlayback> | undefined;
         try {
@@ -406,7 +404,7 @@ describe('localVoiceTtsController', () => {
         } finally { controller.stopSay(); reading(); ordinary?.(); await Promise.all([saying, speaking]); }
     });
 
-    it('refuses captured Say setup after canonical Voice is turned Off', async () => {
+    it('refuses Say after the saved provider is turned Off', async () => {
         const current = storage.getState().settings;
         const local = readLocalConversationVoiceSettings(current.voice);
         storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: writeLocalConversationVoiceSettings({
@@ -415,9 +413,7 @@ describe('localVoiceTtsController', () => {
         const captured = storage.getState().settings;
         storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: { ...captured.voice, providerId: null } }, captured));
         const controller = createLocalVoiceTtsController();
-        const request = controller.say({ text: 'A stale setup must not speak.', settings: captured,
-            tts: readLocalConversationVoiceSettings(captured.voice).tts, networkTimeoutMs: 15_000, onSpeaking: () => {},
-        });
+        const request = controller.say({ text: 'A stale setup must not speak.', onSpeaking: () => {} });
         try {
             await expect(request).rejects.toMatchObject({ code: 'provider_unselected' });
             expect(expoSpeechSpeak).not.toHaveBeenCalled();
@@ -434,12 +430,9 @@ describe('localVoiceTtsController', () => {
             ? writeLocalDirectVoiceSettings(voice, { ...direct, tts: { ...direct.tts, provider: 'device' } })
             : writeLocalConversationVoiceSettings(voice, { ...conversation, tts: { ...conversation.tts, provider: 'device' } });
         storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: configuredVoice }, current));
-        const settings = storage.getState().settings;
         const controller = createLocalVoiceTtsController();
         const playback = speechBoundary.holdNextPlayback('device');
-        const reading = controller.say({ text: 'Finish this admitted answer.', settings,
-            tts: readLocalConversationVoiceSettings(settings.voice).tts, networkTimeoutMs: 15_000, onSpeaking: () => {},
-        });
+        const reading = controller.say({ text: 'Finish this admitted answer.', onSpeaking: () => {} });
         try {
             await Promise.race([playback.started, reading.then(() => {
                 throw new Error('Read-aloud completed before the held playback started');
@@ -450,9 +443,7 @@ describe('localVoiceTtsController', () => {
             expect(controller.readSay()).toBe('speaking');
             playback();
             await expect(reading).resolves.toEqual({ status: 'completed' });
-            await expect(controller.say({ text: 'Do not admit another answer.', settings,
-                tts: readLocalConversationVoiceSettings(settings.voice).tts, networkTimeoutMs: 15_000, onSpeaking: () => {},
-            })).rejects.toMatchObject({ code: 'provider_unselected' });
+            await expect(controller.say({ text: 'Do not admit another answer.', onSpeaking: () => {} })).rejects.toMatchObject({ code: 'provider_unselected' });
         } finally { controller.stopSay(); playback(); await reading; }
     });
 

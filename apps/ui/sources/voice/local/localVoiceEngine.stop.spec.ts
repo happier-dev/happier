@@ -543,7 +543,7 @@ describe('local voice engine stop', () => {
     const { executeVoiceSpeechAction } = await import('@/sync/ops/actions/voiceSpeechAction');
     const { localVoiceTtsController } = await import('@/voice/backends/tts/localVoiceTtsController');
     const sayPlayback = localVoiceSpeechOutputBoundary.holdNextPlayback('device');
-    const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep reading until I start the microphone.' }, storage.getState().settings);
+    const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep reading until I start the microphone.' });
     try {
       await sayPlayback.started;
       let phaseAtCapture: string | null = null;
@@ -604,8 +604,7 @@ describe('local voice engine stop', () => {
     try {
       if (capture === 'recorded-starting-stop-failed') {
         await recorderStarting.promise;
-        const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Do not speak after a failed late native stop.' },
-          storage.getState().settings);
+        const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Do not speak after a failed late native stop.' });
         localVoiceSpeechOutputBoundary.fileRecording.stop.mockRejectedValueOnce(new Error('file_recording_stop_failed'));
         admitRecorder.resolve({ recordingId: 'local-engine-recording' });
         await starting;
@@ -620,13 +619,13 @@ describe('local voice engine stop', () => {
         // Only the clock is synthetic. Native start remains genuinely pending;
         // Say must not borrow End's existing 1s terminal-abandonment shortcut.
         vi.useFakeTimers();
-        const first = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Superseded answer.' }, storage.getState().settings);
+        const first = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Superseded answer.' });
         let replacement = first;
         try {
           await vi.advanceTimersByTimeAsync(1_001);
           expect(localVoiceTtsController.readSay()).toBe('preparing');
           expect(expoSpeechSpeak).not.toHaveBeenCalled();
-          replacement = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Current answer.' }, storage.getState().settings);
+          replacement = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Current answer.' });
           await vi.advanceTimersByTimeAsync(1_001);
           expect(localVoiceTtsController.readSay()).toBe('preparing');
           expect(expoSpeechSpeak).not.toHaveBeenCalled();
@@ -644,7 +643,7 @@ describe('local voice engine stop', () => {
       }
       if (capture === 'recorded-starting-finite') {
         await recorderStarting.promise;
-        const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Finish the admitted answer.' }, storage.getState().settings);
+        const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Finish the admitted answer.' });
         expect(localVoiceTtsController.readSay()).toBe('preparing');
         storage.__setState({ settings: { ...storage.getState().settings, voice: {
           ...storage.getState().settings.voice, providerId: null,
@@ -653,14 +652,12 @@ describe('local voice engine stop', () => {
         await starting;
         expect(await saying).toEqual({ status: 'completed' });
         expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual(['Finish the admitted answer.']);
-        expect(await executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'The next readout needs Voice.' },
-          storage.getState().settings)).toMatchObject({ status: 'unavailable', code: 'provider_unselected' });
+        expect(await executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'The next readout needs Voice.' })).toMatchObject({ status: 'unavailable', code: 'provider_unselected' });
         return;
       }
       if (capture === 'recorded-starting') {
         await recorderStarting.promise;
-        const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Read this answer.' },
-          storage.getState().settings);
+        const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Read this answer.' });
         expect(localVoiceTtsController.readSay()).toBe('preparing');
         await waitForTestEvent(lifecycle.subscribe, lifecycle.getSnapshot,
           snapshot => snapshot.status === 'connected' && snapshot.mode === 'idle');
@@ -691,8 +688,7 @@ describe('local voice engine stop', () => {
         const committed = lifecycle.commitInput(target.sessionId);
         try {
           await enqueueEntered.promise;
-          expect(await executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Read while the committed input settles.' },
-            storage.getState().settings)).toEqual({ status: 'completed' });
+          expect(await executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Read while the committed input settles.' })).toEqual({ status: 'completed' });
           acknowledgeEnqueue.resolve();
           await committed;
           expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'idle' });
@@ -723,8 +719,7 @@ describe('local voice engine stop', () => {
           recordingOpen = false;
           return result;
         });
-        expect(await executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Do not speak over a failed microphone stop.' },
-          storage.getState().settings)).toMatchObject({ status: 'unavailable' });
+        expect(await executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Do not speak over a failed microphone stop.' })).toMatchObject({ status: 'unavailable' });
         expect(expoSpeechSpeak).not.toHaveBeenCalled();
         expect(localVoiceTtsController.readSay()).toBe('idle');
         expect(recordingOpen).toBe(true);
@@ -734,8 +729,7 @@ describe('local voice engine stop', () => {
           recordingOpenAtSpeech = recordingOpen;
           options?.onStart?.(); options?.onDone?.();
         });
-        expect(await executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Retry after the recorder really stops.' },
-          storage.getState().settings)).toMatchObject({ status: 'completed' });
+        expect(await executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Retry after the recorder really stops.' })).toMatchObject({ status: 'completed' });
         expect(recordingOpenAtSpeech).toBe(false);
         expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
         expect(localVoiceSpeechTranscription).not.toHaveBeenCalled();
@@ -747,8 +741,7 @@ describe('local voice engine stop', () => {
         captureModeAtSpeech = lifecycle.getSnapshot().mode;
         options?.onStart?.(); options?.onDone?.();
       });
-      expect(await executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Read this answer.' },
-        storage.getState().settings)).toEqual({ status: 'completed' });
+      expect(await executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Read this answer.' })).toEqual({ status: 'completed' });
       expect(captureModeAtSpeech).toBe('idle');
       localVoiceTtsController.stopSay();
       if (capture === 'recorded-muted') {
@@ -839,7 +832,7 @@ describe('local voice engine stop', () => {
     const { executeVoiceSpeechAction } = await import('@/sync/ops/actions/voiceSpeechAction');
     const { localVoiceTtsController } = await import('@/voice/backends/tts/localVoiceTtsController');
     const playback = localVoiceSpeechOutputBoundary.holdNextPlayback('device');
-    const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep Stop reachable.' }, storage.getState().settings);
+    const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep Stop reachable.' });
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
     try {
       await playback.started;
@@ -897,7 +890,7 @@ describe('local voice engine stop', () => {
     const committed = toggleLocalVoiceTurn('s1');
     try {
       await waitForLocalVoiceBoundaryEvent('transcription');
-      saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Read another answer.' }, storage.getState().settings);
+      saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Read another answer.' });
       await playback.started;
       const submitted = Promise.race([accepted.promise.then(() => true), committed.then(() => false)]);
       transcription.resolve('Keep this already committed utterance.');

@@ -107,7 +107,7 @@ describe('native Voice permission input', () => {
           } } },
         });
       }
-      saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep the selected answer playing.' }, storage.getState().settings);
+      saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep the selected answer playing.' });
       await playback.started;
       releaseTranscript.resolve();
       const { readStoredSessionMessages } = await import('@happier-dev/session-core/messages');

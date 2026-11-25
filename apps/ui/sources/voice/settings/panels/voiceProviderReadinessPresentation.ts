@@ -80,9 +80,9 @@ export function resolveVoiceProviderReadinessPresentation(
       && (readiness.code === 'agent_signed_out' || readiness.code.startsWith('runtime_'))
       ? t('voiceSurface.setUpAgent', { agent: readiness.selectedAgent.title }) : readiness.recoveryAction === 'none'
       ? null
-      : translate((readiness.recoveryAction === 'enable_voice' || readiness.recoveryAction === 'enable_voice_agent') ? 'voice.readiness.actions.open_features'
+      : translate(
         // A check that could not complete is checked again; any other Retry stays Retry.
-        : readiness.recoveryAction === 'retry' ? isVoiceReadinessCouldNotCheck(readiness) ? 'voice.readiness.actions.check_again' : 'common.retry'
+        readiness.recoveryAction === 'retry' ? isVoiceReadinessCouldNotCheck(readiness) ? 'voice.readiness.actions.check_again' : 'common.retry'
         : `voice.readiness.actions.${readiness.recoveryAction}`),
     // Device speech still being asked about has not been checked yet; any other unknown is a check that could not complete.
     short: isVoiceReadinessCouldNotCheck(readiness) ? translate('voice.readiness.short.cantCheck')

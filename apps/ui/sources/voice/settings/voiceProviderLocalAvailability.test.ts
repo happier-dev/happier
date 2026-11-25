@@ -185,7 +185,7 @@ describe('resolveVoiceProviderLocalAvailability', () => {
             status: 'needs_setup',
             code: 'feature_policy_disabled',
             reasonKey: 'voice.readiness.feature_policy_disabled',
-            recoveryAction: 'enable_voice_agent',
+            recoveryAction: 'open_features',
         });
     });
 

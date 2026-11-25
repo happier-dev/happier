@@ -17,9 +17,9 @@ describe('voice settings route focus', () => {
     const unknown = projectVoiceReadinessRequirement('conversation_tts', 'local_neural', 'runtime', 'unknown')!;
     expect(resolveVoiceSettingsRecoveryTarget(unknown)).toBeNull();
   });
-  it('opens the existing turn-on feature destination for a policy-disabled Voice agent', () => {
-    expect(resolveVoiceSettingsRecoveryTarget('enable_voice_agent')).toBe('/settings/features');
-    expect(resolveVoiceSettingsRecoveryTarget('enable_voice')).toBe('/settings/features');
+  it('opens Features without focusing a Voice settings control', () => {
+    expect(resolveVoiceSettingsRecoveryTarget('open_features')).toBe('/settings/features');
+    expect(resolveVoiceSettingsRecoveryFocus('open_features')).toBeNull();
     expect(resolveVoiceSettingsRecoveryTarget('configure_credential')).toEqual(VOICE_SETTINGS_PROVIDER_FOCUS_TARGET);
     expect(resolveVoiceSettingsRecoveryTarget('select_execution_machine')).toEqual(VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET);
     expect(resolveVoiceSettingsRecoveryTarget('install_model')).toEqual({

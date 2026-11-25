@@ -46,7 +46,7 @@ export type VoiceRoleReadiness = Readonly<{
   status: 'ready' | 'needs_setup' | 'unavailable' | 'installing' | 'incompatible';
   code: string;
   reasonKey: string;
-  recoveryAction: 'enable_voice' | 'enable_voice_agent' | 'none' | 'retry' | 'select_provider' | 'open_provider_settings' | 'select_execution_machine' | 'configure_credential' | 'review_credential_access' | 'configure_endpoint' | 'install_model' | 'switch_provider';
+  recoveryAction: 'open_features' | 'none' | 'retry' | 'select_provider' | 'open_provider_settings' | 'select_execution_machine' | 'configure_credential' | 'review_credential_access' | 'configure_endpoint' | 'install_model' | 'switch_provider';
 }>;
 
 export function projectHostedModeAvailabilityReadiness(input: Readonly<{
@@ -134,7 +134,7 @@ export function projectVoiceReadinessRequirement(
 ): VoiceRoleReadiness | null {
   if (fact === 'ready') return null;
   if (requirement === 'server_feature' && fact === 'policy_disabled') {
-    return result(role, providerId, 'needs_setup', 'feature_policy_disabled', 'enable_voice_agent');
+    return result(role, providerId, 'needs_setup', 'feature_policy_disabled', 'open_features');
   }
   if (requirement === 'credential' && fact === 'approval_required') {
     return result(role, providerId, 'needs_setup', 'credential_approval_required', 'review_credential_access');

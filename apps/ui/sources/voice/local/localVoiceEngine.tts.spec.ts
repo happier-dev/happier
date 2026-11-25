@@ -128,7 +128,7 @@ describe('local voice engine TTS behavior', () => {
         let saying: ReturnType<typeof executeVoiceSpeechAction> | undefined;
         try {
             await waitForLocalVoiceBoundaryEvent('pending-enqueue');
-            saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep the chosen readout.' }, storage.getState().settings);
+            saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep the chosen readout.' });
             await playback.started;
             await publishLocalVoiceAssistantMessage({ sessionId: 's1', id: 'late-direct-after-say', text: 'Keep this submitted reply in the transcript.' });
             await vi.waitFor(() => {
