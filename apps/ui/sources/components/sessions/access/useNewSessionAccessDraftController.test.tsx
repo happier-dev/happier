@@ -994,7 +994,11 @@ describe('useNewSessionAccessDraft repository currentness', () => {
         await after.unmount();
     });
 
-    it('says a refused Team once: its context choice carries the reason and Sign in, and the Teams directory leaves it out', async () => {
+    it.each([
+        { choice: 'selected', code: 'session_access_authentication_required' },
+        { choice: 'selected', code: 'session_access_authentication_unavailable' },
+        { choice: 'attempted', code: 'session_access_authentication_unavailable' },
+    ] as const)('shows $code once for a $choice Team and offers only applicable recovery', async ({ choice, code }) => {
         runTeamActionMock.mockImplementation(async (request) => {
             if ((request as unknown as { actionId?: string }).actionId !== 'teams.list') {
                 return { kind: 'failed' as const, failure: { kind: 'unreachable' as const, retryable: true, code: null } };
@@ -1019,16 +1023,30 @@ describe('useNewSessionAccessDraft repository currentness', () => {
                 if (!body.creationTeamId) return new Response(JSON.stringify({ v: 1, principals: [] }));
                 return new Response(JSON.stringify({ v: 1, principals: [], creationDecision: null, creationRefusal: {
                     v: 1, teamId: 'team-willow', teamName: 'Willow Design Studio',
-                    code: 'session_access_authentication_required', accepted: [{ kind: 'home_method', methodId: 'key_challenge' }],
+                    code, accepted: [{ kind: 'home_method', methodId: 'key_challenge' }],
                 } }));
             }
             return new Response('{}', { status: 404 });
         });
         let latest: Controller | null = null;
-        await renderScreen(<Probe initial={null} initialPrimaryTeamId="team-willow" availability="available" demanded
+        await renderScreen(<Probe initial={null} initialPrimaryTeamId={choice === 'selected' ? 'team-willow' : null} availability="available" demanded
             scope={{ serverId: profile.id, accountId: 'creator' }} onReady={(controller) => { latest = controller; }} />);
-        await vi.waitFor(() => expect(latest!.model.context?.options.find((option) => option.teamId === 'team-willow')
-            ?.blockedReason?.action).toBeDefined());
+        if (choice === 'attempted') await act(async () => latest!.actions.setContext('team-willow'));
+        const refusedChoice = () => latest!.model.context?.options.find((option) => option.teamId === 'team-willow')?.blockedReason;
+        await vi.waitFor(() => expect(refusedChoice()?.code).toBe(code));
+        if (code === 'session_access_authentication_required') {
+            expect(refusedChoice()?.action?.label).toBe(t('teams.errors.signInRequiredAction'));
+        } else {
+            expect(refusedChoice()?.action).toBeUndefined();
+            expect(refusedChoice()?.message).toBe(t('session.access.authenticationUnavailable'));
+            // The context choice already shows the explanation. Pressing it must not repeat the notice.
+            await act(async () => latest!.actions.explain(refusedChoice()!));
+        }
+        expect(latest!.model.context?.unavailableReason).toBeUndefined();
+        expect(latest!.model.context?.error).toBeUndefined();
+        expect(latest!.model.content.issue).toBeUndefined();
+        expect(latest!.model.notice).toBeUndefined();
+        expect(latest!.model.context?.options.find((option) => option.teamId === null)?.blockedReason).toBeUndefined();
         const teams = () => latest!.model.directory.sections.find((section) => section.kind === 'team')!;
         await vi.waitFor(() => expect(teams().resolved).toBe(true));
         const willowKey = sessionAccessSubjectKey({ kind: 'team', teamId: 'team-willow' });
@@ -1038,6 +1056,10 @@ describe('useNewSessionAccessDraft repository currentness', () => {
         await act(async () => { found = await teams().resolveCandidates!('', new AbortController().signal); });
         expect(found.map((row) => row.principal.key)).toEqual([northwindKey]);
         expect(found.map((row) => row.principal.key)).not.toContain(willowKey);
+        if (choice === 'selected') {
+            await act(async () => latest!.actions.setContext(null));
+            expect(latest!.model.context?.primaryTeamId).toBeNull();
+        }
     });
 
     it('retries an unavailable creation decision through the existing content retry action', async () => {
