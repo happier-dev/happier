@@ -38,6 +38,7 @@ import { StatusPill } from '@/components/ui/status/StatusPill';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { CheckoutUnreachableState, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
+import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useLayoutMaxWidth, useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
@@ -237,7 +238,9 @@ export function ProjectScriptsBody({
   if (waiting && !(read && read.key === key && 'value' in read)) {
     content = page ? <ConstrainedScreenContent>{waiting}</ConstrainedScreenContent> : waiting;
   } else if (!read || read.key !== key) {
-    content = (
+    content = page ? (
+      <PageLoadingRows header loadingLabel={t('projects.scripts.definition.inspecting')} testID={`${testID}.inspection`} />
+    ) : (
       <SurfaceStateCard
         kind="loading"
         title={t('projects.scripts.definition.inspecting')}

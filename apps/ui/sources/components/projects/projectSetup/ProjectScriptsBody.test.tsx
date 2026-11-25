@@ -668,6 +668,22 @@ function textOf(
 }
 
 describe('ProjectScriptsBody setup affordance', () => {
+  it('reserves the Scripts page header during the first inspection', async () => {
+    isolateManifestDrafts();
+    shared.inspection = { definition: presentDefinition(declared), detection, importCandidates: [] };
+    const reply = createDeferred<unknown>();
+    shared.inspectionPending = reply.promise;
+    try {
+      const screen = await render('page', 'scripts.inspection');
+      expect(screen.findByTestId('scripts.inspection-header')).toBeTruthy();
+      await act(async () => reply.resolve(shared.inspection));
+      await vi.waitFor(() => expect(screen.findByTestId('scripts.header')).toBeTruthy());
+      expect(screen.findByTestId('scripts.inspection-header')).toBeNull();
+    } finally {
+      reply.resolve(shared.inspection);
+    }
+  });
+
   it('reads only the selected native invocation when its row opens', async () => {
     isolateManifestDrafts();
     shared.inspection = { definition: presentDefinition(declared), detection, importCandidates: [] };

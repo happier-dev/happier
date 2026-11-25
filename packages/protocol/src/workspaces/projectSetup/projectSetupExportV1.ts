@@ -4,10 +4,10 @@ import { ProjectDefinitionOriginV1Schema, type ProjectEffectiveDefinitionV1 } fr
 import { ProjectManifestV1Schema, type ProjectManifestV1 } from './projectManifestV1.js';
 
 /** One declaration a shared setup can carry, and the layer that decides it today. */
-export const ProjectSetupExportUnitV1Schema = z.strictObject({
+export const ProjectSetupExportUnitV1Schema = lazyZodSchema(() => z.strictObject({
   path: z.array(z.string().check(z.minLength(1))).check(z.minLength(1), z.maxLength(2)),
   layer: ProjectDefinitionOriginV1Schema.shape.layer,
-});
+}));
 export type ProjectSetupExportUnitV1 = z.infer<typeof ProjectSetupExportUnitV1Schema>;
 export type ProjectSetupExportPathV1 = ProjectSetupExportUnitV1['path'];
 
