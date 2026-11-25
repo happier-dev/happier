@@ -45,6 +45,11 @@ export type TeamsDirectoryViewState = Readonly<{
     unavailableHomes: readonly TeamsDirectoryUnavailableHome[];
     /** The list is known to be missing at least one admitted Home's Teams. */
     partial: boolean;
+    /**
+     * At least one admitted Home has Teams on screen (or said it has none). Until then a failure is
+     * the whole page's state, not a gap beside "other Homes", and nothing offers the archive.
+     */
+    answered: boolean;
     /** At least one shown Home is known to be behind its Home. */
     stale: boolean;
     /** Whether rows should be labelled with their Home. */
@@ -91,6 +96,14 @@ export function teamsUnavailableHomeReason(home: Pick<TeamsDirectoryUnavailableH
         case 'error': return t('teams.errors.loadFailed');
         case 'credential_unreadable': return t('homeGovernance.credentialUnreadableTitle');
     }
+}
+
+/**
+ * A Home's failure as the Teams directory says it: a read that simply failed names the Teams, in the
+ * same words Share uses for the same read; every other reason is the Home's own.
+ */
+export function teamsDirectoryHomeReason(home: Pick<TeamsDirectoryUnavailableHome, 'reason'>): string {
+    return home.reason === 'error' ? t('teams.errors.teamsLoadFailed') : teamsUnavailableHomeReason(home);
 }
 
 /**
@@ -219,6 +232,7 @@ export function resolveTeamsDirectoryViewState(
         archivedRows: retainRows(archivedRows, previous?.archivedRows),
         unavailableHomes: unavailableHomes.length > 0 ? Object.freeze(unavailableHomes) : EMPTY_UNAVAILABLE,
         partial,
+        answered: answeredHomes > 0,
         stale,
         multiHome: admittedHomes > 1,
     });

@@ -696,3 +696,21 @@ describe('TeamMemberDetailScreen first frame', () => {
         expect(ids.filter((id) => id.startsWith('team-member-groups-loading'))).toEqual([]);
     });
 });
+
+describe('TeamMemberDetailScreen cold load onto a person', () => {
+    it.each(['team', 'person'] as const)('holds the person page header shape while the %s is read', async (held) => {
+        const serverId = await addHome(teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ viewRoster: true }) }));
+        if (held === 'team') {
+            harness.answer(serverId, TEAM_GET_PATH, { body: teamSummaryFixture(), respondAfter: new Promise<void>(() => {}) });
+        }
+        harness.answer(serverId, MEMBER_GET_PATH, { body: teamMembershipFixture(), respondAfter: new Promise<void>(() => {}) });
+        const screen = await renderDetail(serverId);
+        await vi.waitFor(() => expect(harness.requestsFor(held === 'team' ? TEAM_GET_PATH : MEMBER_GET_PATH).length).toBeGreaterThan(0));
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        // The person's own header (their avatar's place and a pending name), never the Members sub-page header.
+        expect(ids).toContain('team-member-identity-loading');
+        expect(ids).toContain('team-member-identity-loading-avatar');
+        expect(ids).not.toContain('team-page-header');
+        expect(ids).not.toContain('team-member-header');
+    });
+});

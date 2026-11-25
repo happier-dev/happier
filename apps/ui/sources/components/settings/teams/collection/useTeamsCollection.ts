@@ -79,7 +79,10 @@ export function useTeamsCollection(options: Readonly<{
     const createEligibility = useHomeGovernanceEligibilitySnapshots(active.scopes);
     const archived = useTeamsDirectory({ archived: 'archived', enabled: sourceHint === null && showArchived });
     const selected = useTeamBinding(options.selectedAddress?.serverId ?? '', options.selectedAddress?.teamId ?? '');
-    const selectedRow = selected.kind === 'bound' && selected.state.kind === 'ready'
+    // The routed Team joins the list only once the directory has answered: alone, before that, it would read as
+    // the whole set, and the rest would be inserted around it when the list arrives.
+    const directoryUnknown = active.kind === 'loading' && active.rows.length === 0;
+    const selectedRow = !directoryUnknown && selected.kind === 'bound' && selected.state.kind === 'ready'
         ? { address: selected.address, team: selected.state.team, homeName: selected.homeName }
         : null;
     const selectedTeam = selectedRow?.team;
@@ -135,7 +138,9 @@ export function useTeamsCollection(options: Readonly<{
         const snapshot = createEligibility.snapshotsByServerId.get(scope.serverId);
         return snapshot?.data?.teamsEnabled === true && snapshot.data.createTeam;
     });
-    const offerArchived = sourceHint === null && active.scopes.length > 0;
+    // The archive is offered once the directory has answered: not over a list still being read (the
+    // routed Team alone is not the set), and not under a directory that could not be read at all.
+    const offerArchived = sourceHint === null && active.scopes.length > 0 && active.answered;
 
     // Only a current answer from a Home that offers Teams can explain creation.
     const createGuidance = React.useMemo(() => resolveTeamsCreateGuidance({

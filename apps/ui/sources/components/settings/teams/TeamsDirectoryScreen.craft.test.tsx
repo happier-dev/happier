@@ -180,7 +180,9 @@ describe('TeamsDirectoryScreen craft', () => {
         { width: 390, status: 403, body: { error: 'team_forbidden', details: { reason: 'legacy_home_credential' } },
             reason: 'teams.errors.signInOutdated', action: 'teams.errors.signInAgainAction' },
         { width: 1440, status: 500, body: { error: 'internal_error' },
-            reason: 'teams.errors.loadFailed', action: 'teams.unavailable.retry' },
+            reason: 'teams.errors.teamsLoadFailed', action: 'common.retry' },
+        { width: 390, status: 500, body: { error: 'internal_error' },
+            reason: 'teams.errors.teamsLoadFailed', action: 'common.retry' },
     ])('shows one reason and one recovery action for HTTP $status at $width px', async ({ width, status, body, reason, action }) => {
         const home = await memberHome(0);
         harness.answer(home, TEAMS_LIST_PATH, { status, body });
@@ -195,6 +197,27 @@ describe('TeamsDirectoryScreen craft', () => {
             action: renderedText.filter((text) => text === action).length,
         }).toEqual({ reason: 1, action: 1 });
         expect(screen.findHostByTestId('teams-directory-empty')).toBeNull();
+        // No Home answered: the one Home's message is the page state, not a section about "other Homes",
+        // and nothing offers archived Teams of a directory that could not be read.
+        expect(renderedText).not.toContain('teams.directory.partialHomes');
+        expect(renderedText).not.toContain('teams.directory.unreachableHomes');
+        expect(screen.findHostByTestId('teams-directory-toggle-archived')).toBeNull();
+    });
+
+    it('names the Homes that failed beside the Homes that answered', async () => {
+        const answered = await memberHome(1);
+        const failed = await harness.addHome({
+            name: 'Field office', serverUrl: 'https://field.example', accountId: 'member-b', teamsEnabled: true,
+        });
+        await harness.selectHomes([answered, failed]);
+        harness.answer(failed, TEAMS_LIST_PATH, { status: 500, body: { error: 'internal_error' } });
+
+        const screen = await renderDirectory();
+        await vi.waitFor(() => expect(screen.findHostByTestId(`teams-home-unavailable:${failed}`)).not.toBeNull());
+        expect(screen.findHostByTestId(`teams-row:${answered}:team-0`)).not.toBeNull();
+        const renderedText = screen.getTextContent().split(/\s+/);
+        expect(renderedText.filter((text) => text === 'teams.directory.partialHomes')).toHaveLength(1);
+        expect(screen.findHostByTestId('teams-directory-toggle-archived')).not.toBeNull();
     });
 
     it('shows one Team sign-in when a Team rule refuses the detail read beside a successful directory', async () => {

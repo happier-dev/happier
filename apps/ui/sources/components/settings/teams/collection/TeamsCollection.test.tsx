@@ -89,6 +89,28 @@ describe('Team collection first read', () => {
         // The archived toggle belongs under the rows: it arrives with them, never under the waiting line.
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('teams-directory-toggle-archived');
     });
+
+    it('holds the waiting line, not a one-Team list, while a routed Team is read before its directory', async () => {
+        const home = await addHome('routed-home');
+        await harness.selectHomes([home]);
+        const release = Promise.withResolvers<void>();
+        harness.answer(home, LIST_PATH, { body: { items: [
+            teamSummaryFixture({ id: 'northwind', name: 'Northwind' }),
+            teamSummaryFixture({ id: 'willow', name: 'Willow' }),
+        ], nextCursor: null }, respondAfter: release.promise });
+        harness.answer(home, '/v1/teams/get', { body: teamSummaryFixture({ id: 'willow', name: 'Willow' }) });
+        pathname = `/settings/teams/${home}/willow`;
+        const screen = await renderScreen(<TeamsCollectionRail />);
+        await vi.waitFor(() => expect(harness.requestsFor('/v1/teams/get').length).toBeGreaterThan(0));
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('teams-directory-loading'));
+        // The routed Team alone is not the set: no partial list, and nothing that belongs under the rows.
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain(`teams-row:${home}:willow`);
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('teams-directory-toggle-archived');
+        release.resolve();
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain(`teams-row:${home}:northwind`));
+        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain(`teams-row:${home}:willow`);
+        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('teams-directory-toggle-archived');
+    });
 });
 
 it('places the second Team and Show archived at the mounted row offsets on the first recycler layout', async () => {
@@ -168,7 +190,9 @@ describe('Team collection loaded-page search', () => {
         const screen = await renderScreen(<TeamsDirectoryScreen />);
         await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain(`teams-home-unavailable:${home}`));
         const card = screen.tree.findAllByType(SurfaceStateCard).find((node) => node.props.testID === `teams-home-unavailable:${home}`);
-        expect(card?.props).toMatchObject({ kind: 'error', size: 'line', reason: 'teams.errors.loadFailed', action: { testID: 'teams-directory-retry' } });
+        // No Home answered: its one message is the page state, in Share's words for the same read.
+        expect(card?.props).toMatchObject({ kind: 'error', title: 'teams.errors.teamsLoadFailed',
+            action: { testID: 'teams-directory-retry', label: 'common.retry' } });
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('teams-directory-loading');
         harness.answer(home, LIST_PATH, { body: { items: [], nextCursor: null } });
         await screen.pressByTestIdAsync('teams-directory-retry');

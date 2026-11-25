@@ -21,7 +21,7 @@ import { t } from '@/text';
 import { TeamRow } from './TeamRow';
 import { teamCredentialCreatePath, teamDetailPath, teamsCreatePath, type TeamCredentialSourceHint } from './teamsRoutes';
 import type { TeamsDirectoryRow, TeamsDirectoryUnavailableHome } from './teamsDirectoryViewState';
-import { teamsUnavailableHomeReason, teamsUnavailableHomeSettingsAction, teamsUnavailableHomeStateKind } from './teamsDirectoryViewState';
+import { teamsDirectoryHomeReason, teamsUnavailableHomeReason, teamsUnavailableHomeSettingsAction, teamsUnavailableHomeStateKind } from './teamsDirectoryViewState';
 import { TeamsCollectionAddButton } from './collection/TeamsCollectionRail';
 import {
     readLastVisitedTeamsCollectionTeam,
@@ -40,8 +40,14 @@ type TeamsDirectoryVirtualizedRow = Readonly<{
     render: () => React.ReactElement;
 }>;
 
+/**
+ * Homes whose Teams could not be read. Beside Homes that answered, they are a section that names each
+ * gap; when no Home answered, the failure is the page's own state, said once.
+ */
 const UnavailableHomes = React.memo(function UnavailableHomes(props: Readonly<{
     homes: readonly TeamsDirectoryUnavailableHome[];
+    /** At least one other Home answered, so these are gaps in a list that is shown. */
+    partial: boolean;
     onRetry: () => void;
     /**
      * Distinguishes the active list's report from the archived list's, because
@@ -55,8 +61,28 @@ const UnavailableHomes = React.memo(function UnavailableHomes(props: Readonly<{
     if (props.homes.length === 0) return null;
 
     const prefix = props.testIDPrefix ?? 'teams-home-unavailable';
+    const recovery = (home: TeamsDirectoryUnavailableHome, index: number) => home.retryable ? {
+        testID: index === 0 ? props.retryTestID ?? 'teams-directory-retry' : `${prefix}:${home.serverId}:retry`,
+        label: t('common.retry'),
+        onPress: props.onRetry,
+    } : teamsUnavailableHomeSettingsAction(home, (href) => router.push(href as Href));
+    const only = props.homes.length === 1 ? props.homes[0]! : null;
+    if (!props.partial && only && only.reason !== 'loading') {
+        // The one Home's message is the page state: what failed and the one way forward.
+        return (
+            <SurfaceStateCard
+                testID={`${prefix}:${only.serverId}`}
+                kind={teamsUnavailableHomeStateKind(only)}
+                title={teamsDirectoryHomeReason(only)}
+                action={recovery(only, 0)}
+            />
+        );
+    }
     return (
-        <ItemGroup title={t('teams.directory.unreachableHomes')} description={t('teams.directory.partialHomes')}>
+        <ItemGroup
+            title={props.partial ? t('teams.directory.unreachableHomes') : undefined}
+            description={props.partial ? t('teams.directory.partialHomes') : undefined}
+        >
             {props.homes.map((home, index) => home.reason === 'loading' ? (
                 <Item
                     key={home.serverId}
@@ -74,12 +100,8 @@ const UnavailableHomes = React.memo(function UnavailableHomes(props: Readonly<{
                     kind={teamsUnavailableHomeStateKind(home)}
                     size="line"
                     title={home.homeName}
-                    reason={teamsUnavailableHomeReason(home)}
-                    action={home.retryable ? {
-                        testID: index === 0 ? props.retryTestID ?? 'teams-directory-retry' : `${prefix}:${home.serverId}:retry`,
-                        label: t('teams.unavailable.retry'),
-                        onPress: props.onRetry,
-                    } : teamsUnavailableHomeSettingsAction(home, (href) => router.push(href as Href))}
+                    reason={teamsDirectoryHomeReason(home)}
+                    action={recovery(home, index)}
                 />
             ))}
         </ItemGroup>
@@ -186,7 +208,7 @@ const TeamsCollectionLanding = React.memo(function TeamsCollectionLanding(props:
             {answeredUnavailableHomes.length === 0 ? (
                 <TeamsEmptyState collection={collection} onCreate={() => router.push(teamsCreatePath() as never)} />
             ) : (
-                <UnavailableHomes homes={answeredUnavailableHomes} onRetry={active.refresh} />
+                <UnavailableHomes homes={answeredUnavailableHomes} partial={active.answered} onRetry={active.refresh} />
             )}
         </ItemList>
     );
@@ -363,7 +385,7 @@ function useTeamsDirectoryRows(input: Readonly<{
 
         if (answeredUnavailableHomes.length > 0) {
             add('unavailable-homes', () => (
-                <UnavailableHomes homes={answeredUnavailableHomes} onRetry={active.refresh} />
+                <UnavailableHomes homes={answeredUnavailableHomes} partial={active.answered} onRetry={active.refresh} />
             ));
         }
 
@@ -406,6 +428,8 @@ function useTeamsDirectoryRows(input: Readonly<{
                 add('archived-unavailable-homes', () => (
                     <UnavailableHomes
                         homes={archived.unavailableHomes}
+                        // The archived list sits under active Teams that were shown.
+                        partial
                         onRetry={archived.refresh}
                         testIDPrefix="teams-archived-home-unavailable"
                         retryTestID="teams-directory-archived-retry"

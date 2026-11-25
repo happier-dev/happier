@@ -7,6 +7,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
+import { useTeamsDirectoryRow } from '@/hooks/teams/useTeamsDirectoryRow';
 import {
   CollectionList,
   collectionListStyles,
@@ -117,8 +118,16 @@ export const TeamMembersCollectionRail = React.memo(
       rows.push({ key, render, estimatedHeightPx });
     // While the first page is read, the people the Team summary counts hold their place in the rail's own rows (the
     // avatar, the name and role); an unknown count, or a search, reserves nothing rather than a guess.
-    const reservedPeople = searching ? 0 : Math.min(team?.counts?.members ?? 0, TEAM_MEMBERS_PAGE_LIMIT_DEFAULT_V1);
-    if (roster.status === 'loading' && roster.rows.length === 0 && reservedPeople > 0) {
+    // While the Team itself is read, the row the Teams directory already holds counts them; on a person's own route at
+    // least that person is there, so their place is held rather than an empty rail.
+    const teamPending = projection
+      ? projection.state.kind === 'loading' || projection.state.kind === 'unobserved'
+      : binding.kind === 'resolving';
+    const directoryRow = useTeamsDirectoryRow(projection?.scope ?? null, teamId);
+    const knownMembers = (team ?? directoryRow)?.counts?.members
+      ?? (teamPending && props.selectedMembershipId ? 1 : 0);
+    const reservedPeople = searching ? 0 : Math.min(knownMembers, TEAM_MEMBERS_PAGE_LIMIT_DEFAULT_V1);
+    if ((teamPending || roster.status === 'loading') && roster.rows.length === 0 && reservedPeople > 0) {
       add('loading', () => (
         <ItemLoadStateRows
           testID="team-members-rail-loading"

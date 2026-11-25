@@ -358,6 +358,56 @@ describe('TeamMemberEncryptionSection mounted membership history', () => {
         expect(screen.getTextContent()).toContain(t('teams.members.encryption.scopeBody'));
     });
 
+    it('holds the section description from the first frame and returns to the last-known result', async () => {
+        const recipientContent = tweetnacl.box.keyPair();
+        const recipientSigning = tweetnacl.sign.keyPair();
+        const firstRead = createDeferred<Response>();
+        const second = createDeferred<Response>();
+        let collectionGets = 0;
+        const readyPage = () => new Response(JSON.stringify({
+            status: 'ready', recipientAccountId: 'recipient-1',
+            contentKey: {
+                status: 'available', accountSigningPublicKey: encodeHex(recipientSigning.publicKey),
+                contentPublicKey: encodeBase64(recipientContent.publicKey, 'base64'),
+                contentPublicKeySignature: encodeBase64(signAccountContentKeyBindingV1({
+                    accountSigningSecretKey: recipientSigning.secretKey,
+                    contentPublicKey: recipientContent.publicKey,
+                }), 'base64'),
+            },
+            items: [],
+            exceptions: { callerEnvelopeRepairRequiredCount: 0, callerVisibleNonTransferableSessionCount: 0 },
+            nextCursor: null,
+        }));
+        const request = vi.fn(async (url: string) => {
+            if (new URL(url).pathname.includes('/account/encryption')) return Response.json({
+                mode: 'e2ee', version: 1, signingKeyFingerprint: 'signing-current',
+                contentKeyFingerprint: 'content-current', updatedAt: 1,
+                recipientEnvelopeReadiness: { status: 'available' },
+            });
+            collectionGets += 1;
+            return collectionGets === 1 ? await firstRead.promise : await second.promise;
+        });
+        const setup = await setupMountedMemberRequest(request, { accountEncryption: 'e2ee' });
+        const context = createMountedContext(setup.profile.id, vi.fn());
+        const first = await renderSettingsView(React.createElement(TeamMemberEncryptionSection, { context }));
+        // First visit: the check paints with the section's description already in place.
+        await vi.waitFor(() => expect(collectionGets).toBe(1));
+        expect(first.findRow('team-member-encryption-checking')).not.toBeNull();
+        expect(first.getTextContent()).toContain(t('teams.members.encryption.scopeBody'));
+        await act(async () => { firstRead.resolve(readyPage()); });
+        await vi.waitFor(() => expect(first.findRow('team-member-encryption-status')).not.toBeNull());
+        await act(async () => { first.unmount(); });
+
+        // Return visit: the last-known result paints at once while the Home is asked again quietly.
+        const back = await renderSettingsView(React.createElement(TeamMemberEncryptionSection, { context }));
+        expect(back.findRow('team-member-encryption-checking')).toBeNull();
+        expect(back.findRow('team-member-encryption-status')).not.toBeNull();
+        expect(back.getTextContent()).toContain(t('teams.members.encryption.scopeBody'));
+        await vi.waitFor(() => expect(collectionGets).toBe(2));
+        await act(async () => { second.resolve(readyPage()); });
+        await vi.waitFor(() => expect(back.findRow('team-member-encryption-status')).not.toBeNull());
+    });
+
     it('routes add-journey Group auto-preparation through Action admission before committing envelopes', async () => {
         const recipientContent = tweetnacl.box.keyPair();
         const recipientSigning = tweetnacl.sign.keyPair();

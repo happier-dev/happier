@@ -15,7 +15,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { TeamRow, teamRailRowHasSubtitle } from '../TeamRow';
 import { teamCredentialCreatePath, teamDetailPath, teamsCreatePath } from '../teamsRoutes';
 import type { TeamsDirectoryUnavailableHome } from '../teamsDirectoryViewState';
-import { teamsUnavailableHomeReason, teamsUnavailableHomeSettingsAction, teamsUnavailableHomeStateKind } from '../teamsDirectoryViewState';
+import { teamsDirectoryHomeReason, teamsUnavailableHomeSettingsAction, teamsUnavailableHomeStateKind } from '../teamsDirectoryViewState';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import {
@@ -238,12 +238,12 @@ const UnavailableHomesRail = React.memo(function UnavailableHomesRail(props: Rea
                     key={home.serverId}
                     testID={`${prefix}:${home.serverId}`}
                     title={home.homeName}
-                    reason={teamsUnavailableHomeReason(home)}
+                    reason={teamsDirectoryHomeReason(home)}
                     kind={teamsUnavailableHomeStateKind(home)}
                     size="line"
                     action={home.retryable ? {
                         testID: index === 0 ? `${prefix}-retry` : `${prefix}:${home.serverId}:retry`,
-                        label: t('teams.unavailable.retry'),
+                        label: t('common.retry'),
                         onPress: props.onRetry,
                     } : teamsUnavailableHomeSettingsAction(home, (href) => router.push(href as Href))}
                 />

@@ -13,6 +13,7 @@ import { memoryDocumentHref } from '@/components/memory/memoryDocumentRoutes';
 import { readMachineAddRoutePath } from '@/components/machines/add/machineAddPaths';
 import { hasNewSessionPickerContinuation } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { useNavigationLeavesLargeTitle } from '@/components/ui/layout/navigationTitleChrome';
+import { useTeamRouteTitle } from '@/components/settings/teams/useTeamRouteTitle';
 
 type Translate = (key: TranslationKeyNoParams) => string;
 
@@ -251,6 +252,8 @@ function SettingsParentBackButton({
 }>): React.ReactElement | null {
     const pathname = usePathname();
     const { parentPathname, goToParent } = useSettingsParentBack('SettingsParentBackButton.back', { machineAddPushesWays: true });
+    // A parent that is one Team's page is named by that Team, as its own header names it.
+    const teamTitle = useTeamRouteTitle(parentLabel ? parentPathname : null);
 
     if (!shouldShowSettingsParentBackButton({ pathname, hideOnTopLevel })) {
         return null;
@@ -263,7 +266,8 @@ function SettingsParentBackButton({
         accessibilityLabel,
         ...(tintColor ? { tintColor } : {}),
         onPress: goToParent,
-        ...(parentLabel && parentTitleKey ? { label: parentLabel(parentTitleKey) } : {}),
+        ...(parentLabel && teamTitle ? { label: teamTitle }
+            : parentLabel && parentTitleKey ? { label: parentLabel(parentTitleKey) } : {}),
     });
 }
 

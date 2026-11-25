@@ -8,7 +8,10 @@ import {
 
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { PageHeader, PageHeaderPlaceholder } from '@/components/ui/layout/PageHeader';
+import { HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
+import { useUnistyles } from 'react-native-unistyles';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
@@ -59,6 +62,41 @@ import {
 } from './teamMemberPresentation';
 
 const MEMBER_HEADER_AVATAR_SIZE = 44;
+/** A representative date for the pending "Joined …" fact: only its width is drawn. */
+const REPRESENTATIVE_JOINED_AT = Date.UTC(2026, 8, 30);
+
+/**
+ * A person's page header while the Team or the person is read: their avatar's place, a pending name and the
+ * facts the arriving header draws, so the person's own header lands where this one stood (never the Members
+ * sub-page header first).
+ */
+const TeamMemberLoadingHeader = React.memo(function TeamMemberLoadingHeader() {
+    const { theme } = useUnistyles();
+    const reducedMotion = useReducedMotionPreference();
+    return (
+        <PageHeaderPlaceholder
+            testID="team-member-identity-loading"
+            alwaysShowTitle
+            leading={(
+                <HappierSkeletonBlock
+                    testID="team-member-identity-loading-avatar"
+                    color={theme.colors.surface.skeleton}
+                    reducedMotion={reducedMotion}
+                    width={MEMBER_HEADER_AVATAR_SIZE}
+                    height={MEMBER_HEADER_AVATAR_SIZE}
+                    radius={MEMBER_HEADER_AVATAR_SIZE / 2}
+                />
+            )}
+            meta={[
+                { key: 'role', text: teamRoleLabel('member'), pending: true },
+                { key: 'joined', text: t('teams.members.joined', {
+                    when: formatCalendarDate(REPRESENTATIVE_JOINED_AT, getPreferredLanguage()),
+                }), pending: true },
+            ]}
+        />
+    );
+});
+const renderTeamMemberLoadingHeader = () => <TeamMemberLoadingHeader />;
 
 type MembershipLoad =
     | Readonly<{ kind: 'loading' }>
@@ -414,10 +452,7 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
     if (load.kind === 'loading') {
         return (
             <>
-                <PageHeader testID="team-member-header" title={t('teams.tabs.members')} alwaysShowTitle meta={[
-                    { key: 'team', text: context.team.name },
-                    { key: 'home', icon: 'house', text: context.homeName },
-                ]} />
+                <TeamMemberLoadingHeader />
                 {props.banners}
                 {/* The page's known first section holds its place while the person is read. */}
                 <ItemGroup title={t('teams.members.roleLabel')}>
@@ -741,7 +776,8 @@ export const TeamMemberDetailScreen = React.memo(function TeamMemberDetailScreen
     renderEncryptionSection?: TeamMemberSectionRenderer;
 }>) {
     return (
-        <TeamSection serverId={props.serverId} teamId={props.teamId} title={t('teams.tabs.members')} childRendersHeader>
+        <TeamSection serverId={props.serverId} teamId={props.teamId} title={t('teams.tabs.members')} childRendersHeader
+            renderLoadingHeader={renderTeamMemberLoadingHeader}>
             {(context, banners) => (
                 <MemberDetail
                     context={context}

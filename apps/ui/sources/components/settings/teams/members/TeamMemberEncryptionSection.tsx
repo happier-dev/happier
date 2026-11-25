@@ -67,6 +67,16 @@ const UNSUPPORTED: EncryptedAccess = Object.freeze({
 });
 const FAILED: EncryptedAccess = Object.freeze({ kind: 'failed' as const });
 
+/**
+ * The last settled result per exact membership-history scope, kept for this app run only.
+ *
+ * A return visit paints it at once and asks the Home again quietly (the discover pass keeps a
+ * settled state while it refreshes), instead of re-drawing "Checking…" and growing the section
+ * when the answer lands. It is observed state, never a setting, and holds only settled results;
+ * work in progress and failures are always re-read.
+ */
+const lastSettledEncryptedAccess = new Map<string, EncryptedAccess>();
+
 type TeamMemberRecipientEncryptionPresentation = 'plain_account' | 'setup_required' | 'repair_required';
 
 /** Classify recipient readiness for the member-detail presentation boundary. */
@@ -173,7 +183,6 @@ export function TeamMemberEncryptionSection(props: Readonly<{
     const availabilityState = useSessionCollaborationAvailabilityState(context.scope.serverId);
     // The preparation request is an action admission and stays fail-closed while presentation remains loading.
     const availability: SessionCollaborationAvailability = availabilityState === 'available' ? 'available' : 'unavailable';
-    const [state, setState] = React.useState<EncryptedAccess>(CHECKING);
     const [refreshing, setRefreshing] = React.useState(false);
     // One generation guards every async write: a Home, Account or membership change makes an
     // in-flight discovery or pass stale, and a stale result must never repaint this row.
@@ -198,6 +207,11 @@ export function TeamMemberEncryptionSection(props: Readonly<{
         recipientAccountId,
         availability,
     }), [serverId, accountId, teamId, groupId, groupAccountId, membershipId, recipientAccountId, availability]);
+    const scopeKey = membershipHistoryPreparationScopeKey(request);
+    const [state, setState] = React.useState<EncryptedAccess>(() => lastSettledEncryptedAccess.get(scopeKey) ?? CHECKING);
+    React.useEffect(() => {
+        if (state.kind === 'ready' || state.kind === 'setup_required') lastSettledEncryptedAccess.set(scopeKey, state);
+    }, [scopeKey, state]);
 
     const discover = React.useCallback(() => {
         const currentGeneration = (generation.current += 1);
@@ -230,7 +244,8 @@ export function TeamMemberEncryptionSection(props: Readonly<{
         if (availabilityState === 'loading') {
             generation.current += 1;
             setRefreshing(false);
-            setState(CHECKING);
+            // A last-known result stays while the Home's availability is read again.
+            setState((previous) => lastSettledEncryptedAccess.get(scopeKey) === previous ? previous : CHECKING);
             return;
         }
         if (availabilityState !== 'available') {
@@ -243,7 +258,7 @@ export function TeamMemberEncryptionSection(props: Readonly<{
         return () => {
             generation.current += 1;
         };
-    }, [discover, availabilityState]);
+    }, [discover, availabilityState, scopeKey]);
 
     const prepare = React.useCallback(() => {
         const previousState = state;
@@ -300,7 +315,7 @@ export function TeamMemberEncryptionSection(props: Readonly<{
     // actionable work and on this exact membership, so a rerender, a retry, or an
     // ordinary visit to the same detail never starts another one.
     const autoStarted = React.useRef<string | null>(null);
-    const autoStartKey = membershipHistoryPreparationScopeKey(request);
+    const autoStartKey = scopeKey;
     React.useEffect(() => {
         if (props.autoStartPreparation !== true) return;
         if (autoStarted.current === autoStartKey) return;
@@ -328,9 +343,11 @@ export function TeamMemberEncryptionSection(props: Readonly<{
         );
     }
 
+    // The ready section's own description is there from the first frame, so the answer
+    // never inserts a line above the rows below it.
     if (state.kind === 'checking') {
         return (
-            <ItemGroup title={t('teams.members.encryption.title')}>
+            <ItemGroup title={t('teams.members.encryption.title')} description={t('teams.members.encryption.scopeBody')}>
                 <Item
                     testID="team-member-encryption-checking"
                     title={t('teams.members.encryption.checking')}
@@ -379,7 +396,7 @@ export function TeamMemberEncryptionSection(props: Readonly<{
 
     if (state.kind === 'preparing') {
         return (
-            <ItemGroup title={t('teams.members.encryption.title')}>
+            <ItemGroup title={t('teams.members.encryption.title')} description={t('teams.members.encryption.scopeBody')}>
                 <Item
                     testID="team-member-encryption-preparing"
                     title={t('teams.members.encryption.preparing', { prepared: state.preparedCount })}
