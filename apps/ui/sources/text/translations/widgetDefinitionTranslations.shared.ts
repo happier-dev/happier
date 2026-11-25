@@ -64,6 +64,8 @@ export type WidgetDefinitionTranslation = Readonly<{
     saveWidget: string;
     saveFailed: string;
     savedButNotPlaced: string;
+    placementUnconfirmed: string;
+    placementCheck: string;
     savedAsYours: (params: Readonly<{ name: string }>) => string;
     name: string;
     nameNeeded: string;
@@ -149,6 +151,8 @@ export const widgetDefinitionTranslationsEnglish = { en: {
         saveWidget: "Save widget",
         saveFailed: "Couldn’t save the widget. Try again.",
         savedButNotPlaced: "Saved to Your widgets, but it couldn’t be added everywhere you chose.",
+        placementUnconfirmed: "We couldn't confirm the widget was added",
+        placementCheck: "Check",
         savedAsYours: ({ name }) => `Saved “${name}” to Your widgets`,
         name: "Name",
         nameNeeded: "Give it a name",

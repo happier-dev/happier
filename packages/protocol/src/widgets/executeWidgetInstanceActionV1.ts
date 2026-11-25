@@ -28,7 +28,7 @@ export const readWidgetActionSurfacePortV1 = (deps: Pick<ActionExecutorDeps, 'wi
 const surfacePort = readWidgetActionSurfacePortV1;
 
 /** Shared Project writes may name an unnamed instance; every other captured field stays exact. */
-function matchesWidgetWriteAcknowledgement(surface: WidgetSurfaceRefV1, expected: WidgetInstanceV1, actual: WidgetInstanceV1 | null | undefined): boolean {
+export function matchesWidgetWriteAcknowledgement(surface: WidgetSurfaceRefV1, expected: WidgetInstanceV1, actual: WidgetInstanceV1 | null | undefined): boolean {
   if (sameStrictJsonValue(actual, expected)) return true;
   return surface.owner.kind === 'project' && expected.displayName === undefined && actual?.displayName !== undefined
     && sameStrictJsonValue(actual, { ...expected, displayName: actual.displayName });

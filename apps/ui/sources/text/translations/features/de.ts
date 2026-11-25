@@ -18927,6 +18927,8 @@ const widgetDefinitionTranslations = { de: {
         saveWidget: "Widget speichern",
         saveFailed: "Widget konnte nicht gespeichert werden. Versuch es erneut.",
         savedButNotPlaced: "Unter Deine Widgets gespeichert, konnte aber nicht überall hinzugefügt werden.",
+        placementUnconfirmed: "Wir konnten nicht bestätigen, dass das Widget hinzugefügt wurde",
+        placementCheck: "Prüfen",
         savedAsYours: ({ name }) => `„${name}“ unter Deine Widgets gespeichert`,
         name: "Name",
         nameNeeded: "Gib ihm einen Namen",

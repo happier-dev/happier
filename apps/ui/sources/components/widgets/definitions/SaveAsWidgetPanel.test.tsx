@@ -19,11 +19,16 @@ import {
     SessionSystemRecordStoredSchema} from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import { tryWriteServerEnabledBitInPlace} from '@happier-dev/protocol/features/serverEnabledBit';
 import { decodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import { buildHomeHubArtifactIdV1 } from '@happier-dev/protocol/home/homeHubArtifactV1';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { readBuiltinWidgetDescriptorV1, resolveConfiguredWidgetInputs, WidgetInstanceActionOutputSchemasV1, type WidgetInputBindingsV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 
 const harness = createHomeGovernanceHarness();
 const readBatchRequest = createSessionReadBatchFetchBoundary(harness.request);
+const { openDestination } = vi.hoisted(() => ({ openDestination: vi.fn() }));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+    router: { push: openDestination, navigate: openDestination, dismissTo: openDestination },
+}).module);
 installHomeGovernanceBoundaries(harness);
 // This Home serves writes: deliver the Socket boundary's real connected event
 // so scoped Actions retain the connection owner's admitted HTTP authority.
@@ -452,37 +457,96 @@ describe('Session widget placement through the destination setup', () => {
         } finally { await home.screen.unmount(); await home.disconnect(); }
     });
 
-    it('Add-to reconciles an unknown committed placement without creating another copy', async () => {
-        const home = await openSessionHome({ key: 'lost-placement', builtinId: 'session_summary',
+    it.each([
+        { entry: 'addTo', committed: true, readAvailable: true },
+        { entry: 'addTo', committed: true, readAvailable: false },
+        { entry: 'save', committed: true, readAvailable: false },
+        { entry: 'save', committed: false, readAvailable: false },
+    ] as const)('reconciles an unknown placement from $entry (committed: $committed, read available: $readAvailable)', async ({ entry, committed, readAvailable }) => {
+        const home = await openSessionHome({ key: `lost-placement-${entry}-${committed}-${readAvailable}`, builtinId: 'session_summary',
             bindings: { session: { kind: 'context', slot: 'session' } } });
         const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        const { readPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
+        retirePresentationNotice();
+        openDestination.mockClear();
+        const layout = buildHomeHubArtifactIdV1(home.account.accountId);
+        const writePath = `/v1/artifacts/${encodeURIComponent(layout)}`;
         let readsUnavailable = false;
-        setRuntimeFetch((input, init) => {
+        let placementWrites = 0;
+        let placementReadsBlocked = 0;
+        setRuntimeFetch(async (input, init) => {
             const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-            if (readsUnavailable && new URL(url).pathname.startsWith('/v1/artifacts/'))
-                return Promise.resolve(new Response('{}', { status: 503 }));
+            const path = new URL(url).pathname;
+            const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
+            const createsLayout = path === '/v1/artifacts' && body?.id === layout;
+            if (init?.method === 'POST' && (path === writePath || createsLayout) && ++placementWrites === 1) {
+                if (committed) {
+                    const response = await readBatchRequest(input, init);
+                    expect(response.ok).toBe(true);
+                }
+                readsUnavailable = !readAvailable;
+                // Return a truncated acknowledgement. The transport cannot turn a missing
+                // receipt into a successful one and cannot retry by reading a response body.
+                return Response.json({});
+            }
+            if (readsUnavailable && ((path === '/v1/artifacts/read' && body?.artifactIds?.includes(layout))
+                || (path === writePath && init?.method !== 'POST'))) {
+                placementReadsBlocked += 1;
+                return new Response('{}', { status: 503 });
+            }
             return readBatchRequest(input, init);
         });
-        harness.artifacts(home.account.serverId).afterNextCreate(async () => {
-            // The first create is the definition; the next is its Home layout.
-            harness.artifacts(home.account.serverId).afterNextCreate(async () => {
-                readsUnavailable = true;
-                throw new TypeError('Connection lost after placement commit');
-            });
-        });
+        const check = 'placement.addTo.check';
+        const add = 'placement.addTo.setup.submit';
+        const chooseHome = async () => {
+            await home.screen.pressByTestIdAsync('openAdd');
+            await home.screen.pressByTestIdAsync('placement.addTo.destination.home');
+        };
         try {
-            const setup = await home.placeAt('addTo');
-            let first: unknown;
-            await act(async () => { first = await setup.submit(setup.initial); });
-            expect(first).toMatchObject({ ok: false });
-            readsUnavailable = false;
-            expect((await home.copies()).filter(copy => copy.definition.kind === 'artifact')).toHaveLength(1);
-            let retried: unknown;
-            await act(async () => { retried = await home.screen.tree.root.findByType(WidgetSetupStep).props.setup.submit(setup.initial); });
-            expect(retried).toEqual({ ok: true });
+            if (entry === 'addTo') {
+                const setup = await home.placeAt('addTo');
+                if (readAvailable) {
+                    await home.screen.pressByTestIdAsync(add);
+                } else {
+                    let first: unknown;
+                    await act(async () => { first = await setup.submit(setup.initial); });
+                    expect(first).toMatchObject({ ok: false, errorCode: 'widget_add_unknown' });
+                }
+            } else {
+                await home.saveWithPlace('home');
+            }
+            if (!readAvailable) {
+                await vi.waitFor(() => expect(home.screen.getTextContent()).toContain("We couldn't confirm the widget was added"), { timeout: 8000 });
+                expect(home.screen.findByTestId(add)).toBeNull();
+                expect(placementReadsBlocked).toBeGreaterThan(0);
+                expect(readPresentationNotice()).toBeNull();
+                await home.screen.pressByTestIdAsync(check);
+                await vi.waitFor(() => expect(openDestination.mock.calls.map(([href]) => href)
+                    .some(href => href === '/' || href === '/home')).toBe(true), { timeout: 8000 });
+                expect(home.screen.findByTestId(add)).toBeNull();
+                expect(placementWrites).toBe(1);
+                if (committed) {
+                    await home.screen.pressByTestIdAsync('placement.addTo.cancel');
+                    expect(readPresentationNotice()).toBeNull();
+                    await chooseHome();
+                    expect(home.screen.findByTestId(add)).toBeNull();
+                    expect(home.screen.findByTestId(check)).not.toBeNull();
+                }
+                readsUnavailable = false;
+                await home.screen.pressByTestIdAsync(check);
+                if (!committed) {
+                    await vi.waitFor(() => expect(home.screen.findByTestId(add), home.screen.getTextContent()).not.toBeNull(), { timeout: 8000 });
+                    expect(placementWrites).toBe(1);
+                    expect((await home.copies()).filter(copy => copy.definition.kind === 'artifact')).toHaveLength(0);
+                    await home.screen.pressByTestIdAsync(add);
+                }
+            }
+            await vi.waitFor(() => expect(readPresentationNotice()?.message, home.screen.getTextContent()).toBe(t('widgetAdd.justAdded', { widget: 'Session summary' })), { timeout: 8000 });
+            expect(home.screen.findByTestId(check)).toBeNull();
             expect(home.savedDefinitions()).toHaveLength(1);
             expect((await home.copies()).filter(copy => copy.definition.kind === 'artifact')).toHaveLength(1);
-        } finally { await home.screen.unmount(); await home.disconnect(); }
+            expect(placementWrites).toBe(committed ? 1 : 2);
+        } finally { retirePresentationNotice(); await home.screen.unmount(); await home.disconnect(); }
     });
 
     it('Duplicate resumes its unknown definition and allocates a new identity only for the next intentional copy', async () => {

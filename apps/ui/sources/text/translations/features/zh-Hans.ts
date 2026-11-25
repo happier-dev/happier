@@ -19308,6 +19308,8 @@ const widgetDefinitionTranslations = { 'zh-Hans': {
         saveWidget: "保存小组件",
         saveFailed: "无法保存小组件，请重试。",
         savedButNotPlaced: "已保存到你的小组件，但未能添加到你选择的所有位置。",
+        placementUnconfirmed: "无法确认小组件是否已添加",
+        placementCheck: "检查",
         savedAsYours: ({ name }) => `已将“${name}”保存到你的小组件`,
         name: "名称",
         nameNeeded: "请为它命名",

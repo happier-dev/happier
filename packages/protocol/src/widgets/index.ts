@@ -15,7 +15,7 @@ export * from './widgetPresentationV1.js';
 export { admitWidgetActionSurfaceV1, readWidgetActionAccountScopeAdmissionV1 } from './widgetActionScopeV1.js';
 export * from './homeWidgetActionPortV1.js';
 export * from './workBoardWidgetActionPortV1.js';
-export { readWidgetActionSurfacePortV1 } from './executeWidgetInstanceActionV1.js';
+export { matchesWidgetWriteAcknowledgement, readWidgetActionSurfacePortV1 } from './executeWidgetInstanceActionV1.js';
 export * from './sessionBoardWidgetActionPortV1.js';
 export * from './widgetDefinitionV1.js';
 export * from './widgetDefinitionArtifactV1.js';

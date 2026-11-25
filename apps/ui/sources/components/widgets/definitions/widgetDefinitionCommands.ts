@@ -1,12 +1,14 @@
-import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getActionSpec, type PublicActionInputById, type PublicActionResultById } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import type { WidgetDefinitionV1, WidgetLayoutFragmentV1 } from '@happier-dev/protocol/widgets';
+import { matchesWidgetWriteAcknowledgement, type WidgetDefinitionV1, type WidgetInstanceRefV1, type WidgetLayoutFragmentV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import { randomUUID } from '@/platform/randomUUID';
 import { createFrontDoorActionExecute, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 const executeWidgetAction = createFrontDoorActionExecute();
 
@@ -110,47 +112,91 @@ export function createWidgetArtifactWriteAttempt<Id extends ArtifactWriteId>(act
     };
 }
 
-/** Gallery's prepared-instance custody, shared by Add-to and Save's destination setup. */
-export function createWidgetItemAddAttempt(target: WidgetCommandTarget): Readonly<{
-    run(input: () => PublicActionInputById['widgets.item.add'], widgetAreaContext: ActionExecutorContext['widgetAreaContext']): Promise<WidgetDefinitionCommandOutcome<PublicActionResultById['widgets.item.add']>>;
-}> {
-    type Input = PublicActionInputById['widgets.item.add'];
-    type Outcome = WidgetDefinitionCommandOutcome<PublicActionResultById['widgets.item.add']>;
-    let prepared: Input | undefined;
-    let previous: Outcome | undefined;
-    let pending: Promise<Outcome> | undefined;
-    return {
-        run(input: () => Input, widgetAreaContext: ActionExecutorContext['widgetAreaContext']): Promise<Outcome> {
+type WidgetItemAddInput = PublicActionInputById['widgets.item.add'];
+type WidgetItemAddCommandOutcome = WidgetDefinitionCommandOutcome<PublicActionResultById['widgets.item.add']>;
+type UnconfirmedPlacement = Readonly<{ kind: 'unconfirmed'; errorCode: string; details?: unknown }>;
+type WidgetPlacementOutcome = WidgetItemAddCommandOutcome | UnconfirmedPlacement | Readonly<{ kind: 'absent' }>;
+
+export type WidgetItemAddAttempt = Readonly<{
+    outcome(): WidgetPlacementOutcome | undefined;
+    run(input: () => WidgetItemAddInput, context: ActionExecutorContext['widgetAreaContext']): Promise<WidgetPlacementOutcome>;
+    check(): Promise<WidgetPlacementOutcome | undefined>;
+}>;
+
+const unsettledPlacements = new WeakMap<ActiveServerAccountScopeLifetime, Map<string, WidgetItemAddAttempt>>();
+
+/** Keep an unconfirmed placement across Back, Close, and reopening from either entry point. */
+export function getWidgetItemAddAttempt(source: WidgetInstanceRefV1, destination: WidgetSurfaceRefV1, existing?: WidgetItemAddAttempt): WidgetItemAddAttempt {
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    const key = stableJsonStringify([source, destination]);
+    const retained = lifetime ? unsettledPlacements.get(lifetime) ?? new Map<string, WidgetItemAddAttempt>() : undefined;
+    if (lifetime && retained) unsettledPlacements.set(lifetime, retained);
+    const remembered = retained?.get(key) ?? existing;
+    if (remembered) return remembered;
+
+    let prepared: WidgetItemAddInput | undefined;
+    let previous: WidgetPlacementOutcome | undefined;
+    let pending: Promise<WidgetPlacementOutcome> | undefined;
+    const read = async (input: WidgetItemAddInput): Promise<WidgetPlacementOutcome | undefined> => {
+        const result = await runWidgetDefinitionCommand('widgets.item.list', { surface: input.surface }, destination);
+        if (result.kind !== 'applied' || !sameStrictJsonValue(result.result.surface, input.surface)) return undefined;
+        const found = result.result.instances.find(entry => entry.instance.id === input.instance.id);
+        if (!found) return { kind: 'absent' };
+        if (!matchesWidgetWriteAcknowledgement(input.surface, input.instance, found.instance)
+            || (input.size !== undefined && input.size !== found.size)
+            || (input.area !== undefined && !sameStrictJsonValue(input.area, found.area))) {
+            return { kind: 'refused', errorCode: 'widget_instance_already_exists' };
+        }
+        return { kind: 'applied', result: { ref: { surface: input.surface, instanceId: found.instance.id }, instance: found.instance } };
+    };
+    const settle = (operation: () => Promise<WidgetPlacementOutcome>): Promise<WidgetPlacementOutcome> => {
+        retained?.set(key, attempt);
+        pending = operation().then(outcome => {
+            previous = outcome;
+            return outcome;
+        }).finally(() => {
+            if (previous?.kind !== 'unconfirmed') retained?.delete(key);
+            pending = undefined;
+        });
+        return pending;
+    };
+    const attempt: WidgetItemAddAttempt = {
+        outcome: () => {
+            const current = retained?.get(key);
+            return current && current !== attempt ? current.outcome() : previous;
+        },
+        run(input, context) {
+            const current = retained?.get(key);
+            if (current && current !== attempt) return current.run(input, context);
             if (pending) return pending;
-            if (previous?.kind === 'applied') return Promise.resolve(previous);
-            pending = (async (): Promise<Outcome> => {
-                let correctRefusedInput = false;
-                if (prepared && previous) {
-                    const read = await runWidgetDefinitionCommand('widgets.item.list', { surface: prepared.surface }, target);
-                    if (read.kind !== 'applied') return previous;
-                    const found = read.result.instances.find(entry => entry.instance.id === prepared!.instance.id);
-                    if (found) return sameStrictJsonValue(read.result.surface, prepared.surface)
-                        && sameStrictJsonValue(found.instance, prepared.instance)
-                        && (prepared.size === undefined || prepared.size === found.size)
-                        && (prepared.area === undefined || sameStrictJsonValue(prepared.area, found.area))
-                        ? { kind: 'applied', result: { ref: { surface: read.result.surface, instanceId: found.instance.id }, instance: found.instance } }
-                        : { kind: 'refused', errorCode: 'widget_instance_already_exists' };
+            if (previous?.kind === 'unconfirmed' || previous?.kind === 'applied') return Promise.resolve(previous);
+            return settle(async () => {
+                if (prepared && previous && previous.kind !== 'absent') {
+                    const observed = await read(prepared);
+                    if (observed?.kind !== 'absent') return observed ?? previous;
                     if (previous.kind === 'approvalPending') return previous;
-                    correctRefusedInput = previous.kind === 'refused' && previous.errorCode !== 'widget_add_unknown';
                 }
-                return runWidgetDefinitionCommand('widgets.item.add', () => {
-                    if (correctRefusedInput && prepared) {
-                        const corrected = input();
-                        prepared = { ...corrected, instance: { ...corrected.instance, id: prepared.instance.id } };
-                    }
-                    prepared ??= input();
+                const outcome = await runWidgetDefinitionCommand('widgets.item.add', () => {
+                    const next = input();
+                    prepared = prepared ? { ...next, instance: { ...next.instance, id: prepared.instance.id } } : next;
                     return prepared;
-                },
-                    target, undefined, widgetAreaContext);
-            })().then(outcome => { previous = outcome; return outcome; }).finally(() => { pending = undefined; });
-            return pending;
+                }, destination, undefined, context);
+                if (!prepared || outcome.kind !== 'refused' || (outcome.errorCode !== 'widget_add_unknown'
+                    && !isActionOutcomeUnknownErrorCodeV1(outcome.errorCode))) return outcome;
+                return await read(prepared) ?? { ...outcome, kind: 'unconfirmed' };
+            });
+        },
+        async check() {
+            const current = retained?.get(key);
+            if (current && current !== attempt) return current.check();
+            if (pending) return pending;
+            if (!prepared || previous?.kind !== 'unconfirmed') return previous;
+            const input = prepared;
+            const unconfirmed = previous;
+            return settle(async () => await read(input) ?? unconfirmed);
         },
     };
+    return attempt;
 }
 
 export async function runWidgetDefinitionCommand<Id extends CommandId>(

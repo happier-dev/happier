@@ -8,7 +8,12 @@ import { composeWidgetGroupContextV1, isWidgetTargetHostableV1, projectWidgetBin
 
 import { useWorkBoardReadState, useWorkBoardSummaries } from '@/components/boards/model/useWorkBoards';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useOpenAppSection } from '@/components/appShell/workspace/destinationRoute';
+import { createBoardRoute } from '@/components/boards/boardsRoutes';
+import { useOpenPhoneHome } from '@/components/navigation/shell/PhoneHomeLogoButton';
+import { useOpenProject } from '@/components/projects/useOpenProject';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { WidgetSetupStep } from '@/components/widgets/add/WidgetSetupStep';
 import { WidgetFlowPanel } from '@/components/widgets/flow/WidgetFlowPanel';
 import { listWidgetGroupProjects, resolveWidgetGroupCopyDestinations, WidgetCopyDestinationMenu, type WidgetGroupCopyDestination } from '@/components/widgets/group/widgetGroupCopy';
@@ -19,19 +24,23 @@ import { WidgetSetupPreview } from '@/components/widgets/surface/WidgetSetupPrev
 import { buildWidgetCandidateSetup, widgetProvidedContext, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { readWidgetDescriptor, resolveWidgetInstanceTitle } from '@/components/widgets/widgetCatalog';
 import { randomUUID } from '@/platform/randomUUID';
-import { useWorkspaceRefs } from '@/sync/domains/state/storage';
+import { storage, useWorkspaceRefs } from '@/sync/domains/state/storage';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { buildProjectGroupDisplayIndex, projectGroupIdentityKey } from '@/sync/domains/workspaces/projectGroupDisplay';
+import { readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRows';
 import { t } from '@/text';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { isPublicProfileWidgetSurfaceV1, projectWidgetPublicProfileDescriptorV1, translateWidgetPublicProfileCopyV1 } from '@happier-dev/protocol/widgets';
 
-import { createWidgetArtifactWriteAttempt, createWidgetItemAddAttempt } from './widgetDefinitionCommands';
+import { createWidgetArtifactWriteAttempt, getWidgetItemAddAttempt, type WidgetItemAddAttempt } from './widgetDefinitionCommands';
 
 /** An open copy owns promotion and placement independently, including a Save → setup handoff. */
 export type WidgetCopyAttempt = {
     promotion?: ReturnType<typeof createWidgetArtifactWriteAttempt<'widgets.definition.saveFromSession'>>;
-    placement?: ReturnType<typeof createWidgetItemAddAttempt>;
+    placement?: WidgetItemAddAttempt;
 };
 
 /**
@@ -103,24 +112,87 @@ export function WidgetCopyPanel(props: Readonly<{
     testID: string;
 }>) {
     const { candidate, destinations } = useWidgetCopyTarget(props.instance, props.current);
-    // This open flow retains an acknowledged library copy when destination placement is refused.
-    const promoted = React.useRef<WidgetDefinitionV1 | null>(props.saved ?? null);
-    const attempt = React.useRef<WidgetCopyAttempt>({});
-    const phone = useDeviceType() === 'phone';
     const destination = destinations.find(entry => entry.key === props.destinationKey);
     if (!candidate || !destination) return (
         <WidgetFlowPanel title={t('widgetFrame.groupAddTo')} {...(props.onBack ? { onBack: props.onBack } : {})} onCancel={props.onClose} testID={props.testID}
             note={t('widgetDefinition.aboutUnavailable')}>{null}</WidgetFlowPanel>
     );
-    const setup = buildWidgetCopySetup({ candidate, destination, instance: props.instance, current: props.current,
-        providedContext: props.providedContext, promoted, attempt: props.attempt ?? attempt.current, testID: props.testID });
-    return <WidgetSetupStep key={destination.key} setup={setup} callerContext={props.callerContext} phone={phone} {...(props.onBack ? { onBack: props.onBack } : {})}
-        onCancel={props.onClose} onDone={result => {
-            publishPresentationNotice({ key: `widget-copy:${props.instance.id}`, severity: 'info', message: result.approvalPending
-                ? `${promoted.current ? `${t('widgetDefinition.savedButNotPlaced')} ` : ''}${t('widgetAdd.areaApprovalPending')}`
-                : t('widgetAdd.justAdded', { widget: resolveWidgetInstanceTitle(props.instance, candidate) }) });
-            (props.onDone ?? props.onClose)();
-        }} serverId={props.current.serverId} testID={`${props.testID}.setup`} />;
+    return <WidgetCopySetupPanel key={destination.key} {...props} candidate={candidate} destination={destination} />;
+}
+
+function WidgetCopySetupPanel(props: React.ComponentProps<typeof WidgetCopyPanel> & Readonly<{
+    candidate: WidgetCandidate;
+    destination: WidgetGroupCopyDestination;
+}>) {
+    const { candidate, destination, instance } = props;
+    const phone = useDeviceType() === 'phone';
+    const promoted = React.useRef<WidgetDefinitionV1 | null>(props.saved ?? null);
+    const [attempt] = React.useState<WidgetCopyAttempt>(() => props.attempt ?? {});
+    const [unconfirmed, setUnconfirmed] = React.useState<WidgetItemAddAttempt | null>(() => {
+        const placement = getWidgetItemAddAttempt({ surface: props.current, instanceId: instance.id }, destination.surface, attempt.placement);
+        return placement.outcome()?.kind === 'unconfirmed' ? placement : null;
+    });
+    const done = (result: Extract<WidgetSetupSubmitResult, { ok: true }>) => {
+        publishPresentationNotice({ key: `widget-copy:${instance.id}`, severity: 'info', message: result.approvalPending
+            ? `${promoted.current ? `${t('widgetDefinition.savedButNotPlaced')} ` : ''}${t('widgetAdd.areaApprovalPending')}`
+            : t('widgetAdd.justAdded', { widget: resolveWidgetInstanceTitle(instance, candidate) }) });
+        (props.onDone ?? props.onClose)();
+    };
+    if (unconfirmed) return <WidgetPlacementCheck attempt={unconfirmed} destination={destination}
+        onBack={props.onBack} onClose={props.onClose} testID={props.testID} phone={phone} onChecked={outcome => {
+            attempt.placement = unconfirmed;
+            if (outcome?.kind === 'applied') done({ ok: true });
+            else if (outcome?.kind !== 'unconfirmed') setUnconfirmed(null);
+        }} />;
+    const setup = buildWidgetCopySetup({ candidate, destination, instance, current: props.current,
+        providedContext: props.providedContext, promoted, attempt, onUnconfirmed: setUnconfirmed, testID: props.testID });
+    return <WidgetSetupStep setup={setup} callerContext={props.callerContext} phone={phone} {...(props.onBack ? { onBack: props.onBack } : {})}
+        onCancel={props.onClose} onDone={done} serverId={props.current.serverId} testID={`${props.testID}.setup`} />;
+}
+
+function WidgetPlacementCheck(props: Readonly<{
+    attempt: WidgetItemAddAttempt;
+    destination: WidgetGroupCopyDestination;
+    onBack?: () => void;
+    onClose: () => void;
+    onChecked(outcome: Awaited<ReturnType<WidgetItemAddAttempt['check']>>): void;
+    phone: boolean;
+    testID: string;
+}>) {
+    const openSection = useOpenAppSection();
+    const openPhoneHome = useOpenPhoneHome();
+    const { open: openProject } = useOpenProject();
+    const [checking, setChecking] = React.useState(false);
+    const openDestination = async (surface: WidgetSurfaceRefV1) => {
+        const active = getActiveServerAccountScope();
+        if (active?.accountId !== surface.accountId || !areServerProfileIdentifiersEquivalent(active.serverId, surface.serverId)) return;
+        const owner = surface.owner;
+        if (owner.kind === 'home') {
+            if (props.phone) openPhoneHome();
+            else openSection('/');
+        } else if (owner.kind === 'workBoard') {
+            openSection(createBoardRoute(owner.boardId));
+        } else if (owner.kind === 'project') {
+            const project = projectGroupIdentityKey({ serverId: surface.serverId, projectKey: owner.projectId });
+            const baseline = buildProjectGroupDisplayIndex(readProjectWorkspaceRefs(storage.getState())).get(project)?.baseline;
+            if (baseline) await openProject(baseline.id, { serverId: surface.serverId, layoutId: null });
+        } else if (isPublicProfileWidgetSurfaceV1(surface)) {
+            openSection(SETTINGS_ROUTES.accountPublicProfileEdit);
+        }
+    };
+    const check = async () => {
+        setChecking(true);
+        const pending = props.attempt.check();
+        void openDestination(props.destination.surface);
+        const outcome = await pending;
+        setChecking(false);
+        props.onChecked(outcome);
+    };
+    return <WidgetFlowPanel title={t('widgetFrame.groupAddTo')} onBack={props.onBack} onCancel={props.onClose} phone={props.phone}
+        note={t('widgetDefinition.placementUnconfirmed')} testID={props.testID}
+        primary={{ label: t('widgetDefinition.placementCheck'), onPress: () => { void check(); }, busy: checking, disabled: checking, testID: `${props.testID}.check` }}>
+        {null}
+    </WidgetFlowPanel>;
 }
 
 /**
@@ -138,6 +210,7 @@ export function buildWidgetCopySetup(input: Readonly<{
     /** The library copy this flow made (or Save as your widget made); filled by the first placement otherwise. */
     promoted: { current: WidgetDefinitionV1 | null };
     attempt?: WidgetCopyAttempt;
+    onUnconfirmed?: (attempt: WidgetItemAddAttempt) => void;
     testID: string;
 }>): WidgetSetup {
     const { candidate, destination, promoted, current, instance } = input;
@@ -153,6 +226,14 @@ export function buildWidgetCopySetup(input: Readonly<{
     return buildWidgetCandidateSetup({ candidate, context, audience: 'personal', scope: destination.surface,
         mode: { kind: 'add', submitLabel: t('widgetAdd.areaAddTo', { surface: destination.label }), copiedInput },
         submit: async draft => {
+            const placementAttempt = getWidgetItemAddAttempt({ surface: current, instanceId: instance.id }, destination.surface, attempt.placement);
+            attempt.placement = placementAttempt;
+            const unconfirmed = (outcome: Readonly<{ errorCode: string; details?: unknown }>) => {
+                input.onUnconfirmed?.(placementAttempt);
+                return { ok: false as const, errorCode: outcome.errorCode, details: outcome.details, message: t('widgetDefinition.placementUnconfirmed') };
+            };
+            const existing = placementAttempt.outcome();
+            if (existing?.kind === 'unconfirmed') return unconfirmed(existing);
             const sourceOwner = current.owner;
             if (sourceOwner.kind === 'sessionBoard' && !promoted.current) {
                 attempt.promotion ??= createWidgetArtifactWriteAttempt('widgets.definition.saveFromSession', current);
@@ -168,8 +249,7 @@ export function buildWidgetCopySetup(input: Readonly<{
             const definition = promoted.current;
             const { networkOverride: _sourceNetworkOverride, ...sourceInstance } = instance;
             const networkOverride = definition ? readWidgetDefinitionNetworkOverrideV1(definition) : undefined;
-            attempt.placement ??= createWidgetItemAddAttempt(destination.surface);
-            const outcome = await attempt.placement.run(() => {
+            const outcome = await placementAttempt.run(() => {
                 const copy: WidgetInstanceV1 = definition ? { ...sourceInstance, id: randomUUID(), definition: { kind: 'artifact', artifactId: definition.id },
                     bindings: draft.bindings, ...(networkOverride ? { networkOverride } : {}) }
                     : { ...instance, id: randomUUID(), bindings: draft.bindings };
@@ -181,8 +261,11 @@ export function buildWidgetCopySetup(input: Readonly<{
                     ...(destination.area ? { area: destination.area } : {}), ...(draft.size ? { size: draft.size } : {}) };
             },
                 { surface: destination.surface, values: providedContext });
-            return outcome.kind === 'refused' ? { ok: false, message: t(definition ? 'widgetDefinition.savedButNotPlaced' : 'widgetAdd.addFailed') }
-                : { ok: true, ...(outcome.kind === 'approvalPending' ? { approvalPending: true } : {}) };
+            if (outcome.kind === 'unconfirmed') return unconfirmed(outcome);
+            if (outcome.kind === 'refused' || outcome.kind === 'absent') {
+                return { ok: false, message: t(definition ? 'widgetDefinition.savedButNotPlaced' : 'widgetAdd.addFailed') };
+            }
+            return { ok: true, ...(outcome.kind === 'approvalPending' ? { approvalPending: true } : {}) };
         },
         renderPreview: ({ draft }) => <WidgetSetupPreview scope={destination.surface} providedContext={providedContext}
             candidate={candidate} draft={draft} testID={`${input.testID}.preview`} />,

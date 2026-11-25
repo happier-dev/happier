@@ -19457,6 +19457,8 @@ const widgetDefinitionTranslations = { pl: {
         saveWidget: "Zapisz widżet",
         saveFailed: "Nie udało się zapisać widżetu. Spróbuj ponownie.",
         savedButNotPlaced: "Zapisano w Twoich widżetach, ale nie dodano wszędzie, gdzie wybrano.",
+        placementUnconfirmed: "Nie udało się potwierdzić dodania widżetu",
+        placementCheck: "Sprawdź",
         savedAsYours: ({ name }) => `Zapisano „${name}” w Twoich widżetach`,
         name: "Nazwa",
         nameNeeded: "Nadaj mu nazwę",

@@ -129,7 +129,9 @@ export function useWidgetDefinitionFlows(input: Readonly<{
         attempts: ReadonlyMap<string, WidgetCopyAttempt> }> | null>(null);
     const close = React.useCallback(() => { setFlow(null); setCopyTo(null); setPlacing(null); }, []);
     const stopPlacing = React.useCallback(() => {
-        if (placing) publishPresentationNotice({ key: `widget-save:${instance?.id ?? 'item'}`, severity: 'info', message: t('widgetDefinition.savedButNotPlaced') });
+        if (placing && ![...placing.attempts.values()].some(attempt => attempt.placement?.outcome()?.kind === 'unconfirmed')) {
+            publishPresentationNotice({ key: `widget-save:${instance?.id ?? 'item'}`, severity: 'info', message: t('widgetDefinition.savedButNotPlaced') });
+        }
         close();
     }, [close, instance?.id, placing]);
     const placeNext = React.useCallback(() => {

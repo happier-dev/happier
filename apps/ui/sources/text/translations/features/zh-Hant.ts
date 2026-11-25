@@ -19308,6 +19308,8 @@ const widgetDefinitionTranslations = { 'zh-Hant': {
         saveWidget: "儲存小工具",
         saveFailed: "無法儲存小工具，請再試一次。",
         savedButNotPlaced: "已儲存到你的小工具，但未能加入你選擇的所有位置。",
+        placementUnconfirmed: "無法確認小工具是否已加入",
+        placementCheck: "檢查",
         savedAsYours: ({ name }) => `已將「${name}」儲存到你的小工具`,
         name: "名稱",
         nameNeeded: "請為它命名",

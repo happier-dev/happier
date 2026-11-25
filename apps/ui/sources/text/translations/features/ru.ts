@@ -19458,6 +19458,8 @@ const widgetDefinitionTranslations = { ru: {
         saveWidget: "Сохранить виджет",
         saveFailed: "Не удалось сохранить виджет. Попробуйте ещё раз.",
         savedButNotPlaced: "Сохранено в «Ваши виджеты», но добавить во все выбранные места не удалось.",
+        placementUnconfirmed: "Не удалось подтвердить добавление виджета",
+        placementCheck: "Проверить",
         savedAsYours: ({ name }) => `«${name}» сохранён в «Ваши виджеты»`,
         name: "Название",
         nameNeeded: "Дайте ему название",

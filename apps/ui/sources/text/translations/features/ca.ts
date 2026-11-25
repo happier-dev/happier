@@ -19447,6 +19447,8 @@ const widgetDefinitionTranslations = { ca: {
         saveWidget: "Desa el giny",
         saveFailed: "No s’ha pogut desar el giny. Torna-ho a provar.",
         savedButNotPlaced: "Desat a Els teus ginys, però no s’ha pogut afegir a tots els llocs triats.",
+        placementUnconfirmed: "No hem pogut confirmar que s’hagi afegit el giny",
+        placementCheck: "Comprova",
         savedAsYours: ({ name }) => `S’ha desat «${name}» a Els teus ginys`,
         name: "Nom",
         nameNeeded: "Posa-li un nom",

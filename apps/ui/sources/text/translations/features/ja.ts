@@ -19368,6 +19368,8 @@ const widgetDefinitionTranslations = { ja: {
         saveWidget: "ウィジェットを保存",
         saveFailed: "ウィジェットを保存できませんでした。もう一度お試しください。",
         savedButNotPlaced: "あなたのウィジェットに保存しましたが、選んだすべての場所には追加できませんでした。",
+        placementUnconfirmed: "ウィジェットが追加されたことを確認できませんでした",
+        placementCheck: "確認",
         savedAsYours: ({ name }) => `「${name}」をあなたのウィジェットに保存しました`,
         name: "名前",
         nameNeeded: "名前を付けてください",
