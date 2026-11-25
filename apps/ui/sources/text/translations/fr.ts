@@ -11969,6 +11969,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
       portInUse: ({ port }: { port: number }) => `Le port ${port} est déjà utilisé. Arrêtez le service existant ou choisissez un autre port.`,
       portInUseSameProject: ({ port }: { port: number }) => `Le port ${port} est déjà utilisé par ce projet. Utilisez le service en cours ou choisissez un autre port.`,
       processExit: ({ code }: { code: string }) => `Le service a quitté avec le code ${code}. Consultez les détails avant de réessayer.`,
+      portsUnavailable: 'Happier n’a pas pu attribuer de ports à cet espace de travail. Réessayez ou choisissez de nouveaux ports.',
       openRunning: ({ service }: { service: string }) => `Ouvrir ${service} en cours`,
       exitCode: ({ code }: { code: string }) => `Code de sortie ${code}`,
       docker: {

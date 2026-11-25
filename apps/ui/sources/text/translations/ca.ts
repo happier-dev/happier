@@ -11312,6 +11312,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
       portInUse: ({ port }: { port: number }) => `El port ${port} ja està en ús. Atura el servei existent o tria un altre port.`,
       portInUseSameProject: ({ port }: { port: number }) => `Aquest projecte ja utilitza el port ${port}. Utilitza el servei en execució o tria un altre port.`,
       processExit: ({ code }: { code: string }) => `El servei ha finalitzat amb el codi ${code}. Consulta els detalls abans de tornar-ho a provar.`,
+      portsUnavailable: 'Happier no ha pogut assignar ports a aquest espai de treball. Torna-ho a provar o tria ports nous.',
       openRunning: ({ service }: { service: string }) => `Obre ${service} en execució`,
       exitCode: ({ code }: { code: string }) => `Codi de sortida ${code}`,
       docker: {

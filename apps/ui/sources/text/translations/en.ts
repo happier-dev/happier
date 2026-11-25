@@ -13890,6 +13890,7 @@ const enLocalServices = {
       portInUse: ({ port }: { port: number }) => `Port ${port} is already in use. Stop the existing service or choose another port.`,
       portInUseSameProject: ({ port }: { port: number }) => `Port ${port} is already in use by this project. Use the running service or choose another port.`,
       processExit: ({ code }: { code: string }) => `The service exited with code ${code}. Check Details before trying again.`,
+      portsUnavailable: 'Happier couldn’t assign ports for this workspace. Try again, or choose new ports.',
       openRunning: ({ service }: { service: string }) => `Open running ${service}`,
       exitCode: ({ code }: { code: string }) => `Exit code ${code}`,
       docker: {

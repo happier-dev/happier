@@ -12248,6 +12248,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
       portInUse: ({ port }: { port: number }) => `A porta ${port} já está em uso. Pare o serviço existente ou escolha outra porta.`,
       portInUseSameProject: ({ port }: { port: number }) => `Este projeto já usa a porta ${port}. Use o serviço em execução ou escolha outra porta.`,
       processExit: ({ code }: { code: string }) => `O serviço terminou com o código ${code}. Confira os detalhes antes de tentar novamente.`,
+      portsUnavailable: 'O Happier não conseguiu atribuir portas a este espaço de trabalho. Tente novamente ou escolha novas portas.',
       openRunning: ({ service }: { service: string }) => `Abrir ${service} em execução`,
       exitCode: ({ code }: { code: string }) => `Código de saída ${code}`,
       docker: {

@@ -34,7 +34,7 @@ import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 
 import { LocalServiceActionFailureNotice } from './LocalServiceActionFailureNotice';
 import { ServiceOutputDisclosure } from './ServiceOutputDisclosure';
-import { useLocalServiceActionRunner } from './localServiceActionOutcome';
+import { describeRetainedLocalServiceStartFailure, useLocalServiceActionRunner, type LocalServiceActionFailure } from './localServiceActionOutcome';
 import type { LocalServiceActionInvocationOptions } from './localServiceActionAdmission';
 import {
     copyLocalServiceAddress,
@@ -632,8 +632,16 @@ export function ServiceRowView(props: Readonly<{
         })();
     }, [menuPendingId, props, row.target, row.title, runner]);
 
+    // A Start accepted and then failed is retained as an operation: its typed cause reads in the same
+    // notice as a refused Start, and Retry starts it again from a cleared receipt.
+    const retainedStart = relocation.failedBeforeStop ? relocation.operation?.snapshot ?? null : null;
+    const retainedFailure = React.useMemo((): LocalServiceActionFailure | null => {
+        const presented = retainedStart ? describeRetainedLocalServiceStartFailure(retainedStart) : null;
+        return presented ? { ...presented, title: t('localServices.actions.failureTitle.start', { service: row.title }),
+            retry: canStart ? () => { relocation.clear(); handleStart(); } : null } : null;
+    }, [canStart, handleStart, relocation.clear, retainedStart, row.title]);
     // A start that collided with this project's own running instance points at it instead of repeating itself.
-    const failure = runner.failure;
+    const failure = runner.failure ?? retainedFailure;
     const collision = failure?.establishmentFailure;
     const runningTarget = collision?.cause === 'port_in_use' && collision.sameProject && collision.port !== undefined
         ? props.findRunningOpenTarget?.(collision.port, row.target) ?? null : null;
@@ -651,7 +659,7 @@ export function ServiceRowView(props: Readonly<{
                     });
                 },
             } : null}
-            onDismiss={runner.dismissFailure}
+            onDismiss={runner.failure ? runner.dismissFailure : relocation.clear}
         />
     ) : null;
 

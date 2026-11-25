@@ -11983,6 +11983,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       portInUse: ({ port }: { port: number }) => `Порт ${port} уже занят. Остановите существующий сервис или выберите другой порт.`,
       portInUseSameProject: ({ port }: { port: number }) => `Порт ${port} уже занят этим проектом. Используйте работающий сервис или выберите другой порт.`,
       processExit: ({ code }: { code: string }) => `Сервис завершился с кодом ${code}. Перед повторной попыткой проверьте подробности.`,
+      portsUnavailable: 'Happier не удалось назначить порты этому рабочему пространству. Попробуйте ещё раз или выберите новые порты.',
       openRunning: ({ service }: { service: string }) => `Открыть запущенный ${service}`,
       exitCode: ({ code }: { code: string }) => `Код завершения ${code}`,
       docker: {

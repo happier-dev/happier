@@ -11960,6 +11960,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       portInUse: ({ port }: { port: number }) => `Port ${port} jest już używany. Zatrzymaj istniejącą usługę lub wybierz inny port.`,
       portInUseSameProject: ({ port }: { port: number }) => `Port ${port} jest już używany przez ten projekt. Użyj działającej usługi lub wybierz inny port.`,
       processExit: ({ code }: { code: string }) => `Usługa zakończyła się z kodem ${code}. Przed ponowną próbą sprawdź szczegóły.`,
+      portsUnavailable: 'Happier nie mógł przypisać portów temu obszarowi roboczemu. Spróbuj ponownie lub wybierz nowe porty.',
       openRunning: ({ service }: { service: string }) => `Otwórz działającą usługę ${service}`,
       exitCode: ({ code }: { code: string }) => `Kod wyjścia ${code}`,
       docker: {

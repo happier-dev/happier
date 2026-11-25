@@ -988,6 +988,7 @@ export function resolveReasonCopy(input: Readonly<{
         : failure?.cause === 'port_in_use' && failure.port !== undefined ? t(failure.sameProject
             ? 'localServices.actions.failure.portInUseSameProject' : 'localServices.actions.failure.portInUse', { port: failure.port })
         : failure?.exitCode !== undefined ? t('localServices.actions.failure.processExit', { code: String(failure.exitCode) })
+        : failure?.cause === 'runtime_unavailable' ? t('localServices.actions.failure.portsUnavailable')
         : startFailed ? t('localServices.actions.failure.startFailed')
         : known ?? resolveGenericMessage(input.kind, input.servicesActionOffered);
     const namedBody = input.kind === 'localServiceAction' && input.serviceName && !input.serviceNamedByTitle && !stoppedService && !startFailed

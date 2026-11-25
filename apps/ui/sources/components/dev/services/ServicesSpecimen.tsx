@@ -211,7 +211,27 @@ function PublishedHeader(): React.ReactElement {
     );
 }
 
+/** A Start accepted and then failed: the retained operation's error, with its typed establishment cause. */
+const START_FAILURES = {
+    port_in_use: { cause: 'port_in_use', port: 5173, lastStderrLine: 'OSError: [Errno 98] Address already in use' },
+    process_exited: { cause: 'process_exited', exitCode: 1, lastStderrLine: 'Error: Cannot find module \'vite\'' },
+    runtime_unavailable: { cause: 'runtime_unavailable', reason: 'port_selection_failed' },
+} as const;
+export type ServicesSpecimenStartFailure = keyof typeof START_FAILURES;
+// The same checkout with docs startable, so its Start can be pressed and fail.
+const LAUNCHER_STARTABLE = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
+    v: 1, machineId: MACHINE, sessionId: SESSION, updatedAt: 3_000,
+    targets: [
+        runningTarget('web', 'web', 5173, SESSION),
+        runningTarget('storybook', 'storybook', 6006, STORYBOOK_SESSION),
+        { id: 'package:docs:dev', source: 'package_script', sourceClass: { kind: 'package_script', runTargetId: 'docs:dev', packageName: 'docs', scriptName: 'dev' },
+            machineId: MACHINE, title: 'docs', confidence: 'medium', state: 'available', actions: ['start'], commandPreview: 'yarn docs:dev' },
+    ],
+});
+
 export function ServicesSpecimen(props: Readonly<{ phone: boolean; scan?: 'denied'; remote?: boolean; ports?: 'own' | 'unavailable';
+    /** Start fails with this retained establishment cause (press a row's Start). */
+    startFailure?: ServicesSpecimenStartFailure;
     /** A Home that does not offer Local services (`server_disabled`, `unsupported`, `unknown`). */
     availability?: FeatureAvailabilityArm }>): React.ReactElement {
     const [scope, setScope] = React.useState<ServicesScope>('workspace');
@@ -238,7 +258,7 @@ export function ServicesSpecimen(props: Readonly<{ phone: boolean; scan?: 'denie
                         <PaneHeaderSlotScope slotKey="services">
                             <DetectedLocalServicesPane
                                 inventoryState={props.scan === 'denied' ? INVENTORY_SCAN_DENIED : props.ports ? INVENTORY_PORTS : INVENTORY}
-                                launcherState={props.ports ? LAUNCHER_PORTS : LAUNCHER}
+                                launcherState={props.ports ? LAUNCHER_PORTS : props.startFailure ? LAUNCHER_STARTABLE : LAUNCHER}
                                 scopeNote={scopeNote}
                                 onShowServiceTerminal={async () => null}
                                 sessionId={SESSION}
@@ -246,7 +266,9 @@ export function ServicesSpecimen(props: Readonly<{ phone: boolean; scan?: 'denie
                                 onChangeScope={setScope}
                                 machine={MACHINE_ONLINE}
                                 onOpenServiceInBrowser={NOOP}
-                                onStartLauncherTarget={NOOP}
+                                onStartLauncherTarget={props.startFailure ? async () => ({ ok: false,
+                                    errorCode: 'plugin_managed_service_establishment_failed', error: 'plugin_managed_service_establishment_failed',
+                                    details: { establishmentFailure: START_FAILURES[props.startFailure!] } }) : NOOP}
                                 onTerminateDetectedService={NOOP}
                                 onForgetDetectedService={onForget}
                                 onCopyServiceUrl={async () => true}

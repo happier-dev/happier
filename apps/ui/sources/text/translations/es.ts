@@ -12131,6 +12131,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
       portInUse: ({ port }: { port: number }) => `El puerto ${port} ya está en uso. Detén el servicio existente o elige otro puerto.`,
       portInUseSameProject: ({ port }: { port: number }) => `Este proyecto ya usa el puerto ${port}. Usa el servicio en ejecución o elige otro puerto.`,
       processExit: ({ code }: { code: string }) => `El servicio terminó con el código ${code}. Consulta los detalles antes de reintentarlo.`,
+      portsUnavailable: 'Happier no pudo asignar puertos a este espacio de trabajo. Inténtalo de nuevo o elige puertos nuevos.',
       openRunning: ({ service }: { service: string }) => `Abrir ${service} en ejecución`,
       exitCode: ({ code }: { code: string }) => `Código de salida ${code}`,
       docker: {

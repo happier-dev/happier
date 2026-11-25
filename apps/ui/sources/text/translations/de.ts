@@ -12002,6 +12002,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
       portInUse: ({ port }: { port: number }) => `Port ${port} wird bereits verwendet. Beende den bestehenden Dienst oder wähle einen anderen Port.`,
       portInUseSameProject: ({ port }: { port: number }) => `Port ${port} wird bereits von diesem Projekt verwendet. Nutze den laufenden Dienst oder wähle einen anderen Port.`,
       processExit: ({ code }: { code: string }) => `Der Dienst wurde mit Code ${code} beendet. Prüfe die Details vor einem erneuten Versuch.`,
+      portsUnavailable: 'Happier konnte diesem Arbeitsbereich keine Ports zuweisen. Versuche es erneut oder wähle neue Ports.',
       openRunning: ({ service }: { service: string }) => `Laufenden Dienst ${service} öffnen`,
       exitCode: ({ code }: { code: string }) => `Exitcode ${code}`,
       docker: {

@@ -9900,6 +9900,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
       portInUse: ({ port }: { port: number }) => `連接埠 ${port} 已被佔用。請停止現有服務或選擇其他連接埠。`,
       portInUseSameProject: ({ port }: { port: number }) => `此專案已在使用連接埠 ${port}。請使用正在執行的服務或選擇其他連接埠。`,
       processExit: ({ code }: { code: string }) => `服務已結束，代碼為 ${code}。重試前請查看詳細資料。`,
+      portsUnavailable: 'Happier 無法為此工作區分配連接埠。請重試，或選擇新的連接埠。',
       openRunning: ({ service }: { service: string }) => `開啟執行中的 ${service}`,
       exitCode: ({ code }: { code: string }) => `結束代碼 ${code}`,
       docker: {

@@ -12428,6 +12428,7 @@ localTailscale: {
       portInUse: ({ port }: { port: number }) => `ポート ${port} は使用中です。既存のサービスを停止するか、別のポートを選んでください。`,
       portInUseSameProject: ({ port }: { port: number }) => `このプロジェクトはポート ${port} を使用中です。実行中のサービスを使うか、別のポートを選んでください。`,
       processExit: ({ code }: { code: string }) => `サービスはコード ${code} で終了しました。再試行する前に詳細を確認してください。`,
+      portsUnavailable: 'Happier はこのワークスペースにポートを割り当てられませんでした。もう一度試すか、新しいポートを選んでください。',
       openRunning: ({ service }: { service: string }) => `実行中の ${service} を開く`,
       exitCode: ({ code }: { code: string }) => `終了コード ${code}`,
       docker: {

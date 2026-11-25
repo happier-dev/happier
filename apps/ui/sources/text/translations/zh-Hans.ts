@@ -11766,6 +11766,7 @@ export const zhHans: TranslationStructure = {
       portInUse: ({ port }: { port: number }) => `端口 ${port} 已被占用。请停止现有服务或选择其他端口。`,
       portInUseSameProject: ({ port }: { port: number }) => `此项目已在使用端口 ${port}。请使用正在运行的服务或选择其他端口。`,
       processExit: ({ code }: { code: string }) => `服务已退出，代码为 ${code}。重试前请查看详情。`,
+      portsUnavailable: 'Happier 无法为此工作区分配端口。请重试，或选择新的端口。',
       openRunning: ({ service }: { service: string }) => `打开正在运行的 ${service}`,
       exitCode: ({ code }: { code: string }) => `退出代码 ${code}`,
       docker: {

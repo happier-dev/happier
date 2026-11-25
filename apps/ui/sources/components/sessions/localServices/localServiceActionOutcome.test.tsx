@@ -32,6 +32,7 @@ vi.mock('@/modal', async () => {
 import {
     readLocalServiceActionOutcome,
     describeLocalServiceActionFailure,
+    describeRetainedLocalServiceStartFailure,
     presentLocalServiceActionFailure,
     useLocalServiceActionRunner,
 } from './localServiceActionOutcome';
@@ -546,5 +547,33 @@ describe('useLocalServiceActionRunner', () => {
         expect(modalSpies.alert.mock.calls[0]?.[1]).not.toContain(RPC_ERROR_CODES.FORBIDDEN);
         expect(modalSpies.alert.mock.calls[0]?.[1]).not.toContain('private transport detail');
         expect(value.current?.pendingId).toBeNull();
+    });
+});
+
+describe('describeRetainedLocalServiceStartFailure', () => {
+    // The retained Start operation's error, as `action.operations.get` returns it since 86f2ef5019c.
+    const retained = (establishmentFailure: Record<string, unknown>) => ({
+        actionId: 'localServices.launcher.start', state: 'failed' as const,
+        error: { errorCode: 'plugin_managed_service_establishment_failed', error: 'plugin_managed_service_establishment_failed',
+            details: { establishmentFailure } },
+    });
+
+    it.each([
+        ['port_in_use', { cause: 'port_in_use', port: 33239, lastStderrLine: 'OSError: [Errno 98] Address already in use' }, '33239'],
+        ['process_exited', { cause: 'process_exited', exitCode: 3 }, '3'],
+        ['runtime_unavailable', { cause: 'runtime_unavailable', reason: 'port_selection_failed' }, null],
+    ])('says the %s cause in words from the operation\'s details, with the code kept under Details', (_cause, establishmentFailure, fact) => {
+        const presented = describeRetainedLocalServiceStartFailure(retained(establishmentFailure));
+        expect(presented).not.toBeNull();
+        expect(presented?.body).not.toBe(t('localServices.actions.failure.startFailed'));
+        if (fact) expect(presented?.body).toContain(fact);
+        expect(presented?.body).not.toContain('plugin_managed_service_establishment_failed');
+        expect(presented?.details).toContain('plugin_managed_service_establishment_failed');
+        expect(presented?.establishmentFailure).toEqual(establishmentFailure);
+    });
+
+    it('reads nothing from a Start that has not failed or from another Action', () => {
+        expect(describeRetainedLocalServiceStartFailure({ ...retained({ cause: 'process_exited', exitCode: 1 }), state: 'running' })).toBeNull();
+        expect(describeRetainedLocalServiceStartFailure({ ...retained({ cause: 'process_exited', exitCode: 1 }), actionId: 'projects.service.relocate' })).toBeNull();
     });
 });

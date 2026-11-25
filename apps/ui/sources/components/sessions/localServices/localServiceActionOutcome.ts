@@ -4,6 +4,7 @@ import { MachineServiceControlResultV1Schema } from '@happier-dev/protocol/actio
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { LocalServiceNativePrerequisiteV1Schema, type LocalServiceNativePrerequisiteV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import { LocalServiceEstablishmentFailureV1Schema, type LocalServiceEstablishmentFailureV1 } from '@happier-dev/protocol/local/services/launcher/v1';
+import { LOCAL_SERVICE_LAUNCHER_START_ACTION_ID_V1 } from '@happier-dev/protocol/local/services/actionIdsV1';
 
 import { Modal } from '@/modal';
 import { isLocalServiceActionRefusedByPolicy, resolveReasonCopy } from '@/sync/domains/surfaces/copy';
@@ -229,6 +230,25 @@ export function describeLocalServiceStartFailure(target: LocalServiceLaunchTarge
     return { reasonCode: failure.reasonCode, ...describeLocalServiceActionFailure({
         reasonCode: failure.reasonCode, serviceName: failure.serviceName, serviceTarget: target,
     }) };
+}
+
+/**
+ * A retained Start operation that failed after its request was accepted. Its error carries the same
+ * typed cause and `details.establishmentFailure` as a refused launcher response, so it is read by the
+ * one classifier and worded by the one presenter: the row says the port, the exit or the runtime, not
+ * only that the Service failed.
+ */
+export function describeRetainedLocalServiceStartFailure(snapshot: Readonly<{ actionId: string; state: string; error?: unknown }>):
+    (ReturnType<typeof describeLocalServiceActionFailure> & Readonly<{ reasonCode: string | null;
+        establishmentFailure?: LocalServiceEstablishmentFailureV1; failureCause?: ActionFailureCauseV1 }>) | null {
+    const error = asRecord(snapshot.error);
+    if (snapshot.actionId !== LOCAL_SERVICE_LAUNCHER_START_ACTION_ID_V1 || snapshot.state !== 'failed' || !error) return null;
+    const outcome = readFailureOutcome({ ...error, ok: false });
+    if (outcome.kind !== 'failed') return null;
+    return { reasonCode: outcome.reasonCode,
+        ...(outcome.establishmentFailure ? { establishmentFailure: outcome.establishmentFailure } : {}),
+        ...(outcome.failureCause ? { failureCause: outcome.failureCause } : {}),
+        ...describeLocalServiceActionFailure(outcome) };
 }
 
 export type LocalServiceActionRunner = Readonly<{
