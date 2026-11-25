@@ -16827,7 +16827,7 @@ const traditionalChinese: TeamsTranslationRoot = {
             label: '正在顯示此 Home 最後已知的資料。',
         },
         errors: {
-            loadFailed: "無法載入此資訊。請重試。",
+            loadFailed: "無法載入此資訊。",
             generic: '操作未完成，沒有任何內容被變更。',
             policySaveFailed: '無法儲存此團隊設定。請檢查目前值後重試。',
             signInOutdated: '此裝置需要較新的登入才能使用團隊。',

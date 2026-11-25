@@ -16887,7 +16887,7 @@ const spanish: TeamsTranslationRoot = {
             label: 'Mostrando los últimos datos conocidos de este Home.',
         },
         errors: {
-            loadFailed: "No se pudo cargar esta información. Inténtalo de nuevo.",
+            loadFailed: "No se pudo cargar esta información.",
             generic: 'No se pudo completar. No se cambió nada.',
             policySaveFailed: 'No se pudo guardar esta configuración del equipo. Revisa los valores actuales e inténtalo de nuevo.',
             signInOutdated: 'Los equipos necesitan un inicio de sesión más reciente en este dispositivo.',

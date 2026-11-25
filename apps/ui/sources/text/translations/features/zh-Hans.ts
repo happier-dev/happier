@@ -16827,7 +16827,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
             label: '正在显示此 Home 最后已知的数据。',
         },
         errors: {
-            loadFailed: "无法加载此信息。请重试。",
+            loadFailed: "无法加载此信息。",
             generic: '操作未完成，没有任何内容被更改。',
             policySaveFailed: '无法保存此团队设置。请检查当前值后重试。',
             signInOutdated: '此设备需要更新的登录才能使用团队。',

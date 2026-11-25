@@ -16765,7 +16765,7 @@ const german: TeamsTranslationRoot = {
             label: 'Es werden die zuletzt bekannten Daten dieses Homes angezeigt.',
         },
         errors: {
-            loadFailed: "Diese Informationen konnten nicht geladen werden. Versuche es erneut.",
+            loadFailed: "Diese Informationen konnten nicht geladen werden.",
             generic: 'Das hat nicht geklappt. Es wurde nichts geändert.',
             policySaveFailed: 'Diese Team-Einstellung konnte nicht gespeichert werden. Prüfe die aktuellen Werte und versuche es erneut.',
             signInOutdated: 'Teams brauchen auf diesem Gerät eine neuere Anmeldung.',

@@ -17008,7 +17008,7 @@ const french: TeamsTranslationRoot = {
             label: 'Affichage des dernières données connues pour ce Home.',
         },
         errors: {
-            loadFailed: "Ces informations n’ont pas pu être chargées. Réessaie.",
+            loadFailed: "Ces informations n’ont pas pu être chargées.",
             generic: 'L’opération n’a pas abouti. Rien n’a été modifié.',
             policySaveFailed: 'Ce réglage de l’équipe n’a pas pu être enregistré. Vérifie les valeurs actuelles et réessaie.',
             signInOutdated: 'Les équipes demandent une connexion plus récente sur cet appareil.',

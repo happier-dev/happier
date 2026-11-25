@@ -16965,7 +16965,7 @@ const catalan: TeamsTranslationRoot = {
             label: 'Es mostren les darreres dades conegudes d’aquest Home.',
         },
         errors: {
-            loadFailed: "No s’ha pogut carregar aquesta informació. Torna-ho a provar.",
+            loadFailed: "No s’ha pogut carregar aquesta informació.",
             generic: 'No s’ha pogut completar. No s’ha canviat res.',
             policySaveFailed: 'No s’ha pogut desar aquesta configuració del Team. Revisa els valors actuals i torna-ho a provar.',
             signInOutdated: 'Els Teams necessiten un inici de sessió més recent en aquest dispositiu.',

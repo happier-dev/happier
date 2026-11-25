@@ -16951,7 +16951,7 @@ const italian: TeamsTranslationRoot = {
             label: 'Vengono mostrati gli ultimi dati noti di questo Home.',
         },
         errors: {
-            loadFailed: "Non è stato possibile caricare queste informazioni. Riprova.",
+            loadFailed: "Non è stato possibile caricare queste informazioni.",
             generic: 'Operazione non riuscita. Non è stato modificato nulla.',
             policySaveFailed: 'Non è stato possibile salvare questa impostazione del team. Controlla i valori attuali e riprova.',
             signInOutdated: 'I team richiedono un accesso più recente su questo dispositivo.',

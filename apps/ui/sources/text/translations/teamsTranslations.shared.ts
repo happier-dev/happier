@@ -187,7 +187,7 @@ export const english = {
             label: 'Showing the last known data for this Home.',
         },
         errors: {
-            loadFailed: "This information couldn’t be loaded. Try again.",
+            loadFailed: "This information couldn’t be loaded.",
             generic: 'That did not go through. Nothing was changed.',
             policySaveFailed: 'This Team setting could not be saved. Review the current values and try again.',
             outcomeUnknown: 'The Home may have completed this change. Refresh the Team before trying again.',

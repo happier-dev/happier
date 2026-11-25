@@ -16979,7 +16979,7 @@ const polish: TeamsTranslationRoot = {
             label: 'Pokazujemy ostatnie znane dane tego Home.',
         },
         errors: {
-            loadFailed: "Nie udało się wczytać tych informacji. Spróbuj ponownie.",
+            loadFailed: "Nie udało się wczytać tych informacji.",
             generic: 'Operacja nie doszła do skutku. Nic nie zostało zmienione.',
             policySaveFailed: 'Nie udało się zapisać tego ustawienia zespołu. Sprawdź bieżące wartości i spróbuj ponownie.',
             signInOutdated: 'Zespoły wymagają nowszego logowania na tym urządzeniu.',
