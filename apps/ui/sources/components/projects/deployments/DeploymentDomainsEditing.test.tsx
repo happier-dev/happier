@@ -17,6 +17,7 @@ import { t } from '@/text';
 import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
 import type { DomainIngressInspection } from './DeploymentDomainIngressFields';
 
+vi.mock('yaml', { spy: true });
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
 );
@@ -651,17 +652,24 @@ describe('Environment → Domains: Service defaults for saved Compose and apps (
 
   it('offers a Port choice only when the service declares more than one port (DEPLOY-REACCEPT-1113 D6)', async () => {
     const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const { parse } = await import('yaml');
+    const document = 'services:\n  app:\n    image: nginx:alpine\n    expose:\n      - "80"\n      - "443"\n';
+    const countParses = () => vi.mocked(parse).mock.calls.filter(([source]) => source === document).length;
+    const beforeOpen = countParses();
     const detail = withDatabase({ kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`,
-      document: 'services:\n  app:\n    image: nginx:alpine\n    expose:\n      - "80"\n      - "443"\n',
-      profiles: [], services: ['app'], primaryService: 'app' });
+      document, profiles: [], services: ['app'], primaryService: 'app' });
     const { screen, controller, settle } = await renderDomains(detail, [], domainActions(detail));
     try {
       expect(await settle(id)).not.toBeNull();
+      await act(async () => {});
+      expect(countParses(), 'Compose parses before Add').toBe(beforeOpen);
       await screen.pressByTestIdAsync(id);
       const select = (testID: string) => screen.findAllByType(DropdownMenu).find(node => node.props.testID === testID);
-      await act(async () => {
-        await vi.waitFor(() => expect(select(`${id}.port`)?.props.items.map((item: { id: string }) => item.id)).toEqual(['80', '443']));
+      await vi.waitFor(async () => {
+        await act(async () => {});
+        expect(select(`${id}.port`)?.props.items.map((item: { id: string }) => item.id)).toEqual(['80', '443']);
       });
+      expect(countParses()).toBe(beforeOpen + 1);
       // Nothing is chosen yet, so the field shows the choose placeholder, never the first port as if picked (D9).
       const { ValueFieldSelect } = await import('@/components/ui/forms/ValueFieldSelect');
       const port = screen.findAllByType(ValueFieldSelect).find(node => node.props.testID === `${id}.port`);

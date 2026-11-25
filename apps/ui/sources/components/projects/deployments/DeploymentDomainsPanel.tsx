@@ -134,12 +134,14 @@ export function DeploymentDomainsPanel(
   const content = editing?.content ?? null;
   // A recorded export names a service's port; otherwise the port its stored Compose service declares fills Port.
   const explicitExports = content?.ownServer?.serviceExports ?? NO_EXPORTS;
-  const storedDocument = content?.definition.kind === 'stored' ? content.definition.document : null;
+  const storedDocument = adding && editing?.targetLink && content?.definition.kind === 'stored'
+    ? content.definition.document : null;
   const [declared, setDeclared] = React.useState<Readonly<{
     document: string; services: readonly string[]; exports: readonly RouteExport[];
   }> | null>(null);
+  const declaredDocument = declared?.document;
   React.useEffect(() => {
-    if (!storedDocument) return;
+    if (!storedDocument || declaredDocument === storedDocument) return;
     let current = true;
     void readDeploymentComposeServiceFacts(storedDocument).then(facts => {
       if (current) setDeclared({ document: storedDocument, services: facts.services, exports: facts.containerPorts });
@@ -147,7 +149,7 @@ export function DeploymentDomainsPanel(
       // Compose that does not parse declares no port; Port stays typed and the add's own check refuses it.
     });
     return () => { current = false; };
-  }, [storedDocument]);
+  }, [storedDocument, declaredDocument]);
   const routeExports = React.useMemo(() => {
     const declaredExports = declared && declared.document === storedDocument ? declared.exports : NO_EXPORTS;
     if (declaredExports.length === 0) return explicitExports;
