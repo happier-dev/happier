@@ -227,11 +227,12 @@ UNAVAILABLE (it proved nothing, so the next kick checks HEAD again) and releases
 `check.lock`. A checker bed that `stack qa-bed create` has not finished seeding
 (no `qa-bed/seed.json`) is UNAVAILABLE too.
 
-A committed-revision reload refuses before any preparation when the shared
-checkout's `pnpm-lock.yaml` differs from HEAD's (`working_lockfile_differs_from_head`),
-naming the lane whose board post names that write, because no revision can then
-adopt the dependency snapshot. A Stack whose overlay declares the lockfile is not
-refused.
+A committed-revision reload selects dependencies from the revision it builds.
+Revision trees reuse a matching published installation or prepare a frozen
+installation for the selected inputs. A web export that captures a revision
+without a tree can use the checkout only when its published installation matches
+that revision. Edits to the shared checkout's lockfile do not queue unrelated
+revision reloads.
 
 QA source stacks run a committed revision plus only the files the Stack declares
 as its own uncommitted overlay. Other lanes' edits in the shared checkout never

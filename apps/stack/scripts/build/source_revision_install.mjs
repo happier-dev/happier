@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
-import { cp, link, lstat, mkdir, readdir, readFile, readlink, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { cp, link, lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { mountCapturedWorkspaceDependencies, readBuildInputDependencies, withBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
@@ -19,6 +19,7 @@ import { resolveServerGeneratedClients } from './server_generated_clients.mjs';
  * own lockfile pins different ones (2c8b5a872a: Prisma 6 schema, checkout Prisma 7, P1012).
  */
 export const INSTALLS = 'installs';
+export const REVISION_DEPENDENCIES_MISMATCH_CODE = 'HAPPIER_SOURCE_REVISION_DEPENDENCIES_MISMATCH';
 /** Shared with the base marker name. */
 const INSTALL_MARKER = '.happier-revision-tree.json';
 
@@ -330,14 +331,35 @@ async function writeRevisionDependencyInputs({ descriptor, outputDir }) {
   }
 }
 
+async function readRevisionDependencyIdentity({ descriptor, inputsDir, env }) {
+  await mkdir(inputsDir, { recursive: true });
+  await writeRevisionDependencyInputs({ descriptor, outputDir: inputsDir });
+  const { installIdentity } = await inspectDependencyRefresh({ installDir: inputsDir, env });
+  return installIdentity;
+}
+
+/** A descriptor-only web capture mounts the checkout installation. A revision
+ * tree uses its pinned installation instead and does not need this assertion. */
+export async function assertRevisionCheckoutDependencies({ repoDir, descriptor, scratchRoot, env }) {
+  await mkdir(scratchRoot, { recursive: true });
+  const inputsDir = await mkdtemp(join(scratchRoot, '.tmp-dependency-inputs-'));
+  try {
+    const identity = await readRevisionDependencyIdentity({ descriptor, inputsDir, env });
+    const checkout = await readBuildInputDependencies({ sourceDir: repoDir, env });
+    if (checkout.identity !== identity) {
+      throw Object.assign(new Error(`[source-ui] revision ${descriptor.key} needs dependency installation ${identity}; use a prepared revision tree or publish that installation in the checkout`),
+        { code: REVISION_DEPENDENCIES_MISMATCH_CODE });
+    }
+  } finally {
+    await rm(inputsDir, { recursive: true, force: true });
+  }
+}
+
 /** The revision's dependency identity and, when already available, its root:
  * the checkout when its published installation has that identity, or the
  * published installation of that identity. `root: null` means it must be installed. */
 async function inspectRevisionDependencies({ repoDir, descriptor, treesRoot, scratch, env }) {
-  const inputsDir = join(scratch, 'inputs');
-  await mkdir(inputsDir, { recursive: true });
-  await writeRevisionDependencyInputs({ descriptor, outputDir: inputsDir });
-  const { installIdentity: identity } = await inspectDependencyRefresh({ installDir: inputsDir, env });
+  const identity = await readRevisionDependencyIdentity({ descriptor, inputsDir: join(scratch, 'inputs'), env });
   // A checkout no refresh owner has published (no marker) is installed from its own current inputs.
   const checkout = (await readBuildInputDependencies({ sourceDir: repoDir, env })).identity
     ?? (await inspectDependencyRefresh({ installDir: resolveDependencyInstallRoot(repoDir), env })).installIdentity;

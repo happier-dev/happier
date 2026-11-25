@@ -351,6 +351,24 @@ test('stacks on one revision share one base tree; each runs only its own declare
   assert.equal(cloneInfo.ino, baseInfo.ino);
 });
 
+test('upgrading a same-cut base for daemon UI leaves the running support inputs read-only', { skip: process.platform === 'win32' }, async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const treesRoot = fixture.path('trees');
+  const { descriptorPath } = await resolveSourceTreeRevision({ repoDir, treesRoot,
+    rev: 'HEAD', overlay: [], outputDir: fixture.path('descriptors') });
+  const plain = await prepareStackSourceRevisionTree({ repoDir, treesRoot, descriptorPath,
+    treeDir: fixture.path('stacks/plain/tree') });
+  const nativeInput = 'apps/cli/native/version.txt';
+  const before = await lstat(join(plain.treeDir, nativeInput));
+  assert.equal(before.mode & 0o222, 0);
+  const upgrade = await prepareStackSourceRevisionTree({ repoDir, treesRoot, descriptorPath,
+    treeDir: fixture.path('stacks/daemon/tree'), preparePluginUi: true });
+  assert.equal(upgrade.baseBuilt, true);
+  assert.equal(upgrade.supportFingerprint, plain.supportFingerprint);
+  assert.equal((await lstat(join(plain.treeDir, nativeInput))).mode, before.mode,
+    'retiring the base must not chmod the other reload’s hardlinked native support inputs');
+});
+
 test('a cold source reload prepares one shared base for the server and daemon', async t => {
   const { fixture, repoDir } = await createRevisionFixture(t);
   const descriptor = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'),

@@ -151,7 +151,9 @@ test('a base installs its revision\'s lockfile, never another lane\'s uncommitte
 test('a base reuses the checkout installation when it is exactly the revision\'s dependency identity', async t => {
   const context = await createPnpmRevisionFixture(t);
   await publishCheckoutInstall(context);
-  const { baseDir } = await prepareHeadBase(context, 'clean');
+  const lockfile = 'pnpm-lock.yaml';
+  await context.write(lockfile, (await readFile(join(context.repoDir, lockfile), 'utf8')) + '\n# another lane\n');
+  const { baseDir } = await prepareHeadBase(context, 'dirty-lockfile');
   assert.equal(loadFixtureDep(baseDir), 'committed');
   const checkoutDep = await realpath(join(context.repoDir, 'apps/server/node_modules/fixture-dep/index.js'));
   const baseDep = await realpath(join(baseDir, 'apps/server/node_modules/fixture-dep/index.js'));

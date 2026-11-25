@@ -198,7 +198,8 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, preparePluginUi
     // Those generated inputs follow the revision's sources and its own tools
     // (its Prisma), never the checkout's.
     await deriveRevisionGeneratedInputs({ captureDir: staging, sourceDir: install.dir, env, signal });
-    await rm(baseDir, { recursive: true, force: true });
+    // Unlink the old base without chmodding files still shared with live clones.
+    removeOwnedDirectorySync(baseDir);
     await rename(staging, baseDir);
   } catch (error) {
     await rm(staging, { recursive: true, force: true });
@@ -315,8 +316,7 @@ async function sweepUnreferencedSupport({ treesRoot }) {
     if (keep.has(name)) continue;
     // The support owner's own artifact lock: never delete one it is publishing.
     await withWorkspaceBundleLock(async () => {
-      await setBundleReadOnly(join(supportDir, name), false);
-      await rm(join(supportDir, name), { recursive: true, force: true });
+      removeOwnedDirectorySync(join(supportDir, name));
     }, { lockPath: `${join(supportDir, name)}.lock`, errorLabel: 'daemon support artifact build lock' });
     deleted.push(name);
   }
@@ -398,7 +398,7 @@ async function readJson(path) {
  * The requesting Stack's reference is registered under the same lock, so a
  * concurrent sweep can never delete a base a clone is about to read.
  */
-export async function prepareSourceRevisionBase({ repoDir, treesRoot, descriptor, treeDir, preparePluginUi = false, env = process.env, signal, requestBaseArchive }) {
+export async function prepareSourceRevisionBase({ repoDir, treesRoot, descriptor, treeDir, preparePluginUi = false, env = process.env, signal, requestBaseArchive, cloneInto }) {
   const baseDir = join(resolve(treesRoot), descriptor.revision);
   await mkdir(treesRoot, { recursive: true });
   return await withBaseLock(baseDir, signal, async () => {
@@ -418,14 +418,17 @@ export async function prepareSourceRevisionBase({ repoDir, treesRoot, descriptor
         await chmod(resolveDependencyRefreshMarkerPath(baseDir), 0o444);
       } finally { await chmod(modules, 0o555); }
     }
-    if (marker && built) await setSourceRevisionTreeWritable(baseDir);
     if (built) await buildRevisionBase({ repoDir: resolve(repoDir), baseDir, descriptor, preparePluginUi,
       installIdentity: marker?.installIdentity, env, signal, requestBaseArchive });
+    // Another preparation can upgrade this base in place. Complete the clone
+    // under the same lock, before the old directory can be replaced.
+    if (cloneInto) await cloneTree(baseDir, cloneInto, { base: baseDir, clone: treeDir });
     if (treeDir) {
       await mkdir(`${baseDir}.refs`, { recursive: true });
       await writeFile(referencePath(baseDir, treeDir), JSON.stringify({ treeDir, pid: process.pid }));
     }
-    return { baseDir, built };
+    const installIdentity = built ? (await readJson(join(baseDir, BASE_MARKER))).installIdentity : marker.installIdentity;
+    return { baseDir, built, installIdentity };
   });
 }
 
@@ -469,8 +472,7 @@ export async function sweepSourceRevisionBases({ treesRoot, signal }) {
         // Clones taken before a failed rebuild still name it; their next release retires it.
         if (await isLiveReference(baseDir, await readJson(join(`${baseDir}.refs`, name)))) return;
       }
-      await setSourceRevisionTreeWritable(dir);
-      await rm(dir, { recursive: true, force: true });
+      removeOwnedDirectorySync(dir);
       if (dir === baseDir) {
         await rm(`${baseDir}.refs`, { recursive: true, force: true });
         removeOwnedDirectorySync(sourceGuestPayloadRetainedRoot(baseDir));
@@ -487,8 +489,7 @@ export async function sweepSourceRevisionBases({ treesRoot, signal }) {
         else await rm(path, { force: true });
       }
       if (live) return;
-      await setSourceRevisionTreeWritable(baseDir);
-      await rm(baseDir, { recursive: true, force: true });
+      removeOwnedDirectorySync(baseDir);
       await rm(`${baseDir}.refs`, { recursive: true, force: true });
       await rm(`${baseDir}${DESCRIBED_SUFFIX}`, { force: true });
       removeOwnedDirectorySync(sourceGuestPayloadRetainedRoot(baseDir));
@@ -530,28 +531,28 @@ export async function prepareStackSourceRevisionTree({ repoDir, treesRoot, treeD
   repoDir = resolve(repoDir);
   treeDir = resolve(treeDir);
   let descriptor = await readTreeDescriptor(descriptorPath);
-  let base;
-  try {
-    base = await prepareSourceRevisionBase({ repoDir, treesRoot, descriptor, treeDir, preparePluginUi, env, signal, requestBaseArchive });
-  } catch (error) {
-    // A described ancestor is only a cache candidate: it may be an intermediate
-    // commit whose generation or import graph the requested revision repairs.
-    // Build the requested commit directly; never retry an invalid requested tree.
-    if (!descriptor.commit || signal?.aborted) throw error;
-    console.error(`[source-tree] base=${descriptor.revision} preparation failed; preparing requested revision=${descriptor.commit.revision} directly`);
-    const tree = { ...descriptor.tree };
-    for (const [path, entry] of Object.entries(descriptor.commit.paths)) {
-      if (entry) tree[path] = entry;
-      else delete tree[path];
-    }
-    descriptor = { ...descriptor, revision: descriptor.commit.revision, tree, commit: undefined };
-    base = await prepareSourceRevisionBase({ repoDir, treesRoot, descriptor, treeDir, preparePluginUi, env, signal, requestBaseArchive });
-  }
   const staging = `${treeDir}.tmp-${randomUUID()}`;
+  const prepareBase = () => prepareSourceRevisionBase({ repoDir, treesRoot, descriptor, treeDir, preparePluginUi,
+    env, signal, requestBaseArchive, cloneInto: staging });
+  let base;
   let overlaid = 0;
   try {
-    // Links name the published tree path; the staging directory is renamed into it.
-    await cloneTree(base.baseDir, staging, { base: base.baseDir, clone: treeDir });
+    try {
+      base = await prepareBase();
+    } catch (error) {
+      // A described ancestor is only a cache candidate: it may be an intermediate
+      // commit whose generation or import graph the requested revision repairs.
+      if (!descriptor.commit || signal?.aborted) throw error;
+      console.error(`[source-tree] base=${descriptor.revision} preparation failed; preparing requested revision=${descriptor.commit.revision} directly`);
+      const tree = { ...descriptor.tree };
+      for (const [path, entry] of Object.entries(descriptor.commit.paths)) {
+        if (entry) tree[path] = entry;
+        else delete tree[path];
+      }
+      await rm(staging, { recursive: true, force: true });
+      descriptor = { ...descriptor, revision: descriptor.commit.revision, tree, commit: undefined };
+      base = await prepareBase();
+    }
     await rm(join(staging, BASE_MARKER), { force: true });
     await writeFile(join(staging, TREE_MARKER), JSON.stringify({ baseDir: base.baseDir, revision: descriptor.commit?.revision ?? descriptor.revision }));
     // The served commit's changes since the base, from Git objects.
@@ -578,7 +579,9 @@ export async function prepareStackSourceRevisionTree({ repoDir, treesRoot, treeD
   } catch (error) {
     await rm(staging, { recursive: true, force: true });
     // The previous tree (if any) keeps its own reference; this attempt's goes.
-    if (!existsSync(join(treeDir, TREE_MARKER))) await rm(referencePath(base.baseDir, treeDir), { force: true });
+    if (!existsSync(join(treeDir, TREE_MARKER))) {
+      await rm(referencePath(join(resolve(treesRoot), descriptor.revision), treeDir), { force: true });
+    }
     throw error;
   }
   // Run where the tree's links resolve. Derivation replaces generated files
@@ -590,7 +593,7 @@ export async function prepareStackSourceRevisionTree({ repoDir, treesRoot, treeD
     await deriveDaemonPluginPublication({ treeDir, env, signal });
   }
   if (preparePluginUi && changedPaths.length) await prepareDaemonPluginUi({ treeDir, env, signal });
-  const installIdentity = (await readJson(join(base.baseDir, BASE_MARKER))).installIdentity;
+  const { installIdentity } = base;
   const supportFingerprint = await stageTreeNativeSupport({ treeDir, treesRoot,
     dependencyRootDir: revisionInstallDir(treesRoot, installIdentity), env, signal });
   await writeOwnFile(join(treeDir, TREE_MARKER), JSON.stringify({ baseDir: base.baseDir,

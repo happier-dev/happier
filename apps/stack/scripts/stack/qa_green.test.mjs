@@ -94,6 +94,24 @@ test('the green state belongs to the repository, whatever stack the committer\'s
   assert.ok(plain.startsWith(storage));
 });
 
+test('a green check delegates dependency selection to the pinned reload despite a dirty working lockfile', async t => {
+  const { repoDir, commit } = await gitRepo(t);
+  const lockfile = join(repoDir, 'pnpm-lock.yaml');
+  await writeFile(lockfile, "lockfileVersion: '9.0'\n");
+  const revision = await commit('selected');
+  await writeFile(lockfile, "lockfileVersion: '9.0'\n# another lane\n");
+  const storage = join(repoDir, '..', 'stacks');
+  await mkdir(join(storage, 'bed', 'qa-bed'), { recursive: true });
+  await writeFile(join(storage, 'bed', 'env'), '');
+  await writeFile(join(storage, 'bed', 'qa-bed', 'seed.json'), '{}');
+  // The pinned reload is the child-process boundary.
+  await mkdir(join(repoDir, 'apps/stack/scripts'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/stack/scripts/repo_local.mjs'),
+    'console.log(JSON.stringify({ status: "READY", revision: process.argv.at(-1).slice(6) }));');
+  assert.deepEqual(await checkRevisionOnBed({ repoDir, stackName: 'bed', revision,
+    env: { ...process.env, HAPPIER_STACK_STORAGE_DIR: storage } }), { status: 'READY', revision });
+});
+
 // 2026-11-18: a green check sat 4 h inside its bed reload (a remote command whose script frame never came) holding
 // check.lock, and stopping the checker left that reload running. Cancelling a check must stop its reload and say
 // the check proved nothing, so the lock is released and the next kick checks HEAD again.

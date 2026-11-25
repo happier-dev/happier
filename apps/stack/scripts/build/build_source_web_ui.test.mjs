@@ -25,11 +25,12 @@ import { sanitizeStackTestRunnerEnv } from '../utils/test/test_env.mjs';
 import { recordStackRuntimeStart, readStackRuntimeStateFile } from '../utils/stack/runtime_state.mjs';
 import { resolveSourceQaUiMode } from '../runtime/shared/borrowed_expo.mjs';
 import { beginPendingSourceStart } from '../runtime/shared/pending_source_start.mjs';
-import { resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath, withDependencyRefreshLock } from '../utils/proc/dependency_refresh.mjs';
+import { inspectDependencyRefresh, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath, withDependencyRefreshLock } from '../utils/proc/dependency_refresh.mjs';
 import { withPatchedProcessEnv } from '../testkit/core/env_scope.mjs';
 import { resolveHeavyweightMemoryFloorKiB } from '../utils/dev_targets/remote_commands.mjs';
 import { isJsonOwnerFileLockActive } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { isWorkspaceBundleLockActive, withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
+import { resolveSourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 import { resolveSourceTreeRevision, writeSourceRevisionArchive } from './source_revision_tree.mjs';
 import { mountCapturedWorkspaceDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readSourceComponentBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
@@ -55,6 +56,54 @@ for (const mode of ['fixed', 'old', 'still-broken', 'unnamed']) {
     assert.equal(attempts, ['fixed', 'still-broken'].includes(mode) ? 2 : 1);
   });
 }
+
+test('a descriptor-only export checks the installed identity of its selected lockfile', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-web-revision-install-' });
+  const repoDir = fixture.path('repo');
+  await mkdir(join(repoDir, 'apps/ui'), { recursive: true });
+  await mkdir(join(repoDir, 'node_modules'));
+  await writeFile(join(repoDir, 'package.json'), JSON.stringify({ workspaces: ['apps/*'] }));
+  await writeFile(join(repoDir, 'apps/ui/package.json'), JSON.stringify({ name: '@happier-dev/ui' }));
+  await writeFile(join(repoDir, 'pnpm-workspace.yaml'), 'packages: [apps/*]\n');
+  await writeFile(join(repoDir, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n");
+  await writeFile(join(repoDir, '.gitignore'), 'node_modules\n');
+  const git = (...args) => execFileSync('git', ['-C', repoDir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]);
+  git('init', '--quiet');
+  git('add', '-A');
+  git('commit', '--quiet', '-m', 'selected');
+  const identity = await resolveSourceRevisionIdentity({ repoDir, rev: 'HEAD', overlay: [] });
+  const descriptorPath = await writeSourceRevisionDescriptor({ repoDir, identity, outputDir: fixture.path('descriptor'), components: ['expo'] });
+  const env = { ...process.env, HAPPIER_STACK_SKIP_REFRESH_DEPS: '1' };
+  const { installIdentity } = await inspectDependencyRefresh({ installDir: repoDir, env });
+  const marker = resolveDependencyRefreshMarkerPath(repoDir);
+  const capture = output => captureSourceWebBuildInputs({ repoDir, outputDir: fixture.path(output),
+    revision: { descriptorPath }, env });
+  const lockfile = join(repoDir, 'pnpm-lock.yaml');
+  await writeFile(lockfile, (await readFile(lockfile, 'utf8')) + '\n# another lane\n');
+  await writeFile(marker, JSON.stringify({ version: 7, identity: installIdentity }));
+  assert.equal((await capture('matching')).revision.revision, identity.revision);
+  const changed = await inspectDependencyRefresh({ installDir: repoDir, env });
+  assert.notEqual(changed.installIdentity, installIdentity);
+  await writeFile(marker, JSON.stringify({ version: 7, identity: changed.installIdentity }));
+  // Stub capacity admission only. Run the actual producer child, stderr
+  // transport, refusal mapper, and public export entry point.
+  const launcher = fixture.path('launcher.sh');
+  await writeFile(launcher, '#!/bin/sh\nwhile [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n');
+  const sourceUrl = new URL('./build_source_web_ui.mjs', import.meta.url);
+  const publicOwner = fixture.path('export-owner.mjs');
+  const source = (await readFile(sourceUrl, 'utf8'))
+    .replace("fileURLToPath(new URL('../../bin/hstack-exec', import.meta.url))", JSON.stringify(launcher));
+  await writeFile(publicOwner, relocateSourceOwnerImports(source, sourceUrl));
+  const { exportSourceWebUi: exportShared } = await import(pathToFileURL(publicOwner));
+  const stackBaseDir = fixture.path('stacks/producer');
+  const pending = await beginPendingSourceStart({ stackBaseDir });
+  t.after(() => pending.dispose());
+  await assert.rejects(exportShared({ repoDir, baseDir: fixture.path('state'), stackBaseDir, pending,
+    revision: { revision: identity.revision }, sourceRevision: { descriptorPath },
+    env: { ...buildNativeAdmissionFixtureEnv(env), HAPPIER_STACK_STACK: 'producer',
+      HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer' } }),
+  { code: 'HAPPIER_SOURCE_REVISION_DEPENDENCIES_MISMATCH', phase: 'source-producer', sourceStack: 'producer' });
+});
 
 test('a clean source tree provides the installed Pierre worker and WASM to Expo public export', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-web-pierre-worker-' });
@@ -447,6 +496,8 @@ await writeFile(join(web,'app.js'),await readFile(join(process.cwd(),'sources/ap
     HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer', HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'),
     // The fixture borrows the host's installed dependencies; pnpm installation is outside this contract.
     HAPPIER_STACK_SKIP_REFRESH_DEPS: '1' };
+  const { installIdentity } = await inspectDependencyRefresh({ installDir: repoDir, env });
+  await writeFile(resolveDependencyRefreshMarkerPath(repoDir), JSON.stringify({ version: 7, identity: installIdentity }));
   const producerBaseDir = fixture.path('stacks/producer');
   const exports = async () => JSON.parse(await readFile(counter, 'utf8').catch(() => '[]')).length;
   const publish = async rev => publishProducerSourceWebUi({ repoDir, stackBaseDir: producerBaseDir, revision: { revision: rev },

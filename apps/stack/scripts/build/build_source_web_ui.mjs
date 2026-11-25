@@ -516,7 +516,7 @@ export async function withSourceWebUiInputs({ repoDir, baseDir, env = process.en
     removeOwnedDirectorySync(workspace);
     let captured;
     try {
-      captured = await captureSourceWebBuildInputs({ repoDir: sourceDir, outputDir: workspace, signal, revision });
+      captured = await captureSourceWebBuildInputs({ repoDir: sourceDir, outputDir: workspace, signal, revision, env });
       if (tree) {
         // The copies keep the base's read-only modes; Expo rewrites copied public files.
         await setBundleReadOnly(workspace, false);

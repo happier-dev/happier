@@ -41,7 +41,7 @@ import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeCaptureUnavailable 
 import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourceReloadPluginFailures.mjs';
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
 import { readSourceSelectionPaths, readSourceSelectionRollbackPaths, sourceRecordReferencePaths } from '../runtime/shared/source_selection_rollback.mjs';
-import { readRevisionServerClientRoots, requestRevisionInstallArchive, resolveRevisionDependencyRoot, sourceRevisionTreesRoot } from './source_revision_install.mjs';
+import { REVISION_DEPENDENCIES_MISMATCH_CODE, assertRevisionCheckoutDependencies, readRevisionServerClientRoots, requestRevisionInstallArchive, resolveRevisionDependencyRoot, sourceRevisionTreesRoot } from './source_revision_install.mjs';
 import { applySourceRevision, canResolveSourceRevisions, parseSourceOverlayPaths, readSourceCaptureBuildInputs, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
 import { SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS, assertSourceRuntimeCodeAscii, dropRedundantSourceRuntimeChunkImports, stripUnusedSourceRuntimeBanners, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
@@ -118,11 +118,14 @@ async function readSharedSourceInputManifest(sharedSourceInputs) {
   return manifest;
 }
 
-export async function captureSourceWebBuildInputs({ repoDir, outputDir, component = 'expo', signal, sharedSourceInputs, revision, includeGuestPayload = false }) {
+export async function captureSourceWebBuildInputs({ repoDir, outputDir, component = 'expo', signal, sharedSourceInputs, revision, includeGuestPayload = false, env = process.env }) {
   repoDir = resolve(repoDir);
   const sharedManifest = await readSharedSourceInputManifest(sharedSourceInputs);
   const sourceDir = sharedSourceInputs?.repoDir ?? repoDir;
   const descriptor = !sharedManifest && revision ? await readSourceRevisionDescriptor(revision.descriptorPath) : null;
+  if (descriptor && component === 'expo') {
+    await assertRevisionCheckoutDependencies({ repoDir, descriptor, scratchRoot: outputDir, env });
+  }
   const inputs = await readSourceCaptureBuildInputs({ repoDir: sourceDir, component, descriptor });
   const guestInputs = includeGuestPayload && component === 'server'
     ? await readSourceCaptureBuildInputs({ repoDir: sourceDir, component: 'daemon', descriptor }) : null;
@@ -865,8 +868,10 @@ export function normalizeSourceCapturedAfter(value) {
 
 export function sourceRuntimeProducerUnavailable(cause, context) {
   const nextAction = cause.nextAction ?? 'Repair repository producer inputs and retry the Stack reload';
+  const producerCode = cause.producerFailed || cause.code === 'source_runtime_producer_failed'
+    ? 'source_runtime_producer_failed' : 'source_runtime_producer_unavailable';
   return Object.assign(new Error(`[source-bundle] repository producer ${context.producerStackName} unavailable (${cause.code ?? cause.name}): ${redactFailureDiagnostic(cause.message, context.env)}; ${nextAction}`, { cause }), {
-    code: cause.producerFailed || cause.code === 'source_runtime_producer_failed' ? 'source_runtime_producer_failed' : 'source_runtime_producer_unavailable',
+    code: cause.code === REVISION_DEPENDENCIES_MISMATCH_CODE ? cause.code : producerCode,
     reason: cause.code ?? 'producer_request_failed', phase: 'source-producer',
     retryable: cause.retryable ?? true,
     producerStackName: context.producerStackName, sourceStack: context.producerStackName,
