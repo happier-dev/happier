@@ -164,6 +164,14 @@ describe('MobileBottomChromeHost mounted chrome', () => {
         await act(async () => measurement?.props.onLayout({ nativeEvent: { layout: { height: 42.2 } } }));
         expect(screen.findHostByTestId('chrome-height')?.props.children).toBe(42);
     });
+    it('publishes the bar height in the commit that first draws the bar, before any layout event', async () => {
+        // A web layout event is delivered a task after paint, so a composer that reserved only from it painted
+        // once without the bar's room and then moved up by the bar's height (K01 cold load, 56 px at 390).
+        const screen = await renderScreen(<Harness />, {
+            createNodeMock: element => element.props.testID === 'mobile-bottom-chrome-bar' ? { offsetHeight: 56.4 } : null,
+        });
+        expect(screen.findHostByTestId('chrome-height')?.props.children).toBe(56);
+    });
     it('offers new Session creation only beside Sessions and selects Workflows from its route', async () => {
         const screen = await renderScreen(<Harness />);
         expect(screen.findByType(MainAppTabBar).props.trailingAccessory).toBeTruthy();

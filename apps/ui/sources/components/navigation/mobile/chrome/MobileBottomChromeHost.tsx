@@ -105,6 +105,12 @@ type BottomChromeItem = Readonly<{
     chromeRevision?: PresentedDetailNavigationModel['chromeRevision'];
 }>;
 
+/** A web View is its DOM element, laid out by the time a layout effect runs; native layout arrives through onLayout. */
+function readLaidOutHeight(node: unknown): number | null {
+    const height = (node as { offsetHeight?: unknown } | null)?.offsetHeight;
+    return typeof height === 'number' && height > 0 ? height : null;
+}
+
 function isSameBottomChromeItem(left: BottomChromeItem | null, right: BottomChromeItem | null): boolean {
     if (!left || !right) {
         return left === right;
@@ -526,6 +532,17 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
         }
     }, [presenter, renderedChrome.current, setBottomChromeHeight]);
 
+    // The bar's height reaches the composer's reservation in the commit that first draws the bar. A web layout
+    // event arrives a task after paint, so a composer that waited for it painted once in the bar's place and then
+    // moved up by the bar's height (K01 cold load, 56 px at 390). Later size changes still come through onLayout.
+    const currentChromeNodeRef = React.useRef<View>(null);
+    const renderedChromeKey = renderedChrome.current?.key ?? null;
+    React.useLayoutEffect(() => {
+        if (renderedChromeKey === null) return;
+        const height = readLaidOutHeight(currentChromeNodeRef.current);
+        if (height !== null) setBottomChromeHeight(height);
+    }, [renderedChromeKey, setBottomChromeHeight]);
+
     if (presenter === 'system') {
         return systemChrome ? <SystemMobileBottomChrome model={systemChrome.systemModel} hidden={resolvedChrome === null} /> : null;
     }
@@ -588,7 +605,7 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     return (
         <View pointerEvents="box-none" style={wrapperStyle}>
             {currentChromeContent ? (
-                <View onLayout={handleChromeLayout} pointerEvents="box-none" style={currentStyle}>
+                <View ref={currentChromeNodeRef} testID="mobile-bottom-chrome-bar" onLayout={handleChromeLayout} pointerEvents="box-none" style={currentStyle}>
                     {currentChromeContent}
                 </View>
             ) : null}
