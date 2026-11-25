@@ -27,6 +27,8 @@ import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListR
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import type { ApprovalSessionReadingStatus } from './useApprovalSessionReading';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import {
     describeApprovalAgent,
     describeApprovalOrigin,
@@ -93,8 +95,14 @@ export const ApprovalSessionContextCard = React.memo(function ApprovalSessionCon
     const sentenceHome = homeName ?? resolveApprovalHomeSentenceName(props.serverId);
     const sessionTitle = namedSession
         ?? (!guard && props.requesterSessionId?.trim() && props.requesterStatus !== 'resolving' ? describeUnnamedApprovalRequester(props.requesterSurface, sentenceHome) : null);
-    const agentLabel = recordingVisible ? describeApprovalAgent(props.requesterAgentId) : null;
-    const originLabel = guard ? null : describeApprovalOrigin(props.requesterSurface);
+    // The agent that asked: the request's own record, else the asking Session's Agent (R12 (d)).
+    const sessionAgentId = guard || !props.session ? null
+        : resolveAgentIdFromSessionMetadata(readSessionOwnerMetadataView(props.session));
+    const agentLabel = recordingVisible ? describeApprovalAgent(props.requesterAgentId ?? sessionAgentId) : null;
+    // A named Agent is the more exact fact than "Asked by an agent" or "Asked by Happier": one fact once.
+    const surface = props.requesterSurface.trim();
+    const originLabel = guard || (agentLabel && (surface === 'system' || surface === 'agent' || surface === 'session_agent'))
+        ? null : describeApprovalOrigin(props.requesterSurface);
     const endpointLabels = readApprovalSessionEndpointLabels({
         session: recordingVisible ? props.session : null,
         machine: null,
@@ -122,7 +130,9 @@ export const ApprovalSessionContextCard = React.memo(function ApprovalSessionCon
     // The section always leads with one main line: the session, else the Home that asked (by its
     // name, so it is not also repeated as a "Home: …" fact), else who asked and how.
     const homeLeads = !sessionTitle && !sessionResolving && Boolean(homeLabel);
-    const requesterFacts = agentLabel || originLabel ? joinHappierFacts(agentLabel, originLabel) : null;
+    // Who asked, how, and from which Home: one quiet facts line, not a separate "Home: …" label.
+    const factsHome = homeLabel && !homeLeads ? homeLabel : null;
+    const requesterFacts = agentLabel || originLabel || factsHome ? joinHappierFacts(agentLabel, originLabel, factsHome) : null;
     const factsLead = !sessionTitle && !sessionResolving && !homeLeads;
     const mainLine = guard ? t('detailPages.approval.requesterGuard') : sessionTitle ?? (homeLeads ? homeLabel : requesterFacts);
 
@@ -148,9 +158,6 @@ export const ApprovalSessionContextCard = React.memo(function ApprovalSessionCon
                     ) : null}
                     {recordingVisible && (contextLine || (!guard && props.contextFacts)) ? <ApprovalContextLine context={props.context}
                         facts={props.contextFacts} showWorkspace={!pathLabel} /> : null}
-                    {homeLabel && !homeLeads ? (
-                        <Text style={styles.homeLabel}>{t('actionConfirmations.homeTarget', { serverId: homeLabel })}</Text>
-                    ) : null}
                 </View>
 
                 {!guard && props.session?.id ? (

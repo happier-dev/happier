@@ -124,3 +124,23 @@ describe('Requested by Happier Guard', () => {
         expect(text).not.toContain('detailPages.approval.origin.system');
     });
 });
+
+// R12 (d): the card names the Agent that asked and carries the Home in the same quiet facts line.
+describe('Requested by facts line', () => {
+    it('names the asking Session\'s Agent and puts the Home in the facts line instead of "Home: …"', async () => {
+        const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { describeApprovalAgent } = await import('./approvalRequesterLabels');
+        const { joinHappierFacts } = await import('@happier-dev/plugin-ui/presentation');
+        const session = createSessionFixture({ id: 'session-1', metadata: { ...createSessionFixture().metadata!, flavor: 'claude' } });
+        const screen = await renderScreen(<ApprovalSessionContextCard session={session} sessionName="QA writer" machineLabel={null}
+            serverId="home" context={null} homeName={null} homeDisplayId="settingsAccount.thisHomeTitle"
+            requesterSessionId="session-1" requesterAgentId={null} requesterSurface="system" />);
+        const agent = describeApprovalAgent('claude');
+        expect(agent).toBeTruthy();
+        expect(screen.findByTestId('approvals.requester-origin')?.props.children)
+            .toBe(joinHappierFacts(agent, 'settingsAccount.thisHomeTitle'));
+        const text = screen.getTextContent();
+        expect(text).not.toContain('actionConfirmations.homeTarget');
+        expect(text).not.toContain('detailPages.approval.origin.system');
+    });
+});

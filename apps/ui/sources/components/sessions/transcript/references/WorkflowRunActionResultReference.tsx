@@ -190,7 +190,8 @@ function MountedWorkflowRunReference(props: Readonly<{
                 renderSurface={renderWorkUpdateCardSurface}
                 mark={<Icon name={WORKER_KIND_GLYPHS.workflow_run} size={MARK_SIZE} color={theme.colors.text.secondary} />}
                 title={(
-                    <Text numberOfLines={1} style={styles.title}>
+                    // A long Workflow name wraps to a second line rather than clipping on a phone (R12 taste).
+                    <Text numberOfLines={2} style={styles.title}>
                         <Text style={styles.verb}>{`${t('workflows.transcriptCard.startedWorkflow')} \u00b7 `}</Text>
                         {title}
                     </Text>

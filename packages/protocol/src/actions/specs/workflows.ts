@@ -18,7 +18,7 @@ export { WORKFLOW_DANGER_ACTION_IDS, WORKFLOW_READ_ACTION_IDS } from '../actionI
 
 export const WORKFLOW_ACTION_TITLES: Readonly<Record<WorkflowActionIdV1, string>> = {
   'workflow.validate': 'Validate workflow',
-  'workflow.run.start': 'Start workflow Run',
+  'workflow.run.start': 'Start workflow run',
   [WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1]: 'List workflow activity',
   'workflow.run.list': 'List workflow Runs',
   'workflow.run.summaries': 'Summarize workflow Runs',
