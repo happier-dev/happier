@@ -4,7 +4,9 @@ import { readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import type { TriageTaskWriteResultV1 } from '@happier-dev/triage-protocol/v1';
 
 /** Translate only failures received from the host Action transport, which owns dispatch evidence. */
-export function triageTaskWriteInvocationFailureV1(error: unknown): TriageTaskWriteResultV1 {
+export function triageTaskWriteInvocationFailureV1(
+    error: unknown,
+): Extract<TriageTaskWriteResultV1, { kind: 'refused' | 'uncertain' }> {
     if (!isPluginError(error)) return { kind: 'uncertain' };
     const requestId = readPluginErrorRequestIdV1(error);
     const details = error.details;

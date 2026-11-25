@@ -29,7 +29,7 @@ import { TriageSourceMark } from '../list/sourceMark.js';
 import { TriageTaskOriginLink } from './taskOrigin.js';
 import { useLinkedSessionOpen } from './useLinkedSessionOpen.js';
 import { taskWriteMessage, taskSourceLinkLabel } from '../taskWriteMessage.js';
-import { TaskWriteNotice } from './TaskWriteNotice.js';
+import { TaskWriteFailureDetails, TaskWriteNotice } from './TaskWriteNotice.js';
 import { TriageStoryFactsProvider, type TriageStoryFactsV1 } from '@happier-dev/triage-sources/ui';
 import { TriageEntryStatusMenuContext, type TriageEntryStatusMenuV1 } from '../header/entryActionControls.js';
 import { triageDetailKindHasTabsV1 } from './tabs.js';
@@ -609,12 +609,14 @@ export function TriageCreateTaskFields(props: Readonly<{
         {originContext}
         {write.originErrorLink !== 'failed' && write.originErrorLink !== 'unknown' ? null : <Stack gap="small">
           <Banner tone="warning" title={text('plugins.triage.tasks.origin.partial', 'The task was created, but its origin link is not confirmed. Repair the link without creating another task.')} />
+          <TaskWriteFailureDetails result={write.originErrorLinkFailure} />
           <Action.Control action={TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1} variant="secondary"
             title={text('plugins.triage.tasks.origin.repair', 'Repair origin link')} disabled={write.busy}
             controller={{ prepare: write.prepareOriginRepair, onSettled: execution => { write.settleOriginRepair(execution); } }} />
         </Stack>}
         {write.reviewLink !== 'failed' && write.reviewLink !== 'unknown' ? null : <Stack gap="small">
           <Banner tone="warning" title={text('plugins.triage.tasks.review.partial', 'The task was created, but its Review link is not confirmed. Repair the link without creating another task.')} />
+          <TaskWriteFailureDetails result={write.reviewLinkFailure} />
           <Action.Control action={TRIAGE_TASKS_SET_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1} variant="secondary"
             title={text('plugins.triage.tasks.review.repair', 'Repair Review link')} disabled={write.busy}
             controller={{ prepare: write.prepareReviewRepair, onSettled: execution => { write.settleReviewRepair(execution); } }} />

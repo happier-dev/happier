@@ -33,6 +33,7 @@ function hostTaskExecution(execution: PluginUiActionControlExecution): TaskExecu
 }
 type TaskAddress = Readonly<{ entryRef: TriageEntryRefV1; sourceInstanceId: string }>;
 type TaskWriteAddress = TaskAddress | Readonly<{ draftId: string }>;
+type TaskLinkFailure = ReturnType<typeof triageTaskWriteInvocationFailureV1>;
 type TaskWriteSnapshot = Readonly<{
   result: TriageTaskWriteResultV1 | null;
   busy: boolean;
@@ -43,12 +44,14 @@ type TaskWriteSnapshot = Readonly<{
   sessionLink: 'linked' | 'failed' | 'unknown' | null;
   linkSessionId: string | null;
   originErrorLink: 'linked' | 'failed' | 'unknown' | null;
+  originErrorLinkFailure: TaskLinkFailure | null;
   originError: TriageCreateTaskActionInputV1['originError'] | null;
   reviewLink: 'linked' | 'failed' | 'unknown' | null;
+  reviewLinkFailure: TaskLinkFailure | null;
   originReview: TriageCreateTaskActionInputV1['originReview'] | null;
   createdEntryRef: TriageEntryRefV1 | null;
 }>;
-const IDLE: TaskWriteSnapshot = Object.freeze({ result: null, busy: false, checking: false, rebaseFields: null, progress: null, sessionLink: null, linkSessionId: null, originErrorLink: null, originError: null, reviewLink: null, originReview: null, createdEntryRef: null });
+const IDLE: TaskWriteSnapshot = Object.freeze({ result: null, busy: false, checking: false, rebaseFields: null, progress: null, sessionLink: null, linkSessionId: null, originErrorLink: null, originErrorLinkFailure: null, originError: null, reviewLink: null, reviewLinkFailure: null, originReview: null, createdEntryRef: null });
 
 /** This is the mounted commit's state, shared by entry rather than by its row or detail renderer. */
 function createTaskWriteOperation() {
@@ -120,7 +123,8 @@ function createTaskWriteOperation() {
       active = null;
       if (result.kind !== 'uncertain') intent = null;
       publish({ result, busy: false, checking: false, rebaseFields: null,
-        progress: result.kind === 'uncertain' ? snapshot.progress : null, sessionLink, linkSessionId, originErrorLink, originError, reviewLink, originReview, createdEntryRef });
+        progress: result.kind === 'uncertain' ? snapshot.progress : null, sessionLink, linkSessionId,
+        originErrorLink, originErrorLinkFailure: null, originError, reviewLink, reviewLinkFailure: null, originReview, createdEntryRef });
       // A slow aggregate refresh never holds the confirmed write or its UI hostage.
       if (result.kind === 'applied' || result.kind === 'uncertain') void Promise.resolve().then(onApplied).catch(() => {
         host.diagnostic({ code: 'triage_task_reread_unavailable', severity: 'warning',
@@ -138,16 +142,18 @@ function createTaskWriteOperation() {
     settleReviewRepair(execution: TaskExecution) {
       if (retired || !snapshot.busy) return false;
       let reviewLink: TaskWriteSnapshot['reviewLink'];
+      let reviewLinkFailure: TaskLinkFailure | null = null;
       try {
         if (!execution.ok) throw execution.error;
         const answer = TriageSetTaskOriginReviewResultV1Schema.parse(execution.result);
         reviewLink = answer.status === 'linked' ? 'linked' : 'failed';
       } catch (error) {
-        reviewLink = triageTaskWriteInvocationFailureV1(error).kind === 'refused' ? 'failed' : 'unknown';
+        reviewLinkFailure = triageTaskWriteInvocationFailureV1(error);
+        reviewLink = reviewLinkFailure.kind === 'refused' ? 'failed' : 'unknown';
       }
       if (retired) return false;
       active = null;
-      publish({ ...snapshot, busy: false, reviewLink });
+      publish({ ...snapshot, busy: false, reviewLink, reviewLinkFailure });
       return reviewLink === 'linked';
     },
     prepareOriginRepair() {
@@ -160,16 +166,18 @@ function createTaskWriteOperation() {
     settleOriginRepair(execution: TaskExecution) {
       if (retired || !snapshot.busy) return false;
       let originErrorLink: TaskWriteSnapshot['originErrorLink'];
+      let originErrorLinkFailure: TaskLinkFailure | null = null;
       try {
         if (!execution.ok) throw execution.error;
         const answer = TriageSetTaskOriginErrorResultV1Schema.parse(execution.result);
         originErrorLink = answer.status === 'linked' ? 'linked' : 'failed';
       } catch (error) {
-        originErrorLink = triageTaskWriteInvocationFailureV1(error).kind === 'refused' ? 'failed' : 'unknown';
+        originErrorLinkFailure = triageTaskWriteInvocationFailureV1(error);
+        originErrorLink = originErrorLinkFailure.kind === 'refused' ? 'failed' : 'unknown';
       }
       if (retired) return false;
       active = null;
-      publish({ ...snapshot, busy: false, originErrorLink });
+      publish({ ...snapshot, busy: false, originErrorLink, originErrorLinkFailure });
       return originErrorLink === 'linked';
     },
     async checkAgain(host: Pick<PluginUiHostApi, 'executeAction'>, signal?: AbortSignal) {

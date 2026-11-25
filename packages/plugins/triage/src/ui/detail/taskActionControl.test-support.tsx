@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { createPluginUiActionControlTestHost, createPluginUiTestkit, type PluginUiTestkitOptions } from '@happier-dev/plugin-sdk/testing';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { isPluginActionHandlerInvocationNotStartedAdvisory } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
@@ -30,7 +30,7 @@ export async function createTaskActionControlTestkit(options: Omit<TestkitOption
   adapter: TestkitOptions['adapter'] | ((controls: ActionControlHost) => TestkitOptions['adapter']);
 }>) {
   const rawTaskWrites: string[] = [];
-  // This external executor fixture does not simulate cancellation or request correlation.
+  // The external executor fixture uses a stable gesture ID for all mounted Actions.
   const executorSignal = new AbortController().signal;
   const controls = createPluginUiActionControlTestHost(async request => {
     try {
@@ -38,7 +38,9 @@ export async function createTaskActionControlTestkit(options: Omit<TestkitOption
       return { ok: true, result };
     } catch (error) {
       const code = error instanceof PluginError ? error.code : 'internal_error';
-      return { ok: false, errorCode: code, error: code };
+      const requestId = readPluginErrorRequestIdV1(error);
+      return { ok: false, errorCode: code, error: error instanceof PluginError ? error.message : code,
+        ...(requestId === undefined ? {} : { requestId }) };
     }
   });
   function HostSlot() {

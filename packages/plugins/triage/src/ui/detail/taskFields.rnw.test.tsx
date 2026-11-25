@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { afterEach, expect, it } from 'vitest';
 import { createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { defineUiSurface, Text } from '@happier-dev/plugin-ui';
@@ -89,6 +90,8 @@ it('creates once from an error and repairs only its failed origin link before op
       }
       expect(action).toBe('tasks/set-origin-error-v1');
       expect(input).toMatchObject({ originError, entryRef: { source: source.configuredInstance.instance.source, ...source.getResult.localRef } });
+      if (actions.length === 2) throw new PluginError({ code: 'triage_tasks_origin_forbidden',
+        message: 'The owner refused the origin link.', details: { requestId: 'request-origin-repair-1' } });
       return { v: 1, status: 'linked' };
     } },
   });
@@ -98,7 +101,12 @@ it('creates once from an error and repairs only its failed origin link before op
   expect(fixture.rawTaskWrites).toEqual([]);
   expect(created).toEqual([]);
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Repair origin link' })); });
-  expect(actions).toEqual(['tasks/create-v1', 'tasks/set-origin-error-v1']);
+  expect(created).toEqual([]);
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Details' })); });
+  expect(await fixture.getByText('request-origin-repair-1')).toBeDefined();
+  expect(await fixture.getByText('triage_tasks_origin_forbidden')).toBeDefined();
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Repair origin link' })); });
+  expect(actions).toEqual(['tasks/create-v1', 'tasks/set-origin-error-v1', 'tasks/set-origin-error-v1']);
   expect(created).toEqual([{ source: source.configuredInstance.instance.source, ...source.getResult.localRef }]);
 });
 
@@ -128,6 +136,8 @@ it('creates once from selected Review findings and repairs only the relationship
       }
       expect(action).toBe('tasks/set-origin-review-v1');
       expect(input).toMatchObject({ originReview, entryRef: { source: source.configuredInstance.instance.source, ...source.getResult.localRef } });
+      if (actions.length === 2) throw new PluginError({ code: 'triage_tasks_review_forbidden',
+        message: 'The owner refused the Review link.', details: { requestId: 'request-review-repair-1' } });
       return { v: 1, status: 'linked' };
     } },
   });
@@ -136,7 +146,12 @@ it('creates once from selected Review findings and repairs only the relationship
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Create task' })); });
   expect(created).toEqual([]);
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Repair Review link' })); });
-  expect(actions).toEqual(['tasks/create-v1', 'tasks/set-origin-review-v1']);
+  expect(created).toEqual([]);
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Details' })); });
+  expect(await fixture.getByText('request-review-repair-1')).toBeDefined();
+  expect(await fixture.getByText('triage_tasks_review_forbidden')).toBeDefined();
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Repair Review link' })); });
+  expect(actions).toEqual(['tasks/create-v1', 'tasks/set-origin-review-v1', 'tasks/set-origin-review-v1']);
   expect(created).toEqual([{ source: source.configuredInstance.instance.source, ...source.getResult.localRef }]);
 });
 
