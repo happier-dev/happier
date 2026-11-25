@@ -84,6 +84,7 @@ import {
 import { createIdentityAdministrationClient } from './identityAdministrationClient';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { ReservedShape } from '@/components/ui/lists/ReservedShape';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 
 /** Consume the catalog's exact Team-owned GitHub creation decision. */
@@ -432,13 +433,7 @@ const AuthorizedAuthenticationContent = React.memo(
             }
           >
             {state.items.length === 0 ? (
-              <SurfaceStateCard
-                testID="team-authentication-empty"
-                kind="empty"
-                size="line"
-                title={t('teams.authentication.empty')}
-                reason={t('teams.authentication.policy.admissionNeeds.connection')}
-              />
+              <ConnectionsEmptyLine />
             ) : (
               state.items.map((connection) => (
                 <ConnectionRow
@@ -821,8 +816,8 @@ const AuthenticationFacts = React.memo(function AuthenticationFacts(
 
 /**
  * The connections the Team summary proves exist: an "Only these" policy names each accepted Team connection, and
- * each holds a connection row's place. Otherwise the count is unknown and one quiet line waits, in the empty
- * line's own shape (the same line component), so an empty list replaces it without a move.
+ * each holds a connection row's place. Otherwise the count is unknown and one quiet line waits over the empty
+ * line's own box (that line drawn unseen), so an empty list replaces it without a move.
  */
 function TeamConnectionsReserve(props: Readonly<{ team: TeamSectionContext['team'] }>) {
   const policy = props.team.policy.authenticationPolicy;
@@ -838,7 +833,22 @@ function TeamConnectionsReserve(props: Readonly<{ team: TeamSectionContext['team
       accessibilityLabel={t('common.loading')}
     />
   ) : (
-    <QuietLoadingLine testID="team-authentication-loading" />
+    <ReservedShape shape={<ConnectionsEmptyLine />}>
+      <QuietLoadingLine testID="team-authentication-loading" />
+    </ReservedShape>
+  );
+}
+
+/** A Team without sign-in connections: one quiet line naming the state and what adding one does. */
+function ConnectionsEmptyLine() {
+  return (
+    <SurfaceStateCard
+      testID="team-authentication-empty"
+      kind="empty"
+      size="line"
+      title={t('teams.authentication.empty')}
+      reason={t('teams.authentication.policy.admissionNeeds.connection')}
+    />
   );
 }
 
@@ -914,14 +924,18 @@ function AuthenticationLoading(known: AuthenticationLoadingKnown) {
         description={t('teams.authentication.connectionsDescription')}
         action={<HeldSectionAction kind="connection" />}
       >
-        <QuietLoadingLine testID="team-authentication-loading" />
+        <ReservedShape shape={<ConnectionsEmptyLine />}>
+          <QuietLoadingLine testID="team-authentication-loading" />
+        </ReservedShape>
       </ItemGroup>
       <ItemGroup
         title={t('teams.authentication.directory.section')}
         description={t('teams.authentication.directory.overviewSubtitle')}
         action={<HeldSectionAction kind="directory" />}
       >
-        <QuietLoadingLine testID="team-authentication-directory-loading" />
+        <ReservedShape shape={<DirectoryEmptyLine />}>
+          <QuietLoadingLine testID="team-authentication-directory-loading" />
+        </ReservedShape>
       </ItemGroup>
     </>
   );

@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { StyleSheet, View } from 'react-native';
 
 import {
   TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1,
@@ -13,6 +12,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
+import { ReservedShape } from '@/components/ui/lists/ReservedShape';
 import type { useTeamSharedResourcesSummary } from '@/hooks/teams/useTeamSharedResourcesSummary';
 import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { t } from '@/text';
@@ -135,22 +135,16 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
         })}
       >
         {loadingWithNothing ? (
-          <View>
-            <View testID="team-overview-shared-reserve" style={styles.unseen} accessibilityElementsHidden
-              importantForAccessibility="no-hide-descendants" aria-hidden pointerEvents="none">
-              <SharedEmptyRow teamName={props.teamName} />
-            </View>
-            <View style={styles.over}>
-              <ItemLoadStateRows
-                testID="team-overview-shared-loading"
-                state={{ kind: 'loading' }}
-                rows={LOADING_ROWS}
-                lines={1}
-                leadingMark="logo"
-                showDivider={false}
-              />
-            </View>
-          </View>
+          <ReservedShape shapeTestID="team-overview-shared-reserve" shape={<SharedEmptyRow teamName={props.teamName} />}>
+            <ItemLoadStateRows
+              testID="team-overview-shared-loading"
+              state={{ kind: 'loading' }}
+              rows={LOADING_ROWS}
+              lines={1}
+              leadingMark="logo"
+              showDivider={false}
+            />
+          </ReservedShape>
         ) : null}
         {failedWithNothing ? (
           <ItemLoadStateRows
@@ -241,8 +235,3 @@ function SharedEmptyRow(props: Readonly<{ teamName: string }>) {
     />
   );
 }
-
-const styles = StyleSheet.create({
-  unseen: { opacity: 0 },
-  over: { position: 'absolute', top: 0, left: 0, right: 0 },
-});

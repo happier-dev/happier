@@ -555,6 +555,9 @@ describe('the Authentication page while its Team is read', () => {
         expect(screen.findAllByType(ItemLoadStateRows)).toHaveLength(0);
         expect(stateLine(screen, 'team-authentication-loading')).toBeDefined();
         expect(stateLine(screen, 'team-authentication-directory-loading')).toBeDefined();
+        // Each quiet line stands over its empty line's own box (that line drawn unseen), so an empty answer moves nothing.
+        expect(stateLine(screen, 'team-authentication-empty')?.title).toBe('teams.authentication.empty');
+        expect(stateLine(screen, 'team-authentication-directory')?.title).toBe('teams.authentication.directory.empty');
         expect(screen.findByTestId('team-authentication-add-connection')).not.toBeNull();
         expect(screen.findByTestId('team-authentication-directory-add')).not.toBeNull();
     });
