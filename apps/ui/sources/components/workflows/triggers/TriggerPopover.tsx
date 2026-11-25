@@ -30,6 +30,8 @@ import { Popover } from '@/components/ui/popover';
 import { PhoneSheetPushContext, usePhoneSheetPush, type PhoneSheetPushStack } from '@/components/ui/popover/phoneSheetPush';
 import { Text } from '@/components/ui/text/Text';
 import { resolveWorkflowProblemPresentation, type WorkflowProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { useActiveServerAccountScope, useSessionReferenceTarget } from '@/sync/domains/state/storage';
 import { t } from '@/text';
@@ -80,7 +82,7 @@ import { LocalDateTimeEditor } from '@/components/ui/dateTime/LocalDateTimeEdito
 import { parseHappierLocalDateTime } from '@happier-dev/plugin-ui/presentation';
 import { useTriggerScheduleCommands } from './useTriggerScheduleCommands';
 import { useProposedScheduleOccurrence } from './useProposedScheduleOccurrence';
-import { useNotifyMeChannelOptions, useTriggerWorkflowDefinition } from './useTriggerThenOptions';
+import { useNotifyMeChannelOptions, useTriggerWorkflowDefinition, type SendToOption } from './useTriggerThenOptions';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { SessionTriggerPullRequestPicker } from './SessionTriggerPullRequestPicker';
 import { WorkflowExamplesSection } from '../library/WorkflowExamplesSection';
@@ -453,6 +455,26 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     const sessionScoped = triggerScope === 'session';
     const showThen = props.showThen ?? true;
     const needsTarget = showThen && !observationOnly;
+    const notifyChannels = useNotifyMeChannelOptions(
+        needsTarget && then.kind === 'notifyMe' && props.submitRefusal === undefined && props.pushedPage === undefined
+            && (!eventEditing || when.kind !== 'pluginEvent'),
+        props.accountLifetime,
+    );
+    const notifyChannelFailure = notifyChannels.result?.kind === 'failed' ? notifyChannels.result : null;
+    const optionReadFailure = then.kind === 'runWorkflow' && workflow.status === 'failed'
+        ? { message: t('workflows.loadFailedBody'), retry: workflow.retry }
+        : notifyChannelFailure
+            ? {
+                message: resolveActionExecutionErrorMessage(
+                    notifyChannelFailure.error instanceof WorkflowActionError
+                        ? { errorCode: notifyChannelFailure.error.rawCode, details: notifyChannelFailure.error.rawDetails }
+                        : notifyChannelFailure.error,
+                    resolveWorkflowProblemPresentation(notifyChannelFailure.error).message,
+                    { closedCodesOnly: true },
+                ),
+                retry: notifyChannels.retry,
+            }
+            : null;
     const target = needsTarget ? buildTriggerTarget(then, triggerScope) : null;
     const promptDestination = useSessionReferenceTarget(
         needsTarget && then.kind === 'sendPrompt' && then.runsIn?.kind === 'session' ? then.runsIn.sessionId : '', originServerId,
@@ -729,6 +751,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                         then={then}
                                         onChange={changeThen}
                                         workflowOptions={props.workflowOptions}
+                                        sendToOptions={notifyChannels.result?.kind === 'failed' ? null : notifyChannels.result?.options ?? []}
                                         scope={triggerScope}
                                         machineId={props.machineId ?? null}
                                         serverId={props.serverId ?? null}
@@ -750,9 +773,9 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                     {then.kind === 'runWorkflow' && workflow.status === 'loading' ? (
                                         <Item title={t('common.loading')} mode="info" />
                                     ) : null}
-                                    {then.kind === 'runWorkflow' && workflow.status === 'failed' ? (
-                                        <Item title={t('workflows.loadFailedTitle')} subtitle={t('workflows.loadFailedBody')}
-                                            detail={t('workflows.retry')} onPress={workflow.retry} />
+                                    {optionReadFailure ? (
+                                        <Item title={t('workflows.loadFailedTitle')} subtitle={optionReadFailure.message}
+                                            detail={t('workflows.retry')} onPress={optionReadFailure.retry} />
                                     ) : null}
                                     {/* Its own steps open as a workflow to review: a destination, so a row
                                         under the steps that says what happens, not one more foot button. No
@@ -908,6 +931,7 @@ function ThenRows(props: Readonly<{
     then: TriggerThenValue;
     onChange: (next: TriggerThenValue) => void;
     workflowOptions: readonly TriggerWorkflowOption[];
+    sendToOptions: readonly SendToOption[] | null;
     scope: 'session' | 'account';
     machineId: string | null;
     serverId: string | null;
@@ -982,11 +1006,12 @@ function ThenRows(props: Readonly<{
                         allowEmpty
                         onCommit={(title) => props.onChange({ ...then, title })}
                     />
-                    <SendToSelect
+                    {props.sendToOptions === null ? null : <SendToSelect
                         testID={`${props.testID}-send-to`}
+                        options={props.sendToOptions}
                         selected={then.channels}
                         onChange={(channels) => props.onChange({ ...then, channels })}
-                    />
+                    />}
                 </>
             );
         case 'runWorkflow':
@@ -1216,12 +1241,13 @@ function DoActionRows(props: Readonly<{
  */
 function SendToSelect(props: Readonly<{
     testID: string;
+    options: readonly SendToOption[];
     selected: readonly string[];
     onChange: (channels: readonly string[]) => void;
 }>) {
     const [open, setOpen] = React.useState(false);
     const accessoryLayout = useTriggerFieldLayout();
-    const options = useNotifyMeChannelOptions();
+    const { options } = props;
     const labels = new Map(options.map((option) => [option.value, option.label]));
     const summary = props.selected.length === 0
         ? t('workflows.triggers.then.sendToDefault')

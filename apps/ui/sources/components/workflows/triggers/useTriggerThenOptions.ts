@@ -11,6 +11,7 @@ import {
 } from '@/components/workflows/presentation/workflowReferenceOptions';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 export { useWorkflowReferenceDefinition as useTriggerWorkflowDefinition } from '@/components/workflows/presentation/useWorkflowReferenceDefinition';
 
@@ -51,19 +52,34 @@ export function useTriggerThenOptions(options?: Readonly<{ libraryEnabled?: bool
 }
 
 export type SendToOption = Readonly<{ value: string; label: string }>;
+type NotifyMeChannelRead =
+    | Readonly<{ kind: 'ready'; options: readonly SendToOption[] }>
+    | Readonly<{ kind: 'failed'; error: unknown }>;
 
 /**
  * Notify me's **Send to** choices (F2): the Notify me Action's own `channels` options source,
  * resolved through the Action front door only while the row is shown.
  */
-export function useNotifyMeChannelOptions(): readonly SendToOption[] {
-    const accountLifetime = useWorkflowAccountLifetime();
-    const [options, setOptions] = React.useState<readonly SendToOption[]>([]);
+export function useNotifyMeChannelOptions(enabled: boolean, explicitLifetime?: ServerAccountScopeLifetime | null) {
+    const addressedLifetime = useWorkflowAccountLifetime(explicitLifetime);
+    const activeLifetime = useActiveServerAccountScopeLifetime();
+    const accountLifetime = addressedLifetime === undefined ? activeLifetime : addressedLifetime;
+    const [attempt, setAttempt] = React.useState(0);
+    const [read, setRead] = React.useState<Readonly<{
+        accountLifetime: typeof accountLifetime;
+        attempt: number;
+        result: NotifyMeChannelRead;
+    }> | null>(null);
+    const retry = React.useCallback(() => setAttempt(current => current + 1), []);
     React.useEffect(() => {
+        if (!enabled) {
+            setRead(null);
+            return;
+        }
         const controller = new AbortController();
         const outputSchema = getActionSpec('action.options.resolve').outputSchema;
         void callWorkflowAction({
-            ...(accountLifetime === undefined ? {} : { accountLifetime }),
+            ...(addressedLifetime === undefined ? {} : { accountLifetime: addressedLifetime }),
             actionId: 'action.options.resolve',
             input: { actionId: NOTIFY_ME_ACTION_ID, fieldPath: 'channels' },
             parseResult: (value) => {
@@ -78,10 +94,17 @@ export function useNotifyMeChannelOptions(): readonly SendToOption[] {
                     : [];
             },
             signal: controller.signal,
-        }).then((resolved) => {
-            if (!controller.signal.aborted) setOptions(resolved);
-        }).catch(() => undefined);
+        }).then(
+            options => {
+                if (!controller.signal.aborted) setRead({ accountLifetime, attempt, result: { kind: 'ready', options } });
+            },
+            (error: unknown) => {
+                if (!controller.signal.aborted) setRead({ accountLifetime, attempt, result: { kind: 'failed', error } });
+            },
+        );
         return () => controller.abort();
-    }, [accountLifetime]);
-    return options;
+    }, [accountLifetime, addressedLifetime, attempt, enabled]);
+    const result = enabled && read !== null && read.accountLifetime === accountLifetime && read.attempt === attempt
+        ? read.result : null;
+    return { result, retry };
 }

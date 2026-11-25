@@ -380,6 +380,51 @@ describe('Run a workflow trigger inputs', () => {
         expect(screen.findByTestId('when-choice-configure-event')).not.toBeNull();
     });
 
+    it('shows a refused Send to read and retries without losing the Notify me draft', async () => {
+        const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const { createHydratedPlainMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+        const profileId = await home.addHome({ name: 'Notification channels', serverUrl: 'https://trigger-channels.test',
+            accountId: 'account-a', currentAccount: true, serverIdentityId: 'srv_trigger-channels' });
+        serverId = resolveServerProfileScopeIdForIdentifier(profileId);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        publishAppliedActiveServerRuntimeAvailability(true);
+        getStorage().setState({ profileScope: { serverId, accountId: 'account-a' }, settingsScope: { serverId, accountId: 'account-a' } });
+        const availableChannel = { value: 'plugin/channel', label: 'Plugin channel' };
+        let refused = true;
+        const boundary = await answerExternalActionAccountForHome(home, serverId, {
+            machineId: 'notification-machine', actionId: 'action.options.resolve', tokenEpoch: 0,
+            execute: () => refused ? null : { actionId: null, fieldPath: null,
+                optionsSourceId: 'notifications.channels.available', options: [availableChannel] },
+            failure: result => result === null ? { errorCode: 'target_unavailable', error: 'target_unavailable',
+                details: { code: 'target_unavailable', reason: 'action_unavailable' } } : null,
+        });
+        await publishMachineInventoryForTest({ serverId, accountId: 'account-a' }, [createHydratedPlainMachineFixture({
+            id: boundary.machine.id, accountId: 'account-a', machine: { activeAt: Date.now() },
+        })]);
+        home.answer(serverId, '/v1/machines', { body: [boundary.machine] });
+
+        const screen = await renderScreen(<TriggerPopover testID="notify-options" anchorRef={React.createRef()}
+            onRequestClose={vi.fn()} whenKinds={['schedule']} sessionId={null}
+            initial={{ when: { kind: 'schedule', expression: '54 * * * *', timezone: null,
+                schedule: { repeat: 'hourly', hour: 9, minute: 54, day: 1 } }, enabled: true,
+                then: { kind: 'notifyMe', title: '', message: 'Retain this reminder', channels: [] } }}
+            workflowOptions={[]} onSubmit={vi.fn<ExistingTriggerSubmit>(async () => {})} />);
+        await waitForHomeGovernance(() => expect(home.requestsFor('/v1/actions/action.options.resolve')).toHaveLength(1));
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('workflows.problem.preExecution.actionUnavailable'));
+        expect(screen.findByTestId('notify-options-send-to')).toBeNull();
+        const retry = screen.findByProps({ title: 'workflows.loadFailedTitle', detail: 'workflows.retry' });
+        expect(retry).not.toBeNull();
+        refused = false;
+        await act(async () => retry.props.onPress());
+        await waitForHomeGovernance(() => expect(screen.findAllByType(DropdownMenu)
+            .find(node => node.props.testID === 'notify-options-send-to')?.props.items)
+            .toMatchObject([{ id: availableChannel.value, title: availableChannel.label }]));
+        expect(screen.getTextContent()).not.toContain('workflows.problem.preExecution.actionUnavailable');
+        expect(screen.findByProps({ accessibilityLabel: 'workflows.triggers.then.message', value: 'Retain this reminder' })).not.toBeNull();
+    });
+
     it('edits an hourly schedule as Every hour at a minute, never as its cron, and writes the minute back', async () => {
         const onSubmit = vi.fn<ExistingTriggerSubmit>(async () => {});
         const screen = await renderScreen(<TriggerPopover testID="hourly" anchorRef={React.createRef()}
