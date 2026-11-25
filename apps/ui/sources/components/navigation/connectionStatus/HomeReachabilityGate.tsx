@@ -3,7 +3,7 @@ import { resolveHref } from 'expo-router/build/link/href';
 
 import { buildHomeRecoveryHref } from '@/components/settings/server/navigation/serverSettingsRouteParams';
 import { useAppUpdateStatus } from '@/updates/useAppUpdateStatus';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { selectHomeAdmission } from '@/sync/runtime/connectivity/homeAdmissionReadiness';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 
@@ -250,13 +250,12 @@ function HomeAdmissionRecoveryCard(props: Readonly<{
             const component = 'component' in requirement ? requirement.component : 'client';
             const code = 'error' in requirement ? requirement.error : requirement.kind;
             if (component === 'client') return <HomeAdmissionClientUpdateCard diagnosticCode={code} />;
-            // The Account has not been admitted, so its private Updates screen
-            // cannot run a Home or Machine action. Open the app's fixed help link.
+            // The external-link Action runs on this client before the Home admits the Account.
             const guide = component === 'server' ? 'server--self-host-updates' : 'cli-updates-binary-vs-npm';
             return <SurfaceStateCard kind="unavailable" size="page" testID="home-unreachable"
                 title={t('updates.summary.required')} diagnosticCode={code} diagnosticDetail={component}
                 action={props.summary.action === 'update' ? { testID: 'home-admission-update', label: t('updates.action.openUpdates'),
-                    onPress: () => openExternalUrl('https://docs.happier.dev/releases/updates#' + guide) } : undefined} />;
+                    onPress: () => requestOpenExternalUrl('https://docs.happier.dev/releases/updates#' + guide) } : undefined} />;
         }
         case 'offline':
         case 'unavailable':

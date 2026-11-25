@@ -358,10 +358,26 @@ export async function expectColdHomeLaunch(
                     expect(Boolean(screen.findHostByTestId(`home-admission-${action}`))).toBe(connection.action === action);
                 }
                 if (connection.guidanceUrl) {
+                    expect(getCurrentAuth()?.isAuthenticated).toBe(true);
+                    expect(isAppliedActiveServerRuntimeAvailable()).toBe(false);
                     const open = vi.fn();
                     vi.stubGlobal('open', open);
-                    await pressTestInstanceAsync(screen.findHostByTestId('home-admission-update')!);
-                    expect(open).toHaveBeenCalledWith(connection.guidanceUrl, '_blank', 'noopener,noreferrer');
+                    const pressUpdates = () => pressTestInstanceAsync(screen.findHostByTestId('home-admission-update'));
+                    await pressUpdates();
+                    expect(open).toHaveBeenCalledExactlyOnceWith(connection.guidanceUrl, '_blank', 'noopener,noreferrer');
+
+                    const { settings } = storage.getState();
+                    try {
+                        await act(async () => {
+                            storage.setState({ settings: { ...settings, actionsSettingsV1: { v: 1,
+                                actions: { 'links.openExternal': { enabled: false } } } } });
+                        });
+                        open.mockClear();
+                        await pressUpdates();
+                        expect(open).not.toHaveBeenCalled();
+                    } finally {
+                        await act(async () => { storage.setState({ settings }); });
+                    }
                 }
                 if (connection.status) expect(screen.getTextContent()).toContain(`HTTP ${connection.status}`);
                 if (connection.retryPending) {
