@@ -268,32 +268,50 @@ afterEach(async () => {
   clearActiveAccountSettingsSnapshot();
 });
 
+const sharedLaunchSecret = {
+  resourceId: 'shared-key',
+  ownerAccountId: 'owner-account',
+  displayName: 'Shared key',
+  kind: 'apiKey',
+  encryptionMode: 'plain',
+  revision: 7,
+} as const;
+
 it.each([
   {
     name: 'missing',
     requestedRevision: 1,
     resources: [],
-    expectedCode: 'provider_binding_changed',
+    expectedCode: 'provider_secret_missing',
+    expectedReason: 'reference_forbidden',
+  },
+  {
+    name: 'withdrawn',
+    requestedRevision: 6,
+    resources: [{ ...sharedLaunchSecret, materialStatus: 'access_removed' as const, storedContent: null }],
+    expectedCode: 'provider_secret_missing',
+    expectedReason: 'reference_forbidden',
   },
   {
     name: 'stale',
     requestedRevision: 6,
     resources: [{
-      resourceId: 'shared-key',
-      ownerAccountId: 'owner-account',
-      displayName: 'Shared key',
-      kind: 'apiKey' as const,
-      encryptionMode: 'plain' as const,
-      revision: 7,
-      materialStatus: 'access_removed' as const,
-      storedContent: null,
+      ...sharedLaunchSecret,
+      materialStatus: 'ready' as const,
+      storedContent: sealSavedSecretResourceStoredContentV1({
+        resourceId: sharedLaunchSecret.resourceId,
+        mode: 'plain',
+        content: { v: 1, name: sharedLaunchSecret.displayName, kind: 'apiKey', value: 'fixture-value' },
+      }),
     }],
     expectedCode: 'provider_binding_changed',
+    expectedReason: 'reference_stale',
   },
 ])('rejects a $name launch secret reference before creating any Run effect', async ({
   requestedRevision,
   resources,
   expectedCode,
+  expectedReason,
 }) => {
   const createRuntime = vi.fn(() => createTestExecutionRunHostRuntime());
   const sendAcp = vi.fn(async () => {});
@@ -334,7 +352,10 @@ it.each([
     },
   })).rejects.toMatchObject({
     code: expectedCode,
-    details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
+    details: {
+      executionRunStart: { v: 1, runCreation: 'noRunCreated' },
+      providerError: { code: expectedCode, savedSecretReason: expectedReason },
+    },
   });
 
   expect(createRuntime).not.toHaveBeenCalled();
@@ -1116,7 +1137,8 @@ describe('ExecutionRunManager (review intent)', () => {
       sessionId: 'parent-session', sidechainId: 'sidechain-a', intent: 'review',
     } as unknown as ExecutionRunState);
     internals.controllers.set('run-a', {
-      kind: 'backend', cancelled: false, pendingInputAcceptance: Promise.resolve('accepted'),
+      kind: 'backend', backend: createTestExecutionRunHostRuntime(),
+      cancelled: false, pendingInputAcceptance: Promise.resolve('accepted'),
       currentInputTurn: {
         turnId: 'turn-a', inputIds: ['input-a', 'input-b'], state: 'active',
       },
@@ -1127,7 +1149,7 @@ describe('ExecutionRunManager (review intent)', () => {
       localId: 'turn-a:task_complete',
       meta: { runtimeTurnId: 'turn-a' },
       provenance: { kind: 'non_dependent', source: 'external' } as const,
-      // This transcript-only fixture owns its OS publication lifetime; it does not provision a Run backend.
+      // This transcript-only fixture owns its publication lifetime without provisioning the fixture backend.
       admission: { signal: new AbortController().signal },
     };
     await target.enqueueUserTextMessageCommitted?.('Native child input', { ...opts, localId: 'child-user' });
@@ -2602,7 +2624,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     }
   });
 
-  it('retains a provider-undelivered permission response target for replay', async () => {
+  it('keeps a provider-undelivered permission request pending until a retry is delivered', async () => {
     let agentState: AgentState = {
       requests: Object.create(null),
       completedRequests: Object.create(null),
@@ -2617,10 +2639,9 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       },
       logPrefix: '[ExecutionRunPermissionUndeliveredTest]',
     });
-    const providerDelivery = vi.fn(async () => ({
-      delivered: false as const,
-      reason: 'unknown_request' as const,
-    }));
+    const providerDelivery = vi.fn()
+      .mockResolvedValueOnce({ delivered: false, reason: 'unknown_request' })
+      .mockResolvedValueOnce({ delivered: true });
     const sendAcp = vi.fn(async (_provider: unknown, _body: ACPMessageData) => {});
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
@@ -2674,16 +2695,19 @@ describe('ExecutionRunManager (long-lived runs)', () => {
         responseTarget,
       });
 
-      await expect(permissionStore.completeRequest({
-        requestId,
-        status: 'approved',
-        decision: 'approved',
-      })).resolves.toBe(true);
-
-      await vi.waitFor(() => expect(providerDelivery).toHaveBeenCalledOnce());
-      expect(permissionStore.readCompletedResponseTarget(requestId)).toMatchObject({ responseTarget });
+      const answer = { requestId, status: 'approved', decision: 'approved' } as const;
+      await expect(permissionStore.completeRequest(answer)).resolves.toBe(false);
+      expect(providerDelivery).toHaveBeenCalledExactlyOnceWith(providerRequestId, true);
+      expect(permissionStore.readOutstandingRequest(requestId)).toMatchObject({ responseTarget });
+      expect(agentState.completedRequests?.[requestId]).toBeUndefined();
       expect(manager.get(run.runId)?.status).toBe('running');
       expect(sendAcp.mock.calls.some(([, body]) => body.type === 'permission-response')).toBe(false);
+
+      await expect(permissionStore.completeRequest(answer)).resolves.toBe(true);
+      expect(permissionStore.readOutstandingRequest(requestId)).toBeNull();
+      expect(agentState.completedRequests?.[requestId]).toMatchObject({ status: 'approved' });
+      expect(permissionStore.readCompletedResponseTarget(requestId)).toBeNull();
+      expect(providerDelivery).toHaveBeenCalledTimes(2);
     } finally {
       await manager.dispose();
     }
@@ -2704,7 +2728,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
         sessionId: 'parent_session_1',
         intent: 'delegate',
         backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
-        instructions: 'first',
+        instructions: '',
         permissionMode: 'default',
         retentionPolicy: 'resumable',
         runClass: 'long_lived',
@@ -2716,6 +2740,8 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       };
       const retired = internals.controllers.get(started.runId);
       if (!retired || retired.kind !== 'backend') throw new Error('expected backend controller');
+      await retired.provisioningPromise;
+      expect(manager.get(started.runId)?.status).toBe('running');
       const respondToPermission = vi.fn()
         .mockResolvedValueOnce({ delivered: false as const, reason: 'unknown_request' as const })
         .mockResolvedValue({ delivered: true as const });
@@ -2738,7 +2764,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
           backendId: run.backendId,
           runtimeKind: 'acp',
           providerRequestId: 'provider-request-reused',
-          controllerOccurrenceId: 'occurrence-retired',
+          controllerOccurrenceId: retired.controllerOccurrenceId,
         } as never,
       })).resolves.toMatchObject({
         ok: false,
@@ -2764,6 +2790,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       })).resolves.toMatchObject({
         ok: false,
         errorCode: 'execution_run_permission_not_delivered',
+        delivery: { delivered: false, reason: 'unknown_request' },
       });
       expect(sendAcp).not.toHaveBeenCalled();
 
