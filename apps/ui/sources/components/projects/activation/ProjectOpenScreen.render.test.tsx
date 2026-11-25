@@ -485,6 +485,19 @@ describe('Project Open rendered choices', () => {
         expect(screen.findByTestId('projects.open.back')).toBeFalsy();
     });
 
+    it('shows the chosen Source as the selected row of the source list while the catalog does not list it', async () => {
+        const draftId = '00000000-0000-4000-8000-000000000081';
+        await seedOpenDraft(draftId);
+        const screen = await renderScreen(<ProjectOpenScreen />);
+        // The retained draft settles after the form mounts: the selected row follows it.
+        const selectedTitles = () => (screen.findByTestId('projects.open.sources')
+            ?.findAll(node => typeof node.props?.testID === 'string' && node.props.selected === true && typeof node.props.title === 'string')
+            .map(node => node.props.title) ?? []).filter((title, index, all) => all.indexOf(title) === index);
+        await vi.waitFor(() => expect(selectedTitles()).toEqual(['Hello-World']));
+        // A list holding the chosen Source is not empty: no "nothing to choose" line beside it.
+        expect(screen.findByTestId('projects.open.noSources')).toBeFalsy();
+    });
+
     it.each([{ timed: true, connect: true }, { timed: false, connect: true }, { timed: true, connect: false }])
       ('renders a rate-limit recovery banner (%j)', async ({ timed, connect }) => {
         const draftId = '00000000-0000-4000-8000-000000000081';

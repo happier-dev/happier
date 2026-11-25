@@ -17,12 +17,40 @@ import type { CustomModalInjectedProps } from '@/modal/types';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
-import { describeProjectSourceRow } from '../sources/projectSourceAddress';
+import { describeProjectSourceRow, formatProjectSourceAddress } from '../sources/projectSourceAddress';
 import {
   groupProjectSources,
   type ProjectSourceGroup,
 } from '../sources/projectSourceGroups';
 import { useProjectSources } from '../sources/useProjectSources';
+import type { ProjectOpenSubject } from './projectOpenChoices';
+
+/** The chosen subject as the source list's row: the list always shows what the form stands on as selected. */
+export type ProjectOpenChosenRow = Readonly<{ id: string; title: string; subtitle: string | null; mono: boolean }>;
+
+/**
+ * What the source list shows for the form's subject. A folder has its own row ("A folder on a machine…"); a saved
+ * Source, a repository address and an existing checkout are named by the row below, which the list draws selected
+ * wherever the catalog does not list it (a checkout opened elsewhere, a Source the search or catalog leaves out).
+ */
+export function describeProjectOpenChosenRow(subject: ProjectOpenSubject | null, sourceName: string | null): ProjectOpenChosenRow | null {
+  if (!subject || subject.kind === 'folder') return null;
+  if (subject.kind === 'source') {
+    const address = subject.source.repository ? formatProjectSourceAddress(subject.source.repository) : null;
+    return { id: subject.source.id, title: sourceName ?? address ?? subject.source.id,
+      subtitle: subject.source.repository ? describeProjectSourceRow(subject.source) : null, mono: false };
+  }
+  if (subject.kind === 'repository') {
+    const address = formatProjectSourceAddress(subject.selector);
+    return { id: `repository:${address}`, title: subject.selector.repository.nameWithOwner.split('/').pop() || address,
+      subtitle: address, mono: false };
+  }
+  // A checkout reads as a folder row: its name, then the folder it sits in.
+  const path = subject.workspace.rootPath.replace(/(?<=.)[\\/]+$/u, '');
+  const name = path.split(/[\\/]/u).filter(Boolean).pop() ?? path;
+  const parent = path.slice(0, Math.max(0, path.length - name.length)).replace(/[\\/]+$/u, '') || null;
+  return { id: `workspace:${path}`, title: name, subtitle: parent, mono: true };
+}
 
 /** Team names for a Home's Source groups ("From Acme"), from the one Teams directory owner. */
 export function useProjectSourceTeamName(
@@ -51,6 +79,8 @@ export const ProjectOpenSourceChooser = React.memo(
       query: string;
       onChangeQuery: (query: string) => void;
       selectedSourceId: string | null;
+      /** The form's subject, drawn selected when no catalog row stands for it. */
+      chosen: ProjectOpenChosenRow | null;
       folderSelected: boolean;
       /** A folder is picked on a Machine, so the row waits for one. */
       folderDisabled: boolean;
@@ -64,6 +94,8 @@ export const ProjectOpenSourceChooser = React.memo(
         <Icon name={name} size={18} color={theme.colors.text.secondary} />
       </HappierCollectionListMark>
     );
+    const listed = props.groups.some(group => group.sources.some(source => source.repository && source.id === props.chosen?.id));
+    const chosen = listed ? null : props.chosen;
     return (
       <CollectionList
         testID="projects.open.sources"
@@ -74,6 +106,18 @@ export const ProjectOpenSourceChooser = React.memo(
           testID: 'projects.open.search',
         }}
       >
+        {chosen ? (
+          <CollectionNavigationRow
+            surface="page"
+            testID="projects.open.chosen"
+            title={chosen.title}
+            {...(chosen.subtitle ? { subtitle: chosen.subtitle } : {})}
+            subtitleMono={chosen.mono}
+            icon={mark('git-branch')}
+            selected
+            onPress={noop}
+          />
+        ) : null}
         {props.groups.filter(group => group.sources.some(source => source.repository)).map((group, index) => (
           <React.Fragment key={group.id}>
             <CollectionListGroupLabel title={group.title} first={index === 0} />
@@ -91,7 +135,7 @@ export const ProjectOpenSourceChooser = React.memo(
             ))}
           </React.Fragment>
         ))}
-        {props.empty ? (
+        {props.empty && !chosen ? (
           <Item
             testID="projects.open.noSources"
             title={t('projects.open.noSources')}
@@ -118,10 +162,13 @@ export const ProjectOpenSourceChooser = React.memo(
   },
 );
 
+const noop = () => {};
+
 export type ProjectOpenSourceSheetProps = CustomModalInjectedProps &
   Readonly<{
     scope: ServerAccountScope;
     selectedSourceId: string | null;
+    chosen: ProjectOpenChosenRow | null;
     folderSelected: boolean;
     folderDisabled: boolean;
     onSelectSource: (source: ProjectSourceV1) => void;
@@ -154,6 +201,7 @@ export function ProjectOpenSourceSheet(
           void controller.load(next);
         }}
         selectedSourceId={props.selectedSourceId}
+        chosen={props.chosen}
         folderSelected={props.folderSelected}
         folderDisabled={props.folderDisabled}
         onSelectSource={(source) => {

@@ -86,7 +86,7 @@ import {
 import { readProjectOpenRouteDraft } from './projectOpenRoute.mjs';
 import { useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
 import { describeManagedCheckoutPlace } from '../shell/projectCheckoutPlace';
-import { ProjectOpenSourceChooser, ProjectOpenSourceSheet, useProjectSourceTeamName } from './ProjectOpenSourceChooser';
+import { describeProjectOpenChosenRow, ProjectOpenSourceChooser, ProjectOpenSourceSheet, useProjectSourceTeamName } from './ProjectOpenSourceChooser';
 import { useProjectOpen } from './useProjectOpen';
 import { readProjectAttachedDashboardSelection } from '../detail/projectRouteState';
 import { readProjectOpenSharedSetupSourceId } from '../projectSetup/sharedSetupRoute';
@@ -357,12 +357,14 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
       ?? subject.source.repository?.repository.nameWithOwner
       ?? null
     : null;
+  const chosenRow = describeProjectOpenChosenRow(subject, sourceName);
   const openSourceSheet = () => {
     Modal.show({
       component: ProjectOpenSourceSheet,
       props: {
         scope: props.scope,
         selectedSourceId,
+        chosen: chosenRow,
         folderSelected: subject?.kind === 'folder',
         folderDisabled: !machineId,
         onSelectSource: (source: ProjectSourceV1) => setSubjectRef.current({ kind: 'source', source }),
@@ -475,6 +477,7 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
                 void catalogController.load(next);
               }}
               selectedSourceId={selectedSourceId}
+              chosen={chosenRow}
               folderSelected={subject?.kind === 'folder'}
               folderDisabled={!machineId}
               onSelectSource={(source) => setSubject({ kind: 'source', source })}
@@ -743,6 +746,8 @@ function ProjectOpenSubjectSection(
           detail={formatProjectSourceAddress(repository)}
           // An address is an identifier: the mono role, as on the Source's own header.
           detailStyle={styles.address}
+          // A path or address gives up its middle, never its end, and only once the row runs out of room.
+          detailEllipsizeMode="middle"
           showChevron={false}
         />
       ) : (
@@ -751,6 +756,7 @@ function ProjectOpenSubjectSection(
           title={t('projects.open.repository')}
           detail={subject.kind === 'workspace' ? subject.workspace.rootPath : ''}
           detailStyle={styles.address}
+          detailEllipsizeMode="middle"
           showChevron={false}
         />
       )}

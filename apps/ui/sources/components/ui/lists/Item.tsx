@@ -302,6 +302,8 @@ export interface ItemProps {
     subtitleStyle?: StyleProp<TextStyle>;
     titleEllipsizeMode?: ItemTextEllipsizeMode;
     subtitleEllipsizeMode?: ItemTextEllipsizeMode;
+    /** Where a one-line detail gives up text when the row runs out of room: `middle` keeps a path's end. */
+    detailEllipsizeMode?: ItemTextEllipsizeMode;
     detailStyle?: StyleProp<TextStyle>;
     showChevron?: boolean;
     /**
@@ -940,6 +942,7 @@ function ItemRow(props: ItemProps & Readonly<{
         subtitleStyle,
         titleEllipsizeMode,
         subtitleEllipsizeMode,
+        detailEllipsizeMode,
         detailStyle,
         showChevron = true,
         keepChevronWithRightElement = false,
@@ -2049,21 +2052,31 @@ function ItemRow(props: ItemProps & Readonly<{
                 {copyFeedback.isCopied() ? (
                     <CopiedPill visible testID="item-copy-feedback" />
                 ) : detail && !detailBeneath ? (
-                    <Text
-                        testID={detailTestID}
-                        style={[
-                            styles.detail,
-                            detailSizeStyle,
-                            detailFigures,
-                            { marginRight: rightElement || showAccessory ? 8 : 0 },
-                            subtitleInkStyle,
-                            detailStyle,
-                            wrapDetail ? styles.detailWrapped : null,
-                        ]}
-                        numberOfLines={wrapDetail ? undefined : 1}
-                    >
-                        {detail}
-                    </Text>
+                    detailEllipsizeMode === 'middle' && !wrapDetail ? (
+                        <MiddleEllipsisText
+                            testID={detailTestID}
+                            style={[styles.detail, detailSizeStyle, detailFigures,
+                                { marginRight: rightElement || showAccessory ? 8 : 0 }, subtitleInkStyle, detailStyle]}
+                            value={detail}
+                        />
+                    ) : (
+                        <Text
+                            testID={detailTestID}
+                            style={[
+                                styles.detail,
+                                detailSizeStyle,
+                                detailFigures,
+                                { marginRight: rightElement || showAccessory ? 8 : 0 },
+                                subtitleInkStyle,
+                                detailStyle,
+                                wrapDetail ? styles.detailWrapped : null,
+                            ]}
+                            numberOfLines={wrapDetail ? undefined : 1}
+                            ellipsizeMode={detailEllipsizeMode}
+                        >
+                            {detail}
+                        </Text>
+                    )
                 ) : null}
                 {loading && (
                     <ActivitySpinner
@@ -2140,6 +2153,7 @@ function ItemRow(props: ItemProps & Readonly<{
         detailTestID,
         detailSizeStyle,
         detailFigures,
+        detailEllipsizeMode,
         detailStyle,
         disabledPartFade,
         iconContainerStyle,
