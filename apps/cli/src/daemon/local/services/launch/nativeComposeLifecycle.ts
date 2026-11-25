@@ -810,17 +810,19 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
 function nativeRefusal(reason: string, step = 'deployment.native', errorCode: string | null = null,
     effectAttempted?: true, nativeCompose?: DeploymentNativeComposeFailureV1): never {
     const failureCause: ActionFailureCauseV1 = { phase: `${step}.${reason}`, errorClass: 'Error', errorCode, httpStatus: null };
+    let details: { requiredFact: string; remedy: string; nativeCompose: DeploymentNativeComposeFailureV1 } | undefined;
     if (nativeCompose) {
         const { requiredFact, remedy } = projectDeploymentFailureRecoveryV1({ failureCause }, 'native_failed');
-        throw createActionExecuteFailureError({
-            ok: false, errorCode: 'native_failed', error: 'native_failed', failureCause,
-            details: { requiredFact, remedy, nativeCompose }, ...(effectAttempted ? { effectAttempted } : {}),
-        });
+        details = { requiredFact, remedy, nativeCompose };
     }
+    // Activation cleanup consumes the native reason. The Action and Receipt read the typed cause.
+    const cause = effectAttempted || nativeCompose ? {
+        ok: false as const, errorCode: 'native_failed', error: 'native_failed', failureCause,
+        ...(effectAttempted ? { effectAttempted } : {}),
+        ...(details ? { details } : {}),
+    } : undefined;
     throw new PluginError({ code: 'native_failed', message: 'Native Compose operation could not be completed', details: { reason },
-        failureCause }, effectAttempted === undefined ? undefined : { cause: {
-            ok: false, errorCode: 'native_failed', error: 'native_failed', failureCause, effectAttempted,
-        } });
+        failureCause }, cause === undefined ? undefined : { cause });
 }
 
 function nativeModel(stdout: string): Record<string, unknown> {

@@ -113,17 +113,21 @@ it.skipIf(process.platform === 'win32').each(['proven', 'beforeCreate', 'missing
                 expect(capturedLogs).toHaveLength(2);
                 expect(capturedLogs).toEqual(expect.arrayContaining(incumbentIds));
                 return;
-            } else if (mode === 'addressPoolExhausted') {
+            } else if (mode === 'beforeCreate' || mode === 'addressPoolExhausted') {
                 const error = await activation.catch((failure: unknown) => failure);
                 const receiptFailure = projectDeploymentReceiptFailure(projectDeploymentException(error), 'activate');
                 expect(receiptFailure).toMatchObject({ code: 'native_failed', phase: 'activate',
-                    effectAttempted: true, failureCause: { errorCode: 'deployment_network_address_pool_exhausted' } });
-                expect(readDeploymentFailureRecoveryV1(receiptFailure.code, receiptFailure)).toMatchObject({
-                    remedy: expect.stringMatching(/free unused Docker networks/i),
-                    nextAction: { destination: 'machines' },
-                });
-            } else if (mode === 'proven' || mode === 'beforeCreate' || mode.startsWith('preview')) await expect(activation).rejects.toMatchObject({ code: 'native_failed',
-                details: { reason: mode === 'beforeCreate' ? 'native_compose_command_failed' : 'deployment_health_check_failed', firstDeployCleanup: 'removed' } });
+                    effectAttempted: true, nativeCompose: { subcommand: 'up', exitStatus: 1 } });
+                if (mode === 'addressPoolExhausted') {
+                    expect(receiptFailure.failureCause).toMatchObject({ errorCode: 'deployment_network_address_pool_exhausted' });
+                    expect(readDeploymentFailureRecoveryV1(receiptFailure.code, receiptFailure)).toMatchObject({
+                        remedy: expect.stringMatching(/free unused Docker networks/i),
+                        nextAction: { destination: 'machines' },
+                    });
+                }
+                expect(error).toMatchObject({ details: { firstDeployCleanup: 'removed' } });
+            } else if (mode === 'proven' || mode.startsWith('preview')) await expect(activation).rejects.toMatchObject({ code: 'native_failed',
+                details: { reason: 'deployment_health_check_failed', firstDeployCleanup: 'removed' } });
             else if (mode === 'unprovedRemoval') {
                 await expect(activation).rejects.toMatchObject({ code: 'native_failed', details: { reason: 'deployment_health_check_failed' } });
                 await expect(activation).rejects.not.toMatchObject({ details: { firstDeployCleanup: 'removed' } });
