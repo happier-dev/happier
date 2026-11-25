@@ -45,6 +45,7 @@ function connectedCodexSession(bound = true): Session {
       ...(bound
         ? {
             connectedServices: {
+              v: 1,
               bindingsByServiceId: {
                 'openai-codex': {
                   source: 'connected',
