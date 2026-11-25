@@ -13,8 +13,7 @@ import {
 import { probeAuthenticatedServerAuthPingEndpoint } from '@/sync/api/capabilities/probeAuthenticatedServerAuthPingEndpoint';
 import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { isServerRuntimeTransportPublished } from '@/sync/runtime/nativeLoopbackTunnels/runtimeOrigin';
+import { doesHomeUrlRequireSelectedTransport } from '@/sync/runtime/nativeLoopbackTunnels/runtimeOrigin';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
@@ -181,6 +180,8 @@ type ReachabilitySupervisorEntry = {
     runtimeOrigin: string | null;
     /** Semantic carrier for a Home with no reachable URL origin (browser Iroh). */
     homeCarrier: HomeCarrier | null;
+    /** A start supplied an explicit transport (origin or carrier), as the carrier policy selected it. */
+    transportSelected: boolean;
     token: string | null;
     state: ManagedConnectionState;
     supervisor: ManagedConnectionSupervisor;
@@ -249,6 +250,7 @@ function getOrCreateEntry(serverUrlRaw: string, token: string | null = null): Re
         serverUrl,
         runtimeOrigin: null,
         homeCarrier: null,
+        transportSelected: false,
         token,
         state: {
             phase: 'idle',
@@ -291,15 +293,13 @@ function getOrCreateEntry(serverUrlRaw: string, token: string | null = null): Re
 }
 
 /**
- * The Account bearer goes only to an address the carrier policy selected. An entry with
- * no selected origin or carrier for the active descriptor-backed Home whose policy has
- * published no transport would probe the canonical URL, so it stays unstarted; the
- * publication's own start supplies the selected transport and runs the probe.
+ * The Account bearer goes only to an address the carrier policy selected. A token-bearing
+ * entry for a descriptor-backed Home (focused or not) that no start has given a transport
+ * would probe the canonical URL, so it stays unstarted; the start that supplies the selected
+ * transport (the active Home's publication, a scoped-transport lease) runs the probe.
  */
 function awaitsSelectedTransport(entry: ReachabilitySupervisorEntry): boolean {
-    if (!entry.token || entry.runtimeOrigin || entry.homeCarrier) return false;
-    const snapshot = getActiveServerSnapshot();
-    return canonicalizeServerUrl(snapshot.serverUrl) === entry.serverUrl && !isServerRuntimeTransportPublished(snapshot);
+    return !!entry.token && !entry.transportSelected && doesHomeUrlRequireSelectedTransport(entry.serverUrl);
 }
 
 async function startEntrySupervisor(entry: ReachabilitySupervisorEntry): Promise<void> {
@@ -801,6 +801,7 @@ export async function startServerReachabilitySupervisor(params: Readonly<{
         entry.token = params.token;
         entry.runtimeOrigin = runtimeOrigin;
         entry.homeCarrier = homeCarrier;
+        if ('runtimeOrigin' in params || 'homeCarrier' in params) entry.transportSelected = true;
 
         if (!networkAllowed) {
             return;

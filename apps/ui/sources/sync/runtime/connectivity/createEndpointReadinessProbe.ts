@@ -142,7 +142,9 @@ export function createEndpointReadinessProbe(params: Readonly<{
                 if (settled) return;
                 // The Home pool owns the network probe. This caller observes its
                 // verdict and releases only its own demand, including on abort.
-                const leasePromise = acquireServerReachabilitySupervisor({ serverUrl: endpoint, token, signal: params.signal });
+                // An endpoint probe names its exact address: it is the transport.
+                const leasePromise = acquireServerReachabilitySupervisor({ serverUrl: endpoint, token, runtimeOrigin: endpoint,
+                    signal: params.signal });
                 release = () => {
                     void leasePromise.then((lease) => lease.release()).catch(() => {});
                 };

@@ -23,6 +23,8 @@ afterEach(async () => {
     resetRuntimeFetch();
     const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
     await resetServerReachabilitySupervisors();
+    // The next case imports its pool under its own profile mocks, not this cleanup's instance.
+    vi.resetModules();
 });
 
 const irohProfile = {
@@ -60,6 +62,7 @@ describe('apiSocket reachability carrier selection', () => {
             return {
                 ...actual,
                 getServerProfileById: (id: unknown) => (params.profile && String(id) === params.profile.id ? params.profile : null),
+                listServerProfiles: () => (params.profile ? [params.profile] : []),
                 getActiveServerHomeCarrier: () => null,
                 subscribeActiveServerRuntimeOrigin: (listener: (snapshot: Record<string, unknown>) => void) => {
                     originListenerRef.current = listener;
@@ -118,6 +121,53 @@ describe('apiSocket reachability carrier selection', () => {
             await pool.invalidateAllServerReachabilitySupervisors();
             await vi.waitFor(() => expect(bearerRequests).toContain(origin), { timeout: 10_000 });
             expect(bearerRequests.every((value) => value === origin)).toBe(true);
+        } finally {
+            apiSocket.disconnect();
+            (await import('@/utils/system/runtimeFetch')).resetRuntimeFetch();
+        }
+    });
+
+    // Security review B18 M1: the existing-Session chooser's Retry waits on any Home, not only the
+    // focused one, with no transport hint. A fresh entry for a non-focused descriptor Home must not
+    // send the bearer to its canonical URL; a start that supplies the selected transport probes it.
+    it('sends no bearer to a non-focused descriptor Home until a start selects its transport', async () => {
+        const { apiSocket, pool, bearerRequests } = await initializeWithRealPool({
+            profile: irohProfile,
+            snapshot: { serverId: 'srv_loopback', serverUrl: 'http://127.0.0.1:3010', generation: 1 },
+        });
+        const controller = new AbortController();
+        try {
+            await vi.waitFor(() => expect(bearerRequests).toContain('http://127.0.0.1:3010'), { timeout: 10_000 });
+            bearerRequests.length = 0;
+            // The chooser Retry's call shape: canonical URL and token only.
+            const waiting = pool.waitForServerReachable({ serverUrl: 'https://api.example.test', token: 'token-b', signal: controller.signal });
+            await pool.invalidateAllServerReachabilitySupervisors();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(bearerRequests).not.toContain('https://api.example.test');
+
+            // A scoped-transport lease supplies the policy's selected origin; the waiter then completes over it.
+            const lease = await pool.acquireServerReachabilitySupervisor({
+                serverUrl: 'https://api.example.test', token: 'token-b', runtimeOrigin: 'http://127.0.0.1:43555',
+            });
+            await waiting;
+            await lease.release();
+            expect(bearerRequests).toContain('http://127.0.0.1:43555');
+            expect(bearerRequests).not.toContain('https://api.example.test');
+        } finally {
+            controller.abort();
+            apiSocket.disconnect();
+            (await import('@/utils/system/runtimeFetch')).resetRuntimeFetch();
+        }
+    });
+
+    it('still probes a non-focused Home with no descriptor from a hint-less wait', async () => {
+        const { apiSocket, pool, bearerRequests } = await initializeWithRealPool({
+            profile: null,
+            snapshot: { serverId: 'srv_loopback', serverUrl: 'http://127.0.0.1:3010', generation: 1 },
+        });
+        try {
+            await pool.waitForServerReachable({ serverUrl: 'http://127.0.0.1:3011', token: 'token-c' });
+            expect(bearerRequests).toContain('http://127.0.0.1:3011');
         } finally {
             apiSocket.disconnect();
             (await import('@/utils/system/runtimeFetch')).resetRuntimeFetch();

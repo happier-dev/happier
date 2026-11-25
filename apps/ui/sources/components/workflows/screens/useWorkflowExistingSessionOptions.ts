@@ -38,6 +38,7 @@ import { areServerProfileIdentifiersEquivalent, getServerProfileById } from '@/s
 import { readSessionOwnerMetadataView, SESSION_OWNER_METADATA_PROJECTION } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { waitForServerReachable } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
+import { resolveServerScopedTransport } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedTransport';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 
 type WorkflowSessionOptions = Readonly<{
@@ -228,10 +229,16 @@ export function useWorkflowExistingSessionOptions(params: Readonly<{
                 if (!profile) throw new Error('Session inventory Home unavailable');
                 const credentials = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, { serverId: binding.scope.serverId });
                 if (!credentials) throw new Error('Session inventory credentials unavailable');
-                // The existing transport owner retains carrier selection, probes
-                // and recovery cadence. Retry remains loading until it verifies
-                // reachability or this demand/Account leaves; no chooser timer.
-                await waitForServerReachable({ serverUrl: profile.serverUrl, token: credentials.token, signal: controller.signal });
+                // The scoped transport owner selects this Home's carrier (any Home, not only
+                // the focused one); the pool probes only that transport. Retry remains loading
+                // until it verifies reachability or this demand/Account leaves; no chooser timer.
+                const transport = await resolveServerScopedTransport({ profile, credentials });
+                try {
+                    await waitForServerReachable({ serverUrl: transport.canonicalServerUrl, token: credentials.token,
+                        runtimeOrigin: transport.runtimeOrigin, homeCarrier: transport.homeCarrier ?? null, signal: controller.signal });
+                } finally {
+                    await transport.release();
+                }
             }
             throwIfAborted(controller.signal);
             if (!binding.isCurrent()) return;

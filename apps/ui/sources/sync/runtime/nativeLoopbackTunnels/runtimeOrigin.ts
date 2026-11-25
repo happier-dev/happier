@@ -1,11 +1,22 @@
 import type { ActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { getServerProfileById, listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { ServerScopedTransportUnavailableError } from '@/sync/runtime/homeCarrier';
 
 /** Descriptor-backed Homes require a policy publication, including HTTPS. */
 export function isServerRuntimeTransportPublished(snapshot: Pick<ActiveServerSnapshot, 'serverId' | 'carrier'>): boolean {
     return snapshot.carrier !== undefined
         || !getServerProfileById(snapshot.serverId)?.homeConnectionDescriptor;
+}
+
+/**
+ * The same rule for any Home addressed by URL: a saved descriptor-backed Home at this
+ * canonical URL is reached only through a transport its carrier policy selected.
+ */
+export function doesHomeUrlRequireSelectedTransport(serverUrl: string): boolean {
+    const canonical = canonicalizeServerUrl(serverUrl);
+    return !!canonical && listServerProfiles().some((profile) => !!profile.homeConnectionDescriptor
+        && [profile.serverUrl, profile.canonicalServerUrl].some((url) => !!url && canonicalizeServerUrl(url) === canonical));
 }
 
 /** Resolves the ephemeral data-plane origin without changing the stable Home identity. */
