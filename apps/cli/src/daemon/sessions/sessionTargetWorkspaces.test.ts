@@ -126,15 +126,31 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
             await expect(Promise.all([request(), request(), request()])).resolves.toEqual([content, content, content]);
             expect(channels).toHaveLength(1);
             await expect(exits[0]).resolves.toBe(0);
-            await runWithWorkspaceSourceDemand(source!, async () => {
+            let stopWatch: (() => void) | undefined;
+            try {
+                await new Promise<void>((resolve, reject) => {
+                    stopWatch = source!.watchTree([{ directory: guestRoot, onStructuralChange() {} }], {
+                        onReady: resolve,
+                        onUnavailable: reject,
+                    });
+                });
+                expect(channels).toHaveLength(2);
+                // Separate, settled requests reuse the watcher-held provider channel.
+                await expect(source!.readdir(guestRoot)).resolves.toEqual(expect.arrayContaining([
+                    expect.objectContaining({ name: 'a.txt' }),
+                ]));
                 await expect(request()).resolves.toEqual(content);
                 expect(channels).toHaveLength(2);
+                expect(channels[1]!.writableEnded).toBe(false);
                 channels[1]!.end();
                 await expect(exits[1]).resolves.toBe(0);
+                // Disconnect delivery is not demand for a replacement.
                 expect(channels).toHaveLength(2);
                 await expect(Promise.all([request(), request()])).resolves.toEqual([content, content]);
                 expect(channels).toHaveLength(3);
-            });
+            } finally {
+                stopWatch?.();
+            }
             await expect(exits[2]).resolves.toBe(0);
             lifetime.abort();
             expect(resolveSessionTargetWorkspace({ workspace, requesterAccountId: 'owner' })).toBeNull();
