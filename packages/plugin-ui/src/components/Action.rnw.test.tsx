@@ -692,7 +692,8 @@ describe('plugin-ui Action family dispatches through the canonical host API', ()
       expect(mount.container.textContent).toContain(code);
       if (hostReason !== undefined) {
         expect(presentActionFailure.mock.calls[0]?.[0]).toMatchObject({ errorCode: code, details });
-        expect(mount.container.textContent).toContain('403');
+        // Each disclosed value keeps the label its presenter gave it; a bare "403" names nothing.
+        expect(mount.container.textContent).toContain('Provider status: 403');
       }
       expect(mount.container.textContent).not.toContain(details.privatePayload);
     } finally { mount.unmount(); }

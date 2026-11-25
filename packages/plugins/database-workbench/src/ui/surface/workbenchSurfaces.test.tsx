@@ -358,7 +358,7 @@ describe('Database workbench surfaces', () => {
       await settle(20);
       expect(refused).toBe(true);
       await fixture.press(await fixture.getByRole('button', { name: 'Details' }));
-      expect(await fixture.getByText(code)).toBeTruthy();
+      expect(await fixture.getByText(`Code: ${code}`)).toBeTruthy();
       expect(await fixture.getByText('The provider is throttling catalogue reads.')).toBeTruthy();
       allowRead = true;
       await fixture.press(await fixture.getByRole('button', { name: 'Try again' }));
@@ -629,13 +629,17 @@ describe('Database workbench surfaces', () => {
       await fixture.press(await fixture.getByRole('button', { name: 'Create read-only login' }));
       await settle(20);
       if (outcome !== 'applied') {
-        expect(await fixture.getByText(bindingFailureMessage)).toBeTruthy();
         expect(configured).toBe(false);
         expect(execute.mock.calls.map(([{ action }]) => action)).toEqual([create, create]);
         if (outcome === 'binding failure without a secret') {
+          expect(await fixture.getByText(bindingFailureMessage)).toBeTruthy();
           expect(await fixture.queryByRole('button', { name: attachTitle })).toBeUndefined();
           return;
         }
+        // The login exists and is saved: using it is the one way forward, and a second login is not offered.
+        expect(document.body.textContent).toContain('happier_read');
+        expect(await fixture.queryByRole('button', { name: 'Create read-only login' })).toBeUndefined();
+        expect(await fixture.getAllByRole('button', { name: attachTitle })).toHaveLength(1);
         await fixture.press(await fixture.getByRole('button', { name: attachTitle }));
         expect(await fixture.getByText('Saved read-only URL selected')).toBeTruthy();
         expect(await fixture.queryByRole('button', { name: 'Create read-only login' })).toBeUndefined();
@@ -704,8 +708,11 @@ describe('Database workbench surfaces', () => {
         expect(document.body.textContent).toContain(reason);
         expect(await fixture.getByText(nextStep)).toBeTruthy();
         await fixture.press(await fixture.getByRole('button', { name: 'Details' }));
-        expect(await fixture.getByText(code)).toBeTruthy();
+        expect(document.body.textContent).toContain(`Code: ${code}`);
         expect(document.body.textContent).not.toContain('Something went wrong');
+        // A login can't be created here, so Create is no longer pressable into the same refusal.
+        expect((await fixture.getByRole('button', { name: 'Create read-only login' })).state?.disabled).toBe(true);
+        expect((await fixture.getByRole('button', { name: 'Use existing read-only login' })).state?.disabled).not.toBe(true);
       } else {
         expect(await fixture.getByText('Could not verify the setup result.')).toBeTruthy();
         expect(presentActionFailure).not.toHaveBeenCalled();

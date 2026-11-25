@@ -85,5 +85,7 @@
   "plugins.database.insights.tables": "Taules",
   "plugins.database.insights.workflowUnavailable": "No s’ha pogut obrir l’editor de fluxos de treball.",
   "plugins.database.refresh": "Actualitza",
-  "plugins.database.retry": "Torna-ho a provar"
+  "plugins.database.retry": "Torna-ho a provar",
+  "plugins.database.readSetup.editingOff": "Crear un inici de sessió modifica la base de dades, així que cal tenir activada l’edició de la base de dades. Fes servir un inici de sessió de només lectura que ja tinguis o demana a un gestor de l’entorn que activi l’edició.",
+  "plugins.database.readSetup.recovery": "S’ha creat i desat l’inici de sessió de només lectura {role}, però Workbench no ha pogut començar a fer-lo servir. Fes servir aquest inici de sessió per acabar la configuració."
 }

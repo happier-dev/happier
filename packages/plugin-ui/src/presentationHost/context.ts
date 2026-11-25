@@ -532,6 +532,8 @@ export type PluginUiPresentationHost = Readonly<{
     /** 1-based lines drawn on a failure band (the line that threw). */
     markedLines?: readonly number[];
     selectable: boolean;
+    /** Wrap long lines instead of scrolling sideways. */
+    wrap?: boolean;
     testID?: string;
   }>): ReactNode;
   /**

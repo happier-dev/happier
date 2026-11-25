@@ -49,6 +49,8 @@ export type CodeBlockProps = Readonly<{
    */
   markedLines?: readonly number[];
   selectable?: boolean;
+  /** Wrap long lines instead of scrolling sideways: text a person reviews before confirming must be readable whole. */
+  wrap?: boolean;
   copyLabel?: string;
   copiedLabel?: string;
   testID?: string;
@@ -173,6 +175,7 @@ export function CodeBlock({
   language,
   markedLines,
   selectable = true,
+  wrap = false,
   copyLabel,
   copiedLabel,
   testID,
@@ -189,12 +192,14 @@ export function CodeBlock({
   });
   const normalizedLanguage = behavior.language;
   const content = host
-    ? host.renderCodeBlock({ code, selectable, ...(normalizedLanguage ? { language: normalizedLanguage } : {}), ...(markedLines?.length ? { markedLines } : {}), ...(testID ? { testID } : {}) })
-    : (
-      <HappierScrollArea horizontal testID={testID}>
-        <HappierText selectable={selectable} variant="code">{code}</HappierText>
-      </HappierScrollArea>
-    );
+    ? host.renderCodeBlock({ code, selectable, ...(wrap ? { wrap } : {}), ...(normalizedLanguage ? { language: normalizedLanguage } : {}), ...(markedLines?.length ? { markedLines } : {}), ...(testID ? { testID } : {}) })
+    : wrap
+      ? <HappierText selectable={selectable} variant="code" testID={testID}>{code}</HappierText>
+      : (
+        <HappierScrollArea horizontal testID={testID}>
+          <HappierText selectable={selectable} variant="code">{code}</HappierText>
+        </HappierScrollArea>
+      );
 
   return (
     <HappierStack gap={8}>

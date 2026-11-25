@@ -16,7 +16,7 @@ import {
   type DatabaseManagedDeploymentTargetV1,
   type DatabaseNamedCellV1,
 } from '@happier-dev/plugin-sdk/database';
-import { encodeBase64 } from '@happier-dev/plugin-sdk/protocol';
+import { encodeBase64, formatSharedSavedSecretRefV1 } from '@happier-dev/plugin-sdk/protocol';
 import { renderSurface as renderPanel } from '@happier-dev/plugins-database-workbench/happier-plugin-ui/database-panel-native';
 import { renderSurface as renderPage } from '@happier-dev/plugins-database-workbench/happier-plugin-ui/database-workbench-native';
 import { renderSurface as renderRail } from '@happier-dev/plugins-database-workbench/happier-plugin-ui/database-rail-native';
@@ -90,8 +90,17 @@ export type DatabaseWorkbenchSpecimenState = Readonly<{
   console?: 'error' | 'cancelled';
   /** `?stats=off`: statement statistics are off and this server can't turn them on (the Insights setup state). */
   stats?: 'off';
-  review?: 'unverified' | 'read-setup' | 'read-setup-refused';
+  review?: DatabaseWorkbenchReadSetupState;
 }>;
+
+/**
+ * `?review=`: a writable database's staged review (`unverified`), or a Railway database that needs a read-only login:
+ * its PostgreSQL or MySQL review, editing off, a login created but not yet in use, or a refusal with details.
+ */
+export const DATABASE_WORKBENCH_REVIEW_STATES = [
+  'unverified', 'read-setup', 'read-setup-mysql', 'read-setup-refused', 'read-setup-binding', 'read-setup-failed',
+] as const;
+type DatabaseWorkbenchReadSetupState = typeof DATABASE_WORKBENCH_REVIEW_STATES[number];
 
 const UNVERIFIED_BILLING: DatabaseDescriptorV1 = {
   ...BILLING_DEV,
@@ -101,31 +110,62 @@ const UNVERIFIED_BILLING: DatabaseDescriptorV1 = {
   endpointTrust: 'encrypted_unverified',
 };
 
-const RAILWAY_BILLING_TARGET: DatabaseManagedDeploymentTargetV1 = {
-  kind: 'managed_deployment',
-  environment: { serverId: 'meridian', environmentId: 'billing-staging', projectSourceId: 'billing-service' },
-  targetLinkId: 'billing-postgres',
-  contribution: { pluginId: 'happier.deploy.railway-data', contributionId: 'postgresql' },
-  platformProjectId: 'meridian-billing',
-  branchId: 'staging',
-  database: 'billing_staging',
-};
-const RAILWAY_BILLING_PATH = 'target/' + encodeBase64(
-  new TextEncoder().encode(JSON.stringify(RAILWAY_BILLING_TARGET)), 'base64url',
-);
+// Railway names every database `railway`; the engine is the contribution that links it.
+function railwayTarget(engine: 'postgresql' | 'mysql'): DatabaseManagedDeploymentTargetV1 {
+  return {
+    kind: 'managed_deployment',
+    environment: { serverId: 'meridian', environmentId: 'billing-staging', projectSourceId: 'billing-service' },
+    targetLinkId: `billing-${engine}`,
+    contribution: { pluginId: 'happier.deploy.railway-data', contributionId: engine },
+    platformProjectId: 'meridian-billing',
+    branchId: 'staging',
+    database: 'railway',
+  };
+}
+function railwayPath(engine: 'postgresql' | 'mysql'): string {
+  return 'target/' + encodeBase64(new TextEncoder().encode(JSON.stringify(railwayTarget(engine))), 'base64url');
+}
 const CREATE_READ_ACCESS = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
+const READ_ROLE = 'happier_ro_2b80ccb7367af66e';
+// The statements the read-role planner (`packages/databases/src/readRoleSetup.ts`) writes for each engine.
+const READ_SETUP_STATEMENTS = {
+  postgresql: [
+    `CREATE ROLE "${READ_ROLE}" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD <generated SCRAM verifier>`,
+    `GRANT CONNECT ON DATABASE "railway" TO "${READ_ROLE}"`,
+    `GRANT USAGE ON SCHEMA "public" TO "${READ_ROLE}"`,
+    `GRANT SELECT ON ALL TABLES IN SCHEMA "public" TO "${READ_ROLE}"`,
+    `ALTER ROLE "${READ_ROLE}" SET default_transaction_read_only = on`,
+  ],
+  mysql: [
+    `CREATE USER '${READ_ROLE}'@'%' IDENTIFIED BY RANDOM PASSWORD REQUIRE SSL ACCOUNT LOCK`,
+    `GRANT SELECT, SHOW VIEW ON \`railway\`.* TO '${READ_ROLE}'@'%'`,
+    `ALTER USER '${READ_ROLE}'@'%' ACCOUNT UNLOCK`,
+  ],
+} as const;
+
+/** What the read-setup Actions settle with in each `?review=` state: the owner's typed refusals, as a host delivers them. */
+function readSetupRefusal(review: DatabaseWorkbenchReadSetupState | undefined, input: Record<string, unknown>) {
+  if (review === 'read-setup-refused')
+    return { ok: false, errorCode: 'database_editing_off', error: 'database_editing_off' } as const;
+  if (review === 'read-setup-binding' && input.mode === 'apply')
+    return { ok: false, errorCode: 'database_read_role_binding_failed', effectAttempted: true,
+      error: 'The database login and its Saved Secret were created, but binding it did not complete. Use the existing read-only login to finish.',
+      details: { role: READ_ROLE, savedSecretRef: formatSharedSavedSecretRefV1('railway-billing-reader'), resourceRevision: 3 },
+      failureCause: { phase: 'database.read_access.binding', errorClass: 'PluginError', errorCode: 'deployment_conflict', httpStatus: null } } as const;
+  if (review === 'read-setup-failed' && input.mode === 'apply')
+    return { ok: false, errorCode: 'database_read_role_failed', effectAttempted: false, requestId: 'req_01JDX4Q8M2ZK7',
+      error: 'The database refused to create the read-only login.',
+      failureCause: { phase: 'database.read_access.create', errorClass: 'DatabaseError', errorCode: '42501', httpStatus: null } } as const;
+  return null;
+}
 
 const NEVER = new Promise<never>(() => {});
 
 async function answer(state: DatabaseWorkbenchSpecimenState, descriptor: DatabaseDescriptorV1, actionId: string, raw: unknown): Promise<unknown> {
   const input = raw as Record<string, unknown>;
-  if (state.review === 'read-setup' && actionId === CREATE_READ_ACCESS && input.mode === 'preview') {
-    return { ok: true, status: 'review', role: 'billing_reader', endpointTrust: 'encrypted_unverified', statements: [
-      'CREATE ROLE billing_reader LOGIN',
-      'GRANT CONNECT ON DATABASE billing_staging TO billing_reader',
-      'GRANT USAGE ON SCHEMA public TO billing_reader',
-      'GRANT SELECT ON ALL TABLES IN SCHEMA public TO billing_reader',
-    ] };
+  if (state.review?.startsWith('read-setup') && actionId === CREATE_READ_ACCESS && input.mode === 'preview') {
+    return { ok: true, status: 'review', role: READ_ROLE, endpointTrust: 'encrypted_unverified',
+      statements: READ_SETUP_STATEMENTS[state.review === 'read-setup-mysql' ? 'mysql' : 'postgresql'] };
   }
   const operation =
     typeof input.operation === 'string' ? input.operation : actionId;
@@ -277,7 +317,7 @@ type SpecimenControl = {
  */
 function createSpecimenActionControls(
   execute: (actionId: string, input: unknown) => Promise<unknown>,
-  refuseReadSetup: boolean,
+  review: DatabaseWorkbenchReadSetupState | undefined,
 ) {
   const bound = new Map<string, SpecimenControl & { action: string }>();
   const listeners = new Set<() => void>();
@@ -302,9 +342,10 @@ function createSpecimenActionControls(
       if (!preparation) return;
       control.busy = true;
       publish();
-      const execution = refuseReadSetup && control.action === CREATE_READ_ACCESS
-        ? { ok: false, errorCode: 'database_editing_off', error: 'database_editing_off' } as const
-        : { ok: true, result: await execute(control.action, preparation.input) } as Parameters<PluginUiActionControlController['onSettled']>[0];
+      const refusal = control.action === CREATE_READ_ACCESS
+        ? readSetupRefusal(review, preparation.input as Record<string, unknown>) : null;
+      const execution = refusal
+        ?? { ok: true, result: await execute(control.action, preparation.input) } as Parameters<PluginUiActionControlController['onSettled']>[0];
       control.busy = false;
       publish();
       control.controller.onSettled(execution);
@@ -343,8 +384,8 @@ export function DatabaseWorkbenchSpecimen(
   }>,
 ) {
   const { rows: rowsState, console: consoleState, stats: statsState, review } = props.state;
-  const needsReadSetup = review === 'read-setup' || review === 'read-setup-refused';
-  const subPath = needsReadSetup ? RAILWAY_BILLING_PATH : props.subPath;
+  const needsReadSetup = review?.startsWith('read-setup') === true;
+  const subPath = needsReadSetup ? railwayPath(review === 'read-setup-mysql' ? 'mysql' : 'postgresql') : props.subPath;
   const descriptor = props.state.review === 'unverified' ? UNVERIFIED_BILLING : BILLING_DEV;
   const environment = usePluginSurfaceEnvironment(
     resolveLocalServicePreviewPlatform(),
@@ -400,7 +441,7 @@ export function DatabaseWorkbenchSpecimen(
     }, descriptor, actionId, input),
     [consoleState, descriptor, rowsState, statsState, review],
   );
-  const actionControls = React.useMemo(() => createSpecimenActionControls(execute, review === 'read-setup-refused'), [execute, review]);
+  const actionControls = React.useMemo(() => createSpecimenActionControls(execute, review), [execute, review]);
   const presentation = React.useMemo(() => ({ actionControls: actionControls.controls }), [actionControls]);
   const hostApi = React.useMemo<PluginUiHostApi>(() => {
     const base = createBundledPluginFixtureHostApi(

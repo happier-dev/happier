@@ -69,18 +69,29 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
     }
   }
 
-  const failure = notice?.kind === 'failure' ? <Action.Failure execution={notice.execution}
-    onRetry={notice.recovery ? () => openAttach(notice.recovery) : undefined} retryLabel={attachTitle} />
+  // The login already exists and is saved: using it is the one way forward, never a second login.
+  const recovery = notice?.kind === 'failure' ? notice.recovery : null;
+  // The owner's typed refusal says a login can't be created here; Create stays visible but is never pressed into it again.
+  const editingOff = notice?.kind === 'failure'
+    && (notice.execution.status === 'error' || notice.execution.status === 'outcomeUnknown')
+    && notice.execution.code === 'database_editing_off';
+  const failure = recovery
+    ? <ErrorState layout="line" title={t('plugins.database.readSetup.recovery',
+        'The read-only login {role} was created and saved, but Workbench couldn’t start using it. Use that login to finish setting up.',
+        { role: review?.role ?? '' })} />
+    : notice?.kind === 'failure' ? <Action.Failure execution={notice.execution} />
     : notice?.kind === 'unexpected' ? <ErrorState layout="line" title={notice.text} /> : undefined;
   if (!attaching && !review) {
     return <SurfaceState kind="unavailable" size="page" title={title}
-      description={t('plugins.database.readSetup.description', 'Choose a read-only login for {database} so you can browse its tables.', { database: target.database })}
+      description={editingOff
+        ? t('plugins.database.readSetup.editingOff', 'Creating a login changes the database, so it needs database editing. Use a read-only login you already have, or ask an Environment manager to turn editing on.')
+        : t('plugins.database.readSetup.description', 'Choose a read-only login for {database} so you can browse its tables.', { database: target.database })}
       body={failure}
       live={notice?.kind === 'pending' ? { text: notice.text } : undefined}
       alternative={<Row gap="small" wrap justify="center">
-        <Button title={attachTitle} variant="secondary" size="small" disabled={notice?.kind === 'pending'}
+        <Button title={attachTitle} variant={editingOff ? 'primary' : 'secondary'} size="small" disabled={notice?.kind === 'pending'}
           onPress={() => openAttach()} />
-        <Action.Control action={createAction} title={createTitle} variant="plain" disabled={notice?.kind === 'pending'}
+        <Action.Control action={createAction} title={createTitle} variant="plain" disabled={notice?.kind === 'pending' || editingOff}
           controller={{
             prepare: () => { setNotice(null); return { input: projectNativeJsonValueForTransport({ target, mode: 'preview' }) }; },
             onSettled: execution => settled(execution, 'review'),
@@ -92,7 +103,8 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
   const input = attaching
     ? secret && projectNativeJsonValueForTransport({ target, savedSecretRef: secret.ref, resourceRevision: secret.resourceRevision })
     : review && projectNativeJsonValueForTransport({ target, mode: 'apply', role: review.role, statements: review.statements });
-  return <Stack gap="medium" grow>
+  // One column: the header, the notice, the statements and the action that confirms them share the page's width.
+  return <ScrollArea><Stack gap="medium">
     <PageHeader title={attaching ? attachTitle : t('plugins.database.readSetup.review', 'Review the read-only login')}
       description={attaching
         ? t('plugins.database.readSetup.savedSecret', 'Choose the connection URL for a read-only login to {database}. If it isn’t listed, save it in Saved Secrets first.', { database: target.database })
@@ -103,20 +115,21 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
     {attaching
       ? <SavedSecretChoiceList testIDPrefix="database-read-access-secret" selectedRef={secret?.ref ?? null}
           onSelect={(next) => { setNotice(null); setSecret(next); }} />
-      : review && <ScrollArea><CodeBlock language="sql" code={review.statements.join('\n\n')} /></ScrollArea>}
+      : review && <CodeBlock language="sql" wrap code={review.statements.join('\n\n')} />}
     {failure}
     {notice?.kind === 'pending' ? <Text tone="secondary" value={notice.text} /> : null}
     <Stack gap="small" align="flex-start">
-      {input === null ? null : <Action.Control
+      {recovery ? <Button title={attachTitle} variant="primary" onPress={() => openAttach(recovery)} />
+        : input === null ? null : <Action.Control
         action={attaching ? attachAction : createAction}
         title={attaching ? t('plugins.database.readSetup.confirmAttach', 'Use this login') : createTitle}
         variant="primary"
-        disabled={notice?.kind === 'pending'}
+        disabled={notice?.kind === 'pending' || (!attaching && editingOff)}
         reviewedInput={input}
         controller={{ prepare: () => { setNotice(null); return { input }; }, onSettled: execution => settled(execution, 'configured') }}
         fallback={<Text tone="secondary" value={unavailable}/>} />}
       <Button title={t('plugins.database.readSetup.back', 'Back to setup options')} variant="plain"
         onPress={() => { setNotice(null); setReview(null); setAttaching(false); }} />
     </Stack>
-  </Stack>;
+  </Stack></ScrollArea>;
 }

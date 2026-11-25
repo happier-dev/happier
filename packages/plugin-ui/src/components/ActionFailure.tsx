@@ -44,6 +44,6 @@ export function ActionFailure({ execution, onRetry, retryLabel }: Readonly<{
   const presentation = presented?.failure === failure && presented.host === host ? presented.presentation : null;
   return <ErrorState layout="line" title={presentation?.reason ?? failure.message}
     description={presentation?.nextStep ?? undefined}
-    details={presentation?.technicalDetails.map(line => line.value).join('\n') || failure.code}
+    details={presentation?.technicalDetails.map(line => `${line.label}: ${line.value}`).join('\n') || failure.code}
     onRetry={onRetry} retryLabel={retryLabel} />;
 }

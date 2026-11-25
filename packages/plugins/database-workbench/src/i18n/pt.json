@@ -85,5 +85,7 @@
   "plugins.database.insights.tables": "Tabelas",
   "plugins.database.insights.workflowUnavailable": "Não foi possível abrir o editor de fluxos de trabalho.",
   "plugins.database.refresh": "Atualizar",
-  "plugins.database.retry": "Tentar novamente"
+  "plugins.database.retry": "Tentar novamente",
+  "plugins.database.readSetup.editingOff": "Criar um login altera o banco de dados, então é preciso que a edição do banco de dados esteja ativada. Use um login somente leitura que você já tenha ou peça a um gestor do ambiente para ativar a edição.",
+  "plugins.database.readSetup.recovery": "O login somente leitura {role} foi criado e salvo, mas o Workbench não conseguiu começar a usá-lo. Use esse login para concluir a configuração."
 }

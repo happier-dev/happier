@@ -2,6 +2,7 @@ import { useLocalSearchParams } from 'expo-router';
 import * as React from 'react';
 
 import {
+  DATABASE_WORKBENCH_REVIEW_STATES,
   DatabaseWorkbenchSpecimen,
   type DatabaseWorkbenchSpecimenSurface,
 } from '@/components/dev/databaseWorkbench/DatabaseWorkbenchSpecimen';
@@ -12,7 +13,8 @@ import {
  * `?width=` the content column the surface gets (default: the whole screen), `?state=loading|empty|failed` the rows'
  * answer, `?console=error|cancelled` what Run answers, `?stats=off` statement statistics off (Insights setup),
  * `?review=unverified` a writable database with the trust notice in its staged changes review,
- * `?review=read-setup` a Railway database that needs a read-only login, or `?review=read-setup-refused` with editing off.
+ * `?review=read-setup|read-setup-mysql` a Railway database that needs a read-only login, `read-setup-refused` with editing
+ * off, `read-setup-binding` a login created but not yet in use, `read-setup-failed` a refusal with details.
  */
 export default function DatabaseWorkbenchDevScreen() {
   const params = useLocalSearchParams<{
@@ -29,6 +31,7 @@ export default function DatabaseWorkbenchDevScreen() {
       ? params.surface
       : 'page';
   const width = Number(params.width);
+  const review = DATABASE_WORKBENCH_REVIEW_STATES.find(state => state === params.review);
   return (
     <DatabaseWorkbenchSpecimen
       surface={surface}
@@ -38,7 +41,7 @@ export default function DatabaseWorkbenchDevScreen() {
         ...(params.state === 'loading' || params.state === 'empty' || params.state === 'failed' ? { rows: params.state } : {}),
         ...(params.console === 'error' || params.console === 'cancelled' ? { console: params.console } : {}),
         ...(params.stats === 'off' ? { stats: 'off' as const } : {}),
-        ...(params.review === 'unverified' || params.review === 'read-setup' || params.review === 'read-setup-refused' ? { review: params.review } : {}),
+        ...(review ? { review } : {}),
       }}
     />
   );
