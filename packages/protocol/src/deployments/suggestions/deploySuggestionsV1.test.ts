@@ -36,7 +36,7 @@ it('drops a recommendation without its short title or why line', () => {
     expect(result.dropped).toEqual([1, 2, 3, 4].map(index => ({ index, reason: 'invalid_recommendation' })));
 });
 it('drops numeric CAD and dollar-word prices while preserving technical version text', () => {
-    const technical = { ...recommendation, whatToBuild: 'A CAD 3D viewer with CSS 3 and React 20' };
+    const technical = { ...recommendation, whatToBuild: 'A CAD 3D and CAD 2.5D viewer with CSS 3 and React 20' };
     const result = validateDeploySuggestionV1({ recommendations: [technical,
         { ...recommendation, whatToBuild: 'A bakery website for CAD 20 per month' },
         { ...recommendation, whatToBuild: 'A bakery website for 20 dollars per month' }], questions: null }, catalog);
