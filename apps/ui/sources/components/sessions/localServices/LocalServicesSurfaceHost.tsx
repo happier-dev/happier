@@ -214,6 +214,10 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
     const capture = worktree && captureLifetime && checkout && servingCheckout
         && resolveWorkspaceRefByAddress([checkout], servingCheckout).kind === 'resolved'
         ? { lifetime: captureLifetime, worktree } : null;
+    const restartTarget = logOccurrence?.restartTarget;
+    const onRestart = entryActions.handlers.onRestartManagedService;
+    const restartSelectedService = capture && restartTarget && onRestart
+        ? { name: restartTarget.title, run: async () => onRestart(restartTarget) } : undefined;
 
     return (<>
         <DetectedLocalServicesPane
@@ -238,7 +242,7 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
             renderServicePlacement={props.renderServicePlacement}
             describeDeclaration={props.describeDeclaration}
             viewerAccountId={entryActions.viewerAccountId}
-            effectReview={entryActions.review}
+            effectReview={restartSelectedService ? undefined : entryActions.review}
             scopeNote={scopeNote}
             viewTabs={viewTabs}
             viewBody={viewBody}
@@ -250,6 +254,8 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
                 serverId={serverId}
                 occurrence={logOccurrence}
                 capture={capture}
+                restartSelectedService={restartSelectedService}
+                effectReview={restartSelectedService ? entryActions.review : null}
                 onClose={entryActions.dismissServiceLogs}
                 testID={`${props.testID}-logs`}
             />
@@ -257,10 +263,12 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
     </>);
 }
 
-function LocalServiceLogsCompanion({ serverId, occurrence, capture, onClose, testID }: Readonly<{
+function LocalServiceLogsCompanion({ serverId, occurrence, capture, restartSelectedService, effectReview, onClose, testID }: Readonly<{
     serverId: string;
     occurrence: LocalServiceLogOccurrence;
     capture: Readonly<{ lifetime: ServerAccountScopeLifetime; worktree: LocalServiceCaptureWorktree }> | null;
+    restartSelectedService?: React.ComponentProps<typeof LocalServiceCaptureView>['restartSelectedService'];
+    effectReview: React.ReactNode;
     onClose: () => void;
     testID: string;
 }>): React.ReactElement {
@@ -270,8 +278,12 @@ function LocalServiceLogsCompanion({ serverId, occurrence, capture, onClose, tes
     return (
         <DetailCompanionPane open title={t('machineServices.logs.title')} subtitle={occurrence.name}
             onClose={onClose} testID={testID}>
+            {effectReview}
             <ServiceOccurrenceLogs
-                {...occurrence}
+                machineId={occurrence.machineId}
+                serviceId={occurrence.serviceId}
+                expectedGeneration={occurrence.expectedGeneration}
+                name={occurrence.name}
                 serverId={serverId}
                 machineName={machineName}
                 active={presented}
@@ -283,6 +295,7 @@ function LocalServiceLogsCompanion({ serverId, occurrence, capture, onClose, tes
                     active={presented}
                     machineName={machineName}
                     onShowServers={onClose}
+                    restartSelectedService={restartSelectedService}
                     testID={`${testID}-capture`}
                 />
             ) : null}

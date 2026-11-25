@@ -39,6 +39,8 @@ import {
 import { getPreferredLanguage, t } from '@/text';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 
+import { useLocalServiceActionRunner } from './localServiceActionOutcome';
+
 export type LocalServiceCaptureViewId = 'endpoints' | 'traces' | 'logs';
 
 /** The checkout whose capture is read: the Project's admitted checkout, on the Machine that runs it. */
@@ -89,6 +91,7 @@ export function LocalServiceCaptureView(
     active: boolean;
     machineName: string;
     onShowServers: () => void;
+    restartSelectedService?: Readonly<{ name: string; run: () => Promise<unknown> }>;
     testID: string;
   }>,
 ): React.ReactElement {
@@ -146,6 +149,18 @@ export function LocalServiceCaptureView(
     setAttempt(value => value + 1);
     void refresh?.();
   }, [refresh]);
+  const serviceAction = useLocalServiceActionRunner();
+  const selected = props.restartSelectedService;
+  const restarting = serviceAction.pendingId === 'restart';
+  const restart = async () => {
+    if (!selected || restarting) return;
+    if (await serviceAction.run({
+      id: 'restart',
+      serviceName: selected.name,
+      failureTitle: t('localServices.actions.failureTitle.restart', { service: selected.name }),
+      action: selected.run,
+    })) retry();
+  };
   const traceDetail = React.useMemo<CaptureListDetail<DatabaseCaptureSummaryV1>>(() => ({
     openId: openTraceId,
     onOpenChange: setOpenTraceId,
@@ -408,7 +423,12 @@ export function LocalServiceCaptureView(
             emphasis={t('deploymentTelemetry.local.restart')}
             // The line's owner draws `emphasis` inside `reason`: what to do, then why.
             reason={`${t('deploymentTelemetry.local.restart')} ${t('deploymentTelemetry.local.restartReason')}`}
-            action={{
+            action={selected ? {
+              label: t('localServices.actions.restartTitle'),
+              busy: restarting,
+              disabled: restarting,
+              onPress: () => { void restart(); },
+            } : {
               label: t('deploymentTelemetry.local.openServers'),
               onPress: props.onShowServers,
             }}

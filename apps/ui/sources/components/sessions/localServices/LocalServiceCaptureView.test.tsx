@@ -84,6 +84,7 @@ function view(
   which: 'endpoints' | 'traces' | 'logs' = 'endpoints',
   transport?: ReturnType<typeof createTelemetryCaptureFixtureTransport>,
   active = true,
+  restartSelectedService?: { name: string; run: () => Promise<unknown> },
 ) {
   return (
     <AppPresentationPlatformProvider>
@@ -96,6 +97,7 @@ function view(
             active={active}
             machineName="MacBook Pro"
             onShowServers={() => {}}
+            {...(restartSelectedService ? { restartSelectedService } : {})}
             testID="capture"
           />
         </TelemetryCaptureFixtureProvider>
@@ -444,6 +446,20 @@ describe('LocalServiceCaptureView', () => {
       await settle();
       expect(screen.findByTestId('capture-restart')).not.toBeNull();
       expect(screen.getTextContent()).toMatch(/Restart the dev servers to capture their requests\..*Capture changed while they were running/);
+    } finally { await screen.unmount(); }
+  });
+
+  it('offers Restart from the selected service capture', async () => {
+    const { invoke } = machine(call => call.actionId.endsWith('/capture/status')
+      ? { ok: true, source, coverage, enabled: true, restartRequired: true }
+      : { ok: true, source, items: [] });
+    const run = vi.fn(async () => ({ status: 'succeeded' }));
+    const screen = await renderScreen(view(invoke, 'logs', undefined, true, { name: 'billing-api', run }));
+    try {
+      await settle();
+      expect(screen.findByTestId('capture-restart-action')?.props.accessibilityLabel).toBe('Restart');
+      await screen.pressByTestIdAsync('capture-restart-action');
+      expect(run).toHaveBeenCalledOnce();
     } finally { await screen.unmount(); }
   });
 

@@ -18,4 +18,5 @@ export type LocalServiceLogOccurrence = Readonly<{
   expectedGeneration: string;
   name: string;
   workspace?: LocalServiceLaunchTarget['workspace'];
+  restartTarget?: LocalServiceLaunchTarget;
 }>;

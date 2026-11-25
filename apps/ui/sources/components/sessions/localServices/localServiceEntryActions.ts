@@ -120,12 +120,17 @@ export function resolveLocalServiceEntryActions(
       row.status === 'starting' ||
       row.status === 'stopping' ||
       hasUnsettledLocalServiceCustody(row));
+  const restartManaged =
+    managedLive &&
+    row.status === 'running' &&
+    Boolean(handlers.onRestartManagedService);
   return {
     open,
     showTerminal: row.target.terminalView && handlers.onShowServiceTerminal ? row.target : null,
     showLogs: row.target.sourceClass?.kind === 'managed_service' && handlers.onShowServiceLogs
       ? { machineId: row.target.machineId, serviceId: row.target.id,
-          expectedGeneration: row.target.sourceClass.managedServiceId, name: row.target.title, workspace: row.target.workspace }
+          expectedGeneration: row.target.sourceClass.managedServiceId, name: row.target.title, workspace: row.target.workspace,
+          ...(restartManaged ? { restartTarget: row.target } : {}) }
       : null,
     start:
       primary?.kind === 'start' && handlers.onStartLauncherTarget
@@ -142,10 +147,7 @@ export function resolveLocalServiceEntryActions(
         row.target.source === 'managed_service') &&
       Boolean(handlers.onForgetDetectedService),
     stopManaged: managedLive && Boolean(handlers.onStopManagedService),
-    restartManaged:
-      managedLive &&
-      row.status === 'running' &&
-      Boolean(handlers.onRestartManagedService),
+    restartManaged,
     // A stopped or failed Service answers nowhere: there is no address to copy until it runs again.
     address: row.status === 'stopped' || row.status === 'failed' ? null : formatLocalServiceRowAddress(row),
     openUnavailableReason:
