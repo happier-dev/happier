@@ -12,7 +12,7 @@ import {
  * `?width=` the content column the surface gets (default: the whole screen), `?state=loading|empty|failed` the rows'
  * answer, `?console=error|cancelled` what Run answers, `?stats=off` statement statistics off (Insights setup),
  * `?review=unverified` a writable database with the trust notice in its staged changes review,
- * `?review=read-setup` a Railway database that needs a read-only login.
+ * `?review=read-setup` a Railway database that needs a read-only login, or `?review=read-setup-refused` with editing off.
  */
 export default function DatabaseWorkbenchDevScreen() {
   const params = useLocalSearchParams<{
@@ -38,7 +38,7 @@ export default function DatabaseWorkbenchDevScreen() {
         ...(params.state === 'loading' || params.state === 'empty' || params.state === 'failed' ? { rows: params.state } : {}),
         ...(params.console === 'error' || params.console === 'cancelled' ? { console: params.console } : {}),
         ...(params.stats === 'off' ? { stats: 'off' as const } : {}),
-        ...(params.review === 'unverified' || params.review === 'read-setup' ? { review: params.review } : {}),
+        ...(params.review === 'unverified' || params.review === 'read-setup' || params.review === 'read-setup-refused' ? { review: params.review } : {}),
       }}
     />
   );

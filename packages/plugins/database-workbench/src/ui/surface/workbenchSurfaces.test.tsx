@@ -609,15 +609,21 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
-  it('shows a signed Preview refusal and leaves read access unapplied', async () => {
+  it.each(['refused', 'unexpected'] as const)('shows the %s signed Preview result without applying read access', async (outcome) => {
     const target = { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
         targetLinkId: 'link', contribution: { pluginId: 'happier.deploy.railway-data', contributionId: 'postgresql' },
         platformProjectId: 'project', branchId: 'branch', database: 'billing_dev' } as const;
     const create = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
     const daemon = daemonAnswers([{ ...descriptor, target }]);
-    const reason = 'Save a write login for billing_dev before creating a read-only login.';
+    const code = 'database_editing_off';
+    const reason = 'Database editing is off for this Environment.';
+    const nextStep = 'Ask an Environment manager to turn it on.';
+    const presentActionFailure = vi.fn<NonNullable<PluginUiTestkitHostHandlers['presentActionFailure']>>(async ({ failure }) => {
+      expect(failure.errorCode).toBe(code);
+      return { reason, nextStep, technicalDetails: [{ key: 'code', label: 'Code', value: code }] };
+    });
     const execute = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async () =>
-      ({ ok: false, errorCode: 'write_connection_setup_required', error: reason }));
+      outcome === 'refused' ? { ok: false, errorCode: code, error: code } : { ok: true, result: null });
     const control = createPluginUiActionControlTestHost(execute);
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'managed-read-unverified', mountNonce: 'managed-read-unverified' },
@@ -643,6 +649,7 @@ describe('Database workbench surfaces', () => {
         async watchResource() { throw new PluginError({ code: 'read_role_setup_required' }); },
         executeAction: daemon,
         actionControl: control.handler,
+        presentActionFailure,
       },
     });
     try {
@@ -651,7 +658,16 @@ describe('Database workbench surfaces', () => {
       await settle(20);
       expect(execute.mock.calls.map(([{ action, input }]) => ({ action, input })))
         .toEqual([{ action: create, input: { target, mode: 'preview' } }]);
-      expect(await fixture.getByText(reason)).toBeTruthy();
+      if (outcome === 'refused') {
+        expect(document.body.textContent).toContain(reason);
+        expect(await fixture.getByText(nextStep)).toBeTruthy();
+        await fixture.press(await fixture.getByRole('button', { name: 'Details' }));
+        expect(await fixture.getByText(code)).toBeTruthy();
+        expect(document.body.textContent).not.toContain('Something went wrong');
+      } else {
+        expect(await fixture.getByText('Could not verify the setup result.')).toBeTruthy();
+        expect(presentActionFailure).not.toHaveBeenCalled();
+      }
       expect(document.body.textContent).not.toContain('Review the read-only login');
       expect(await fixture.getByRole('button', { name: 'Use existing read-only login' })).toBeTruthy();
     } finally { await fixture.dispose(); }

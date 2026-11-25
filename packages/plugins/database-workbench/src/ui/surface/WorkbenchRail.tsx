@@ -18,7 +18,7 @@ import {
   usePluginTranslation,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
-import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, useHostDatabaseWorkbench } from '@happier-dev/plugin-ui/hostApi';
+import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, useHostDatabaseWorkbench, type PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import {
   useDatabaseAccess,
   useDatabaseRelations,
@@ -125,7 +125,9 @@ function MachineAgentAccess({ targetKey, level }: Readonly<{ targetKey: string; 
   const t = usePluginTranslation();
   const instance = useWorkbenchInstance();
   const [draft, setDraft] = React.useState<DatabaseAgentAccessV1 | null>(null);
-  const [notice, setNotice] = React.useState<Readonly<{ text: string; error?: true; code?: string; pending?: true }> | null>(null);
+  const [notice, setNotice] = React.useState<Readonly<{ text: string; error?: true; pending?: true; execution?: never }>
+    | Readonly<{ execution: PluginActionExecution; pending?: never }>
+    | null>(null);
   const selected = draft ?? level;
   const choices = {
     none: t('plugins.database.access.level.none', 'None'),
@@ -154,7 +156,7 @@ function MachineAgentAccess({ targetKey, level }: Readonly<{ targetKey: string; 
         return;
       }
     }
-    setNotice('code' in result ? { text: result.message, error: true, code: result.code }
+    setNotice('code' in result ? { execution: result }
       : { text: t('plugins.database.access.changeFailed', 'The access change could not be confirmed.'), error: true });
   }
   return <Stack gap="small">
@@ -170,7 +172,8 @@ function MachineAgentAccess({ targetKey, level }: Readonly<{ targetKey: string; 
       disabled={selected === level || notice?.pending}
       reviewedInput={input}
       controller={{ prepare: () => ({ input }), onSettled: settle }} />
-    {notice?.error ? <ErrorState layout="line" title={notice.text} details={notice.code} />
+    {notice?.execution ? <Action.Failure execution={notice.execution} />
+      : notice?.error ? <ErrorState layout="line" title={notice.text} />
       : notice ? <Text tone="secondary" variant="meta" value={notice.text} /> : null}
   </Stack>;
 }

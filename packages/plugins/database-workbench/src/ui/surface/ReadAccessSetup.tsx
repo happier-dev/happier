@@ -11,7 +11,7 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/prot
 import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 import { Action, Button, CodeBlock, ErrorState, PageHeader, Row, ScrollArea, Stack, SurfaceState, Text, usePluginTranslation } from '@happier-dev/plugin-ui';
 import { SavedSecretChoiceList, type SavedSecretChoiceSelection } from '@happier-dev/plugin-ui/components';
-import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/hostApi';
+import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, type PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import { translateUnverifiedServerNotice } from './connectionCopy.js';
 
 const attachAction = databaseActionLocalIdV1(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1);
@@ -25,7 +25,11 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
   const [review, setReview] = React.useState<Extract<DatabaseReadAccessSetupResultV1, { status: 'review' }> | null>(null);
   const [attaching, setAttaching] = React.useState(false);
   const [secret, setSecret] = React.useState<SavedSecretChoiceSelection | null>(null);
-  const [notice, setNotice] = React.useState<Readonly<{ kind: 'pending' | 'error'; text: string }> | null>(null);
+  const [notice, setNotice] = React.useState<
+    | Readonly<{ kind: 'pending' | 'unexpected'; text: string }>
+    | Readonly<{ kind: 'failure'; execution: PluginActionExecution }>
+    | null
+  >(null);
   const title = t('plugins.database.readSetup.title', 'Set up read-only access');
   const attachTitle = t('plugins.database.readSetup.attach', 'Use existing read-only login');
   const createTitle = t('plugins.database.readSetup.create', 'Create read-only login');
@@ -45,18 +49,20 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
         else onConfigured();
         return;
       }
-      setNotice({ kind: 'error', text: unexpected });
+      setNotice({ kind: 'unexpected', text: unexpected });
     } else if (isPluginActionConfirmationDeclined(result)) {
       setNotice(null);
     } else if (result.status === 'error' || result.status === 'outcomeUnknown') {
-      setNotice({ kind: 'error', text: result.message });
+      setNotice({ kind: 'failure', execution: result });
     }
   }
 
+  const failure = notice?.kind === 'failure' ? <Action.Failure execution={notice.execution} />
+    : notice?.kind === 'unexpected' ? <ErrorState layout="line" title={notice.text} /> : undefined;
   if (!attaching && !review) {
     return <SurfaceState kind="unavailable" size="page" title={title}
       description={t('plugins.database.readSetup.description', 'Choose a read-only login for {database} so you can browse its tables.', { database: target.database })}
-      body={notice?.kind === 'error' ? <ErrorState layout="line" title={notice.text} /> : undefined}
+      body={failure}
       live={notice?.kind === 'pending' ? { text: notice.text } : undefined}
       alternative={<Row gap="small" wrap justify="center">
         <Button title={attachTitle} variant="secondary" size="small" disabled={notice?.kind === 'pending'}
@@ -85,7 +91,7 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
       ? <SavedSecretChoiceList testIDPrefix="database-read-access-secret" selectedRef={secret?.ref ?? null}
           onSelect={(next) => { setNotice(null); setSecret(next); }} />
       : review && <ScrollArea><CodeBlock language="sql" code={review.statements.join('\n\n')} /></ScrollArea>}
-    {notice?.kind === 'error' ? <ErrorState layout="line" title={notice.text} /> : null}
+    {failure}
     {notice?.kind === 'pending' ? <Text tone="secondary" value={notice.text} /> : null}
     <Stack gap="small" align="flex-start">
       {input === null ? null : <Action.Control

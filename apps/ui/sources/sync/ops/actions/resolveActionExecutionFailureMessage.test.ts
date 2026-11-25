@@ -14,6 +14,14 @@ import { presentActionExecutionFailure, resolveActionExecutionErrorMessage, reso
 import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
 
 describe('Action failure presentation', () => {
+    it('explains a code-only refusal when Environment database editing is off', () => {
+        const errorCode = 'database_editing_off';
+        expect(presentActionExecutionFailure({ ok: false, errorCode, error: errorCode })).toMatchObject({
+            reason: t('plugins.database.access.editingOff'),
+            technicalDetails: expect.arrayContaining([expect.objectContaining({ key: 'code', value: errorCode })]),
+        });
+    });
+
     it.each([
         ['provider_account_grant_stale', 'settingsProviders.accountAccessStale'],
         ['provider_account_scope_required', 'settingsProviders.errors.accountScopeRequiredDescription'],

@@ -26,12 +26,12 @@ export function ActionFailure({ execution, onRetry, retryLabel }: Readonly<{
       ok: false,
       errorCode: failure.code,
       error: failure.message,
-      message: failure.authoredMessage,
-      details: failure.details,
-      requestId: failure.requestId,
-      effectAttempted: failure.effectAttempted,
-      failureCause: failure.failureCause,
-      remediation: failure.remediation,
+      ...(failure.authoredMessage === undefined ? {} : { message: failure.authoredMessage }),
+      ...(failure.details === undefined ? {} : { details: failure.details }),
+      ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
+      ...(failure.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }),
+      ...(failure.failureCause === undefined ? {} : { failureCause: failure.failureCause }),
+      ...(failure.remediation === undefined ? {} : { remediation: failure.remediation }),
     }, { signal: controller.signal }).then(presentation => {
       if (!controller.signal.aborted) setPresented({ failure, host, presentation });
     }, () => {

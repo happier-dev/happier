@@ -33,6 +33,7 @@ import {
   createPluginSurfaceContext,
   usePluginSurfaceEnvironment,
 } from '@/components/plugins/surfaces/pluginSurfaceContext';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import { HAPPIER_PAGE_METRICS, HappierColumnEdgeContext } from '@happier-dev/plugin-ui/presentation';
@@ -89,7 +90,7 @@ export type DatabaseWorkbenchSpecimenState = Readonly<{
   console?: 'error' | 'cancelled';
   /** `?stats=off`: statement statistics are off and this server can't turn them on (the Insights setup state). */
   stats?: 'off';
-  review?: 'unverified' | 'read-setup';
+  review?: 'unverified' | 'read-setup' | 'read-setup-refused';
 }>;
 
 const UNVERIFIED_BILLING: DatabaseDescriptorV1 = {
@@ -274,7 +275,10 @@ type SpecimenControl = {
  * author's controller to prepare, answers from the fixture as the Action executor would, and settles back, so Run and
  * Explain show their real results here. No other host machinery is stood in for.
  */
-function createSpecimenActionControls(execute: (actionId: string, input: unknown) => Promise<unknown>) {
+function createSpecimenActionControls(
+  execute: (actionId: string, input: unknown) => Promise<unknown>,
+  refuseReadSetup: boolean,
+) {
   const bound = new Map<string, SpecimenControl & { action: string }>();
   const listeners = new Set<() => void>();
   let snapshot: ReturnType<PluginSurfaceActionControls['getSnapshot']> = Object.freeze([]);
@@ -298,10 +302,12 @@ function createSpecimenActionControls(execute: (actionId: string, input: unknown
       if (!preparation) return;
       control.busy = true;
       publish();
-      const result = await execute(control.action, preparation.input);
+      const execution = refuseReadSetup && control.action === CREATE_READ_ACCESS
+        ? { ok: false, errorCode: 'database_editing_off', error: 'database_editing_off' } as const
+        : { ok: true, result: await execute(control.action, preparation.input) } as Parameters<PluginUiActionControlController['onSettled']>[0];
       control.busy = false;
       publish();
-      control.controller.onSettled({ ok: true, result } as Parameters<PluginUiActionControlController['onSettled']>[0]);
+      control.controller.onSettled(execution);
     },
     commit: async () => undefined,
     invalidatePreparations() {},
@@ -337,7 +343,8 @@ export function DatabaseWorkbenchSpecimen(
   }>,
 ) {
   const { rows: rowsState, console: consoleState, stats: statsState, review } = props.state;
-  const subPath = review === 'read-setup' ? RAILWAY_BILLING_PATH : props.subPath;
+  const needsReadSetup = review === 'read-setup' || review === 'read-setup-refused';
+  const subPath = needsReadSetup ? RAILWAY_BILLING_PATH : props.subPath;
   const descriptor = props.state.review === 'unverified' ? UNVERIFIED_BILLING : BILLING_DEV;
   const environment = usePluginSurfaceEnvironment(
     resolveLocalServicePreviewPlatform(),
@@ -393,7 +400,7 @@ export function DatabaseWorkbenchSpecimen(
     }, descriptor, actionId, input),
     [consoleState, descriptor, rowsState, statsState, review],
   );
-  const actionControls = React.useMemo(() => createSpecimenActionControls(execute), [execute]);
+  const actionControls = React.useMemo(() => createSpecimenActionControls(execute, review === 'read-setup-refused'), [execute, review]);
   const presentation = React.useMemo(() => ({ actionControls: actionControls.controls }), [actionControls]);
   const hostApi = React.useMemo<PluginUiHostApi>(() => {
     const base = createBundledPluginFixtureHostApi(
@@ -406,7 +413,7 @@ export function DatabaseWorkbenchSpecimen(
       readResource: (async () =>
         connectionContent(descriptor)) as unknown as PluginUiHostApi['readResource'],
       watchResource: (async () => {
-        if (review === 'read-setup') throw new PluginError({ code: 'read_role_setup_required' });
+        if (needsReadSetup) throw new PluginError({ code: 'read_role_setup_required' });
         return { subscriptionId: 'dev-database-workbench', dispose() {} };
       }) as unknown as PluginUiHostApi['watchResource'],
       replacePageLocation: (async () =>
@@ -424,10 +431,11 @@ export function DatabaseWorkbenchSpecimen(
         status: 'cancelled',
       })) as unknown as PluginUiHostApi['downloadFile'],
       // Run and Explain are host-drawn Action controls (`createSpecimenActionControls`).
-      version: () => ({ ...base.version(), methods: [...base.version().methods, 'actionControl'] }),
+      version: () => ({ ...base.version(), methods: [...base.version().methods, 'actionControl', 'presentActionFailure'] }),
       actionControl: actionControls.actionControl,
+      presentActionFailure: async failure => presentActionExecutionFailure(failure),
     };
-  }, [actionControls, context, descriptor, execute, review]);
+  }, [actionControls, context, descriptor, execute, needsReadSetup]);
   const module = React.useMemo(
     () => ({
       renderSurface:

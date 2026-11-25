@@ -16,8 +16,8 @@ import {
 } from '@happier-dev/plugin-sdk/database';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import { Button, EmptyState, ErrorState, Item, ItemGroup, Row, Select, Stack, Text, usePluginTranslation } from '@happier-dev/plugin-ui';
-import { useExecutePluginAction } from '@happier-dev/plugin-ui/hostApi';
+import { Action, Button, EmptyState, ErrorState, Item, ItemGroup, Row, Select, Stack, Text, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { type PluginActionExecution, useExecutePluginAction } from '@happier-dev/plugin-ui/hostApi';
 import { displayDatabaseStatementShape } from '@happier-dev/databases/statements';
 import { useWorkbenchInstance } from '../../hooks.js';
 import { ACTIVITY_READ } from './ActivityView.js';
@@ -115,7 +115,7 @@ function FindingsGroup({ target, request }: Readonly<{
     return <Text tone="secondary">{t('plugins.database.insights.sourceLoading', 'Loading findings…')}</Text>;
   }
   if (execution.status !== 'success') {
-    return <Failure details={'message' in execution ? execution.message : undefined} retry={refresh} />;
+    return <Action.Failure execution={execution} onRetry={refresh} retryLabel={t('plugins.database.retry', 'Try again')} />;
   }
   const parsed = DatabaseFindingsListResultV1Schema.safeParse(execution.result);
   if (!parsed.success) return <Failure retry={refresh} />;
@@ -159,13 +159,13 @@ function NativeFinding({ target, request, recordKey, relation, dismissalKey, onD
   }, [relation, request]);
   const { execution, refresh, demandError } = useFindingAction(readAction, target, selectedRequest, recordKey);
   const dismiss = useExecutePluginAction(dismissAction);
-  const [dismissError, setDismissError] = React.useState<string | null>(null);
+  const [dismissError, setDismissError] = React.useState<string | PluginActionExecution | null>(null);
   if (demandError) return <Failure details={demandError.details} retry={refresh} />;
   if (execution.status === 'idle' || execution.status === 'pending') {
     return <Text tone="secondary">{t('plugins.database.insights.sourceLoading', 'Loading findings…')}</Text>;
   }
   if (execution.status !== 'success') {
-    return <Failure details={'message' in execution ? execution.message : undefined} retry={refresh} />;
+    return <Action.Failure execution={execution} onRetry={refresh} retryLabel={t('plugins.database.retry', 'Try again')} />;
   }
   const parsed = DatabaseFindingReadResultV1Schema.safeParse(execution.result);
   if (!parsed.success) return <Failure retry={refresh} />;
@@ -180,7 +180,7 @@ function NativeFinding({ target, request, recordKey, relation, dismissalKey, onD
     if (result.status === 'success' && DatabaseFindingDismissResultV1ProtocolSchema.safeParse(result.result).success) {
       onDismiss(dismissalKey);
     } else {
-      setDismissError('message' in result ? result.message
+      setDismissError('code' in result ? result
         : t('plugins.database.insights.dismissFailed', 'The finding could not be dismissed.'));
     }
   };
@@ -192,6 +192,7 @@ function NativeFinding({ target, request, recordKey, relation, dismissalKey, onD
       {dismissalKey ? <Button size="small" variant="secondary" busy={dismiss.execution.status === 'pending'}
         title={t('plugins.database.insights.dismissFinding', 'Dismiss finding')} onPress={dismissFinding} /> : null}
     </Row>
-    {dismissError ? <ErrorState layout="line" title={dismissError} /> : null}
+    {typeof dismissError === 'string' ? <ErrorState layout="line" title={dismissError} />
+      : dismissError && <Action.Failure execution={dismissError} />}
   </Stack>;
 }

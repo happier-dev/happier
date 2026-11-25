@@ -18,7 +18,7 @@ import { projectNativeJsonValueForTransport, ProtocolWorkspaceAddressV1Schema } 
 import { SessionInputHandoffResultV1Schema, type SessionInputHandoffInputV1 } from '@happier-dev/plugin-sdk/sessions';
 import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 import { Action, Button, ErrorState, Markdown, Row, Stack, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
-import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, useExecutePluginAction, usePluginHostApi } from '@happier-dev/plugin-ui/hostApi';
+import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, useExecutePluginAction, usePluginHostApi, type PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import { buildDatabaseFindingWorkflowSeed } from '../../../insights/findingEventSource.js';
 import { createDatabaseBriefHandoffControl } from '../../../insights/migration.js';
 import { useWorkbenchInstance } from '../../hooks.js';
@@ -39,7 +39,7 @@ export function FindingBrief({ target, recordKey, sourceSelection, request, find
   const build = useExecutePluginAction(buildAction);
   const read = useExecutePluginAction(readAction);
   const [brief, setBrief] = React.useState<Brief | null>(null);
-  const [error, setError] = React.useState<{ title: string; details?: string } | null>(null);
+  const [error, setError] = React.useState<{ title: string; details?: string } | PluginActionExecution | null>(null);
   const missing = t('plugins.database.insights.briefUnavailable', 'The finding brief could not be prepared.');
   const prepareInput = async () => {
     if (sourceSelection) return projectNativeJsonValueForTransport({ target, recordKey, sourceSelection });
@@ -59,7 +59,7 @@ export function FindingBrief({ target, recordKey, sourceSelection, request, find
     }
     if (result.status === 'pending') return;
     if (result.status !== 'success') {
-      setError({ title: 'message' in result ? result.message : missing });
+      setError('code' in result ? result : { title: missing });
       return;
     }
     const prepared = DatabaseFindingBriefBuildResultV1Schema.safeParse(result.result);
@@ -81,7 +81,7 @@ export function FindingBrief({ target, recordKey, sourceSelection, request, find
         const result = await read.execute(await prepareInput());
         if (result.status === 'pending') return;
         if (result.status !== 'success') {
-          setError({ title, details: 'message' in result ? result.message : undefined });
+          setError('code' in result ? result : { title });
           return;
         }
         const parsed = DatabaseFindingReadResultV1Schema.safeParse(result.result);
@@ -102,8 +102,11 @@ export function FindingBrief({ target, recordKey, sourceSelection, request, find
   const settled = (execution: PluginUiActionControlExecution) => {
     const result = projectPluginActionControlExecutionV1(execution, t);
     if (isPluginActionConfirmationDeclined(result)) return;
-    const message = 'message' in result ? result.message
-      : t('plugins.database.insights.composerUnavailable', 'The brief could not be opened in the Composer.');
+    if ('code' in result) {
+      setError(result);
+      return;
+    }
+    const message = t('plugins.database.insights.composerUnavailable', 'The brief could not be opened in the Composer.');
     const handoff = result.status === 'success' ? SessionInputHandoffResultV1Schema.safeParse(result.result) : null;
     const kind = handoff?.success ? handoff.data.kind : null;
     setError(kind === 'composed' || kind === 'authoringResult' || kind === 'cancelled' ? null : { title: message });
@@ -135,6 +138,6 @@ export function FindingBrief({ target, recordKey, sourceSelection, request, find
       title={t('plugins.database.insights.prepareBrief', 'Prepare brief')} onPress={prepare} />}
     {!sourceSelection ? <Button size="small" variant="secondary" busy={read.execution.status === 'pending'}
       title={t('plugins.database.insights.createWorkflow', 'Create workflow from finding')} onPress={createWorkflow} /> : null}
-    {error ? <ErrorState layout="line" {...error} /> : null}
+    {error && ('status' in error ? <Action.Failure execution={error} /> : <ErrorState layout="line" {...error} />)}
   </Stack>;
 }

@@ -9,7 +9,7 @@ import {
   type CollectionField,
   type CollectionRowActions,
 } from '@happier-dev/plugin-ui/components';
-import { isPluginActionConfirmationDeclined, usePluginSurfaceActivity } from '@happier-dev/plugin-ui/hostApi';
+import { isPluginActionConfirmationDeclined, usePluginSurfaceActivity, type PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import {
   Action,
   ErrorState,
@@ -208,7 +208,9 @@ function CancelActivity({ target, activityKey, queryStartedAt }: Readonly<{
   queryStartedAt: string;
 }>) {
   const t = usePluginTranslation();
-  const [notice, setNotice] = React.useState<Readonly<{ text: string; disable?: boolean }> | null>(null);
+  const [notice, setNotice] = React.useState<Readonly<{ text: string; disable?: boolean; execution?: never }>
+    | Readonly<{ execution: PluginActionExecution; disable?: never }>
+    | null>(null);
   const input = projectNativeJsonValueForTransport({
     target, operation: 'activity.cancel', activityKey, queryStartedAt,
   });
@@ -234,14 +236,16 @@ function CancelActivity({ target, activityKey, queryStartedAt }: Readonly<{
                 : t('plugins.database.activity.cancelFailed', 'The database could not cancel this query.'),
               disable: status !== 'signal_failed',
             });
+          } else if ('code' in settled) {
+            setNotice({ execution: settled });
           } else {
-            setNotice({ text: 'message' in settled ? settled.message
-              : t('plugins.database.activity.cancelUnconfirmed', 'Cancellation could not be confirmed.') });
+            setNotice({ text: t('plugins.database.activity.cancelUnconfirmed', 'Cancellation could not be confirmed.') });
           }
         },
       }}
     />
-    {notice ? <Text tone="secondary" value={notice.text} /> : null}
+    {notice?.execution ? <Action.Failure execution={notice.execution} />
+      : notice ? <Text tone="secondary" value={notice.text} /> : null}
   </Stack>;
 }
 

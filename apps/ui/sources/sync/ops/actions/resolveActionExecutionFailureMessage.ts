@@ -300,6 +300,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (code === 'account_mode_mismatch' || code === 'recipient_mode_unsupported') return t('secrets.catalog.status.recipient_mode_unsupported');
     const managedRefusal = typeof code === 'string' ? describeManagedAcquisitionRefusal(code) : null;
     if (managedRefusal) return managedRefusal;
+    if (code === 'database_editing_off') return t('plugins.database.access.editingOff');
     const deploymentRefusal = code === 'template_domain_required' ? readDeploymentRefusalRecoveryV1(code, record.details) : null;
     if (deploymentRefusal) return deploymentRefusal.remedy;
     // The Home refused the target Machine as offline (its admission's typed availability diagnostic, carried as the

@@ -5,7 +5,7 @@ import {
 import { databaseActionLocalIdV1, isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 import { DatabaseDescriptorV1Schema, type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
-import { Action, Button, ErrorState, Stack, Text, TextField, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { Action, Button, Stack, Text, TextField, usePluginTranslation } from '@happier-dev/plugin-ui';
 import { SavedSecretChoiceList } from '@happier-dev/plugin-ui/components';
 import { projectPluginActionControlExecutionV1, useExecutePluginAction } from '@happier-dev/plugin-ui/hostApi';
 import type { WorkbenchLaunchInput } from './mount.js';
@@ -41,8 +41,7 @@ export function DatabaseConnection({ scope, onConnected, onCancel }: Readonly<{
     <SavedSecretChoiceList testIDPrefix="database-connect-secret" selectedRef={ref}
       onConnect={next => { reset(); setRef(next); }} />
     {ref ? <TextField label={t('plugins.database.connect.name', 'Connection name')} value={name} onChange={setName} /> : null}
-    {execution.status === 'error' || execution.status === 'outcomeUnknown' ? <ErrorState layout="line"
-      title={execution.message} details={execution.code} /> : null}
+    <Action.Failure execution={execution} />
     {awaitingApproval ? <Text tone="secondary" value={t('plugins.database.connect.pending', 'Waiting for approval.')} /> : null}
     <Button title={failed ? t('plugins.database.retry', 'Try again') : t('plugins.database.connect.test', 'Test and connect')}
       disabled={!ref || busy} onPress={() => { void connect(); }} />

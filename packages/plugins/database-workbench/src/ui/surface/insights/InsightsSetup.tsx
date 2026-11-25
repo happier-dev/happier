@@ -3,7 +3,7 @@ import type { DatabaseDescriptorV1, DatabaseStatsObservationV1, DatabaseTargetV1
 import { DATABASE_STATS_ENABLE_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { projectNativeJsonValueForTransport, ProtocolWorkspaceAddressV1Schema } from '@happier-dev/plugin-sdk/protocol';
 import { SessionInputHandoffResultV1Schema } from '@happier-dev/plugin-sdk/sessions';
-import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, usePluginHostApi } from '@happier-dev/plugin-ui/hostApi';
+import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, usePluginHostApi, type PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import {
   Action,
   Button,
@@ -96,7 +96,9 @@ function composePreloadGuidance(translate: PluginTranslate): string {
 function EnableStatistics({ target, onRetry }: Readonly<{ target: DatabaseTargetV1; onRetry?: (() => void) | undefined }>) {
   const t = usePluginTranslation();
   const input = projectNativeJsonValueForTransport({ target, operation: 'stats.enable' });
-  const [notice, setNotice] = React.useState<Readonly<{ text: string; pending?: boolean }> | null>(null);
+  const [notice, setNotice] = React.useState<Readonly<{ text: string; pending?: boolean; execution?: never }>
+    | Readonly<{ execution: PluginActionExecution; pending?: never }>
+    | null>(null);
   return <>
     <Action.Control
       action={databaseActionLocalIdV1(DATABASE_STATS_ENABLE_ACTION_ID_V1)}
@@ -123,14 +125,16 @@ function EnableStatistics({ target, onRetry }: Readonly<{ target: DatabaseTarget
           } else if (settled.status === 'success' && !settled.result.ok
             && settled.result.code === 'database_statistics_extension_privilege_required' && settled.result.reason) {
             setNotice({ text: settled.result.reason });
+          } else if ('code' in settled) {
+            setNotice({ execution: settled });
           } else {
-            setNotice({ text: 'message' in settled ? settled.message
-              : t('plugins.database.insights.setup.enableFailed', 'Statistics could not be enabled.') });
+            setNotice({ text: t('plugins.database.insights.setup.enableFailed', 'Statistics could not be enabled.') });
           }
         },
       }}
     />
-    {notice ? <Text tone="secondary" value={notice.text} /> : null}
+    {notice?.execution ? <Action.Failure execution={notice.execution} />
+      : notice ? <Text tone="secondary" value={notice.text} /> : null}
   </>;
 }
 
@@ -140,7 +144,7 @@ function SetupTaskControl({ task, directory, title, accessibilityLabel, presenta
   presentation?: Readonly<{ icon?: 'generate' | 'pulse'; description?: string; disclosure?: boolean }>;
 }>) {
   const t = usePluginTranslation();
-  const [error, setError] = React.useState<{ title: string; details?: string } | null>(null);
+  const [error, setError] = React.useState<{ title: string; details?: string } | PluginActionExecution | null>(null);
   const control = createDatabaseBriefHandoffControl(() => buildDatabaseFindingBriefV1(task), {
     handoff: { v: 1, sessionChoice: { kind: 'new' }, delivery: 'compose',
       newSession: { kind: 'new', seed: { placement: { kind: 'exactTarget', ...task.sourceScope,
@@ -152,6 +156,10 @@ function SetupTaskControl({ task, directory, title, accessibilityLabel, presenta
       const result = projectPluginActionControlExecutionV1(execution, t);
       if (isPluginActionConfirmationDeclined(result)) return;
       if (result.status === 'pending') return;
+      if ('code' in result) {
+        setError(result);
+        return;
+      }
       const handoff = result.status === 'success' ? SessionInputHandoffResultV1Schema.safeParse(result.result) : null;
       const delivered = handoff?.success ? handoff.data : null;
       if (delivered?.kind === 'composed' || delivered?.kind === 'authoringResult' || delivered?.kind === 'cancelled') {
@@ -159,16 +167,15 @@ function SetupTaskControl({ task, directory, title, accessibilityLabel, presenta
         return;
       }
       const details = delivered?.kind === 'failed' ? delivered.failure.errorCode
-        : delivered?.kind === 'unavailable' ? delivered.reason : 'code' in result ? result.code : undefined;
-      setError({ title: 'message' in result ? result.message
-        : t('plugins.database.insights.composerUnavailable', 'The brief could not be opened in the Composer.'),
+        : delivered?.kind === 'unavailable' ? delivered.reason : undefined;
+      setError({ title: t('plugins.database.insights.composerUnavailable', 'The brief could not be opened in the Composer.'),
         ...(typeof details === 'string' ? { details } : {}),
       });
     },
   });
   return <><Action.Control {...control} title={title} variant="secondary" {...presentation}
       {...(accessibilityLabel === undefined ? {} : { accessibilityLabel })} />
-    {error ? <ErrorState layout="line" {...error} /> : null}
+    {error && ('status' in error ? <Action.Failure execution={error} /> : <ErrorState layout="line" {...error} />)}
   </>;
 }
 
