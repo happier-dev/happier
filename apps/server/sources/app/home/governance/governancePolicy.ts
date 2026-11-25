@@ -154,7 +154,10 @@ export type HomeGovernancePolicySetResult =
     | Readonly<{ status: "forbidden" }>
     | Readonly<{ status: "invalid_policy" }>
     | Readonly<{ status: "refused"; code: Extract<HomeGovernanceErrorCodeV1, "managed_default_machine_not_member_usable"> }>
-    /** The patch widens sign-in, admission or storage policy without `confirmWidening`; nothing was written. */
+    /**
+     * The patch widens sign-in, admission or storage policy without `confirmWidening`; nothing was
+     * written. The route admits that operand only from a present person (never automation authority).
+     */
     | Readonly<{ status: "widening_unconfirmed" }>;
 
 class HomeGovernancePolicyCreateConflictError extends Error {

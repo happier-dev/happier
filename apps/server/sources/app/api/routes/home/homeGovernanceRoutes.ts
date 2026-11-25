@@ -388,9 +388,13 @@ export function homeGovernanceRoutes(app: Fastify): void {
         async (request, reply) => {
             const requestHomeEnv = await readRequestHomeEnv(request);
             if (request.validationError) return await reply.code(400).send({ error: "invalid_home_input" as const });
+            // A sign-in widening needs the present person's confirmation (§3.4 bound 5). An Agent,
+            // plugin or other automation caller cannot author it; an Agent request a person approved
+            // replays as that person, so its confirmation arrives with present-user authority.
+            const { confirmWidening: _callerConfirmation, ...unconfirmedPatch } = request.body;
             const outcome = await setHomeGovernancePolicy({
                 actorAccountId: request.userId,
-                patch: request.body,
+                patch: request.authAuthority === "present_user" ? request.body : unconfirmedPatch,
                 env: requestHomeEnv,
             });
             if (outcome.status === "forbidden") {

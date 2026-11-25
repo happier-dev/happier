@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { AUTHORITY_CEILING_HEADER_V1 } from "@happier-dev/protocol/actions/invocationAuthority";
 
 import { auth } from "@/app/auth/auth";
 import { mintHomeClaimCode } from "@/app/home/governance/homeClaimCode";
@@ -129,6 +130,22 @@ describe("home.policy.set widening", () => {
         expect(unconfirmed.statusCode).toBe(409);
         expect(unconfirmed.json()).toEqual({ error: "home_policy_widening_unconfirmed" });
 
+        // An Agent or other automation caller cannot author the person's confirmation:
+        // the operand counts only under present-user authority (approved replays run as the person).
+        const automation = await app.inject({
+            method: "POST",
+            url: "/v1/home/policy/set",
+            headers: { authorization: `Bearer ${owner.token}`, [AUTHORITY_CEILING_HEADER_V1]: "account_automation" },
+            payload: {
+                expectedRevision: 1,
+                confirmWidening: true,
+                authenticationPolicy: { v: 1, admission: "self_service" },
+            },
+        });
+        expect(automation.statusCode).toBe(409);
+        expect(automation.json()).toEqual({ error: "home_policy_widening_unconfirmed" });
+        // Nothing was written: the person's confirmation below still applies at revision 1.
+
         const confirmed = await post(app, "/v1/home/policy/set", owner.token, {
             expectedRevision: 1,
             confirmWidening: true,
@@ -136,5 +153,15 @@ describe("home.policy.set widening", () => {
         });
         expect(confirmed.statusCode).toBe(200);
         expect(confirmed.json()).toMatchObject({ revision: 2 });
+
+        // Narrowing needs no confirmation and keeps working for automation callers.
+        const automationNarrowed = await app.inject({
+            method: "POST",
+            url: "/v1/home/policy/set",
+            headers: { authorization: `Bearer ${owner.token}`, [AUTHORITY_CEILING_HEADER_V1]: "account_automation" },
+            payload: { expectedRevision: 2, authenticationPolicy: { v: 1, admission: "invitation_only" } },
+        });
+        expect(automationNarrowed.statusCode).toBe(200);
+        expect(automationNarrowed.json()).toMatchObject({ revision: 3 });
     });
 });

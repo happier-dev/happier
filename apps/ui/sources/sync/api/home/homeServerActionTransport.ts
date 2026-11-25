@@ -4,6 +4,7 @@ import {
 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
@@ -181,6 +182,8 @@ export async function requestHomeDomain<TValue, TCode extends string = HomeDomai
     /** The row/domain's side-effect class; required so response loss is never guessed. */
     effect: 'read' | 'write';
     signal?: AbortSignal;
+    /** An Agent, plugin or caller-authored document's invocation: the Home must not treat it as the person. */
+    authorityCeiling?: 'account_automation';
     /** Borrows an already admitted Account lifetime; never captures another authority. */
     requestAuthority?: Readonly<{ request: ServerFetch; assertCurrent: () => void }>;
 }>): Promise<HomeDomainResult<TValue, TCode | HomeDomainErrorCode>> {
@@ -188,10 +191,11 @@ export async function requestHomeDomain<TValue, TCode extends string = HomeDomai
     try {
         const carry = async (authority: Readonly<{ request: ServerFetch }>) => {
             params.requestAuthority?.assertCurrent();
+            const ceilingHeader = params.authorityCeiling ? { [AUTHORITY_CEILING_HEADER_V1]: params.authorityCeiling } : null;
             const response = await authority.request(params.path, {
                 method: params.method ?? 'POST',
-                ...(params.input === undefined ? {} : {
-                    headers: { 'content-type': 'application/json' },
+                ...(params.input === undefined ? (ceilingHeader ? { headers: ceilingHeader } : {}) : {
+                    headers: { 'content-type': 'application/json', ...ceilingHeader },
                     body: JSON.stringify(params.input),
                 }),
                 ...(params.signal ? { signal: params.signal } : {}),

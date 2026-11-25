@@ -301,6 +301,23 @@ describe('createHomeDomainActionExecutorForScope', () => {
             .toBe('https://home-a.example/v1/home/governance/get');
     });
 
+    it('tells the Home an automation caller is not the person, so caller-authored confirmations never count', async () => {
+        const { scope } = await scopeForNewHome('https://home-ceiling.example');
+        runtimeFetchMock.mockImplementation(async () => jsonResponse({ error: 'home_policy_widening_unconfirmed' }, 409));
+        const execute = createHomeDomainActionExecutorForScope(scope);
+        const input = { expectedRevision: 3, confirmWidening: true, authenticationPolicy: { v: 1, admission: 'self_service' } };
+
+        // Agent-authored hosted HTML runs Host Actions in the app as account automation.
+        await execute({ actionId: 'home.policy.set', input,
+            context: { surface: 'ui', authority: 'account_automation' } as never });
+        await execute({ actionId: 'home.policy.set', input,
+            context: { surface: 'ui', authority: 'present_user' } as never });
+
+        const ceilings = runtimeFetchMock.mock.calls.map(([request]) =>
+            new Headers(request?.init?.headers).get('x-happier-authority-ceiling'));
+        expect(ceilings).toEqual(['account_automation', null]);
+    });
+
     it('carries managed GitHub administration through the same exact-Home executor', async () => {
         const { scope } = await scopeForNewHome('https://home-github.example');
         runtimeFetchMock.mockResolvedValue(jsonResponse({ registrations: [], installations: [] }, 200));

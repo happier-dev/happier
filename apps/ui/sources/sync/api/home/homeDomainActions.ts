@@ -230,7 +230,7 @@ export function createHomeDomainActionExecutorForScope(
     }>,
     readCurrentness?: () => boolean,
 ): HomeDomainActionExecutor {
-    return async ({ actionId, input, preparedRequest, signal }) => {
+    return async ({ actionId, input, preparedRequest, context, signal }) => {
         const spec = getActionSpec(actionId);
         const request = preparedRequest ? bindPublicProfilePreparedHttpRequestV1(actionId, preparedRequest)
             : bindHomeDomainActionHttpRequestV1(actionId, input);
@@ -246,6 +246,8 @@ export function createHomeDomainActionExecutorForScope(
             input: request.body,
             schema: homeDomainActionOutputSchemaV1(actionId, preparedRequest),
             effect: spec.sideEffectClass === 'read' ? 'read' : 'write',
+            // The host-stamped caller authority travels to the Home, as on every other Account transport.
+            ...(context?.authority === 'account_automation' ? { authorityCeiling: 'account_automation' as const } : {}),
             ...(errorSchema ? { errorSchema } : {}),
             ...(signal ? { signal } : {}),
             ...(retiredSessionId ? { projectCurrentAccountResult: (settled: HomeDomainResult<unknown, string>) => {

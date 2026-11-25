@@ -741,6 +741,48 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     expect(approvalsCreate).not.toHaveBeenCalled();
   });
 
+  it('asks the person about an Agent sign-in widening and replays the approval once as that person', async () => {
+    // The Home admits `confirmWidening` only under present-user authority, so the
+    // person's approval is the confirmation: the replay must carry their authority.
+    const effects: Array<Readonly<{ input: unknown; authority: unknown }>> = [];
+    const approvals = new Map<string, ApprovalRequest>();
+    const executor = createActionExecutor({
+      homeDomainAction: async ({ input, context }) => {
+        effects.push({ input, authority: context.authority });
+        return { error: 'unused' };
+      },
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }),
+      approvalsCreate: async ({ request }) => {
+        const artifactId = `policy-approval-${approvals.size + 1}`;
+        approvals.set(artifactId, ApprovalRequestV2Schema.parse(request));
+        return { artifactId };
+      },
+      approvalsGet: async ({ artifactId }) => approvals.get(artifactId) ?? null,
+      approvalsUpdate: async ({ artifactId, request }) => {
+        const transition = transitionStoredApproval(approvals.get(artifactId), request);
+        if (!transition.ok) return transition;
+        approvals.set(artifactId, ApprovalRequestV2Schema.parse(request));
+        return { ok: true as const };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
+    } as Partial<ActionExecutorDeps> as ActionExecutorDeps);
+    const input = { expectedRevision: 1, confirmWidening: true, authenticationPolicy: { v: 1, admission: 'self_service' } } as const;
+    const agent = { surface: 'agent', authority: 'account_automation', serverId: 'home-1', runtimeAccountId: 'account-1',
+      serverIdentityId: 'home-identity-1', actionRequestId: 'request-policy-1', defaultSessionId: 'agent-session',
+      actionCaller: { kind: 'session', sessionId: 'agent-session', starterDepth: 0, turnDepth: 0 } } as const;
+    const person = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: 'home-1', serverIdentityId: 'home-identity-1', runtimeAccountId: 'account-1' } as const;
+
+    const requested = await executor.execute('home.policy.set', input, agent);
+    expect(requested).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(effects).toEqual([]);
+    const artifactId = (requested as { result: { artifactId: string } }).result.artifactId;
+
+    await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, person);
+    await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, person);
+    expect(effects).toEqual([{ input, authority: 'present_user' }]);
+  });
+
   it('routes a validated governance mutation to the one Home family dependency', async () => {
     const controller = new AbortController();
     const homeDomainAction = vi.fn(async () => homeAccountRow());
