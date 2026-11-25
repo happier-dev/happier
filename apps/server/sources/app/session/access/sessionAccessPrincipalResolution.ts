@@ -4,16 +4,11 @@ import { buildShareEligibleAccountWhere } from "@/app/teams/shareEligibility";
 import { resolveGrantableTeamsForActorInTx } from "@/app/teams/queries";
 import { resolveGrantableTeamGroupsForActorInTx } from "@/app/teams/groups/grantableGroups";
 import { projectTeamGroupNameForRecipient } from "@/app/teams/groups/privateLabels";
-import {
-    qualifyTeamProjectionReadAuthenticationsInTx,
-    resolveTeamActorContextsInTx,
-} from "@/app/teams/actorContext";
-import type { SessionAccessAuthentication } from "./sessionAccessAuthentication";
+import { resolveTeamActorContextsInTx } from "@/app/teams/actorContext";
+import { qualifySessionTeamAuthenticationsInTx, type SessionAccessAuthentication } from "./sessionAccessAuthentication";
 import type { Tx } from "@/storage/inTx";
-import { TeamMembershipStatus } from "@/storage/enums.generated";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { projectTeamCreationPolicy } from "@/app/teams/creationPolicy";
-import { projectTeamPolicyV1 } from "@/app/teams/projections";
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { SessionAccessCandidatesInspectResponseV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { assertSessionAccessManageAccessInTx } from './sessionAccessGrantService';
@@ -78,18 +73,19 @@ export async function resolveSessionAccessPrincipalsInTx(input: Readonly<{
         ...(input.creationTeamId ? [input.creationTeamId] : []),
     ])];
     const contexts = await resolveTeamActorContextsInTx(input.tx, { teamIds, actorAccountId: input.actorAccountId });
-    const qualifications = await qualifyTeamProjectionReadAuthenticationsInTx(input.tx, {
-        contexts: [...contexts.values()],
-        ...(input.authentication ? {
-            env: input.authentication.env,
-            authenticationEvidence: input.authentication.authenticationEvidence,
-            authenticationAuthority: input.authentication.authority,
-        } : {}),
+    const memberTeamIds = await resolveGrantableTeamsForActorInTx(input.tx, {
+        actorAccountId: input.actorAccountId, teamIds: [...contexts.keys()], actorContexts: contexts,
     });
-    const qualifiedTeamIds = teamIds.filter(teamId => qualifications.get(teamId)?.ok);
-    const grantableTeamIds = await resolveGrantableTeamsForActorInTx(input.tx, {
-        actorAccountId: input.actorAccountId, teamIds: qualifiedTeamIds, actorContexts: contexts,
+    const memberTeams = [...contexts.values()].filter(context => memberTeamIds.has(context.team.id));
+    // This read previews Session admission. The Team settings exception for
+    // repairing a malformed policy does not qualify a Session attachment.
+    const qualifications = await qualifySessionTeamAuthenticationsInTx(input.tx, {
+        accountId: input.actorAccountId,
+        teams: memberTeams.map(context => context.team),
+        authentication: input.authentication ?? { env: process.env, authority: "present_user", authenticationEvidence: undefined },
     });
+    const grantableTeamIds = new Set([...qualifications].filter(([, qualification]) => qualification.status === "satisfied")
+        .map(([teamId]) => teamId));
     const grantableGroups = await resolveGrantableTeamGroupsForActorInTx(input.tx, {
         actorAccountId: input.actorAccountId,
         groups: groupSubjects.filter(subject => grantableTeamIds.has(subject.teamId)),
@@ -111,11 +107,9 @@ export async function resolveSessionAccessPrincipalsInTx(input: Readonly<{
             continue;
         }
         const context = contexts.get(subject.teamId);
-        if (!context || !qualifications.get(subject.teamId)?.ok) continue;
+        if (!context || !grantableTeamIds.has(subject.teamId)) continue;
         if (subject.kind === "team") {
-            if (grantableTeamIds.has(subject.teamId)) {
-                result.push({ kind: "team", teamId: context.team.id, name: context.team.name });
-            }
+            result.push({ kind: "team", teamId: context.team.id, name: context.team.name });
             continue;
         }
         const group = grantableGroups.get(subject.groupId);
@@ -134,18 +128,18 @@ export async function resolveSessionAccessPrincipalsInTx(input: Readonly<{
         // A member whose current sign-in this Team does not accept is told so: the same
         // qualification decides the Session write, which refuses with the same code.
         // Anyone else learns nothing about the Team.
-        if (context?.membership?.status === TeamMembershipStatus.active && qualification && !qualification.ok) {
+        if (context && qualification && qualification.status !== "satisfied") {
             creationRefusal = {
                 v: 1,
                 teamId: context.team.id,
                 teamName: context.team.name,
-                code: qualification.error === "team_authentication_required"
+                code: qualification.status === "authentication_required"
                     ? "session_access_authentication_required"
                     : "session_access_authentication_unavailable",
-                accepted: projectTeamPolicyV1(context.team).authenticationPolicy?.accepted ?? [],
+                accepted: qualification.status === "authentication_required" ? [...qualification.accepted] : [],
             };
         }
-        if (context && qualification?.ok && grantableTeamIds.has(input.creationTeamId)) {
+        if (context && qualification?.status === "satisfied") {
             creationDecision = {
                 v: 1,
                 teamId: context.team.id,

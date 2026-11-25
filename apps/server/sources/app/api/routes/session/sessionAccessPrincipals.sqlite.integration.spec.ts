@@ -216,6 +216,48 @@ describe("Selected Session access principals (SQLite HTTP integration)", () => {
         }
     });
 
+    it.each([
+        {
+            label: "repair-required sign-in",
+            policy: { v: 1, mode: "restricted", accepted: [] },
+            code: "session_access_authentication_unavailable",
+            offered: [],
+        },
+        {
+            label: "one offered sign-in",
+            policy: { v: 1, mode: "restricted", accepted: [
+                { kind: "home_method", methodId: "key_challenge" },
+                { kind: "home_method", methodId: "unconfigured-provider" },
+            ] },
+            code: "session_access_authentication_required",
+            offered: [{ kind: "home_method", methodId: "key_challenge" }],
+        },
+    ])("projects the creation refusal for $label only to a current member", async ({ policy, code, offered }) => {
+        const account = () => db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "e2ee" } });
+        const [owner, stranger] = await Promise.all([account(), account()]);
+        const team = await db.team.create({ data: { name: "Private creation context", authenticationPolicy: policy } });
+        await inTx(tx => admitTeamMemberInTx(tx, {
+            teamId: team.id, accountId: owner.id, role: "owner", historyAccess: "all_existing",
+        }));
+        const resolve = (accountId: string) => app.inject({
+            method: "POST", url: "/v1/session-access/principals/resolve",
+            headers: { "x-test-user-id": accountId },
+            payload: { v: 1, subjects: [{ kind: "team", teamId: team.id }], creationTeamId: team.id },
+        });
+        const refusal = await resolve(owner.id);
+        expect(refusal.statusCode).toBe(200);
+        expect(refusal.json()).toEqual({ v: 1, principals: [], creationDecision: null, creationRefusal: {
+            v: 1, teamId: team.id, teamName: team.name, code, accepted: offered,
+        } });
+        const hidden = await resolve(stranger.id);
+        expect(hidden.statusCode).toBe(200);
+        expect(hidden.json()).toEqual({ v: 1, principals: [], creationDecision: null });
+        await db.team.update({ where: { id: team.id }, data: { archivedAt: new Date() } });
+        const archived = await resolve(owner.id);
+        expect(archived.statusCode).toBe(200);
+        expect(archived.json()).toEqual({ v: 1, principals: [], creationDecision: null });
+    });
+
     it("rejects authority fields and incomplete Group references at the strict request boundary", async () => {
         const actor = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
         for (const payload of [
