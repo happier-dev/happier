@@ -1216,11 +1216,14 @@ describe('AppShellPluginUiProjectionProvider', () => {
         const reporterCalls = () => selectionReads.mock.calls.filter(([input]) =>
             input.includeMachineCandidates === false && pluginIds.includes(input.pluginId));
         const { AppShellPluginUiProjectionProvider } = await import('./AppShellPluginUiProjection');
-        const render = (open: boolean) => <AppShellPluginUiProjectionProvider>
-            <PresentedFixtureMachineTargets />
-            <ProjectionProbe />
-            {open && presentedIds.map(id => <PresentedFixturePluginOrigin key={id} pluginId={id} />)}
-        </AppShellPluginUiProjectionProvider>;
+        let commits = 0;
+        const render = (open: boolean) => <React.Profiler id="app-shell-projections" onRender={() => { commits++; }}>
+            <AppShellPluginUiProjectionProvider>
+                <PresentedFixtureMachineTargets />
+                <ProjectionProbe />
+                {open && presentedIds.map(id => <PresentedFixturePluginOrigin key={id} pluginId={id} />)}
+            </AppShellPluginUiProjectionProvider>
+        </React.Profiler>;
         const screen = await renderScreen(render(false));
         onTestFinished(() => screen.unmount());
         await flushHookEffects({ cycles: 8 });
@@ -1260,10 +1263,18 @@ describe('AppShellPluginUiProjectionProvider', () => {
         expect(reporterCalls()).toHaveLength(0);
         const before = publication.getSnapshot();
         const currentness = before.currentnessForActiveAccountByMachineId.get(machineId)!;
-        await act(async () => { publication.publishMachineCurrentness(machineId, lifetime, {
-            ...currentness, pluginUiProjection: normalizePluginUiProjection(makeProjection()),
-        }); });
+        const admittedProjection = currentness.pluginUiProjection!;
+        const commitsBeforeReplay = commits;
+        for (let replay = 0; replay < 3; replay++) {
+            const rebuiltProjection = { ...admittedProjection };
+            expect(rebuiltProjection).toEqual(admittedProjection);
+            await act(async () => { publication.publishMachineCurrentness(machineId, lifetime, {
+                ...currentness, pluginUiProjection: rebuiltProjection,
+            }); });
+        }
         await flushHookEffects({ cycles: 5 });
+        expect.soft(commits - commitsBeforeReplay).toBe(0);
+        expect.soft(publication.getSnapshot()).toBe(before);
         expect(reporterCalls()).toHaveLength(0);
         const changedCurrentness = { ...currentness, pluginUiProjection: normalizePluginUiProjection(makeProjection(true)) };
         await act(async () => { publication.publishMachineCurrentness(machineId, lifetime, changedCurrentness); });

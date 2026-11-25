@@ -4,6 +4,7 @@ import { shallow } from 'zustand/shallow';
 
 import type { PluginAccountUiProjectionInputs } from '@/sync/domains/plugins/availability/reader';
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import { retainPluginUiProjectionValue } from '@/sync/domains/plugins/ui/projectionOrigins';
 import { selectPresentedPluginUiProjection } from '@/sync/domains/plugins/ui/presentedPluginUiProjection';
 import { selectPluginDestinationSurfacePlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import {
@@ -789,11 +790,25 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             if (!sources || sources.accountLifetime !== accountLifetime || !isCurrent(accountLifetime)
                 || currentness.serverId !== sources.activeServerId || !membersByMachineId.has(machineId)) return;
             const current = snapshot.currentnessForActiveAccountByMachineId.get(machineId);
-            if (current && shallow(current, currentness)) {
-                pendingMachineReports.delete(machineId);
-                return;
+            let next = currentness;
+            if (current && current.accountLifetime === currentness.accountLifetime) {
+                if (shallow(current, currentness)) {
+                    pendingMachineReports.delete(machineId);
+                    return;
+                }
+                const { presentedPluginIds } = currentness;
+                const incoming = current.presentedPluginIds && presentedPluginIds && shallow(current.presentedPluginIds, presentedPluginIds)
+                    ? { ...currentness, presentedPluginIds: current.presentedPluginIds }
+                    : currentness;
+                // Reconcile the Machine's report before exposing it in the external-store
+                // snapshot. The union's sharing only protects its own derived outputs.
+                next = retainPluginUiProjectionValue(current, incoming) as PluginUiProjectionCurrentness;
+                if (next === current) {
+                    pendingMachineReports.delete(machineId);
+                    return;
+                }
             }
-            pendingMachineReports.set(machineId, currentness);
+            pendingMachineReports.set(machineId, next);
             schedulePublication();
         },
         publishExecutionOrigin(pluginId: string, accountLifetime: ActiveServerAccountScopeLifetime | null, origin: PluginMachineExecutionOriginV1 | null,
