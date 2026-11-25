@@ -400,6 +400,22 @@ documents idempotent handling; the CLI does not automatically replay a failed
 mutation.
 Do not reuse a request id after the daemon restarts to mean “the same request.”
 
+### Find a contributed Action's operation
+
+For a daemon Action that declares a tracked operation, save
+`operationRequestIdentity` from the `actions invoke --json` reply, including a
+reply that reports a pending approval. Pass that object as `requestIdentity` in
+`actions invoke action.operations.list --input-json`,
+along with the `serverId` and `machineId` of the receiving machine. Use the
+returned `operationId` with `actions invoke action.operations.get --input-json`
+on the same Home and machine.
+
+If the invocation failed, use `error.requestId` and the registry key made of
+the plugin ID followed by `/` and the Action's local ID. For example, the
+discovery ID `acme.notes/actions/sessions/prepare` uses the registry key
+`acme.notes/sessions/prepare`. A lookup can be empty before operation admission,
+including while a durable approval is pending, or after the record expires.
+
 ### Friendly command families derived from Actions
 
 Some Action families also have a friendly command path, so you do not need

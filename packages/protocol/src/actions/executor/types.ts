@@ -359,7 +359,7 @@ import type { AutomationRunCause } from '../../automations/automationRunCause.js
 import type { MachinePoolActionIdV1, MachinePoolWireInputV1 } from '../../machines/pools/actionsV1.js';
 import type { ProjectWorkerActionIdV1, ProjectWorkerActionInputV1, ProjectWorkerActionOutputV1 } from '../specs/projectWorkers.js';
 import type { ActionOperationActionIdV1, ActionOperationActionInputV1 } from '../specs/actionOperations.js';
-import type { ActionOperationDeclarationV1, ActionOperationDomainRefV1, ActionOperationObservationV1, ActionOperationProgressStepV1 } from '../operations/v1.js';
+import type { ActionOperationDomainRefV1, ActionOperationObservationV1, ActionOperationProgressStepV1 } from '../operations/v1.js';
 import type { EphemeralRunnerActionIdV1 } from '../../ephemeralRunner/actionIdsV1.js';
 import type {
   WorkflowActionInputSchemasV1,
@@ -1787,8 +1787,6 @@ export type ActionExecutorDeps = Readonly<{
     /** Authored operands before deployment preparation, for host-local request comparison. */
     semanticInput?: unknown;
     context: ActionExecutorContext;
-    /** Dynamic contributed Action declaration consumed by the shared operation owner. */
-    operation?: ActionOperationDeclarationV1;
     execute: (context: ActionExecutorContext) => Promise<ActionExecuteResult>;
     /** Probe this host's retained admitted invocation before preparing a new one. */
     resumeRetained?: true;

@@ -6861,9 +6861,10 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
             ...(deps.resolveEnvironmentApprovalScope ? { resolveEnvironmentApprovalScope: deps.resolveEnvironmentApprovalScope } : {}),
             ...(executionContext.signal ? { signal: executionContext.signal } : {}),
           });
+          // The wrapper retains host invocation context. The contributed receiver
+          // owns operation observation under the registry contribution key.
           const invoked = contributedDefinition?.operation && runActionOperation && !ctx.operationAcceptance
-            ? await runActionOperation({ actionId: 'action.invoke', input: data, context: ctx,
-              operation: contributedDefinition.operation, execute: invoke })
+            ? await runActionOperation({ actionId: 'action.invoke', input: data, context: ctx, execute: invoke })
             : await invoke(ctx);
           if (sessionReadSetFailures && invoked.ok) {
             return { ...invoked, result: { kind: 'sessionReadSet', result: invoked.result, failures: sessionReadSetFailures } };

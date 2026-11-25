@@ -55,6 +55,9 @@ import { createClientActionReverseDispatcher } from '@/session/actions/clientAct
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { executeActionOperationActionV1, type ActionOperationMachineTransportV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
 import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { createPluginActionExecutor } from '@/session/actions/createDaemonPluginActionExecutor';
+import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import axios from 'axios';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -1509,6 +1512,86 @@ describe('actions root command', () => {
     expect(input).toMatchObject({
       action: { pluginId: 'example.plugin', localId: 'do-work' },
       input: { note: 'hi', mode: 'safe', config: { retries: 2 } },
+    });
+  });
+
+  it('uses the contributed invocation JSON reference to list and get its sole operation', async () => {
+    const pluginId = 'example.plugin';
+    const localId = 'sessions/prepare';
+    const serverId = 'home';
+    const machineId = 'worker';
+    const operationRuntime = createHostActionOperationRuntime({ machineId, resolveAccountId: async () => 'owner' });
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController, plugins: [{
+      manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: { actions: [{
+        id: localId, title: 'Prepare', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'],
+        execution: { target: 'daemon' }, inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' } },
+      }] } }),
+      files: { 'daemon.mjs': 'export function activate(api) { api.actions.register("sessions/prepare", async () => ({ prepared: true })); }' },
+    }] });
+    onTestFinished(() => fixture.dispose());
+    const executor = createActionExecutor({
+      listContributedActionDefinitions: createCommittedContributedActionDefinitionLister(),
+      invokeContributedAction: createCommittedContributedActionInvoker({ observePluginExecution: operationRuntime.observePluginExecution }),
+      runActionOperation: operationRuntime.runActionOperation,
+      actionOperationAction: args => executeActionOperationActionV1({ ...args, transport: async ({ method, payload }) => {
+        if (method === ACTION_OPERATION_RPC_METHODS_V2.list) return await operationRuntime.handlers.listV2(payload);
+        if (method === ACTION_OPERATION_RPC_METHODS_V2.get) return await operationRuntime.handlers.getV2(payload);
+        throw new Error(`Unexpected operation RPC ${method}`);
+      } }),
+    });
+    const deps = { readCredentialsFn: async () => credentials('stored_session'),
+      createExecutorFn: () => ({ execute: executor.execute,
+        resolveSessionTarget: async () => { throw new Error('Unexpected Session lookup'); } }) };
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+      output += String(chunk);
+      const callback = args.find(argument => typeof argument === 'function');
+      if (typeof callback === 'function') callback();
+      return true;
+    });
+    const invoke = async (id: string, input: unknown, flags: string[] = []) => {
+      output = '';
+      await handleActionsCommand(['invoke', id, '--input-json', JSON.stringify(input), ...flags, '--json'], deps);
+      return JSON.parse(output);
+    };
+    const reply = await invoke('action.invoke', { action: { pluginId, localId }, input: {} }, ['--request-id', 'fixture-request']);
+    expect(reply).toMatchObject({ ok: true, data: { prepared: true },
+      operationRequestIdentity: { actionId: 'example.plugin/sessions/prepare', requestId: 'fixture-request' } });
+    const listed = await invoke('action.operations.list', { serverId, machineId, requestIdentity: reply.operationRequestIdentity });
+    expect(listed).toMatchObject({ ok: true, data: { items: [{
+      actionId: 'example.plugin/sessions/prepare', requestId: 'fixture-request', state: 'succeeded',
+    }] } });
+    const { operationId } = listed.data.items[0];
+    expect(await invoke('action.operations.get', { serverId, machineId, operationId })).toMatchObject({
+      ok: true, data: { kind: 'found', operation: { operationId, state: 'succeeded' } },
+    });
+    expect(await operationRuntime.handlers.listV2({})).toMatchObject({ items: [{ operationId }] });
+  });
+
+  it('uses the original contributed invocation identity in a deferred approval reply', async () => {
+    const executor = createPluginActionExecutor({ base: createActionExecutor({}),
+      // The receiving Machine has queued the approval and returned its receipt over the transport.
+      requestPluginActionExecution: async () => ({ matched: true,
+        result: { ok: true, result: { kind: 'approval_request_created', artifactId: 'operation-approval' } },
+      }) });
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+      output += String(chunk);
+      const callback = args.find(argument => typeof argument === 'function');
+      if (typeof callback === 'function') callback();
+      return true;
+    });
+    await handleActionsCommand(['invoke', 'action.invoke', '--input-json', JSON.stringify({
+      action: { pluginId: 'example.plugin', localId: 'sessions/prepare' }, input: {},
+    }), '--request-id', 'needs-approval', '--json'], {
+      readCredentialsFn: async () => credentials('stored_session'),
+      createExecutorFn: () => ({ execute: executor.execute,
+        resolveSessionTarget: async () => { throw new Error('Unexpected Session lookup'); } }),
+    });
+    expect(JSON.parse(output)).toMatchObject({ ok: true,
+      data: { kind: 'approval_request_created', artifactId: 'operation-approval' },
+      operationRequestIdentity: { actionId: 'example.plugin/sessions/prepare', requestId: 'needs-approval' },
     });
   });
 

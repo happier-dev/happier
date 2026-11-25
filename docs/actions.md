@@ -2828,8 +2828,11 @@ Actions remain off regardless of their saved approval overrides.
 
 In 0.3 development, contributed Action discovery, Settings keys and public Tool
 `actionId` metadata share `pluginId/actions/localId`, formatted from the typed
-contribution identity. Internal registry keys remain `pluginId/localId`; only
-the existing daemon execution adapter translates at that boundary. Generic
+contribution identity. The daemon execution adapter uses the registry key
+`pluginId/localId`. The contributed Action observer records tracked invocations
+under that registry key and the invocation's request ID. CLI JSON exposes this
+pair as `operationRequestIdentity` for `action.operations.list`. The matching
+row supplies the operation ID for `action.operations.get`. Generic
 `action_execute` admits a qualified Action through current `action.spec.get`,
 without requiring a separate Tool declaration. Named Tools still use their
 admitted catalog snapshot and contributor-occurrence fence. Both paths retain

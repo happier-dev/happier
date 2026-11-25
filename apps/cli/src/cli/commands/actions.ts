@@ -4,12 +4,15 @@ import { randomUUID } from 'node:crypto';
 import { createCliActionApprovalPresenter } from '@/cli/actions/approvalPrompt';
 import { definitionList, fail, renderHelpPage, sectionTitle } from '@happier-dev/cli-common/output';
 import { actionSpecToActionDefinitionV1, readCompleteActionSpecV1 } from '@happier-dev/protocol/actions/actionCatalog';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { getActionSpec, resolveActionExecutionPlacementForInput, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { readMissingActionSecretInputPaths } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readPluginActionExecutionReference } from '@/session/actions/createDaemonPluginActionExecutor';
 import type { ActionDefinitionV1, ActionExecuteResult, SignedRootActionId } from '@happier-dev/protocol';
 import { parseActionExecuteFailure, withActionAutomationNoticesV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeCliActionThrownError, projectCliActionFailure, throwCliActionFailure as throwActionFailure } from './session/shared/normalizeActionExecuteResult';
@@ -569,7 +572,16 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
       ...(automationNotices ? { automationNotices } : {}),
     });
   }
-  if (sessionMcp && await tryHandleApprovalRequestCreated({ envelopeKind: 'actions_invoke', json, result: data, automationNotices })) return;
+  const operationAction = json && invocation.actionId === ACTION_INVOKE_ACTION_ID_V1
+    ? contributed ?? readPluginActionExecutionReference(invocation.actionId, resolvedInput)
+    : null;
+  const operationReceipt = operationAction ? { operationRequestIdentity: {
+    actionId: buildQualifiedPluginContributionKey(operationAction),
+    requestId: invocation.requestId,
+  } } : {};
+  if (sessionMcp && await tryHandleApprovalRequestCreated({
+    envelopeKind: 'actions_invoke', json, result: data, automationNotices, ...operationReceipt,
+  })) return;
   if (wait) {
     const address = invocation.actionId === 'action.operations.get' ? null : await readFiniteActionOperationAddress(resolvedInput, data);
     if (address) {
@@ -587,11 +599,11 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
       data = readFiniteActionOutcome({ actionId: 'action.operations.get', input: observationInput, result: observed });
     } else data = readFiniteActionOutcome({ actionId: invocation.actionId, input: resolvedInput, result: data });
   }
-  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'actions_invoke', json, result: data, automationNotices,
+  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'actions_invoke', json, result: data, automationNotices, ...operationReceipt,
     executionPlacement: localInvocation ? resolveActionExecutionPlacementForInput(
       getActionSpec(localInvocation.actionId), resolvedInput, undefined, sessionMcp ? 'agent' : 'cli') : contributedExecutionPlacement,
   })) return;
-  if (json) await printJsonEnvelope({ ok: true, kind: 'actions_invoke', data,
+  if (json) await printJsonEnvelope({ ok: true, kind: 'actions_invoke', data, ...operationReceipt,
     ...(automationNotices ? { automationNotices } : {}) }); else await writeJsonStdout(data, { pretty: true });
 }
 
