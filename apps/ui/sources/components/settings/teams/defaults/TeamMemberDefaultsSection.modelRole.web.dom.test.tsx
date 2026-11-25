@@ -19,7 +19,7 @@ vi.mock('@react-navigation/native', async () => (await import('@/dev/testkit/moc
 const account = createProviderSettingsAccountHarness();
 const declarations = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(declarations);
-const { ProjectSessionDefaultsSection } = await import('./TeamMemberDefaultsSection');
+const { TeamMemberDefaultsSection } = await import('./TeamMemberDefaultsSection');
 const { ModalProvider, Modal } = await import('@/modal');
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let unmount: (() => Promise<void>) | undefined;
@@ -37,7 +37,7 @@ it('exposes the Model field as a named button that opens the picker', async () =
     const container = document.createElement('div'); document.body.append(container);
     const root = createRoot(container);
     unmount = async () => { await act(async () => root.unmount()); container.remove(); };
-    await act(async () => root.render(<ModalProvider><ProjectSessionDefaultsSection testID="defaults" serverId={serverId} teamId={null}
+    await act(async () => root.render(<ModalProvider><TeamMemberDefaultsSection testID="defaults" serverId={serverId} teamId={null}
         defaults={{}} save={vi.fn(async () => {})} scope="personal-project"
         context={{ primaryTeamId: null, projectDefaults: { permissionModeByAgentTargetKey: { [agentTargetKey]: 'read-only' } } }}
         teamName="Acme" projectName="acme/web" editable busy={false} /></ModalProvider>));

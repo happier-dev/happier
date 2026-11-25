@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { ProjectSessionDefaultsLoadingSection, ProjectSessionDefaultsSection } from '@/components/settings/teams/defaults/TeamMemberDefaultsSection';
+import { ProjectSessionDefaultsLoadingSection, TeamMemberDefaultsSection } from '@/components/settings/teams/defaults/TeamMemberDefaultsSection';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -195,7 +195,7 @@ export const ProjectSessionDefaultsView = React.memo(function ProjectSessionDefa
           // The editor's own rows hold their places while it reads (lab L11-loading).
           <ProjectSessionDefaultsLoadingSection testID={`${testID}.loading`} shared={scope === 'project'} />
         ) : (
-          <ProjectSessionDefaultsSection
+          <TeamMemberDefaultsSection
             testID={`${testID}.editor`}
             serverId={props.serverId}
             teamId={teamId}

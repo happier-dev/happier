@@ -81,8 +81,13 @@ type RowState = Readonly<{
  * sessions start with. Members can change each one; nothing is copied into their
  * settings. One writer, `teams.policy.set` through the Action executor; who may
  * write is the Home's decision, mirrored by `access` and said when it is no.
+ *
+ * The same whole editor serves a project's Session defaults (plan F §2/§6, lab L11) when `scope` is
+ * `'personal-project'` (For me) or `'project'` (the project's shared Source): Machine first, the project-only
+ * Agent row, then the Approval profile and one row per Agent; each pick saves on its own through the host's
+ * writer, and the page header, not the section, names the scope.
  */
-type TeamMemberDefaultsSectionProps = Readonly<{
+type TeamScopeDefaultsProps = Readonly<{
   context: TeamSectionContext;
   scope: MemberDefaultsScope;
   access: MemberDefaultsAccess;
@@ -100,10 +105,28 @@ type TeamMemberDefaultsSectionProps = Readonly<{
   homeDefaults: ManagedSessionDefaultsV1 | null;
 }>;
 
+type ProjectScopeDefaultsProps = ProjectSessionDefaultsSectionInput & Readonly<{
+  serverId: string;
+  teamId: string | null;
+  editable: boolean;
+  busy: boolean;
+  testID: string;
+}>;
+
+type TeamMemberDefaultsSectionProps = TeamScopeDefaultsProps | ProjectScopeDefaultsProps;
+
+function isProjectScope(props: TeamMemberDefaultsSectionProps): props is ProjectScopeDefaultsProps {
+  return typeof props.scope === 'string';
+}
+
 export const TeamMemberDefaultsSection = React.memo(
-  function TeamMemberDefaultsSection(
-    props: TeamMemberDefaultsSectionProps,
-  ) {
+  function TeamMemberDefaultsSection(props: TeamMemberDefaultsSectionProps) {
+    // A host is a project or a Team/Group/Home for its whole life; each kind keeps its own writer state.
+    return isProjectScope(props) ? <ProjectScopeDefaults {...props} /> : <TeamScopeDefaults {...props} />;
+  },
+);
+
+function TeamScopeDefaults(props: TeamScopeDefaultsProps) {
     const { context, scope, access } = props;
     const home = 'home' in props && props.home;
     const [busy, setBusy] = React.useState(false);
@@ -159,16 +182,6 @@ export const TeamMemberDefaultsSection = React.memo(
       [context, home, scope, stored],
     );
 
-    const enabledAgentIds = useEnabledAgentIds();
-    const agents = React.useMemo(
-      () =>
-        // Only Agents with a backend target can carry a Session default.
-        getResolvedAgentCatalogEntries({ enabledAgentIds }).filter(
-          (entry) => entry.backendTargetKey !== null,
-        ),
-      [enabledAgentIds],
-    );
-
     const sessionConflicts = home ? NO_CONFLICTS : memberDefaultsConflicts(stored, scope, '', policy?.homeDefaults);
     // The people a Team or Group default reaches: the audience a picked profile is offered to.
     const audience = React.useMemo<readonly PrincipalRefV1[] | undefined>(() => {
@@ -208,57 +221,128 @@ export const TeamMemberDefaultsSection = React.memo(
       .join(' ');
 
     return (
-      <>
-        {error || repairRequired ? (
-          <AttentionBanner
-            testID={`${props.testID}-attention`}
-            title={
-              error
-                ? t('homeGovernance.changeFailedTitle')
-                : t('teams.settings.memberDefaults.repairRequired')
-            }
-            description={error ?? undefined}
-            accessibilityLiveRegion={error ? 'assertive' : undefined}
-          />
-        ) : null}
-        <ItemGroup
-          testID={props.testID}
-          // The Home's defaults are a page of their own whose header already names and explains them.
-          title={home ? undefined : t('teams.settings.memberDefaults.title')}
-          description={home ? undefined : description}
-        >
-          <TeamMemberMachineDefaultRow
-            state={row}
-            conflict={sessionConflicts.placement}
-            testID={`${props.testID}-machine`}
-            onApprovalPending={context.requestApproval}
-          />
-          {home ? null : (
-            <ApprovalProfileDefaultRow
-              scopeOrHome={context.scope}
-              value={defaults.approvalProfileId}
-              audience={audience}
-              description={t('teams.settings.memberDefaults.approvalProfileMembers')}
-              conflictNote={sessionConflicts.approvalProfile ? row.conflictNote : undefined}
-              editable={editable}
-              disabled={row.disabled}
-              save={saveApprovalProfile}
-              testID={`${props.testID}-approvalProfile`}
-            />
-          )}
-          <AgentDefaultsList
-            agents={agents}
-            state={row}
-            // Team, Group and Home defaults name no default Agent; their Agents with a value lead.
-            selected={undefined}
-            conflictsFor={(key) => memberDefaultsConflicts(stored, scope, key, policy?.homeDefaults)}
-            testID={props.testID}
-          />
-        </ItemGroup>
-      </>
+      <DefaultsEditor
+        testID={props.testID}
+        row={row}
+        attention={error || repairRequired ? {
+          title: error ? t('homeGovernance.changeFailedTitle') : t('teams.settings.memberDefaults.repairRequired'),
+          description: error ?? undefined,
+          accessibilityLiveRegion: error ? 'assertive' : undefined,
+        } : null}
+        // The Home's defaults are a page of their own whose header already names and explains them.
+        title={home ? undefined : t('teams.settings.memberDefaults.title')}
+        description={home ? undefined : description}
+        placementConflict={sessionConflicts.placement}
+        onApprovalPending={context.requestApproval}
+        approvalProfile={home ? null : {
+          scopeOrHome: context.scope,
+          value: defaults.approvalProfileId,
+          audience,
+          description: t('teams.settings.memberDefaults.approvalProfileMembers'),
+          conflictNote: sessionConflicts.approvalProfile ? row.conflictNote : undefined,
+          editable,
+          disabled: row.disabled,
+          save: saveApprovalProfile,
+        }}
+        // Team, Group and Home defaults name no default Agent; their Agents with a value lead.
+        selectedAgent={undefined}
+        conflictsFor={(key) => memberDefaultsConflicts(stored, scope, key, policy?.homeDefaults)}
+      />
     );
-  },
-);
+}
+
+/** A project scope's state: the host owns the scope (For me, or the project's Source) and its writer. */
+function ProjectScopeDefaults(props: ProjectScopeDefaultsProps) {
+  const { defaults } = props;
+  const { save, selectAgent, selectApprovalProfile, error, retry, inheritance } = useProjectSessionDefaultsSectionAdapter(props);
+  // A project default reaches everyone admitted to it (owner 2026-11-16 ~19:15Z); "For me" reaches only me.
+  const shared = props.scope === 'project';
+  const audience = React.useMemo<readonly PrincipalRefV1[] | undefined>(
+    () => (shared && props.teamId ? [{ kind: 'team', teamId: props.teamId }] : undefined),
+    [shared, props.teamId],
+  );
+  const row: RowState = {
+    serverId: props.serverId,
+    teamId: props.teamId ?? '',
+    connectedServicesTeamResourcesOnly: shared,
+    defaults,
+    editable: props.editable,
+    disabled: props.busy,
+    conflictNote: '',
+    save,
+    inheritance,
+  };
+  return (
+    <DefaultsEditor
+      testID={props.testID}
+      row={row}
+      attention={error ? {
+        title: t('homeGovernance.changeFailedTitle'),
+        description: resolveActionExecutionErrorMessage(error.cause, t('teams.errors.generic'), { safeToRetry: true }),
+        action: props.editable ? { label: t('common.retry'), onPress: retry,
+          testID: `${props.testID}-retry`, disabled: props.busy } : undefined,
+        accessibilityLiveRegion: 'assertive',
+      } : null}
+      placementConflict={false}
+      projectAgent={{ current: defaults.defaultAgentTarget, onSelect: selectAgent }}
+      approvalProfile={{
+        scopeOrHome: props.serverId,
+        value: defaults.approvalProfileId,
+        audience,
+        inherited: inheritance.approvalProfileId,
+        description: shared ? t('teams.settings.memberDefaults.approvalProfileProject') : undefined,
+        editable: props.editable,
+        disabled: props.busy,
+        save: selectApprovalProfile,
+      }}
+      selectedAgent={defaults.defaultAgentTarget ?? inheritance.agentTarget.value}
+      conflictsFor={noConflicts}
+    />
+  );
+}
+
+/**
+ * The editor's one assembly for every scope: an attention banner when a save failed, then one section with the
+ * Machine first, a project's Agent row, the Approval profile (not on the Home's page), and one row per Agent.
+ */
+function DefaultsEditor(props: Readonly<{
+  testID: string;
+  row: RowState;
+  attention: Readonly<Pick<React.ComponentProps<typeof AttentionBanner>, 'title' | 'description' | 'action' | 'accessibilityLiveRegion'>> | null;
+  title?: string;
+  description?: string;
+  placementConflict: boolean;
+  onApprovalPending?: TeamSectionContext['requestApproval'];
+  /** Only a project names the Agent its new sessions start with. */
+  projectAgent?: Readonly<{ current: AgentExecutionTargetV1 | undefined; onSelect: (target: AgentExecutionTargetV1 | undefined) => void }>;
+  approvalProfile: Omit<React.ComponentProps<typeof ApprovalProfileDefaultRow>, 'testID'> | null;
+  selectedAgent: AgentExecutionTargetV1 | undefined;
+  conflictsFor: (backendTargetKey: string) => MemberDefaultsConflicts;
+}>) {
+  const { testID, row } = props;
+  const enabledAgentIds = useEnabledAgentIds();
+  const agents = React.useMemo(
+    // Only Agents with a backend target can carry a Session default.
+    () => getResolvedAgentCatalogEntries({ enabledAgentIds }).filter((entry) => entry.backendTargetKey !== null),
+    [enabledAgentIds],
+  );
+  return (
+    <>
+      {props.attention ? <AttentionBanner testID={`${testID}-attention`} {...props.attention} /> : null}
+      <ItemGroup testID={testID} title={props.title} description={props.description}>
+        <TeamMemberMachineDefaultRow state={row} conflict={props.placementConflict} testID={`${testID}-machine`}
+          onApprovalPending={props.onApprovalPending} />
+        {props.projectAgent ? (
+          <ProjectAgentDefaultRow agents={agents} state={row} current={props.projectAgent.current}
+            onSelect={props.projectAgent.onSelect} testID={`${testID}-agent`} />
+        ) : null}
+        {props.approvalProfile ? <ApprovalProfileDefaultRow {...props.approvalProfile} testID={`${testID}-approvalProfile`} /> : null}
+        <AgentDefaultsList agents={agents} state={row} selected={props.selectedAgent}
+          conflictsFor={props.conflictsFor} testID={testID} />
+      </ItemGroup>
+    </>
+  );
+}
 
 const noConflicts = () => NO_CONFLICTS;
 
@@ -850,67 +934,6 @@ const ProjectAgentDefaultRow = React.memo(function ProjectAgentDefaultRow(props:
         props.onSelect(next);
       }}
     />
-  );
-});
-
-/**
- * The same member-defaults editor, for a project (plan F §2, lab L11): Machine first, the project-only Agent
- * row, then one row per Agent; each pick saves on its own. The host owns the scope (For me, or the project's
- * Source) and its writer; this section only renders the rows and reports a failed save.
- */
-export const ProjectSessionDefaultsSection = React.memo(function ProjectSessionDefaultsSection(props: ProjectSessionDefaultsSectionInput & Readonly<{
-  serverId: string;
-  teamId: string | null;
-  editable: boolean;
-  busy: boolean;
-  testID: string;
-}>) {
-  const { defaults } = props;
-  const { save, selectAgent, selectApprovalProfile, error, retry, inheritance } = useProjectSessionDefaultsSectionAdapter(props);
-  // A project default reaches everyone admitted to it (owner 2026-11-16 ~19:15Z); "For me" reaches only me.
-  const shared = props.scope === 'project';
-  const audience = React.useMemo<readonly PrincipalRefV1[] | undefined>(
-    () => (shared && props.teamId ? [{ kind: 'team', teamId: props.teamId }] : undefined),
-    [shared, props.teamId],
-  );
-  const enabledAgentIds = useEnabledAgentIds();
-  const agents = React.useMemo(
-    () => getResolvedAgentCatalogEntries({ enabledAgentIds }).filter((entry) => entry.backendTargetKey !== null),
-    [enabledAgentIds],
-  );
-  const row: RowState = {
-    serverId: props.serverId,
-    teamId: props.teamId ?? '',
-    connectedServicesTeamResourcesOnly: shared,
-    defaults,
-    editable: props.editable,
-    disabled: props.busy,
-    conflictNote: '',
-    save,
-    inheritance,
-  };
-  return (
-    <>
-      {error ? (
-        <AttentionBanner testID={`${props.testID}-attention`} title={t('homeGovernance.changeFailedTitle')}
-          description={resolveActionExecutionErrorMessage(error.cause, t('teams.errors.generic'), { safeToRetry: true })}
-          action={props.editable ? { label: t('common.retry'), onPress: retry,
-            testID: `${props.testID}-retry`, disabled: props.busy } : undefined}
-          accessibilityLiveRegion="assertive" />
-      ) : null}
-      <ItemGroup testID={props.testID}>
-        <TeamMemberMachineDefaultRow state={row} conflict={false} testID={`${props.testID}-machine`} />
-        <ProjectAgentDefaultRow agents={agents} state={row} current={defaults.defaultAgentTarget}
-          onSelect={selectAgent} testID={`${props.testID}-agent`} />
-        <ApprovalProfileDefaultRow scopeOrHome={props.serverId} value={defaults.approvalProfileId} audience={audience}
-          inherited={inheritance.approvalProfileId}
-          description={shared ? t('teams.settings.memberDefaults.approvalProfileProject') : undefined}
-          editable={props.editable} disabled={props.busy} save={selectApprovalProfile} testID={`${props.testID}-approvalProfile`} />
-        <AgentDefaultsList agents={agents} state={row}
-          selected={defaults.defaultAgentTarget ?? inheritance.agentTarget.value}
-          conflictsFor={noConflicts} testID={props.testID} />
-      </ItemGroup>
-    </>
   );
 });
 

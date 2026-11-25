@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { ProjectSessionDefaultsV1 } from '@happier-dev/protocol/projects/projectSessionDefaultsV1';
 import { TeamCredentialResourceCatalogEntryV1Schema, TeamPolicySetInputV1Schema, TeamSummaryV1Schema } from '@happier-dev/protocol/teams';
 
 import { createMachineFixture, renderScreen, standardCleanup, teamCapabilitiesFixture, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit';
@@ -172,7 +173,7 @@ it('keeps explicit Automatic separate from clearing a personal model to its Sour
         settings: { experiments: true, featureToggles: { providers: true } },
         features: createRootLayoutFeaturesResponse({ features: { providers: { enabled: true }, teams: { enabled: true } } }),
     });
-    const { ProjectSessionDefaultsSection } = await import('./TeamMemberDefaultsSection');
+    const { TeamMemberDefaultsSection } = await import('./TeamMemberDefaultsSection');
     const automatic = { ...nativeRef, modelId: 'default' };
     const lower = { ...nativeRef, modelId: 'source-model' };
     declarations.setResponse(RPC_METHODS.CAPABILITIES_INVOKE, { ok: true, result: {
@@ -182,7 +183,7 @@ it('keeps explicit Automatic separate from clearing a personal model to its Sour
     const context = { primaryTeamId: null, projectDefaults: { modelByAgentTargetKey: {
         [agentTargetKey]: { v: 1 as const, ref: lower, updatedAt: 1 },
     } } };
-    let persisted: React.ComponentProps<typeof ProjectSessionDefaultsSection>['defaults'] = {
+    let persisted: ProjectSessionDefaultsV1 = {
         placement: { kind: 'machine', target: { serverId, machineId: 'machine-5964' } },
         permissionModeByAgentTargetKey: { [agentTargetKey]: 'read-only' },
         modelByAgentTargetKey: { [agentTargetKey]: { v: 1, ref: automatic, updatedAt: 2 } },
@@ -190,7 +191,7 @@ it('keeps explicit Automatic separate from clearing a personal model to its Sour
     const writes = vi.fn();
     function Host() {
         const [defaults, setDefaults] = React.useState(persisted);
-        return <ProjectSessionDefaultsSection testID="defaults" serverId={serverId} teamId={null}
+        return <TeamMemberDefaultsSection testID="defaults" serverId={serverId} teamId={null}
             defaults={defaults} save={async next => { persisted = next ?? {}; writes(next); setDefaults(persisted); }}
             scope="personal-project" context={context} teamName="Acme" projectName="acme/web" editable busy={false} />;
     }
@@ -225,11 +226,11 @@ it('shows what an empty project field falls back to, whose it is, and names it o
         settings: { experiments: true, featureToggles: { providers: true } },
         features: createRootLayoutFeaturesResponse({ features: { providers: { enabled: true }, teams: { enabled: true } } }),
     });
-    const { ProjectSessionDefaultsSection } = await import('./TeamMemberDefaultsSection');
+    const { TeamMemberDefaultsSection } = await import('./TeamMemberDefaultsSection');
     const save = vi.fn(async () => {});
     // The project's shared Source sets Codex to read-only; nothing is set For me.
     const context = { primaryTeamId: null, projectDefaults: { permissionModeByAgentTargetKey: { [agentTargetKey]: 'read-only' as const } } };
-    const screen = await renderScreen(<ModalProvider><ProjectSessionDefaultsSection testID="defaults" serverId={serverId} teamId={null}
+    const screen = await renderScreen(<ModalProvider><TeamMemberDefaultsSection testID="defaults" serverId={serverId} teamId={null}
         defaults={{}} save={save} scope="personal-project" context={context} teamName="Acme" projectName="acme/web"
         editable busy={false} /></ModalProvider>);
     const agent = () => screen.findAll(node => node.props.testID === 'defaults-agent:codex'
@@ -249,6 +250,28 @@ it('shows what an empty project field falls back to, whose it is, and names it o
     expect(save).not.toHaveBeenCalled();
 });
 
+it.each(['personal-project', 'project'] as const)('renders the L11 %s scope through the one member-defaults editor: Machine, Agent, Approval profile, then Agents, with no section header', async scope => {
+    const { serverId } = await account.restore({ accountId: 'admin', currentAccount: true, waivedActions: ['providers.models.refresh'],
+        machines: [createMachineFixture({ id: 'machine-5964', activeAt: Date.now(), storageMode: 'plain' })],
+        settings: { experiments: true, featureToggles: { providers: true } },
+        features: createRootLayoutFeaturesResponse({ features: { providers: { enabled: true }, teams: { enabled: true } } }),
+    });
+    const { TeamMemberDefaultsSection } = await import('./TeamMemberDefaultsSection');
+    const context = { primaryTeamId: null, projectDefaults: { permissionModeByAgentTargetKey: { [agentTargetKey]: 'read-only' as const } } };
+    const screen = await renderScreen(<ModalProvider><TeamMemberDefaultsSection testID="defaults" serverId={serverId} teamId={null}
+        defaults={{}} save={vi.fn(async () => {})} scope={scope} context={context} teamName="Acme" projectName="acme/web"
+        editable busy={false} /></ModalProvider>);
+    const order = () => screen.findAll(node => typeof node.props.testID === 'string'
+        && /^defaults-(machine|agent|approvalProfile|otherAgents|agent:[a-z]+)$/.test(node.props.testID))
+        .map(node => node.props.testID as string).filter((id, index, ids) => ids.indexOf(id) === index);
+    // The shared Source's Codex value is a lower layer For me and this scope's own (unset) layer for the project.
+    await waitForHomeGovernance(() => expect(order()).toEqual(['defaults-machine', 'defaults-agent', 'defaults-approvalProfile',
+        ...(scope === 'personal-project' ? ['defaults-agent:codex'] : []), 'defaults-otherAgents']));
+    // The project page's header and scope line name the scope; the editor adds no section title or description (plan F §6 L11).
+    expect(screen.getTextContent()).not.toContain(t('teams.settings.memberDefaults.title'));
+    expect(screen.getTextContent()).not.toContain(t('teams.settings.memberDefaults.description'));
+});
+
 async function openOtherAgents(screen: Awaited<ReturnType<typeof renderScreen>>, prefix: string) {
     const others = () => screen.findAll(node => node.props.testID === `${prefix}-otherAgents`
         && typeof node.props.onExpandedChange === 'function')[0];
@@ -262,10 +285,10 @@ it('lists only Agents with a value at some layer and keeps the rest behind one O
         settings: { experiments: true, featureToggles: { providers: true } },
         features: createRootLayoutFeaturesResponse({ features: { providers: { enabled: true }, teams: { enabled: true } } }),
     });
-    const { ProjectSessionDefaultsSection } = await import('./TeamMemberDefaultsSection');
+    const { TeamMemberDefaultsSection } = await import('./TeamMemberDefaultsSection');
     // Only Codex has a value (from the project's shared Source); nothing is set For me.
     const context = { primaryTeamId: null, projectDefaults: { permissionModeByAgentTargetKey: { [agentTargetKey]: 'read-only' as const } } };
-    const screen = await renderScreen(<ModalProvider><ProjectSessionDefaultsSection testID="defaults" serverId={serverId} teamId={null}
+    const screen = await renderScreen(<ModalProvider><TeamMemberDefaultsSection testID="defaults" serverId={serverId} teamId={null}
         defaults={{}} save={vi.fn(async () => {})} scope="personal-project" context={context} teamName="Acme" projectName="acme/web"
         editable busy={false} /></ModalProvider>);
     const agentRows = () => screen.findAll(node => typeof node.props.testID === 'string' && /^defaults-agent:[^:]+$/.test(node.props.testID)

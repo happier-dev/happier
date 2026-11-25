@@ -36,7 +36,7 @@ const disposeLoader = await installRealActionExecutorModuleLoader();
 afterAll(disposeLoader);
 const { ModalProvider, Modal } = await import('@/modal');
 const { AppShellPluginUiProjectionProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
-const { ProjectSessionDefaultsSection } = await import('./TeamMemberDefaultsSection');
+const { TeamMemberDefaultsSection } = await import('./TeamMemberDefaultsSection');
 const { getConnectedAccountAuthentication, getConnectedServiceRegistrySnapshot } = await import('@/sync/domains/connectedServices/connectedServiceRegistry');
 
 const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' };
@@ -89,7 +89,7 @@ it.each(['personal-project', 'project'] as const)('uses the %s audience for the 
         const [defaults, setDefaults] = React.useState<ProjectSessionDefaultsV1>({
             defaultAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.muse', localId: 'muse' } },
         });
-        return <AppShellPluginUiProjectionProvider><ModalProvider><ProjectSessionDefaultsSection
+        return <AppShellPluginUiProjectionProvider><ModalProvider><TeamMemberDefaultsSection
             testID="defaults" serverId={serverId} teamId="team-1" defaults={defaults} scope={scope} context={undefined}
             editable busy={false} save={async next => {
                 const validated = next === null ? null : ProjectSessionDefaultsV1Schema.parse(next);

@@ -30,7 +30,7 @@ vi.mock('socket.io-client', async (original) =>
 );
 installDisconnectedServerSocketBoundary();
 const { ModalProvider } = await import('@/modal');
-const { ProjectSessionDefaultsSection } =
+const { TeamMemberDefaultsSection } =
   await import('./TeamMemberDefaultsSection');
 const { storage } = await import('@/sync/domains/state/storage');
 const originalState = storage.getState();
@@ -106,7 +106,7 @@ describe('Approval profile default in the project defaults editor', () => {
     };
     const element = (defaults: ProjectSessionDefaultsV1) => (
       <ModalProvider>
-        <ProjectSessionDefaultsSection
+        <TeamMemberDefaultsSection
           testID="defaults"
           serverId={account!.scope.serverId}
           teamId={team.id}
