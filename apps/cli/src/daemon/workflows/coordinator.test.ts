@@ -3,6 +3,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import { AutomationRunCauseSchema } from '@happier-dev/protocol';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { updateWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createCliSettingsDeclarationAction } from '@/session/actions/settingsDeclarationAction';
@@ -3068,23 +3069,30 @@ describe('workflow coordinator', () => {
     });
   });
 
-  it('persists the selected conditional branch and scalar body frontier across restart', async () => {
+  it.each([true, false])('edits one canonical If condition and retains branch semantics across restart (chooseThen: %s)', async chooseThen => {
     const store = createInMemoryWorkflowCoordinatorStore();
     let releaseFirst!: () => void;
     let markFirstStarted!: () => void;
     const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
-    const workflow: WorkflowDefinitionV1 = { ...definition([{
+    const authored: WorkflowDefinitionV1 = { ...definition([{
       kind: 'if',
       id: 'choice',
-      when: { kind: 'compare', operator: 'eq', left: { kind: 'input', name: 'chooseThen' }, right: { kind: 'literal', value: true } },
+      when: { kind: 'compare', operator: 'eq', left: { kind: 'input', name: 'chooseThen' }, right: { kind: 'literal', value: false } },
       then: [step('then-a'), step('then-b')],
       otherwise: [step('otherwise-a')],
     }]), inputs: [{ name: 'chooseThen', valueType: 'boolean', required: true }] };
+    const when = { kind: 'compare', operator: 'eq', left: { kind: 'input', name: 'chooseThen' }, right: { kind: 'literal', value: true } } as const;
+    const workflow = updateWorkflowBlock(authored, 'choice', current => current.kind === 'if' ? { ...current, when } : current);
+    expect(authored.blocks[0]).toMatchObject({ when: { kind: 'compare', right: { kind: 'literal', value: false } } });
+    expect(workflow.blocks).toEqual([{ ...authored.blocks[0], when }]);
+    if (authored.blocks[0]?.kind !== 'if' || workflow.blocks[0]?.kind !== 'if') throw new Error('Expected the authored If');
+    expect(workflow.blocks[0].then).toBe(authored.blocks[0].then);
+    expect(workflow.blocks[0].otherwise).toBe(authored.blocks[0].otherwise);
     const coordinator = createWorkflowCoordinator({
       store,
       resolveWorkspace,
       executeStep: async ({ step: current }) => {
-        if (current.id === 'then-a') {
+        if (current.id === (chooseThen ? 'then-a' : 'otherwise-a')) {
           markFirstStarted();
           await new Promise<void>((release) => { releaseFirst = release; });
         }
@@ -3092,15 +3100,15 @@ describe('workflow coordinator', () => {
       },
     });
     const firstRun = coordinator.run({
-      runId: 'run-if-restart', definition: workflow, inputs: { chooseThen: true }, executionTarget, authorization,
+      runId: 'run-if-restart', definition: workflow, inputs: { chooseThen }, executionTarget, authorization,
     });
     await firstStarted;
     const container = [...store.records.values()].find((record) => record.blockId === 'choice');
-    expect(container?.container).toEqual({ kind: 'if', selected: 'then', nextBlockOrdinal: '0' });
+    expect(container?.container).toEqual({ kind: 'if', selected: chooseThen ? 'then' : 'otherwise', nextBlockOrdinal: '0' });
     releaseFirst();
     await firstRun;
     await vi.waitFor(() => expect(container && store.read(container.key)?.container)
-      .toEqual({ kind: 'if', selected: 'then', nextBlockOrdinal: '2' }));
+      .toEqual({ kind: 'if', selected: chooseThen ? 'then' : 'otherwise', nextBlockOrdinal: chooseThen ? '2' : '1' }));
 
     const restartedCalls: string[] = [];
     const restarted = createWorkflowCoordinator({
@@ -3111,10 +3119,10 @@ describe('workflow coordinator', () => {
         return { kind: 'completed', result: current.id };
       },
     });
-    await expect(restarted.run({ runId: 'run-if-restart', definition: workflow, inputs: { chooseThen: false }, executionTarget, authorization }))
+    await expect(restarted.run({ runId: 'run-if-restart', definition: workflow, inputs: { chooseThen: !chooseThen }, executionTarget, authorization }))
       .resolves.toMatchObject({ state: 'succeeded' });
     expect(restartedCalls).toEqual([]);
-    expect([...store.records.values()].some((record) => record.blockId === 'otherwise-a')).toBe(false);
+    expect([...store.records.values()].some((record) => record.blockId === (chooseThen ? 'otherwise-a' : 'then-a'))).toBe(false);
   });
 
   it('resolves and persists workspace before either leaf executor can dispatch', async () => {
