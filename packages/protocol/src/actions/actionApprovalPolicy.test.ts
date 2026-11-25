@@ -355,8 +355,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
       const spec = getActionSpec(actionId);
       expect(spec.requiredAuthority).toBe('account_automation');
       expect(resolveActionApprovalRouting({ actionId, spec, context, settings: EMPTY_SETTINGS }).required).toBe(false);
-      expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, context, settings: EMPTY_SETTINGS }),
-        actionId !== 'deployments.rollback');
+      expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, context, settings: EMPTY_SETTINGS }), true);
       expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, context,
         settings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['ui'] } }) }), false);
       expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, context, settings: EMPTY_SETTINGS,
