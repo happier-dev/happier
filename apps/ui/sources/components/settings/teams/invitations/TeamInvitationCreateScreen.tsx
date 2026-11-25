@@ -15,6 +15,7 @@ import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { useTeamInvitations } from '@/hooks/teams/useTeamInvitations';
 import { randomUUID } from '@/platform/randomUUID';
+import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 import {
     createTeamInvitation,
     reissueTeamInvitation,
@@ -29,6 +30,7 @@ import { askAdministratorsText } from '../collection/teamsCreateGuidanceText';
 import { useEligibleProviderRecoveryViewer } from '../identity/eligibleProviderAvailability';
 import { teamRoleLabel } from '../teamLabels';
 import { teamMutationFailureLabel } from '../teamMutationPresentation';
+import { teamSignInFailureAction } from '../useTeamReadFailureAction';
 import { sessionHistoryChoiceOptions } from '../teamPolicyPresentation';
 import { TeamLinkDelivery } from '../TeamLinkDelivery';
 
@@ -76,7 +78,7 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
     );
     const [submitting, setSubmitting] = React.useState(false);
     const [retryingDelivery, setRetryingDelivery] = React.useState(false);
-    const [error, setError] = React.useState<string | null>(null);
+    const [failure, setFailure] = React.useState<HomeDomainFailure<string> | null>(null);
     /**
      * The one confined delivery of the raw bearer. It lives in this screen's
      * memory only: it is never persisted, never placed in a snapshot, and cannot
@@ -85,6 +87,10 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
     const [issued, setIssued] = React.useState<TeamInvitationCreateResultV1 | null>(null);
     const { onIssuedChange } = props;
     const isIssued = issued !== null;
+    const error = failure ? teamMutationFailureLabel(failure) : null;
+    const signInRecovery = !isIssued && failure && error
+        ? teamSignInFailureAction(failure, context.address, (href) => router.push(href), 'team-invite-refusal')
+        : undefined;
     React.useEffect(() => {
         onIssuedChange?.(isIssued);
     }, [isIssued, onIssuedChange]);
@@ -153,7 +159,7 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
     const startAnother = () => {
         if (deliveryRetryInFlightRef.current) return;
         setIssued(null);
-        setError(null);
+        setFailure(null);
         setDelivery('link');
         setEmail('');
         setRole('member');
@@ -180,7 +186,7 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
         if (submitInFlightRef.current) return;
         submitInFlightRef.current = true;
         setSubmitting(true);
-        setError(null);
+        setFailure(null);
         let outcome: Awaited<ReturnType<typeof createTeamInvitation>>;
         try {
             outcome = await createTeamInvitation({
@@ -199,7 +205,7 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
         } catch {
             submitInFlightRef.current = false;
             if (bearerLifetime.current.signal.aborted) return;
-            setError(t('teams.errors.generic'));
+            setFailure({ kind: 'unknown', code: null, retryable: false });
             setSubmitting(false);
             return;
         }
@@ -213,7 +219,7 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
         // operation this Home does not have is an update fact about the Home,
         // never relabelled as a mail-delivery problem, and an answer that was
         // lost says so rather than claiming no invitation exists.
-        setError(teamMutationFailureLabel(outcome.failure));
+        setFailure(outcome.failure);
     }, [context, role, historyAccess, historyChoiceAvailable, effectiveDelivery, trimmedEmail]);
 
     const reissueIssuedInvitation = React.useCallback(async () => {
@@ -226,7 +232,7 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
         deliveryRetryIdentity.current = retryIdentity;
 
         setRetryingDelivery(true);
-        setError(null);
+        setFailure(null);
         let outcome: Awaited<ReturnType<typeof reissueTeamInvitation>>;
         try {
             outcome = await reissueTeamInvitation({
@@ -246,7 +252,7 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
         } catch {
             deliveryRetryInFlightRef.current = false;
             if (bearerLifetime.current.signal.aborted) return;
-            setError(t('teams.errors.generic'));
+            setFailure({ kind: 'unknown', code: null, retryable: false });
             setRetryingDelivery(false);
             return;
         }
@@ -261,7 +267,7 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
         // operation this Home does not have is an update fact about the Home,
         // never relabelled as a mail-delivery problem, and an answer that was
         // lost says so rather than claiming no invitation exists.
-        setError(teamMutationFailureLabel(outcome.failure));
+        setFailure(outcome.failure);
     }, [context, issued]);
 
     if (!canManageInvitations) {
@@ -506,14 +512,23 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
                                     onPress={props.onDone}
                                 />
                             ) : null}
-                            <RoundButton
-                                testID="team-invite-submit"
-                                size="small"
-                                title={t('teams.invitations.create')}
-                                loading={submitting}
-                                disabled={!canSubmit}
-                                onPress={() => void submit()}
-                            />
+                            {signInRecovery ? (
+                                <RoundButton
+                                    testID={signInRecovery.testID}
+                                    size="small"
+                                    title={signInRecovery.label}
+                                    onPress={signInRecovery.onPress}
+                                />
+                            ) : (
+                                <RoundButton
+                                    testID="team-invite-submit"
+                                    size="small"
+                                    title={t('teams.invitations.create')}
+                                    loading={submitting}
+                                    disabled={!canSubmit}
+                                    onPress={() => void submit()}
+                                />
+                            )}
                         </>
                     )}
                 >

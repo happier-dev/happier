@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { teamErrorHttpStatusV1 } from '@happier-dev/protocol/teams';
 
 import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamInvitationRowFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -13,11 +14,12 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 const setClipboardStringSafeMock = vi.hoisted(() => vi.fn(async (_value: string) => true));
 const shareTextSafeMock = vi.hoisted(() => vi.fn(async () => 'shared' as const));
 const sharingAvailableMock = vi.hoisted(() => ({ current: true }));
+const routerPush = vi.hoisted(() => vi.fn());
 
 installSettingsViewCommonModuleMocks({
     storage: 'real',
     router: async () => ({
-        useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
+        useRouter: () => ({ push: routerPush, back: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),
         useLocalSearchParams: () => ({}),
     }),
@@ -99,6 +101,7 @@ beforeEach(async () => {
     shareTextSafeMock.mockReset();
     shareTextSafeMock.mockResolvedValue('shared');
     sharingAvailableMock.current = true;
+    routerPush.mockClear();
 });
 
 afterEach(() => {
@@ -106,6 +109,27 @@ afterEach(() => {
 });
 
 describe('TeamInvitationCreateScreen', () => {
+    it.each([
+        { code: 'team_authentication_required', details: undefined, label: 'teams.errors.authenticationRequired', path: '/teams/team-1/sign-in' },
+        { code: 'team_forbidden', details: { reason: 'legacy_home_credential' }, label: 'teams.errors.signInOutdated', path: '/settings/account' },
+    ] as const)('keeps the invitation draft and routes sign-in after a $code refusal', async ({ code, details, label, path }) => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, INVITATION_CREATE_PATH, {
+            status: teamErrorHttpStatusV1(code),
+            body: { error: code, ...(details ? { details } : {}) },
+        });
+        const screen = await renderCreateScreen(serverId);
+        await waitForTestId(screen, 'team-invite-submit');
+        await screen.pressByTestIdAsync('team-invite-submit');
+
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(label));
+        expect(screen.getTextContent().split(label)).toHaveLength(2);
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-invite-submit');
+        await screen.pressByTestIdAsync('team-invite-refusal-sign-in');
+        expect(new URL(routerPush.mock.lastCall?.[0] ?? '', 'https://app.example').pathname).toBe(path);
+        expect(harness.requestsFor(INVITATION_CREATE_PATH)).toHaveLength(1);
+    });
+
     it('starts a fresh invitation and finishes through the fixed-Team dialog close callback', async () => {
         const serverId = await addManagedHome();
         harness.answer(serverId, INVITATION_CREATE_PATH, {
