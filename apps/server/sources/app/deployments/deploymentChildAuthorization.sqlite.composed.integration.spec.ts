@@ -5735,6 +5735,85 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
+    it.each(['plain', 'e2ee'] as const)('reads a completed provider variable sync without an installed Machine grant (%s)', async contentMode => {
+        const hosted = await fixture('account', 'account', { readableEnvironment: true, contentMode, platformTarget: 'vercel' });
+        const native = await fixture('account', 'account', { readableEnvironment: true, contentMode });
+        const resourceId = crypto.randomUUID();
+        const runtimeCapture = { resourceId, revision: 2, requiredBindings: [{ purpose: 'variable', phase: 'runtime' }] };
+        // Both rows have the exact persisted capture shape from binding preparation.
+        // Hosted writes to the provider; own-server delivers to the current installation.
+        await db.deploymentEnvironment.update({ where: { id: hosted.environment.id },
+            data: { referencedSavedSecretRevisions: [] } });
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const read = async (f: typeof hosted) => {
+                const response = await app.inject({
+                    method: 'GET', url: `/v1/deployments/environments/${f.environment.id}?serverId=${serverId}`,
+                    headers: { 'x-test-user-id': f.account.id, ...currentAccountStoredContentCompatibilityHeaders },
+                });
+                expect(response.statusCode, response.body).toBe(200);
+                return response.json();
+            };
+            expect(await read(hosted)).toMatchObject({ secretScope: { status: 'ready', requiredGrantCount: 0 } });
+            await db.deploymentEnvironment.updateMany({ where: { id: { in: [hosted.environment.id, native.environment.id] } },
+                data: { referencedSavedSecretRevisions: [runtimeCapture] } });
+            expect(await read(native)).toMatchObject({ secretScope: { status: 'unavailable', requiredGrantCount: 1, missingGrantCount: 1 } });
+            expect(await read(hosted)).toMatchObject({ secretScope: { status: 'ready', requiredGrantCount: 0, missingGrantCount: 0 } });
+            await db.deploymentEnvironment.update({ where: { id: hosted.environment.id },
+                data: { referencedSavedSecretRevisions: [{ resourceId, revision: 2,
+                    requiredBindings: [{ purpose: 'variable', phase: 'build' }] }] } });
+            expect(await read(hosted)).toMatchObject({ secretScope: { status: 'unavailable', requiredGrantCount: 1, missingGrantCount: 1 } });
+            await db.deploymentEnvironment.update({ where: { id: hosted.environment.id },
+                data: { referencedSavedSecretRevisions: [{ resourceId, revision: 2 }] } });
+            expect(await read(hosted)).toMatchObject({ secretScope: { status: 'unavailable',
+                reason: 'secret_scope_requirements_unavailable' } });
+            await db.deploymentEnvironment.update({ where: { id: hosted.environment.id },
+                data: { referencedSavedSecretRevisions: [runtimeCapture] } });
+            await db.deploymentTargetLink.update({ where: { id: hosted.link.id }, data: { detachedAt: new Date() } });
+            expect(await read(hosted)).toMatchObject({ secretScope: { status: 'unavailable',
+                reason: 'secret_scope_requirements_unavailable' } });
+        });
+    });
+
+    it('requires the new Source owner to have use access to a provider runtime variable', async () => {
+        const f = await fixture('account', 'account', { readableEnvironment: true, platformTarget: 'vercel' });
+        const team = await db.team.create({ data: { name: 'Review hosted Source transfer' } });
+        const grant = teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: f.account.id });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: f.account.id, role: 'owner' } });
+        await db.machineGrant.createMany({ data: [f.controller.id, f.builder.id].map(machineId => ({ ...grant, machineId })) });
+
+        const resourceId = crypto.randomUUID();
+        const secret = { v: 1 as const, name: 'Runtime service credential', kind: 'token' as const, value: 'test-runtime-secret' };
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: f.account.id, resourceId,
+            displayName: secret.name, kind: secret.kind, encryptionMode: 'plain',
+            storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain', content: secret }) })))
+            .toMatchObject({ ok: true, value: { revision: 1 } });
+        const bindings = [{ purpose: 'variable' as const, phase: 'runtime' as const, name: 'SERVICE_CREDENTIAL',
+            source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } }];
+        const content = await f.content('deployment-environment.v1', { ...createDeploymentEnvironmentDetailV1().content, bindings });
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id },
+            data: { ...content, referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(bindings) } });
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded' } });
+        if (!f.receipt.contentArtifactId) throw new Error('Expected a stored deployment Receipt');
+        await db.artifactGrant.createMany({ data: [content.contentArtifactId, f.link.contentArtifactId, f.receipt.contentArtifactId]
+            .map(artifactId => ({ ...grant, artifactId })) });
+        const source = await db.projectSource.findUniqueOrThrow({ where: { id: f.environment.projectSourceId } });
+        const teamOwner = { kind: 'team', teamId: team.id };
+        const token = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        await withAuthenticatedTestApp(projectSourceRoutes, async app => {
+            const transfer = () => app.inject({ method: 'PATCH', url: `/v1/projects/sources/${source.id}`,
+                headers: { authorization: `Bearer ${token}` }, payload: { serverId, sourceId: source.id,
+                    expectedRevision: source.revision, patch: { owner: teamOwner } } });
+            const denied = await transfer();
+            expect(denied.statusCode, denied.body).toBe(409);
+            expect(denied.json()).toMatchObject({ error: 'source_conflict',
+                current: { owner: { kind: 'account', accountId: f.account.id }, revision: source.revision } });
+            await db.savedSecretTeamGrant.create({ data: { resourceId, teamId: team.id, createdByAccountId: f.account.id } });
+            const admitted = await transfer();
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            expect(admitted.json()).toMatchObject({ source: { owner: teamOwner } });
+        }, { authentication: 'real' });
+    });
+
     it.each((['plain', 'e2ee'] as const).flatMap(contentMode => [false, true].map(existing => ({ contentMode, existing }))))
     ('persists incomplete template captures through signed storage HTTP ($contentMode; existing=$existing)', async ({ contentMode, existing }) => {
         const f = await fixture('account', 'account', { templateRoot: true, readableEnvironment: true, contentMode });

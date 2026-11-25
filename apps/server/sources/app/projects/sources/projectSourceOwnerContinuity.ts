@@ -1,5 +1,6 @@
 import type { ProjectSourceV1, ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { PROJECT_DEPLOYMENT_DEFAULTS_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
+import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { readArtifactRecipientCensusInTx } from '@/app/artifacts/artifactAccessService';
 import { readProjectDeploymentDefaultsContentInTx } from '@/app/projects/projectDeploymentDefaultsService';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -51,6 +52,7 @@ export async function hasProjectSourceOwnerContinuityInTx(tx: Tx, actorAccountId
         .filter(reference => reference.expectedStoredKind !== PROJECT_DEPLOYMENT_DEFAULTS_ARTIFACT_STORED_KIND_V1)
         .map(reference => ({ reference, expectedStoredKind: reference.expectedStoredKind, access: 'read' }));
     const machines: Parameters<typeof admitDeploymentMachinesInTx>[2][number][] = [];
+    const savedSecretRevisions: Array<{ resourceId: string; expectedRevision: number }> = [];
     const active = new Set<string>(deploymentInProgressStates());
     for (const environment of environments) {
         for (const link of environment.targetLinks) {
@@ -77,6 +79,9 @@ export async function hasProjectSourceOwnerContinuityInTx(tx: Tx, actorAccountId
         if (environment.telemetryMachineId) machines.push({ machineId: environment.telemetryMachineId, role: 'telemetry' });
         const required = await readDeploymentEnvironmentRequiredSecretUsesInTx(tx, environment);
         if (required.status !== 'complete') return false;
+        const captures = readDeploymentBindingSavedSecretRevisionsV1(environment.referencedSavedSecretRevisions);
+        if (!captures) return false;
+        for (const { resourceId, revision } of captures) savedSecretRevisions.push({ resourceId, expectedRevision: revision });
         if (!required.requiredSecretUses.length) continue;
         let grants: Awaited<ReturnType<typeof readEnvironmentMachineSecretGrantsInTx>>;
         try { grants = await readEnvironmentMachineSecretGrantsInTx(tx, { environmentId: environment.id }); }
@@ -87,11 +92,12 @@ export async function hasProjectSourceOwnerContinuityInTx(tx: Tx, actorAccountId
         if (required.requiredSecretUses.some(use => !grants.some(grant => grant.kind === 'secret'
             && grant.resourceId === use.resourceId && grant.resourceRevision === use.resourceRevision
             && grant.machineId === use.machineId && grant.installationId === use.installationId))) return false;
-        const revisions = new Map(required.requiredSecretUses.map(use => [use.resourceId, use.resourceRevision]));
-        const resources = await readSavedSecretResourcesForPrincipalInTx(tx, input.owner, [...revisions.keys()]);
+    }
+    if (savedSecretRevisions.length) {
+        const resourceIds = [...new Set(savedSecretRevisions.map(capture => capture.resourceId))];
+        const resources = await readSavedSecretResourcesForPrincipalInTx(tx, input.owner, resourceIds);
         if (!validateSavedSecretResourceReferenceCapturesV1(resources, {
-            references: [...revisions.keys()].map(formatSharedSavedSecretRefV1),
-            savedSecretRevisions: [...revisions].map(([resourceId, expectedRevision]) => ({ resourceId, expectedRevision })),
+            references: resourceIds.map(formatSharedSavedSecretRefV1), savedSecretRevisions,
         })) return false;
     }
     if (!(await admitDeploymentMachinesInTx(tx, input.owner, machines)).ok) return false;

@@ -219,6 +219,7 @@ export async function readDeploymentEnvironmentRequiredSecretUsesInTx(tx: Tx,
         }
     }
     return projectEnvironmentSecretBindingRequiredUsesV1({ referencedSavedSecretRevisions: captures,
+        runtimeVariablesManagedByProvider: link?.sourceKind === 'plugin' && link.role === 'runtime' && link.detachedAt === null,
         runtimeInstallations, ...(row.buildMachineId ? { buildInstallation: installations.get(row.buildMachineId) ?? null } : {}),
         currentRegistryTargetLinkIds });
 }

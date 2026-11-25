@@ -44,6 +44,8 @@ export function projectEnvironmentSecretBindingRequiredUsesV1(input: Readonly<{
     referencedSavedSecretRevisions: unknown;
     /** Null means current runtime placement/installation identity is unavailable. */
     runtimeInstallations: readonly Installation[] | null;
+    /** The runtime provider consumes these through the reviewed variables writer. */
+    runtimeVariablesManagedByProvider?: boolean;
     /** Null means a selected builder has no current installed identity; omission means none selected. */
     buildInstallation?: Installation | null;
     /** Actual current Environment relations, not identifiers inferred from binding content. */
@@ -57,6 +59,7 @@ export function projectEnvironmentSecretBindingRequiredUsesV1(input: Readonly<{
     for (const capture of captures) {
         if (!capture.requiredBindings) { complete = false; continue; }
         for (const binding of capture.requiredBindings) {
+            if (input.runtimeVariablesManagedByProvider && binding.purpose === 'variable' && binding.phase === 'runtime') continue;
             if (binding.purpose === 'registry' && !registryLinks?.has(binding.targetLinkId)) {
                 complete = false;
                 continue;
