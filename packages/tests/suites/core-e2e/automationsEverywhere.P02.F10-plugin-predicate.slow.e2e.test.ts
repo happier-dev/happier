@@ -266,7 +266,7 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
       expect(fixture.takeRequestObservations().filter(request => request.method === 'POST'
         && request.path === AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1)).toHaveLength(1);
       let admittedRun: { id: string; state: string; workflowRunState?: string } | undefined;
-      await waitFor(async () => {
+      await waitForWorkflowChildSession(async () => {
         const response = await fetchJson<unknown>(`${fixture!.server.baseUrl}/v3/automations/${encodeURIComponent(saved.set.automationId)}/runs`, {
           headers: { Authorization: `Bearer ${actor.credentials.token}`,
             ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) },
@@ -282,7 +282,7 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
         return reviewRunHasChildSession(actor, run.id, {
           parentSessionId: session.sessionId, machineId: machine.target.machineId, path: machine.workspaceDir,
         });
-      }, { failFast: true, context: 'Private plugin approved replay starts one safe review Run' }).catch(error => {
+      }, 'Private plugin approved replay starts one safe review Run').catch(error => {
         throw new Error(`Admitted review Run: ${JSON.stringify(admittedRun ?? null)}`, { cause: error });
       });
       return;
