@@ -21,7 +21,7 @@ const NAMES_SHOWN = 1;
 
 /** Only the owner's needs-you and failed words speak in colour; every other tone stays ink. */
 function cellTone(tone: TextTone): Pick<HappierFactStripFact, 'tone'> {
-  return tone === 'danger' ? { tone: 'danger' } : tone === 'warning' ? { tone: 'attention' } : {};
+  return tone === 'danger' ? { tone } : tone === 'warning' || tone === 'attention' ? { tone: 'attention' } : {};
 }
 
 /**
@@ -48,14 +48,14 @@ export function TriageDetailHeaderFacts(
   const status = facts.merge.kind === 'unknown' && facts.merge.reading !== true
     ? unavailable
     : mergeFact(text, facts.merge, facts.branch?.base ?? null);
-  const checks = line === null
+  const checks: Readonly<{ value: string; tone: TextTone; sub: string | null }> = line === null
     ? sourceChecks === 'empty' ? checksFact(text, { kind: 'none' })
       : sourceChecks === 'reading' ? checksFact(text, { kind: 'unknown', reading: true })
       : facts.checks.kind === 'unknown' && facts.checks.reading !== true ? unavailable : checksFact(text, facts.checks)
     : { value: line.lead ?? line.label, tone: line.state === 'failed' ? 'danger' : 'neutral',
         sub: rollup?.failing?.[0]?.name ?? (line.lead === null ? line.line : line.line.replace(/^\u00b7 /, '')) };
   const sourceMerge = source?.merge;
-  const reviewStatus = source?.review === 'reading' ? { kind: 'unknown' as const, reading: true }
+  const reviewStatus = source?.review === 'reading' ? { kind: 'unknown', reading: true } as const
     : source?.review ?? facts.review;
   const review = reviewStatus.kind === 'unknown' && reviewStatus.reading !== true
     ? { ...unavailable, person: null } : reviewFact(text, reviewStatus);
@@ -76,7 +76,7 @@ export function TriageDetailHeaderFacts(
   const cells: HappierFactStripFact[] = [
     { key: 'status', testID: 'triage-detail-facts.status', label: text('plugins.triage.surface.detail.facts.status', 'Status'),
       ...(sourceMerge == null ? { value: status.value, ...cellTone(status.tone), detail: status.sub }
-        : { value: sourceMerge.value, tone: resolveTriageRowFactStatusToneV1(sourceMerge.tone) }) },
+        : { value: sourceMerge.value, ...cellTone(resolveTriageRowFactStatusToneV1(sourceMerge.tone)) }) },
     { key: 'checks', testID: 'triage-detail-facts.checks', label: text('plugins.triage.surface.detail.facts.checks', 'Checks'),
       value: checks.value, ...cellTone(checks.tone), detail: checks.sub },
     { key: 'reviewers', testID: 'triage-detail-facts.reviewers', label: text('plugins.triage.surface.detail.facts.reviewers', 'Reviewers'),
