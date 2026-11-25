@@ -52,6 +52,8 @@ export function NewAppDeploySteps(
     source: NewAppDeploySource;
     /** A "Deploy an app here" door's Machine; the person can still choose another. */
     machineId: string | null;
+    /** The Project the dialog was opened from: a definition or catalog app goes there unless the person changes it. */
+    projectSourceId?: string | null;
     phone: boolean;
     steps: DeploymentDraftStepsHost;
     /** Closes the flow before it navigates (a dialog steps aside; a page has nothing to close). */
@@ -99,6 +101,7 @@ type BoundProps = Readonly<{
   phone: boolean;
   steps: DeploymentDraftStepsHost;
   onLeave: () => void;
+  projectSourceId?: string | null;
 }>;
 
 function useDeployExits(props: BoundProps) {
@@ -155,6 +158,7 @@ function DefinitionDeploy(
   const projectChoice = useDeploymentProjectChoice({
     lifetime,
     initiallyNew: true,
+    ...(props.projectSourceId ? { initialProjectSourceId: props.projectSourceId } : {}),
   });
   const actions = React.useMemo(
     () => createDeploymentActions(lifetime),
@@ -226,7 +230,8 @@ type CatalogTemplate = NonNullable<ReturnType<typeof readStoreAppTemplate>>;
 function CatalogAppDraft(props: BoundProps & Readonly<{ templateRef: CatalogTemplate['templateRef'];
   title: string; template: CatalogTemplate['app']; targetId: string | null }>) {
   const { lifetime } = props;
-  const projectChoice = useDeploymentProjectChoice({ lifetime, initiallyNew: true, initialNewProjectName: props.title });
+  const projectChoice = useDeploymentProjectChoice({ lifetime, initiallyNew: true, initialNewProjectName: props.title,
+    ...(props.projectSourceId ? { initialProjectSourceId: props.projectSourceId } : {}) });
   const actions = React.useMemo(() => createDeploymentActions(lifetime), [lifetime]);
   const catalogApp = React.useMemo(() => ({ templateRef: props.templateRef, title: props.title, template: props.template }),
     [props.templateRef, props.title, props.template]);

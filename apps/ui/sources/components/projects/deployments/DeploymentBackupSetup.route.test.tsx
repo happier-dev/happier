@@ -207,10 +207,12 @@ it('shows unknown local capacity before effects and keeps zero capacity eligible
     sourceChoices={[{ kind: 'volume', sourceId: 'content', service: 'web', volume: 'content', consistency: 'stopDuringCopy' }]}
     review={{ pendingId: null, request() {}, open() {} }} onChanged={() => {}} onClose={() => {}} />);
   try {
-    expect(screen.findAllByType(Item).find(row => row.props.testID === 'local-setup.capacityReview')?.props.title)
-      .toBe(t('projects.deployments.settingsSections.setupCapacityUnknown'));
+    // No directory yet: nothing is said about free space (R16-D7: "Free space unavailable" before any path).
+    expect(screen.findAllByType(Item).find(row => row.props.testID === 'local-setup.capacityReview')).toBeUndefined();
     expect(configure).not.toHaveBeenCalled();
     await act(async () => screen.findAllByType(HappierInputField).find(field => field.props.field.path === 'path')!.props.onChange('/backups'));
+    expect(screen.findAllByType(Item).find(row => row.props.testID === 'local-setup.capacityReview')?.props.title)
+      .toBe(t('projects.deployments.settingsSections.setupCapacityUnknown'));
     await screen.pressByTestIdAsync('local-setup.test');
     expect(configure).toHaveBeenCalledWith(expect.objectContaining({ intent: 'test' }));
     expect(screen.getTextContent()).toContain(formatMachineBytes(0, 'storage'));

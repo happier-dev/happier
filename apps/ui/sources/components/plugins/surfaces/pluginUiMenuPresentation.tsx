@@ -61,6 +61,8 @@ export function PluginUiMenuPresentation({ input, controls }: Readonly<{ input: 
         popoverSheetHeader={input.sheet?.header} popoverSheetFooter={input.sheet?.footer}
         {...(input.sheet ? { popoverPhonePresentation: 'sheet' as const } : {})}
         showCategoryTitles={menu.showGroupLabels}
+        // A named group is its own section, parted from the rows above it as the package's Menu draws it (R16-D6).
+        separateCategories={source.groups.length > 0}
         onSelect={id => {
             const item = allItems.find(item => item.id === id);
             if (item?.action) {

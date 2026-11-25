@@ -83,6 +83,11 @@ export function readServicesColumnSelection(
     : { kind: 'project', projectSourceId };
 }
 
+/** Deploy an app from the column starts in the Project the column has open; All services starts with no Project (R16-D10). */
+export function servicesColumnNewAppContext(selection: ServicesColumnSelection): Readonly<{ projectSourceId: string }> | undefined {
+  return selection && selection.kind !== 'all' ? { projectSourceId: selection.projectSourceId } : undefined;
+}
+
 const selectDeploymentColumnParams = (params: Readonly<Record<string, string | string[] | undefined>>) => ({
   deploymentEnvironment: readProjectRouteStringParam(params.deploymentEnvironment),
   selectedServerId: readProjectRouteStringParam(params.serverId),
@@ -119,9 +124,9 @@ export const ServicesColumn = React.memo(function ServicesColumn() {
     () => ({
       label: t('newApp.title'),
       testID: 'services-column:deploy',
-      onPress: () => openNewApp(),
+      onPress: () => openNewApp(null, null, servicesColumnNewAppContext(selection)),
     }),
-    [openNewApp],
+    [openNewApp, selection],
   );
   const navigate = React.useCallback(
     (href: string) => router.push(href as never),

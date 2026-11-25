@@ -436,6 +436,16 @@ describe('readServicesColumnSelection', () => {
     });
     expect(readServicesColumnSelection('/projects/ws-1', null)).toBeNull();
   });
+
+  it('opens Deploy an app in the Project the column has open, and in no Project from All services (R16-D10)', async () => {
+    const { servicesColumnNewAppContext } = await import('./ServicesColumn');
+    expect(servicesColumnNewAppContext(readServicesColumnSelection('/deployments/source-a', null)))
+      .toEqual({ projectSourceId: 'source-a' });
+    expect(servicesColumnNewAppContext(readServicesColumnSelection('/deployments/source-a', 'env-1')))
+      .toEqual({ projectSourceId: 'source-a' });
+    expect(servicesColumnNewAppContext(readServicesColumnSelection('/projects/deployments', null))).toBeUndefined();
+    expect(servicesColumnNewAppContext(null)).toBeUndefined();
+  });
 });
 
 describe('Services column draws the one Environment row (UI refinements 2026-11-15 08:57Z)', () => {

@@ -8,7 +8,6 @@ import type { DeploymentBackupVerifyInputV1 } from '@happier-dev/protocol/deploy
 import type { DeploymentBackupHistoryResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupHistoryV1';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
 import { formatElapsedDuration } from '@/components/machines/durationWords';
 import type { DeploymentBackupFacts } from './useDeploymentBackupFacts';
 
@@ -66,7 +65,7 @@ import type { StoragePathCapacityV1 } from '@happier-dev/protocol/storage/storag
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { MachineSetupRecipeInputs } from '@/components/settings/machines/managed/MachineSetupRecipeInputs';
 import { readMachineSetupRecipeInputState } from '@/components/settings/machines/managed/machineSetupRecipeInputsModel';
-import { deploymentActionRefusalRemedy, deploymentBackupCredentialLabel as credentialLabel, deploymentWorkStatus } from './deploymentPresentation';
+import { deploymentActionRefusalRemedy, deploymentBackupCredentialLabel as credentialLabel } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { deploymentBackupKeepFields as KEEP_FIELDS, deploymentBackupKeepLabels as KEEP_LABEL,
   deploymentBackupRetentionDraftFrom as draftFrom, retentionFromDraft,
@@ -77,6 +76,8 @@ import type { AccountSettingsScope } from '@/sync/domains/settings/scope/account
 export { retentionFromDraft } from './deploymentBackupRetention';
 
 const noop = () => {};
+/** The press position Back up now records, so its progress is told apart from a check or a prune. */
+const BACKUP_RUN_AT = 'backupRun';
 type BackupHistoryEntry = NonNullable<DeploymentBackupHistoryResultV1['history']>['entries'][number];
 type ActionsFactoryForOperations = ReturnType<typeof createDeploymentActions>;
 
@@ -102,7 +103,7 @@ export function useDeploymentBackupOperations(props: Readonly<{
     const capture = await actions.runBackup(input);
     setResult(t('projects.deployments.backupCompleted', { count: capture.manifests.length }));
     return { ok: true };
-  }) : null;
+  }, BACKUP_RUN_AT) : null;
   // A recorded backup names its run and snapshots, so it is checked without reading the destination's inventory.
   const verify = actions && input ? (entry: BackupHistoryEntry, level: DeploymentBackupVerifyInputV1['level']) => change.press(async () => {
     setResult(null);
@@ -123,7 +124,9 @@ export function useDeploymentBackupOperations(props: Readonly<{
       : t('projects.deployments.settingsSections.prunedNothing'));
     return { ok: true };
   }) : null;
-  return { change, result, run, verify, prune, machineId: input?.machineId ?? null, deployed: deploymentId !== null };
+  // Back up now shows its own progress in place; a check or a prune running beside it does not borrow it (R16-D7).
+  const backingUp = change.running && change.outcomeAt === BACKUP_RUN_AT;
+  return { change, result, run, verify, prune, backingUp, machineId: input?.machineId ?? null, deployed: deploymentId !== null };
 }
 
 export type DeploymentBackupOperations = ReturnType<typeof useDeploymentBackupOperations>;
@@ -147,7 +150,7 @@ export function DeploymentBackupSectionActions(props: Readonly<{
       {props.onRestore ? <SectionActionButton testID={`${props.testID}.restore`} icon="clock-counter-clockwise"
         title={t('projects.deployments.restoreAction')} onPress={props.onRestore} /> : null}
       {operations.run ? <SectionActionButton testID={`${props.testID}.run`} title={t('projects.deployments.backupRun')}
-        disabled={operations.change.running} onPress={operations.run} /> : null}
+        disabled={operations.change.running} loading={operations.backingUp} onPress={operations.run} /> : null}
       {items.length > 0 ? (
         <DropdownMenu open={open} onOpenChange={setOpen} items={items} matchTriggerWidth={false} placement="bottom"
           popoverAccessibilityLabel={t('projects.deployments.dataBackups')}
@@ -207,10 +210,14 @@ function BackupRow(props: Readonly<{ entry: BackupHistoryEntry; operations: Depl
     { id: 'repositoryCheck', title: t('projects.deployments.backupRepositoryCheck'), testID: `${props.testID}.repositoryCheck` },
   ] : null;
   const verify = operations.verify;
+  const { theme } = useUnistyles();
   return (
     <Item
       testID={props.testID}
-      icon={<WorkStatusGlyph status={deploymentWorkStatus(entry.state)} testIDSuffix={`backup-${entry.operationId}`} />}
+      // A run's rows share their section with the saved setup: a leading glyph would indent every row of it (R16-D7).
+      // A failure speaks with the section's own dot beside its words; a kept backup says nothing extra.
+      subtitleLeading={entry.state === 'failed'
+        ? <StatusDot size={6} color={theme.colors.state.danger.foreground} /> : undefined}
       title={formatAsOfTime(entry.completedAt)}
       subtitle={entry.state === 'failed' ? t('projects.deployments.databaseHistoryFailed', { action: backup })
         : entry.state === 'cancelled' ? t('projects.deployments.databaseHistoryCancelled', { action: backup })
@@ -738,7 +745,10 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
     {destination.definition.locality === 'local' ? <Item mode="info" title={t('projects.deployments.settingsSections.setupLocalWarning')}
       subtitle={retention?.kind === 'keepEverything' ? t('projects.deployments.settingsSections.setupLocalGrowth') : undefined} /> : null}
     {/* Free space belongs to a disk (a Machine folder, an SFTP host); an object-storage bucket has none to read. */}
-    {!result?.review?.capacity && (anotherMachine || destination.definition.resticTransport !== 's3') ? <BackupPathCapacityReview
+    {/* A folder on this Machine has nothing to say about free space until there is a directory to read it for (R16-D7);
+        a disk elsewhere keeps pointing to the Machine that owns it. */}
+    {!result?.review?.capacity && (anotherMachine || (destination.definition.resticTransport !== 's3'
+      && (destination.definition.locality !== 'local' || (typeof fields.path === 'string' && fields.path.trim() !== '')))) ? <BackupPathCapacityReview
       capacity={pathCapacity.capacity} machine={pathCapacity.machineName || props.machine} testID={id} /> : null}
     {anotherMachine ? <>
       <SessionMachineField serverId={serverId} testID={`${id}.receiver`} machines={receiverMachines}

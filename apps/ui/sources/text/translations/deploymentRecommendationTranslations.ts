@@ -4,7 +4,7 @@ type RecommendationCopy = Readonly<{ stored: string; requiresRepository: string;
 
 export const deploymentRecommendationTranslations = {
   "en": {
-    "stored": "This is a stored definition. One of your Machines can run it as is.",
+    "stored": "It runs as written, with nothing to build first.",
     "requiresRepository": "This platform deploys from a repository. Create an Environment that deploys from a repository, or run this stored definition on your own server.",
     "requiresRepositoryMany": "These platforms deploy from a repository. Deploy from a repository to use one, or run this app on one of your Machines.",
     "catalogRequiresRepository": "These platforms require a repository. Choose an online Machine to run this catalog template.",
@@ -13,7 +13,7 @@ export const deploymentRecommendationTranslations = {
     "chooseMachine": "Add or choose an available Machine to run this definition."
   },
   "fr": {
-    "stored": "Cette définition est enregistrée. L’une de vos Machines peut l’exécuter telle quelle.",
+    "stored": "Elle s’exécute telle quelle, sans rien à construire.",
     "requiresRepository": "Cette plateforme déploie depuis un dépôt. Créez un environnement qui déploie depuis un dépôt, ou exécutez cette définition enregistrée sur votre propre serveur.",
     "requiresRepositoryMany": "Ces plateformes déploient depuis un dépôt. Déployez depuis un dépôt pour en utiliser une, ou exécutez cette app sur l’une de vos Machines.",
     "catalogRequiresRepository": "Ces plateformes nécessitent un dépôt. Choisissez une Machine en ligne pour exécuter ce modèle du catalogue.",
@@ -22,7 +22,7 @@ export const deploymentRecommendationTranslations = {
     "chooseMachine": "Ajoutez ou choisissez une Machine disponible pour exécuter cette définition."
   },
   "de": {
-    "stored": "Diese Definition ist gespeichert. Eine deiner Maschinen kann sie unverändert ausführen.",
+    "stored": "Sie läuft so, wie sie ist; vorher muss nichts gebaut werden.",
     "requiresRepository": "Diese Plattform stellt aus einem Repository bereit. Erstelle eine Umgebung, die aus einem Repository bereitstellt, oder führe diese gespeicherte Definition auf deinem eigenen Server aus.",
     "requiresRepositoryMany": "Diese Plattformen stellen aus einem Repository bereit. Stelle aus einem Repository bereit, um eine davon zu nutzen, oder führe diese App auf einer deiner Maschinen aus.",
     "catalogRequiresRepository": "Diese Plattformen benötigen ein Repository. Wähle eine online verfügbare Maschine, um diese Katalogvorlage auszuführen.",
@@ -31,7 +31,7 @@ export const deploymentRecommendationTranslations = {
     "chooseMachine": "Füge eine verfügbare Maschine hinzu oder wähle eine aus, um diese Definition auszuführen."
   },
   "es": {
-    "stored": "Esta definición está guardada. Una de tus Máquinas puede ejecutarla tal como está.",
+    "stored": "Se ejecuta tal cual, sin nada que compilar antes.",
     "requiresRepository": "Esta plataforma despliega desde un repositorio. Crea un entorno que despliegue desde un repositorio o ejecuta esta definición guardada en tu propio servidor.",
     "requiresRepositoryMany": "Estas plataformas despliegan desde un repositorio. Despliega desde un repositorio para usar una, o ejecuta esta app en una de tus máquinas.",
     "catalogRequiresRepository": "Estas plataformas requieren un repositorio. Elige una Máquina en línea para ejecutar esta plantilla del catálogo.",
@@ -40,7 +40,7 @@ export const deploymentRecommendationTranslations = {
     "chooseMachine": "Añade o elige una Máquina disponible para ejecutar esta definición."
   },
   "it": {
-    "stored": "Questa definizione è salvata. Una delle tue Macchine può eseguirla così com’è.",
+    "stored": "Si esegue così com’è, senza nulla da compilare prima.",
     "requiresRepository": "Questa piattaforma distribuisce da un repository. Crea un ambiente che distribuisca da un repository oppure esegui questa definizione salvata sul tuo server.",
     "requiresRepositoryMany": "Queste piattaforme distribuiscono da un repository. Distribuisci da un repository per usarne una, oppure esegui questa app su una delle tue macchine.",
     "catalogRequiresRepository": "Queste piattaforme richiedono un repository. Scegli una Macchina online per eseguire questo modello del catalogo.",
@@ -49,7 +49,7 @@ export const deploymentRecommendationTranslations = {
     "chooseMachine": "Aggiungi o scegli una Macchina disponibile per eseguire questa definizione."
   },
   "pt": {
-    "stored": "Esta definição está guardada. Uma das suas Máquinas pode executá-la tal como está.",
+    "stored": "É executada tal como está, sem nada para compilar antes.",
     "requiresRepository": "Esta plataforma faz a implantação a partir de um repositório. Crie um ambiente que use um repositório para a implantação ou execute esta definição guardada no seu próprio servidor.",
     "requiresRepositoryMany": "Estas plataformas implantam a partir de um repositório. Implante a partir de um repositório para usar uma, ou execute esta app numa das suas máquinas.",
     "catalogRequiresRepository": "Estas plataformas exigem um repositório. Escolha uma Máquina online para executar este modelo do catálogo.",
@@ -58,7 +58,7 @@ export const deploymentRecommendationTranslations = {
     "chooseMachine": "Adicione ou escolha uma Máquina disponível para executar esta definição."
   },
   "ca": {
-    "stored": "Aquesta definició està desada. Una de les teves Màquines pot executar-la tal com està.",
+    "stored": "S’executa tal com és, sense res a compilar abans.",
     "requiresRepository": "Aquesta plataforma desplega des d’un repositori. Crea un entorn que desplegui des d’un repositori o executa aquesta definició desada al teu propi servidor.",
     "requiresRepositoryMany": "Aquestes plataformes despleguen des d’un repositori. Desplega des d’un repositori per fer-ne servir una, o executa aquesta app en una de les teves màquines.",
     "catalogRequiresRepository": "Aquestes plataformes requereixen un repositori. Tria una Màquina en línia per executar aquesta plantilla del catàleg.",
@@ -67,7 +67,7 @@ export const deploymentRecommendationTranslations = {
     "chooseMachine": "Afegeix o tria una Màquina disponible per executar aquesta definició."
   },
   "ru": {
-    "stored": "Это сохранённое определение. Одна из ваших машин может запустить его как есть.",
+    "stored": "Запускается как есть, ничего не нужно собирать заранее.",
     "requiresRepository": "Эта платформа развёртывает из репозитория. Создайте окружение, которое развёртывается из репозитория, или запустите это сохранённое определение на своём сервере.",
     "requiresRepositoryMany": "Эти платформы развёртывают из репозитория. Развёртывайте из репозитория, чтобы использовать одну из них, или запустите это приложение на одной из своих машин.",
     "catalogRequiresRepository": "Этим платформам нужен репозиторий. Выберите машину в сети, чтобы запустить этот шаблон из каталога.",
@@ -76,7 +76,7 @@ export const deploymentRecommendationTranslations = {
     "chooseMachine": "Добавьте или выберите доступную Машину для запуска этого описания."
   },
   "pl": {
-    "stored": "To zapisana definicja. Jedna z Twoich Maszyn może ją uruchomić w obecnej postaci.",
+    "stored": "Działa tak, jak jest zapisana, bez wcześniejszego budowania.",
     "requiresRepository": "Ta platforma wdraża z repozytorium. Utwórz środowisko wdrażane z repozytorium lub uruchom tę zapisaną definicję na własnym serwerze.",
     "requiresRepositoryMany": "Te platformy wdrażają z repozytorium. Wdrażaj z repozytorium, aby użyć jednej z nich, albo uruchom tę aplikację na jednej ze swoich maszyn.",
     "catalogRequiresRepository": "Te platformy wymagają repozytorium. Wybierz Maszynę online, aby uruchomić ten szablon z katalogu.",
@@ -85,7 +85,7 @@ export const deploymentRecommendationTranslations = {
     "chooseMachine": "Dodaj lub wybierz dostępną Maszynę, aby uruchomić tę definicję."
   },
   "ja": {
-    "stored": "保存済みの定義です。いずれかのマシンでそのまま実行できます。",
+    "stored": "書かれたとおりに動き、先にビルドするものはありません。",
     "requiresRepository": "このプラットフォームはリポジトリからデプロイします。リポジトリからデプロイする環境を作成するか、この保存済みの定義を自分のサーバーで実行してください。",
     "requiresRepositoryMany": "これらのプラットフォームはリポジトリからデプロイします。使うにはリポジトリからデプロイするか、このアプリを自分のマシンで実行してください。",
     "catalogRequiresRepository": "これらのプラットフォームにはリポジトリが必要です。このカタログテンプレートを実行するには、オンラインのマシンを選択してください。",
@@ -94,7 +94,7 @@ export const deploymentRecommendationTranslations = {
     "chooseMachine": "この定義を実行する利用可能なマシンを追加または選択してください。"
   },
   "zh-Hans": {
-    "stored": "这是已保存的定义。你的一台机器可以按原样运行它。",
+    "stored": "按原样运行，无需先构建。",
     "requiresRepository": "此平台从仓库部署。请创建一个从仓库部署的环境，或在你自己的服务器上运行此已保存的定义。",
     "requiresRepositoryMany": "这些平台从仓库部署。要使用它们，请从仓库部署，或在你的一台机器上运行此应用。",
     "catalogRequiresRepository": "这些平台需要代码仓库。请选择一台在线机器来运行此目录模板。",
@@ -103,7 +103,7 @@ export const deploymentRecommendationTranslations = {
     "chooseMachine": "添加或选择可用的机器来运行此定义。"
   },
   "zh-Hant": {
-    "stored": "這是已儲存的定義。你的一台機器可以原樣執行它。",
+    "stored": "依原樣執行，無需先建置。",
     "requiresRepository": "此平台從儲存庫部署。請建立一個從儲存庫部署的環境，或在你自己的伺服器上執行此已儲存的定義。",
     "requiresRepositoryMany": "這些平台從儲存庫部署。要使用它們，請從儲存庫部署，或在你的一台機器上執行此應用。",
     "catalogRequiresRepository": "這些平台需要程式碼儲存庫。請選擇一部在線機器來執行此目錄範本。",

@@ -28,6 +28,8 @@ import { getTranslationValue, t, tLoose } from '@/text';
 import type { ApprovalActionFieldsPresentation } from './approvalFieldValues';
 import { presentPluginInstallApprovalRows } from './pluginInstallApprovalFacts';
 import { useApprovalReferenceReading, type ApprovalReferenceReading } from './approvalReferenceReading';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { navigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useOptionalAuth } from '@/auth/context/AuthContext';
@@ -64,6 +66,22 @@ export function demoteAskingSessionTarget(presentation: ApprovalFieldsPresentati
         && row.reference.id === askingSessionId && row.reference.presentation !== 'destructive_target';
     if (!presentation.rows.some(isAskingTarget)) return presentation;
     return { ...presentation, rows: presentation.rows.map(row => isAskingTarget(row) ? { ...row, technical: true as const } : row) };
+}
+
+/**
+ * The Home the approval is on and the viewer's own Account are already said by the page that asks ("Delete this
+ * account?" on this Home), so a row naming them reads as filler ("Invoking Home · This Home", "Your Account · Your
+ * account"). They keep their exact ids in Technical details (R16-D9). Another Home or another person's Account leads.
+ */
+export function demoteSelfReferences(presentation: ApprovalFieldsPresentation, approvalServerId: string | null | undefined,
+    viewer: Readonly<{ serverId: string; accountId: string }> | null): ApprovalFieldsPresentation {
+    if (!approvalServerId) return presentation;
+    const isSelf = (row: ApprovalFieldRow) => row.kind === 'value' && !row.technical && (
+        (row.reference?.kind === 'home' && areServerProfileIdentifiersEquivalent(row.reference.id, approvalServerId))
+        || (row.reference?.kind === 'account' && viewer !== null && viewer.accountId === row.reference.id
+            && areServerProfileIdentifiersEquivalent(viewer.serverId, approvalServerId)));
+    if (!presentation.rows.some(isSelf)) return presentation;
+    return { ...presentation, rows: presentation.rows.map(row => isSelf(row) ? { ...row, technical: true as const } : row) };
 }
 
 function readAskingSessionId(request: ApprovalFieldsRequest | undefined): string | null {
@@ -144,8 +162,9 @@ export const ActionApprovalFieldsCard = React.memo(function ActionApprovalFields
 }>) {
     const [detailsOpen, setDetailsOpen] = React.useState(props.collapsed !== true);
     const askingSessionId = readAskingSessionId(props.request);
-    const presentation = React.useMemo(() => demoteAskingSessionTarget(props.presentation, askingSessionId),
-        [askingSessionId, props.presentation]);
+    const viewer = useAccountSettingsScope();
+    const presentation = React.useMemo(() => demoteSelfReferences(demoteAskingSessionTarget(props.presentation, askingSessionId),
+        props.serverId, viewer), [askingSessionId, props.presentation, props.serverId, viewer]);
     const reading = { ...props, presentation, detailsOpen, setDetailsOpen };
     if (props.request && isDiscussionReplyActionIdV1(props.request.actionId) && (props.anatomy === 'page' || detailsOpen)) return (
         <DiscussionReplyApprovalFields request={props.request} serverId={props.serverId ?? null}>

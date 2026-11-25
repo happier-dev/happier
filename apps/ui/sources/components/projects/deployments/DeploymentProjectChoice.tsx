@@ -22,14 +22,16 @@ export type DeploymentProjectSelection =
  * The new Project's request key is stable per name and owner, so a retried review keeps the Source creator's identity.
  */
 export function useDeploymentProjectChoice(input: Readonly<{ lifetime: ServerAccountScopeLifetime; initialNewProjectName?: string;
-  initiallyNew?: boolean; fixedProjectSourceId?: string }>) {
+  initiallyNew?: boolean; fixedProjectSourceId?: string;
+  /** The Project the flow was opened from: chosen to start with, still changeable (R16-D10). */
+  initialProjectSourceId?: string }>) {
   const { serverId, accountId } = input.lifetime.scope;
   const fixed = input.fixedProjectSourceId !== undefined;
   const sources = useProjectSources(input.lifetime.scope, { enabled: !fixed }).state;
   const projectRead = useProjectSource(fixed ? input.lifetime : null, input.fixedProjectSourceId ?? null);
   const fixedProject = projectRead.source?.source ?? null;
-  const [sourceId, setSourceId] = React.useState<string | null>(null);
-  const [newProject, setNewProject] = React.useState(!fixed && input.initiallyNew === true);
+  const [sourceId, setSourceId] = React.useState<string | null>(input.initialProjectSourceId ?? null);
+  const [newProject, setNewProject] = React.useState(!fixed && input.initiallyNew === true && !input.initialProjectSourceId);
   const [newProjectName, setNewProjectName] = React.useState(input.initialNewProjectName ?? '');
   const [ownerId, setOwnerId] = React.useState('account');
   const teamsDirectory = useTeamsDirectory({ serverIds: [serverId], enabled: !fixed && newProject });

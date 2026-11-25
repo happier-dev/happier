@@ -894,7 +894,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               ...(deployCatalogItem ? { mark: <StoreItemMark facts={{ kind: deployCatalogItem.kind, title: deployCatalogItem.title,
                 brand: deployCatalogItem.brandMark }} size={ICON_SIZE.md} /> } : {}) }} />
         <NewAppDeploySteps serverId={scope.serverId} source={deploySource} machineId={props.machine?.machineId ?? null}
-          phone={phone} steps={deploySteps} onLeave={stepAside} />
+          projectSourceId={props.projectSourceId ?? null} phone={phone} steps={deploySteps} onLeave={stepAside} />
       </View>
     );
   } else if (step === 'auto') {

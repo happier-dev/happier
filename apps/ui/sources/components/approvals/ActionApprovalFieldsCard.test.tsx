@@ -1007,3 +1007,16 @@ it('names a Workflow, a Run and a Project by what they are, and says so neutrall
         active.dispose();
     }
 });
+
+it('keeps the invoking Home and the viewer\'s own Account out of the facts, one disclosure away (R16-D9)', async () => {
+    const { demoteSelfReferences } = await import('./ActionApprovalFieldsCard');
+    const presentation = describeApprovalActionFields({ actionId: 'account.delete',
+        actionArgs: { serverId: 'home-a', accountId: 'viewer' } });
+    const shown = (rows: typeof presentation.rows) => rows.filter(row => !(row.kind === 'value' && row.technical))
+        .map(row => row.kind === 'value' ? row.reference?.kind : row.kind);
+    expect(shown(presentation.rows)).toEqual(['home', 'account']);
+    // Someone else's Account, or another Home, is a fact the person needs.
+    expect(shown(demoteSelfReferences(presentation, 'home-b', { serverId: 'home-b', accountId: 'other' }).rows))
+        .toEqual(['home', 'account']);
+    expect(shown(demoteSelfReferences(presentation, 'home-a', { serverId: 'home-a', accountId: 'viewer' }).rows)).toEqual([]);
+});
