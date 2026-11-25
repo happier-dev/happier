@@ -2550,10 +2550,9 @@ describe('mounted Usage page scope commands', () => {
         expect.soft(screen.findAllByType(WidgetSurface).map(node => node.props.instance.id)).toEqual(['work-only']);
         expect.soft(Boolean(screen.findHostByTestId('usage-area.unavailable'))).toBe(false);
         expect.soft(Boolean(screen.findHostByTestId('usage-area.loading'))).toBe(false);
-        // The document can draw while the named views are still reading. Hold the view bar's row.
-        expect.soft(screen.findHostByTestId('usage-views')).not.toBeNull();
-        expect.soft(screen.findByTestId('usage-views.tabs:viewport')).toBeNull();
-        expect.soft(screen.findHostByTestId('usage-views.current')).toBeNull();
+        // The owner request at 18:59Z requires navigable presets even before inventory settles.
+        expect.soft(screen.findAllByType(WidgetAreaLayoutBar)).toHaveLength(1);
+        expect.soft(screen.findByTestId('usage-views.loading')).toBeNull();
         inventoryRead.resolve();
         if (inventoryFails) {
             // The views' failure is said once, by the page header, not as a second failure line under it.

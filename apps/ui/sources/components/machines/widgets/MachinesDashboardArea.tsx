@@ -115,7 +115,6 @@ function MachinesDashboardDocument(
   return (
     <>
       <WidgetAreaLayoutBar
-        inventoryStatus={bar.inventoryStatus}
         layouts={bar.layouts}
         selectedId={bar.selectedId}
         onSelect={bar.onSelect}

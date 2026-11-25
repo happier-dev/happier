@@ -113,50 +113,6 @@ describe('WidgetAreaLayoutBar', () => {
     expect(trigger.props.accessibilityLabel).toBe('Dashboards');
   });
 
-  it.each([
-    { form: 'tabs', widths: { bar: 600, viewport: 560, strip: 280 } },
-    { form: 'chooser', widths: { bar: 300, viewport: 200, strip: 520 } },
-  ])('first paints $form from the answered inventory', async ({ form, widths }) => {
-    const props = {
-      labels: LABELS, selectedId: 'overview', onSelect: vi.fn(),
-      onCreate: null, actions: null, testID: 'bar',
-    };
-    const cold = { inventoryStatus: 'loading' as const };
-    const answered = { inventoryStatus: 'ready' as const };
-    const screen = await renderScreen(<WidgetAreaLayoutBar {...props} {...cold} layouts={DASHBOARDS.slice(0, 2)} />);
-    // Before the fix, the provisional strip could measure and paint before the actual list arrived.
-    if (screen.findByTestId('bar.tabs:viewport')) {
-      await measure(screen, 'bar', { bar: 300, viewport: 260, strip: 180 });
-    }
-    expect(screen.findByTestId('bar.tabs:viewport')).toBeNull();
-    expect(screen.findHostByTestId('bar.current')).toBeNull();
-    const barStyle = () => StyleSheet.flatten(screen.findHostByTestId('bar')!.props.style);
-    const reservedHeight = barStyle().minHeight;
-    expect(reservedHeight).toBeGreaterThan(0);
-
-    await screen.update(<WidgetAreaLayoutBar {...props} {...answered} layouts={DASHBOARDS} />);
-    expect(barStyle()).toMatchObject({ minHeight: reservedHeight, opacity: 0 });
-    expect(screen.findHostByTestId('bar.current')).toBeNull();
-    await measure(screen, 'bar', widths);
-
-    expect(barStyle().minHeight).toBe(reservedHeight);
-    expect(barStyle().opacity).not.toBe(0);
-    expect(Boolean(screen.findByTestId('bar.tabs:growth'))).toBe(form === 'tabs');
-    expect(Boolean(screen.findHostByTestId('bar.current'))).toBe(form === 'chooser');
-    await screen.unmount();
-  });
-
-  it('paints the remembered lone layout immediately', async () => {
-    const remembered = { inventoryStatus: 'ready' as const };
-    const screen = await renderScreen(
-      <WidgetAreaLayoutBar {...remembered} layouts={[DASHBOARDS[0]]} labels={LABELS}
-        selectedId="overview" onSelect={vi.fn()} onCreate={null} actions={null} testID="bar" />,
-    );
-    expect(screen.findHostByTestId('bar.current')).not.toBeNull();
-    expect(screen.findByTestId('bar.tabs:viewport')).toBeNull();
-    await screen.unmount();
-  });
-
   it('remeasures compact tabs after a rename or deletion and restores the strip when it fits', async () => {
     const props = { selectedId: 'overview', onSelect: () => {}, onCreate: null,
       actions: null, labels: LABELS, testID: 'bar' };

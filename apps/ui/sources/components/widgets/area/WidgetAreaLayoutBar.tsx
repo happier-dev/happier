@@ -15,7 +15,6 @@ import {
   happierPageTextMetrics,
 } from '@happier-dev/plugin-ui/presentation';
 
-import type { ProjectDashboardsState } from '@/components/projects/overview/useProjectDashboards';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
@@ -118,9 +117,8 @@ function LayoutTab(_props: HappierTabDescriptor): null {
  * name opens the same list. Switching writes nothing.
  * The inventory (names, order, `isEdited`) comes from `useWidgetAreaLayouts`.
  */
-type WidgetAreaLayoutBarProps = Readonly<{
-    /** Omitted by bars with a static inventory. */
-    inventoryStatus?: ProjectDashboardsState['status'];
+export const WidgetAreaLayoutBar = React.memo(function WidgetAreaLayoutBar(
+  props: Readonly<{
     layouts: readonly WidgetAreaLayoutOption[];
     selectedId: string;
     onSelect: (layoutId: string) => void;
@@ -136,17 +134,8 @@ type WidgetAreaLayoutBarProps = Readonly<{
      */
     heading?: 'page' | 'section';
     testID: string;
-}>;
-
-export const WidgetAreaLayoutBar = React.memo(function WidgetAreaLayoutBar(props: WidgetAreaLayoutBarProps) {
-  // Keep provisional options out of the fit pass so the answered list decides its first paint.
-  if (props.inventoryStatus === 'loading') {
-    return <View testID={props.testID} style={styles.bar} />;
-  }
-  return <MeasuredWidgetAreaLayoutBar {...props} />;
-});
-
-function MeasuredWidgetAreaLayoutBar(props: WidgetAreaLayoutBarProps) {
+  }>,
+) {
   const { theme } = useUnistyles();
   const tabsTheme = usePluginUiTheme(theme);
   const { testID, labels } = props;
@@ -212,7 +201,7 @@ function MeasuredWidgetAreaLayoutBar(props: WidgetAreaLayoutBarProps) {
   if (fit.narrow || props.layouts.length < 2) {
     return (
       <>
-      <View testID={testID} style={[styles.bar, styles.narrow]} onLayout={fit.onBarLayout}>
+      <View testID={testID} style={styles.narrow} onLayout={fit.onBarLayout}>
         <LayoutCurrentNameMenu
           layouts={props.layouts}
           selected={selected}
@@ -295,7 +284,7 @@ function MeasuredWidgetAreaLayoutBar(props: WidgetAreaLayoutBarProps) {
     {readFailureNotice}
     </>
   );
-}
+});
 
 /**
  * Whether the tabs fit the bar, by measurement: while they show, the bar width they need is their
@@ -675,9 +664,9 @@ function WidgetAreaLayoutActionsMenu(
 }
 
 const styles = StyleSheet.create(() => ({
-  bar: { minWidth: 0, minHeight: 38 },
+  bar: { minWidth: 0 },
   unfit: { opacity: 0 },
-  narrow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  narrow: { flexDirection: 'row', alignItems: 'center', gap: 4, minWidth: 0 },
   trailing: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
   grow: { flex: 1 },
   current: {
