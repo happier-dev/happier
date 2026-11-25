@@ -119,6 +119,7 @@ const SecretKeyLoginFormBody = React.memo(function SecretKeyLoginFormBody(props:
                 homeCarrier: getActiveServerHomeCarrier() ?? undefined,
                 requireKeyChallengeV2: false,
             };
+            if (!target.endpointUrl) return { kind: 'home_required' };
             home = target.canonicalServerUrl;
             const persistenceTarget = { serverUrl: home, serverId: target.serverId ?? target.serverIdentityId };
             let allowed = false;

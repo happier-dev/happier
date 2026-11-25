@@ -48,6 +48,7 @@ describe('cold destination Home through boot and root redirect admission', () =>
         locks.restore();
         storage.restore();
         vi.unstubAllGlobals();
+        vi.unstubAllEnvs();
     });
 
     function navigate(pathname: string, params: Record<string, string>) {
@@ -127,10 +128,28 @@ describe('cold destination Home through boot and root redirect admission', () =>
         const { screen, protectedMount, finishSignIn } = await coldLoad(pathname, qualified ? home.id : undefined, { unrelated: 'discard-me' });
         try {
             const entry = await finishSignIn();
-            const destination = qualified ? `${pathname}?serverId=${encodeURIComponent(home.id)}` : pathname;
+            const destination = pathname.startsWith('/session/') ? `${pathname}?serverId=${encodeURIComponent(home.id)}` : pathname;
             expect(entry).not.toContain('discard-me');
             expect(protectedMount).not.toHaveBeenCalled();
             expect(navigation.replace).toHaveBeenCalledExactlyOnceWith(destination);
+        } finally { await screen.unmount(); }
+    });
+
+    it('keeps a bare cold destination while the device chooses its first Home', async () => {
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', '{}');
+        vi.stubEnv('EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS', '');
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_SERVER_URL', '');
+        vi.stubEnv('EXPO_PUBLIC_HAPPY_SERVER_URL', '');
+        vi.stubEnv('EXPO_PUBLIC_SERVER_URL', '');
+        profiles.resetServerProfilesRuntimeForTests({ preserveGenerations: true });
+        const { screen, protectedMount, finishSignIn } = await coldLoad('/session/session-a/sharing');
+        try {
+            expect(profiles.getActiveServerSnapshot().serverId).toBe('');
+            const entry = await finishSignIn({ switchHome: true });
+            const chosenId = profiles.getActiveServerSnapshot().serverId;
+            expect(entry).toContain('onboardingDestination');
+            expect(protectedMount).not.toHaveBeenCalled();
+            expect(navigation.replace).toHaveBeenCalledExactlyOnceWith(`/session/session-a/sharing?serverId=${encodeURIComponent(chosenId)}`);
         } finally { await screen.unmount(); }
     });
 
@@ -141,7 +160,7 @@ describe('cold destination Home through boot and root redirect admission', () =>
             const entry = await finishSignIn({ publishHomeIdentity: 'srv_resume_adopted' });
             expect(entry).toContain(home.id);
             expect(protectedMount).not.toHaveBeenCalled();
-            expect(navigation.replace).toHaveBeenCalledExactlyOnceWith('/session/session-a/sharing');
+            expect(navigation.replace).toHaveBeenCalledExactlyOnceWith('/session/session-a/sharing?serverId=srv_resume_adopted');
         } finally { await screen.unmount(); }
     });
 

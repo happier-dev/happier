@@ -117,6 +117,30 @@ describe('first-run custom Home address connection', () => {
         else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = originalScope;
     });
 
+    it('opens the existing Home address step if recovery-key sign-in has no Home', async () => {
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', '{}');
+        vi.stubEnv('EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS', '');
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_SERVER_URL', '');
+        vi.stubEnv('EXPO_PUBLIC_HAPPY_SERVER_URL', '');
+        vi.stubEnv('EXPO_PUBLIC_SERVER_URL', '');
+        vi.stubEnv('EXPO_PUBLIC_HAPPY_SERVER_CONTEXT', 'stack');
+        const { getActiveServerSnapshot, resetServerProfilesRuntimeForTests } = await import('@/sync/domains/server/serverProfiles');
+        resetServerProfilesRuntimeForTests();
+        expect(getActiveServerSnapshot().serverUrl).toBe('');
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
+        const { AuthProvider } = await import('@/auth/context/AuthContext');
+        const screen = await renderScreen(<AuthProvider initialCredentials={null}><OnboardingWizardSurface
+            layout="portrait" initialStepId="auth_restore" authEntryOptions={authEntryOptions} /></AuthProvider>);
+        try {
+            await screen.pressByTestIdAsync('restore-open-manual');
+            expect(screen.findByTestId('already-use-happier.home-address')).not.toBeNull();
+            expect(screen.findByTestId('restore-manual-secret-input')).toBeNull();
+        } finally {
+            await screen.unmount();
+            vi.unstubAllEnvs();
+        }
+    });
+
     it('keeps an unreachable typed address and does not adopt or focus it', async () => {
         const { listServerProfiles, getActiveServerSnapshot } = await import('@/sync/domains/server/serverProfiles');
         const beforeProfiles = listServerProfiles();

@@ -1066,8 +1066,12 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     const handleOpenSecretKeyLogin = React.useCallback(() => {
         setAccountDirectoryHomeRecovery(null);
         setAccountDirectoryKeyRequest(null);
+        if (!activeServerSnapshot.serverUrl && canConnectHomeByAddress(setupPolicy)) {
+            handleOpenConnectHome();
+            return;
+        }
         dispatch({ type: 'wizard/goToStep', stepId: 'auth_secret_key' });
-    }, []);
+    }, [activeServerSnapshot.serverUrl, handleOpenConnectHome, setupPolicy]);
 
     const handleOpenAccountDirectoryKeyLogin = React.useCallback((request: WelcomeAuthenticationMethod) => {
         setAccountDirectoryHomeRecovery(null);

@@ -21,6 +21,7 @@ import { HappyError } from '@/utils/errors/errors';
 export type SecretKeyEntrySubmitResult =
     | Readonly<{ kind: 'completed' }>
     | Readonly<{ kind: 'invalid_key' }>
+    | Readonly<{ kind: 'home_required' }>
     | Readonly<{ kind: 'failed'; error?: unknown; home?: string }>
     | Readonly<{ kind: 'cancelled' }>;
 
@@ -130,6 +131,8 @@ export const SecretKeyEntryForm = React.memo(function SecretKeyEntryForm(props: 
             if (result.kind === 'cancelled') return;
             if (result.kind === 'invalid_key') {
                 setError(t('connect.invalidSecretKey'));
+            } else if (result.kind === 'home_required') {
+                setError(t('connect.addPhoneChooseHomeTitle'));
             } else if (result.error instanceof HappyError && result.error.kind === 'auth') {
                 setError(authenticationErrorMessage(result.error, result.home));
             } else {

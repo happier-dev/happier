@@ -31,6 +31,19 @@ describe('teamAcceptedSignInNames', () => {
 });
 
 describe('presentTeamSignInRequired', () => {
+  it('opens Team sign-in when the origin is refused and carries no return', () => {
+    const navigate = vi.fn();
+    presentTeamSignInRequired({
+      code: 'session_access_authentication_required',
+      teamId: 'team-1',
+      serverId: 'profile-acme',
+      accepted: [],
+      origin: { pathname: '//elsewhere.example.test/session/s-1', search: '' },
+      navigate,
+    }).action.onPress();
+    expect(navigate).toHaveBeenCalledExactlyOnceWith('/teams/team-1/sign-in?serverId=profile-acme');
+  });
+
   it('leads to the Team sign-in and carries the page it was opened from, without its unrelated query', () => {
     const navigate = vi.fn();
     // The web window's address when Sign in is pressed: the Session page with its pane, plus a parameter it does not need.

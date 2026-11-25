@@ -1,4 +1,6 @@
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
+import { readCurrentRouteAddress } from '@/components/appShell/workspace/currentRouteLocation';
+import { matchWorkspaceDestinationRoute } from '@/components/appShell/workspace/workspaceRoutes';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
@@ -40,6 +42,13 @@ export function SessionSharingCompatibilityRoute() {
 
     React.useEffect(() => {
         if (!target) return;
+        // Expo can briefly render its stale Share scene as the browser leaves
+        // the workspace. Only the live link may request this redirect.
+        const address = readCurrentRouteAddress();
+        if (address) {
+            const route = matchWorkspaceDestinationRoute(address.pathname);
+            if (route?.routeKey !== 'session/[id]/sharing' || normalizeSessionId(route.params.id) !== target.sessionId) return;
+        }
         openCollaboration();
     }, [openCollaboration, target]);
 

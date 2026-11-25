@@ -56,7 +56,7 @@ function admitProtectedPath(value: unknown): string | null {
 
 function readProtectedDestination(value: string): Readonly<{
     path: string;
-    homeId: string;
+    homeId: string | null;
     explicitHome: boolean;
     accountId: string | null;
 }> | null {
@@ -65,7 +65,9 @@ function readProtectedDestination(value: string): Readonly<{
         if (!Array.isArray(parsed) || parsed.length !== 4) return null;
         const [rawPath, homeId, explicitHome, accountId]: unknown[] = parsed;
         const path = admitProtectedPath(rawPath);
-        if (!path || typeof homeId !== 'string' || !homeId || typeof explicitHome !== 'boolean') return null;
+        if (!path || typeof explicitHome !== 'boolean') return null;
+        if (homeId !== null && (typeof homeId !== 'string' || !homeId)) return null;
+        if (explicitHome && homeId === null) return null;
         if (accountId !== null && (typeof accountId !== 'string' || !accountId)) return null;
         return { path, homeId, explicitHome, accountId };
     } catch {
@@ -153,13 +155,15 @@ export function RootLayoutRedirectGate({ children }: { children: React.ReactNode
     const finishSignIn = isAuthenticated && Boolean(pending) && !suppliedHomeNavigation?.draftHref;
     React.useLayoutEffect(() => {
         if (!finishSignIn) return;
-        if (!destination || !areServerProfileIdentifiersEquivalent(destination.homeId, activeServerSnapshot.serverId)
+        const activeHomeId = activeServerSnapshot.serverId;
+        if (!destination || !activeHomeId
+            || (destination.homeId !== null && !areServerProfileIdentifiersEquivalent(destination.homeId, activeHomeId))
             || !matchesSignedInAccount(destination.accountId, auth.credentials?.token)) {
             router.replace('/');
             return;
         }
-        const path = destination.explicitHome
-            ? withInternalRouteQueryParams(destination.path, { serverId: destination.homeId })
+        const path = destination.explicitHome || destination.path.startsWith('/session/')
+            ? withInternalRouteQueryParams(destination.path, { serverId: activeHomeId })
             : destination.path;
         const continuation = tryAdmitInternalRouteHref(path);
         if (continuation) resolvePostAuthLanding({ replace: router.replace, continuation });
@@ -178,11 +182,11 @@ export function RootLayoutRedirectGate({ children }: { children: React.ReactNode
             : homeIdInPath ? null : routeHomeId;
         const accountId = segments.includes('[accountId]') ? null : firstRouteParam(globalSearchParams.accountId) || null;
         const path = admitProtectedPath(pathname);
-        const homeId = queryHomeId ?? (homeIdInPath ? routeHomeId : null) ?? activeServerSnapshot.serverId;
+        const homeId = queryHomeId ?? (homeIdInPath ? routeHomeId : null) ?? (activeServerSnapshot.serverId || null);
         const entry = resolveWebServerEntrySignInRoute();
-        // Keep the request in the onboarding route for this attempt. The
-        // auth operation or the destination's own access policy still owns access.
-        const href = path && homeId
+        // A bare link on a fresh device awaits the Home chosen in this attempt.
+        // The auth operation and the destination's own access policy still own access.
+        const href = path
             ? withInternalRouteQueryParams(entry, { [PROTECTED_DESTINATION_PARAM]: JSON.stringify([path, homeId, Boolean(queryHomeId), accountId]) })
             : entry;
         return queryHomeId

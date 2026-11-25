@@ -1004,6 +1004,7 @@ describe('SessionCollaborationSurface', () => {
 
             const target = { serverId: home.id, sessionId: 'same-id' };
             const shareHref = `/session/same-id/sharing?serverId=${home.id}`;
+            let visiblePath: string | null = null;
             const mountPeople = () => renderScreen(<AppPaneProvider><SessionCollaborationSurface target={target} /></AppPaneProvider>);
             const followShareLink = async (href: string) => {
                 const url = new URL(href, 'https://app.test');
@@ -1025,7 +1026,7 @@ describe('SessionCollaborationSurface', () => {
                 return screen;
             };
             vi.stubGlobal('window', { location: {
-                get pathname() { return route.pathname; },
+                get pathname() { return visiblePath ?? route.pathname; },
                 get search() {
                     const query = new URLSearchParams({ serverId: home.id, right: 'collaboration' });
                     const focus = route.readParams().collaborationFocus;
@@ -1044,6 +1045,20 @@ describe('SessionCollaborationSurface', () => {
             await before.pressByTestIdAsync(signIn);
             const signInUrl = new URL(String(route.push.mock.lastCall?.[0]), 'https://app.test');
             expect(signInUrl.pathname).toBe('/teams/team-willow/sign-in');
+            if (entry === 'deep link') {
+                // The browser has moved to Team sign-in while Expo can still mount
+                // its stale Share scene during the workspace handoff.
+                visiblePath = signInUrl.pathname;
+                route.params = { id: 'same-id', serverId: home.id };
+                route.replace.mockClear();
+                const staleShareScene = await renderScreen(<SessionSharingCompatibilityRoute />);
+                try {
+                    expect(route.replace).not.toHaveBeenCalled();
+                } finally {
+                    await staleShareScene.unmount();
+                    visiblePath = null;
+                }
+            }
             await before.unmount();
 
             // The Home now accepts this credential. Follow the same successful destination the sign-in page uses.

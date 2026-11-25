@@ -18,7 +18,7 @@ export const SecretKeyLoginEmbedded = React.memo(function SecretKeyLoginEmbedded
             <SecretKeyLoginForm
                 embedded
                 // The auth commit wakes the root gate that owns this attempt's destination.
-                onAuthenticated={rootAuthReturn ? leaveArrivalToRootGate : undefined}
+                onSuccess={rootAuthReturn ? leaveArrivalToRootGate : undefined}
                 secondaryAction={props.onLostKey
                     ? { label: t('connect.lostYourKey'), onPress: props.onLostKey, testID: 'restore-open-lost-access' }
                     : undefined}

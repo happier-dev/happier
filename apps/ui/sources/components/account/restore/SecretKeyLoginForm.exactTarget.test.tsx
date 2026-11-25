@@ -7,7 +7,7 @@ import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHel
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
-import { adoptHomeProfile, getActiveServerId, setActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { adoptHomeProfile, getActiveServerId, getActiveServerSnapshot, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { AuthProvider, getCurrentAuth } from '@/auth/context/AuthContext';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
@@ -260,4 +260,18 @@ it.each([
     await vi.waitFor(() => expect(getCurrentAuth()?.credentials?.token).toBe(fixture.token));
     if (wizard) expect(router.dismissTo).not.toHaveBeenCalled();
     else expect(router.dismissTo).toHaveBeenCalledWith('/settings/account');
+});
+
+it('says a Home is needed before the recovery key can be used on a fresh device', async () => {
+    vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', '{}');
+    vi.stubEnv('EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS', '');
+    vi.stubEnv('EXPO_PUBLIC_HAPPIER_SERVER_URL', '');
+    vi.stubEnv('EXPO_PUBLIC_HAPPY_SERVER_URL', '');
+    vi.stubEnv('EXPO_PUBLIC_SERVER_URL', '');
+    expect(getActiveServerSnapshot().serverUrl).toBe('');
+    screen = await renderScreen(<AuthProvider initialCredentials={null}><SecretKeyLoginForm /></AuthProvider>);
+    await act(async () => { screen!.changeTextByTestId('restore-manual-secret-input', 'A'.repeat(43)); });
+    await screen.pressByTestIdAsync('restore-manual-submit');
+    expect(screen.findByTestId('restore-manual-secret-error')?.props.children).toBe(t('connect.addPhoneChooseHomeTitle'));
+    expect(boundary.request.mock.calls.filter(([, path]) => path.startsWith('/v1/auth'))).toHaveLength(0);
 });
