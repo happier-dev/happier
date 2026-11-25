@@ -80,7 +80,7 @@ import { createSessionActiveModelSelection } from '@happier-dev/protocol/provide
 import { resolveRolesSnapshotV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import { accountSettingsParse, encodePlainArtifactStoredContent, FeaturesResponseSchema } from '@happier-dev/protocol';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '@happier-dev/protocol/account/settings/sessionAgentSpawnPolicyV1';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 
@@ -266,6 +266,8 @@ describe('workflow Session step executor', () => {
     const { ExternalActionExecutionAuthorizationV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
     const { retainVerifiedExternalActionRequester } = await import('@/daemon/agentIsolation/agentIsolationLaunchPolicy');
     const { requesterActionContext } = await import('@/daemon/sessionEncryption/requesterAccountActionContext');
+    const { createInvocationSavedSecretOperationContextV1 } = await import('@/settings/secrets/savedSecretOperationContext');
+    const { createEmptyActionAutomationPort } = await import('@/testkit/actionTransportDeps');
     const { invokeAdmittedReviewedChild } = await import('@/daemon/externalActions/managedReviewedChild');
     const { createWorkflowRunStorageTestkit } = await import('./workflowRunStorage.testkit');
     const { prepareWorkflowAcceptedWorkspaceTarget } = await import('./resolveWorkflowWorkspace');
@@ -276,6 +278,11 @@ describe('workflow Session step executor', () => {
     // The person has waived Ask for Project Open; its exact reviewed child plan still scopes execution.
     installWorkflowRoleAccount(credentials, accountSettingsParse({ actionsSettingsV1: { v: 1,
       approvalWaivedSurfaces: { 'projects.open': ['agent'] } } }));
+    const settingsSnapshot = getActiveAccountSettingsSnapshot();
+    if (!settingsSnapshot) throw new Error('Expected requester Account Settings');
+    const savedSecretOperationContext = createInvocationSavedSecretOperationContextV1({
+      credentials, snapshot: settingsSnapshot, serverHttpBaseUrl: resolveServerHttpBaseUrl(), isCurrent: async () => true,
+    });
     const opens: ReturnType<typeof OpenProjectInputV1Schema.parse>[] = [];
     const ordinaryRpc = readiness.callMachineRpc.getMockImplementation()!;
     readiness.callMachineRpc.mockImplementation(async request => {
@@ -309,8 +316,8 @@ describe('workflow Session step executor', () => {
       projectAccountRowCipher: createProjectAccountRowCipherV1({ mode: 'plain', material: null,
         randomBytes: () => { throw new Error('Plain account needs no encryption randomness'); } }),
       isCurrent: async () => true, readArtifact: async () => null,
-      // The requester custody is opened at the verified ingress boundary; the issuer only reads its presence.
-      [requesterActionContext]: {} as RequesterAccountActionContext,
+      // Verified ingress distinguishes installed requester custody from transport-only custody.
+      [requesterActionContext]: { savedSecretOperationContext } as RequesterAccountActionContext,
     };
     const authorization = retainVerifiedExternalActionRequester({ isCurrent: async () => true,
       authorization: { ...ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-controller-continuation', binding: {
@@ -335,7 +342,8 @@ describe('workflow Session step executor', () => {
       prepareWorkspace: input => prepareWorkflowAcceptedWorkspaceTarget({ ...input, inspectLocation: async () => null }),
       resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
     });
-    const executor = createActionExecutor({ workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: owner }) });
+    const executor = createActionExecutor({ actionAutomations: createEmptyActionAutomationPort('account-1'),
+      workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: owner }) });
     const execute = (value: unknown, issued: ActionExecutorContext) => executor.execute('workflow.run.start', value, issued);
     // A serialized field and signed continuation alone do not manufacture the host issuer's private proof.
     const forged = await execute(child, context);
