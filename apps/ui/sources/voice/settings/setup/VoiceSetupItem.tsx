@@ -290,8 +290,6 @@ const VoiceSetupTryReadout = React.memo(function VoiceSetupTryReadout(props: Rea
     }, [messages, pending, props.voice.elapsedStartedAt, transcriptEntries]);
     const phrase = t('voiceMoments.setupTryPhrase');
     const heard = React.useMemo(() => resolveVoiceSetupHeardPhrase(phrase, turn.said), [phrase, turn.said]);
-    const replyVisibleWhileThinking = Boolean(turn.reply) && props.voice.surfaceState === 'thinking'
-        && !props.voice.muted && props.voice.statusCell !== 'working' && props.voice.statusCell !== 'needs_you';
     return (
         <VoiceSetupTryPhrase
             testID="voice-setup.try"
@@ -299,7 +297,7 @@ const VoiceSetupTryReadout = React.memo(function VoiceSetupTryReadout(props: Rea
             microphone={{
                 // The capture owner's track name ("MacBook Pro Microphone") while it runs, else the mic state.
                 label: props.voice.inputDeviceLabel ?? props.voice.micStateLabel,
-                state: replyVisibleWhileThinking ? t('voiceAssistant.connected') : props.voice.statusWord,
+                state: props.voice.statusWord,
                 trailing: <VoiceTransport voice={props.voice} size="island" />,
             }}
             reply={turn.reply}

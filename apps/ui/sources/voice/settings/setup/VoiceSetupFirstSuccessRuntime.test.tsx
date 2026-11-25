@@ -308,8 +308,7 @@ it.each([
         expect(screen.findByType(VoiceSetupPanel).props.model.facts.firstTurnComplete).toBe(true);
         if (liveTry) {
             expect(screen.getTextContent()).toContain('Hi');
-            expect(screen.getTextContent()).toContain('Connected');
-            expect(screen.getTextContent()).not.toContain('Thinking…');
+            expect(screen.getTextContent()).toContain('Thinking…');
         }
         const completed = events();
         expect(completed).toEqual([{ kind: 'gather', id: `${attemptId}:first-success` }, { kind: 'gather', id: `${attemptId}:first-success` }]);
