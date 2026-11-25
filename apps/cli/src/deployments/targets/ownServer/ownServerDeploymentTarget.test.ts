@@ -591,7 +591,8 @@ describe('own-server target at the Action host boundary', () => {
                     name: runningServiceBinding.name, grantRef: runningServiceBinding.grantRef } } }));
         const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
         const credentials = { token, encryption: null };
-        const serverHttpBaseUrl = 'https://deployment-health.test';
+        // Each Home owns its automation index. Do not share a cached refusal between fixtures.
+        const serverHttpBaseUrl = `https://${randomUUID()}.deployment-health.test`;
         // Retain coverage of builder refusal in the definition-writing legacy flow.
         environment.environment.protection = scenario === 'promote_build_refused' ? 'nonProduction' : 'production';
         environment.environment.controllerMachineId = scenario === 'retained_health_remote' ? 'other-controller' : 'machine-a';
