@@ -36,7 +36,6 @@ function lifetimeHarness() {
 function harness(rpc: Parameters<typeof createUsageSourceActionPort>[0]['rpc'], options: Readonly<{
     approve?: boolean;
     agentDisabled?: boolean;
-    dismiss?: Parameters<typeof createUsageSourceActionPort>[0]['dismiss'];
 }> = {}) {
     const scope = lifetimeHarness();
     const settings = ActionsSettingsV1Schema.parse({ v: 1,
@@ -55,7 +54,7 @@ function harness(rpc: Parameters<typeof createUsageSourceActionPort>[0]['rpc'], 
             assertCurrent: context => {
                 context.signal?.throwIfAborted();
                 if (!scope.lifetime.isCurrent()) throw new Error('retired');
-            }, rpc, ...(options.dismiss ? { dismiss: options.dismiss } : {}),
+            }, rpc,
         }),
         isActionEnabled: (id, context) => isActionEnabledByActionsSettings(id, settings, context),
         readActionsSettings: () => settings,
@@ -418,18 +417,11 @@ describe('Usage Sources consent controller', () => {
         expect(controller.getSnapshot().sources).toEqual([]);
     });
 
-    it('records Not now only after the client-local Action acknowledges it, without changing consent', async () => {
-        let available = false;
-        const { controller } = harness(async () => ({ sources: [source] }), {
-            dismiss: async () => ({ status: available ? 'dismissed' : 'unavailable' }),
-        });
+    it('reports unavailable dismissal when the executor has no mounted delivery', async () => {
+        const { controller } = harness(async () => ({ sources: [source] }));
         await controller.discover();
-        await controller.notNow('source');
+        expect(await controller.notNow('source')).toMatchObject({ ok: true, result: { status: 'unavailable' } });
         expect(controller.getSnapshot()).toMatchObject({ sources: [source], dismissedSourceIds: [], error: { errorCode: 'usage_source_dismiss_unavailable' } });
-        available = true;
-        await controller.notNow('source');
-        await controller.refresh();
-        expect(controller.getSnapshot()).toMatchObject({ sources: [source], dismissedSourceIds: ['source'], error: null });
         controller.dispose();
     });
 

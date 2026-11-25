@@ -16,12 +16,20 @@ import { CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD, ConnectedServicePoolSelect
 import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 
 const harness = createHomeGovernanceHarness();
+const mountedSourceAction = vi.hoisted(() => ({
+    execute: null as import('@/sync/ops/actions/frontDoorRuntimeActionExecutor').FrontDoorActionExecute | null,
+}));
 installHomeGovernanceBoundaries(harness);
 installDisconnectedServerSocketBoundary();
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
     const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
     const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
-    return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
+    const create = createFrontDoorActionExecuteForVitest(original);
+    return { ...original, createFrontDoorActionExecute: ((executor, options) => {
+        const execute = create(executor, options);
+        if (!executor && options?.usageSourceDismiss) mountedSourceAction.execute = execute;
+        return execute;
+    }) satisfies typeof original.createFrontDoorActionExecute };
 });
 
 const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
@@ -48,7 +56,8 @@ const { applyConnectedAccountCatalogSnapshot } = await import('@/sync/store/sett
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { restoreConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
-const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+const { getActiveServerAccountScope, captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+const { UsageSourcesMachines } = await import('./widgets/UsageSourcesWidget');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { normalizeUsageQuery, getUsageQueryKey } = await import('@happier-dev/protocol/inputs/usageQuery');
 const [{ ApprovalRequestV2Schema}, { AccountProfileSchema}] = await Promise.all([import('@happier-dev/protocol/approvals/approvalRequestV1'), import('@happier-dev/protocol/account/profile')]);
@@ -335,6 +344,67 @@ describe('Usage settings UI Action admission', () => {
         expect(revision).toBe(2);
         await waitForHomeGovernance(() => expect(settled).toHaveBeenCalledTimes(1));
         await screen.unmount();
+    });
+
+    it('hides the card when the mounted discovery dismissal Action acknowledges it, including after remount', async () => {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        expect(lifetime?.scope.serverId).toBe(serverId);
+        const machineId = 'discovery-machine';
+        const sourceId = 'discovery-claude';
+        const input = { serverId, machineId, sourceId };
+        const source = {
+            ...input, agent: { pluginId: 'happier.agent.claude', localId: 'claude' },
+            root: { kind: 'default', path: '/fixture' }, consent: 'disabled', status: 'found',
+            coverage: 'unknown', pendingCount: 0, asOfMs: null,
+        } as const;
+        const context = { surface: 'ui', authority: 'present_user', serverId, expectedAccountId: lifetime!.scope.accountId } as const;
+        // Supply only the discovery/status RPC transport. The mounted UI and its typed executor stay real.
+        const rpc = vi.spyOn(machineRpc, 'machineRpcWithServerScope').mockImplementation(async <R, A>(params: ServerScopedMachineRpcParams<A>) => {
+            expect(params.method === 'usage.sources.discover' || params.method === 'usage.sources.get').toBe(true);
+            return { sources: [source] } as R;
+        });
+        const render = () => renderScreen(<UsageSourcesMachines lifetime={lifetime!} serverId={serverId}
+            machines={[{ id: machineId, name: 'Fixture machine', online: true }]} testID="sources"
+            input={{ agents: [], machines: [], sources: [] }} />);
+        const card = `sources.machine.${machineId}.source.${sourceId}`;
+        const refused = { ok: true, result: { status: 'unavailable' } };
+        let retired: typeof mountedSourceAction.execute = null;
+        try {
+            for (const entry of ['action', 'remounted_action', 'menu'] as const) {
+                const screen = await render();
+                await waitForHomeGovernance(() => expect(screen.findByTestId(`${card}.add`)).toBeTruthy());
+                const controller = screen.tree.root.findAll(node => node.props.source?.sourceId === sourceId
+                    && typeof node.props.controller?.getSnapshot === 'function')[0]?.props.controller as
+                    import('./widgets/usageSourcesController').UsageSourcesController;
+                expect(controller.getSnapshot().dismissedSourceIds).toEqual([]);
+                const execute = mountedSourceAction.execute;
+                if (!execute) throw new Error('The real mounted Action executor was not captured');
+                if (retired && entry === 'remounted_action') {
+                    expect(await retired('usage.sources.dismiss', input, context)).toMatchObject(refused);
+                    expect(controller.getSnapshot().dismissedSourceIds).toEqual([]);
+                }
+                if (entry === 'menu') {
+                    expect(screen.findByTestId(`${card}.notNow`)).toBeFalsy();
+                    await screen.pressByTestIdAsync(`${card}.options`);
+                    await screen.pressByTestIdAsync(`${card}.notNow`);
+                    await waitForHomeGovernance(() => expect(screen.findByTestId(`${card}.add`)).toBeFalsy());
+                } else await act(async () => {
+                    expect(await execute('usage.sources.dismiss', input, context))
+                        .toMatchObject({ ok: true, result: { status: 'dismissed' } });
+                });
+                expect({
+                    cardVisible: Boolean(screen.findByTestId(`${card}.add`)),
+                    dismissedSourceIds: controller.getSnapshot().dismissedSourceIds,
+                }).toEqual({ cardVisible: false, dismissedSourceIds: [sourceId] });
+                expect(await execute('usage.sources.get', input, context)).toMatchObject({ ok: true, result: { sources: [source] } });
+                await screen.unmount();
+                expect(await execute('usage.sources.dismiss', input, context)).toMatchObject(refused);
+                retired = execute;
+            }
+        } finally {
+            rpc.mockRestore();
+            mountedSourceAction.execute = null;
+        }
     });
 
     it('retains mounted local delivery beneath canonical admission and refuses it after Account retirement', async () => {

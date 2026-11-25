@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { createUsageSourcesController, resolveUsageSourceDismiss, type UsageSourcesController, type UsageSourcesSnapshot } from './usageSourcesController';
+import { createUsageSourcesController, type UsageSourcesController, type UsageSourcesSnapshot } from './usageSourcesController';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 
 export type UsageSourcesHookOptions = Omit<Parameters<typeof createUsageSourcesController>[0], 'lifetime'> & Readonly<{
@@ -28,13 +28,10 @@ export function useUsageSourcesController(options: UsageSourcesHookOptions): Rea
 }> {
     const { machineId, lifetime } = options;
     const controllerRef = useRef<UsageSourcesController | null>(null);
-    const executorOptions = useMemo(() => ({ usageSourceDismiss: async (
-        input: Parameters<typeof resolveUsageSourceDismiss>[0],
-        context: Readonly<{ signal?: AbortSignal }>,
-    ) => {
-        context.signal?.throwIfAborted();
-        return resolveUsageSourceDismiss(input, { machineId, lifetime, snapshot: controllerRef.current?.getSnapshot() });
-    } }), [machineId, lifetime]);
+    const executorOptions = useMemo(() => ({
+        usageSourceDismiss: async (...args: Parameters<UsageSourcesController['deliverDismiss']>) =>
+            controllerRef.current?.deliverDismiss(...args) ?? { status: 'unavailable' as const },
+    }), [machineId, lifetime]);
     const mountedExecution = useMountedActionExecution(lifetime?.scope, { executorOptions });
     const executor = options.executor ?? mountedExecution;
     const execute = executor.execute;

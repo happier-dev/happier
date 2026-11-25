@@ -1,7 +1,7 @@
 import { ActionApprovalRequestCreatedResultSchema, type ActionApprovalRequestCreatedResult,
     type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseUsageSourceActionResult, USAGE_SOURCE_ACTION_INPUT_SCHEMAS, USAGE_SOURCE_CONSENT_DISCLOSURE,
-    type UsageSourceActionId, type UsageSourceActionInputById, type UsageSourceDateRangeV1,
+    type UsageSourceActionId, type UsageSourceActionInputById, type UsageSourceActionOutputById, type UsageSourceDateRangeV1,
     type UsageSourceV1 } from '@happier-dev/protocol/usage/usageSources';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { canRetainUsageReadFailure } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
@@ -32,6 +32,8 @@ export type UsageSourcesController = Readonly<{
     refresh(sourceId?: string): Promise<ActionExecuteResult>;
     setConsent(sourceId: string, enabled: boolean): Promise<ActionExecuteResult>;
     notNow(sourceId: string): Promise<ActionExecuteResult>;
+    deliverDismiss(input: UsageSourceActionInputById['usage.sources.dismiss'], context: Pick<ActionExecutorContext, 'signal'>):
+        Promise<UsageSourceActionOutputById['usage.sources.dismiss']>;
     setRoot(sourceId: string, root: string | null, callerContext?: ActionExecutorContext): Promise<ActionExecuteResult>;
     stop(sourceId: string): Promise<ActionExecuteResult>;
     deleteHistory(sourceId: string, dateRange?: UsageSourceDateRangeV1): Promise<ActionExecuteResult>;
@@ -40,18 +42,6 @@ export type UsageSourcesController = Readonly<{
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 const isRead = (id: UsageSourceActionId) => id === 'usage.sources.discover' || id === 'usage.sources.get';
-
-/** One admission for the mounted client-local Not now intent, including mounted delivery. */
-export function resolveUsageSourceDismiss(input: UsageSourceActionInputById['usage.sources.dismiss'], options: Readonly<{
-    machineId: string;
-    lifetime: ServerAccountScopeLifetime | null;
-    snapshot: UsageSourcesSnapshot | undefined;
-}>): Readonly<{ status: 'dismissed' | 'unavailable' }> {
-    return { status: options.lifetime?.isCurrent() && options.snapshot && !options.snapshot.retired
-        && input.serverId === options.lifetime.scope.serverId && input.machineId === options.machineId
-        && options.snapshot.sources.some(source => source.sourceId === input.sourceId && source.consent === 'disabled')
-        ? 'dismissed' : 'unavailable' };
-}
 
 /**
  * The last sources each Machine answered, per Account scope (stale-while-revalidate, R139): a revisit opens on
@@ -105,14 +95,19 @@ export function createUsageSourcesController(options: Readonly<{
         if (!options.lifetime.isCurrent()) dispose();
         return !snapshot.retired;
     };
-    const execute = createFrontDoorActionExecute(options.executor, {
-        // Not now is an admitted client-local fact, scoped to this mounted card lifetime.
-        usageSourceDismiss: async (input, context) => {
-            context.signal?.throwIfAborted();
-            current();
-            return resolveUsageSourceDismiss(input, { machineId: options.machineId, lifetime: options.lifetime, snapshot });
-        },
-    });
+    // Both the button and the mounted Action acknowledge this local effect through the same delivery.
+    const deliverDismiss: UsageSourcesController['deliverDismiss'] = async (input, context) => {
+        context.signal?.throwIfAborted();
+        if (!current() || input.serverId !== target.serverId || input.machineId !== target.machineId
+            || !snapshot.sources.some(source => source.sourceId === input.sourceId && source.consent === 'disabled' && source.status === 'found')) {
+            return { status: 'unavailable' };
+        }
+        if (!snapshot.dismissedSourceIds.includes(input.sourceId)) {
+            publish({ ...snapshot, dismissedSourceIds: [...snapshot.dismissedSourceIds, input.sourceId] });
+        }
+        return { status: 'dismissed' };
+    };
+    const execute = createFrontDoorActionExecute(options.executor, { usageSourceDismiss: deliverDismiss });
     const reconcile = (sources: readonly UsageSourceV1[]) => {
         const next = sources.map(source => {
             const previous = snapshot.sources.find(row => row.sourceId === source.sourceId);
@@ -207,10 +202,6 @@ export function createUsageSourcesController(options: Readonly<{
                 const range = 'dateRange' in input ? input.dateRange : undefined;
                 publish({ ...snapshot, historyDeletion: { sourceId, deletedEventCount: data.deletedEventCount,
                     ...(range === undefined ? {} : { dateRange: range }) } });
-            } else if ('status' in data && data.status === 'dismissed' && sourceId !== undefined) {
-                if (!snapshot.dismissedSourceIds.includes(sourceId)) {
-                    publish({ ...snapshot, dismissedSourceIds: [...snapshot.dismissedSourceIds, sourceId] });
-                }
             } else if ('status' in data && data.status === 'unavailable') {
                 publish({ ...snapshot, error: failure('usage_source_dismiss_unavailable') });
             }
@@ -257,6 +248,7 @@ export function createUsageSourcesController(options: Readonly<{
         },
         setConsent: (sourceId, enabled) => run('usage.sources.consent.set', { ...target, sourceId, enabled }),
         notNow: sourceId => run('usage.sources.dismiss', { ...target, sourceId }),
+        deliverDismiss,
         setRoot: (sourceId, root, callerContext) => run('usage.sources.root.set', { ...target, sourceId, root }, callerContext),
         stop: sourceId => run('usage.sources.stop', { ...target, sourceId }),
         deleteHistory: (sourceId, dateRange) => run('usage.sources.history.delete', { ...target, sourceId,

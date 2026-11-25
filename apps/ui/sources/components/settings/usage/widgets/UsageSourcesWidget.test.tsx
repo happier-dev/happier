@@ -157,7 +157,6 @@ function machineBoundary(initial: UsageSourceV1 = found, initialDiscovery?: read
         }
         return { sources: byMachine?.get(request.input.machineId) ?? discovery ?? [current] };
       },
-      dismiss: async () => ({ status: 'dismissed' }),
     }),
     readActionsSettings: () => settings,
   } as Partial<ActionExecutorDeps> as ActionExecutorDeps);
@@ -568,19 +567,6 @@ describe('Usage Sources body', () => {
     expect([at('~/.claude'), at('/tmp/codex-earlier'), at('~/.codex')]).toEqual(
       [at('~/.claude'), at('/tmp/codex-earlier'), at('~/.codex')].sort((a, b) => a - b));
     expect(at('~/.claude')).toBeGreaterThan(-1);
-  });
-  it('hides a found card on Not now without consenting or deleting anything', async () => {
-    const boundary = machineBoundary();
-    const screen = await mount(boundary.executor);
-    const card = 'sources.machine.mac.source.claude-default';
-    await vi.waitFor(() =>
-      expect(screen.findByTestId(`${card}.add`)).toBeTruthy(),
-    );
-    // Not now is a quiet option in the row's menu; only Add is drawn on the row.
-    expect(screen.findByTestId(`${card}.notNow`)).toBeFalsy();
-    await chooseOption(screen, card, 'notNow');
-    await vi.waitFor(() => expect(screen.findByTestId(card)).toBeFalsy());
-    expect(boundary.calls).toEqual(['usage.sources.discover']);
   });
 
   it('gives a source that cannot be read exactly one status, without an offer to resume it', async () => {
