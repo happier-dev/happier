@@ -20354,6 +20354,11 @@ settingsSession: {
    settingsPlugins: {
   publish: pluginPublishTranslations['pl'],
       updateReview: pluginUpdateReviewTranslations.pl,
+      databaseWorkbench: {
+        title: "Warsztat baz danych",
+        activityRefreshInterval: "Interwał odświeżania aktywności (ms)",
+        activityRefreshIntervalDescription: "Ustaw 0, aby odświeżać ręcznie. Aktywność odświeża się automatycznie tylko w otwartym widoku.",
+      },
       ...pluginWebhookAdministrationTranslations['pl'],
       ...pluginAccountDataEraseTranslations.pl,
       ...pluginAccountReleaseSelectionTranslations.pl,

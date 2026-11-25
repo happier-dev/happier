@@ -12,13 +12,15 @@ import {
   type PageHeaderMetaFact,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
+import { usePluginSurfaceActivity } from '@happier-dev/plugin-ui/hostApi';
 import {
+  useDatabaseActivity,
   useDatabaseInsights,
   useStatementsLastLook,
   useWorkbenchInstance,
   useWorkbenchLocation,
 } from '../../hooks.js';
-import { ActivityView } from './ActivityView.js';
+import { ACTIVITY_READ, ActivityView } from './ActivityView.js';
 import { formatMoment } from './format.js';
 import { InsightsSetup } from './InsightsSetup.js';
 import { NativeFindings } from './NativeFindings.js';
@@ -130,6 +132,8 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
   const sources = useInsightSources(descriptor);
   const tab = selectedTab === 'sources' && sources.length === 0 ? 'statements' : selectedTab;
   const statements = useInsightsStatements(props.targetKey);
+  const presented = usePluginSurfaceActivity().active;
+  const activity = useDatabaseActivity(props.targetKey, ACTIVITY_READ, tab === 'activity' && presented);
   const openConsole = React.useCallback(
     async (sql: string) => {
       await instance.console(props.targetKey).setText(sql);
@@ -140,7 +144,7 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
   const facts: PageHeaderMetaFact[] = [
     { key: 'database', text: descriptor.label },
     ...(tab === 'statements' ? statementsFacts(translate, statements) : []),
-    ...(tab === 'activity'
+    ...(tab === 'activity' && activity.supported && activity.autoRefreshEnabled && !activity.error
       ? [
           {
             key: 'live',
@@ -158,14 +162,18 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
         title={translate('plugins.database.insights.title', 'Insights')}
         meta={facts}
         actions={
-          tab === 'activity' || tab === 'sources' || tab === 'findings' ? null : (
+          tab === 'sources' || tab === 'findings' || (tab === 'activity' && !activity.supported) ? null : (
             <IconButton
               accessibilityLabel={translate(
                 'plugins.database.refresh',
                 'Refresh',
               )}
               icon={<Icon name="refresh" />}
-              onPress={tab === 'statements' ? statements.stats.refresh : () => instance.refresh(props.targetKey)}
+              onPress={
+                tab === 'activity' ? activity.refresh
+                  : tab === 'statements' ? statements.stats.refresh
+                    : () => instance.refresh(props.targetKey)
+              }
             />
           )
         }
@@ -212,7 +220,7 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
           value="activity"
           title={translate('plugins.database.insights.activity', 'Activity')}
         >
-          <ActivityView targetKey={props.targetKey} />
+          <ActivityView targetKey={props.targetKey} activity={activity} />
         </Tabs.Item>
         <Tabs.Item value="findings" title={translate('plugins.database.insights.findings', 'Findings')}>
           <NativeFindings key={props.targetKey} target={descriptor.target} targetKey={props.targetKey} />

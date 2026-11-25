@@ -193,6 +193,57 @@ function pageContext() {
 }
 
 describe('Database Insights surfaces', () => {
+  it('refreshes the selected Activity when the Account preference is manual', async () => {
+    const activityReads = vi.fn((): DatabaseStatsObservationV1 => ({
+      v: 1, engineId: 'postgresql', observedAtMs: Date.parse('2026-11-17T14:05:00Z'),
+      scope: { database: 'billing_dev' }, intervalBasis: { ...basis, selectionKey: 'activity' },
+      status: 'available', group: 'activity', coverage: { status: 'complete' },
+      completeness: { complete: true }, data: [],
+    }));
+    const nativeRead = daemon(statements);
+    const activityRead = daemon(activityReads);
+    const presentationHost: PluginUiPresentationHost = {
+      renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, renderPopover: () => null,
+      databaseWorkbench: {
+        useActivityRefreshIntervalMs: () => 0,
+        activityResource: source => {
+          const snapshot = { value: null, loading: true, error: null };
+          return {
+            getSnapshot: () => snapshot, subscribe: () => () => {},
+            refresh: async () => { await source.read({ signal: new AbortController().signal }); },
+            retainAutoRefresh: () => () => {}, invalidate: () => {}, dispose: () => {},
+          };
+        },
+        lastLook: () => ({
+          observe: () => ({ comparison: { status: 'unavailable', reason: 'previous_sample_required' }, persistenceError: null }),
+        }),
+      },
+    };
+    const page = await createPluginUiTestkit({
+      identity: { instanceId: 'manual-activity', mountNonce: 'manual-activity' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: context => <PluginUiHostPresentationScope environment={projectHappierUiEnvironment(context.surface)}
+        presentationHost={presentationHost}>{renderPage(context)}</PluginUiHostPresentationScope>,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }),
+      subPath: 'insights',
+      surfaceContext: pageContext(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        ...resourceHandlers(), replacePageLocation: async ({ subPath }) => subPath,
+        executeAction: call => JSON.stringify(call.input).includes('"group":"activity"')
+          ? activityRead(call) : nativeRead(call),
+      },
+    });
+    try {
+      await settle();
+      await page.press(await page.getByRole('tab', { name: 'Activity' }));
+      await settle();
+      expect(activityReads).not.toHaveBeenCalled();
+      await page.press(await page.getByRole('button', { name: 'Refresh' }));
+      await settle();
+      expect(activityReads).toHaveBeenCalledTimes(1);
+    } finally { await page.dispose(); }
+  });
+
   it('loads native findings on demand and reads only the selected detail', async () => {
     const nativeRead = daemon(statements);
     const sample = statements();

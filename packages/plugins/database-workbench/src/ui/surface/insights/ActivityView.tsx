@@ -9,7 +9,7 @@ import {
   type CollectionField,
   type CollectionRowActions,
 } from '@happier-dev/plugin-ui/components';
-import { isPluginActionConfirmationDeclined, usePluginSurfaceActivity, type PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
+import { isPluginActionConfirmationDeclined, type PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import {
   Action,
   ErrorState,
@@ -21,7 +21,7 @@ import {
   usePluginTranslation,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
-import { useDatabaseActivity, useWorkbenchInstance } from '../../hooks.js';
+import { type useDatabaseActivity, useWorkbenchInstance } from '../../hooks.js';
 import { databaseActionSettlement } from '../../actionSettlement.js';
 import { WORKBENCH_DISPLAY_PAGE_ROWS } from '../mount.js';
 import { displayDatabaseStatementShape, formatElapsed } from './format.js';
@@ -248,8 +248,10 @@ function CancelActivity({ target, activityKey, queryStartedAt }: Readonly<{
   </Stack>;
 }
 
-/** Live activity retains the host's presented demand only while this view is on screen (R13, D21). */
-export function ActivityView(props: Readonly<{ targetKey: string }>) {
+export function ActivityView(props: Readonly<{
+  targetKey: string;
+  activity: ReturnType<typeof useDatabaseActivity>;
+}>) {
   const translate = usePluginTranslation();
   const descriptor = useWorkbenchInstance().target(props.targetKey);
   const canCancel = descriptor.access?.canWrite === true
@@ -259,15 +261,8 @@ export function ActivityView(props: Readonly<{ targetKey: string }>) {
     return { accessory: <CancelActivity key={session.queryStartedAt}
       target={descriptor.target} activityKey={session.key} queryStartedAt={session.queryStartedAt} /> };
   }, [descriptor.target]);
-  const presented = usePluginSurfaceActivity().active;
-  const activity = useDatabaseActivity(
-    props.targetKey,
-    ACTIVITY_READ,
-    presented,
-  );
-  const observation = activity.observation as
-    | DatabaseStatsObservationV1
-    | undefined;
+  const { activity } = props;
+  const observation = activity.observation;
   const available =
     observation?.status === 'available' && observation.group === 'activity'
       ? observation

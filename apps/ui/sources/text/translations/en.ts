@@ -23922,6 +23922,11 @@ const enSettingsPlugins = {
   },
   publish: pluginPublishTranslations['en'],
   updateReview: pluginUpdateReviewTranslations.en,
+  databaseWorkbench: {
+    title: "Database Workbench",
+    activityRefreshInterval: "Activity refresh interval (ms)",
+    activityRefreshIntervalDescription: "Use 0 to refresh manually. Activity refreshes automatically only while it is open.",
+  },
   ...pluginWebhookAdministrationTranslations['en'],
   ...pluginAccountDataEraseTranslations.en,
   ...pluginAccountReleaseSelectionTranslations.en,

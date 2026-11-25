@@ -296,10 +296,11 @@ export function useDatabaseActivity(targetKey: string, request: Extract<Database
     const useInterval = useHostDatabaseWorkbench()?.useActivityRefreshIntervalMs ?? useManualActivityRefreshInterval;
     const intervalMs = useInterval();
     const resource = useMemo(() => {
+        if (!presented) return null;
         try { return instance.activity(targetKey, request); } catch { return null; }
         // The request is compared by value.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [instance, targetKey, JSON.stringify(request)]);
+    }, [instance, targetKey, JSON.stringify(request), presented]);
     const subscribe = useCallback((listener: () => void) => resource?.subscribe(listener) ?? (() => undefined), [resource]);
     const get = useCallback(() => resource?.getSnapshot() ?? noActivity, [resource]);
     const snapshot = useSyncExternalStore(subscribe, get, get);
@@ -308,5 +309,6 @@ export function useDatabaseActivity(targetKey: string, request: Extract<Database
         return resource.retainAutoRefresh({ intervalMs });
     }, [resource, presented, intervalMs]);
     return useMemo(() => ({ observation: snapshot.value ?? undefined, loading: snapshot.loading, error: snapshot.error,
-        supported: resource !== null, refresh: () => resource?.refresh() }), [snapshot, resource]);
+        supported: resource !== null, autoRefreshEnabled: intervalMs > 0, refresh: () => resource?.refresh() }),
+    [snapshot, resource, intervalMs]);
 }
