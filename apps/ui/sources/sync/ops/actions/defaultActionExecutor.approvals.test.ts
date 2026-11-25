@@ -452,7 +452,7 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(outgoing).toEqual([]);
     });
 
-    it.each(['refused', 'malformed'] as const)('settles a dispatched live CLI %s reply through the incumbent outcome owner without fallback', async reply => {
+    it.each(['refused', 'malformed'] as const)('keeps the live CLI claim available after an unconfirmed %s reply without fallback', async reply => {
         const artifactId = 'live-cli-confidential-refusal';
         await seedApproval(artifactId, liveCliConfidentialApproval());
         rpcResult = reply === 'refused'
@@ -460,11 +460,11 @@ describe('createDefaultActionExecutor approvals', () => {
             : { status: 'executed' };
         const result = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' },
             { ...context(), authority: 'present_user', actionCaller: { kind: 'host' } });
-        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'outcome_unknown',
-            execution: { ok: false, errorCode: 'approval_execution_outcome_unknown' } } });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown' });
         expect(outgoing).toHaveLength(1);
-        expect(persistedApproval(artifactId)).toMatchObject({ status: 'outcome_unknown',
-            execution: { ok: false, errorCode: 'approval_execution_outcome_unknown', effectAttempted: true } });
+        const request = persistedApproval(artifactId);
+        expect(request).toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
+        expect(request.execution).toBeUndefined();
         expect(homes.requestsFor('/v2/account/settings').filter(request => request.input !== null)).toEqual([]);
     });
 
@@ -2519,16 +2519,20 @@ describe('createDefaultActionExecutor approvals', () => {
         const decided = await executor.execute('approval.request.decide', {
             artifactId: 'approval-plugin-install', decision: 'approve',
         }, context());
-        const status = reply === 'success' ? 'executed' : reply === 'pre_effect' ? 'approved' : 'outcome_unknown';
-        expect(decided, JSON.stringify(decided)).toMatchObject(reply === 'pre_effect'
-            ? { ok: false, errorCode: 'approval_context_unavailable', effectAttempted: false }
-            : { ok: true, result: { status,
-                ...(reply === 'success' ? {} : { execution: { ok: false, effectAttempted: true } }),
-            } });
-        if (reply !== 'success') {
-            expect(persistedApproval('approval-plugin-install')).toMatchObject({ status });
-            if (reply === 'pre_effect') expect(persistedApproval('approval-plugin-install').execution).toBeUndefined();
-            else expect(await executor.execute('approval.request.decide', { artifactId: 'approval-plugin-install', decision: 'approve' }, context())).toEqual(decided);
+        if (reply === 'success') {
+            expect(decided).toMatchObject({ ok: true, result: { status: 'executed' } });
+        } else if (reply === 'pre_effect') {
+            const recordedRefusal = {
+                status: 'failed',
+                execution: { ok: false, effectAttempted: false, errorCode: 'approval_context_unavailable' },
+            };
+            expect(decided).toMatchObject({ ok: true, result: recordedRefusal });
+            expect(persistedApproval('approval-plugin-install')).toMatchObject(recordedRefusal);
+        } else {
+            expect(decided).toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown' });
+            const request = persistedApproval('approval-plugin-install');
+            expect(request).toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
+            expect(request.execution).toBeUndefined();
         }
         expect(outgoing).toMatchObject([{ method: 'machine-exact:' + RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED,
             params: { artifactId: 'approval-plugin-install' } }]);

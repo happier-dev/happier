@@ -1,9 +1,11 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { PluginAvailabilityCollectionWritersClaimActionInputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
+import axios from '@/api/client/credentialAxios';
 import * as persistence from '@/persistence';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import type { StoredCredentials } from '@/persistence';
+import { absentAccountPluginAvailabilityHttpResponse } from '@/testkit/http/accountPluginAvailability';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -11,6 +13,13 @@ it.each(['admitted', 'refused'] as const)('joins the source declaration claim be
     // Credential persistence and authenticated HTTP are the external boundaries.
     vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(null);
     const credentials = { token: 'event-setup-account', encryption: null } satisfies StoredCredentials;
+    const home = 'https://event-setup.example.test';
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+        expect(new URL(url).origin).toBe(home);
+        const response = absentAccountPluginAvailabilityHttpResponse(url, body);
+        if (!response) throw new Error(`Unexpected Account admission request: ${url}`);
+        return response;
+    });
     const pluginId = DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed.pluginId;
     let releaseClaim!: () => void;
     const claimResponse = new Promise<void>(resolve => { releaseClaim = resolve; });
@@ -24,11 +33,11 @@ it.each(['admitted', 'refused'] as const)('joins the source declaration claim be
             readCredentials: async () => credentials,
             isCurrentAccount: () => true,
             resolveAccountScopeKey: () => 'event-setup-account-scope',
-            resolveBaseUrl: () => 'https://event-setup.example.test',
+            resolveBaseUrl: () => home,
             http: {
                 get: async () => { throw new Error('Event setup does not read Account storage'); },
                 post: async (url, body) => {
-                    expect(url).toBe('https://event-setup.example.test/v1/plugins/availability/collection-writers/claim');
+                    expect(url).toBe(`${home}/v1/plugins/availability/collection-writers/claim`);
                     const input = PluginAvailabilityCollectionWritersClaimActionInputV1Schema.parse(JSON.parse(body));
                     if (!('manifest' in input)) return { status: 404, data: { error: 'plugin_declaration_not_found' } };
                     expect(input.manifest.id).toBe(pluginId);
