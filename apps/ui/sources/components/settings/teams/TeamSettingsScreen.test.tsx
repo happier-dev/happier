@@ -650,6 +650,33 @@ describe('TeamSettingsScreen', () => {
         });
     });
 
+    it.each([
+        { status: 400, code: 'invalid_team_input', message: 'teams.logo.failed' },
+        { status: 409, code: 'team_archived', message: 'teams.errors.archived' },
+        { status: 404, code: 'team_not_found', message: 'teams.errors.notFound' },
+    ])('shows $code after the Home refuses a Team logo without offering the same upload', async ({ status, code, message }) => {
+        const serverId = await addHomeWithTeam(teamSummaryFixture({
+            capabilities: teamCapabilitiesFixture({ manageSettings: true }),
+        }));
+        const bytes = new Uint8Array([137, 80, 78, 71]);
+        pickImages.mockResolvedValue([{
+            kind: 'web',
+            file: { type: 'image/png', arrayBuffer: async () => bytes.buffer },
+        }]);
+        harness.answer(serverId, TEAM_LOGO_SET_PATH, { status, body: { error: code } });
+
+        const screen = await renderSettings(serverId);
+        await waitForTestId(screen, 'team-settings-logo-set');
+        await screen.pressByTestIdAsync('team-settings-logo-set');
+        await waitForTestId(screen, 'team-settings-logo-use');
+        await screen.pressByTestIdAsync('team-settings-logo-use');
+
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.getTextContent()).not.toContain('teams.logo.retry');
+        expect(screen.findByTestId('team-settings-logo-use')).toBeNull();
+        if (code === 'invalid_team_input') expect(screen.findByTestId('team-settings-logo-set')).not.toBeNull();
+    });
+
     it('starts only one confirmed logo upload when activated twice before busy renders', async () => {
         let releaseUpload = (): void => {};
         const respondAfter = new Promise<void>((resolve) => { releaseUpload = resolve; });

@@ -31,6 +31,8 @@ import {
     updateTeam,
 } from '@/sync/ops/teams/teamOperations';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
+import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
+import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 import { t } from '@/text';
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
 
@@ -64,6 +66,14 @@ const READ_ONLY_LOGO_SIZE = 32;
 
 const RESOURCE_CREATION_OPTIONS = TeamResourceCreationPolicyV1Schema.options;
 const EXTERNAL_SHARING_OPTIONS = TeamExternalSharingPolicyV1Schema.options;
+
+function logoUploadFailure(failure: HomeDomainFailure<string>) {
+    return {
+        kind: 'failed' as const,
+        message: failure.code === 'invalid_team_input' ? t('teams.logo.failed') : teamMutationFailureLabel(failure),
+        retryable: failure.retryable && failure.code !== 'team_authentication_unavailable',
+    };
+}
 
 const TeamIdentitySection = React.memo(function TeamIdentitySection(props: Readonly<{
     context: TeamSectionContext;
@@ -302,20 +312,18 @@ const TeamLogoSection = React.memo(function TeamLogoSection(props: Readonly<{
                 address: context.address,
                 image,
                 onApprovalSucceeded: () => onSettled({ kind: 'succeeded' }),
-                onApprovalFailed: (code) => onSettled({
-                    kind: 'failed',
-                    message: teamMutationFailureLabel({ kind: 'unknown', code, retryable: false }),
-                }),
+                onApprovalFailed: (code, failure) => onSettled(logoUploadFailure(failure
+                    ? homeDomainFailureFromActionFailure(failure, 'teams.logo.set') : { kind: 'unknown', code, retryable: false })),
             });
             return outcome.kind === 'succeeded'
                 ? { kind: 'succeeded' as const }
-                : { kind: 'failed' as const, message: teamMutationFailureLabel(outcome.failure) };
+                : logoUploadFailure(outcome.failure);
         } catch (cause) {
             if (isTeamActionApprovalPendingError(cause)) {
                 context.requestApproval(cause.registration);
                 return { kind: 'pending' as const };
             }
-            return { kind: 'failed' as const, message: t('teams.logo.failed') };
+            return { kind: 'failed' as const, message: t('teams.errors.outcomeUnknown'), retryable: false };
         }
     }, [context]);
 

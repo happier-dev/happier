@@ -233,7 +233,7 @@ export function setTeamLogo(params: Readonly<{
     address: TeamAddress;
     image: TeamLogoSourceV1;
     onApprovalSucceeded?: (team: TeamSummaryV1) => void | Promise<void>;
-    onApprovalFailed?: (code: string) => void;
+    onApprovalFailed?: (code: string, failure?: ActionExecuteFailure) => void;
 }>): Promise<TeamMutationOutcome> {
     return mutateTeam({
         scope: params.scope,

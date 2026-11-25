@@ -31,7 +31,7 @@ const ACCEPTED_LOGO_FORMATS = TEAM_LOGO_ACCEPTED_MIME_TYPES
 
 type LogoCommitResult =
     | Readonly<{ kind: 'succeeded' }>
-    | Readonly<{ kind: 'failed'; message: string | null }>;
+    | Readonly<{ kind: 'failed'; message: string | null; retryable: boolean }>;
 
 /** Reads a picked image without assuming a platform-specific file API. */
 async function readPickedImageBytes(
@@ -55,8 +55,8 @@ function sourceUri(source: TeamLogoSourceV1): string {
  *
  * Picking never uploads. The selected bytes first render through the same
  * square center-cover Avatar presentation used after publication, and only the
- * explicit Use action asks the caller to commit them. A failed commit keeps the
- * local candidate so retry never asks the person to pick the file again.
+ * explicit Use action asks the caller to commit them. When the same upload can
+ * be retried, the local candidate stays in place.
  *
  * It is one row — the preview, what it shows, and its actions — that the caller places in its
  * section; a refusal replaces the row's description until the next pick.
@@ -116,12 +116,16 @@ export const TeamLogoPicker = React.memo(function TeamLogoPicker(props: Readonly
                 if (result.kind === 'succeeded') {
                     setCandidate(null);
                     setError(null);
-                } else setError(result.message);
+                } else {
+                    if (!result.retryable && result.message) setCandidate(null);
+                    setError(result.message);
+                }
             };
             const result = await props.onUse(candidate, settle);
             if (result.kind !== 'pending') settle(result);
         } catch {
-            setError(t('teams.logo.failed'));
+            setCandidate(null);
+            setError(t('teams.errors.outcomeUnknown'));
         } finally {
             useInFlightRef.current = false;
             setBusy(false);
