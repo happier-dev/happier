@@ -1,11 +1,62 @@
 import { describe, expect, it } from 'vitest';
+import {
+    SessionAccessErrorCodeV1Schema,
+    type SessionAccessErrorCodeV1,
+} from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { t } from '@/text';
 
 import { createSessionAccessApiErrorFromResponse, SessionAccessApiError } from '@/sync/api/session/sessionAccessApi';
 
-import { presentSessionAccessFailure, presentSessionAccessReason } from './presentSessionAccessFailure';
+import { presentSessionAccessApprovalSettlement, presentSessionAccessFailure, presentSessionAccessReason } from './presentSessionAccessFailure';
 
 describe('session access failure presentation', () => {
+    const otherOwners: ReadonlySet<SessionAccessErrorCodeV1> = new Set([
+        'session_initial_access_creator_mismatch', 'session_responsibility_assignee_unavailable', 'invalid_cursor',
+    ]);
+    const grantAndContextOutcomes: Partial<Record<SessionAccessErrorCodeV1, readonly [number, () => string]>> = {
+        session_access_forbidden: [403, () => t('errors.permissionDenied')],
+        session_access_session_not_found: [404, () => t('session.access.sessionNotAvailable')],
+        session_access_subject_not_found: [404, () => t('session.access.subjectNotFound')],
+        session_access_subject_ineligible: [400, () => t('session.access.subjectIneligible')],
+        session_access_owner_grant_invalid: [400, () => t('session.access.ownerGrantManaged')],
+        session_access_self_grant_invalid: [400, () => t('session.access.selfGrantManaged')],
+        session_access_permission_delegation_forbidden: [403, () => t('session.access.delegationForbidden')],
+        session_access_permission_delegation_requires_edit: [400, () => t('session.access.delegationRequiresEdit', {
+            view: t('session.access.view'), edit: t('session.access.edit'), admin: t('session.access.admin'),
+        })],
+        session_access_team_policy_required: [409, () => t('session.access.teamPolicyRequired')],
+        session_access_authentication_required: [403, () => t('session.access.authenticationRequired')],
+        session_access_authentication_unavailable: [503, () => t('session.access.authenticationUnavailable')],
+        session_access_external_sharing_requires_team_admin: [403, () => `${t('teams.settings.externalSharingSection')}: ${t('teams.policy.externalSharingAdmins')}`],
+        session_access_external_sharing_disabled: [403, () => `${t('teams.settings.externalSharingSection')}: ${t('teams.policy.externalSharingDisabled')}`],
+        session_access_sharing_unavailable: [404, () => t('session.collaboration.accessUnavailableReason')],
+        session_access_invalid_recipient_envelope: [400, () => t('session.access.repair')],
+        invalid_request: [400, () => t('session.access.requestInvalid')],
+        data_key_not_required: [400, () => t('session.access.notRequired')],
+        recipient_envelope_required: [400, () => t('session.access.setup')],
+        recipient_key_unavailable: [400, () => t('session.access.setup')],
+    };
+
+    it.each(SessionAccessErrorCodeV1Schema.options.filter(code => !otherOwners.has(code)))(
+        'keeps the closed grant or context decision %s after HTTP or approval without Retry',
+        (code) => {
+            const outcome = grantAndContextOutcomes[code];
+            if (!outcome) throw new Error(`Missing presentation for ${code}`);
+            const [status, expectedMessage] = outcome;
+            const fromHttp = presentSessionAccessFailure(createSessionAccessApiErrorFromResponse({ error: code }, status));
+            expect(fromHttp.retryable).toBe(false);
+            expect(fromHttp.code).toBe(code);
+            expect(fromHttp.message).not.toBe(t('errors.operationFailed'));
+            expect(fromHttp.message).toBe(expectedMessage());
+            expect(presentSessionAccessApprovalSettlement(code)).toEqual(fromHttp);
+        },
+    );
+
+    it('omits Retry on bad HTTP input even when the Home cannot identify a field', () => {
+        const failure = presentSessionAccessFailure(createSessionAccessApiErrorFromResponse({ error: 'Bad Request' }, 400));
+        expect(failure.retryable).toBe(false);
+    });
+
     it('preserves the confirmed transaction rollback through the HTTP adapter and presenter', () => {
         const failure = presentSessionAccessFailure(createSessionAccessApiErrorFromResponse({
             error: 'database_transaction_conflict_exhausted', statusCode: 503,

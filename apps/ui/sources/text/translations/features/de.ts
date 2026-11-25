@@ -14227,6 +14227,8 @@ const sessionAccessTranslations = { "de": {
         delegationForbidden: "Bitte den Sitzungsinhaber oder einen Admin, der Berechtigungsanfragen genehmigen kann, um diese Änderung.",
         delegationRequiresEdit: ({ view, edit, admin }: { view: string; edit: string; admin: string }) => `Wähle „${edit}“ oder „${admin}“, um Berechtigungsanfragen genehmigen zu lassen. Lass die Genehmigung aus, wenn du „${view}“ beibehalten willst.`,
         selfGrantManaged: "Ein anderer Zugriffsverwalter muss deinen Zugriff ändern.",
+        ownerGrantManaged: "Den Zugriff des Sitzungsinhabers kannst du hier nicht ändern.",
+        requestInvalid: "Dieses Home hat die Anfrage zum Sitzungszugriff abgelehnt.",
         homeUnsupported: "Dieses Home unterstützt Sitzungszugriff noch nicht. Aktualisiere es, um zu verwalten, wer diese Sitzung öffnen kann.",
         openCollaboration: "Zusammenarbeit öffnen",
         authenticationRequired: "Melde dich mit einer von diesem Team akzeptierten Methode an und versuche es erneut.",

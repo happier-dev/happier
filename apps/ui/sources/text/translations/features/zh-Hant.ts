@@ -14111,6 +14111,8 @@ const sessionAccessTranslations = { "zh-Hant": {
         delegationForbidden: "請會話擁有者或可核准權限請求的管理員進行這項變更。",
         delegationRequiresEdit: ({ view, edit, admin }: { view: string; edit: string; admin: string }) => `若要允許核准權限請求，請選擇「${edit}」或「${admin}」。若要維持「${view}」，請關閉核准功能。`,
         selfGrantManaged: "你的存取權限需由其他存取管理員變更。",
+        ownerGrantManaged: "無法在這裡變更工作階段擁有者的存取權限。",
+        requestInvalid: "此 Home 未接受工作階段存取要求。",
         homeUnsupported: "此 Home 尚未支援工作階段存取。請更新後再管理誰可以開啟此工作階段。",
         openCollaboration: "開啟協作",
         authenticationRequired: "請使用此團隊接受的方式登入，然後再試一次。",

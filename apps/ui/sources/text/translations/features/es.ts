@@ -14122,6 +14122,8 @@ const sessionAccessTranslations = { "es": {
         delegationForbidden: "Pide al propietario de la sesión o a un administrador que pueda aprobar solicitudes de permiso que haga este cambio.",
         delegationRequiresEdit: ({ view, edit, admin }: { view: string; edit: string; admin: string }) => `Elige ${edit} o ${admin} para permitir que se aprueben solicitudes de permiso. Para mantener ${view}, deja la aprobación desactivada.`,
         selfGrantManaged: "Otro administrador de acceso debe cambiar tu acceso.",
+        ownerGrantManaged: "Aquí no puedes cambiar el acceso de quien es propietario de la sesión.",
+        requestInvalid: "Este Home no aceptó la solicitud de acceso a la sesión.",
         homeUnsupported: "Este Home todavía no admite el acceso a sesiones. Actualízalo para gestionar quién puede abrir esta sesión.",
         openCollaboration: "Abrir Colaboración",
         authenticationRequired: "Inicia sesión con un método aceptado por este equipo y vuelve a intentarlo.",

@@ -43,6 +43,8 @@ export const sessionAccessTranslationsEnglish = { "en": {
         delegationForbidden: "Ask the Session owner or an admin who can approve permission requests to make this change.",
         delegationRequiresEdit: ({ view, edit, admin }: { view: string; edit: string; admin: string }) => `Choose ${edit} or ${admin} to allow permission requests. To keep ${view}, leave approval off.`,
         selfGrantManaged: "Another access manager must change your access.",
+        ownerGrantManaged: "You can’t change the Session owner’s access here.",
+        requestInvalid: "This Home didn’t accept the request for Session access.",
         homeUnsupported: "This Home doesn't support session access yet. Update it to manage who can open this session.",
         openCollaboration: "Open Collaboration",
         authenticationRequired: "Sign in with a method accepted by this Team, then try again.",

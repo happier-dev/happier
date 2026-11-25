@@ -14253,6 +14253,8 @@ const sessionAccessTranslations = { "pl": {
         delegationForbidden: "Poproś właściciela sesji lub administratora, który może zatwierdzać prośby o uprawnienia, o wprowadzenie tej zmiany.",
         delegationRequiresEdit: ({ view, edit, admin }: { view: string; edit: string; admin: string }) => `Wybierz „${edit}” lub „${admin}”, aby zezwolić na zatwierdzanie próśb o uprawnienia. Aby zachować „${view}”, pozostaw zatwierdzanie wyłączone.`,
         selfGrantManaged: "Twój dostęp musi zmienić inny menedżer dostępu.",
+        ownerGrantManaged: "Tutaj nie możesz zmienić dostępu właściciela sesji.",
+        requestInvalid: "Ten Home nie przyjął żądania dostępu do sesji.",
         homeUnsupported: "Ten Home nie obsługuje jeszcze dostępu do sesji. Zaktualizuj go, aby zarządzać tym, kto może otworzyć tę sesję.",
         openCollaboration: "Otwórz współpracę",
         authenticationRequired: "Zaloguj się metodą akceptowaną przez ten zespół i spróbuj ponownie.",

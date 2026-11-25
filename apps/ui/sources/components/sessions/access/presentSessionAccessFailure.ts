@@ -1,4 +1,7 @@
-import type { SessionAccessErrorCodeV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
+import {
+    SessionAccessErrorCodeV1Schema,
+    type SessionAccessErrorCodeV1,
+} from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { SessionAccessApiError } from '@/sync/api/session/sessionAccessHttpFailure';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
@@ -26,6 +29,10 @@ function sessionAccessFailureMessage(code: string, status?: number): string {
         // explainable row state, so it must never surface as a generic failure.
         case 'session_access_self_grant_invalid':
             return t('session.access.selfGrantManaged');
+        case 'session_access_owner_grant_invalid':
+            return t('session.access.ownerGrantManaged');
+        case 'invalid_request':
+            return t('session.access.requestInvalid');
         case 'session_access_session_not_found':
             return t('session.access.sessionNotAvailable');
         case 'session_access_permission_delegation_forbidden':
@@ -99,25 +106,11 @@ export function presentSessionAccessFailure(
     }
     if (error instanceof SessionAccessApiError) {
         const message = sessionAccessFailureMessage(error.code, error.status);
-        const terminal = error.status === 403 || error.status === 404 || error.status === 409
+        // Deferred approval supplies the owner's code without its HTTP status.
+        // The same closed grant and context refusals stay settled in both paths.
+        const terminal = SessionAccessErrorCodeV1Schema.safeParse(error.code).success
+            || (error.status !== undefined && error.status >= 400 && error.status < 500)
             || error.code === 'public_share_isolation_unavailable'
-            || error.code === 'session_access_session_not_found'
-            || error.code === 'session_access_subject_ineligible'
-            || error.code === 'session_access_owner_grant_invalid'
-            || error.code === 'session_access_self_grant_invalid'
-            || error.code === 'session_access_permission_delegation_forbidden'
-            || error.code === 'session_access_permission_delegation_requires_edit'
-            || error.code === 'session_access_team_policy_required'
-            || error.code === 'session_access_authentication_required'
-            || error.code === 'session_access_authentication_unavailable'
-            || error.code === 'session_access_external_sharing_requires_team_admin'
-            || error.code === 'session_access_external_sharing_disabled'
-            || error.code === 'session_access_sharing_unavailable'
-            || error.code === 'session_access_invalid_recipient_envelope'
-            || error.code === 'invalid_request'
-            || error.code === 'data_key_not_required'
-            || error.code === 'recipient_envelope_required'
-            || error.code === 'recipient_key_unavailable'
             || error.code === 'unsupported_action';
         return { code: error.code, message, retryable: !terminal };
     }

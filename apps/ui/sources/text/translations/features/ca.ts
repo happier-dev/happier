@@ -14223,6 +14223,8 @@ const sessionAccessTranslations = { "ca": {
         delegationForbidden: "Demana a la persona propietària de la sessió o a un administrador que pugui aprovar sol·licituds de permís que faci aquest canvi.",
         delegationRequiresEdit: ({ view, edit, admin }: { view: string; edit: string; admin: string }) => `Tria ${edit} o ${admin} per permetre aprovar sol·licituds de permís. Per mantenir ${view}, deixa l’aprovació desactivada.`,
         selfGrantManaged: "Un altre gestor d’accés ha de canviar el teu accés.",
+        ownerGrantManaged: "Aquí no podeu canviar l’accés de qui té la propietat de la sessió.",
+        requestInvalid: "Aquest Home no ha acceptat la sol·licitud d’accés a la sessió.",
         homeUnsupported: "Aquest Home encara no admet l’accés a sessions. Actualitza’l per gestionar qui pot obrir aquesta sessió.",
         openCollaboration: "Obre Col·laboració",
         authenticationRequired: "Inicia la sessió amb un mètode acceptat per aquest equip i torna-ho a provar.",

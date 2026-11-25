@@ -14171,6 +14171,8 @@ const sessionAccessTranslations = { "ja": {
         delegationForbidden: "セッションのオーナー、または権限リクエストを承認できる管理者に、この変更を依頼してください。",
         delegationRequiresEdit: ({ view, edit, admin }: { view: string; edit: string; admin: string }) => `権限リクエストの承認を許可するには「${edit}」または「${admin}」を選んでください。「${view}」のままにする場合は承認をオフにしてください。`,
         selfGrantManaged: "自分のアクセス権は、別のアクセス管理者が変更する必要があります。",
+        ownerGrantManaged: "セッションの所有者のアクセス権はここでは変更できません。",
+        requestInvalid: "この Home はセッションへのアクセスリクエストを受け付けませんでした。",
         homeUnsupported: "この Home はまだセッションアクセスに対応していません。更新すると、このセッションを開けるユーザーを管理できます。",
         openCollaboration: "コラボレーションを開く",
         authenticationRequired: "このチームが承認する方法でサインインしてから、もう一度お試しください。",

@@ -14111,6 +14111,8 @@ const sessionAccessTranslations = { "zh-Hans": {
         delegationForbidden: "请让会话所有者或可以批准权限请求的管理员进行此更改。",
         delegationRequiresEdit: ({ view, edit, admin }: { view: string; edit: string; admin: string }) => `要允许批准权限请求，请选择“${edit}”或“${admin}”。若保留“${view}”，请关闭审批。`,
         selfGrantManaged: "你的访问权限需由其他访问管理员更改。",
+        ownerGrantManaged: "无法在这里更改会话所有者的访问权限。",
+        requestInvalid: "此 Home 未接受会话访问请求。",
         homeUnsupported: "此 Home 尚不支持会话访问。请更新后再管理谁可以打开此会话。",
         openCollaboration: "打开协作",
         authenticationRequired: "请使用此团队接受的方式登录，然后重试。",
