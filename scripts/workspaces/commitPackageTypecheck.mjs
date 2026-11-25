@@ -303,8 +303,9 @@ function compileApp(worktree, dir, env) {
     const result = spawnSync(process.execPath, args, { cwd, env: { ...env, HAPPIER_TYPECHECK_REPORT_DIR: reports }, stdio: ['ignore', ...descriptors] });
     const stdout = readFileSync(join(output, 'stdout'), 'utf8');
     const stderr = readFileSync(join(output, 'stderr'), 'utf8');
+    const failureCode = /^\[typecheck-failure\] ([a-z][a-z0-9-]*(?::[A-Za-z0-9_]+)?)(?:\s|$)/mu.exec(stderr)?.[1];
     return { rows: packageTypecheckRows({ ...result, stdout, stderr }, cwd, worktree), ms: Date.now() - started,
-      failure: `exit=${result.status ?? 'none'} signal=${result.signal ?? 'none'}${result.error ? ` error=${result.error.code}` : ''}`,
+      failureCode, failure: `exit=${result.status ?? 'none'} signal=${result.signal ?? 'none'}${result.error ? ` error=${result.error.code}` : ''}`,
       tail: stderr.split(/\r?\n/u).filter(line => line.startsWith('[typecheck-')).slice(-3) };
   } finally {
     for (const descriptor of descriptors) closeSync(descriptor);
@@ -430,6 +431,11 @@ function missingPublishedDeclaration(repo, treeId, rows) {
 /** Rows per (tree, package) from the result cache, compiling the missing ones in the warm worktree, or, with
  * `remote`, taking them from a worker (`remote(treeId, dirs, side)` -> Map of rows or null per package).
  * The caller holds the worktree lock and, when anything compiles here, compiler admission. */
+function setTypecheckFailure(rows, dir, code) {
+  rows.failures ??= new Map();
+  rows.failures.set(dir, code);
+}
+
 export function treeTypechecker({ repo, state, env, log, compile = compileScope, bootstrap, remote = null, worktreeRev = 'HEAD', capturedWorktree }) {
   const worktree = capturedWorktree ?? join(state, 'worktree');
   const compileEnv = compileEnvOf(env);
@@ -485,6 +491,8 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
         log(`[commit-package-typecheck] ${side} ${dir} worker ${(ms / 1000).toFixed(1)}s ${workerRows ? `${workerRows.length} diagnostics` : 'incomplete'}`);
         rows.set(dir, workerRows);
         if (workerRows) store(dir, { rows: workerRows, ms });
+        else setTypecheckFailure(rows, dir, fetched?.failures?.get(dir)
+          ?? (fetched?.get(dir) === undefined ? 'worker-unavailable' : 'worker-compile-incomplete'));
       }
       return rows;
     })();
@@ -507,7 +515,10 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
         });
       } catch (error) {
         log(`[commit-package-typecheck] ${side} incomplete generated-input-preparation: ${error.message}`);
-        for (const dir of missing) rows.set(dir, null);
+        for (const dir of missing) {
+          rows.set(dir, null);
+          setTypecheckFailure(rows, dir, 'generated-input-preparation');
+        }
         return rows;
       }
     }
@@ -518,6 +529,7 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
       const judged = judgeRows(treeId, compiled.rows, side, dir);
       rows.set(dir, judged);
       if (judged) store(dir, compiled);
+      else setTypecheckFailure(rows, dir, compiled.failureCode ?? (compiled.rows ? 'compiler-input-incomplete' : 'compiler-incomplete'));
     }
     return rows;
   };
@@ -693,7 +705,7 @@ function coveringRollingHead(repo, verdictPath, commit, packages) {
   try { verdicts = readFileSync(verdictPath, 'utf8'); }
   catch (error) { if (error?.code === 'ENOENT') return undefined; throw error; }
   for (const line of verdicts.split('\n').reverse()) {
-    const row = /^\S+ ROLLING-ok scope=packages base=\S+ head=([0-9a-f]+) packages=(\S+) new=0 incomplete=(\S+) unavailable=(\S+) /u.exec(line);
+    const row = /^\S+ ROLLING-ok scope=packages base=\S+ head=([0-9a-f]+) packages=(\S+) new=0(?: incomplete=(\S+) unavailable=(\S+))? /u.exec(line);
     if (!row) continue;
     const [, head, selected, incomplete, unavailable] = row;
     const checked = new Set(selected.split(','));
@@ -909,7 +921,7 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
   const head = pending?.head ?? git(['rev-parse', 'HEAD']).trim();
   const recordedPath = rollingHeadPath(state, scope);
   const recorded = pending ? pending.base : existsSync(recordedPath) ? readFileSync(recordedPath, 'utf8').trim() : '';
-  const result = { scope, base: recorded, head, attributions: [], incomplete: [], unavailable: [], packages: [] };
+  const result = { scope, base: recorded, head, attributions: [], incomplete: [], unavailable: [], packages: [], failures: [] };
   if (recorded === head) return result;
   const base = pending ? pending.base : rollingBase(repo, recorded, head);
   result.base = base;
@@ -919,7 +931,10 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
       writeFileSync(`${recordedPath}.tmp`, head);
       renameSync(`${recordedPath}.tmp`, recordedPath);
     }
-    appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} ROLLING-${verdict} scope=${scope} base=${base} head=${head} packages=${result.packages.join(',') || '-'} new=${result.fresh ?? result.attributions.reduce((sum, entry) => sum + entry.rows.length, 0)} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} ${((Date.now() - started) / 1000).toFixed(1)}s${result.attributions.map(entry => ` | ${entry.commit.slice(0, 11)}: ${entry.rows.length}`).join('')}\n`);
+    const gaps = verdict === 'ok' ? '' : ` incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'}`;
+    const failures = result.failures.length ? ` failure=${result.failures.map(({ side, dir, code }) => `${side}:${dir}:${code}`).join(',')}` : '';
+    const evidence = result.headTree ? ` headTree=${result.headTree} diagnostics=${result.diagnostics}` : '';
+    appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} ROLLING-${verdict} scope=${scope} base=${base} head=${head} packages=${result.packages.join(',') || '-'} new=${result.fresh ?? result.attributions.reduce((sum, entry) => sum + entry.rows.length, 0)}${gaps}${failures}${evidence} ${((Date.now() - started) / 1000).toFixed(1)}s${result.attributions.map(entry => ` | ${entry.commit.slice(0, 11)}: ${entry.rows.length}`).join('')}\n`);
   };
   const packages = rollingScopeDirs({ repo, base, head, scope, baseline: !recorded });
   result.packages = packages;
@@ -929,8 +944,30 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
   // compiles in this process.
   const { rowsAt } = treeTypechecker({ repo, state, env, log, compile, bootstrap,
     remote: remote === undefined ? workerTreeRows({ repo, state, env, log, scope }) : remote });
+  const readSide = async (tree, side) => {
+    let rows;
+    try {
+      rows = await rowsAt(tree, packages, side);
+    } catch (error) {
+      log(`[rolling-head-typecheck] ${scope} ${side} comparison-execution-failed: ${error.stack ?? error}`);
+      rows = new Map();
+      for (const dir of packages) setTypecheckFailure(rows, dir, 'comparison-execution-failed');
+    }
+    for (const dir of packages) {
+      if (isAppScope(dir) && rows.get(dir)?.some(row => row.file === '<global>')) {
+        rows.set(dir, null);
+        setTypecheckFailure(rows, dir, 'compiler-global-diagnostic');
+      }
+      if (!rows.get(dir)) result.failures.push({ side, dir, code: rows.failures?.get(dir) ?? 'compiler-incomplete' });
+    }
+    return rows;
+  };
   const headTree = treeOf(head);
-  const headRows = await rowsAt(headTree, packages, 'head');
+  const headRows = await readSide(headTree, 'head');
+  if (isAppScope(scope) && headRows.get(scope)) {
+    result.headTree = headTree;
+    result.diagnostics = headRows.get(scope).length;
+  }
   // No recorded baseline: HEAD's own diagnostics become it. Comparing against HEAD^ would cost a second
   // full compile (apps/cli: 66 min) for a one-commit range nobody has asked about.
   if (!recorded) {
@@ -938,11 +975,18 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
     record(result.incomplete.length ? 'INCOMPLETE' : 'BASELINE');
     return result;
   }
-  const compared = freshBetween(git, treeOf(base), headTree, packages, await rowsAt(treeOf(base), packages, 'base'), headRows);
+  if (isAppScope(scope) && !headRows.get(scope)) {
+    // A historical compiler cannot recover missing HEAD rows. Keep the last checked checkpoint.
+    result.unavailable = [scope];
+    record('INCOMPLETE');
+    return result;
+  }
+  const baseTree = treeOf(base);
+  const compared = freshBetween(git, baseTree, headTree, packages, await readSide(baseTree, 'base'), headRows);
   result.incomplete = compared.incomplete;
   result.unavailable = compared.unavailable;
   if (!compared.fresh.length) {
-    record(compared.incomplete.length || (isAppScope(scope) && compared.unavailable.length) ? 'INCOMPLETE' : 'ok');
+    record(compared.incomplete.length || compared.unavailable.length ? 'INCOMPLETE' : 'ok');
     return result;
   }
   // The verdict is decided here. Attribution compiles intermediate commits and can take hours on a
@@ -1172,7 +1216,16 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
       let fetched;
       try { fetched = JSON.parse(line.slice(WORKER_ROWS.length)); }
       catch (error) { log(`[rolling-head-typecheck] worker ${worker} returned invalid rows for ${label}: ${error.message}`); continue; }
-      const byTree = new Map(treeIds.map(id => [id, new Map(dirs.map(dir => [dir, Array.isArray(fetched[id]?.[dir]) ? fetched[id][dir] : null]))]));
+      const byTree = new Map();
+      for (const id of treeIds) {
+        const rows = new Map();
+        for (const dir of dirs) {
+          const value = fetched[id]?.[dir];
+          rows.set(dir, Array.isArray(value) ? value : null);
+          if (typeof value?.failure === 'string') setTypecheckFailure(rows, dir, value.failure);
+        }
+        byTree.set(id, rows);
+      }
       return many ? byTree : byTree.get(treeId);
     }
     return none;
@@ -1506,6 +1559,27 @@ export function nextRollingScope({ pending, lastScope, lastApp }) {
   return [...ROLLING_APP_SCOPES.slice(start), ...ROLLING_APP_SCOPES.slice(0, start)].find(scope => pending.includes(scope));
 }
 
+/** Run each pending scope against the current HEAD, refreshing it after every pass. */
+export async function runRollingVerdictRound({ scopes, head, recorded, run, log }) {
+  const stalled = new Set();
+  let lastApp, lastScope;
+  for (;;) {
+    const current = head();
+    const pending = scopes.filter(scope => recorded(scope) !== current && !stalled.has(`${scope}@${current}`));
+    const scope = nextRollingScope({ pending, lastScope, lastApp });
+    if (!scope) return scopes.some(scope => recorded(scope) !== current) ? current : undefined;
+    lastScope = scope;
+    const before = recorded(scope);
+    const status = await run(scope, before, current);
+    // A turn is consumed by an attempt, even if the compiler leaves the checkpoint in place.
+    if (scope !== 'packages') lastApp = scope;
+    if (recorded(scope) === before) {
+      log(`[rolling-head-typecheck] ${scope} pass exit=${status} recorded nothing; waiting for the next HEAD move`);
+      stalled.add(`${scope}@${current}`);
+    }
+  }
+}
+
 async function rolling(repo) {
   const state = commitPackageTypecheckStateDir(repo);
   const worktree = join(state, 'worktree');
@@ -1518,18 +1592,9 @@ async function rolling(repo) {
     let stalledHead;
     try {
       stalledHead = await withWorkspaceBundleLock(async () => {
-        // One scope per pass (nextRollingScope), HEAD re-read after every pass. A scope that recorded nothing waits for
-        // the next HEAD move; when nothing behind can progress, the round ends.
-        const stalled = new Set();
-        let lastApp, lastScope;
-        for (;;) {
-          const current = head();
-          const pending = scopes.filter(scope => recorded(scope) !== current && !stalled.has(`${scope}@${current}`));
-          const scope = nextRollingScope({ pending, lastScope, lastApp });
-          lastScope = scope;
-          if (!scope) { if (scopes.some(scope => recorded(scope) !== current)) return current; break; }
-          {
-            const before = recorded(scope);
+        const stalled = await runRollingVerdictRound({
+          scopes, head, recorded, log: console.error,
+          run: (scope, before, current) => {
             ensureWorktree(repo, worktree);
             const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_ROLLING: '1', HAPPIER_COMMIT_TYPECHECK_REPO: repo,
               HAPPIER_COMMIT_TYPECHECK_LOCKED: '1', HAPPIER_COMMIT_TYPECHECK_SCOPE: scope };
@@ -1538,12 +1603,10 @@ async function rolling(repo) {
             const command = admittedCommand(repo, payload, idle, scope === 'packages' ? undefined : scope);
             const result = spawnSync(command[0], command.slice(1), { cwd: worktree, env, stdio: 'inherit' });
             if (result.error) throw result.error;
-            if (recorded(scope) === before) {
-              console.error(`[rolling-head-typecheck] ${scope} pass exit=${result.status} recorded nothing; waiting for the next HEAD move`);
-              stalled.add(`${scope}@${current}`);
-            } else if (scope !== 'packages') lastApp = scope;
-          }
-        }
+            return result.status;
+          },
+        });
+        if (stalled) return stalled;
         // Every scope has its verdict for the newest HEAD; attribute recorded RED ranges now. A HEAD
         // move meanwhile is picked up by the outer loop, verdicts first again.
         for (const scope of scopes) {
@@ -1593,8 +1656,13 @@ export async function commitPackageTypecheckMain(argv, entry = fileURLToPath(imp
     const request = JSON.parse(process.env.HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST);
     const { rowsAt } = treeTypechecker({ repo: request.repo ?? join(state, 'repo.git'), state, env: process.env,
       log: message => process.stderr.write(`${message}\n`), worktreeRev: request.ref ?? 'rolling' });
-    const byTree = Object.fromEntries(request.trees.map((tree, index) =>
-      [tree, Object.fromEntries(rowsAt(tree, request.packages, request.sides[index] || tree.slice(0, 10)))]));
+    const byTree = Object.fromEntries(request.trees.map((tree, index) => {
+      const rows = rowsAt(tree, request.packages, request.sides[index] || tree.slice(0, 10));
+      return [tree, Object.fromEntries([...rows].map(([dir, value]) => {
+        const failure = rows.failures?.get(dir);
+        return [dir, failure ? { failure } : value];
+      }))];
+    }));
     process.stdout.write(`${WORKER_ROWS}${JSON.stringify(byTree)}\n`);
     return !request.gate || completeTypecheckRows(byTree, request.trees, request.packages) ? 0 : 2;
   }
@@ -1604,7 +1672,7 @@ export async function commitPackageTypecheckMain(argv, entry = fileURLToPath(imp
       ? await attributeRollingRange(options) : await rollingHeadTypecheckPass({ ...options, attribute: false });
     if (!result) return 0;
     console.log(`[rolling-head-typecheck] ${result.scope} ${result.base.slice(0, 11)}..${result.head.slice(0, 11)} packages=${result.packages.length} attributions=${result.attributions.map(entry => `${entry.commit.slice(0, 11)}:${entry.rows.length}`).join(',') || 'none'}`);
-    return 0;
+    return result.failures.length ? 2 : 0;
   }
   const admitted = argv.includes('--compiler-admitted') && process.env.HAPPIER_COMMIT_TYPECHECK_REQUEST;
   if (admitted) {
