@@ -23,6 +23,8 @@ import { resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/se
 import { discardSessionDraftPersistenceWrites, prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
 import { clearBrowserRecords } from '@/sync/domains/state/browserRecordStorage';
 import { readWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
+import { TRIAGE_APP_PAGE_DESTINATION_V1 } from '@happier-dev/triage-protocol/v1';
+import { buildPluginAppPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -1017,14 +1019,16 @@ describe('Environment Telemetry capability views', () => {
       await screen.pressByTestIdAsync('project-deployments.telemetry.tab:llmCalls');
       await settle();
       expect(llmCostReads()).toBe(1);
-      expect(transport.watchers).toBe(2);
+      // Readiness follows status alongside the LLM costs and call list.
+      expect(transport.watchers).toBe(3);
       await act(async () => transport.invalidate());
       await settle();
       expect(llmCostReads()).toBe(2);
       await reportCollectionLayout(screen, 'telemetry.capture.llmCalls');
       await screen.pressByTestIdAsync('telemetry.capture.llmCall.call-1');
       await settle();
-      expect(transport.watchers).toBe(0);
+      // Opening the trace releases both rolling LLM reads and keeps readiness.
+      expect(transport.watchers).toBe(1);
       await act(async () => transport.invalidate());
       await settle();
       expect(llmCostReads()).toBe(2);
