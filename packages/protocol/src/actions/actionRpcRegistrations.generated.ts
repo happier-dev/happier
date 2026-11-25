@@ -155,6 +155,7 @@ export function listActionSpecRpcRegistrations(): readonly ActionSpecRpcRegistra
     ["localServices.actions.restartManaged",{"rpcMethod":"daemon.localServices.actions.restartManaged","voiceClientToolName":"localServices_actions_restartManaged","mcpToolName":"localServices_actions_restartManaged"}],
     ["localServices.actions.terminateDetected",{"rpcMethod":"daemon.localServices.actions.terminateDetected","voiceClientToolName":"localServices_actions_terminateDetected","mcpToolName":"localServices_actions_terminateDetected"}],
     ["machines.runs.list",{"mcpToolName":"machines_runs_list","rpcMethod":"daemon.executionRuns.list"}],
+    ["machines.vitals.get",{"mcpToolName":"machines_vitals_get","voiceClientToolName":"getMachineVitals","rpcMethod":"machines.vitals.get"}],
     ["machines.processes.list",{"rpcMethod":"machines.processes.list","mcpToolName":"machines_processes_list"}],
     ["machines.processes.get",{"rpcMethod":"machines.processes.get","mcpToolName":"machines_processes_get"}],
     ["machines.processes.check",{"rpcMethod":"machines.processes.check","mcpToolName":"machines_processes_check"}],

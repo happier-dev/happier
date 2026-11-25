@@ -40,7 +40,7 @@ describe('Machine vitals Machine admission', () => {
         // Match the canonical erased heterogeneous RPC transport registry.
         const handlers: RpcHandlerMap = new Map();
         const rpc: RpcHandlerRegistrar = { registerHandler(method, handler) { handlers.set(method, handler); } };
-        registerDaemonMachineVitalsRpcHandlers(rpc, { sampler, target: options.target ?? (() => identity) });
+        registerDaemonMachineVitalsRpcHandlers(rpc, { machineId: identity.machineId, sampler, target: options.target ?? (() => identity) });
         return { sampler, handlers };
     }
     function context(actorAccountId: string, role: 'use' | 'manage', verify = async () => true, controller = new AbortController()): RpcHandlerContext {
@@ -100,7 +100,7 @@ describe('Machine vitals Machine admission', () => {
                 // target matching, authorization, dispatch and schemas remain real.
                 verifyMachineAdmission: async () => current,
             }) });
-        registerDaemonMachineVitalsRpcHandlers(manager, { sampler, target: () => identity });
+        registerDaemonMachineVitalsRpcHandlers(manager, { machineId: identity.machineId, sampler, target: () => identity });
         const request = { method: `m:${RPC_METHODS.MACHINES_VITALS_GET}`, params: { machineId: 'm', view: 'summary' },
             callerAuthority: 'present_user' as const,
             machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse(context('owner', 'manage').machineAdmission) };
@@ -109,6 +109,14 @@ describe('Machine vitals Machine admission', () => {
             const response = await manager.handleRequest(request);
             expect(MachineVitalsSnapshotV1Schema.parse(response)).toEqual(response);
             expect(response).toMatchObject({ state: 'reporting', sample: { memory: { totalBytes: 102_400_000, availableBytes: 40_960_000 } } });
+            const targetedRequest = { ...request, params: {
+                v: 1, kind: 'targeted_action_rpc', input: request.params,
+                target: { kind: 'machine', machineId: 'm' },
+            } };
+            expect(await manager.handleRequest(targetedRequest)).toEqual(response);
+            expect(await manager.handleRequest({ ...targetedRequest, params: {
+                ...targetedRequest.params, target: { kind: 'machine', machineId: 'other-machine' },
+            } })).toMatchObject({ ok: false, errorCode: 'invalid_action_transport_input' });
             const summary = MachineVitalsSnapshotV1Schema.parse(response);
             expect(MachineResourceSummaryV1Schema.parse(projectMachineResourceSummaryV1(summary, sampler.host() ?? undefined)).cpu)
                 .toMatchObject({ load1: expect.any(Number), logicalCores: summary.sample?.cpu.reported ? sampler.host()?.logicalCores : undefined });
@@ -128,7 +136,7 @@ describe('Machine vitals Machine admission', () => {
                 // Home verification is the network boundary; dispatcher, route and sampler are real.
                 verifyMachineAdmission: async () => { verifications++; return current; },
             }) });
-        registerDaemonMachineVitalsRpcHandlers(manager, { sampler, target: () => identity });
+        registerDaemonMachineVitalsRpcHandlers(manager, { machineId: identity.machineId, sampler, target: () => identity });
         const request = (sinceSampledAt: number) => ({ method: `m:${RPC_METHODS.DAEMON_VITALS_WATCH}`,
             params: { machineId: 'm', view: 'summary', sinceSampledAt }, callerAuthority: 'present_user' as const,
             machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse(context('recipient', 'use').machineAdmission) });

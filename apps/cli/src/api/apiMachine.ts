@@ -3454,7 +3454,7 @@ export class ApiMachineClient {
     }
 
     registerMachineVitalsRoutes(options: DaemonMachineVitalsRoutes): void {
-        registerDaemonMachineVitalsRpcHandlers(this.rpcHandlerManager, { ...options,
+        registerDaemonMachineVitalsRpcHandlers(this.rpcHandlerManager, { ...options, machineId: this.machine.id,
             canReadServiceHistory: (serviceId, ingress) => this.getMachineServicesBinding().canReadHistory(serviceId, {
                 requesterAccountId: ingress.machineAdmission?.actorAccountId,
                 context: ingress.localActionContext,

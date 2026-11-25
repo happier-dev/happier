@@ -219,7 +219,7 @@ describe('Machine Services exact demand cost', () => {
             const routes: RpcHandlerMap = new Map();
             let readable = true;
             registerDaemonMachineVitalsRpcHandlers({ registerHandler: (method, handler) => { routes.set(method, handler); } }, {
-                sampler, target: () => ({ ...target, installationId: 'installation', custodianAccountId: 'owner' }),
+                machineId: target.machineId, sampler, target: () => ({ ...target, installationId: 'installation', custodianAccountId: 'owner' }),
                 canReadServiceHistory: (serviceId, ingress) => runtime.canReadHistory(serviceId, {
                     requesterAccountId: ingress.machineAdmission?.actorAccountId,
                     canReadEnvironments: async () => new Set(readable ? ['environment'] : []),

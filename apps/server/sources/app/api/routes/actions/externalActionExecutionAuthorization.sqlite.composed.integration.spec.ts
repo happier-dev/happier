@@ -382,6 +382,88 @@ type TestAdmittedRequester = Readonly<{
 describe("external Action execution authorization", () => {
     let harness: LightSqliteHarness;
 
+    it('mints shared Session Vitals through the Machine Action carrier without broadening Machine access', async () => {
+        const source = await createFixture({ qualifiedPat: false });
+        const target = await createFixture({ qualifiedPat: false });
+        const unshared = await createFixture({ qualifiedPat: false });
+        const homeId = await getOrCreateServerIdentityId();
+        const session = await db.session.create({ data: {
+            accountId: source.account.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}',
+        } });
+        await db.accessKey.create({ data: { accountId: source.account.id, machineId: source.machine.id,
+            sessionId: session.id, data: 'session-source' } });
+        const principal = { kind: 'account', accountId: source.account.id } as const;
+        const grant = { actorAccountId: target.account.id, machineId: target.machine.id, principal };
+        expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { ...grant, level: 'view' })))
+            .toMatchObject({ kind: 'saved' });
+        const token = await auth.createToken(source.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const presence = createSessionPublisherPresence();
+        const publisher = { data: {} };
+        expect((await presence.registerPublisher({ socket: publisher, binding: {
+            accountId: source.account.id, machineId: source.machine.id, sessionId: session.id,
+        }, completeActivitySnapshot: { state: 'active', activeCount: 1 } })).status).toBe('registered');
+        const sourceRoom = getAccountSessionSocketRoom(source.account.id, session.id);
+        const io = createSocketRoomDiscoveryHarness(async room => room === sourceRoom ? [publisher] : []);
+        const { app } = await createApp(source.team.id, false, input => resolveCurrentSessionMachineFromServer({ io, presence, ...input }));
+        const sourceBinding = { machineId: source.machine.id, installationId: source.machine.installationId! };
+        const mint = async (actionId: 'machines.services.list' | 'machines.vitals.get', machineId = target.machine.id) => {
+            const requestId = crypto.randomUUID();
+            const origin = SessionActionRpcOriginV1Schema.parse({ v: 1, requestId, sourceTurnId: 'ordinary-machine-read',
+                callerPermissionMode: 'default', caller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 } });
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId,
+                target: { kind: 'machine', machineId }, input: { serverId: homeId, machineId,
+                    ...(actionId === 'machines.vitals.get' ? { view: 'summary' } : {}) } });
+            const installationProof = signMachineInstallationProof({ privateKey: source.keyPair.secretKey,
+                payload: { version: 1, accountId: source.account.id, ...sourceBinding,
+                    externalActionOrigin: { homeId, actionId, requestId,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin } } });
+            const response = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId, envelope, installationProof,
+                    sessionActionOrigin: origin, sessionActionSource: sourceBinding } });
+            return { status: response.statusCode, ...(response.statusCode === 200
+                ? { binding: ExternalActionExecutionAuthorizationV1Schema.parse(response.json()).binding }
+                : { code: response.json().code, cause: response.json().failureCause?.errorCode,
+                    diagnostic: response.json().diagnostic?.reason, correlated: response.json().requestId === requestId }) };
+        };
+        try {
+            const readLiveAdmission = () => resolveMachineAdmission({ actorAccountId: source.account.id,
+                machineId: target.machine.id, rpcMethod: RPC_METHODS.MACHINES_VITALS_GET, requireOnline: true });
+            await db.machine.update({ where: { id: target.machine.id }, data: { active: false } });
+            const offlineAdmission = await readLiveAdmission();
+            const socket = createAuthenticatedFakeSocket();
+            qualifyCurrentAccountStoredContentSocket(socket);
+            registerSocketRpcHandlers({ userId: source.account.id, socket: socket as unknown as Socket, io });
+            const offlineReply = vi.fn();
+            await getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL)({
+                method: `${target.machine.id}:${RPC_METHODS.MACHINES_VITALS_GET}`,
+                params: { serverId: homeId, machineId: target.machine.id, view: 'summary' },
+            }, offlineReply);
+            expect(offlineReply).toHaveBeenCalledWith(expect.objectContaining({
+                ok: false, effectAttempted: false,
+                failureCause: expect.objectContaining({ phase: 'rpc.admission.machine', errorCode: 'machine_unavailable' }),
+            }));
+            await db.machine.update({ where: { id: target.machine.id }, data: { active: true, lastActiveAt: new Date() } });
+            expect(await readLiveAdmission()).toMatchObject({ kind: 'admitted', role: 'use' });
+            expect(await mint('machines.services.list')).toMatchObject({ status: 200, binding: {
+                machineId: target.machine.id, custodianAccountId: target.account.id, admittedMachineRole: 'use',
+            } });
+            expect(await mint('machines.vitals.get', source.machine.id)).toMatchObject({ status: 200, binding: {
+                machineId: source.machine.id, custodianAccountId: source.account.id,
+            } });
+            const online = await mint('machines.vitals.get');
+            await inTx(tx => removeMachineAccessGrantInTx(tx, grant));
+            const withdrawn = await mint('machines.vitals.get');
+            const neverShared = await mint('machines.vitals.get', unshared.machine.id);
+            expect(await readLiveAdmission()).toMatchObject({ kind: 'denied', code: 'access_denied' });
+            expect(withdrawn).toEqual(neverShared);
+            expect(neverShared).toMatchObject({ status: 409, code: 'target_unavailable', cause: undefined, correlated: true });
+            expect(offlineAdmission).toMatchObject({ kind: 'denied', code: 'machine_unavailable', diagnostic: { reason: 'machine_offline' } });
+            expect(online, 'the ordinary remote Session read should obtain a root for its subsequent approval')
+                .toMatchObject({ status: 200, binding: { machineId: target.machine.id,
+                    custodianAccountId: target.account.id, admittedMachineRole: 'use' } });
+        } finally { await app.close(); }
+    });
+
     it('admits the signed Artifact audience review query and refuses altered or undeclared query operands', async () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const reader = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });

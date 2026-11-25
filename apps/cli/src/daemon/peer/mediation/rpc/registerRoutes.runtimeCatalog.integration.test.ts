@@ -320,7 +320,7 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
         const sampler = createMachineVitalsSampler({ readers: createLinuxMachineVitalsReader({ root: native.root }),
             historyStore: await createMinuteHistoryStore({ directory: join(native.root, 'history') }) });
         const manager = (client as unknown as Readonly<{ rpcHandlerManager: RpcHandlerRegistrar }>).rpcHandlerManager;
-        registerDaemonMachineVitalsRpcHandlers(manager, { sampler, target: () => ({ serverId: 'daemon-home',
+        registerDaemonMachineVitalsRpcHandlers(manager, { machineId: 'machine_1', sampler, target: () => ({ serverId: 'daemon-home',
             machineId: 'machine_1', installationId: installationStore.identity!.installationId, custodianAccountId: 'account_1' }) });
         const app = createApp({ nowMs: () => 2_000, invokeLocal: client.getPeerMediationMachineRpcHandlerManager().invokeLocal });
         const invoke = async (nonceByte: number, machineId = 'machine_1') => {

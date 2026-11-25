@@ -10,6 +10,7 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { doesMachineRpcTargetMatchAdmission } from '@/api/machine/machineRpcAuthorization';
+import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 
 export type DaemonMachineVitalsRoutes = Readonly<{
     sampler: MachineVitalsSampler;
@@ -53,7 +54,10 @@ function fiveMinuteSeries(sampler: MachineVitalsSampler): MachineVitalsSnapshotV
     return appendMachineVitalsSeriesV1(series, null, live);
 }
 
-export function registerDaemonMachineVitalsRpcHandlers(rpc: RpcHandlerRegistrar, options: DaemonMachineVitalsRoutes): void {
+export function registerDaemonMachineVitalsRpcHandlers(
+    rpc: RpcHandlerRegistrar,
+    options: DaemonMachineVitalsRoutes & Readonly<{ machineId: string }>,
+): void {
     const bindAdmission = (request: Readonly<{ serverId?: string; machineId: string }>, context?: RpcHandlerContext) => {
         const target = options.target();
         const deny = (predicate: RpcAdmissionPredicate) => { context?.reportAdmissionDenial?.(predicate); return false; };
@@ -75,7 +79,7 @@ export function registerDaemonMachineVitalsRpcHandlers(rpc: RpcHandlerRegistrar,
         // The dispatcher admits each request once; returns retain only local binding and cancellation.
         return assertLocal;
     };
-    rpc.registerHandler(RPC_METHODS.MACHINES_VITALS_GET, async (raw: unknown, context) => {
+    const readVitals = async (raw: unknown, context?: RpcHandlerContext) => {
         const request = MachineVitalsGetInputV1Schema.parse(raw);
         const assertLocal = bindAdmission(request, context);
         try {
@@ -89,6 +93,15 @@ export function registerDaemonMachineVitalsRpcHandlers(rpc: RpcHandlerRegistrar,
                 ...(attention ? { attention } : {}),
             } satisfies MachineVitalsSnapshotV1;
         } finally { await assertLocal(); }
+    };
+    registerActionSpecRpcHandlers({
+        rpcHandlerManager: rpc,
+        methods: [RPC_METHODS.MACHINES_VITALS_GET],
+        targetMachineId: options.machineId,
+        defaultMachineTarget: true,
+        resolveActionExecutor: ({ ingress }) => ({
+            execute: async (_actionId, input) => ({ ok: true, result: await readVitals(input, ingress) }),
+        }),
     });
     rpc.registerHandler(RPC_METHODS.MACHINES_VITALS_HISTORY_GET, async (raw: unknown, context) => {
         const request = MachineVitalsHistoryGetInputV1Schema.parse(raw);

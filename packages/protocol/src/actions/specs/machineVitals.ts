@@ -37,6 +37,7 @@ function createMachineVitalsActionSpecs() {
     prompting: { agentGuidance: 'Read current vitals before diagnosing resource use. Unknown metrics are not zero. For memory pressure, read machines.processes.list and machines.guard.get; the Guard ladder is the canonical source of stop candidates.' },
     description: 'CPU, memory pressure, disk and network of a machine, now and over the last five minutes.',
     executionPlacement: 'machine',
+    surfaces: { ...surfaces, rpc: true },
     bindings: { mcpToolName: 'machines_vitals_get', voiceClientToolName: 'getMachineVitals', rpcMethod: RPC_METHODS.MACHINES_VITALS_GET },
     inputSchema: MACHINE_VITALS_ACTION_INPUT_SCHEMAS['machines.vitals.get'], outputSchema: MachineVitalsSnapshotV1Schema,
     invocationServerIdForInput: actionInputServerId(MACHINE_VITALS_ACTION_INPUT_SCHEMAS['machines.vitals.get'], input => input.serverId),
