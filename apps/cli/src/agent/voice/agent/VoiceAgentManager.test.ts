@@ -50,6 +50,25 @@ import { estimateTokensV1 } from '@happier-dev/protocol/capabilities/estimateTok
 
 type VoiceTestRuntime<T extends object = object> = ExecutionRunHostRuntime & T;
 
+function applyTestVoiceRunAction(
+  manager: VoiceAgentManager,
+  voiceAgentId: string,
+  params: Parameters<typeof applyExecutionRunAction>[0]['params'],
+  onVoiceAgentWelcomed?: () => void,
+) {
+  const run: ExecutionRunState = { runId: voiceAgentId, callId: 'call', sidechainId: 'sidechain', sessionId: 'control', depth: 0,
+    intent: 'voice_agent', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, backendId: 'claude', instructions: '',
+    permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', status: 'running', startedAtMs: 0 };
+  const controller: ExecutionRunController = { kind: 'voice_agent', controllerOccurrenceId: 'occurrence', voiceAgentId,
+    cancelled: false, lastMarkerWriteAtMs: 0, terminalPromise: Promise.resolve(), resolveTerminal: () => {},
+    transcript: { persistenceMode: 'ephemeral', epoch: 1 }, externalStreamIdByInternal: new Map(), internalStreamIdByExternal: new Map(),
+    pendingTranscriptTurnByExternalStreamId: new Map(), terminalReadByExternalStreamId: new Map(), readInFlightByExternalStreamId: new Map() };
+  return applyExecutionRunAction({ runId: voiceAgentId, params, runs: new Map([[voiceAgentId, run]]),
+    controllers: new Map([[voiceAgentId, controller]]), voiceAgentManager: manager, parentProvider: 'claude',
+    onVoiceAgentWelcomed,
+    startRun: async () => { throw new Error('Voice Actions must not start another Run'); } });
+}
+
 function createInstructionBlocksResolver(readMarkdown: () => Promise<string>) {
   return async (args: ResolveVoicePromptPreparationArgs) => ({ systemAppendBlocks: await resolveCliVoicePromptStackBlocks({
     ...args,
@@ -2119,7 +2138,7 @@ describe('VoiceAgentManager', () => {
     } finally { await manager.dispose(); }
   });
 
-  it.each(['provider_busy', 'context_length_exceeded'])('surfaces the typed runtime refusal %s instead of treating it as delivered', async code => {
+  it.each(['provider_busy', 'context_length_exceeded', 'model_unavailable'])('surfaces the typed runtime refusal %s instead of treating it as delivered', async code => {
     // `deliverInput` reports a refusal as a value rather than a throw. If Voice
     // ignored the status it would fall through to an empty chat buffer and report
     // the generic 'Bootstrap failed', hiding the reason the Agent gave.
@@ -2160,6 +2179,8 @@ describe('VoiceAgentManager', () => {
         cursor = reply.nextCursor;
       }
       expect(events).toContainEqual({ t: 'error', error: 'Agent refused the prompt', errorCode: code });
+      await expect(applyTestVoiceRunAction(manager, started.voiceAgentId, { actionId: 'voice_agent.welcome' }))
+        .resolves.toMatchObject({ ok: false, errorCode: code });
       expect(events.some(event => event.t === 'done' || event.t === 'voice_output' && event.output.kind === 'turn_final')).toBe(false);
     } finally {
       await manager.dispose();
@@ -2169,8 +2190,10 @@ describe('VoiceAgentManager', () => {
   it.each([
     { mode: 'stream', provider: 'unified' }, { mode: 'send', provider: 'unified' },
     { mode: 'stream', provider: 'sdk' }, { mode: 'send', provider: 'sdk' },
+    { mode: 'voice_agent.welcome', provider: 'sdk' }, { mode: 'voice_agent.commit', provider: 'sdk' },
   ] as const)('settles two consecutive native usage-limit failures through Voice $mode from $provider and accepts the next turn', async ({ mode, provider }) => {
     let refused = 0;
+    const resetAtMs = 1_794_340_800_000;
     const backend = createDeterministicBackend('quota-category', { onSend(request, publish) {
       if (refused < 2) {
         refused += 1;
@@ -2181,11 +2204,11 @@ describe('VoiceAgentManager', () => {
             // The SDK boundary publishes a generic source plus its canonical structured classification.
             v: 1, source: 'agent_session_error',
             usageLimit: { v: 1, limitCategory: 'usage_limit', quotaScope: 'account', recoverability: 'wait',
-              resetAtMs: null, retryAfterMs: null, planType: null, utilization: null, overage: null,
+              resetAtMs, retryAfterMs: null, planType: null, utilization: null, overage: null,
               action: null, connectedService: null },
             runtimeAuthClassification: { kind: 'usage_limit', limitCategory: 'usage_limit',
               serviceId: 'happier.agent.claude/claude-subscription', profileId: null, groupId: null,
-              resetsAtMs: null, retryAfterMs: null, planType: null, rateLimits: null, source: 'structured_provider_error' },
+              resetsAtMs: resetAtMs, retryAfterMs: null, planType: null, rateLimits: null, source: 'structured_provider_error' },
           } : { v: 1, source: 'usage_limit' },
         } });
         return;
@@ -2198,15 +2221,31 @@ describe('VoiceAgentManager', () => {
       const started = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'default',
         idleTtlSeconds: 60, initialContext: '' });
+      let streamedFailure: Extract<VoiceAgentTurnStreamEvent, { t: 'error' }> | undefined;
       for (const userText of ['First question', 'Second question']) {
-        if (mode === 'stream') {
+        if (mode === 'stream' || (mode !== 'send' && !streamedFailure)) {
           const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText });
           const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
-          expect(events).toContainEqual(expect.objectContaining({ t: 'error', errorCode: 'usage_limit' }));
+          streamedFailure = events.find(event => event.t === 'error');
+          expect(streamedFailure).toMatchObject({ errorCode: 'usage_limit', ...(provider === 'sdk' ? {
+            usageLimitResetAtMs: resetAtMs,
+            runtimeIssueV1: { source: 'usage_limit', usageLimit: { resetAtMs, limitCategory: 'usage_limit', quotaScope: 'account' } },
+          } : {}) });
           expect(events.some(event => event.t === 'done' || event.t === 'voice_output' && event.output.kind === 'turn_final')).toBe(false);
-        } else {
+        } else if (mode === 'send') {
           const error = await manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText }).catch(error => error);
           expect(readExecutionRunErrorCode(error)).toBe('usage_limit');
+        } else {
+          const result = await applyTestVoiceRunAction(manager, started.voiceAgentId, { actionId: mode });
+          expect(result).toMatchObject({
+            ok: false, errorCode: streamedFailure?.errorCode, error: streamedFailure?.error,
+            details: { runtimeIssueV1: {
+              code: streamedFailure?.runtimeIssueV1?.code, source: streamedFailure?.runtimeIssueV1?.source,
+              usageLimit: streamedFailure?.runtimeIssueV1?.usageLimit,
+            } },
+          });
+          expect(result.details?.runtimeIssueV1?.agentId).toBe(streamedFailure?.runtimeIssueV1?.agentId);
+          expect(result.details?.runtimeIssueV1?.failureCause).toEqual(streamedFailure?.runtimeIssueV1?.failureCause);
         }
         expect(manager.readCurrentRuntimeAuthority(started.voiceAgentId)?.runtimeState).toBe('idle');
       }
@@ -4400,7 +4439,7 @@ describe('VoiceAgentManager', () => {
     }
   });
 
-  it('does not install or dispatch a fresh instruction read after the voice instance stops', async () => {
+  it.each(['stream', 'welcome'] as const)('does not dispatch pending %s preparation after the voice instance stops', async carrier => {
     const backend = createPromptCaptureBackend([{ responseText: 'unused' }]);
     let completeRead!: () => void;
     const pendingRead = new Promise<void>((resolve) => { completeRead = resolve; });
@@ -4419,11 +4458,15 @@ describe('VoiceAgentManager', () => {
         contextSessionId: 'admitted-target', chatModelId: 'chat-model', commitModelId: 'commit-model',
         permissionIntent: 'read-only', idleTtlSeconds: 60, initialContext: 'CTX',
       });
-      await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'hello' });
+      const welcome = carrier === 'welcome'
+        ? applyTestVoiceRunAction(manager, started.voiceAgentId, { actionId: 'voice_agent.welcome' })
+        : null;
+      if (!welcome) await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'hello' });
       await vi.waitFor(() => expect(reads).toBe(2));
       const stopped = manager.stop({ voiceAgentId: started.voiceAgentId });
       completeRead();
       await stopped;
+      if (welcome) await expect(welcome).resolves.toMatchObject({ ok: false, errorCode: 'execution_run_not_found' });
       expect(backend.prompts).toEqual([]);
     } finally {
       completeRead();
@@ -4458,19 +4501,22 @@ describe('VoiceAgentManager', () => {
     try {
       const { voiceAgentId } = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         chatModelId: 'chat', commitModelId: 'chat', permissionIntent: 'read-only', idleTtlSeconds: 60, initialContext: '' });
-      const run: ExecutionRunState = { runId: voiceAgentId, callId: 'call', sidechainId: 'sidechain', sessionId: 'control', depth: 0,
-        intent: 'voice_agent', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, backendId: 'claude', instructions: '',
-        permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', status: 'running', startedAtMs: 0 };
-      const controller: ExecutionRunController = { kind: 'voice_agent', controllerOccurrenceId: 'occurrence', voiceAgentId,
-        cancelled: false, lastMarkerWriteAtMs: 0, terminalPromise: Promise.resolve(), resolveTerminal: () => {},
-        transcript: { persistenceMode: 'ephemeral', epoch: 1 }, externalStreamIdByInternal: new Map(), internalStreamIdByExternal: new Map(),
-        pendingTranscriptTurnByExternalStreamId: new Map(), terminalReadByExternalStreamId: new Map(), readInFlightByExternalStreamId: new Map() };
-      const result = await applyExecutionRunAction({ runId: voiceAgentId,
-        params: { actionId: 'voice_agent.welcome', input: { welcomeText } }, runs: new Map([[voiceAgentId, run]]),
-        controllers: new Map([[voiceAgentId, controller]]), voiceAgentManager: manager, parentProvider: 'claude',
-        startRun: async () => { throw new Error('Welcome must not start another Run'); } });
+      const result = await applyTestVoiceRunAction(manager, voiceAgentId, { actionId: 'voice_agent.welcome', input: { welcomeText } });
       expect(result).toMatchObject({ ok: true });
       expect(backend.prompts[0]).toContain(`exactly this message:\n${welcomeText}\n\nThen, wait`);
+    } finally { await manager.dispose(); }
+  });
+
+  it('keeps an untyped Voice Action failure generic', async () => {
+    const manager = new VoiceAgentManager({ createRuntime: () => createPromptCaptureBackend([{ responseText: 'hello' }]) });
+    try {
+      const { voiceAgentId } = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        chatModelId: 'chat', commitModelId: 'chat', permissionIntent: 'read-only', idleTtlSeconds: 60, initialContext: '' });
+      const result = await applyTestVoiceRunAction(manager, voiceAgentId, { actionId: 'voice_agent.welcome' }, () => {
+        throw new Error('Internal welcome failure');
+      });
+      expect(result).toMatchObject({ ok: false, errorCode: 'execution_run_failed' });
+      expect(result).not.toHaveProperty('details');
     } finally { await manager.dispose(); }
   });
 

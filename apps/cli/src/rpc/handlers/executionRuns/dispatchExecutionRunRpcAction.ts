@@ -1015,6 +1015,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
           ok: false,
           error: acted.error ?? 'Unsupported',
           errorCode: acted.errorCode ?? 'execution_run_action_not_supported',
+          ...(acted.details ? { details: acted.details } : {}),
         };
       }
       return {

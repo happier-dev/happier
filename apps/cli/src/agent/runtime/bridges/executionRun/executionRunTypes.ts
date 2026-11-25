@@ -337,6 +337,7 @@ export type ExecutionRunActionResult = Readonly<{
   ok: boolean;
   errorCode?: string;
   error?: string;
+  details?: Pick<ExecutionRunError, 'runtimeIssueV1' | 'uxDiagnostic'>;
   updatedToolResult?: unknown;
   result?: unknown;
 }>;

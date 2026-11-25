@@ -153,6 +153,18 @@ describe('ActionSpec-derived RPC registrar', () => {
         });
     });
 
+    it('preserves public Run Action quota details through RPC projection', () => {
+        const runtimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1,
+            code: 'usage_limit', source: 'usage_limit', usageLimit: { v: 1, quotaScope: 'account',
+                recoverability: 'wait', limitCategory: 'usage_limit', resetAtMs: 1_794_340_800_000, retryAfterMs: null } };
+        const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'usage_limit', error: 'Quota exhausted',
+            details: { runtimeIssueV1, providerBody: 'private body' } });
+        expect(module.unwrapActionResultForRpc('execution.run.action', failure)).toEqual({
+            ok: false, errorCode: 'usage_limit', error: 'Quota exhausted',
+            details: { runtimeIssueV1 },
+        });
+    });
+
     it('keeps only the declared reachability facts at the Action RPC failure sink', () => {
         const busy = { ok: false as const, errorCode: 'effect_in_progress', error: 'effect_in_progress',
             effectAttempted: false, details: { actionOperationId: 'held-owner-compose' } };

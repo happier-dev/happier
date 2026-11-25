@@ -20,6 +20,7 @@ import {
   type ExecutionRunProfileContributionCatalog,
 } from '@/agent/executionRuns/profiles/intentRegistry';
 import { VoiceAgentError, type VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
+import { normalizeVoiceAgentTurnError } from '@/agent/voice/agent/voiceAgentTurnError';
 import { buildExecutionRunProfileStartParams } from './profileStart';
 import { projectExecutionRunPublicState } from './publicState';
 import type {
@@ -36,7 +37,7 @@ import type {
 } from '@/agent/executionRuns/profiles/review/hostActionMaterializer';
 import type { ReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
 import { readRetainedReviewFindings } from '@/agent/reviews/normalize/readRetainedReviewFindings';
-import { readExecutionRunErrorCode } from './errors';
+import { projectExecutionRunError, readExecutionRunErrorCode, readExecutionRunErrorMessage } from './errors';
 import { resolveExecutionRunResumeBackendOptions } from './resolveExecutionRunResumeBackendOptions';
 
 function readNonEmptyString(value: unknown): string | null {
@@ -52,7 +53,7 @@ function backendTargetsEqual(left: BackendTargetRefV1, right: BackendTargetRefV1
       : false;
 }
 
-export async function applyExecutionRunAction(args: Readonly<{
+type ApplyExecutionRunActionArgs = Readonly<{
   runId: string;
   params: ExecutionRunActionParams;
   runs: Map<string, ExecutionRunState>;
@@ -79,7 +80,43 @@ export async function applyExecutionRunAction(args: Readonly<{
   effectiveCallerPermissionMode?: string;
   reviewComments?: ReviewRunCommentService;
   applyReviewNarrationAction?: (actionId: 'review.walkthrough' | 'review.explain_findings', input: unknown) => Promise<ExecutionRunActionResult>;
-}>): Promise<ExecutionRunActionResult> {
+}>;
+
+function projectActionFailure(
+  error: unknown,
+  runId: string,
+  fallbackCode = 'execution_run_failed',
+): ExecutionRunActionResult {
+  if (error instanceof VoiceAgentError) {
+    if (error.code === 'VOICE_AGENT_BUSY') {
+      return { ok: false, errorCode: 'execution_run_busy', error: readExecutionRunErrorMessage(error) };
+    }
+    if (error.code === 'VOICE_AGENT_NOT_FOUND') {
+      return { ok: false, errorCode: 'execution_run_not_found', error: readExecutionRunErrorMessage(error) };
+    }
+  }
+
+  const failure = projectExecutionRunError(normalizeVoiceAgentTurnError(error), { runId });
+  const { runtimeIssueV1, uxDiagnostic } = failure;
+  return {
+    ok: false,
+    errorCode: failure.code === 'execution_run_failed' ? fallbackCode : failure.code,
+    error: failure.message,
+    ...(runtimeIssueV1 || uxDiagnostic ? {
+      details: { ...(runtimeIssueV1 ? { runtimeIssueV1 } : {}), ...(uxDiagnostic ? { uxDiagnostic } : {}) },
+    } : {}),
+  };
+}
+
+export async function applyExecutionRunAction(args: ApplyExecutionRunActionArgs): Promise<ExecutionRunActionResult> {
+  try {
+    return await dispatchExecutionRunAction(args);
+  } catch (error) {
+    return projectActionFailure(error, args.runId);
+  }
+}
+
+async function dispatchExecutionRunAction(args: ApplyExecutionRunActionArgs): Promise<ExecutionRunActionResult> {
   const run = args.runs.get(args.runId);
   if (args.params.actionId === 'review.triage') {
     // A finding's decision lives only in its ReviewComment; the run's result is not rewritten.
@@ -133,15 +170,13 @@ export async function applyExecutionRunAction(args: Readonly<{
           capabilities: { structuredNarration: false }, costConsent, ...(selected ? { profileId: selected.profileId } : {}),
         };
       } catch (error) {
-        return { ok: false, errorCode: readExecutionRunErrorCode(error) ?? 'invalid_input',
-          error: error instanceof Error ? error.message : 'Review round preparation failed' };
+        return projectActionFailure(error, args.runId, 'invalid_input');
       }
       if (!args.reviewComments) return { ok: false, errorCode: 'review_record_unavailable', error: 'Review records are unavailable' };
       let preparedReview: Awaited<ReturnType<ReviewRunCommentService['prepareNewRound']>>;
       try { preparedReview = await args.reviewComments.prepareNewRound(run); }
       catch (error) {
-        return { ok: false, errorCode: readExecutionRunErrorCode(error) ?? 'action_failed',
-          error: error instanceof Error ? error.message : 'Review round preparation failed' };
+        return projectActionFailure(error, args.runId, 'action_failed');
       }
       const { reviewInput, ...prepared } = preparedReview;
       const roundInput = paidSelection
@@ -173,8 +208,7 @@ export async function applyExecutionRunAction(args: Readonly<{
           ...(prepared.comparisonId ? { comparisonId: prepared.comparisonId } : {}) } };
       } catch (error) {
         await args.reviewComments.failUnstartedRound(prepared.reviewRound);
-        return { ok: false, errorCode: readExecutionRunErrorCode(error) ?? 'action_failed',
-          error: error instanceof Error ? error.message : 'Review launch failed' };
+        return projectActionFailure(error, args.runId, 'action_failed');
       }
     }
 
@@ -240,65 +274,47 @@ export async function applyExecutionRunAction(args: Readonly<{
       if (!ctrl || ctrl.kind !== 'voice_agent') {
         return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running' };
       }
-      try {
-        const maxChars = (() => {
-          const v: any = args.params.input ?? null;
-          const raw = Number(v?.maxChars ?? 0);
-          return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : undefined;
-        })();
-        const committed = await args.voiceAgentManager.commit({
-          voiceAgentId: ctrl.voiceAgentId,
-          ...(maxChars ? { maxChars } : {}),
-          ...(args.causalPermissionAuthority
-            ? { causalPermissionAuthority: args.causalPermissionAuthority }
-            : {}),
-        });
-        const updatedResumeHandle = run.retentionPolicy === 'resumable' ? args.voiceAgentManager.getResumeHandle(ctrl.voiceAgentId) : null;
-        if (updatedResumeHandle && run.retentionPolicy === 'resumable') {
-          const latest = args.runs.get(args.runId) ?? null;
-          if (latest && latest.status === 'running') {
-            args.runs.set(args.runId, { ...latest, resumeHandle: updatedResumeHandle });
-          }
+      const maxChars = (() => {
+        const v: any = args.params.input ?? null;
+        const raw = Number(v?.maxChars ?? 0);
+        return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : undefined;
+      })();
+      const committed = await args.voiceAgentManager.commit({
+        voiceAgentId: ctrl.voiceAgentId,
+        ...(maxChars ? { maxChars } : {}),
+        ...(args.causalPermissionAuthority
+          ? { causalPermissionAuthority: args.causalPermissionAuthority }
+          : {}),
+      });
+      const updatedResumeHandle = run.retentionPolicy === 'resumable' ? args.voiceAgentManager.getResumeHandle(ctrl.voiceAgentId) : null;
+      if (updatedResumeHandle && run.retentionPolicy === 'resumable') {
+        const latest = args.runs.get(args.runId) ?? null;
+        if (latest && latest.status === 'running') {
+          args.runs.set(args.runId, { ...latest, resumeHandle: updatedResumeHandle });
         }
-        return { ok: true, result: { commitText: committed.commitText } };
-      } catch (e) {
-        if (e instanceof VoiceAgentError) {
-          if (e.code === 'VOICE_AGENT_BUSY') return { ok: false, errorCode: 'execution_run_busy', error: e.message };
-          if (e.code === 'VOICE_AGENT_NOT_FOUND') return { ok: false, errorCode: 'execution_run_not_found', error: e.message };
-          return { ok: false, errorCode: 'execution_run_failed', error: e.message };
-        }
-        return { ok: false, errorCode: readExecutionRunErrorCode(e) ?? 'execution_run_failed', error: e instanceof Error ? e.message : 'Commit failed' };
       }
+      return { ok: true, result: { commitText: committed.commitText } };
     }
     if (actionId === 'voice_agent.welcome') {
       const ctrl = args.controllers.get(args.runId);
       if (!ctrl || ctrl.kind !== 'voice_agent') {
         return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running' };
       }
-      try {
-        const welcomeText = (() => {
-          const input = args.params.input;
-          const raw: unknown = input && typeof input === 'object' ? Reflect.get(input, 'welcomeText') : undefined;
-          return typeof raw === 'string' ? raw : undefined;
-        })();
-        const welcomed = await args.voiceAgentManager.welcome({
-          voiceAgentId: ctrl.voiceAgentId,
-          ...(welcomeText !== undefined ? { welcomeText } : {}),
-          ...(args.causalPermissionAuthority
-            ? { causalPermissionAuthority: args.causalPermissionAuthority }
-            : {}),
-        });
-        await args.onVoiceAgentWelcomed?.(args.runId, ctrl.transcript.epoch);
-        return { ok: true, result: { assistantText: welcomed.assistantText,
-          ...(welcomed.preparedInstructionsFor ? { preparedInstructionsFor: welcomed.preparedInstructionsFor } : {}) } };
-      } catch (e) {
-        if (e instanceof VoiceAgentError) {
-          if (e.code === 'VOICE_AGENT_BUSY') return { ok: false, errorCode: 'execution_run_busy', error: e.message };
-          if (e.code === 'VOICE_AGENT_NOT_FOUND') return { ok: false, errorCode: 'execution_run_not_found', error: e.message };
-          return { ok: false, errorCode: 'execution_run_failed', error: e.message };
-        }
-        return { ok: false, errorCode: 'execution_run_failed', error: e instanceof Error ? e.message : 'Welcome failed' };
-      }
+      const welcomeText = (() => {
+        const input = args.params.input;
+        const raw: unknown = input && typeof input === 'object' ? Reflect.get(input, 'welcomeText') : undefined;
+        return typeof raw === 'string' ? raw : undefined;
+      })();
+      const welcomed = await args.voiceAgentManager.welcome({
+        voiceAgentId: ctrl.voiceAgentId,
+        ...(welcomeText !== undefined ? { welcomeText } : {}),
+        ...(args.causalPermissionAuthority
+          ? { causalPermissionAuthority: args.causalPermissionAuthority }
+          : {}),
+      });
+      await args.onVoiceAgentWelcomed?.(args.runId, ctrl.transcript.epoch);
+      return { ok: true, result: { assistantText: welcomed.assistantText,
+        ...(welcomed.preparedInstructionsFor ? { preparedInstructionsFor: welcomed.preparedInstructionsFor } : {}) } };
     }
   }
 

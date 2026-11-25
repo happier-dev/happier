@@ -10,6 +10,8 @@ import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol/deployme
 import { WorkflowTargetUnavailableReasonV1Schema } from '@happier-dev/protocol/workflows/workflowTargetUnavailableReasonV1';
 import { TargetedActionRpcRequestV1Schema, listActionSpecRpcRegistrations } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { sanitizeSessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readConnectedServiceUxDiagnosticFromError } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol/actions';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { logger } from '@/ui/logger';
@@ -143,6 +145,13 @@ export function unwrapActionResultForRpc(actionId: ActionId, result: ActionExecu
             readExecutionRunStartRunCreation(result.details),
         )
         : undefined;
+    if (actionId === 'execution.run.action') {
+        const runtimeIssueV1 = sanitizeSessionRuntimeIssueV1(readObjectValue(result.details, 'runtimeIssueV1'));
+        const uxDiagnostic = readConnectedServiceUxDiagnosticFromError(result);
+        if (runtimeIssueV1 || uxDiagnostic) {
+            details = { ...(runtimeIssueV1 ? { runtimeIssueV1 } : {}), ...(uxDiagnostic ? { uxDiagnostic } : {}) };
+        }
+    }
     if (result.errorCode === 'unsupported_action') {
         const scopeFailure = ActionCurrentSessionScopeFailureDetailsV1Schema.safeParse(result.details);
         if (scopeFailure.success) details = scopeFailure.data;
