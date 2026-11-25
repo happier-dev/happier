@@ -2,22 +2,45 @@ import { once } from 'node:events';
 import { readFile, readdir } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
-import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
+import { computeWorkspaceSyncPolicyDigest, createDirectRouteGrantSigningInputV2 } from '@happier-dev/protocol';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import tweetnacl from 'tweetnacl';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { ProjectAccountRowV1Schema, type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { WorkspaceSyncRelationshipCreateResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { WorkspaceSyncRelationshipCreateResultV1Schema, WorkspaceSyncRelationshipTerminateActionOutputV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
 import * as installationStore from '@/daemon/identity/store';
 import { getActiveProjectAccountRowsSnapshot, readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
 import { deriveWorkspaceSyncEndpointId } from '@/workspaces/sync/transport/workspaceSyncBrokerProtocol';
 import { readWorkspaceSyncFinalReadyFactAtPath, writeWorkspaceSyncFinalReadyFact } from '@/workspaces/sync/workspaceSyncFinalReadyFact';
 import { resolveWorkspaceSyncWorkerTarget } from '@/workspaces/sync/workspaceSyncPreparation';
+import { createRequesterWorkspaceSyncFixture } from './createRequesterWorkspaceSyncFixture.testkit';
 import { composeBindChildSourcePhaseTestRuntime } from './createProductionDaemonWorkspaceSyncRuntime.testkit';
 
 const socketIo = vi.hoisted(() => vi.fn());
 vi.mock('socket.io-client', () => ({ io: socketIo }));
+vi.mock('node:fs', async original => {
+  const actual = await original<typeof import('node:fs')>();
+  const { requesterWorkspaceSyncInstallationFilesystemBoundary } = await import('./requesterWorkspaceSyncFilesystem.testkit');
+  return requesterWorkspaceSyncInstallationFilesystemBoundary(actual);
+});
+vi.mock('../../../../../packages/cli-common/src/process/execFileWithDeadline', async original => {
+  const actual = await original<typeof import('../../../../../packages/cli-common/src/process/execFileWithDeadline')>();
+  const { requesterWorkspaceSyncExecBoundary } = await import('./requesterWorkspaceSyncProcess.testkit');
+  return { ...actual, execFileWithDeadline: (...args: Parameters<typeof actual.execFileWithDeadline>) =>
+    requesterWorkspaceSyncExecBoundary(actual, args) };
+});
+vi.mock('node:child_process', async original => {
+  const actual = await original<typeof import('node:child_process')>();
+  const { spawnRequesterWorkspaceSyncProcessBoundary } = await import('./requesterWorkspaceSyncProcess.testkit');
+  return { ...actual, spawn: (command: string, args: readonly string[], options: import('node:child_process').SpawnOptions) =>
+    spawnRequesterWorkspaceSyncProcessBoundary(actual, command, args, options, false) };
+});
 
 await import('@/api/api');
 
@@ -184,4 +207,98 @@ it('recovers a Watching Fresh copy on native redial, ends its writer loan on Sto
     finish();
     await pending;
   }
+
+  phase = 'settle the Fresh-copy runtimes before exercising the shared source';
+  await fixture.parent.stop();
+  await fixture.targetParent!.stop();
+  identity.mockRestore();
+  if (process.platform === 'linux') {
+    await exerciseSharedSourceLifecycle(value => { phase = value; });
+  }
 }, 60_000);
+
+async function exerciseSharedSourceLifecycle(setPhase: (value: string) => void) {
+  setPhase('construct the shared source and target runtimes');
+  const actualSocket = await vi.importActual<typeof import('socket.io-client')>('socket.io-client');
+  socketIo.mockImplementation(actualSocket.io);
+  const signingKey = tweetnacl.sign.keyPair();
+  const setup = await createRequesterWorkspaceSyncFixture({
+    role: 'use', isolationOff: true, gitReplica: 'existing', remoteTarget: true, remoteSeed: true,
+    originalActionHomeHttp: true, socketIo, allowRelationshipAction: true, allowRelationshipControls: true,
+    nativeCarrierHome: {
+      resolveTrustRoots: () => [{ keyId: 'shared-home', publicKey: Buffer.from(signingKey.publicKey).toString('base64url') }],
+      readTargetMachine: async id => ({ id, operationProtocolCapabilitiesRevision: 1,
+        operationProtocolCapabilities: { irohMachineEndpoint: { protocolVersions: [1],
+          endpointId: (id === 'target-parent' ? 'b' : 'a').repeat(64), directAddresses: ['127.0.0.1:7777'] } } }),
+      mintGrant: async ({ kind, ttlMs, ...binding }) => {
+        const now = Date.now();
+        const payload = { ...binding, grantId: 'shared-restart-grant', accountId: 'member-a', iat: now, exp: now + ttlMs,
+          aud: 'happier-daemon-route-grant' as const, proofKind: kind };
+        return { payload, signature: { keyId: 'shared-home', alg: 'Ed25519' as const,
+          valueBase64Url: Buffer.from(tweetnacl.sign.detached(Buffer.from(createDirectRouteGrantSigningInputV2(payload)),
+            signingKey.secretKey)).toString('base64url') } };
+      },
+      admitNativeTunnel: async ({ handshake }) => {
+        if (handshake.flow !== 'workspace_sync' || handshake.initiator.kind !== 'machine') {
+          throw new Error('Shared Sync carrier sent the wrong handshake');
+        }
+        return setup.fixture.targetParent!.acquireWorkspaceSyncMachineIngress({
+          operationId: handshake.operationId, sourceMachineId: handshake.initiator.machineId,
+          targetMachineId: handshake.target.machineId, actorAccountId: handshake.accountId,
+        });
+      },
+    },
+  });
+  setPhase('create a Keep-updated Git Replica under Use on the shared source');
+  runScmExecutable(setup.sourcePath, 'git', ['clone', '-q', '.', setup.targetPath]);
+  const created = await setup.executeNativeRelationshipAction();
+  expect(created, JSON.stringify({ result: created, refusals: setup.homeActionRefusals })).toMatchObject({ ok: true, result: { created: true } });
+  if (!created.ok) throw new Error('The shared Git Replica was refused');
+  const { relationshipId } = WorkspaceSyncRelationshipCreateResultV1Schema.parse(created.result);
+  const controller = setup.fixture.parent.workspaceSync.controller;
+  const endpoint = deriveWorkspaceSyncEndpointId(relationshipId, 'beta');
+  const openNativeStream = async () => {
+    const pipe = await setup.fixture.openSourceNativeStream(endpoint);
+    const echo = once(pipe.stream, 'data');
+    pipe.stream.write('shared-native-cycle');
+    expect((await echo)[0]).toEqual(Buffer.from('shared-native-cycle'));
+    return pipe;
+  };
+  setPhase('open the first native writer stream under Use');
+  const original = await openNativeStream();
+  setPhase('read the retained shared target before restart');
+  const read = { relationshipId, side: 'beta' as const, path: 'payload.txt', maxBytes: 128 };
+  await expect(controller.readFile(read)).resolves.toMatchObject({ status: 'text', text: 'before quiesce' });
+  setPhase('redial the restarted target and retain Watching and signed reads under Use');
+  await setup.restartTargetParent();
+  await original.done;
+  const recovered = await openNativeStream();
+  expect(await controller.get(relationshipId)).toMatchObject({ state: 'watching' });
+  await expect(controller.readFile(read)).resolves.toMatchObject({ status: 'text', text: 'before quiesce' });
+  setPhase('Stop the shared link from the person’s target using the CLI');
+  const cli = createCliActionExecutorFromCredentials({
+    credentials: { ...setup.credentials, credentialProvenance: 'stored_session' },
+    externalActionClient: true, serverId: setup.installed.serverId,
+    serverIdentityId: setup.installed.homeServerIdentityId, serverApiUrl: setup.installed.serverHttpBaseUrl,
+    machineId: setup.fixture.targetRef.machineId,
+    actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({
+      actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'workspace.sync.relationship.terminate': ['cli'] } },
+    }) }),
+  });
+  const control = await cli.execute('workspace.sync.relationship.terminate', {
+    relationshipId, controllerMachineId: setup.fixture.targetRef.machineId,
+  }, { surface: 'cli', authority: 'present_user' });
+  expect(control, JSON.stringify({ result: control, routes: setup.homeActionRoutes, refusals: setup.homeActionRefusals })).toMatchObject({ ok: true });
+  if (!control.ok) throw new Error('The shared Sync Stop was refused');
+  expect(WorkspaceSyncRelationshipTerminateActionOutputV1Schema.parse(control.result)).toEqual({
+    v: 1, relationshipId, terminated: true,
+  });
+  expect(setup.homeActionRequests.at(-1)?.placement.machineId).toBe(setup.installed.machineId);
+  await recovered.done;
+  await expect(controller.readFile(read)).rejects.toMatchObject({ code: 'relationship_not_ready' });
+  await expect(setup.fixture.targetParent!.acquireWorkspaceSyncMachineIngress({ operationId: relationshipId,
+    sourceMachineId: setup.installed.machineId, targetMachineId: setup.fixture.targetRef.machineId,
+    actorAccountId: 'member-a',
+  })).rejects.toMatchObject({ code: 'peer_unavailable' });
+  expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+}

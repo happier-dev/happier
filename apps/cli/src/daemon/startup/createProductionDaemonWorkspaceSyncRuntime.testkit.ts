@@ -28,7 +28,7 @@ import { resolveMergedContributionRegistry } from '@/plugins/projection/registry
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createDaemonPluginDevelopmentRootsOwner } from '@/plugins/daemon/developmentRoots';
-import { readProjectAccountRows, withdrawActiveProjectAccountRowsSnapshot,
+import { readProjectAccountRows, subscribeActiveProjectAccountRowsSnapshot, withdrawActiveProjectAccountRowsSnapshot,
   type ActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { createWorkspaceRootOwnershipManager } from '@/workspaces/sync/workspaceSyncRootOwnership';
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
@@ -238,6 +238,8 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   prepareActiveServerDirectory?: (activeServerDir: string) => Promise<void>;
   /** Exercise the real Account row store through the supplied HTTP boundary. */
   projectRowsFromHttp?: boolean;
+  /** Preserve installed projections per simulated process when two Accounts share this VM. */
+  isolateInstalledProjectRows?: boolean;
   /** Home finite-policy boundary for real reservation/dependency scenarios. */
   workerRunAtMost?: number;
   serverId?: string;
@@ -583,8 +585,18 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
       return nativeSummary(next);
     };
     let brokerClient: WorkspaceSyncBrokerClient | undefined;
+    let installedSnapshot: ActiveProjectAccountRowsSnapshot | null = null;
     const overrides: Partial<ProductionDaemonWorkspaceSyncFactories> = {
       ...(!options.projectRowsFromHttp ? { getProjectSnapshot: () => localSnapshot, subscribeProjectSnapshot: () => () => undefined } : {}),
+      ...(options.isolateInstalledProjectRows ? {
+        getProjectSnapshot: () => installedSnapshot,
+        subscribeProjectSnapshot: listener => subscribeActiveProjectAccountRowsSnapshot((_previous, next) => {
+          if (!next || next.scopeKey !== installedSnapshot?.scopeKey) return;
+          const previous = installedSnapshot;
+          installedSnapshot = next;
+          listener(previous, next);
+        }),
+      } satisfies Pick<ProductionDaemonWorkspaceSyncFactories, 'getProjectSnapshot' | 'subscribeProjectSnapshot'> : {}),
       resolveRootOwnershipDirectory: () => lockDirectory,
       stopRetainedNativeProcesses: async () => undefined,
       // Retain the real daemon/controller/Mutagen adapter; substitute only artifact and process boundaries.
@@ -613,7 +625,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
               brokerInstanceId: broker.brokerInstanceId, launchNonce: broker.launchNonce,
               launchSecret: input.launchSecret, sidecarPid: process.pid });
             brokerClient = client;
-            if (options.loopbackWorkspaceSync && machineId === sourceRef.machineId) sourceBrokerClient = client;
+            if ((options.loopbackWorkspaceSync || options.nativeCarrierHome) && machineId === sourceRef.machineId) sourceBrokerClient = client;
             client.onCommand(async (request, signal) => {
               if (request.t === 'resume') {
                 const session = sessions.get(request.sessionIdentifier);
@@ -769,7 +781,8 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     const production = await runWithServerHttpBaseUrl(localHomeTarget.applicationUrl, async () => {
       if (options.projectRowsFromHttp) {
         options.onCompositionPhase?.(`Project row read for ${machineId}`);
-        await readProjectAccountRows({ credentials: machineCredentials, serverId: localProfileId, publication: 'installed' });
+        installedSnapshot = await readProjectAccountRows({
+          credentials: machineCredentials, serverId: localProfileId, publication: 'installed' });
       }
       options.onCompositionPhase?.(`Production runtime construction for ${machineId}`);
       await options.prepareActiveServerDirectory?.(productionInput.activeServerDir);

@@ -1,3 +1,6 @@
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import axios from 'axios';
@@ -48,7 +51,7 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { WorkspaceSyncSourceWriterTargetRoutingV1Schema, SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
-import { WorkspaceSyncRelationshipCreateResultV1Schema, WorkspaceSyncRelationshipsListRpcResultV1Schema, SessionHandoffWorkspaceCaptureResultV3Schema, WorkspaceSyncTargetBootstrapPrepareV1Schema, WorkspaceSyncTargetBootstrapPrepareResultV1Schema, WorkspaceSyncTargetBootstrapReleaseV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { WorkspaceSyncRelationshipCreateResultV1Schema, WorkspaceSyncRelationshipFlushActionOutputV1Schema, WorkspaceSyncRelationshipsListRpcResultV1Schema, SessionHandoffWorkspaceCaptureResultV3Schema, WorkspaceSyncTargetBootstrapPrepareV1Schema, WorkspaceSyncTargetBootstrapPrepareResultV1Schema, WorkspaceSyncTargetBootstrapReleaseV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { WorkspaceSyncController } from '@/workspaces/sync/workspaceSyncController';
 import { deriveWorkspaceSyncEndpointId } from '@/workspaces/sync/transport/workspaceSyncBrokerProtocol';
 import { computeWorkspaceSyncRootFingerprint } from '@/workspaces/sync/workspaceSyncTargetBootstrap';
@@ -390,6 +393,33 @@ it.skipIf(process.platform !== 'linux').each([
   expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { created: true } });
   expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
   expect(await readdir(join(setup.targetPath, '.git'))).toContain('HEAD');
+});
+
+it.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)(
+  'flushes an existing %s Git Replica from the CLI', async role => {
+  executionBoundary.member = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role, isolationOff: true, gitReplica: 'existing',
+    remoteTarget: true, remoteSeed: true, originalActionHomeHttp: true, socketIo, allowRelationshipAction: true, allowRelationshipControls: true });
+  runScmExecutable(setup.sourcePath, 'git', ['clone', '-q', '.', setup.targetPath]);
+  const created = await setup.executeNativeRelationshipAction();
+  expect(created, JSON.stringify({ result: created, refusals: setup.homeActionRefusals })).toMatchObject({ ok: true, result: { created: true } });
+  if (!created.ok) throw new Error('Git Replica was not created');
+  const result = WorkspaceSyncRelationshipCreateResultV1Schema.parse(created.result);
+  const executor = createCliActionExecutorFromCredentials({
+    credentials: { ...setup.credentials, credentialProvenance: 'stored_session' }, externalActionClient: true,
+    serverId: setup.installed.serverId, serverIdentityId: setup.installed.homeServerIdentityId,
+    serverApiUrl: setup.installed.serverHttpBaseUrl,
+    actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({
+      actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'workspace.sync.relationship.flush': ['cli'] } },
+    }) }) });
+  const control = await executor.execute('workspace.sync.relationship.flush', { relationshipId: result.relationshipId,
+    controllerMachineId: setup.installed.machineId }, { surface: 'cli', authority: 'present_user' });
+  expect(control, JSON.stringify({ result: control, routes: setup.homeActionRoutes, refusals: setup.homeActionRefusals })).toMatchObject({ ok: true });
+  if (!control.ok) throw new Error('The Git Replica flush was refused');
+  expect(WorkspaceSyncRelationshipFlushActionOutputV1Schema.parse(control.result)).toMatchObject({
+    relationshipId: result.relationshipId,
+  });
+  expect(setup.homeActionRequests.at(-1)?.placement.machineId).toBe(setup.installed.machineId);
 });
 
 it.skipIf(process.platform !== 'linux').each(['foreign destination', 'foreign Project'] as const)(
