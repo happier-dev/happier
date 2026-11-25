@@ -4,6 +4,9 @@ import { decodeBase64 } from 'privacy-kit';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { AccountSettings, AccountEncryptionCurrentnessResponse, SessionFollowPendingObservationV1,
     SessionFollowUpdateEnvelopeV1, V2SessionRecord, WorkerUpdateV1 } from '@happier-dev/protocol';
+import { buildDiscussionMutationRequestBodyV1 } from '@happier-dev/protocol/discussions/api';
+import { deriveSessionFollowWakeEventLocalIdV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
+import { createDiscussion } from '@/app/discussions/mutations';
 import type { SessionFollowObservePendingRequestV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 import { SESSION_FOLLOW_WAKE_EVENT_MESSAGE, SessionFollowAcknowledgeRequestV1Schema, SessionFollowAcknowledgeResponseV1Schema, TranscriptRawAgentEventV1Schema } from '@happier-dev/protocol';
 import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
@@ -65,7 +68,7 @@ describe('session → Follow WorkerUpdate acceptance', () => {
     let harness: LightSqliteHarness;
     const cleanups: (() => void | Promise<void>)[] = [];
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-follow-stalled-', initAuth: true,
-        env: { HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED: 'true' } }); }, 180_000);
+        env: { HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED: 'true', HAPPIER_FEATURE_SESSIONS_CONVERSATIONS__ENABLED: 'true' } }); }, 180_000);
     afterAll(async () => { await harness?.close(); });
     afterEach(async () => {
         for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
@@ -426,7 +429,8 @@ describe('session → Follow WorkerUpdate acceptance', () => {
             let originalReconcile = makeReconciler();
             const restart = () => { originalReconcile = makeReconciler(); };
             const dispatchReceiverPending = async (observations?: SessionFollowPendingObservationV1[]) => dispatcher.dispatchReceiverRange({
-                observations: observations ?? (await observe()).observations, destinationSessionId: destination.id,
+                observations: (observations ?? (await observe()).observations).filter(row => 'sourceSessionId' in row),
+                destinationSessionId: destination.id,
             });
             const sourceListeners = new Set<(sessionId: string | null, receiver?: true, availabilityChanged?: boolean) => void>();
             let requesterCurrent = true;
@@ -1484,11 +1488,44 @@ describe('session → Follow WorkerUpdate acceptance', () => {
         expect(await db.sessionMessage.count({ where: { sessionId: f.destination.id, acceptedTurnId: 'receiver-turn' } })).toBe(1);
     });
 
-    it('rejoins accepted original custody after a pre-commit ACK failure and leaves the unrepresented suffix in order', async () => {
+    it.each([false, true])('rejoins accepted original custody after a pre-commit ACK failure and leaves the unrepresented suffix in order (B5 active: %s)', async b5 => {
         const f = await fixture();
         await f.follow();
         const original = await f.originals();
         await f.appendReport('Occurrence A');
+        const addressed = b5 ? await (async () => {
+            const content = { v: 1 as const, parts: [
+                { t: 'mention' as const, participant: { kind: 'session' as const, sessionId: f.destination.id } },
+                { t: 'text' as const, text: 'A separate addressed question' },
+            ] };
+            const request = buildDiscussionMutationRequestBodyV1({
+                kind: 'create', creationLocalId: randomUUID(), titleContent: { t: 'plain', v: { v: 1, title: 'B5 addressing' } },
+                participants: [{ kind: 'session', sessionId: f.destination.id }],
+                firstMessage: { localId: randomUUID(), content: { t: 'plain', v: content }, authoredContent: content,
+                    mentionedAccountIds: [], mentionedSessionIds: [f.destination.id] },
+            });
+            const created = await createDiscussion({ actorAccountId: f.account.id, authentication: f.authentication, request });
+            if (!created.ok) throw new Error(created.error);
+            const message = created.value.firstMessage;
+            if (!message) throw new Error('The addressed Discussion had no committed message');
+            const { observations } = await f.observe();
+            const discussion = observations.find(row => !('sourceSessionId' in row) && 'addressing' in row);
+            expect(discussion).toMatchObject({ addressing: { messageId: message.id, participantSessionId: f.destination.id } });
+            const observation = observations.find(row => 'sourceSessionId' in row && row.relation === 'manager');
+            if (!observation || !('sourceSessionId' in observation) || observation.relation !== 'manager' || 'kind' in observation)
+                throw new Error('Expected the current manager observation');
+            const wakeObservations = [{ policy: observation.policy, sourceSessionId: f.source.id,
+                relation: 'manager' as const, attachedAt: observation.attachedAt, expected: observation.delivered, consumed: observation.observed }];
+            const wakeAdmission = { observations: wakeObservations, eventLocalId: deriveSessionFollowWakeEventLocalIdV1({
+                destinationSessionId: f.destination.id, publisherGeneration: '1', observations: wakeObservations,
+            }) };
+            const input = await db.sessionMessage.findFirstOrThrow({ where: { sessionId: f.source.id, seq: 1 } });
+            await db.sessionMessage.update({ where: { id: input.id }, data: {
+                autonomousExchangeState: { v: 1, observedStarts: 5, pauseAtStarts: null, stopped: false, afterTurns: 5 },
+            } });
+            expect((await f.observe({ wakeAdmission })).wakeAdmission).toMatchObject({ status: 'held', code: 'autonomous_check_in' });
+            return discussion;
+        })() : null;
         const first = await original.prepare('natural');
         f.ackTransport.beforeAcknowledge = async () => { throw new Error('ACK transport failed before progress transaction'); };
         await original.accept(first!);
@@ -1523,7 +1560,7 @@ describe('session → Follow WorkerUpdate acceptance', () => {
             expect(next?.representedFollowLocalInputIds).toEqual([row.localId]);
             await original.accept(next!);
         }
-        expect((await f.observe()).observations).toEqual([]);
+        expect((await f.observe()).observations).toEqual(addressed ? [addressed] : []);
         expect(await original.prepare('natural')).toBeNull();
         expect(await db.sessionMessage.count({ where: { sessionId: f.destination.id, acceptedTurnId: 'receiver-turn' } })).toBe(4);
     });
