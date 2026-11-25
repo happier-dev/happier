@@ -79,6 +79,23 @@ describe('resolveLaunchProfileAuthoringIntent', () => {
             });
     });
 
+    it('applies a slim profile’s exact brokered Team model selection', () => {
+        const profile = LaunchProfileV2Schema.parse({
+            v: 2, id: 'work', name: 'Work', createdAt: 1, updatedAt: 2,
+            preferredAgentTargetKey: 'agent:claude',
+            preferredModelSelection: { v: 2, updatedAt: 2, ref: {
+                source: 'team_resource', teamId: 'team', resourceId: 'resource', expectedResourceRevision: 3,
+                deliveryMode: 'brokered', agentTargetKey: 'agent:claude', modelId: 'model-a',
+            } },
+        });
+        expect(resolveLaunchProfileAuthoringIntent({ profileId: 'work', profiles: [profile], migration: undefined }))
+            .toEqual({
+                profileId: 'work',
+                preferredAgentTargetKey: 'agent:happier.agent.claude/claude',
+                modelSelection: profile.preferredModelSelection,
+            });
+    });
+
     it('normalizes placeholders to Default Environment and completed providers to their exact model ref', () => {
         expect(resolveLaunchProfileAuthoringIntent({
             profileId: 'anthropic', profiles: [],
@@ -114,7 +131,7 @@ describe('resolveLaunchProfileAuthoringIntent', () => {
                 modelSelectionOrigin: 'implicit_default', modelSelection: providerRef,
             }]),
         });
-        expect(result.modelSelection?.ref.providerConnectionId).toBe('pc_deepseek');
+        expect(result.modelSelection?.ref).toMatchObject({ providerConnectionId: 'pc_deepseek' });
     });
 
     it('does not promote a pre-provenance DeepSeek outcome into executable authoring intent', () => {

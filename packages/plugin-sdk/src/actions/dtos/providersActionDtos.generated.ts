@@ -8452,6 +8452,48 @@ export type ProvidersActionResultById = {
                     description?: string | undefined;
                     preferredAgentTargetKey?: string | undefined;
                     preferredModelSelection?: undefined | {
+                        ref: {
+                            source: 'account_provider_connection';
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
+                            modelId: string;
+                        } | {
+                            source: 'native';
+                            agentTargetKey: string;
+                            modelId: string;
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            teamId: string;
+                            expectedResourceRevision: number;
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            agentTargetKey: string;
+                            modelId: string;
+                            nativeDelivery?: undefined | {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        };
+                        v: 2;
+                        updatedAt: number;
+                    } | {
                         v: 1;
                         ref: {
                             agentTargetKey: string;

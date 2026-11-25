@@ -8685,6 +8685,15 @@ content-free `connectedServices` selection for explicit reuse; a missing field
 means unavailable selection evidence, not native authentication. Pool reads and
 inheritance preserve the pool id without pinning its current member.
 
+In unreleased 0.3, `launch_profiles.create` and `launch_profiles.save` accept the
+same model selection in `profile.preferredModelSelection` that
+`session.spawn_new` accepts in `modelSelection`. For a brokered Team model, use
+`v: 2` with the exact Team model reference, including `source: 'team_resource'`
+and `deliveryMode: 'brokered'`. To use the saved preference, pass the Profile's
+`profileId` to `session.spawn_new` and omit the explicit model choice. Start
+admits the Team selection against the caller's current Team access and the
+chosen Machine. An explicit model choice takes precedence.
+
 A Session `configuration` is an optional full snapshot. Its `mode`, `model` and
 `permissionIntent` each carry `{ value, updatedAtMs }`; unset values are `null`.
 Its `options` map carries `{ value, updatedAtMs }` for each option id. Model values

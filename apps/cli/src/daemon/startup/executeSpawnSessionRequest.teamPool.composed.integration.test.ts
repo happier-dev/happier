@@ -202,7 +202,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
   afterEach(async () => { await harness?.close(); });
   afterAll(async () => { await pluginReloadController.shutdown(); });
 
-  const runJourney = async (brokerOnly: boolean, onTestFailed: TestContext['onTestFailed'], resumeOnly = false, uiAuthoring = false,
+  const runJourney = async (brokerOnly: boolean, onTestFailed: TestContext['onTestFailed'], resumeOnly = false, uiAuthoring: boolean | 'profile' = false,
     startupOutcomes?: readonly ('exited' | 'acknowledged' | 'misbound')[], pendingRestart = false, preRunnerRefusalOnly = false) => withTempHappyCliEntrypoint(async entrypoint => {
     let phase = 'setup';
     let runnerFailure: string | null = null;
@@ -440,6 +440,21 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
       app.get('/v1/account/profile', async () => AccountProfileResponseSchema.parse({ id: recipient.id }));
       app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ mode: 'plain' }));
       app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: {} }, version: 1 }));
+      const profileId = 'team-model-profile';
+      let profileRows: unknown[] = [];
+      if (uiAuthoring === 'profile') {
+        app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
+        app.get('/v1/account/entity-rows/profiles', async () => ({ status: 'listed', rows: profileRows,
+          nextCursor: null, complete: true, referenceGuardRevision: 1, transferControl: { status: 'absent' }, diagnostics: [] }));
+        app.get('/v1/account/entity-rows/profiles/reference-guard', async () => ({ status: 'ready', revision: 1 }));
+        app.get('/v1/account/entity-rows/profiles/transfer', async () => ({ status: 'absent' }));
+        app.get('/v1/artifacts', async () => ({
+          items: [], hasUnclassified: false, coverage: { status: 'complete', unclassifiedCount: 0 },
+        }));
+        app.get('/v1/account/authoring-memory/lastUsedProfile', async () => ({
+          status: 'present', revision: 1, content: { t: 'plain', v: null },
+        }));
+      }
       app.get('/v1/account/entity-rows/connected-accounts/purposes', async () => ConnectedAccountCatalogRowReadResponseV1Schema.parse({
         status: 'present', revision: 1, content: { t: 'plain', v: emptyConnectedAccountCatalogRecordV1('purposes') },
       }));
@@ -503,6 +518,19 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
         const offered = resources.flatMap(row => row.providerModels).find(row => row.descriptor.id === 'gpt-5.6-luna');
         expect(offered, JSON.stringify(resources)).toBeDefined();
         if (!offered) throw new Error('Home did not offer the source gpt-5.6-luna row');
+        if (uiAuthoring === 'profile') {
+          const profile = { v: 2, id: profileId, name: 'Team model', createdAt: 1, updatedAt: 1,
+            preferredAgentTargetKey: worker.agentTargetKey,
+            preferredModelSelection: { v: 2, updatedAt: 1, ref: {
+              source: 'team_resource', teamId: team.id, resourceId: resource.id,
+              expectedResourceRevision: resource.revision, deliveryMode: 'brokered',
+              agentTargetKey: worker.agentTargetKey, modelId: offered.descriptor.id,
+            } } };
+          profileRows = [{ id: profileId, revision: 1, content: { t: 'plain', v: {
+            v: 1, id: profileId, definition: { kind: 'inline', profile },
+            enabled: true, promptStack: [], secretBindings: {},
+          } } }];
+        }
         if (brokerOnly) {
           phase = 'catalog:broker-open';
           const session = await db.session.create({ data: { accountId: recipient.id, tag: crypto.randomUUID(),
@@ -653,11 +681,15 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
             const metadata = attach.snapshot.ownerMetadata ? projectSessionOwnerCompatibilityViewV1({
               sharedMetadata: attach.snapshot.metadata, ownerMetadata: attach.snapshot.ownerMetadata,
             }) : attach.snapshot.metadata;
-            // The daemon commits immutable birth intent; the host runner
-            // publishes modelSelectionIntentV1 later during metadata startup.
-            expect(metadata.sessionCreationCorrespondenceV1?.recipe.modelSelection).toMatchObject({ v: 2,
-              ref: { source: 'team_resource', teamId: team.id, resourceId: resource.id, expectedResourceRevision: resource.revision,
-                deliveryMode: 'brokered', agentTargetKey: worker.agentTargetKey, modelId: offered.descriptor.id } });
+            const recipe = metadata.sessionCreationCorrespondenceV1?.recipe;
+            if (uiAuthoring === 'profile') {
+              // The birth recipe retains authored intent for creation-key replay.
+              expect(recipe).toMatchObject({ profileId, modelSelection: null });
+            } else {
+              expect(recipe?.modelSelection).toMatchObject({ v: 2,
+                ref: { source: 'team_resource', teamId: team.id, resourceId: resource.id, expectedResourceRevision: resource.revision,
+                  deliveryMode: 'brokered', agentTargetKey: worker.agentTargetKey, modelId: offered.descriptor.id } });
+            }
             expect(attach.snapshot.acceptedTeamCredentialBinding).toMatchObject({ expectedResourceRevision: resource.revision });
           }
           // Replace socket delivery only: the real Home presence owner admits
@@ -897,7 +929,14 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
           readAcceptedBindingLogs = () => acceptedBindingLogs;
           const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
             sessionSpawnDirectTargetTransport: createMachineSessionDirectTargetTransport({ machineId: worker.machineId, spawnLifecycleHandler: handler }) });
-          const authoredSpawn = uiAuthoring ? await (async () => {
+          const authoredSpawn = uiAuthoring === 'profile' ? {
+            creationKey: 'team-pool-profile',
+            executionTarget: { serverId: configuration.activeServerId, machineId: worker.machineId },
+            directory: { kind: 'path', path: directory },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'acme.managed-run', localId: 'agent' } },
+            profileId,
+            initialInput: { text: 'TEAM_POOL_NATIVE_PROMPT' },
+          } : uiAuthoring ? await (async () => {
             let authoring: Parameters<typeof useNewSessionAuthoringState>[0] = {
               automationDraft: DEFAULT_NEW_SESSION_AUTOMATION_DRAFT, automationFeatureEnabled: false,
               selectedMachineId: null, selectedMachine: null, targetServerId: null, selectedPath: directory, directoryKind: 'path',
@@ -931,11 +970,11 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
                 initialMessage: 'TEAM_POOL_NATIVE_PROMPT' }));
             } finally { await hook.unmount(); }
           })() : null;
-          if (uiAuthoring) expect(authoredSpawn?.teamCredentialBindings).toEqual([{
+          if (uiAuthoring === true) expect(authoredSpawn).toMatchObject({ teamCredentialBindings: [{
             v: 1, slot: { kind: 'provider_model' }, teamId: team.id, resourceId: resource.id,
             expectedResourceRevision: resource.revision, deliveryMode: 'brokered',
             providerModelSelection: { agentTargetKey: worker.agentTargetKey, modelId: offered.descriptor.id },
-          }]);
+          }] });
           if (preRunnerRefusalOnly) {
             // Enter at the admitted daemon request. Home must produce the row
             // and its accepted Team binding before the OS refuses launch.
@@ -1268,4 +1307,6 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
     ({ onTestFailed }) => runJourney(false, onTestFailed, true, false, undefined, true));
   it('preserves a UI-authored Team source through submit, daemon spawn, persisted binding and brokered inference',
     ({ onTestFailed }) => runJourney(false, onTestFailed, false, true));
+  it('starts from a saved Profile through the persisted binding and brokered inference',
+    ({ onTestFailed }) => runJourney(false, onTestFailed, false, 'profile'));
 });

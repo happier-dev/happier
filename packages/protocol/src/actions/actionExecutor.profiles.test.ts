@@ -80,6 +80,24 @@ async function artifactEditStore() {
 }
 
 describe('Profile entity Actions', () => {
+  it('creates and reads an inline Profile with its exact brokered Team model source', async () => {
+    const store = catalogStore();
+    const executor = createActionExecutor({
+      profileActionExecute: createProfileActionExecuteV1({ operations: store.operations }),
+    });
+    const preferredModelSelection = {
+      v: 2, updatedAt: 2,
+      ref: { source: 'team_resource', agentTargetKey: 'agent:happier.agent.codex/codex',
+        modelId: 'team-model', resourceId: 'resource-1', teamId: 'team-1', expectedResourceRevision: 4,
+        deliveryMode: 'brokered' },
+    } as const;
+    const profile = { ...authored, preferredAgentTargetKey: preferredModelSelection.ref.agentTargetKey, preferredModelSelection };
+    expect(await executor.execute('launch_profiles.create', { profile, expectedRevision: 'absent' }, context))
+      .toMatchObject({ ok: true, result: { status: 'updated', id: profile.id } });
+    expect(await executor.execute('launch_profiles.read', { id: profile.id }, context))
+      .toMatchObject({ ok: true, result: { profile: { preferredModelSelection } } });
+  });
+
   it('F8 edits only the captured private Profile stack through Actions and refuses a stale revision', async () => {
     const store = catalogStore();
     const neighbor = { id: 'skill', ref: { kind: 'bundle' as const, artifactId: 'skill-artifact' }, enabled: true,

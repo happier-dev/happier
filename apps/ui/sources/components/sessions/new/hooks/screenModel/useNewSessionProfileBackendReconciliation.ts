@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { AgentSessionModeDescriptor } from '@happier-dev/agents';
 import { type PersistedBackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 import type { MachineAgentsSnapshot } from '@/agents/machineAgents/machineAgentInventoryStore';
@@ -35,9 +35,9 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
     sessionModeDescriptor?: AgentSessionModeDescriptor | null;
     resolveProfileAuthoringIntent?: (profileId: string) => Readonly<{
         preferredAgentTargetKey: string | null;
-        modelSelection: SessionModelSelectionV1 | null;
+        modelSelection: SessionModelSelection | null;
     }>;
-    setModelSelectionForBackendTarget?: (backendTargetKey: string, selection: SessionModelSelectionV1 | null) => void;
+    setModelSelectionForBackendTarget?: (backendTargetKey: string, selection: SessionModelSelection | null) => void;
 }>): Readonly<{
     selectProfile: (profileId: string) => void;
 }> {

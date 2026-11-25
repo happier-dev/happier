@@ -7,7 +7,7 @@ import {
   normalizeBackendTargetKeyV2Input,
 } from '../../backends/targets/backendTargetRefV2.js';
 import { CodingPromptBehaviorOverridesV1Schema } from '../../prompts/codingPromptBehaviorV1.js';
-import { SessionModelSelectionV1Schema } from '../../providers/selection/v1.js';
+import { SessionModelSelectionSchema } from '../../providers/selection/schemas.js';
 import { LaunchProfilePlacementPreferenceV1Schema, LaunchProfileCheckoutPreferenceV1Schema } from '../launchPreferencesV1.js';
 import { SESSION_PERMISSION_MODES } from '../../sessions/metadata/sessionPermissionModes.js';
 import { EnvironmentVariableSchema, EnvVarRequirementSchema } from '../environmentVariables.js';
@@ -27,7 +27,7 @@ export const LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1 = Object.freeze(new Set([
   'GEMINI_API_KEY', 'GEMINI_MODEL', 'GOOGLE_GENAI_USE_VERTEXAI',
 ]));
 
-const LaunchProfileModelSelectionV1Schema = lazyZodSchema(() => (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((value) => {
+const LaunchProfileModelSelectionSchema = lazyZodSchema(() => (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const record = value as Record<string, unknown>;
   const ref = record.ref;
@@ -41,7 +41,7 @@ const LaunchProfileModelSelectionV1Schema = lazyZodSchema(() => (<I extends z.co
       ),
     },
   };
-}), SessionModelSelectionV1Schema));
+}), SessionModelSelectionSchema));
 
 export {
   LaunchProfilePlacementPreferenceV1Schema, LaunchProfileCheckoutPreferenceV1Schema,
@@ -61,7 +61,7 @@ export const LaunchProfileV2Schema = lazyZodSchema(() => z.strictObject({
   defaultPersistenceModeByTargetKey: z._default(z.record(BackendTargetKeyV2InputSchema, z.enum(['persisted', 'direct'])), {}),
   compatibilityByTargetKey: z._default(z.record(BackendTargetKeyV2InputSchema, z.boolean()), {}),
   preferredAgentTargetKey: z.optional(BackendTargetKeyV2InputSchema),
-  preferredModelSelection: z.optional(LaunchProfileModelSelectionV1Schema),
+  preferredModelSelection: z.optional(LaunchProfileModelSelectionSchema),
   placement: z.optional(LaunchProfilePlacementPreferenceV1Schema),
   checkout: z.optional(LaunchProfileCheckoutPreferenceV1Schema),
   codingPromptBehaviorOverrides: z.optional(CodingPromptBehaviorOverridesV1Schema),

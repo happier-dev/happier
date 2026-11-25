@@ -51,9 +51,11 @@ export function SlimProfileRoutingFields(props: Readonly<{
         agentId: selectedEntry?.builtInAgentId ?? selectedEntry?.catalogAgentId ?? null,
         machineId: props.machineId,
         serverId: props.serverId,
-        selected: props.preferredModelSelection?.ref ?? null,
+        selected: props.preferredModelSelection?.v === 1 ? props.preferredModelSelection.ref : null,
         title: preferredModelFieldLabel,
-        fallbackLabel: t('profiles.preferredModel.none'),
+        fallbackLabel: props.preferredModelSelection?.v === 2
+            ? props.preferredModelSelection.ref.modelId
+            : t('profiles.preferredModel.none'),
         enabled: preferredModelDemanded,
     });
     const preferredModelPresentation = preferredModel.presentation;

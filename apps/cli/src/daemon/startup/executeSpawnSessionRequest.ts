@@ -687,9 +687,10 @@ export async function executeSpawnSessionRequest(
             }
             let teamModelRow: NormalizedSessionTeamCredentialLaunch['teamModelRow'] = null;
             const retainedTeamBinding = sessionAttachPayload?.snapshot?.acceptedTeamCredentialBinding;
-            const hasTeamSelection = options.teamCredentialBindings?.some(binding => (
-                binding.slot.kind === 'provider_model' && binding.resourceId !== null
-            )) || hasTeamResourceConnectedServiceBinding(prepared.connectedServices)
+            const hasTeamSelection = (modelSelection?.v === 2 && modelSelection.ref.source === 'team_resource')
+                || options.teamCredentialBindings?.some(binding => (
+                    binding.slot.kind === 'provider_model' && binding.resourceId !== null
+                )) || hasTeamResourceConnectedServiceBinding(prepared.connectedServices)
                 || (retainedTeamBinding?.slot.kind === 'provider_model' && retainedTeamBinding.resourceId !== null);
             if (hasTeamSelection) {
                 const homeDomainAction = createAccountServerActionDeps({

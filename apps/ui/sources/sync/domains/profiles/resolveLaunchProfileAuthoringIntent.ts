@@ -3,30 +3,13 @@ import { buildBackendTargetKeyV2, resolveBackendTargetKeyV2 } from '@happier-dev
 import { normalizeLegacyAiLaunchProfileReferenceV1 } from '@happier-dev/protocol/providers/migrations/legacyProfileReferencesV1';
 import type { ProviderSettingsMigrationStateV1 } from '@happier-dev/protocol/providers/settings/v1';
 import { getProfileDefaultBackendTarget } from '@happier-dev/protocol/profiles/profileCompatibility';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 
 export type LaunchProfileAuthoringIntent = Readonly<{
     profileId: string | null;
     preferredAgentTargetKey: string | null;
-    modelSelection: SessionModelSelectionV1 | null;
+    modelSelection: SessionModelSelection | null;
 }>;
-
-function normalizeAuthoringTargetKey(targetKey: string): string {
-    return resolveBackendTargetKeyV2(targetKey);
-}
-
-function normalizeAuthoringModelSelection(
-    selection: SessionModelSelectionV1 | null,
-): SessionModelSelectionV1 | null {
-    if (!selection) return null;
-    return {
-        ...selection,
-        ref: {
-            ...selection.ref,
-            agentTargetKey: normalizeAuthoringTargetKey(selection.ref.agentTargetKey),
-        },
-    };
-}
 
 export function resolveLaunchProfileAuthoringIntent(input: Readonly<{
     profileId: string | null;
@@ -49,12 +32,10 @@ export function resolveLaunchProfileAuthoringIntent(input: Readonly<{
     const migratedModelSelection = resolution.modelRef ? {
         v: 1 as const,
         updatedAt: input.migration?.migratedAt ?? 0,
-        ref: resolution.modelRef,
+        ref: { ...resolution.modelRef, agentTargetKey: resolveBackendTargetKeyV2(resolution.modelRef.agentTargetKey) },
     } : null;
-    const modelSelection = normalizeAuthoringModelSelection(
-        resolution.status === 'review_required' ? null
-            : slim ? slim.preferredModelSelection ?? null : migratedModelSelection,
-    );
+    const modelSelection = resolution.status === 'review_required' ? null
+        : slim ? slim.preferredModelSelection ?? null : migratedModelSelection;
     const preferredTarget = getProfileDefaultBackendTarget({
         ...retainedProfile,
         preferredModelSelection: modelSelection ?? undefined,

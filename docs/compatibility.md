@@ -6594,6 +6594,12 @@ New Profile Save stacks, including first Artifact membership attachments, use
 the current prompt-stack authoring placement contract. Existing rows and
 captured duplication retain their stored placements through the row owner.
 
+In unreleased 0.3, Launch Profile rows and published Profile Artifacts store
+`preferredModelSelection` using the Session Start model selection schema.
+Existing V1 preferences remain valid. Profiles written with a V2 preference
+require matching development readers, including the daemon and clients that
+open the profile. The released 0.2 profile format predates this field.
+
 ### Tolerant stored-data readers
 
 Session input receipts and stored authorities in 0.3 development retain terminal Follow notices that

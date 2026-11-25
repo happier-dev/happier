@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/selection/v1';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { type PersistedBackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
@@ -100,9 +101,9 @@ type HarnessProps = Readonly<{
     resolveDefaultPermissionMode: (profile: AIBackendProfile | null, target: PersistedBackendTargetRefV2) => PermissionMode;
     resolveProfileAuthoringIntent?: (profileId: string) => Readonly<{
         preferredAgentTargetKey: string | null;
-        modelSelection: SessionModelSelectionV1 | null;
+        modelSelection: SessionModelSelection | null;
     }>;
-    setModelSelectionForBackendTargetSpy?: ReturnType<typeof vi.fn<(backendTargetKey: string, selection: SessionModelSelectionV1 | null) => void>>;
+    setModelSelectionForBackendTargetSpy?: ReturnType<typeof vi.fn<(backendTargetKey: string, selection: SessionModelSelection | null) => void>>;
 }>;
 
 function useHarness(props: HarnessProps) {
@@ -219,7 +220,7 @@ describe('useNewSessionProfileBackendReconciliation', () => {
     it.each([false, true])('applies the exact model intent without treating stale inventory as unavailable (stale=%s)', async (stale) => {
         const applyPermissionModeSpy = vi.fn<(mode: PermissionMode, source: 'user' | 'auto') => void>();
         const prepareSecretPromptForProfileSelectionSpy = vi.fn<(prevProfileId: string | null) => void>();
-        const setModelSelectionForBackendTargetSpy = vi.fn<(backendTargetKey: string, selection: SessionModelSelectionV1 | null) => void>();
+        const setModelSelectionForBackendTargetSpy = vi.fn<(backendTargetKey: string, selection: SessionModelSelection | null) => void>();
         const profile = createProfile('profile-a');
         const claudeTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' });
         const selection = SessionModelSelectionV1Schema.parse({
