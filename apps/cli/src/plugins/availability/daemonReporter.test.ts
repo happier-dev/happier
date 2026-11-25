@@ -1,9 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PluginAvailabilityReleasePublishActionInputV1Schema } from '@happier-dev/protocol';
-import type { FeaturesResponse } from '@happier-dev/protocol';
 
-import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { StoredCredentials } from '@/persistence';
 import type { PluginRegistryAvailabilityInventory } from '@/plugins/store/registry/currentState';
 import { logger } from '@/ui/logger';
@@ -133,20 +131,6 @@ function createDeferred(): Readonly<{
   return Object.freeze({ promise, resolve: resolvePromise });
 }
 
-function readyServerFeatures(): CliServerFeaturesSnapshot {
-  return {
-    status: 'ready',
-    // Server-features is the reporter's transport boundary; this fixture only
-    // supplies the identity the reporter actually reads.
-    features: {
-      features: {},
-      capabilities: {
-        serverIdentity: { serverIdentityId: 'srv_availability_daemon' },
-      },
-    } as unknown as FeaturesResponse,
-  };
-}
-
 describe('daemon plugin Availability reporter', () => {
   beforeEach(() => {
     publisher.publishRelease.mockReset();
@@ -167,7 +151,7 @@ describe('daemon plugin Availability reporter', () => {
       return { facts: release.facts, outcome: 'created' };
     });
     const reporter = createDaemonPluginAvailabilityReporter({ credentials,
-      serverFeaturesSnapshotStore: { getSnapshot: readyServerFeatures }, getMachineId: () => 'machine-current', signal: abort.signal });
+      getHomeServerIdentityId: () => 'srv_availability_daemon', getMachineId: () => 'machine-current', signal: abort.signal });
     const first = reporter.report(inventory);
     await started;
     const successor = reporter.report({ ...inventory, revision: 13, materializations: [] });
@@ -192,9 +176,7 @@ describe('daemon plugin Availability reporter', () => {
     });
     const reporter = createDaemonPluginAvailabilityReporter({
       credentials,
-      serverFeaturesSnapshotStore: {
-        getSnapshot: readyServerFeatures,
-      },
+      getHomeServerIdentityId: () => 'srv_availability_daemon',
       getMachineId: () => 'machine-current',
     });
 
@@ -225,7 +207,7 @@ describe('daemon plugin Availability reporter', () => {
   it('reports persisted installation facts without live declarations and suppresses declaration-only changes', async () => {
     const reporter = createDaemonPluginAvailabilityReporter({
       credentials,
-      serverFeaturesSnapshotStore: { getSnapshot: readyServerFeatures },
+      getHomeServerIdentityId: () => 'srv_availability_daemon',
       getMachineId: () => 'machine-current',
     });
     await reporter.report({ ...inventory, materializations: [{
@@ -246,7 +228,7 @@ describe('daemon plugin Availability reporter', () => {
   it('suppresses observation-only updates but publishes changed installation facts', async () => {
     const reporter = createDaemonPluginAvailabilityReporter({
       credentials,
-      serverFeaturesSnapshotStore: { getSnapshot: readyServerFeatures },
+      getHomeServerIdentityId: () => 'srv_availability_daemon',
       getMachineId: () => 'machine-current',
     });
     await reporter.report(inventory);
@@ -261,17 +243,29 @@ describe('daemon plugin Availability reporter', () => {
     });
   });
 
-  it('does not open the transport when the daemon lacks a ready server identity', async () => {
+  it('publishes the authenticated Machine Home as soon as the daemon binds it', async () => {
+    let boundHomeId: string | null = null;
     const reporter = createDaemonPluginAvailabilityReporter({
       credentials,
-      serverFeaturesSnapshotStore: { getSnapshot: () => undefined },
+      getHomeServerIdentityId: () => boundHomeId,
       getMachineId: () => 'machine-current',
     });
 
     await expect(reporter.report(inventory)).rejects.toThrow('Machine Availability has no ready Home identity');
-
     expect(publisher.publishRelease).not.toHaveBeenCalled();
     expect(publisher.reportMaterializations).not.toHaveBeenCalled();
+
+    boundHomeId = 'srv_bound_machine_home';
+    await reporter.report({ ...inventory, releasePublications: [] });
+
+    expect(publisher.reportMaterializations).toHaveBeenCalledWith({
+      expectedRevision: null,
+      snapshot: {
+        serverIdentityId: 'srv_bound_machine_home',
+        machineId: 'machine-current',
+        materializations: [{ ...materialization, serverIdentityId: 'srv_bound_machine_home', machineId: 'machine-current' }],
+      },
+    });
   });
 
   it('retains conflicting release evidence in the complete snapshot so Availability can classify it', async () => {
@@ -280,9 +274,7 @@ describe('daemon plugin Availability reporter', () => {
     );
     const reporter = createDaemonPluginAvailabilityReporter({
       credentials,
-      serverFeaturesSnapshotStore: {
-        getSnapshot: readyServerFeatures,
-      },
+      getHomeServerIdentityId: () => 'srv_availability_daemon',
       getMachineId: () => 'machine-current',
     });
 
@@ -326,9 +318,7 @@ describe('daemon plugin Availability reporter', () => {
     publisher.publishRelease.mockRejectedValueOnce(new Error('transport unavailable'));
     const reporter = createDaemonPluginAvailabilityReporter({
       credentials,
-      serverFeaturesSnapshotStore: {
-        getSnapshot: readyServerFeatures,
-      },
+      getHomeServerIdentityId: () => 'srv_availability_daemon',
       getMachineId: () => 'machine-current',
     });
 
@@ -346,7 +336,7 @@ describe('daemon plugin Availability reporter', () => {
       .mockResolvedValueOnce({ revision: 5, outcome: 'replaced' });
     const reporter = createDaemonPluginAvailabilityReporter({
       credentials,
-      serverFeaturesSnapshotStore: { getSnapshot: readyServerFeatures },
+      getHomeServerIdentityId: () => 'srv_availability_daemon',
       getMachineId: () => 'machine-current',
     });
 
@@ -388,7 +378,7 @@ describe('daemon plugin Availability reporter', () => {
       .mockResolvedValueOnce({ revision: 5, outcome: 'replaced' });
     const reporter = createDaemonPluginAvailabilityReporter({
       credentials,
-      serverFeaturesSnapshotStore: { getSnapshot: readyServerFeatures },
+      getHomeServerIdentityId: () => 'srv_availability_daemon',
       getMachineId: () => 'machine-current',
     });
 
@@ -431,7 +421,7 @@ describe('daemon plugin Availability reporter', () => {
       .mockResolvedValueOnce({ revision: 9, outcome: 'replaced' });
     const reporter = createDaemonPluginAvailabilityReporter({
       credentials,
-      serverFeaturesSnapshotStore: { getSnapshot: readyServerFeatures },
+      getHomeServerIdentityId: () => 'srv_availability_daemon',
       getMachineId: () => 'machine-current',
     });
 

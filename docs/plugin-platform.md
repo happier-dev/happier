@@ -2226,6 +2226,8 @@ release-less Account declaration claim and the serving Machine's Availability
 report before exposing usable source configuration. Setup consumes an in-flight
 or acknowledged report for that registry. A fresh setup can publish through
 the same Availability owner when background publication has yet to run.
+Availability takes its report identity from the daemon's bound Home. The
+feature snapshot can still be warming when the Home binding is ready.
 Ordinary activation and daemon readiness stay independent of the setup wait.
 Immediate definition writes consume the trigger returned by setup. Home still
 enforces watcher ownership and currentness at write admission.

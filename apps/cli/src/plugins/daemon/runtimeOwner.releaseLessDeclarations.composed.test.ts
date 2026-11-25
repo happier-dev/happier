@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FeaturesResponseSchema, PluginManifestV2Schema } from '@happier-dev/protocol';
+import { PluginManifestV2Schema } from '@happier-dev/protocol';
 import { PLUGIN_MANIFEST as LIMA_MANIFEST } from '@happier-dev/plugins-machine-lima/manifest';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
 import { createDaemonPluginRegistryRuntimeLifecycle } from '@/plugins/runtime/reload/registryRuntimeLifecycle';
@@ -112,8 +112,7 @@ describe('daemon release-less declaration publication', () => {
                 return { data: { revision: 1, outcome: 'replaced' }, status: 200, statusText: 'OK', headers: {}, config: { headers: new axios.AxiosHeaders() } };
             });
             const reporter = createDaemonPluginAvailabilityReporter({ credentials, getMachineId: () => 'declaration-controller',
-                serverFeaturesSnapshotStore: { getSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({ features: {},
-                    capabilities: { serverIdentity: { serverIdentityId: 'srv_declaration' } } }) }) } });
+                getHomeServerIdentityId: () => 'srv_declaration' });
             // Lima declaration publication has no Connected Account purpose.
             // Unrelated bundled startup services see unavailable credentials.
             const unused = async (): Promise<never> => { throw new Error('Unexpected Connected Account operation'); };

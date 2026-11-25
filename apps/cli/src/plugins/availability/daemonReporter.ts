@@ -1,6 +1,5 @@
 import { projectPluginMachineMaterializationReportFactsV1 } from '@happier-dev/protocol/plugins/availability/v1';
 
-import type { ServerFeaturesSnapshotStore } from '@/features/serverFeaturesSnapshotStore';
 import type { StoredCredentials } from '@/persistence';
 import type { DaemonPluginAvailabilityReporter } from '@/plugins/daemon/runtimeOwner';
 import { logger } from '@/ui/logger';
@@ -29,7 +28,7 @@ type DrainResult =
  */
 export function createDaemonPluginAvailabilityReporter(params: Readonly<{
   credentials: StoredCredentials;
-  serverFeaturesSnapshotStore: Pick<ServerFeaturesSnapshotStore, 'getSnapshot'>;
+  getHomeServerIdentityId: () => string | null;
   getMachineId: () => string;
   resolveServerUrl?: () => string;
   signal?: AbortSignal;
@@ -48,10 +47,7 @@ export function createDaemonPluginAvailabilityReporter(params: Readonly<{
     let current = initial;
     while (true) {
       params.signal?.throwIfAborted();
-      const features = params.serverFeaturesSnapshotStore.getSnapshot();
-      const serverIdentityId = features?.status === 'ready'
-        ? features.features.capabilities.serverIdentity.serverIdentityId
-        : null;
+      const serverIdentityId = params.getHomeServerIdentityId();
       if (!serverIdentityId) throw new Error('Machine Availability has no ready Home identity');
 
       for (const release of current.inventory.releasePublications) {

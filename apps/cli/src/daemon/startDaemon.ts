@@ -2064,7 +2064,7 @@ export async function startDaemon(
       reloadController: pluginReloadController,
       availabilityReporter: createDaemonPluginAvailabilityReporter({
         credentials,
-        serverFeaturesSnapshotStore,
+        getHomeServerIdentityId: resolveBoundHomeServerIdentityId,
         getMachineId: () => machineId,
         resolveServerUrl: readDaemonHomeServerHttpBaseUrl,
         signal: homeTransportCancellation.signal,

@@ -3,7 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createActionExecutor, FeaturesResponseSchema, arePluginMachineMaterializationRefsEqual, MachineServicesDiscoveryResultV1Schema, MachineServicesListResultV1Schema, type MachineMetadataFieldReadV1, type MachineMetadataFieldPortV1,
+import { createActionExecutor, arePluginMachineMaterializationRefsEqual, MachineServicesDiscoveryResultV1Schema, MachineServicesListResultV1Schema, type MachineMetadataFieldReadV1, type MachineMetadataFieldPortV1,
     PluginEventAutomationSetupResultV1Schema,
     ActionsSettingsV1Schema, setActionApprovalOverride } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -90,9 +90,7 @@ it.skipIf(process.platform !== 'linux').each(['e2ee', 'plain'] as const)('%s: re
             const origin = { serverIdentityId: home.serverId, machineId: home.machineId };
             const reporter = createDaemonPluginAvailabilityReporter({
                 credentials, getMachineId: () => home.machineId,
-                serverFeaturesSnapshotStore: { getSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
-                    features: {}, capabilities: { serverIdentity: { serverIdentityId: home.serverId } },
-                }) }) },
+                getHomeServerIdentityId: () => origin.serverIdentityId,
             });
             const registryStore = createPluginRegistryStateStore({ happyHomeDir });
             await registryStore.initialize();
