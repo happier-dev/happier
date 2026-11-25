@@ -127,8 +127,8 @@ async function getResult(
     const keyCensus = WorkflowRunRecipientCensusResponseV1Schema.parse({ runId: RUN_ID, ownerAccountId: ACCOUNT_ID,
         access: 'owner', encryptionMode: 'plain', dataEncryptionKey: null, callerDataEncryptionKey: null,
         recipients: [], visibleTeamId: null, ownerAccountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } });
-    // Missing accepted bytes is an authoritative unavailable projection; an
-    // opened snapshot without metadata is a readable untitled Run.
+    // Missing accepted bytes makes private content unavailable. An opened
+    // snapshot without saved metadata can still supply its program's title.
     return { runs: [run], acceptedEnvelopesByRunId: metadata === null ? {} : { [RUN_ID]: acceptedEnvelope },
         keyCensusByRunId: { [RUN_ID]: keyCensus } };
 }
@@ -304,15 +304,18 @@ describe('inline transcript workflow Run result', () => {
         expect(text).not.toContain('workflows.run.untitled');
     });
 
-    it('names a readable Run without an authored title untitled instead of unavailable', async () => {
+    it('names a Run without an authored title from its frozen program', async () => {
         await answerRun('running', 2, false);
         const screen = await renderCardRow();
         await settle();
 
         expect(storage.getState().workflowRunsById[workflowRunStoreKey(RUN_ID)]?.summary?.state).toBe('running');
-        expect(storage.getState().workflowRunsById[workflowRunStoreKey(RUN_ID)]?.metadata).toBeNull();
+        expect(storage.getState().workflowRunsById[workflowRunStoreKey(RUN_ID)]?.metadata).toEqual({
+            kind: 'available', value: { title: 'Continue' },
+        });
         const text = collectHostText(screen.tree);
-        expect(text).toContain('workflows.run.untitled');
+        expect(text).toContain('Continue');
+        expect(text).not.toContain('workflows.run.untitled');
         expect(text).not.toContain('workflows.contentUnavailable');
     });
 
