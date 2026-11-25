@@ -12,6 +12,8 @@ import { DiscussionSecondOpinionPreviewV1Schema } from '@happier-dev/protocol/di
 import { DiscussionCreateRequestV1Schema, DiscussionPostRequestV1Schema } from '@happier-dev/protocol/discussions/api';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
@@ -31,6 +33,12 @@ afterEach(() => { getStorage().setState(initial, true); standardCleanup(); });
 
 async function sourceHome() {
     const serverId = await homes.addHome({ name: 'Review', serverUrl: 'https://review.test', accountId: 'alice', currentAccount: true });
+    const features = createRootLayoutFeaturesResponse();
+    expect(tryWriteServerEnabledBitInPlace(features, 'sessions.conversations', true)).toBe(true);
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+    homes.answer(serverId, '/v1/features', { body: features });
+    homes.answer(serverId, '/v1/features/authenticated', { body: features });
     const source = { kind: 'session' as const, message: { kind: 'session' as const,
         session: { serverId, sessionId: 'source-session' }, messageId: 'committed-answer' } };
     const session = createPlainSessionWithDisplayRecordFixture({ id: 'source-session' });
