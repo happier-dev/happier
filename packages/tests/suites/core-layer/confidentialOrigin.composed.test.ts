@@ -24,6 +24,13 @@ import { registerExecutionRunHandlers } from '../../../../apps/cli/src/rpc/handl
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createExecutionRunHostApprovalReplay } from '../../../../apps/ui/sources/sync/ops/actions/executionRunHostApproval';
 
+import { MANAGED_POWER_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedWakeTargetV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
+import { deriveManagedStartApprovalRequestIdV1 } from '@happier-dev/protocol/approvals/creation';
+import { resolveApprovalExecutor } from '@happier-dev/protocol/approvals/resolveApprovalExecutor';
+import { executeManagedMachinePolicyAction } from '../../../../apps/cli/src/daemon/startup/managedMachinePolicyAction';
+
 const originNetworkObservation = vi.hoisted(() => ({ received: undefined as (() => void) | undefined,
   disconnected: undefined as (() => void) | undefined }));
 vi.mock('../../../../apps/cli/src/api/session/sockets', async importOriginal => {
@@ -76,7 +83,8 @@ async function fixture() {
   const home = await server.createHome({ configureHttp: (app, accountId) => {
     // Account metadata HTTP is a boundary fixture. Artifact authentication,
     // storage, codecs, encryption admission, revision CAS and routes are real.
-    const features = registerAccountHomeHttp(app, { accountId, serverId: 'srv_confidential_origin', settings });
+    const features = registerAccountHomeHttp(app, { accountId, serverId: 'srv_confidential_origin', settings,
+      actionHttpBodyAlreadyEnabled: true });
     app.get('/v1/features', async () => features);
   } });
   const { serverUrl, accountId } = home;
@@ -500,6 +508,99 @@ it.each(['ready', 'decision-before-create-ack'] as const)('delivers authenticate
     lifetime.abort();
     await pending;
     decidingCoordinator.dispose();
+    await f.home.close();
+  }
+});
+
+it('settles installed-policy Start when its terminal origin disconnects', async () => {
+  const f = await fixture();
+  const lifetime = new AbortController();
+  let pending: Promise<unknown> | undefined;
+  try {
+    let routes = 0;
+    f.home.startRpc(() => { routes += 1; });
+    await runWithServerHttpBaseUrl(f.serverUrl, async () => {
+      const published = Promise.withResolvers<string>();
+      const provider = { pluginId: 'fixture.compute', localId: 'vm' };
+      const controller = { machineId: 'installed-controller', installationId: 'controller-installation' };
+      const machine = ManagedMachineFullV1Schema.parse({
+        id: 'retained-guest', homeId: f.context.serverIdentityId, custodianAccountId: f.accountId, controller,
+        enrolledMachineId: 'guest', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+        launch: { provider, schemaVersion: 1, name: 'Retained guest', choices: {} },
+        resource: { contributionRef: provider, schemaVersion: 1, value: {} },
+        allocation: 'bound', creationState: 'active', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+        observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' },
+      });
+      const target = ManagedWakeTargetV1Schema.parse({
+        homeId: machine.homeId, managedId: machine.id, enrolledMachineId: machine.enrolledMachineId,
+        expectedIntentRevision: machine.intentRevision, controller, reason: 'admitted-work',
+        origin: { kind: 'session-input', session: { homeId: machine.homeId, sessionId: 'cold-session' },
+          pendingRequestId: 'accepted-original-send', requestedAt: 1 },
+      });
+      const startNative = vi.fn(async () => machine);
+      pending = executeManagedMachinePolicyAction({
+        machine, purpose: { kind: 'accepted-input-start', target }, serverId: f.context.serverId,
+        context: { ...f.context, signal: lifetime.signal, operationAcceptance: { operationId: 'start', accept() {} },
+          operationOwnerUpdate: { update() {} } },
+        runApproved: startNative,
+        createExecutor: overrides => createCliActionExecutorHarness({
+          credentials: f.credentials, token: f.credentials.token, mode: 'plain', ctx: null, sessionId: 'cli-global',
+          serverId: f.context.serverId, serverIdentityId: f.context.serverIdentityId, serverHttpBaseUrl: f.serverUrl,
+          actionsSettingsProvider: { getAccountSettings: () => f.settings,
+            getActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
+              actions: { [MANAGED_POWER_SET_ACTION_ID_V1]: { approvalRequiredSurfaces: ['cli'] } } }) },
+        }, { ...f.store, ...overrides, isApprovalExecutionOriginCurrent: async () => true,
+          approvalsCreate: async args => {
+            const result = await f.store.approvalsCreate(args);
+            published.resolve(result.artifactId);
+            return result;
+          },
+        }).executor,
+      }).then(() => undefined, error => error);
+      const artifactId = await Promise.race([published.promise, pending.then(result => {
+        throw new Error('Policy Ask was not published', { cause: result });
+      })]);
+      lifetime.abort();
+      await pending;
+      const original = ApprovalRequestV2Schema.parse(await f.store.approvalsGet({ artifactId }));
+      expect(original).toMatchObject({ status: 'open', approval: { flow: 'blocking' },
+        executionOriginV1: { caller: { kind: 'host' }, surface: 'cli',
+          requestId: deriveManagedStartApprovalRequestIdV1({ ...machine, managedId: machine.id, expectedRevision: 1 }) } });
+      expect(resolveApprovalExecutor(original)).toEqual({ kind: 'live_invocation' });
+      const otherAccount = await server.createHome({ configureHttp: () => {} });
+      try {
+        const otherStore = createCliApprovalsArtifactStore({
+          credentials: { ...f.credentials, token: otherAccount.token },
+          serverId: f.context.serverId, serverHttpBaseUrl: f.serverUrl, getAccountEncryptionMode: async () => 'plain',
+        });
+        const otherDecider = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...otherStore });
+        expect(await otherDecider.execute('approval.request.decide', { artifactId, decision: 'approve' },
+          { ...f.context, surface: 'ui', authority: 'present_user', runtimeAccountId: otherAccount.accountId,
+            actionRequestId: 'other-account-decision' })).toMatchObject({ ok: false, errorCode: 'approval_not_found' });
+      } finally {
+        await otherAccount.close();
+      }
+      const deciding = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...f.store,
+        isApprovalExecutionOriginCurrent: async () => true,
+        approvalRequestApprovedReplay: args => replayLiveCliApprovalOrigin(args, {
+          token: f.credentials.token, serverUrl: f.serverUrl,
+        }),
+      });
+      const decide = () => deciding.execute('approval.request.decide', { artifactId, decision: 'approve' },
+        { ...f.context, surface: 'ui', authority: 'present_user', actionRequestId: 'app-decision' });
+      await decide();
+      const settled = ApprovalRequestV2Schema.parse(await f.store.approvalsGet({ artifactId }));
+      expect(settled).toMatchObject({ status: 'failed', decision: { kind: 'approve' },
+        execution: { ok: false, effectAttempted: false, errorCode: 'approval_origin_unavailable',
+          failureCause: { phase: 'approval.origin.decide', errorCode: 'target_unavailable', nativeErrorReason: 'unregistered' } } });
+      await decide();
+      expect(ApprovalRequestV2Schema.parse(await f.store.approvalsGet({ artifactId }))).toEqual(settled);
+      expect(routes).toBe(1);
+      expect(startNative).not.toHaveBeenCalled();
+    });
+  } finally {
+    lifetime.abort();
+    await pending;
     await f.home.close();
   }
 });

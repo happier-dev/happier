@@ -1647,6 +1647,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     earlierFailuresShow: '顯示',
     failureGeneric: '已核准的操作失敗了',
     failureNoReason: '未記錄原因。',
+    liveOriginUnavailable: "請求核准的程序已無法使用。請重新請求此操作。",
     failureDispatchRefused: '該機器未接受此請求。原因請見技術詳細資料。',
     failureUnworded: '它在完成前停止了。原因請見技術詳細資料。',
     failureNamed: ({ action }: { action: string }) => `未能完成：${action}`,

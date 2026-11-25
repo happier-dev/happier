@@ -1979,6 +1979,7 @@ export const de: TranslationStructure = {
         earlierFailuresShow: 'Anzeigen',
         failureGeneric: 'Die freigegebene Aktion ist fehlgeschlagen',
         failureNoReason: 'Es wurde kein Grund aufgezeichnet.',
+        liveOriginUnavailable: "Der Prozess, der die Genehmigung angefordert hat, ist nicht verfügbar. Fordere die Aktion erneut an.",
         failureDispatchRefused: 'Die Maschine hat die Anfrage nicht angenommen. Die Ursache steht unter Technische Details.',
         failureUnworded: 'Der Vorgang wurde vor dem Abschluss beendet. Die Ursache steht unter Technische Details.',
         failureNamed: ({ action }: { action: string }) => `Nicht abgeschlossen: ${action}`,

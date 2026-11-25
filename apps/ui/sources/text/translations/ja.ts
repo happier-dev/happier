@@ -2352,6 +2352,7 @@ export const ja: TranslationStructure = {
     earlierFailuresShow: '表示',
     failureGeneric: '承認した操作に失敗しました',
     failureNoReason: '理由は記録されていません。',
+    liveOriginUnavailable: "承認を求めたプロセスを利用できません。もう一度アクションをリクエストしてください。",
     failureDispatchRefused: 'マシンがリクエストを受け付けませんでした。原因は技術的な詳細にあります。',
     failureUnworded: '完了する前に停止しました。原因は技術的な詳細にあります。',
     failureNamed: ({ action }: { action: string }) => `完了できませんでした：${action}`,

@@ -5,6 +5,8 @@ import type { CallerInputConstraintsV1 } from "@happier-dev/protocol/auth/apiTok
 import type { ExternalActionExecutionAuthorizationV1, ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { isLiveCliApprovalOriginMethod, LIVE_CLI_APPROVAL_DECIDE_METHOD } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalOriginFailure } from '@happier-dev/protocol/approvals/approvalStaleReason';
 
 import { isPlainMachineDataKeyMarker } from '@happier-dev/protocol/machines/machineStoredContent';
 import { type SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -79,6 +81,7 @@ export type RpcForwardResult =
         errorCode?: string;
         answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[];
         failureCause?: ActionFailureCauseV1;
+        effectAttempted?: false;
         machineAvailabilityDiagnostic?: MachineAvailabilityDiagnosticV1;
       }>
     | Readonly<{ ok: false } & AnyClientUpgradeRequiredV1>;
@@ -359,6 +362,22 @@ async function executeRpcForwardCall(params: Readonly<{
             observeRpcCall({ method: params.method, durationMs: Date.now() - callStartedAt, result: 'error' });
             return { ok: false, error: 'RPC target discovery unavailable', errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE,
                 failureCause: discoveryFailure };
+        }
+        if (methodRegistrationAbsent && isLiveCliApprovalOriginMethod(params.method)) {
+            const { error, errorCode } = buildApprovalOriginFailure('live_invocation_unavailable');
+            return {
+                ok: false,
+                error,
+                errorCode,
+                effectAttempted: false,
+                failureCause: {
+                    phase: LIVE_CLI_APPROVAL_DECIDE_METHOD,
+                    errorClass: 'RpcError',
+                    errorCode: 'target_unavailable',
+                    nativeErrorReason: 'unregistered',
+                    httpStatus: null,
+                },
+            };
         }
         if (params.answeringClient) return { ok: false, error: 'Answering client unavailable', errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
         const presence = params.isTargetUnavailable ? null : await readMachineRpcTargetPresence({

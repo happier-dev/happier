@@ -2371,6 +2371,7 @@ export const es: TranslationStructure = {
     earlierFailuresShow: 'Mostrar',
     failureGeneric: 'La acción aprobada falló',
     failureNoReason: 'No se registró ningún motivo.',
+    liveOriginUnavailable: "El proceso que solicitó la aprobación no está disponible. Vuelve a solicitar la acción.",
     failureDispatchRefused: 'La máquina no aceptó la solicitud. La causa está en Detalles técnicos.',
     failureUnworded: 'Se detuvo antes de terminar. La causa está en Detalles técnicos.',
     failureNamed: ({ action }: { action: string }) => `No se pudo completar: ${action}`,

@@ -1772,6 +1772,7 @@ const enApprovals = {
   earlierFailuresShow: 'Show',
   failureGeneric: 'The approved action failed',
   failureNoReason: 'No reason was recorded.',
+  liveOriginUnavailable: "The process that requested approval is unavailable. Request the action again.",
   failureDispatchRefused: 'The machine didn’t accept the request. The cause is under Technical details.',
   failureUnworded: 'It stopped before it finished. The cause is under Technical details.',
   failureNamed: ({ action }: { action: string }) => `Couldn't finish: ${action}`,

@@ -63,6 +63,25 @@ describe('approval decision execution outcome', () => {
             errorClass: 'HttpStatusError', errorCode, httpStatus: 503 });
         expect(JSON.stringify(alert.mock.calls)).not.toMatch(/PRIVATE_TOKEN|PRIVATE_DRAFT|private transport text/);
     });
+    it('gives the same recovery for a disconnected approval origin in the alert and receipt', () => {
+        const execution = {
+            executedAtMs: 1, ok: false, effectAttempted: false,
+            errorCode: 'approval_origin_unavailable', error: 'approval_origin_unavailable',
+            failureCause: { phase: 'approval.origin.decide', errorClass: 'RpcError',
+                errorCode: 'target_unavailable', nativeErrorReason: 'unregistered', httpStatus: null },
+        };
+        const presented = presentRecordedApprovalFailure(execution);
+        expect(presented.code).toBe(execution.errorCode);
+        expect(presented.reason).not.toBe(t('approvals.failureNoReason'));
+        alert.mockClear();
+        try {
+            assertApprovalExecutionSucceeded(execution);
+        } catch (error) {
+            alertApprovalFailure(error);
+        }
+        expect(alert.mock.calls[0]?.[1]).toBe(presented.reason);
+    });
+
     it('surfaces a recorded execution failure instead of accepting the decision as success', () => {
         const execution = {
             executedAtMs: 1,

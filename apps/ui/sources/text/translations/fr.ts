@@ -2198,6 +2198,7 @@ export const fr: TranslationStructure = {
     earlierFailuresShow: 'Afficher',
     failureGeneric: "L'action approuvée a échoué",
     failureNoReason: "Aucun motif n'a été enregistré.",
+    liveOriginUnavailable: "Le processus qui a demandé l’approbation est indisponible. Demandez à nouveau l’action.",
     failureDispatchRefused: 'La machine n’a pas accepté la demande. La cause figure dans Détails techniques.',
     failureUnworded: 'Elle s’est arrêtée avant la fin. La cause figure dans Détails techniques.',
     failureNamed: ({ action }: { action: string }) => `Impossible de terminer : ${action}`,

@@ -120,12 +120,13 @@ function registerActionHttpBodyBoundary(app: FastifyInstance) {
 /** The Home features and Account facts every CLI Action composition reads before an Artifact write. */
 export function registerAccountHomeHttp(app: FastifyInstance, input: Readonly<{ accountId: string; serverId: string;
     settings?: Pick<AccountSettings, 'actionsSettingsV1'>; encryptionMode?: 'plain' | 'e2ee';
+    actionHttpBodyAlreadyEnabled?: boolean;
     qualifiedCredential?: Readonly<{
         read(): QualifiedConnectedAccountCredentialSnapshotV4;
         write(snapshot: QualifiedConnectedAccountCredentialSnapshotV4): void;
     }>;
 }>) {
-    registerActionHttpBodyBoundary(app);
+    if (!input.actionHttpBodyAlreadyEnabled) registerActionHttpBodyBoundary(app);
     app.get(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, async () => ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
     const mode = input.encryptionMode ?? 'plain';
     app.get('/v1/account/encryption', async () => ({ mode, updatedAt: 1 }));

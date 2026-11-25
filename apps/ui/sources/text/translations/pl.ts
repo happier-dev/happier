@@ -2198,6 +2198,7 @@ export const pl: TranslationStructure = {
     earlierFailuresShow: 'Pokaż',
     failureGeneric: 'Zatwierdzona akcja nie powiodła się',
     failureNoReason: 'Nie zapisano przyczyny.',
+    liveOriginUnavailable: "Proces, który poprosił o zatwierdzenie, jest niedostępny. Poproś ponownie o wykonanie działania.",
     failureDispatchRefused: 'Maszyna nie przyjęła żądania. Przyczyna jest w Szczegółach technicznych.',
     failureUnworded: 'Zatrzymało się przed zakończeniem. Przyczyna jest w Szczegółach technicznych.',
     failureNamed: ({ action }: { action: string }) => `Nie udało się dokończyć: ${action}`,

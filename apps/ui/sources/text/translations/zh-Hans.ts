@@ -2183,6 +2183,7 @@ export const zhHans: TranslationStructure = {
     earlierFailuresShow: '显示',
     failureGeneric: '已批准的操作失败了',
     failureNoReason: '未记录原因。',
+    liveOriginUnavailable: "请求批准的进程已不可用。请重新请求此操作。",
     failureDispatchRefused: '该机器未接受此请求。原因见技术详情。',
     failureUnworded: '它在完成前停止了。原因见技术详情。',
     failureNamed: ({ action }: { action: string }) => `未能完成：${action}`,

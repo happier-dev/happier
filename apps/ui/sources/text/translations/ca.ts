@@ -2205,6 +2205,7 @@ export const ca: TranslationStructure = {
         earlierFailuresShow: 'Mostra',
         failureGeneric: "L'acció aprovada ha fallat",
         failureNoReason: "No s'ha registrat cap motiu.",
+        liveOriginUnavailable: "El procés que ha demanat l’aprovació no està disponible. Torna a sol·licitar l’acció.",
         failureDispatchRefused: 'La màquina no ha acceptat la sol·licitud. La causa és a Detalls tècnics.',
         failureUnworded: 'S’ha aturat abans d’acabar. La causa és a Detalls tècnics.',
         failureNamed: ({ action }: { action: string }) => `No s'ha pogut completar: ${action}`,

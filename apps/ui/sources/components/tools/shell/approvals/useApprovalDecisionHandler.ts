@@ -8,7 +8,7 @@ import { isActionOutcomeUnknownErrorCodeV1, readActionFailureCauseV1, readAction
 import type { ApprovalRequest} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { TargetActionApprovalRequestV1} from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { ExecutionRunHostActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
-import { ApprovalExecutionV1Schema, resolveApprovalExecutor, type ApprovalExecutionV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ApprovalExecutionV1Schema, LIVE_CLI_APPROVAL_DECIDE_METHOD, resolveApprovalExecutor, type ApprovalExecutionV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ApprovalRequestPublicReadSchema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { ApprovalStaleFailureDetailsSchema } from '@happier-dev/protocol/approvals/approvalStaleReason';
 import { TeamInvitationCreateResultV1Schema, TeamInvitationReissueResultV1Schema } from '@happier-dev/protocol/teams';
@@ -105,6 +105,11 @@ export function presentApprovalFailure(
     // Only a confirmed no-effect refusal may promise that nothing changed.
     const availability = readApprovalDecisionAvailability(code, typeof error === 'object' && error !== null && 'failureCause' in error
         ? error.failureCause : undefined);
+    const cause = availability.failure;
+    if (code === 'approval_origin_unavailable' && cause.phase === LIVE_CLI_APPROVAL_DECIDE_METHOD
+        && 'nativeErrorReason' in cause && cause.nativeErrorReason === 'unregistered') {
+        return { reason: t('approvals.liveOriginUnavailable'), code };
+    }
     if (!(error instanceof ApprovalExecutionError)) {
         if (availability.uncertain) return { reason: t('errors.scmOutcomeUnknown'), code: diagnosticCode ?? availability.transient?.code ?? null };
         if (availability.transient) return { reason: availability.transient.message, code: diagnosticCode ?? availability.transient.code };

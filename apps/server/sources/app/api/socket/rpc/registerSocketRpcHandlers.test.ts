@@ -374,6 +374,28 @@ describe("registerSocketRpcHandlers", () => {
                 expect.objectContaining({ method, params: 'sealed-decision', callerAuthority: 'present_user' }));
         });
 
+        it('acknowledges definitive refusal once a live CLI approval origin disconnects', async () => {
+            const effect = vi.fn(async () => ({ ok: true, status: 'approved' }));
+            const target = { id: 'live-cli-origin', data: receiverData, timeout: () => ({ emitWithAck: effect }) };
+            const room = [target];
+            const { io } = createTargetRoutingIo({ [`rpc:user-1:${method}`]: room, [target.id]: room });
+            const socket = createFakeSocket({ id: 'decider', data: receiverData,
+                handshake: { auth: { token: await auth.createToken('user-1', undefined, {
+                    kind: 'account', authority: 'present_user',
+                }) } } });
+            registerSocketRpcHandlers({ userId: 'user-1', socket: socket as unknown as Socket, io });
+            const decide = async () => {
+                const ack = vi.fn();
+                await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-decision' }, ack);
+                return ack.mock.calls[0]?.[0];
+            };
+            expect(await decide()).toMatchObject({ ok: true, result: { status: 'approved' } });
+            room.length = 0;
+            expect(await decide()).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable', effectAttempted: false,
+                failureCause: { phase: 'approval.origin.decide', errorCode: 'target_unavailable', nativeErrorReason: 'unregistered' } });
+            expect(effect).toHaveBeenCalledOnce();
+        });
+
         it('refuses distinct duplicate live origins even when one has newer UI focus', async () => {
             const effect = vi.fn(async () => ({ ok: true }));
             const targets = ['origin-a', 'origin-b'].map((id, index) => ({ id,

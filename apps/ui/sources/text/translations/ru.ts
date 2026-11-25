@@ -2199,6 +2199,7 @@ export const ru: TranslationStructure = {
     earlierFailuresShow: 'Показать',
     failureGeneric: 'Одобренное действие не выполнено',
     failureNoReason: 'Причина не записана.',
+    liveOriginUnavailable: "Процесс, запросивший одобрение, недоступен. Запросите действие снова.",
     failureDispatchRefused: 'Машина не приняла запрос. Причина — в разделе «Технические сведения».',
     failureUnworded: 'Действие остановилось, не завершившись. Причина — в разделе «Технические сведения».',
     failureNamed: ({ action }: { action: string }) => `Не удалось завершить: ${action}`,
