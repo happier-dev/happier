@@ -13,6 +13,7 @@ import { pluginSourceCustodyV1Equal, type PluginSourceCustodyV1 } from '@happier
 import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { projectActionFailureCauseV1, withActionAutomationNoticesV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionPrepareResult } from '@happier-dev/protocol/actions/executor/types';
+import { createPluginActionCallerContext, PLUGIN_ACTION_CALLER_AUTHORITY } from './pluginActionCallerContext';
 import { createActionAutomationInvocationV1, readActionAutomationExecutionMachineV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
 import { projectPluginActionApprovalScopeV1 } from '@happier-dev/protocol/plugins/actions/approvalScope';
 import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedParentV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
@@ -1125,7 +1126,9 @@ async function contributedInvocationAuthority(
     input: DispatchPluginSurfaceActionInput,
     targetServerId?: string | null,
 ): Promise<ActionRequiredAuthority> {
-    if (input.resourceCaller || input.invocation?.kind === 'clientPluginAction' || resolveMountedPluginActionCaller(input)) return 'account_automation';
+    if (input.resourceCaller || input.invocation?.kind === 'clientPluginAction' || resolveMountedPluginActionCaller(input)) {
+        return PLUGIN_ACTION_CALLER_AUTHORITY;
+    }
     if (input.hostAction?.context?.authority) return input.hostAction.context.authority;
     const serverId = (targetServerId ?? input.contributedAction?.serverId ?? input.hostAction?.context?.serverId)?.trim();
     const surface = input.invocationSurface ?? 'ui';
@@ -2436,6 +2439,23 @@ function mountedHostActionContext(input: DispatchPluginSurfaceActionInput, calle
     // A mounted read belongs to one invocation. Re-derive it at each entry;
     // a nested autonomous Action cannot retain its parent's UI read scope.
     const inheritedSessionListAccess = sessionListAccess === 'mounted_ui' ? undefined : sessionListAccess;
+    const pluginCaller = resourceCaller ? {
+        pluginId: resourceCaller.pluginId,
+        contributionLocalId: resourceCaller.contributionLocalId,
+        occurrenceId: resourceCaller.occurrenceId,
+        sourceCustody: resourceCaller.sourceCustody,
+        ...(resourceCaller.pluginVersion ? { pluginVersion: resourceCaller.pluginVersion } : {}),
+    } : caller || clientCaller ? {
+        pluginId: caller?.pluginId ?? clientCaller!.pluginId,
+        contributionLocalId: caller?.contributionLocalId ?? clientCaller!.contributionLocalId,
+        occurrenceId: caller?.occurrenceId ?? clientCaller!.occurrenceId,
+        ...(clientCaller && !caller ? { mountedInvocationKind: 'clientPluginAction' as const } : {}),
+        ...(declarationBinding?.pluginVersion === undefined ? {} : { pluginVersion: declarationBinding.pluginVersion }),
+        ...(sourceCustody === undefined ? {} : { sourceCustody }),
+        ...((caller?.materialization ?? clientCaller?.materializationRef) === undefined
+            ? {}
+            : { materialization: caller?.materialization ?? clientCaller?.materializationRef }),
+    } : undefined;
     const context: ActionExecutorContext = {
         ...hostContext,
         ...(caller && input.contributedAction && hostContext.externalActionTarget === undefined
@@ -2449,38 +2469,13 @@ function mountedHostActionContext(input: DispatchPluginSurfaceActionInput, calle
         ...(input.actionRequestId ? { actionRequestId: input.actionRequestId } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
         surface: 'plugin',
-        // Borrowing the host's context never makes a Plugin the present user.
-        // Keep its permission and input constraints while capping authority.
-        authority: 'account_automation',
+        ...createPluginActionCallerContext(pluginCaller),
         // Only the actual mounted UI may browse its Account's Sessions. This
         // read scope does not grant human authority or flow into autonomous
         // client Action continuations, Voice, or a stricter inherited corpus.
         ...(isSessionListActionId(actionId) && caller && !clientCaller && (input.invocationSurface ?? 'ui') === 'ui'
             && inheritedSessionListAccess === undefined
             ? { sessionListAccess: 'mounted_ui' as const }
-            : {}),
-        ...(resourceCaller ? { actionCaller: {
-            kind: 'plugin' as const, pluginId: resourceCaller.pluginId,
-            contributionLocalId: resourceCaller.contributionLocalId, occurrenceId: resourceCaller.occurrenceId,
-            sourceCustody: resourceCaller.sourceCustody,
-            ...(resourceCaller.pluginVersion ? { pluginVersion: resourceCaller.pluginVersion } : {}),
-        } } : caller || clientCaller
-            ? {
-                actionCaller: {
-                    kind: 'plugin' as const,
-                    pluginId: caller?.pluginId ?? clientCaller!.pluginId,
-                    contributionLocalId: caller?.contributionLocalId ?? clientCaller!.contributionLocalId,
-                    occurrenceId: caller?.occurrenceId ?? clientCaller!.occurrenceId,
-                    ...(clientCaller && !caller ? { mountedInvocationKind: 'clientPluginAction' as const } : {}),
-                    ...(declarationBinding?.pluginVersion === undefined ? {} : { pluginVersion: declarationBinding.pluginVersion }),
-                    ...(sourceCustody === undefined
-                        ? {}
-                        : { sourceCustody }),
-                    ...((caller?.materialization ?? clientCaller?.materializationRef) === undefined
-                        ? {}
-                        : { materialization: caller?.materialization ?? clientCaller?.materializationRef }),
-                },
-            }
             : {}),
     };
     return originSurface && context.actionCaller?.kind === 'plugin'

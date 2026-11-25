@@ -93,7 +93,7 @@ export function seedAndOpenNewSession(params: Readonly<{
      * The plugin whose surface asked for the seed. It is the caller identity
      * the composer mount qualifies a seeded attachment's local id against —
      * the same qualification a live `attachment.add` from that plugin gets —
-     * so a seed with attachments and no caller identity places nothing.
+     * so a seed with attachments or a post-create Action requires this identity.
      */
     pluginId?: string;
     /** Internal same-setup projection, never part of plugin-authored wire input. */
@@ -129,6 +129,8 @@ export function seedAndOpenNewSession(params: Readonly<{
     if ((seed.attachments?.length ?? 0) > 0 && !pluginId) {
         return { kind: 'invalid', reason: 'seed_attachments_uncredited' };
     }
+    const postCreateAction = seed.postCreateAction;
+    if (postCreateAction && !pluginId) return { kind: 'invalid', reason: 'seed_invalid' };
     if (params.signal?.aborted === true) return { kind: 'unavailable', reason: 'aborted' };
     if (!readIsCurrent(params.isCurrent)) return { kind: 'stale', reason: 'host_retired' };
     if (seed.origin && (seed.origin.accountId !== params.scope.accountId
@@ -176,7 +178,7 @@ export function seedAndOpenNewSession(params: Readonly<{
     const seededDraftId = (params.seedDraft ?? seedNewSessionDraftV1)({
         seed: {
             ...(seed.actionDefault === undefined ? {} : { actionDefault: seed.actionDefault }),
-            ...(seed.postCreateAction === undefined ? {} : { postCreateAction: seed.postCreateAction }),
+            ...(postCreateAction && pluginId ? { postCreateAction: { intent: postCreateAction, pluginId, authoringScope: params.scope } } : {}),
             ...(seed.sessionName === undefined ? {} : { sessionName: seed.sessionName }),
             ...(seed.initialSessionFacts === undefined ? {} : { initialSessionFacts: seed.initialSessionFacts }),
             ...(seed.promptStack === undefined ? {} : { promptStack: seed.promptStack }),

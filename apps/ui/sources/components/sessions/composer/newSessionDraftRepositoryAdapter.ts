@@ -2,7 +2,7 @@ import { ComposerAttachmentDraftV1Schema } from '@happier-dev/protocol/runtime/i
 import { SessionSpaceMembershipTargetV1Schema } from '@happier-dev/protocol/actions';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { nullable } from 'zod/mini';
+import { nullable, nonoptional, strictObject, string, minLength } from 'zod/mini';
 import type { StrictJsonValue } from '@happier-dev/protocol/drafts/sessionDrafts';
 import type { SessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
@@ -36,6 +36,15 @@ import { PluginUiNewSessionActionDefaultV1Schema, PluginUiNewSessionSeedV1Schema
 import { readSessionInstructionsAuthoringDraft } from '@/sync/domains/state/sessionInstructionsDraft';
 import { ManagedMachineAcquisitionDraftReadSchema, ManagedMachineSelectionDraftReadSchema } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { getSessionDraftAuthoringFieldValues } from '@/sync/ops/sessionDrafts/sessionDraftDocumentFields';
+
+const storedPostCreateActionSchema = strictObject({
+    intent: nonoptional(PluginUiNewSessionSeedV1Schema.shape.postCreateAction),
+    pluginId: string().check(minLength(1)),
+    authoringScope: strictObject({
+        serverId: string().check(minLength(1)),
+        accountId: string().check(minLength(1)),
+    }),
+});
 
 function strictJson(value: unknown): StrictJsonValue {
     return StrictJsonValueSchema.parse(value);
@@ -114,7 +123,8 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
     const promptStack = Object.prototype.hasOwnProperty.call(fields, 'promptStack') ? authoring.promptStack : retainedAuthoring.promptStack;
     const instructionsDraft = readSessionInstructionsAuthoringDraft(localState?.instructionsDraft);
     const authoringOrigin = StoredPluginUiNewSessionSeedOriginV1Schema.safeParse(localState?.authoringOrigin);
-    const postCreateAction = PluginUiNewSessionSeedV1Schema.shape.postCreateAction.safeParse(localState?.postCreateAction);
+    const postCreateAction = localState?.postCreateAction === undefined
+        ? undefined : storedPostCreateActionSchema.safeParse(localState.postCreateAction);
     const actionDefault = createStoredReadSchema(PluginUiNewSessionActionDefaultV1Schema).safeParse(localState?.actionDefault);
     const spaceMembership = nullable(SessionSpaceMembershipTargetV1Schema).safeParse(localState?.spaceMembership);
     const managedMachineSelection = nullable(ManagedMachineSelectionDraftReadSchema).safeParse(localState?.managedMachineSelection);
@@ -139,7 +149,7 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
             : '',
         ...(authoringOrigin.success ? { authoringOrigin: authoringOrigin.data } : {}),
         ...(actionDefault.success ? { actionDefault: actionDefault.data } : {}),
-        ...(postCreateAction.success && postCreateAction.data !== undefined ? { postCreateAction: postCreateAction.data } : {}),
+        ...(postCreateAction?.success ? { postCreateAction: postCreateAction.data } : {}),
         ...(spaceMembership.success ? { spaceMembership: spaceMembership.data } : {}),
         ...(attachments.length > 0 ? { composerAttachments: attachments } : {}),
         ...(Array.isArray(localState?.composerAttachmentSeeds) && localState.composerAttachmentSeeds.length > 0
@@ -236,7 +246,7 @@ export function takeNewSessionDraftPostCreateAction(input: Readonly<{
     if (localState?.postCreateAction === undefined) return undefined;
     const { postCreateAction, ...remaining } = localState;
     writeSessionDraftLocalSupplement({ scope: input.scope, address, patch: { newSessionLocalState: remaining } });
-    const parsed = PluginUiNewSessionSeedV1Schema.shape.postCreateAction.safeParse(postCreateAction);
+    const parsed = storedPostCreateActionSchema.safeParse(postCreateAction);
     return parsed.success ? parsed.data : undefined;
 }
 

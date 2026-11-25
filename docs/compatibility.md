@@ -10811,9 +10811,11 @@ request. Draft storage and the wire epoch stay the same.
 
 Unreleased 0.3 mounted `openNewSession` requests may include one strict
 `postCreateAction` intent. The host retains it in the draft's device-local
-supplement and invokes it under the creator's Account after creation returns
-a Session ID. Earlier strict mounted readers require matching development
-Protocol, SDK and UI source for the new field. The common
+supplement with the host-stamped plugin identity and authoring Account. After
+creation returns a Session ID in that Account, the host invokes the intent as
+plugin Account automation. Older development supplements without this
+provenance discard the intent. Earlier strict mounted readers require matching
+development Protocol, SDK and UI source for the new field. The common
 `session.authoring.open` Action retains its existing closed seed contract and
 older draft supplements may omit the field. The inspected `../0.2` frontier
 at `ba3670d22d5` has no corresponding Plugin UI host request module. The

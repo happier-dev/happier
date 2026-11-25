@@ -8,6 +8,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { t } from '@/text';
 import { getErrorMessage } from '@/utils/errors/getErrorMessage';
 import { Modal } from '@/modal';
+import { createPluginActionCallerContext } from '@/components/plugins/surfaces/pluginActionCallerContext';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { presentMachineAgentStartRefusal, presentMachineAgentUpdateNotice } from '@/components/machines/agents/presentMachineAgentStartRefusal';
@@ -773,18 +774,26 @@ export function useCreateNewSession(params: Readonly<{
             if (!draftScope || !submittedDraftId || input.signal.aborted) return;
             // A lost create acknowledgement never reaches this checkpoint. The
             // entry can still be linked manually once the Session is found.
-            const intent = takeNewSessionDraftPostCreateAction({ scope: draftScope, draftId: submittedDraftId });
-            if (!intent) return;
-            const failure = await createDefaultActionExecutor().execute(
-                'action.invoke',
-                bindPluginUiNewSessionPostCreateActionV1(intent, input.sessionId),
-                { surface: 'ui', serverId: input.scope.serverId, expectedAccountId: input.scope.accountId,
-                    defaultSessionId: input.sessionId, signal: input.signal },
-            ).then(result => result.ok ? null : result, normalizeActionExecutorThrownError);
-            if (!failure || input.signal.aborted) return;
+            const seededAction = takeNewSessionDraftPostCreateAction({ scope: draftScope, draftId: submittedDraftId });
+            if (!seededAction) return;
+            let failureCode: string | null;
+            if (seededAction.authoringScope.accountId !== input.scope.accountId
+                || !areServerProfileIdentifiersEquivalent(seededAction.authoringScope.serverId, input.scope.serverId)) {
+                failureCode = 'action_account_scope_changed';
+            } else {
+                const failure = await createDefaultActionExecutor().execute(
+                    'action.invoke',
+                    bindPluginUiNewSessionPostCreateActionV1(seededAction.intent, input.sessionId),
+                    { ...createPluginActionCallerContext({ pluginId: seededAction.pluginId }),
+                        surface: 'ui', serverId: input.scope.serverId, expectedAccountId: input.scope.accountId,
+                        defaultSessionId: input.sessionId, signal: input.signal },
+                ).then(result => result.ok ? null : result, normalizeActionExecutorThrownError);
+                failureCode = failure ? failure.failureCause?.errorCode ?? failure.errorCode : null;
+            }
+            if (!failureCode || input.signal.aborted) return;
             const message = [
                 t('inbox.actionOperations.followUpNeedsAttention'),
-                formatActionFailureDetails({ code: failure.failureCause?.errorCode ?? failure.errorCode }),
+                formatActionFailureDetails({ code: failureCode }),
             ].join('\n');
             actionOperationStore.markFollowUpNeedsAttention({ ...input.scope, requestId: input.requestId, message });
             input.alert(t('common.error'), message);

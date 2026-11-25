@@ -84,13 +84,18 @@ describe('seedAndOpenNewSession', () => {
             input: { v: 1, entryRef: { kind: 'issue', id: 'entry-a' } },
             sessionIdPath: 'sessionId',
         };
-        expect(seedAndOpenNewSession({
+        const seedRequest = {
             seed: { prompt: 'Address this issue', postCreateAction }, scope,
             isCurrent: () => true, createDraftId: () => draftId, navigateToNewSession: () => undefined,
-        }).kind).toBe('opened');
+        };
+        const pluginId = 'happier.test.seed-author';
+        expect(seedAndOpenNewSession(seedRequest).kind).toBe('invalid');
+        expect(seedAndOpenNewSession({ ...seedRequest, pluginId }).kind).toBe('opened');
         const owner = createNewSessionComposerDocumentOwner({ scope, ref: { kind: 'newSession', instanceId: draftId } });
         owner.replaceDocument({ ...owner.read().document, text: 'Address this issue and add a test' });
-        expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({ postCreateAction });
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({
+            postCreateAction: { intent: postCreateAction, pluginId, authoringScope: scope },
+        });
         owner.clear();
         expect(readNewSessionDraftFromRepository({ scope, draftId })?.postCreateAction).toBeUndefined();
     });

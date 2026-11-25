@@ -39,6 +39,11 @@ installDisconnectedServerSocketBoundary(socket => { configureConnectedServerSock
 
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => false));
+const modalShowSpy = vi.hoisted(() => vi.fn((dialog: { props?: { onCancel?: () => void }; chrome?: { testID?: string } }) => {
+  if (dialog.chrome?.testID !== 'app-shell-transient-interaction-dialog') return '';
+  queueMicrotask(() => dialog.props?.onCancel?.());
+  return 'test-action-confirmation';
+}));
 const scopedSocketEmitWithAckSpy = vi.hoisted(() => vi.fn());
 const nativeTriageActionHost = vi.hoisted(() => ({ enabled: false }));
 
@@ -74,7 +79,7 @@ installNewSessionScreenModelCommonModuleMocks({
       hide: vi.fn(),
       hideAll: vi.fn(),
       prompt: vi.fn(async () => null),
-      show: vi.fn(),
+      show: modalShowSpy,
       update: vi.fn(),
     },
   }),
@@ -598,8 +603,8 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     expect(sendMessageSpy).not.toHaveBeenCalled();
   });
 
-  it.each(['linked', 'refused', 'plain'] as const)('settles a New Session draft with an ordinary Triage Action (%s)', async scenario => {
-    const { useCreateNewSession, sessionSpawnNewRpcSpy } = await setupHarness();
+  it.each(['linked', 'refused', 'plain', 'confirmation', 'account-mismatch'] as const)('settles a New Session draft with an ordinary Triage Action (%s)', async scenario => {
+    const { useCreateNewSession, sessionSpawnNewRpcSpy, seedTemporaryDestination } = await setupHarness();
     const { seedAndOpenNewSession } = await import('../newSessionSeedComposer');
     const { readNewSessionDraftFromRepository } = await import('../../composer/newSessionDraftRepositoryAdapter');
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
@@ -620,11 +625,12 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     if (!accountLifetime) throw new Error('Expected creator Account custody');
     const scope = accountLifetime.scope;
+    const draftScope = scenario === 'account-mismatch' ? await seedTemporaryDestination('unused-session') : scope;
     const draftId = '00000000-0000-4000-8000-000000000058';
     const { collections, control } = createTestkitCorpusCollections();
     const entryRef = testkitEntryRef();
     const configured = testkitConfiguredInstance();
-    if (scenario === 'linked') {
+    if (scenario !== 'refused') {
       control.sourceInstances.seed(toCorpusStoredValue({ instanceTag: 'a'.repeat(43),
         lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1,
         sourceQualifiedId: entryRef.source.pluginId + '/' + entryRef.source.localId, configured }));
@@ -632,8 +638,16 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
     const invocations: unknown[] = [];
     const actionId = TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1;
+    const manifest = TRIAGE_PLUGIN.manifest;
     const installed = await installPortableAccountPluginReleaseForTest({
-      manifest: TRIAGE_PLUGIN.manifest,
+      manifest: scenario === 'confirmation' ? {
+        ...manifest,
+        contributes: { ...manifest.contributes, actions: manifest.contributes?.actions?.map(action => action.id === actionId
+          ? { ...action, dangerLevel: 'writesRemote' as const,
+            confirmation: { title: 'Link this Triage entry?' },
+            confirmationWhen: { presentUserUi: false, default: { op: 'eq' as const, path: 'sessionId', value: 'sess_new' } } }
+          : action) },
+      } : manifest,
       accountLifetime,
       publishProjection: true,
       activate(api) {
@@ -668,7 +682,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       // Exercise the normal desktop Account Action placement at its platform boundary.
       nativeTriageActionHost.enabled = true;
       const open = (seed: unknown) => {
-        expect(seedAndOpenNewSession({ scope, seed, isCurrent: () => true,
+        expect(seedAndOpenNewSession({ scope: draftScope, seed, pluginId: manifest.id, isCurrent: () => true,
           createDraftId: () => draftId, navigateToNewSession: () => {} }).kind).toBe('opened');
       };
       if (scenario === 'plain') open({ prompt: 'Address this entry' });
@@ -682,20 +696,30 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
           .toEqual({ status: 'seeded' });
       }
       expect(invocations).toEqual([]);
-      expect(Boolean(readNewSessionDraftFromRepository({ scope, draftId })?.postCreateAction)).toBe(scenario !== 'plain');
-      const params = buildCreateSessionHookParams({ draftId, draftScope: scope, targetServerId: scope.serverId });
+      expect(Boolean(readNewSessionDraftFromRepository({ scope: draftScope, draftId })?.postCreateAction)).toBe(scenario !== 'plain');
+      const params = buildCreateSessionHookParams({ draftId, draftScope, targetServerId: scope.serverId });
       const hook = await renderHook(() => useCreateNewSession(params as never));
       try {
         await act(async () => { await hook.getCurrent().handleCreateSession(); });
         expect(sessionSpawnNewRpcSpy).toHaveBeenCalledTimes(1);
         expect(invocations, JSON.stringify({ alerts: modalAlertSpy.mock.calls, confirms: modalConfirmSpy.mock.calls,
           retainedIntent: Boolean(readNewSessionDraftFromRepository({ scope, draftId })?.postCreateAction) }))
-          .toEqual(scenario === 'plain' ? [] : [{ sessionId: 'sess_new', accountScope: scope }]);
+          .toEqual(scenario === 'linked' || scenario === 'refused' ? [{ sessionId: 'sess_new', accountScope: scope }] : []);
         const rows = await collections.sessionLinks.query({
           index: CORPUS_SESSION_LINKS_INDEX_ID.bySession, prefix: ['sess_new'], order: 'asc',
         });
         expect(rows.rows).toHaveLength(scenario === 'linked' ? 1 : 0);
-        expect(readNewSessionDraftFromRepository({ scope, draftId })?.postCreateAction).toBeUndefined();
+        expect(readNewSessionDraftFromRepository({ scope: draftScope, draftId })?.postCreateAction).toBeUndefined();
+        if (scenario === 'confirmation') expect(modalShowSpy).toHaveBeenCalledWith(expect.objectContaining({
+          chrome: expect.objectContaining({ testID: 'app-shell-transient-interaction-dialog' }),
+        }));
+        if (scenario === 'linked' || scenario === 'account-mismatch') {
+          expect(modalConfirmSpy).not.toHaveBeenCalled();
+          expect(modalShowSpy).not.toHaveBeenCalled();
+        }
+        if (scenario === 'account-mismatch') {
+          expect(modalAlertSpy).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('action_account_scope_changed'), undefined);
+        }
         if (scenario === 'refused') {
           expect(modalAlertSpy).toHaveBeenCalledWith(
             expect.any(String), expect.stringContaining('sessionLinksSourceInstanceUnavailable'), undefined,
