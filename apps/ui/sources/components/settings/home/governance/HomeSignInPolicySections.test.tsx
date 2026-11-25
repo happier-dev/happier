@@ -374,6 +374,20 @@ describe('SignInPolicyEditor', () => {
         });
     });
 
+    it('explains when the Home rejects a policy and preserves the choice for correction', async () => {
+        const { screen, serverId } = await renderEditor();
+        harness.answer(serverId, POLICY_PATH, { status: 400, body: { error: 'home_policy_invalid' } });
+
+        await screen.pressByTestIdAsync('home-policy-auth-admission:closed');
+        await screen.pressByTestIdAsync('home-policy-auth-save');
+
+        await waitForHomeGovernance(() => expect(Modal.alertAsync).toHaveBeenCalledWith(
+            'homeGovernance.changeFailedTitle', 'homeGovernance.invalidPolicy',
+        ));
+        expect(renderedTabIsSelected(screen.findByTestId('home-policy-auth-admission:closed'))).toBe(true);
+        expect(harness.requestsFor(POLICY_PATH)).toHaveLength(1);
+    });
+
     it('keeps the draft through a stale revision and asks for a reload', async () => {
         const refresh = vi.fn();
         const { screen, serverId } = await renderEditor({ refresh });

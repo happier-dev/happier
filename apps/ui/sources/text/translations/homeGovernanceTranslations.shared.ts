@@ -282,6 +282,7 @@ export const en = {
     policyReadOnly: 'Only a Home owner can change these.',
     policyEditingUnavailable: 'Changing policy is not available from this device yet.',
     revisionConflictTitle: 'This policy changed elsewhere',
+    invalidPolicy: "This Home rejected these policy settings. Review them before saving again.",
     revisionConflictBody: 'Someone else saved a change while you were editing. Your choice is kept — reload this Home and apply it again.',
     sessionDefaultsChanged: "The Home’s Session defaults changed. Refresh to see the current choices before editing again.",
     reload: 'Reload',

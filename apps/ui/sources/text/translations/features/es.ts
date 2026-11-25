@@ -7706,6 +7706,7 @@ const es: typeof en = {
     policyReadOnly: 'Solo un propietario del Home puede cambiar esto.',
     policyEditingUnavailable: 'Todavía no se pueden cambiar las políticas desde este dispositivo.',
     revisionConflictTitle: 'Esta política cambió en otro lugar',
+    invalidPolicy: "Este Home ha rechazado estos ajustes de la política. Revísalos antes de volver a guardar.",
     revisionConflictBody: 'Alguien más guardó un cambio mientras editabas. Tu elección se conserva: recarga este Home y vuelve a aplicarla.',
     sessionDefaultsChanged: "Los valores predeterminados de sesión de este Home han cambiado. Recarga la página para ver los ajustes actuales antes de volver a editarlos.",
     reload: 'Recargar',

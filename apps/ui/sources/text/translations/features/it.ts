@@ -7818,6 +7818,7 @@ const it: typeof en = {
     policyReadOnly: 'Solo un proprietario dell’Home può modificarlo.',
     policyEditingUnavailable: 'Non è ancora possibile modificare i criteri da questo dispositivo.',
     revisionConflictTitle: 'Questo criterio è cambiato altrove',
+    invalidPolicy: "Questo Home ha rifiutato queste impostazioni della policy. Controllale prima di salvarle di nuovo.",
     revisionConflictBody: 'Qualcun altro ha salvato una modifica mentre stavi modificando. La tua scelta è conservata: ricarica questo Home e applicala di nuovo.',
     sessionDefaultsChanged: "Le impostazioni predefinite delle sessioni di questo Home sono cambiate. Ricarica la pagina per vedere quelle attuali prima di modificarle di nuovo.",
     reload: 'Ricarica',

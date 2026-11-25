@@ -7707,6 +7707,7 @@ const zhHant: typeof en = {
     policyReadOnly: '只有 Home 擁有者可以變更。',
     policyEditingUnavailable: '尚無法從這台裝置變更政策。',
     revisionConflictTitle: '這個政策已在別處變更',
+    invalidPolicy: "此 Home 拒絕了這些政策設定。請檢查後再儲存。",
     revisionConflictBody: '你編輯時有其他人儲存了變更。你的選擇已保留——請重新載入這個 Home 後再次套用。',
     sessionDefaultsChanged: "這個 Home 的工作階段預設設定已變更。請重新整理頁面查看目前的設定，再繼續編輯。",
     reload: '重新載入',

@@ -289,6 +289,8 @@ function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 
             return t('homeGovernance.errorAccountInactive');
         case 'home_policy_revision_conflict':
             return t('homeGovernance.revisionConflictBody');
+        case 'home_policy_invalid':
+            return t('homeGovernance.invalidPolicy');
         case 'home_settings_invalid': {
             switch (readHomeSettingsInvalidFailure(failure)?.reason) {
                 case 'unknown_key': return t('homeSettings.refused.unknownKey');

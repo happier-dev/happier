@@ -7838,6 +7838,7 @@ const pl: typeof en = {
     policyReadOnly: 'Tylko właściciel Home może to zmienić.',
     policyEditingUnavailable: 'Zmiana zasad nie jest jeszcze możliwa z tego urządzenia.',
     revisionConflictTitle: 'Te zasady zmieniono w innym miejscu',
+    invalidPolicy: "Ten Home odrzucił te ustawienia zasad. Sprawdź je przed ponownym zapisem.",
     revisionConflictBody: 'Ktoś inny zapisał zmianę, gdy edytowałeś. Twój wybór został zachowany — odśwież ten Home i zastosuj go ponownie.',
     sessionDefaultsChanged: "Domyślne ustawienia sesji tego Home uległy zmianie. Odśwież stronę, aby zobaczyć aktualne ustawienia przed ponowną edycją.",
     reload: 'Odśwież',

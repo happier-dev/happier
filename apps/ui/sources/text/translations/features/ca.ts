@@ -7811,6 +7811,7 @@ const ca: typeof en = {
     policyReadOnly: 'Només un propietari del Home ho pot canviar.',
     policyEditingUnavailable: 'Encara no es poden canviar les polítiques des d’aquest dispositiu.',
     revisionConflictTitle: 'Aquesta política ha canviat en un altre lloc',
+    invalidPolicy: "Aquest Home ha rebutjat aquesta configuració de la política. Revisa-la abans de tornar a desar.",
     revisionConflictBody: 'Algú altre ha desat un canvi mentre editaves. La teva tria es manté: torna a carregar aquest Home i aplica-la de nou.',
     sessionDefaultsChanged: "Els valors predeterminats de sessió d’aquest Home han canviat. Actualitza la pàgina per veure la configuració actual abans de tornar-la a editar.",
     reload: 'Torna a carregar',
