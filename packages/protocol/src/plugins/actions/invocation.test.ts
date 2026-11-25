@@ -1351,6 +1351,22 @@ describe('createPluginActionInvocation', () => {
     expect(JSON.stringify(genericResult)).not.toContain('"credential"');
   });
 
+  it('keeps the typed code of a public Action failure thrown by a host service inside the handler', async () => {
+    // A daemon service refusal reaches plugin code as an Error carrying the public failure fields.
+    class HostRefusal extends Error {
+      readonly ok = false;
+      readonly errorCode = 'effect_in_progress';
+      readonly error = 'effect_in_progress';
+      constructor() { super('effect_in_progress'); this.name = 'HostRefusal'; }
+    }
+    expect(await createInvocation().invoke(null, { handler: () => { throw new HostRefusal(); } })).toEqual({
+      status: 'failed',
+      code: 'effect_in_progress',
+      message: 'effect_in_progress',
+      data: { failureCause: { phase: 'action.handler', errorClass: 'Error', errorCode: 'effect_in_progress', httpStatus: null } },
+    });
+  });
+
   it('projects canonical PluginError code and multibyte message text through the stable public boundary', async () => {
     const message = `ACTION_FAILURE_MARKER ${'🚫'.repeat(700)}`;
     const unstableCode = 'Provider Failure';

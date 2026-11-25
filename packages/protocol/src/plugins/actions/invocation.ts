@@ -1091,11 +1091,15 @@ export function createPluginActionInvocation(params: Readonly<{
               ...(pluginError.data === undefined ? {} : { data: pluginError.data }),
             }, pluginError));
           }
-          try { options.recordUnexpectedHandlerFailure?.(error); } catch { /* Diagnostics cannot replace settlement. */ }
+          // A host service refusal keeps its typed public code; only an untyped throw takes the fallback.
+          const publicFailure = parseActionExecuteFailure(error);
+          if (!publicFailure) {
+            try { options.recordUnexpectedHandlerFailure?.(error); } catch { /* Diagnostics cannot replace settlement. */ }
+          }
           return Object.freeze({
             status: 'failed',
-            code: PLUGIN_ACTION_FAILURE_FALLBACK_CODE,
-            message: PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE,
+            code: publicFailure ? projectPluginActionFailureCode(publicFailure.errorCode) : PLUGIN_ACTION_FAILURE_FALLBACK_CODE,
+            message: publicFailure ? projectPluginActionFailureMessage(publicFailure.error) : PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE,
             data: { failureCause: { ...projectActionFailureCauseV1(error, 'action.handler') } },
           });
         }
