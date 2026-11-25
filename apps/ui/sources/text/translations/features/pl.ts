@@ -16999,6 +16999,7 @@ const polish: TeamsTranslationRoot = {
             invalidName: 'Podaj nazwę o długości od 1 do 80 znaków.',
             invalidTeamLink: 'Otwórz zespół z listy Zespoły, aby użyć aktualnego linku.',
             invalidDescription: 'Podaj opis o długości do 500 znaków.',
+            listCursorExpired: "Ta strona nie jest już dostępna. Odśwież listę, aby wrócić na początek.",
             invalidNameCharacters: "Usuń znaki niedrukowalne z nazwy zespołu.",
             invalidDescriptionCharacters: "Usuń znaki niedrukowalne z opisu zespołu.",
             invalidTeamDetails: "Sprawdź dane zespołu.",

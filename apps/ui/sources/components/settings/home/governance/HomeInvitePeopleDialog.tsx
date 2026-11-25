@@ -27,6 +27,7 @@ import { t } from '@/text';
 import type { TeamSectionContext } from '@/components/settings/teams/teamSectionContext';
 
 import type { HomeAdministrationContext } from './homeAdministrationContext';
+import { HomeTeamsDirectoryFailure } from './HomeTeamsDirectoryFailure';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
 export type HomeInvitePeopleDialogProps = CustomModalInjectedProps & Readonly<{
@@ -135,14 +136,11 @@ const HomeInvitePeopleChooser = React.memo(function HomeInvitePeopleChooser(prop
                 </ItemGroup>
             ) : failed ? (
                 <ItemGroup>
-                    <ItemLoadStateRows
+                    <HomeTeamsDirectoryFailure
                         testID="home-invite-people-teams-failed"
-                        state={{
-                            kind: 'failed',
-                            reason: t('homeGovernance.invite.teamsFailed'),
-                            onRetry: directory.refresh,
-                            homeServerIds: serverIds,
-                        }}
+                        home={directory.unavailableHomes.find((home) => home.reason !== 'loading')}
+                        serverIds={serverIds}
+                        refresh={directory.refresh}
                     />
                 </ItemGroup>
             ) : teams.length === 0 && !directory.hasMore && governedTeams > 0 ? (

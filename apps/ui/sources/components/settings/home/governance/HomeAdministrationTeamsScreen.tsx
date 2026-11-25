@@ -18,6 +18,7 @@ import { t } from '@/text';
 
 import { HomeAdministrationSection } from './HomeAdministrationSection';
 import { homeInvitePeopleAction } from './HomeInvitePeopleDialog';
+import { HomeTeamsDirectoryFailure } from './HomeTeamsDirectoryFailure';
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 import { segmentHomeAdministrationRows } from './homeAdministrationVirtualizedSegments';
 import { HomeMemberDefaultsRow, TeamCreationPolicyEditor, TeamsVisibilityPolicyEditor } from './HomeTeamsPolicySections';
@@ -69,7 +70,10 @@ const HomeTeams = React.memo(function HomeTeams(
         // opened, the answer controls whether the affordance remains visible.
         enabled: enabled && showArchived,
     });
-    const archivedRetryable = archived.unavailableHomes.some((home) => home.retryable);
+    const activeFailure = directory.unavailableHomes.find((home) => home.reason !== 'loading');
+    const archivedFailure = archived.unavailableHomes.find((home) => home.reason !== 'loading');
+    const sharedRefusal = activeFailure && !activeFailure.retryable && activeFailure.reason !== 'cursor_expired'
+        && activeFailure.reason === archivedFailure?.reason;
     const archivedLoading = archived.kind === 'loading'
         && archived.unavailableHomes.some((home) => home.reason === 'loading');
     const offerArchived = !showArchived
@@ -137,7 +141,6 @@ const HomeTeams = React.memo(function HomeTeams(
 
         // Still loading only while the Home has not failed to answer; a failed first read is
         // stated inside the section below instead of a spinner that never resolves.
-        const directoryRetryable = directory.unavailableHomes.some((home) => home.retryable);
         if (
             directory.kind === 'loading'
             && directory.rows.length === 0
@@ -154,18 +157,17 @@ const HomeTeams = React.memo(function HomeTeams(
 
         // The Home could not list its Teams: the People page's failed-read row, with Retry when
         // asking again can help and quiet while the page's banner says the Home is unreachable.
-        const directoryFailure = {
-            kind: 'failed' as const,
-            reason: t('homeGovernance.invite.teamsFailed'),
-            onRetry: directoryRetryable ? directory.refresh : undefined,
-            homeServerIds: [serverId],
-        };
+        const openFeatures = context.projection.capabilities.viewAdministration
+            ? () => router.push(homeAdministrationFeaturesPath(serverId) as never)
+            : undefined;
+        const directoryFailure = <HomeTeamsDirectoryFailure testID="home-teams" home={activeFailure}
+            serverIds={serverIds} refresh={directory.refresh} openFeatures={openFeatures} />;
         const directoryFailed = directory.rows.length === 0 && directory.partial;
         if (directoryFailed) {
             // The section and its create action stay; the unknown list is never an empty Home.
             add('unavailable', () => (
                 <ItemGroup surface="none" title={t('homeGovernance.teams')} action={createAction}>
-                    <ItemLoadStateRows testID="home-teams" state={directoryFailure} />
+                    {directoryFailure}
                 </ItemGroup>
             ));
         } else if (directory.rows.length === 0) {
@@ -248,17 +250,15 @@ const HomeTeams = React.memo(function HomeTeams(
                     </ItemGroup>
                 ));
             }
-            if (archived.partial && !archivedLoading) {
+            if (archived.partial && !archivedLoading && !sharedRefusal) {
                 add('archived-failure', () => (
                     <ItemGroup surface="none" title={archived.archivedRows.length === 0 ? t('teams.directory.archivedSection') : undefined}>
-                        <ItemLoadStateRows
+                        <HomeTeamsDirectoryFailure
                             testID="home-teams-archived"
-                            state={{
-                                kind: 'failed',
-                                reason: t('homeGovernance.invite.teamsFailed'),
-                                onRetry: archivedRetryable ? archived.refresh : undefined,
-                                homeServerIds: [serverId],
-                            }}
+                            home={archivedFailure}
+                            serverIds={serverIds}
+                            refresh={archived.refresh}
+                            openFeatures={openFeatures}
                         />
                     </ItemGroup>
                 ));
@@ -268,7 +268,7 @@ const HomeTeams = React.memo(function HomeTeams(
         if (directory.partial && directory.rows.length > 0) {
             add('retry', () => (
                 <ItemGroup>
-                    <ItemLoadStateRows testID="home-teams" state={directoryFailure} />
+                    {directoryFailure}
                 </ItemGroup>
             ));
         } else if (directory.hasMore) {
@@ -282,7 +282,7 @@ const HomeTeams = React.memo(function HomeTeams(
         }
         addMemberDefaults();
         return result;
-    }, [archived, archivedLoading, archivedRetryable, context, directory, mayGovern, offerArchived, openTeam, router, serverId, showArchived, teamsEnabled, theme.colors.text.secondary]);
+    }, [activeFailure, archived, archivedFailure, archivedLoading, context, directory, mayGovern, offerArchived, openTeam, router, serverId, serverIds, sharedRefusal, showArchived, teamsEnabled, theme.colors.text.secondary]);
 
     const renderRow = React.useCallback(({ item }: Readonly<{ item: HomeTeamsVirtualizedRow }>) => item.render(), []);
 

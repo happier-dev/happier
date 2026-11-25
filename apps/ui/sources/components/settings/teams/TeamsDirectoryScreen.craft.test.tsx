@@ -183,6 +183,14 @@ describe('TeamsDirectoryScreen craft', () => {
             reason: 'teams.errors.teamsLoadFailed', action: 'common.retry' },
         { width: 390, status: 500, body: { error: 'internal_error' },
             reason: 'teams.errors.teamsLoadFailed', action: 'common.retry' },
+        { width: 1440, status: 404, body: { error: 'teams_unavailable' },
+            reason: 'teams.unavailable.disabled', action: null },
+        { width: 390, status: 404, body: { error: 'teams_unavailable' },
+            reason: 'teams.unavailable.disabled', action: null },
+        { width: 390, status: 400, body: { error: 'invalid_team_input' },
+            reason: 'homeGovernance.invalidRead', action: null },
+        { width: 1440, status: 403, body: { error: 'team_forbidden' },
+            reason: 'teams.errors.forbidden', action: null },
     ])('shows one reason and one recovery action for HTTP $status at $width px', async ({ width, status, body, reason, action }) => {
         const home = await memberHome(0);
         harness.answer(home, TEAMS_LIST_PATH, { status, body });
@@ -195,13 +203,37 @@ describe('TeamsDirectoryScreen craft', () => {
         expect({
             reason: renderedText.filter((text) => text === reason).length,
             action: renderedText.filter((text) => text === action).length,
-        }).toEqual({ reason: 1, action: 1 });
+        }).toEqual({ reason: 1, action: action === null ? 0 : 1 });
+        if (action === null) expect(screen.findByTestId('teams-directory-retry')).toBeNull();
         expect(screen.findHostByTestId('teams-directory-empty')).toBeNull();
         // No Home answered: the one Home's message is the page state, not a section about "other Homes",
         // and nothing offers archived Teams of a directory that could not be read.
         expect(renderedText).not.toContain('teams.directory.partialHomes');
         expect(renderedText).not.toContain('teams.directory.unreachableHomes');
         expect(screen.findHostByTestId('teams-directory-toggle-archived')).toBeNull();
+    });
+
+    it('names an expired Team directory page and reloads without that cursor', async () => {
+        const home = await memberHome(1);
+        harness.answer(home, TEAMS_LIST_PATH, {
+            body: { items: [teamSummaryFixture({ id: 'team-0' })], nextCursor: 'page-2' },
+        });
+        const screen = await renderDirectory();
+        await vi.waitFor(() => expect(screen.findByTestId('teams-directory-load-more')).not.toBeNull());
+        harness.answer(home, TEAMS_LIST_PATH, { status: 400, body: { error: 'invalid_team_cursor' } });
+
+        await screen.pressByTestIdAsync('teams-directory-load-more');
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('teams.errors.listCursorExpired'));
+        expect(screen.getTextContent()).not.toContain('teams.unavailable.retry');
+        expect(screen.findByTestId('teams-directory-load-more')).toBeNull();
+
+        harness.answer(home, TEAMS_LIST_PATH, {
+            body: { items: [teamSummaryFixture({ id: 'team-new' })], nextCursor: null },
+        });
+        await screen.pressByTestIdAsync('teams-directory-reload');
+        await vi.waitFor(() => expect(screen.findHostByTestId(`teams-row:${home}:team-new`)).not.toBeNull());
+        expect(harness.requestsFor(TEAMS_LIST_PATH).map(({ input }) => (input as { cursor: string | null }).cursor))
+            .toEqual([null, 'page-2', null]);
     });
 
     it('names the Homes that failed beside the Homes that answered', async () => {

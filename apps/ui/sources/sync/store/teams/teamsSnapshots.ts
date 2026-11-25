@@ -905,7 +905,7 @@ export function applyTeamsDirectoryFailure(params: Readonly<{
         // The last known directory stays visible and is marked stale rather than
         // flashing an empty Teams list.
         data: withdrawn ? null : current?.data ?? null,
-        nextCursor: withdrawn ? null : current?.nextCursor ?? null,
+        nextCursor: withdrawn || params.error.code === 'invalid_team_cursor' ? null : current?.nextCursor ?? null,
         lastObservedAt: withdrawn ? null : current?.lastObservedAt ?? null,
         stale: !withdrawn && Boolean(current?.data),
         reachability: reachabilityForScopedSnapshotError(params.error),

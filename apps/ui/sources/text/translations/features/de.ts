@@ -16785,6 +16785,7 @@ const german: TeamsTranslationRoot = {
             invalidName: 'Gib einen Namen mit 1 bis 80 Zeichen ein.',
             invalidTeamLink: 'Öffne das Team über die Teamübersicht, um den aktuellen Link zu verwenden.',
             invalidDescription: 'Gib eine Beschreibung mit höchstens 500 Zeichen ein.',
+            listCursorExpired: "Diese Seite ist nicht mehr verfügbar. Aktualisiere die Liste, um wieder am Anfang zu beginnen.",
             invalidNameCharacters: "Entferne nicht druckbare Zeichen aus dem Teamnamen.",
             invalidDescriptionCharacters: "Entferne nicht druckbare Zeichen aus der Teambeschreibung.",
             invalidTeamDetails: "Prüfe die Teamdetails.",

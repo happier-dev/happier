@@ -15,7 +15,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { TeamRow, teamRailRowHasSubtitle } from '../TeamRow';
 import { teamCredentialCreatePath, teamDetailPath, teamsCreatePath } from '../teamsRoutes';
 import type { TeamsDirectoryUnavailableHome } from '../teamsDirectoryViewState';
-import { teamsDirectoryHomeReason, teamsUnavailableHomeSettingsAction, teamsUnavailableHomeStateKind } from '../teamsDirectoryViewState';
+import { teamsDirectoryHomeAction, teamsDirectoryHomeReason, teamsUnavailableHomeStateKind } from '../teamsDirectoryViewState';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import {
@@ -176,7 +176,7 @@ export const TeamsCollectionRail = React.memo(function TeamsCollectionRail(props
                 add('archived-empty', () => <Item testID="teams-directory-archived-empty" title={t('teams.directory.archivedEmpty')}
                     mode="info" density="compact" />);
             }
-            if (collection.showArchived && !collection.archivedPending && collection.archived.unavailableHomes.length > 0) {
+            if (!directoryPageReportsFailure && collection.showArchived && !collection.archivedPending && collection.archived.unavailableHomes.length > 0) {
                 add('archived-unavailable', () => <UnavailableHomesRail homes={collection.archived.unavailableHomes}
                     onRetry={collection.archived.refresh} testIDPrefix="teams-archived-home-unavailable" />);
             }
@@ -241,11 +241,10 @@ const UnavailableHomesRail = React.memo(function UnavailableHomesRail(props: Rea
                     reason={teamsDirectoryHomeReason(home)}
                     kind={teamsUnavailableHomeStateKind(home)}
                     size="line"
-                    action={home.retryable ? {
-                        testID: index === 0 ? `${prefix}-retry` : `${prefix}:${home.serverId}:retry`,
-                        label: t('common.retry'),
-                        onPress: props.onRetry,
-                    } : teamsUnavailableHomeSettingsAction(home, (href) => router.push(href as Href))}
+                    action={teamsDirectoryHomeAction(home, props.onRetry, (href) => router.push(href as Href), {
+                        retry: index === 0 ? `${prefix}-retry` : `${prefix}:${home.serverId}:retry`,
+                        reload: `${prefix}:${home.serverId}:reload`,
+                    })}
                 />
             ))}
         </>

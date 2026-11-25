@@ -16907,6 +16907,7 @@ const japanese: TeamsTranslationRoot = {
             invalidName: '1〜80 文字の名前を入力してください。',
             invalidTeamLink: '現在のリンクを使うには、「チーム」からチームを開いてください。',
             invalidDescription: '説明は 500 文字以内で入力してください。',
+            listCursorExpired: "このページは利用できなくなりました。更新して一覧の先頭に戻ってください。",
             invalidNameCharacters: "チーム名から印字できない文字を取り除いてください。",
             invalidDescriptionCharacters: "チームの説明から印字できない文字を取り除いてください。",
             invalidTeamDetails: "チームの詳細を確認してください。",

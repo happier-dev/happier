@@ -472,6 +472,16 @@ describe('Invite people', () => {
         });
     }
 
+    it('shows the Home’s Team invitation listing refusal without Retry', async () => {
+        const home = await addHome();
+        harness.answer(home, TEAMS_LIST_PATH, { status: 403, body: { error: 'team_forbidden' } });
+
+        const screen = await renderDialog(home);
+        await waitForHomeGovernance(() => expect(screen.getTextContent().split('teams.errors.forbidden')).toHaveLength(2));
+        expect(ids(screen)).not.toContain('home-invite-people-teams-failed-retry');
+        expect(ids(screen)).not.toContain('home-invite-people-no-teams');
+    });
+
     it('goes straight to the invitation form when the viewer can invite to one Team (a Personal Home)', async () => {
         const home = await addHome();
         const team = answerTeam(home, 'team-1', 'Personal');

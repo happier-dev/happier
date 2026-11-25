@@ -16847,6 +16847,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
             invalidName: '请输入 1 到 80 个字符的名称。',
             invalidTeamLink: '请从“团队”打开该团队，以使用当前的链接。',
             invalidDescription: '请输入不超过 500 个字符的描述。',
+            listCursorExpired: "此页已无法查看。刷新列表可返回开头。",
             invalidNameCharacters: "请从团队名称中移除不可打印的字符。",
             invalidDescriptionCharacters: "请从团队说明中移除不可打印的字符。",
             invalidTeamDetails: "请检查团队详情。",

@@ -319,6 +319,20 @@ describe('HomeAdministrationTeamsScreen', () => {
         expect(ids).not.toContain('home-teams-toggle-archived');
     });
 
+    it.each([
+        { status: 404, code: 'teams_unavailable', reason: 'teams.unavailable.disabled' },
+        { status: 403, code: 'team_forbidden', reason: 'teams.errors.forbidden' },
+    ])('names $code once in the administered directory with no Retry', async ({ status, code, reason }) => {
+        const home = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', teamsEnabled: true });
+        harness.answer(home, GOVERNANCE_PATH, { body: homeGovernanceProjectionFixture() });
+        harness.answer(home, TEAMS_LIST_PATH, { status, body: { error: code } });
+
+        const screen = await renderHomeTeams(home);
+        await waitForHomeGovernance(() => expect(screen.getTextContent().split(reason)).toHaveLength(2));
+        expect(screen.findByTestId('home-teams-retry')).toBeNull();
+        expect(screen.findByTestId('home-teams-empty')).toBeNull();
+    });
+
     it('keeps archived administered Teams reachable for restore', async () => {
         const home = await harness.addHome({
             name: 'Home A',

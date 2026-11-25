@@ -32,7 +32,8 @@ export type TeamsDirectoryRow = Readonly<{
 export type TeamsDirectoryUnavailableHome = Readonly<{
     serverId: string;
     homeName: string;
-    reason: 'loading' | 'offline' | 'error' | 'denied' | 'sign_in_outdated' | 'unsupported' | 'turned_off' | 'credential_unreadable';
+    reason: 'loading' | 'offline' | 'error' | 'denied' | 'sign_in_outdated' | 'unsupported' | 'disabled'
+        | 'turned_off' | 'credential_unreadable' | 'invalid_request' | 'cursor_expired' | 'authentication_unavailable';
     retryable: boolean;
 }>;
 
@@ -78,6 +79,10 @@ export function teamsUnavailableReason(
     if (isActionTurnedOffErrorCode(error.code)) return { reason: 'turned_off', retryable: false };
     // Teams refuse a released 0.2 sign-in; signing in again, not a role, is the way forward.
     if (isTeamLegacyCredentialRefusalV1(error.code, error.details)) return { reason: 'sign_in_outdated', retryable: false };
+    if (error.code === 'teams_unavailable') return { reason: 'disabled', retryable: false };
+    if (error.code === 'invalid_team_input') return { reason: 'invalid_request', retryable: false };
+    if (error.code === 'invalid_team_cursor') return { reason: 'cursor_expired', retryable: false };
+    if (error.code === 'team_authentication_unavailable') return { reason: 'authentication_unavailable', retryable: false };
     if (error.kind === 'forbidden' || error.kind === 'unauthorized') {
         return { reason: 'denied', retryable: false };
     }
@@ -91,10 +96,14 @@ export function teamsUnavailableHomeReason(home: Pick<TeamsDirectoryUnavailableH
         case 'denied': return t('teams.errors.forbidden');
         case 'sign_in_outdated': return t('teams.errors.signInOutdated');
         case 'unsupported': return t('teams.unavailable.updateRequired');
+        case 'disabled': return t('teams.unavailable.disabled');
         case 'turned_off': return t('actionConfirmations.turnedOffReadMessage');
         case 'offline': return t('teams.unavailable.offline');
         case 'error': return t('teams.errors.loadFailed');
         case 'credential_unreadable': return t('homeGovernance.credentialUnreadableTitle');
+        case 'invalid_request': return t('homeGovernance.invalidRead');
+        case 'cursor_expired': return t('teams.errors.listCursorExpired');
+        case 'authentication_unavailable': return t('teams.credentials.externalApi.authenticationUnavailable');
     }
 }
 
@@ -120,6 +129,21 @@ export function teamsUnavailableHomeSettingsAction(
         : undefined;
 }
 
+export function teamsDirectoryHomeAction(
+    home: TeamsDirectoryUnavailableHome,
+    refresh: () => void,
+    navigate: (href: string) => void,
+    testIDs: Readonly<{ retry: string; reload: string }>,
+) {
+    if (home.reason === 'cursor_expired') {
+        return { label: t('common.refresh'), onPress: refresh, testID: testIDs.reload };
+    }
+    if (home.retryable) {
+        return { label: t('common.retry'), onPress: refresh, testID: testIDs.retry };
+    }
+    return teamsUnavailableHomeSettingsAction(home, navigate);
+}
+
 /** The directory page and its rail present the same settled Home failure. */
 export function teamsUnavailableHomeStateKind(home: Pick<TeamsDirectoryUnavailableHome, 'reason'>): SurfaceStateKind {
     switch (home.reason) {
@@ -127,6 +151,8 @@ export function teamsUnavailableHomeStateKind(home: Pick<TeamsDirectoryUnavailab
         case 'denied': return 'denied';
         case 'offline': return 'unavailable';
         case 'unsupported':
+        case 'disabled':
+        case 'authentication_unavailable':
         case 'sign_in_outdated':
         case 'turned_off': return 'unavailable';
         default: return 'error';
@@ -184,10 +210,13 @@ export function resolveTeamsDirectoryViewState(
         const source = input.snapshotsByServerId[home.serverId];
         const snapshots = source === undefined || 'scope' in source ? [source] : source;
         const missing = snapshots.filter((snapshot) => !snapshot?.data);
-        if (missing.length > 0) {
+        // A retained page already has a stale state for a transport failure.
+        // An exact refusal still needs words and, if possible, its own recovery.
+        const failed = snapshots.find((snapshot) => snapshot?.error
+            && (!snapshot.data || snapshot.error.kind !== 'unreachable' && snapshot.error.code != null));
+        if (failed || missing.length > 0) {
             // One Home can have answered the active sequence while its archived
             // sequence is still loading or failed. Keep its rows and name the gap.
-            const failed = missing.find((snapshot) => snapshot?.error);
             const { reason, retryable } = teamsUnavailableReason(failed?.error);
             unavailableHomes.push(Object.freeze({ serverId: home.serverId, homeName, reason, retryable }));
         }

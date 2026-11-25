@@ -21,7 +21,7 @@ import { t } from '@/text';
 import { TeamRow } from './TeamRow';
 import { teamCredentialCreatePath, teamDetailPath, teamsCreatePath, type TeamCredentialSourceHint } from './teamsRoutes';
 import type { TeamsDirectoryRow, TeamsDirectoryUnavailableHome } from './teamsDirectoryViewState';
-import { teamsDirectoryHomeReason, teamsUnavailableHomeReason, teamsUnavailableHomeSettingsAction, teamsUnavailableHomeStateKind } from './teamsDirectoryViewState';
+import { teamsDirectoryHomeAction, teamsDirectoryHomeReason, teamsUnavailableHomeReason, teamsUnavailableHomeStateKind } from './teamsDirectoryViewState';
 import { TeamsCollectionAddButton } from './collection/TeamsCollectionRail';
 import {
     readLastVisitedTeamsCollectionTeam,
@@ -61,11 +61,12 @@ const UnavailableHomes = React.memo(function UnavailableHomes(props: Readonly<{
     if (props.homes.length === 0) return null;
 
     const prefix = props.testIDPrefix ?? 'teams-home-unavailable';
-    const recovery = (home: TeamsDirectoryUnavailableHome, index: number) => home.retryable ? {
-        testID: index === 0 ? props.retryTestID ?? 'teams-directory-retry' : `${prefix}:${home.serverId}:retry`,
-        label: t('common.retry'),
-        onPress: props.onRetry,
-    } : teamsUnavailableHomeSettingsAction(home, (href) => router.push(href as Href));
+    const recovery = (home: TeamsDirectoryUnavailableHome, index: number) => teamsDirectoryHomeAction(
+        home, props.onRetry, (href) => router.push(href as Href), {
+            retry: index === 0 ? props.retryTestID ?? 'teams-directory-retry' : `${prefix}:${home.serverId}:retry`,
+            reload: prefix === 'teams-home-unavailable' && index === 0 ? 'teams-directory-reload' : `${prefix}:${home.serverId}:reload`,
+        },
+    );
     const only = props.homes.length === 1 ? props.homes[0]! : null;
     if (!props.partial && only && only.reason !== 'loading') {
         // The one Home's message is the page state: what failed and the one way forward.
@@ -340,7 +341,7 @@ function useTeamsDirectoryRows(input: Readonly<{
             return result;
         }
 
-        if (active.stale) {
+        if (active.stale && answeredUnavailableHomes.length === 0) {
             add('stale', () => (
                 <AttentionBanner
                     testID="teams-directory-stale"

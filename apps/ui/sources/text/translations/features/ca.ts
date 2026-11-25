@@ -16985,6 +16985,7 @@ const catalan: TeamsTranslationRoot = {
             invalidName: 'Introdueix un nom d’entre 1 i 80 caràcters.',
             invalidTeamLink: "Obre l’equip des d’Equips per fer servir un enllaç vigent.",
             invalidDescription: 'Introdueix una descripció de 500 caràcters com a màxim.',
+            listCursorExpired: "Aquesta pàgina ja no està disponible. Actualitza la llista per tornar al principi.",
             invalidNameCharacters: "Treu els caràcters no imprimibles del nom de l’equip.",
             invalidDescriptionCharacters: "Treu els caràcters no imprimibles de la descripció de l’equip.",
             invalidTeamDetails: "Revisa les dades de l’equip.",

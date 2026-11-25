@@ -17028,6 +17028,7 @@ const french: TeamsTranslationRoot = {
             invalidName: 'Saisis un nom de 1 à 80 caractères.',
             invalidTeamLink: 'Ouvre l’équipe depuis Teams pour utiliser un lien valide.',
             invalidDescription: 'Saisis une description de 500 caractères maximum.',
+            listCursorExpired: "Cette page n’est plus disponible. Actualisez la liste pour revenir au début.",
             invalidNameCharacters: "Retire les caractères non imprimables du nom de l’équipe.",
             invalidDescriptionCharacters: "Retire les caractères non imprimables de la description de l’équipe.",
             invalidTeamDetails: "Vérifie les informations de l’équipe.",

@@ -16907,6 +16907,7 @@ const spanish: TeamsTranslationRoot = {
             invalidName: 'Introduce un nombre de entre 1 y 80 caracteres.',
             invalidTeamLink: 'Abre el equipo desde Equipos para usar un enlace vigente.',
             invalidDescription: 'Introduce una descripción de 500 caracteres como máximo.',
+            listCursorExpired: "Esta página ya no está disponible. Actualiza la lista para volver al principio.",
             invalidNameCharacters: "Quita los caracteres no imprimibles del nombre del equipo.",
             invalidDescriptionCharacters: "Quita los caracteres no imprimibles de la descripción del equipo.",
             invalidTeamDetails: "Revisa los datos del equipo.",

@@ -217,6 +217,7 @@ export const english = {
             invalidName: 'Enter a name between 1 and 80 characters.',
             invalidTeamLink: 'Open the Team from Teams to use a current link.',
             invalidDescription: 'Enter a description of 500 characters or fewer.',
+            listCursorExpired: "This page is no longer available. Refresh to start at the beginning of the list.",
             invalidNameCharacters: "Remove non-printing characters from the Team name.",
             invalidDescriptionCharacters: "Remove non-printing characters from the Team description.",
             invalidTeamDetails: "Review the Team details.",

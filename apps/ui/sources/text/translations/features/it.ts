@@ -16971,6 +16971,7 @@ const italian: TeamsTranslationRoot = {
             invalidName: 'Inserisci un nome da 1 a 80 caratteri.',
             invalidTeamLink: 'Apri il team da Team per usare un link aggiornato.',
             invalidDescription: 'Inserisci una descrizione di massimo 500 caratteri.',
+            listCursorExpired: "Questa pagina non è più disponibile. Aggiorna l’elenco per ripartire dall’inizio.",
             invalidNameCharacters: "Rimuovi i caratteri non stampabili dal nome del team.",
             invalidDescriptionCharacters: "Rimuovi i caratteri non stampabili dalla descrizione del team.",
             invalidTeamDetails: "Controlla i dettagli del team.",
