@@ -45,7 +45,8 @@ export function createMachineServicesRuntime(input: Readonly<{
     readMetadata(): MachineMetadataFieldReadV1;
     captureMetadataPort(): MachineMetadataFieldPortV1;
     restoreEnvironmentServices?(owner: ResolvedExecutablePluginRuntimeRegistry['projectManagedServices'], signal: AbortSignal,
-        observations: Pick<ResolvedExecutablePluginRuntimeRegistry, 'readHealthAlertSource' | 'currentDomainEdgeObservation'>): Promise<void | readonly EnvironmentServiceRecoveryRow[]>;
+        observations: Pick<ResolvedExecutablePluginRuntimeRegistry, 'readHealthAlertSource' | 'currentDomainEdgeObservation'>,
+        environmentId?: string): Promise<void | readonly EnvironmentServiceRecoveryRow[]>;
 }>): Readonly<{ execute(request: Invocation): Promise<MachineServiceActionOutput | ActionExecuteFailure>; sampleUsage(): Promise<readonly MachineServiceUsageV1[]>; getSummary(): MachineManagedServicesSummaryV1 | undefined; canReadHistory(serviceId: string, request: MachineServiceDisclosureRequest): Promise<boolean>; reconcile(): Promise<void>; ensureEnvironmentServices: EnsureEnvironmentServices; dispose(): Promise<void> }> {
     let disposed = false;
     const rows = createMachineServiceRowProjection(revision);
@@ -217,7 +218,7 @@ export function createMachineServicesRuntime(input: Readonly<{
         const { environmentId } = selection;
         const matchesPreflight = createMachineServicePreflightMatcher(selection.preflight);
         // Advisory selection consumes retained observations; it never restores an inventory or establishes saved watches.
-        const restorationFailures = selection.preflight ? [] : await readEnvironmentServices();
+        const restorationFailures = selection.preflight ? [] : await readEnvironmentServices(environmentId);
         if (!selection.preflight) {
             if (!environmentId) await reconcile(serviceId);
         }
@@ -541,17 +542,18 @@ export function createMachineServicesRuntime(input: Readonly<{
                 : { ok: false, ...normalizeActionExecutorThrownError(error) };
         }
     }
-    async function readEnvironmentServices(): Promise<readonly EnvironmentServiceRecoveryRow[]> {
+    async function readEnvironmentServices(environmentId?: string): Promise<readonly EnvironmentServiceRecoveryRow[]> {
         if (!input.restoreEnvironmentServices || disposed) return [];
         const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
         if (!lease) return [];
         try {
             const owner = lease.registry.projectManagedServices;
-            return await owner.restoreEnvironmentServices(target, () => input.restoreEnvironmentServices!(owner, lifetime.signal, lease.registry), lifetime.signal);
+            return await owner.restoreEnvironmentServices({ ...target, environmentId },
+                () => input.restoreEnvironmentServices!(owner, lifetime.signal, lease.registry, environmentId), lifetime.signal);
         } finally { await lease.release(); }
     }
     async function ensureEnvironmentServices(scope?: EnvironmentServiceRecoveryScope): Promise<void> {
-        const failures = await readEnvironmentServices();
+        const failures = await readEnvironmentServices(scope?.environmentId);
         const failure = failures.find(row => !scope || row.environmentId === scope.environmentId
             && (!scope.serviceId || row.serviceId === scope.serviceId)
             && (!scope.composeService || row.identity?.kind === 'deployment' && row.identity.composeService === scope.composeService));

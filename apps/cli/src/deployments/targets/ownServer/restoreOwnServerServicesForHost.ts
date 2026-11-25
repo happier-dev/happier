@@ -30,6 +30,7 @@ const refuse = (code: string, stage = 'service.restoration'): never => { throw O
 export async function restoreOwnServerServicesForHost(input: Readonly<{
     serverId: string;
     machineId: string;
+    environmentId?: string;
     installationId: string;
     owner: RestoreOwnServerDeploymentServicesInput['owner'] & Pick<ReturnType<typeof createManagedServicesOwner>, 'machineServiceRows'>;
     signal: AbortSignal;
@@ -84,7 +85,9 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
     let cursor: string | undefined;
     do {
         const page = DeploymentEnvironmentListResultV1Schema.parse(await deploymentAction!('deployments.environments.list',
-            { serverId: input.serverId, machineId: input.machineId, ...(cursor ? { cursor } : {}) }, context));
+            { serverId: input.serverId, machineId: input.machineId,
+                ...(input.environmentId === undefined ? {} : { environmentIds: [input.environmentId] }),
+                ...(cursor ? { cursor } : {}) }, context));
         if (!page.ok) return refuse(page.error);
         // An older/incomplete inventory cannot establish that there is nothing
         // to restore. Leave the owner's attempt retryable on the next use.

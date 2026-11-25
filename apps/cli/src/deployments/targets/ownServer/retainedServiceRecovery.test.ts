@@ -64,7 +64,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopped' | 'removed' | 'partially-removed' = 'running',
     homeInventoryMode?: 'plain' | 'e2ee', sourceCase?: 'reused-container' | 'foreign-environment' | 'mixed-service-sources', publishedPorts = true, noHealthcheck = false,
     primaryService = 'app', appliedServiceExports: DeploymentServiceExportV1[] = [], restoration = false, prepareReadRole = false,
-    referencePublication?: Readonly<{ host: string; port: string }>) {
+    referencePublication?: Readonly<{ host: string; port: string }>, includeUnreadableEnvironment = false) {
     const root = await mkdtemp(join(tmpdir(), 'happier-retained-service-recovery-'));
     const home = createHash('sha256').update(root).digest('hex').slice(0, 12);
     const docker = await createOwnServerDockerBoundary(join(root, 'tools'), { engineId: `recovery-${home}`, accounting: { memoryBytes: 2097152 } });
@@ -140,6 +140,12 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
     const environment = createDeploymentEnvironmentHeaderV1({ id: identity.environmentId, serverId: target.serverId,
         ...(sourceCase ? { revision: 13 } : {}) });
     const link = createDeploymentTargetLinkHeaderV1({ environmentId: environment.id, activeDeploymentId: servingDeploymentId });
+    const unreadableEnvironment = createDeploymentEnvironmentHeaderV1({ ...environment, id: 'unreadable-environment',
+        runtimeTargetLinkId: 'unreadable-link' });
+    const unreadableReceipt = createDeploymentReceiptHeaderV1({ id: 'unreadable-deployment',
+        environmentId: unreadableEnvironment.id, targetLinkId: 'unreadable-link', contentArtifactId: 'unreadable-receipt-artifact' });
+    const unreadableLink = createDeploymentTargetLinkHeaderV1({ ...link, id: unreadableReceipt.targetLinkId,
+        environmentId: unreadableEnvironment.id, activeDeploymentId: unreadableReceipt.id });
     const sourceReceipt = createDeploymentReceiptDetailV1({
         deployment: createDeploymentReceiptHeaderV1({ environmentId: sourceIdentity.environmentId, id: sourceDeploymentId,
             ...(sourceCase ? { contentArtifactId: 'artifact-retained-a' } : {}) }),
@@ -169,6 +175,7 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
         throw new Error(`Unexpected retained receipt: ${deploymentId}`);
     };
     let inventoryReads = 0;
+    const unreadableReads: string[] = [];
     const noticeRows = new Map<string, { id: string } & Record<string, unknown>>();
     const healthLog = vi.spyOn(logger, 'infoFile');
     const openedReceiptArtifacts: string[] = [];
@@ -201,12 +208,25 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
                 grants: [], bindingPreparation: { runtimeInstallations: [installation], buildInstallation: installation } } };
             expect(request.method).toBe('GET');
             if (path === '/v1/deployments/environments') {
-                expect(new URL(request.url!).searchParams.get('machineId')).toBe(target.machineId);
+                const query = new URL(request.url!).searchParams;
+                expect(query.get('machineId')).toBe(target.machineId);
                 inventoryReads++;
-                return { status: 200, data: { ok: true, items: [environment], runtimeTargetLinks: [link], nextCursor: null, coverage: 'complete' } };
+                const ids = query.getAll('environmentIds');
+                const inventory = [{ environment, link }, ...(includeUnreadableEnvironment ? [{ environment: unreadableEnvironment, link: unreadableLink }] : [])]
+                    .filter(row => !ids.length || ids.includes(row.environment.id));
+                return { status: 200, data: { ok: true, items: inventory.map(row => row.environment),
+                    runtimeTargetLinks: inventory.map(row => row.link), nextCursor: null, coverage: 'complete' } };
             }
             if (path === `/v1/deployments/environments/${environment.id}`)
                 return { status: 200, data: { ok: true, environment, targetLinks: [link] } };
+            if (includeUnreadableEnvironment && path === `/v1/deployments/environments/${unreadableEnvironment.id}`) {
+                unreadableReads.push('environment');
+                return { status: 200, data: { ok: true, environment: unreadableEnvironment, targetLinks: [unreadableLink] } };
+            }
+            if (includeUnreadableEnvironment && path === `/v1/deployments/environments/${unreadableEnvironment.id}/deployments`) {
+                unreadableReads.push('receipts');
+                return { status: 200, data: { ok: true, items: [unreadableReceipt], nextCursor: null } };
+            }
             if (path === `/v1/deployments/environments/${environment.id}/deployments`)
                 return { status: 200, data: { ok: true, items: availableReceipts.map(value => value.deployment), nextCursor: null } };
             const selected = availableReceipts.find(value => path === `/v1/deployments/receipts/${value.deployment.id}`);
@@ -215,6 +235,7 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
         });
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             const path = new URL(url).pathname;
+            if (path === `/v1/artifacts/${unreadableReceipt.contentArtifactId}`) unreadableReads.push('artifact');
             if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(url, [...noticeRows.values()]) };
             const noticeRow = noticeRows.get(path.split('/')[3]!);
             if (noticeRow) return { status: 200, data: path.endsWith('/recipients') ? {
@@ -284,8 +305,8 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
     const runtime = createMachineServicesRuntime({ target,
         readMetadata: () => ({ status: 'ready', metadataVersion: 1, metadata: { serviceWatchesV1: { v: 1, watches: [] } } }),
         captureMetadataPort() { throw new Error('Read-only recovery must not write Machine metadata'); },
-        restoreEnvironmentServices: (owner, signal, observations) => homeInventoryMode
-            ? restoreOwnServerServicesForHost({ ...observations, ...target, installationId: 'installation-a', owner, signal,
+        restoreEnvironmentServices: (owner, signal, observations, environmentId) => homeInventoryMode
+            ? restoreOwnServerServicesForHost({ ...observations, ...target, environmentId, installationId: 'installation-a', owner, signal,
                 isCurrent: () => !signal.aborted, async resolveRuntime() { return { ...target, accountId: 'owner', credentials,
                     serverHttpBaseUrl: serverUrl, isCurrent: async () => !signal.aborted }; } })
             : restoreOwnServerDeploymentServices({ ...target,
@@ -410,6 +431,7 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
         listMachine: (readable = true) => runtime.execute({ actionId: 'machines.services.list', input: target, context,
             canReadEnvironments: async ids => new Set(readable ? ids : []) }),
         get inventoryReads() { return inventoryReads; },
+        unreadableReads,
         detail: async () => MachineServicesDetailResultV1Schema.parse(await runtime.execute({ actionId: 'machines.services.detail',
             input: { ...target, serviceId: service.serviceId }, context, canReadEnvironments: async ids => new Set(ids) })),
         list: async () => MachineServicesListResultV1Schema.parse(await runtime.execute({ actionId: 'machines.services.list',
@@ -477,6 +499,22 @@ describe('retained Environment service recovery on first use', () => {
             expect(await fixture.reads('deployments.health.read', fixture.readInput, fixture.context))
                 .toMatchObject({ ok: false, errorCode: 'ENOENT',
                     failureCause: { phase: 'service.restoration', errorCode: 'ENOENT' } });
+        } finally { await fixture.dispose(); }
+    });
+    it('recovers a cold selected Environment without opening another Environment’s unreadable Artifact', async () => {
+        const fixture = await createRestartedEnvironmentFixture('running', 'plain', undefined, true, false, 'app', [], false,
+            false, undefined, true);
+        try {
+            expect(fixture.readHandle()).toBeNull();
+            const exact = await fixture.reads('deployments.health.read', fixture.readInput, fixture.context);
+            expect({ exact, unreadableReads: fixture.unreadableReads }).toMatchObject({
+                exact: { ok: true, health: 'healthy', freshness: 'current' }, unreadableReads: [],
+            });
+            expect(await fixture.listMachine()).toMatchObject({ ok: false });
+            expect(fixture.unreadableReads).toEqual(['environment', 'receipts', 'artifact']);
+            expect(await fixture.reads('deployments.health.read', fixture.readInput, fixture.context))
+                .toMatchObject({ ok: true, health: 'healthy' });
+            expect(fixture.inventoryReads).toBe(2);
         } finally { await fixture.dispose(); }
     });
     it('preserves the retained service restoration cause through default bindings preparation', async () => {

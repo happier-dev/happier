@@ -8,15 +8,23 @@ export type EnvironmentServiceRecoveryScope = Readonly<{
 }>;
 export type EnsureEnvironmentServices = (scope?: EnvironmentServiceRecoveryScope) => Promise<void>;
 
-/** A requested Home/Machine inventory joins one recovery at the retained
- * service owner. Failed reads remain retryable at the next requested read. */
+/** Each requested inventory joins the retained service owner at its demand
+ * scope. Failed reads remain retryable at the next requested read. */
 export function createEnvironmentServiceRecovery() {
     const recoveries = new Map<string, Promise<readonly EnvironmentServiceRecoveryRow[]>>();
-    return (target: Readonly<{ serverId: string; machineId: string }>, restore: () => Promise<void | readonly EnvironmentServiceRecoveryRow[]>, signal?: AbortSignal): Promise<readonly EnvironmentServiceRecoveryRow[]> => {
+    return function recover(target: Readonly<{ serverId: string; machineId: string; environmentId?: string }>,
+        restore: () => Promise<void | readonly EnvironmentServiceRecoveryRow[]>, signal?: AbortSignal): Promise<readonly EnvironmentServiceRecoveryRow[]> {
         signal?.throwIfAborted();
-        const key = JSON.stringify([target.serverId, target.machineId]);
+        const { serverId, machineId, environmentId } = target;
+        const key = JSON.stringify([serverId, machineId, environmentId]);
         const existing = recoveries.get(key);
         if (existing) return existing;
+        if (environmentId !== undefined) {
+            const inventory = recoveries.get(JSON.stringify([serverId, machineId, null]));
+            // Full discovery can satisfy exact demand. A failure establishing
+            // the full inventory leaves the selected Environment independently readable.
+            if (inventory) return inventory.catch(() => recover(target, restore, signal));
+        }
         const forget = () => { if (recoveries.get(key) === recovery) recoveries.delete(key); };
         const recovery = Promise.resolve().then(restore).then(rows => {
             const result = rows ?? [];
