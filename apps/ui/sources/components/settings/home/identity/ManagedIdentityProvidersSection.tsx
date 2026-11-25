@@ -4,6 +4,7 @@ import type { ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/p
 
 import { useUnistyles } from 'react-native-unistyles';
 
+import { identityAdministrationFailureMessage } from '@/components/settings/identity/identityAdministrationFailure';
 import {
     resolveTestedSignInConnectionStatus,
     signInConnectionStatusLabel,
@@ -112,9 +113,10 @@ export const ManagedIdentityProvidersSection = React.memo(function ManagedIdenti
                     testID="home-identity-providers-unavailable"
                     state={{
                         kind: 'failed',
-                        reason: t('identityAdministration.companySignInReadFailed'),
+                        reason: state.failure.retryable ? t('identityAdministration.companySignInReadFailed')
+                            : identityAdministrationFailureMessage(state.failure.code),
                         onRetry: state.failure.retryable ? refresh : undefined,
-                        homeServerIds: [serverId],
+                        homeServerIds: state.failure.retryable ? [serverId] : undefined,
                     }}
                 />
                 {props.deploymentRows}
@@ -135,8 +137,8 @@ export const ManagedIdentityProvidersSection = React.memo(function ManagedIdenti
                     onPress={() => router.push(homeAdministrationIdentityProviderCreatePath(props.context.scope.serverId))}
                 /></SettingAnchor>
             )}
-            description={state.stale
-                ? t('homeGovernance.offlineNotice')
+            description={state.stale && state.failure
+                ? (state.failure.retryable ? t('homeGovernance.offlineNotice') : identityAdministrationFailureMessage(state.failure.code))
                 : state.unreadableCount > 0
                     ? t('identityAdministration.unreadable')
                     : t('homeGovernance.signInProviders.companySignInDescription')}

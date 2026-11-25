@@ -126,9 +126,10 @@ const DetailContent = React.memo(function DetailContent(props: Readonly<{
                     testID="identity-provider"
                     state={{
                         kind: 'failed',
-                        reason: t('identityAdministration.companySignInReadFailed'),
+                        reason: state.failure.retryable ? t('identityAdministration.companySignInReadFailed')
+                            : identityAdministrationFailureMessage(state.failure.code),
                         onRetry: state.failure.retryable ? refresh : undefined,
-                        homeServerIds: [props.context.scope.serverId],
+                        homeServerIds: state.failure.retryable ? [props.context.scope.serverId] : undefined,
                     }}
                 />
             </ItemGroup>
@@ -265,14 +266,15 @@ const DetailContent = React.memo(function DetailContent(props: Readonly<{
     const busy = pending !== null || !props.context.mutationsAvailable || !projectionCurrent;
     return (
         <>
-            {state.stale ? (
+            {state.stale && state.failure ? (
                 <ItemGroup>
                     <SurfaceStateCard
                         testID="identity-provider-stale"
                         kind="error"
                         size="line"
-                        title={t('homeGovernance.offlineNotice')}
-                        action={{ testID: 'identity-provider-retry', label: t('common.retry'), onPress: refresh }}
+                        title={state.failure.retryable ? t('homeGovernance.offlineNotice')
+                            : identityAdministrationFailureMessage(state.failure.code)}
+                        action={state.failure.retryable ? { testID: 'identity-provider-retry', label: t('common.retry'), onPress: refresh } : undefined}
                     />
                 </ItemGroup>
             ) : null}

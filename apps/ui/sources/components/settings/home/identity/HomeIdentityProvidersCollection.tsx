@@ -11,6 +11,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { signInConnectionStatusLabel, signInConnectionStatusTone } from '@/components/settings/identity/signInConnectionStatus';
+import { identityAdministrationFailureMessage } from '@/components/settings/identity/identityAdministrationFailure';
 import { identityConnectionNextStepLabel, sortIdentityConnectionsForAdministration, teamIdentityConnectionStatus } from '@/components/settings/teams/identity/identityAdministrationPresentation';
 import { WorkosMark } from '@/components/settings/identity/WorkosMark';
 import { eligibleProviderUnavailableReason } from '@/components/settings/teams/identity/eligibleProviderAvailability';
@@ -37,21 +38,22 @@ export function HomeIdentityProvidersCollection(props: Readonly<{ context: HomeA
     const platformMissing = workos?.availability.status === 'unavailable' && workos.availability.code === 'workos_platform_unavailable';
     const connections = state.kind === 'ready' ? sortIdentityConnectionsForAdministration(state.items.filter((connection) => connection.provider.kind === 'workos_sso')) : [];
     // A failed read of the connections is the People page's failed-read row, never mutation copy.
-    const readFailed = (testID: string) => (
+    const readFailed = (testID: string, failure: Readonly<{ code: string; retryable: boolean }>) => (
         <ItemLoadStateRows
             testID={testID}
             state={{
                 kind: 'failed',
-                reason: t('identityAdministration.companySignInReadFailed'),
-                onRetry: state.kind !== 'loading' && state.failure?.retryable ? refresh : undefined,
-                homeServerIds: [context.scope.serverId],
+                reason: failure.retryable ? t('identityAdministration.companySignInReadFailed')
+                    : identityAdministrationFailureMessage(failure.code),
+                onRetry: failure.retryable ? refresh : undefined,
+                homeServerIds: failure.retryable ? [context.scope.serverId] : undefined,
             }}
         />
     );
     const rows = state.kind === 'loading' ? <ItemLoadStateRows testID="home-workos-connections-loading" state={{ kind: 'loading' }} rows={1} accessibilityLabel={t('homeGovernance.signInProviders.companySignIn')} />
-        : state.kind === 'unavailable' ? readFailed('home-workos-connections-unavailable')
+        : state.kind === 'unavailable' ? readFailed('home-workos-connections-unavailable', state.failure)
         : connections.length === 0 && !state.failure ? null : <>
-            {state.failure ? readFailed('home-workos-connections-stale') : null}
+            {state.failure ? readFailed('home-workos-connections-stale', state.failure) : null}
             {connections.map((connection) => {
                 const status = teamIdentityConnectionStatus(connection.state);
                 const tone = signInConnectionStatusTone(status);

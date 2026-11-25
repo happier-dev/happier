@@ -229,6 +229,25 @@ describe('Sign-in providers page', () => {
         expect(screen.findByTestId('home-identity-providers-unavailable-retry')).not.toBeNull();
     });
 
+    it.each([
+        { endpoint: 'managed provider', providerStatus: 403, connectionStatus: 200, testID: 'home-identity-providers-unavailable' },
+        { endpoint: 'WorkOS connection', providerStatus: 200, connectionStatus: 403, testID: 'home-workos-connections-unavailable' },
+    ])('presents the $endpoint access refusal once and without Retry', async ({ providerStatus, connectionStatus, testID }) => {
+        const serverId = await harness.addHome({ name: 'Company Home', serverUrl: 'https://company-home-denied.example', accountId: 'admin-1' });
+        harness.answer(serverId, '/v1/home/governance/get', { body: homeGovernanceProjectionFixture() });
+        harness.answer(serverId, '/v1/home/settings/get', { body: homeSettingsProjectionFixture() });
+        harness.answer(serverId, '/v1/identity/providers/list', { status: providerStatus,
+            body: providerStatus === 403 ? { error: 'identity_provider_forbidden' } : { items: [], unreadableCount: 0 } });
+        harness.answer(serverId, '/v1/home/identity/connections/list', { status: connectionStatus,
+            body: connectionStatus === 403 ? { error: 'home_forbidden' } : { items: [], eligibleProviders: [] } });
+        harness.answer(serverId, '/v1/identity/github-apps/list', { body: { items: [], unreadableCount: 0 } });
+
+        const screen = await renderScreen(<HomeAdministrationSignInProvidersScreen serverId={serverId} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId(testID)).not.toBeNull());
+        expect(screen.getTextContent().match(/identityAdministration\.errorForbidden/g)).toHaveLength(1);
+        expect(screen.findByTestId(`${testID}-retry`)).toBeNull();
+    });
+
     it('shows current Team accepted-sign-in policy on the shared active connection and opens its existing owner', async () => {
         const serverId = await harness.addHome({ name: 'Company Home', serverUrl: 'https://company-team-policy.example', accountId: 'owner-1', teamsEnabled: true });
         const team = teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageAuthentication: true }), policy: teamPolicyFixture({

@@ -195,7 +195,7 @@ export function homeDomainFailureFromActionFailure(
             && 'retryable' in parsedDetails.details
             && parsedDetails.details.retryable === true;
         return withDetails({
-            kind: 'unknown' as const,
+            kind: httpStatus === undefined ? 'unknown' : homeDomainFailureKindForHttpStatus(httpStatus, code),
             retryable,
             code: parsedDetails.code,
             details: parsedDetails.details,
