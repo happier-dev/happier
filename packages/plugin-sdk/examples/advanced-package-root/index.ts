@@ -66,6 +66,7 @@ export const { manifest, activate } = definePlugin({
                         pluginId: 'example.accounts',
                         localId: 'review-api',
                     },
+                    credentialKinds: ['token'],
                     materializationKinds: ['httpHeaders'],
                 }],
                 surfaces: {

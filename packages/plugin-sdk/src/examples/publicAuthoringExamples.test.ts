@@ -1966,6 +1966,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         expect(manifest.contributes.agents[0]?.connectedAccounts).toEqual([{
             purpose: 'review-api',
             service: { pluginId: 'example.accounts', localId: 'review-api' },
+            credentialKinds: ['token'],
             materializationKinds: ['httpHeaders'],
         }]);
         expect(manifest.contributes.providers).toContainEqual(expect.objectContaining({
