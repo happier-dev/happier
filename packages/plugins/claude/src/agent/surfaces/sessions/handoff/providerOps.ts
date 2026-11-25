@@ -2,10 +2,10 @@ import type {
     AgentRuntimeHandoffSurface,
     AgentTerminalSessionStateUpdate,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
 import {
     ClaudeTranscriptExportRefusal,
+    ClaudeTranscriptImportConflict,
     exportClaudeSessionBundle,
     importClaudeSessionBundle,
 } from './bundle.js';
@@ -141,13 +141,13 @@ export const claudeHandoffSurface = {
                 },
             };
         } catch (error) {
-            if (isPluginError(error) && error.code === 'target_identity_conflict') {
+            if (error instanceof ClaudeTranscriptImportConflict) {
                 return {
                     ok: false,
                     code: 'target_identity_conflict',
                     message: error.message,
                     retryable: error.retryable,
-                    ...(error.diagnostics ? { diagnostics: error.diagnostics } : {}),
+                    diagnostics: [error.diagnostic],
                 };
             }
             return {

@@ -55,7 +55,7 @@ async function withTranscriptReader<TResult>(
 
 async function transcriptEqualsFile(content: ClaudeTranscriptContent, filePath: string): Promise<boolean> {
     const entry = await lstat(filePath);
-    if (!entry.isFile()) throw targetIdentityConflict('not_regular_file', 'transcript_file');
+    if (!entry.isFile()) throw new ClaudeTranscriptImportConflict('not_regular_file', 'transcript_file');
     if (entry.size !== transcriptSize(content)) return false;
     const existing = await open(filePath, 'r');
     try {
@@ -241,21 +241,25 @@ function readErrorCode(error: unknown): string | null {
         : null;
 }
 
-function targetIdentityConflict(
-    code: ClaudeTranscriptLookupFailure['code'] | 'transcript_content_mismatch' | 'transcript_identity_changed',
-    pathKind: ClaudeTranscriptLookupFailure['pathKind'],
-): PluginError {
-    return new PluginError({
-        code: 'target_identity_conflict',
-        message: 'Claude handoff target conflicts with the existing native session',
-        retryable: false,
-        diagnostics: [{ code, details: { pathKind } }],
-    });
+export class ClaudeTranscriptImportConflict extends PluginError {
+    readonly diagnostic;
+
+    constructor(
+        code: ClaudeTranscriptLookupFailure['code'] | 'transcript_content_mismatch' | 'transcript_identity_changed',
+        pathKind: ClaudeTranscriptLookupFailure['pathKind'],
+    ) {
+        super({
+            code: 'target_identity_conflict',
+            message: 'Claude handoff target conflicts with the existing native session',
+            retryable: false,
+        });
+        this.diagnostic = { code, details: { pathKind } } as const;
+    }
 }
 
 function targetLookupConflict(error: unknown, pathKind: ClaudeTranscriptLookupFailure['pathKind']): PluginError {
     const failure = classifyClaudeTranscriptLookupError(error, pathKind);
-    return targetIdentityConflict(failure.code, failure.pathKind);
+    return new ClaudeTranscriptImportConflict(failure.code, failure.pathKind);
 }
 
 async function preflightClaudeTranscriptTarget(params: Readonly<{
@@ -280,16 +284,16 @@ async function preflightClaudeTranscriptTarget(params: Readonly<{
     }
     throwIfAborted(params.signal);
     if (!entry.isFile()) {
-        throw targetIdentityConflict('not_regular_file', 'transcript_file');
+        throw new ClaudeTranscriptImportConflict('not_regular_file', 'transcript_file');
     }
 
     const identical = await transcriptEqualsFile(params.transcript, params.transcriptPath).catch((error: unknown) => {
         throwIfAborted(params.signal);
-        throw isPluginError(error) ? error : targetLookupConflict(error, 'transcript_file');
+        throw error instanceof ClaudeTranscriptImportConflict ? error : targetLookupConflict(error, 'transcript_file');
     });
     throwIfAborted(params.signal);
     if (!identical) {
-        throw targetIdentityConflict('transcript_content_mismatch', 'transcript_file');
+        throw new ClaudeTranscriptImportConflict('transcript_content_mismatch', 'transcript_file');
     }
 
     let entryAfterRead;
@@ -300,10 +304,10 @@ async function preflightClaudeTranscriptTarget(params: Readonly<{
     }
     throwIfAborted(params.signal);
     if (!entryAfterRead.isFile()) {
-        throw targetIdentityConflict('not_regular_file', 'transcript_file');
+        throw new ClaudeTranscriptImportConflict('not_regular_file', 'transcript_file');
     }
     if (!isSameFileIdentity(entry, entryAfterRead)) {
-        throw targetIdentityConflict('transcript_identity_changed', 'transcript_file');
+        throw new ClaudeTranscriptImportConflict('transcript_identity_changed', 'transcript_file');
     }
     return 'identical';
 }
@@ -326,7 +330,7 @@ async function assertExistingClaudeProjectParentsAreSafe(params: Readonly<{
     const resolvedProjectDir = resolve(params.projectDir);
     const projectRelativePath = relative(configRoot, resolvedProjectDir);
     if (!isCanonicalAbsolutePathInsideRoot(configRoot, resolvedProjectDir)) {
-        throw targetIdentityConflict('root_mismatch', 'session_dir');
+        throw new ClaudeTranscriptImportConflict('root_mismatch', 'session_dir');
     }
 
     let currentPath = configRoot;
@@ -349,7 +353,7 @@ async function assertExistingClaudeProjectParentsAreSafe(params: Readonly<{
         }
         throwIfAborted(params.signal);
         if (!entry.isDirectory()) {
-            throw targetIdentityConflict('not_directory', pathKind);
+            throw new ClaudeTranscriptImportConflict('not_directory', pathKind);
         }
     }
 }
