@@ -21873,7 +21873,6 @@ const pl = completeWorkspaceSyncTranslation({
     lastChecked: ({ at }) => `Ostatnie sprawdzenie: ${at}`,
     endpoint: { source: ({ label }) => `Źródło · ${label}`, destination: ({ label }) => `Cel · ${label}`, synced: ({ label }) => `Synchronizowany punkt · ${label}` },
     error: {
-        streamLimit: 'Synchronizacja obszarów roboczych osiągnęła limit. Wstrzymaj aktywne połączenie synchronizacji na maszynie źródłowej i spróbuj ponownie.',
         componentUnavailable: 'Synchronizacja obszaru roboczego nie jest dostępna w tej kompilacji. Zainstaluj wymagany składnik i spróbuj ponownie.',
         machineOffline: 'Komputer docelowy jest niedostępny. Połącz go ponownie i spróbuj jeszcze raz.',
         destinationNeedsPreparation: 'Folder docelowy wymaga przygotowania przed rozpoczęciem synchronizacji.',

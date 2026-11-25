@@ -804,8 +804,8 @@ describe('WorkspaceSyncRelationshipOwner', () => {
       const input = { ...createInput, purpose: 'worker_clean_copy' as const,
         targetBootstrap: 'materialize_from_source_workspace' as const, targetWorkspaceRefId: 'target_ref' };
       if (outcome === 'refused' || outcome === 'already listed') {
-        harness.ensureRelationship.mockRejectedValueOnce(Object.assign(new Error('stream limit reached'), { code: 'stream_limit' }));
-        await expect(harness.owner.prepareCreate(input)).rejects.toMatchObject({ code: 'stream_limit' });
+        harness.ensureRelationship.mockRejectedValueOnce(Object.assign(new Error('machine carrier unavailable'), { code: 'machine_carrier_unavailable' }));
+        await expect(harness.owner.prepareCreate(input)).rejects.toMatchObject({ code: 'machine_carrier_unavailable' });
       } else {
         const prepared = await harness.owner.prepareCreate(input);
         if (outcome === 'aborted') {

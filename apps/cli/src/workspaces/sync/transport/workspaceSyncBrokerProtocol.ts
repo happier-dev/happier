@@ -11,7 +11,6 @@ export const WORKSPACE_SYNC_BROKER_MAX_MESSAGE_BYTES = 4096;
 export const WORKSPACE_SYNC_BROKER_MAX_REQUEST_FRAME_BYTES = 2 * 1024 * 1024;
 export const WORKSPACE_SYNC_BROKER_ATTACH_TTL_MS = 30_000;
 export const OPEN_REMOTE_DEADLINE_MS = 15_000;
-export const MAX_CONCURRENT_DATA_STREAMS = 8;
 
 export type MutagenSynchronizationMode = 'one-way-safe' | 'one-way-replica' | 'two-way-safe';
 export type MutagenContentPolicy = Readonly<{
@@ -123,7 +122,6 @@ export const WORKSPACE_SYNC_BROKER_TERMINAL_ERROR_CODES = [
   'agent_unavailable',
   'engine_unavailable',
   'git_selection_unavailable',
-  'stream_limit',
   'expired_request',
   'data_attach_failed',
   'cancelled',

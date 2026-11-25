@@ -40,7 +40,6 @@ export type WorkspaceSyncStateTranslationKey =
 
 export type WorkspaceSyncErrorTranslationKey =
     | 'workspaceSync.error.componentUnavailable'
-    | 'workspaceSync.error.streamLimit'
     | 'workspaceSync.error.machineOffline'
     | 'workspaceSync.error.destinationNeedsPreparation'
     | 'workspaceSync.error.gitPreparationFailed'
@@ -155,8 +154,6 @@ export function resolveWorkspaceSyncErrorTranslationKey(value: unknown): Workspa
         case 'engine_unavailable':
         case 'mutagen_fork_release_commit_required':
             return 'workspaceSync.error.componentUnavailable';
-        case 'stream_limit':
-            return 'workspaceSync.error.streamLimit';
         case 'machine_carrier_unavailable':
         case 'controller_unavailable':
         case 'peer_unavailable':

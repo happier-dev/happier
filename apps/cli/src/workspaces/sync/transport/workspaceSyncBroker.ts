@@ -17,7 +17,6 @@ import {
   encodeBrokerCommandFrame,
   encodeBrokerControlFrame,
   isBrokerTerminalErrorCode,
-  MAX_CONCURRENT_DATA_STREAMS,
   OPEN_REMOTE_DEADLINE_MS,
   type BrokerControlV1,
   type BrokerTerminalErrorCode,
@@ -58,7 +57,6 @@ export interface WorkspaceSyncBrokerConfig {
   brokerInstanceId?: string;
   launchNonce?: string;
   launchSecret: Uint8Array;
-  maxStreams?: number;
   /** Test/composition override; production is capped by the protocol constant. */
   maxPreauthenticatedControls?: number;
   /** Test/composition override for the bounded HELLO window. */
@@ -167,7 +165,6 @@ export class WorkspaceSyncBroker {
   private readonly endpoint: WorkspaceSyncBrokerEndpoint;
   private readonly config: WorkspaceSyncBrokerConfig & {
     now: () => number;
-    maxStreams: number;
     maxPreauthenticatedControls: number;
     handshakeDeadlineMs: number;
   };
@@ -194,7 +191,6 @@ export class WorkspaceSyncBroker {
     this.config = {
       ...config,
       now: config.now ?? Date.now,
-      maxStreams: Math.min(config.maxStreams ?? MAX_CONCURRENT_DATA_STREAMS, MAX_CONCURRENT_DATA_STREAMS),
       maxPreauthenticatedControls: Math.min(
         config.maxPreauthenticatedControls ?? MAX_PREAUTHENTICATED_CONTROL_CONNECTIONS,
         MAX_PREAUTHENTICATED_CONTROL_CONNECTIONS,
@@ -474,16 +470,6 @@ export class WorkspaceSyncBroker {
 
   private openData(socket: Socket, message: Extract<BrokerControlV1, { t: 'open_data' }>): void {
     const now = this.config.now();
-    if (this.pending.size >= this.config.maxStreams) {
-      const failure = new BrokerProtocolError('stream_limit', 'stream limit reached');
-      // Native replies can flatten the refusal into engine_unavailable.
-      // Keep the cause on the matching command until its own verdict arrives.
-      for (const command of this.commands.values()) {
-        if (command.endpointIds?.includes(message.endpointId)) command.endpointFailure ??= failure;
-      }
-      this.sendError(socket, message.requestId, failure.code, failure.message);
-      return;
-    }
     if (this.pending.has(message.requestId)) {
       this.sendError(socket, message.requestId, 'protocol_error', 'duplicate request id'); return;
     }

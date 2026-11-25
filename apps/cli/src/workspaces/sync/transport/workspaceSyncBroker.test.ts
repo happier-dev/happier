@@ -17,7 +17,6 @@ import {
   createBrokerHelloProof,
   deriveWorkspaceSyncEndpointId,
   encodeBrokerControlFrame,
-  MAX_CONCURRENT_DATA_STREAMS,
   OPEN_REMOTE_DEADLINE_MS,
   WORKSPACE_SYNC_BROKER_MAX_MESSAGE_BYTES,
   WORKSPACE_SYNC_BROKER_ATTACH_TTL_MS,
@@ -516,7 +515,7 @@ describe('workspace sync broker authentication and attach rules', () => {
   });
 
   it('refuses a peer retired before data attachment and admits its replacement stream', async () => {
-    const fixture = await useFixture(await startBroker({ maxStreams: 1 }));
+    const fixture = await useFixture(await startBroker());
     const { socket, wire } = await openAuthenticatedRawControl(fixture);
     const endpointId = deriveWorkspaceSyncEndpointId('rel-peer-restart', 'beta');
     const open = async (requestId: string) => {
@@ -539,6 +538,7 @@ describe('workspace sync broker authentication and attach rules', () => {
       || frame.t === 'data_ok' && frame.streamId === retired.ready.streamId, 'retired peer terminal response');
     expect(outcome).toMatchObject({ t: 'error', code: 'peer_unavailable' });
     await waitFor(() => retired.data.destroyed, 'retired peer data cleanup');
+    expect(fixture.broker['pending'].size).toBe(0);
 
     const replacement = await open('req-replacement-peer');
     socket.write(encodeBrokerControlFrame({ t: 'attach_data', streamId: replacement.ready.streamId, attachNonce: replacement.ready.attachNonce }));
@@ -1019,17 +1019,6 @@ describe('workspace sync broker authentication and attach rules', () => {
     data.destroy();
   });
 
-  it('enforces the configured concurrent stream limit', async () => {
-    const fixture = await useFixture(await startBroker({ maxStreams: 1 }));
-    const client = await connectClient(fixture);
-    const first = await client.openStream(deriveWorkspaceSyncEndpointId('rel-limit', 'alpha'));
-    await expect(client.openStream(deriveWorkspaceSyncEndpointId('rel-limit', 'beta'))).rejects.toMatchObject({ code: 'stream_limit' });
-    await first.close();
-    const afterRelease = await client.openStream(deriveWorkspaceSyncEndpointId('rel-limit', 'beta'));
-    await afterRelease.close();
-    await client.close();
-  });
-
   it('rejects expired open requests before opening any peer route', async () => {
     const fixture = await useFixture(await startBroker());
     const client = await connectClient(fixture);
@@ -1116,38 +1105,29 @@ describe('workspace sync broker authentication and attach rules', () => {
     },
   );
 
-  it('preserves a saturated broker refusal for the new link and admits both endpoints after a link closes', async () => {
+  it('tracks two pending streams per live link and releases them on close', async () => {
     const fixture = await useFixture(await startBroker());
     const client = await connectClient(fixture);
-    const operationId = 'fresh-worker-copy';
-    const startLink = async (id: string) => [
-      await client.openStream(deriveWorkspaceSyncEndpointId(id, 'alpha')),
-      await client.openStream(deriveWorkspaceSyncEndpointId(id, 'beta')),
-    ];
-    client.onCommand(async () => {
-      try {
-        return await startLink(operationId).then(() => ({ ok: true }));
-      } catch (error) {
-        // The pinned native client loses the stream error code on its reply.
-        throw new BrokerProtocolError('engine_unavailable', String(error));
-      }
-    });
+    // The owner ruling removes the fixed ceiling on live workspace links.
+    const linkCount = 6;
     try {
       const liveLinks = [];
-      for (let index = 0; index < MAX_CONCURRENT_DATA_STREAMS / 2; index++) {
-        liveLinks.push(await startLink(`watching-${index}`));
+      for (let index = 0; index < linkCount; index++) {
+        const relationshipId = `watching-${index}`;
+        liveLinks.push([
+          await client.openStream(deriveWorkspaceSyncEndpointId(relationshipId, 'alpha')),
+          await client.openStream(deriveWorkspaceSyncEndpointId(relationshipId, 'beta')),
+        ]);
+        expect(fixture.broker['pending'].size).toBe(2 * liveLinks.length);
       }
-      expect(fixture.externalStreams).toHaveLength(MAX_CONCURRENT_DATA_STREAMS);
-      const resume = (requestId: string) => fixture.broker.command({
-        t: 'resume', requestId, sessionIdentifier: 'new-link',
-      }, { operationId });
-      await expect(resume('at-capacity')).rejects.toMatchObject({ code: 'stream_limit' });
-      expect(fixture.externalStreams).toHaveLength(MAX_CONCURRENT_DATA_STREAMS);
-
-      for (const stream of liveLinks[0]) await stream.close();
-      await expect(resume('retry-after-pause')).resolves.toEqual({ ok: true });
-      expect(fixture.externalStreams).toHaveLength(MAX_CONCURRENT_DATA_STREAMS + 2);
-    } finally { await client.close(); }
+      expect(fixture.externalStreams).toHaveLength(2 * linkCount);
+      for (const link of liveLinks) {
+        for (const stream of link) await stream.close();
+      }
+      expect(fixture.broker['pending'].size).toBe(0);
+    } finally {
+      await client.close();
+    }
   });
 
   it('settles only the pending operation whose endpoint refused and retains no error history', async () => {

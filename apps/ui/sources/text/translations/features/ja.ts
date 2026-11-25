@@ -21779,7 +21779,6 @@ const ja = completeWorkspaceSyncTranslation({
     lastChecked: ({ at }) => `最終確認：${at}`,
     endpoint: { source: ({ label }) => `ソース · ${label}`, destination: ({ label }) => `宛先 · ${label}`, synced: ({ label }) => `同期先 · ${label}` },
     error: {
-        streamLimit: 'ワークスペースの同期が上限に達しました。同期元のマシンでアクティブな同期リンクを一時停止してから、もう一度お試しください。',
         componentUnavailable: 'このビルドではワークスペース同期を利用できません。必要なコンポーネントをインストールして、もう一度お試しください。',
         machineOffline: '宛先コンピューターを利用できません。再接続してから、もう一度お試しください。',
         destinationNeedsPreparation: '同期を開始する前に宛先フォルダーの準備が必要です。',

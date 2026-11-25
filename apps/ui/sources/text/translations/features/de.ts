@@ -21356,7 +21356,6 @@ const de = completeWorkspaceSyncTranslation({
     lastChecked: ({ at }) => `Zuletzt geprüft: ${at}`,
     endpoint: { source: ({ label }) => `Quelle · ${label}`, destination: ({ label }) => `Ziel · ${label}`, synced: ({ label }) => `Synchronisierter Endpunkt · ${label}` },
     error: {
-        streamLimit: 'Die Arbeitsbereichssynchronisierung hat ihr Limit erreicht. Pausiere eine aktive Synchronisierungsverbindung auf dem Quellgerät und versuche es erneut.',
         componentUnavailable: 'Die Arbeitsbereichssynchronisierung ist in diesem Build nicht verfügbar. Installiere die erforderliche Komponente und versuche es erneut.',
         machineOffline: 'Der Zielcomputer ist nicht verfügbar. Verbinde ihn erneut und versuche es noch einmal.',
         destinationNeedsPreparation: 'Der Zielordner muss vorbereitet werden, bevor die Synchronisierung beginnen kann.',
