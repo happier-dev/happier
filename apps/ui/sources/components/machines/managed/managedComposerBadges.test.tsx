@@ -272,6 +272,13 @@ describe('managed composer badges', () => {
     expect(badge.label).toBe('Runs on Ben’s build-01');
   });
 
+  it('says someone else\u2019s machine when its owner has no display name, never a null or generic name', async () => {
+    const { t } = await import('@/text');
+    const badge = buildRequesterDisclosureStatusBadge({ owner: null, machine: 'NLDW4-5-40-40', signIn: 'full' });
+    expect(badge.label).toBe(t('machineRequester.runsOnSomeoneElses', { machine: 'NLDW4-5-40-40' }));
+    expect(badge.accessibilityLabel).not.toContain('null');
+  });
+
   it('shows actual full sign-in and machine-user visibility, never scoped access, for the ordinary requester route', async () => {
     const badge = buildRequesterDisclosureStatusBadge({ owner: 'Alice', machine: 'devbox', signIn: 'full' });
     const screen = await renderScreen(<>{badge.renderPopover?.({ open: true,

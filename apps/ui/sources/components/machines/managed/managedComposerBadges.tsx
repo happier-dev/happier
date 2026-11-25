@@ -21,6 +21,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { ManagedMachineArchiveChoiceAvailability } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
 import { RequesterDisclosureContent, type RequesterDisclosureModel } from './RequesterDisclosure';
+import { formatRequesterRunsOn } from './requesterDisclosureNotice';
 
 /**
  * The composer's one status badge for a machine being created (plan 50s3, lab `m-pick Aprog/Aprogd`) and
@@ -329,10 +330,7 @@ function archiveUnavailableReason(
 export function buildRequesterDisclosureStatusBadge(
   model: RequesterDisclosureModel,
 ): AgentInputStatusBadge {
-  const label = t('machineRequester.runsOn', {
-    owner: model.owner,
-    machine: model.machine,
-  });
+  const label = formatRequesterRunsOn(model.owner, model.machine);
   return {
     key: 'machine-requester-disclosure',
     label,
