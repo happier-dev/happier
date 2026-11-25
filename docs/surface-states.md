@@ -4,6 +4,15 @@ Use one state composition for a page, pane, details area or compact list line. A
 
 This page describes **0.3 development source**, not completed platform or live-fidelity certification.
 
+## Startup storage recovery
+
+Browser record storage owns IndexedDB connection failures and drops a failed open
+from its connection cache. When startup cannot open the store for saved drafts,
+the recovery screen asks desktop users to quit Happier completely and reopen it.
+Browser users can reload the page. Startup preserves the stored drafts and waits
+for a successful open before mounting draft editors. On macOS, a full quit
+and reopen gives WebKit a fresh storage context.
+
 ## Managed Project recovery (0.3 development)
 
 Files and Git use the admitted workspace's typed `managed_power_required`

@@ -7,6 +7,15 @@ type BrowserRecordStore = 'records' | 'pictures';
 const connections = new Map<BrowserRecordStore, Promise<IDBDatabase>>();
 const memoryRecords = new Map<string, string>();
 
+export class BrowserRecordDatabaseOpenError extends Error {
+    readonly code = 'indexeddb_open_failed';
+
+    constructor(cause: unknown) {
+        super('Could not open the local records database.', { cause });
+        this.name = 'BrowserRecordDatabaseOpenError';
+    }
+}
+
 /** Hard embed retirement never opens or clears full-app IndexedDB storage. */
 export function clearEmbedBrowserRecords(): void {
     if (isEmbedWindowContext()) memoryRecords.clear();
@@ -49,7 +58,9 @@ export function openBrowserRecordDatabase(store: BrowserRecordStore = 'records')
         };
     }).catch((error: unknown) => {
         connections.delete(store);
-        throw error;
+        // The browser owns the on-disk path. Let the next open use a new
+        // connection, and preserve the failure rather than treating storage as empty.
+        throw new BrowserRecordDatabaseOpenError(error);
     });
     connections.set(store, connection);
     return connection;

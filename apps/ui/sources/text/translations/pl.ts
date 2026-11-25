@@ -2928,6 +2928,9 @@ export const pl: TranslationStructure = {
   },
 
   appBoot: {
+    storageUnavailableTitle: 'Nie udało się otworzyć pamięci lokalnej',
+    storageUnavailableDesktopReason: 'Zamknij Happier całkowicie, a potem otwórz go ponownie. Zapisane wersje robocze zostały zachowane.',
+    storageUnavailableWebReason: 'Odśwież stronę, aby spróbować ponownie. Zapisane wersje robocze zostały zachowane.',
     credentialAccessTitle: 'Otwieranie zapisanego logowania',
     credentialAccessReason: 'Happier przechowuje Twoje logowanie w pęku kluczy tego komputera. Jeśli system zapyta, czy pozwolić Happier z niego korzystać, wybierz Zezwól.',
   },

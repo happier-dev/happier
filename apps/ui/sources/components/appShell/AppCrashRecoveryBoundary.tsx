@@ -120,8 +120,8 @@ export function AppBlockingScreen(props: Readonly<{
   testID?: string;
   title: string;
   subtitle: string;
-  detailsTitle: string;
-  details: string;
+  detailsTitle?: string;
+  details?: string;
   actions: ReadonlyArray<AppBlockingScreenAction>;
   notice?: string;
 }>): React.ReactElement {
@@ -166,17 +166,21 @@ export function AppBlockingScreen(props: Readonly<{
           </View>
         </View>
 
-        <View style={[styles.card, { backgroundColor: theme.colors.surface.inset, borderColor: theme.colors.border.default }]}>
-          <TextBlock
-            text={props.detailsTitle}
-            style={[styles.sectionTitle, { color: theme.colors.text.secondary }]}
-          />
-          <TextBlock
-            text={props.details}
-            style={[styles.details, { color: theme.colors.text.primary }]}
-            selectable
-          />
-        </View>
+        {props.details !== undefined && (
+          <View style={[styles.card, { backgroundColor: theme.colors.surface.inset, borderColor: theme.colors.border.default }]}>
+            {props.detailsTitle !== undefined && (
+              <TextBlock
+                text={props.detailsTitle}
+                style={[styles.sectionTitle, { color: theme.colors.text.secondary }]}
+              />
+            )}
+            <TextBlock
+              text={props.details}
+              style={[styles.details, { color: theme.colors.text.primary }]}
+              selectable
+            />
+          </View>
+        )}
 
         {props.notice && (
           <View testID="app-crash-report-save-failed" accessibilityRole="alert">

@@ -1,9 +1,35 @@
 import { describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
-import { forceCloseDatabase, IDBFactory } from 'fake-indexeddb';
+import { forceCloseDatabase, IDBFactory, IDBOpenDBRequest } from 'fake-indexeddb';
 import { clearBrowserRecords, deleteBrowserRecord, listBrowserRecords, readBrowserRecord, updateBrowserRecord, updateBrowserRecords, writeBrowserRecord } from './browserRecordStorage';
 
 describe('browser large-record transactions', () => {
+    it('preserves the browser open failure and opens the fresh profile on the next attempt', async () => {
+        vi.stubGlobal('indexedDB', new IDBFactory());
+        vi.resetModules();
+        const records = await import('./browserRecordStorage');
+        const cause = new DOMException('Unable to open database file on disk', 'UnknownError');
+        const open = vi.spyOn(indexedDB, 'open').mockImplementationOnce(() => {
+            const request = new IDBOpenDBRequest();
+            Object.defineProperty(request, 'error', { value: cause });
+            queueMicrotask(() => request.onerror?.(new Event('error')));
+            return request;
+        });
+        try {
+            await expect(records.listBrowserRecords('drafts:')).rejects.toMatchObject({
+                code: 'indexeddb_open_failed',
+                cause,
+            });
+            expect(await records.listBrowserRecords('drafts:')).toEqual(new Map());
+            await records.writeBrowserRecord('drafts:example', 'draft after recovery');
+            expect(await records.readBrowserRecord('drafts:example')).toBe('draft after recovery');
+            (await records.openBrowserRecordDatabase()).close();
+        } finally {
+            open.mockRestore();
+            vi.unstubAllGlobals();
+        }
+    });
+
     it('indexes existing version-one pictures by kind without replacing their bytes or keys', async () => {
         vi.stubGlobal('indexedDB', new IDBFactory());
         let upgraded: IDBDatabase | undefined;

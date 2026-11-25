@@ -2931,6 +2931,9 @@ export const ru: TranslationStructure = {
   },
 
   appBoot: {
+    storageUnavailableTitle: 'Не удалось открыть локальное хранилище',
+    storageUnavailableDesktopReason: 'Полностью выйдите из Happier и откройте его снова. Сохранённые черновики остались на месте.',
+    storageUnavailableWebReason: 'Перезагрузите страницу, чтобы повторить попытку. Сохранённые черновики остались на месте.',
     credentialAccessTitle: 'Открываем сохранённый вход',
     credentialAccessReason: 'Happier хранит ваш вход в связке ключей этого компьютера. Если система спросит, разрешить ли Happier доступ, выберите «Разрешить».',
   },

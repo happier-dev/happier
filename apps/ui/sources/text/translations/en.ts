@@ -3087,6 +3087,9 @@ const enAppCrash = {
 };
 
 const enAppBoot = {
+  storageUnavailableTitle: 'Local storage could not open',
+  storageUnavailableDesktopReason: 'Quit Happier completely, then open it again. Your saved drafts were kept.',
+  storageUnavailableWebReason: 'Reload this page to try again. Your saved drafts were kept.',
   credentialAccessTitle: 'Opening your saved sign-in',
   credentialAccessReason:
     'Happier keeps your sign-in in this computer’s keychain. If your system asks to let Happier use it, choose Allow.',

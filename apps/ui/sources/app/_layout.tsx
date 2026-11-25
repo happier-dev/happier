@@ -72,7 +72,8 @@ import { GlassNavigationThemeProvider } from '@/components/ui/glass/GlassNavigat
 import { captureExceptionIfEnabled, initializeSentryOnce, wrapWithSentryIfEnabled } from '@/utils/system/sentry';
 import { t } from '@/text';
 import { preloadTranslations } from '@/text/i18n';
-import { AppCrashRecoveryBoundary } from '@/components/appShell/AppCrashRecoveryBoundary';
+import { AppBlockingScreen, AppCrashRecoveryBoundary } from '@/components/appShell/AppCrashRecoveryBoundary';
+import { BrowserRecordDatabaseOpenError } from '@/sync/domains/state/browserRecordStorage';
 import { WebCryptoStartupGate } from '@/components/web/WebCryptoStartupGate';
 import { consumeRestartBugReportIntent } from '@/utils/system/restartBugReportIntent';
 import { getCurrentReactOwnerHint, getUnexpectedPrimitiveViewChildInfo } from '@/utils/system/debugUnexpectedTextNodeCapture';
@@ -696,7 +697,7 @@ function FullAppRootLayout() {
                     onRestart={onRestart}
                     onError={(error) => captureExceptionIfEnabled(error)}
                 >
-                    <StepMotionStage><AppBoot /></StepMotionStage>
+                    <StepMotionStage><AppBoot onRestart={onRestart} /></StepMotionStage>
                 </AppCrashRecoveryBoundary>
             </WebCryptoStartupGate>
             </GlassMaterialRuntime>
@@ -725,7 +726,7 @@ function RestartBugReportNavigation(props: Readonly<{ pending: boolean; onDispat
     return null;
 }
 
-function AppBoot() {
+function AppBoot({ onRestart }: Readonly<{ onRestart: () => void }>) {
     //
     // Init sequence
     //
@@ -738,6 +739,7 @@ function AppBoot() {
     const [initState, setInitState] = React.useState<AppBootReadyState | null>(null);
     const bootReady = initState !== null;
     const [bootError, setBootError] = React.useState<Error | null>(null);
+    const storageOpenFailed = bootError instanceof BrowserRecordDatabaseOpenError;
     const [bootPhase, setBootPhase] = React.useState<AppBootPhase | null>(null);
     const [restartBugReportPending, setRestartBugReportPending] = React.useState(false);
     const restartBugReportIntent = React.useRef<Promise<boolean> | null>(null);
@@ -768,8 +770,8 @@ function AppBoot() {
     const waitsForStandaloneRoute = isTerminalConnectRoute || pathname === HOME_RECOVERY_ROUTE;
     useLaunchCurtainHold(launchCurtain && waitsForStandaloneRoute && !launchDestinationMounted);
     React.useLayoutEffect(() => {
-        if (!launchCurtain) finishLaunchCurtain();
-    }, [launchCurtain]);
+        if (!launchCurtain || storageOpenFailed) finishLaunchCurtain();
+    }, [launchCurtain, storageOpenFailed]);
     const renderFirstOpen = (content: React.ReactNode, launch?: React.ReactNode) => (
         <>
             {launch}
@@ -857,6 +859,20 @@ function AppBoot() {
     // Not inited
     //
 
+    if (storageOpenFailed) {
+        const desktop = isDesktopHost();
+        return <AppBlockingScreen
+            testID="app-boot-storage-recovery"
+            title={t('appBoot.storageUnavailableTitle')}
+            subtitle={t(desktop ? 'appBoot.storageUnavailableDesktopReason' : 'appBoot.storageUnavailableWebReason')}
+            actions={desktop ? [] : [{
+                testID: 'app-boot-reload',
+                label: t('webCryptoGate.reload'),
+                onPress: onRestart,
+                variant: 'primary',
+            }]}
+        />;
+    }
     if (bootError) throw bootError;
     if (!initState && !isFirstOpenPresenter) {
         const pending = <AppBootPendingSurface phase={bootPhase} />;

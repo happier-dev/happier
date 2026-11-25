@@ -2762,6 +2762,9 @@ export const de: TranslationStructure = {
     },
 
     appBoot: {
+        storageUnavailableTitle: 'Der lokale Speicher konnte nicht geöffnet werden',
+        storageUnavailableDesktopReason: 'Beende Happier vollständig und öffne es erneut. Deine gespeicherten Entwürfe bleiben erhalten.',
+        storageUnavailableWebReason: 'Lade diese Seite neu, um es erneut zu versuchen. Deine gespeicherten Entwürfe bleiben erhalten.',
         credentialAccessTitle: 'Gespeicherte Anmeldung wird geöffnet',
         credentialAccessReason: 'Happier bewahrt deine Anmeldung im Schlüsselbund dieses Computers auf. Wenn dein System fragt, ob Happier darauf zugreifen darf, wähle Erlauben.',
     },

@@ -2906,6 +2906,9 @@ export const it: TranslationStructure = {
   },
 
   appBoot: {
+    storageUnavailableTitle: 'Impossibile aprire l’archivio locale',
+    storageUnavailableDesktopReason: 'Esci completamente da Happier, poi riaprilo. Le bozze salvate sono state conservate.',
+    storageUnavailableWebReason: 'Ricarica questa pagina per riprovare. Le bozze salvate sono state conservate.',
     credentialAccessTitle: 'Apertura dell’accesso salvato',
     credentialAccessReason: 'Happier conserva il tuo accesso nel portachiavi di questo computer. Se il sistema chiede di consentire a Happier di usarlo, scegli Consenti.',
   },

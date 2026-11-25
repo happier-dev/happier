@@ -3072,6 +3072,9 @@ export const ja: TranslationStructure = {
   },
 
   appBoot: {
+    storageUnavailableTitle: 'ローカルストレージを開けませんでした',
+    storageUnavailableDesktopReason: 'Happier を完全に終了してから開き直してください。保存済みの下書きは保持されています。',
+    storageUnavailableWebReason: 'ページを再読み込みして、もう一度お試しください。保存済みの下書きは保持されています。',
     credentialAccessTitle: '保存済みのサインインを開いています',
     credentialAccessReason: 'Happier はサインイン情報をこのコンピュータのキーチェーンに保存しています。Happier による使用の許可を求められたら、「許可」を選んでください。',
   },

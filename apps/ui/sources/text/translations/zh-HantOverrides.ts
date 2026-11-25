@@ -3442,6 +3442,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         copyDetails: '複製錯誤詳細資訊',
     },
 
+    appBoot: {
+        storageUnavailableTitle: '無法開啟本機儲存空間',
+        storageUnavailableDesktopReason: '請完全結束 Happier，然後重新開啟。已儲存的草稿仍會保留。',
+        storageUnavailableWebReason: '請重新整理此頁面後再試一次。已儲存的草稿仍會保留。',
+    },
+
     webCryptoGate: {
         title: '需要安全連線',
         subtitle: '此頁面需要 WebCrypto 來保護你的資料。由於瀏覽器要求安全內容環境（如 HTTPS/localhost），此來源無法使用 WebCrypto。',

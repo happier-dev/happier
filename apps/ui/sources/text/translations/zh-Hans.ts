@@ -2892,6 +2892,9 @@ export const zhHans: TranslationStructure = {
   },
 
   appBoot: {
+    storageUnavailableTitle: '无法打开本地存储',
+    storageUnavailableDesktopReason: '请完全退出 Happier，然后重新打开。已保存的草稿仍保留。',
+    storageUnavailableWebReason: '请刷新此页面重试。已保存的草稿仍保留。',
     credentialAccessTitle: '正在打开已保存的登录信息',
     credentialAccessReason: 'Happier 将你的登录信息保存在这台电脑的钥匙串中。如果系统询问是否允许 Happier 使用它，请选择“允许”。',
   },

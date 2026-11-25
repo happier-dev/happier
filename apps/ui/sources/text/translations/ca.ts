@@ -2916,6 +2916,9 @@ export const ca: TranslationStructure = {
     },
 
     appBoot: {
+        storageUnavailableTitle: 'No s’ha pogut obrir l’emmagatzematge local',
+        storageUnavailableDesktopReason: 'Surt del tot de Happier i torna’l a obrir. Els esborranys desats es conserven.',
+        storageUnavailableWebReason: 'Torna a carregar la pàgina per reintentar-ho. Els esborranys desats es conserven.',
         credentialAccessTitle: 'Obrint el teu inici de sessió desat',
         credentialAccessReason: 'Happier desa el teu inici de sessió al clauer d’aquest ordinador. Si el sistema demana permetre que Happier l’utilitzi, tria Permet.',
     },

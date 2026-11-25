@@ -3092,6 +3092,9 @@ export const es: TranslationStructure = {
   },
 
   appBoot: {
+    storageUnavailableTitle: 'No se pudo abrir el almacenamiento local',
+    storageUnavailableDesktopReason: 'Cierra Happier por completo y vuelve a abrirlo. Tus borradores guardados se han conservado.',
+    storageUnavailableWebReason: 'Vuelve a cargar esta página para reintentarlo. Tus borradores guardados se han conservado.',
     credentialAccessTitle: 'Abriendo tu inicio de sesión guardado',
     credentialAccessReason: 'Happier guarda tu inicio de sesión en el llavero de este equipo. Si tu sistema pide permitir que Happier lo use, elige Permitir.',
   },

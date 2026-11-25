@@ -2919,6 +2919,9 @@ export const fr: TranslationStructure = {
   },
 
   appBoot: {
+    storageUnavailableTitle: 'Impossible d’ouvrir le stockage local',
+    storageUnavailableDesktopReason: 'Quitte complètement Happier, puis rouvre-le. Tes brouillons enregistrés ont été conservés.',
+    storageUnavailableWebReason: 'Recharge cette page pour réessayer. Tes brouillons enregistrés ont été conservés.',
     credentialAccessTitle: 'Ouverture de ta connexion enregistrée',
     credentialAccessReason: 'Happier garde ta connexion dans le trousseau de cet ordinateur. Si ton système demande d’autoriser Happier à l’utiliser, choisis Autoriser.',
   },

@@ -3126,6 +3126,9 @@ export const pt: TranslationStructure = {
   },
 
   appBoot: {
+    storageUnavailableTitle: 'Não foi possível abrir o armazenamento local',
+    storageUnavailableDesktopReason: 'Sai completamente do Happier e abre-o novamente. Os teus rascunhos guardados foram preservados.',
+    storageUnavailableWebReason: 'Recarrega esta página para tentar novamente. Os teus rascunhos guardados foram preservados.',
     credentialAccessTitle: 'A abrir o teu início de sessão guardado',
     credentialAccessReason: 'O Happier guarda o teu início de sessão no porta-chaves deste computador. Se o sistema pedir para permitir que o Happier o use, escolhe Permitir.',
   },
