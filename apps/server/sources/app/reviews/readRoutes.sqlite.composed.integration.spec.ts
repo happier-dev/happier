@@ -12,23 +12,110 @@ import type { Fastify as AppFastify } from '@/app/api/types';
 import { db } from '@/storage/db';
 import { createDatabaseIntegrationHarness } from '@/testkit/databaseIntegrationHarness';
 import { registerReviewReadRoutes } from './readRoutes';
+import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
+import { registerAccountEncryptionRoutes } from '@/app/api/routes/account/registerAccountEncryptionRoutes';
+import { createReviewRecordPortV1, ReviewRoundBindingV1Schema } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
+import { readReviewStartActionResultV1 } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
+import { createCredentialedAccountArtifactStore, createAcknowledgedAccountArtifactTransport } from '../../../../cli/src/api/artifacts/accountArtifactStore';
+import { runWithServerHttpBaseUrl } from '../../../../cli/src/api/client/serverHttpBaseUrl';
+import { createReviewRunCommentService } from '../../../../cli/src/agent/executionRuns/profiles/review/reviewComments';
+import { ReviewProfile } from '../../../../cli/src/agent/executionRuns/profiles/review/ReviewProfile';
+import { finishExecutionRun } from '../../../../cli/src/agent/runtime/bridges/executionRun/finishExecutionRun';
+import { resolveExecutionRunRuntimeBackendTarget, resolveExecutionRunRuntimeBackendId } from '../../../../cli/src/agent/runtime/bridges/executionRun/backendTargets';
+import type { ExecutionRunState } from '../../../../cli/src/agent/runtime/bridges/executionRun/executionRunTypes';
+import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '@happier-dev/protocol/account/settings/sessionAgentSpawnPolicyV1';
 
 describe('Review read Actions through authenticated HTTP', () => {
     let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
     let app: AppFastify;
     let origin: string;
     beforeAll(async () => {
-        harness = await createDatabaseIntegrationHarness({ tempDirPrefix: 'happier-review-read-actions-', initAuth: true });
+        harness = await createDatabaseIntegrationHarness({ tempDirPrefix: 'happier-review-read-actions-', initAuth: true, initEncrypt: true });
         app = Fastify().withTypeProvider<ZodTypeProvider>();
         enableSchemaValidation(app);
         enableAuthentication(app);
         registerReviewReadRoutes(app);
+        artifactsRoutes(app);
+        registerAccountEncryptionRoutes(app);
         await app.listen({ port: 0, host: '127.0.0.1' });
         const address = app.server.address();
         if (!address || typeof address === 'string') throw new Error('Expected HTTP listener');
         origin = `http://127.0.0.1:${address.port}`;
     }, 180_000);
     afterAll(async () => { await app?.close(); await harness?.close(); });
+
+    it('starts a clean engine Review through the Action and reloads its completed empty record through authenticated HTTP', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', seq: 7 } });
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        const recordsFor = () => createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(
+            createCredentialedAccountArtifactStore({ token, encryption: null })));
+        await runWithServerHttpBaseUrl(origin, async () => {
+            const records = recordsFor();
+            const starts: ExecutionRunState[] = [];
+            const executor = createActionExecutor({
+                ...createAccountServerActionDeps({ token, serverId: origin, serverHttpBaseUrl: origin }),
+                reviewRecords: () => records,
+                // The daemon's inventory/start RPC is the OS process boundary; no vendor is launched.
+                reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex', enabled: true,
+                    capabilities: { structuredNarration: true } }] }),
+                executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'clean-review-machine' }),
+                executionRunStart: async (sessionId, input) => {
+                    const request = ExecutionRunStartRequestSchema.parse(input);
+                    const backendTarget = resolveExecutionRunRuntimeBackendTarget(request.backendTarget);
+                    if (!backendTarget) throw new Error('Expected the admitted engine target');
+                    const run: ExecutionRunState = { runId: randomUUID(), callId: randomUUID(), sidechainId: randomUUID(), sessionId,
+                        depth: 0, intent: 'review', backendId: resolveExecutionRunRuntimeBackendId(backendTarget), backendTarget,
+                        instructions: request.instructions ?? '', permissionMode: request.permissionMode,
+                        retentionPolicy: request.retentionPolicy, runClass: request.runClass, ioMode: request.ioMode,
+                        status: 'running', startedAtMs: Date.now(), intentInput: request.intentInput };
+                    starts.push(run);
+                    return { runId: run.runId, callId: run.callId, sidechainId: run.sidechainId };
+                },
+            });
+            const started = await executor.execute('review.start', { sessionId: session.id, scope: 'repository',
+                instructions: 'Review the repository.', reviewers: [{ kind: 'engine', engineId: 'codex' }] }, {
+                surface: 'cli', authority: 'present_user', serverId: origin, bypassApprovals: true, defaultSessionId: session.id,
+                callerPermissionMode: 'read-only', sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+                agentStartContext: { caller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 },
+                    baseline: { machineId: 'clean-review-machine', directory: harness.baseDir }, roles: {}, ledSubtreeSessionIds: [],
+                    workDepthLimit: 4, callerPermissionCeiling: 'read-only' },
+            });
+            expect(started, JSON.stringify(started)).toMatchObject({ ok: true });
+            if (!started.ok) throw new Error(started.error);
+            const receipt = readReviewStartActionResultV1(started.result, { reviewers: [{ kind: 'engine', engineId: 'codex' }] });
+            expect(receipt.kind).toBe('native');
+            if (receipt.kind !== 'native') throw new Error('Expected the native Review admission receipt');
+            const binding = ReviewRoundBindingV1Schema.parse(receipt.reviewRound);
+            expect(starts).toHaveLength(1);
+            const run = starts[0]!;
+            expect(run.intentInput).toMatchObject({ reviewRound: binding, reviewRoundSettlement: 'execution' });
+            const comments = createReviewRunCommentService({ cwd: harness.baseDir,
+                scope: { workspace: { machineId: 'clean-review-machine', path: harness.baseDir } }, reviewRecords: records,
+                execute: async () => { throw new Error('A clean result must not create a Review comment'); } });
+            const payload = { reviewOutcome: 'complete', summary: 'No findings.', findings: [] };
+            const completion = ReviewProfile.onBoundedComplete({ start: run, rawText: JSON.stringify(payload), finishedAtMs: Date.now() });
+            expect(completion.status).toBe('succeeded');
+            const runs = new Map([[run.runId, run]]);
+            expect(await finishExecutionRun({ runId: run.runId,
+                next: { status: completion.status, summary: completion.summary, finishedAtMs: Date.now() },
+                toolResult: { output: completion.toolResultOutput, meta: completion.toolResultMeta }, structuredMeta: completion.structuredMeta,
+                runs, controllers: new Map(), budgetRegistry: null, parentProvider: 'claude', sendAcp: async () => {},
+                enqueueMarkerWrite: async (_id, write) => { await write(); }, terminalMarkerWritePromises: new Map(),
+                reviewComments: comments })).toBe(true);
+            expect(runs.get(run.runId)?.status).toBe('succeeded');
+            expect(await db.reviewComment.count({ where: { reviewId: binding.reviewId } })).toBe(0);
+            // Discard the port and Action executor: all following reads cross HTTP from fresh transport owners.
+            expect(await recordsFor().read(binding.reviewId)).toMatchObject({ reviewId: binding.reviewId,
+                rounds: [{ ordinal: 1, state: 'completed', runs: [{ kind: 'execution', runId: run.runId }] }] });
+            const reloaded = createActionExecutor(createAccountServerActionDeps({ token, serverId: origin, serverHttpBaseUrl: origin }));
+            expect(await reloaded.execute('review.get', { reviewId: binding.reviewId },
+                { surface: 'cli', authority: 'present_user', serverId: origin, bypassApprovals: true }))
+                .toMatchObject({ ok: true, result: { review: { reviewId: binding.reviewId, state: 'completed',
+                    sourceSessionId: session.id, sourceSessionSeq: 7, counts: { total: 0, needsDecision: 0 } } } });
+        });
+    });
 
     it.each(['plain', 'e2ee'] as const)('reads the admitted aggregate and refuses another Account (%s)', async encryptionMode => {
         const owner = await db.account.create({ data: { encryptionMode } });
