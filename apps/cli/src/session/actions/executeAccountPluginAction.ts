@@ -1,6 +1,13 @@
 import { createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import { isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import type { ActionId } from '@happier-dev/protocol';
+import { ActionInvokeInputSchema } from '@happier-dev/protocol/actions/actionInvokeInput';
+import { evaluateInputPredicate } from '@happier-dev/protocol/inputs/inputPredicates';
+import { UiContributedActionExecuteRequestV1Schema } from '@happier-dev/protocol/plugins/actions/clientInvocationV1';
+import { readActionPrincipalAccountId } from './actionPrincipalAccount';
+import { retainAdmittedClientActionParent } from './admittedClientActionChildren';
+import { randomUUID } from 'node:crypto';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { parseQualifiedPluginActionId, type QualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import type { ActionDefinitionV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
@@ -29,6 +36,7 @@ type AccountPluginActionRuntimeRequest = Readonly<{
     | 'savedSecretOperationContext' | 'isCredentialCurrent' | 'happyHomeDir' | 'resolveServerFeaturesSnapshot'
     | 'runtimeActionMachineId' | 'serverIdentityId' | 'onApprovalRequested'
     | 'externalActionMachineRequestPrivateKey' | 'externalActionMachineInstallationId'>
+      & Readonly<{ executeInvokingUiAction?: import('@/plugins/runtime/invocation/actions/executeContributedAction').ClientContributedActionExecutor }>
       & Pick<AccountExecutionRuntimeInput, 'executeTeamCredentialBrokerAction'> & CliActionExactHomeTarget;
   actionId: string;
   input: unknown;
@@ -230,6 +238,78 @@ async function executeInAccountRuntime(params: Parameters<typeof executeAccountP
     && selectedAction.definition.execution !== null && 'target' in selectedAction.definition.execution
     && selectedAction.definition.execution.target === 'account')) return allowUnmatched ? { matched: false } : { matched: true, result: { ok: false,
     errorCode: 'plugin_action_handler_missing', error: 'plugin_action_handler_missing' } };
+  // This is an execution placement transfer. The answering App owns ordinary
+  // Action admission, so a matching Agent request never executes here first.
+  const execution = selectedAction?.definition.execution;
+  const origin = params.context;
+  const caller = origin?.actionCaller;
+  if (execution?.target === 'account' && execution.invokingUi && execution.agentInvokingUi
+    && origin?.surface === 'agent' && caller?.kind === 'session' && origin.authority === 'account_automation'
+    && !origin.bypassApprovals && !origin.expectedContributedActionOccurrenceId
+    && !origin.externalActionExecutionAuthorization && !origin.externalActionCredential
+    && !origin.hostReviewedChild && !params.inheritedInvocation && identity) {
+    const invocation = params.actionId === 'action.invoke' ? ActionInvokeInputSchema.safeParse(params.input) : undefined;
+    const actionInput = invocation?.success ? invocation.data.input : params.input;
+    if ((invocation === undefined || invocation.success) && evaluateInputPredicate(execution.agentInvokingUi.when, actionInput)) {
+      const principalAccountId = readActionPrincipalAccountId(origin);
+      const execute = params.host.executeInvokingUiAction;
+      if (!principalAccountId || !execute || selection?.kind !== 'available') {
+        const code = 'plugin_action_client_target_unavailable';
+        return { matched: true, result: { ok: false, errorCode: code, error: code, effectAttempted: false } };
+      }
+      const request = UiContributedActionExecuteRequestV1Schema.safeParse({
+        v: 1, action: identity, input: actionInput, surface: 'agent',
+        actionRequestId: origin.actionRequestId,
+        expectedContributorOccurrenceId: selection.custodyId,
+        invokingAccountAction: { accountId: principalAccountId, caller, callerPermissionMode: origin.callerPermissionMode,
+          causalPermissionAuthority: origin.causalPermissionAuthority },
+      });
+      const expectedOccurrence = invocation?.data?.expectedContributorOccurrenceId;
+      if (expectedOccurrence !== undefined && expectedOccurrence !== selection.custodyId) {
+        const code = 'plugin_action_generation_retired';
+        return { matched: true, result: { ok: false, errorCode: code, error: code, effectAttempted: false } };
+      }
+      if (!request.success || invocation?.data?.messageActionReference) {
+        const code = 'plugin_action_input_invalid';
+        return { matched: true, result: { ok: false, errorCode: code, error: code, effectAttempted: false } };
+      }
+      const executeChild = origin.executeOrdinaryChildAction;
+      const preparation = execution.agentInvokingUi.preparation;
+      const release = preparation && origin.actionRequestId && executeChild
+        ? retainAdmittedClientActionParent(origin.actionRequestId, {
+          accountId: principalAccountId, sessionId: caller.sessionId,
+          executeChildAtMachine: async (actionId, input, targetMachineId) => {
+            const child = ActionInvokeInputSchema.safeParse(input);
+            if (actionId !== ACTION_INVOKE_ACTION_ID_V1 || !child.success || !child.data.expectedContributorOccurrenceId) {
+              const code = 'invalid_action_input';
+              return { ok: false, errorCode: code, error: code, effectAttempted: false };
+            }
+            const snapshot = await registry.readAccountMachineTargetedContributions?.({
+              targetPluginId: identity.pluginId, ...preparation.point,
+              machineId: targetMachineId, signal: origin.signal,
+            });
+            const action = child.data.action;
+            const declared = snapshot?.contributions.some(contribution => contribution.operations.some(operation =>
+              !operation.unavailable && operation.role === preparation.role
+              && operation.action.pluginId === action.pluginId && operation.action.localId === action.localId
+              && operation.contributor.occurrenceId === child.data.expectedContributorOccurrenceId));
+            if (!declared) {
+              const code = 'admission_unavailable';
+              return { ok: false, errorCode: code, error: code, effectAttempted: false };
+            }
+            return executeChild(actionId, child.data, { actionRequestId: randomUUID(),
+              externalActionTarget: { kind: 'machine', machineId: targetMachineId } });
+          },
+        }) : undefined;
+      try {
+        return { matched: true, result: await execute(request.data, {
+          ...(origin.signal ? { signal: origin.signal } : {}),
+          ...(invocation?.data?.clientId ? { clientId: invocation.data.clientId } : {}),
+          principalAccountId,
+        }) };
+      } finally { release?.(); }
+    }
+  }
   // Nested schema and invocation reads borrow the containing runtime. Its
   // Session or one-shot owner disposes it after its own lifetime.
   const lease = { registry, source: 'ephemeral' as const, durableRevision: -1, release: async () => {} };

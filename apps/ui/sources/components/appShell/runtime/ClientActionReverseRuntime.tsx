@@ -109,7 +109,10 @@ export function ClientActionReverseRuntime(): null {
     const accountId = storage(state => state.profile?.id ?? null);
     const { selectableMachineIds } = useMachinePresenceMembership(serverId);
     const pluginUiProjection = useAppShellPluginUiDeclarationProjection();
-    const contributedMachineIds = new Set(Object.values(pluginUiProjection?.actionsById ?? {}).flatMap(action => {
+    const actions = Object.values(pluginUiProjection?.actionsById ?? {});
+    const receivesAccountActions = actions.some(({ execution }) =>
+        execution.target === 'account' && execution.invokingUi && execution.agentInvokingUi);
+    const contributedMachineIds = new Set(receivesAccountActions ? selectableMachineIds : actions.flatMap(action => {
         const origin = readPluginUiContributionOrigin(action);
         return action.execution.target === 'client' && origin?.phase === 'current' && origin.interactionEnabled
             && origin.serverId === serverId ? [origin.machineId] : [];

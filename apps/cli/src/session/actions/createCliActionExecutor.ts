@@ -117,6 +117,7 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
     requestPluginActionExecution?: PluginActionExecutionRequestOwner;
     /** Credentialed capability receiver; captured parent registries omit this. */
     accountPluginActions?: true;
+    executeInvokingUiAction?: import('@/plugins/runtime/invocation/actions/executeContributedAction').ClientContributedActionExecutor;
   }>;
 
 export type CliReviewServices = Readonly<{

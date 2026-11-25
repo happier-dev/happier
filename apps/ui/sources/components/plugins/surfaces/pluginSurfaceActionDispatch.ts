@@ -334,6 +334,8 @@ export type PluginSurfaceActionCurrentIntentPresenter = (
 const claimPressedSessionSend = Symbol('claimPressedSessionSend');
 
 export type DispatchPluginSurfaceActionInput = Readonly<{
+    /** An invoking Account Action returns selected preparation to the original Session's daemon. */
+    preparationChild?: ActionExecutorContext['executeOrdinaryChildAction'] | null;
     [claimPressedSessionSend]?: ReturnType<typeof createConfirmedSessionSendClaimV1>;
     /** Containing Action admission proof; routing custody only, never child execution context. */
     admittedParentSessionTargetsV1?: ActionResolvedSessionTargetsV1;
@@ -770,6 +772,14 @@ function clientActionExecuteAction(
             // machine/generation of a different ambient projection.
             const registeredAuthority = selection.registration.authority;
             const authority = registeredAuthority && 'machineId' in registeredAuthority ? registeredAuthority : selectedExecutionTarget();
+            const placement = selection.action.execution;
+            const prepare = placement.target === 'account' ? placement.agentInvokingUi?.preparation : undefined;
+            const operation = selected?.carrier.operation;
+            const preparationChild = prepare && operation && input.invocationSurface === 'agent'
+                && operation.role === prepare.role && operation.point.pointId === prepare.point.pointId
+                && operation.point.protocol.id === prepare.point.protocol.id
+                && operation.point.protocol.version === prepare.point.protocol.version
+                ? input.hostAction?.context?.executeOrdinaryChildAction ?? null : undefined;
             const execute = selection.binding.execute ?? input.contributedAction?.execute;
             const contributedAction = authority ? {
                 ...input.contributedAction,
@@ -795,6 +805,7 @@ function clientActionExecuteAction(
                     targetedOperation: selected.carrier.operation,
                     selectedActionInput: selected.carrier.result,
                 } : {}),
+                ...(preparationChild === undefined ? {} : { preparationChild }),
                 action,
                 ...(action === SESSION_MESSAGE_SEND_ACTION_ID_V1 && input[claimPressedSessionSend]
                     ? { [claimPressedSessionSend]: input[claimPressedSessionSend] } : {}),
@@ -2778,6 +2789,17 @@ async function executeContributedAction(
         return failure('unavailable', 'plugin_mounted_caller_unavailable');
     }
 
+    if (input.preparationChild !== undefined) {
+        if (!input.preparationChild || !settlement.direct) return clientActionFailure('admission_unavailable');
+        const currentFailure = preflightFailure(input);
+        if (currentFailure) return currentFailure;
+        const result = await input.preparationChild(ACTION_INVOKE_ACTION_ID_V1, {
+            action: identity, input: normalizedInput, expectedContributorOccurrenceId: projectedAction.occurrenceId,
+        }, { signal: input.signal, externalActionTarget: { kind: 'machine', machineId: binding.machineId } });
+        const outcome = result.ok ? { ok: true as const, result: result.result as PluginUiJsonValueV1 }
+            : projectPluginActionFailure({ ...result, code: result.errorCode, message: result.error });
+        return result.automationNotices ? { ...outcome, automationNotices: result.automationNotices } : outcome;
+    }
     const presentUserIntent = await settleDaemonActionPresentUserIntent(input, identity, projectedAction, normalizedInput, daemonPreparedInput);
     if (!presentUserIntent.ok) return presentUserIntent;
     if (input.hostAction?.context?.verifyMachineAdmissionCurrent

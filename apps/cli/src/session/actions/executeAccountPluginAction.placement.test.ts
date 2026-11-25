@@ -351,6 +351,63 @@ it.each(['host', 'context', 'retained'] as const)('publishes canonical Home iden
     }
 });
 
+it('sends a matching Session Agent Account Action to the invoking App and refuses its absence', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'account-action-invoking-app-'));
+    const app = fastify();
+    const accountId = 'invoking-app-owner';
+    const serverId = 'invoking-app-home';
+    const serverHttpBaseUrl = 'http://account-invoking-app.test';
+    registerAccountHomeHttp(app, { accountId, serverId });
+    const { manifest } = await import('../../../../../packages/plugin-sdk/fixtures/account-actions/src/index');
+    const authored = await registerAuthoredAccountActionRelease(app, accountId, { primary: {
+        projectRoot: resolve(import.meta.dirname, '../../../../../packages/plugin-sdk/fixtures/account-actions'),
+        entryPath: resolve(import.meta.dirname, '../../../../../packages/plugin-sdk/fixtures/account-actions/src/index.ts'),
+        manifestExport: null,
+        manifest: { ...manifest, contributes: { ...manifest.contributes,
+            actions: manifest.contributes?.actions?.map(action => action.id === 'echo' && action.execution?.target === 'account'
+                ? { ...action, execution: { ...action.execution, invokingUi: true,
+                    agentInvokingUi: { when: { op: 'eq', path: 'key', value: 'compose' } } } } : action),
+        } },
+    } });
+    await app.ready();
+    const restore = installAxiosFastifyAdapter({ app, origin: serverHttpBaseUrl });
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const credentials: StoredCredentials = { token, encryption: null, credentialProvenance: 'stored_session' };
+    const action = { pluginId: authored.pluginId, localId: 'echo' };
+    const caller = { kind: 'session', sessionId: 'invoking-session', starterDepth: 1, turnDepth: 2 } as const;
+    const context = { surface: 'agent', authority: 'account_automation', actionCaller: caller,
+        runtimeAccountId: accountId, actionRequestId: 'compose-request' } as const;
+    const runtime = createRetainedAccountExecutionRuntime(() => ({ happyHomeDir,
+        accountExecution: { credentials, serverUrl: serverHttpBaseUrl, serverId, isCurrent: () => true } }));
+    const { createClientActionMachineRpcExecutor } = await import('@/plugins/runtime/invocation/actions/clientActionMachineRpc');
+    const reverse = vi.fn(async () => ({ ok: true as const, result: { ok: true, result: { composed: true } } }));
+    let appReachable = true;
+    try {
+        await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => authored.publishArtifacts(credentials));
+        const host = { token, credentials, happyHomeDir, sessionId: 'cli-global', mode: 'plain' as const, ctx: null,
+            serverId, serverHttpBaseUrl,
+            executeInvokingUiAction: createClientActionMachineRpcExecutor(() => appReachable ? { callConnectedClientRpc: reverse } : null) };
+        const { deps } = createCliActionExecutorHarness(host);
+        const invoke = (key: string) => executeAccountPluginAction({ host, deps, accountRuntime: runtime,
+            actionId: 'action.invoke', input: { action, input: { key } }, context });
+        expect(await invoke('compose')).toEqual({ matched: true, result: { ok: true, result: { composed: true } } });
+        expect(reverse).toHaveBeenCalledWith(RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE,
+            expect.objectContaining({ action, actionRequestId: context.actionRequestId, input: { key: 'compose' },
+                invokingAccountAction: { accountId, caller } }),
+            expect.objectContaining({ principalAccountId: accountId }));
+        appReachable = false;
+        expect(await invoke('compose')).toMatchObject({ matched: true, result: { ok: false, errorCode: 'plugin_action_client_target_unavailable' } });
+        expect(await invoke('direct')).not.toMatchObject({ result: { errorCode: 'plugin_action_client_target_unavailable' } });
+        expect(reverse).toHaveBeenCalledTimes(1);
+    } finally {
+        await runtime.dispose();
+        restore();
+        await app.close();
+        resetActiveAccountSettingsSnapshotForTests();
+        await rm(happyHomeDir, { recursive: true, force: true });
+    }
+});
+
 it('executes a qualified Account Action through the same owner as action.invoke without a Machine', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'account-qualified-action-'));
     const app = fastify();

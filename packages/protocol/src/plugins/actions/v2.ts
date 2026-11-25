@@ -39,7 +39,8 @@ import {
   type PluginJsonSchemaV2,
   type PluginLocalizedStringV2,
 } from '../contributions/publicTypes.js';
-import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
+import { PluginContributionLocalIdSchema, PluginContributionOperationRoleV1Schema } from '../contributionIdentity.js';
+import { PluginUiTargetedContributionPointRefV1Schema } from '../ui/targetedContributions.js';
 import {
   PluginClientExecutionPlatformsV1Schema,
   PluginClientExecutionReferenceV1Schema,
@@ -96,6 +97,14 @@ export const PluginActionExecutionV2Schema = lazyZodSchema(() => z.discriminated
     account: PluginClientExecutionReferenceV1Schema,
     /** Retain ordinary UI authoring when invoked from a UI host; headless hosts remain portable. */
     invokingUi: z.optional(z.literal(true)),
+    /** A matching Agent invocation needs the invoking App to finish authoring. */
+    agentInvokingUi: z.optional(z.strictObject({
+      when: InputPredicateSchema,
+      preparation: z.optional(z.strictObject({
+        point: asProtocolZod(PluginUiTargetedContributionPointRefV1Schema),
+        role: PluginContributionOperationRoleV1Schema,
+      })),
+    })),
   }),
   z.strictObject({
     target: z.literal('client'),

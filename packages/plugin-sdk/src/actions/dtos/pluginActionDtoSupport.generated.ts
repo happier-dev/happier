@@ -13539,6 +13539,19 @@ export type PluginActionContributionV2 = {
             exportName: string;
         };
         invokingUi?: true | undefined;
+        agentInvokingUi?: undefined | {
+            when: InputPredicate;
+            preparation?: undefined | {
+                point: {
+                    pointId: string;
+                    protocol: {
+                        id: string;
+                        version: number;
+                    };
+                };
+                role: string;
+            };
+        };
     } | {
         target: 'client';
         client: {

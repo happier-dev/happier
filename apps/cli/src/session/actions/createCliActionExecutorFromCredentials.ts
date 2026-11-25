@@ -950,6 +950,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   pluginActionExecutionOwner?: 'daemon_control' | 'current_process';
   /** Credentialed capability receiver; not an Account grant or source selector. */
   accountPluginActions?: true;
+  executeInvokingUiAction?: import('@/plugins/runtime/invocation/actions/executeContributedAction').ClientContributedActionExecutor;
   /** In-process daemon owner for plugin review/apply custody. */
   pluginChangeService?: Parameters<typeof createCliActionDeps>[0]['pluginChangeService'];
   /** Root `happier actions` is a signed client of the daemon External Action API. */
@@ -1339,6 +1340,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         return await requestDaemonPluginActionExecution(request, options);
       } } : {}),
       ...(params.accountPluginActions ? { accountPluginActions: true as const } : {}),
+      ...(params.executeInvokingUiAction ? { executeInvokingUiAction: params.executeInvokingUiAction } : {}),
       sessionId: 'cli-global',
       ...(params.sessionMessageReplyPublisher ? { sessionMessageReplyPublisher: params.sessionMessageReplyPublisher } : {}),
       ...(params.postAgentDiscussionMessage ? { postAgentDiscussionMessage: params.postAgentDiscussionMessage } : {}),

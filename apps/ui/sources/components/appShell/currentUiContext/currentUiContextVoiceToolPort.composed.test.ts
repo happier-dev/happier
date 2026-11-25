@@ -1904,6 +1904,55 @@ describe('current UI context Voice tool port', () => {
         }
     });
 
+    it('carries an Agent’s invoking Account Action through the mounted UI and refuses retired or changed custody', async () => {
+        const { definePlugin } = await import('@happier-dev/plugin-sdk');
+        const { defineProtocolObject } = await import('@happier-dev/plugin-sdk/protocol');
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://current-ui-public.test',
+            accountId: 'current-ui-account', request: homes.request });
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected current Account');
+        const account = { artifactId: 'account-runtime', exportName: 'activate' };
+        const authored = definePlugin({ id: 'acme.invoking-account', version: '1.0.0', displayName: 'Invoking Account',
+            actions: { compose: { title: 'Compose', surfaces: ['agent'],
+                execution: { target: 'account', account, invokingUi: true, agentInvokingUi: { when: { op: 'eq', path: 'compose', value: true } } },
+                inputSchema: defineProtocolObject({}, { policy: 'closed' }), run: async () => null } } });
+        const installed = await installPortableAccountPluginReleaseForTest({ manifest: authored.manifest,
+            activate: api => authored.activateAccount(api, account), accountLifetime: lifetime });
+        const action = { pluginId: authored.manifest.id, localId: 'compose' };
+        const occurrenceId = installed.projection.actionsById[`${action.pluginId}/${action.localId}`]!.occurrenceId;
+        const caller = { kind: 'session', sessionId: 'invoking-session', starterDepth: 1, turnDepth: 2 } as const;
+        let mounted = true;
+        let accountCurrent = true;
+        const execute = vi.fn(async () => ({ ok: true as const, result: { opened: true } }));
+        const receive = createCurrentUiContributedActionRpcHandler({
+            machineId: 'invoking-machine', serverId: lifetime.scope.serverId, accountId: lifetime.scope.accountId,
+            readProjection: () => installed.projection, isCurrent: () => accountCurrent, canExecute: () => mounted, execute,
+        });
+        const request = { v: 1, action, input: { compose: true }, surface: 'agent', expectedContributorOccurrenceId: occurrenceId,
+            invokingAccountAction: { accountId: lifetime.scope.accountId, caller } };
+        try {
+            expect(await receive(request)).toEqual({ ok: true, result: { opened: true } });
+            expect(execute).toHaveBeenCalledWith('action.invoke', { action, input: { compose: true } }, expect.objectContaining({
+                actionCaller: caller, expectedAccountId: lifetime.scope.accountId, defaultSessionId: caller.sessionId,
+            }));
+            expect(await receive({ ...request, invokingAccountAction: { ...request.invokingAccountAction, accountId: 'other-account' } }))
+                .toMatchObject({ ok: false, errorCode: 'client_not_available', actionHandlerInvocation: 'notStarted' });
+            mounted = false;
+            expect(await receive(request)).toMatchObject({
+                ok: false, errorCode: 'client_not_available', actionHandlerInvocation: 'notStarted',
+            });
+            mounted = true;
+            accountCurrent = false;
+            expect(await receive(request)).toMatchObject({
+                ok: false, errorCode: 'client_not_available', actionHandlerInvocation: 'notStarted',
+            });
+            expect(execute).toHaveBeenCalledTimes(1);
+        } finally { await installed.dispose(); await connection.dispose(); }
+    });
+
     it('routes generic action.invoke through the answering default UI executor', async () => {
         expect(visibleModalCount).toBe(0);
         const fixture = createCurrentUiClientActionFixture({

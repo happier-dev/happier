@@ -567,6 +567,18 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
         kind: 'machine' as const, machineId: requesterHistoryWorkspace.machineId, project: requesterHistoryWorkspace,
       } } : {}),
       ...(observationSetup ? { requiredContributedActionDangerLevel: 'safe' } : {}),
+      ...(operation.actionId === ACTION_INVOKE_ACTION_ID_V1 && accountPluginActions ? {
+        executeOrdinaryChildAction: (actionId, input, options) => {
+          const parsed = StrictJsonValueSchema.safeParse(input);
+          const target = options?.externalActionTarget;
+          if (actionId !== ACTION_INVOKE_ACTION_ID_V1 || !parsed.success || !options?.actionRequestId || target?.kind !== 'machine') {
+            return Promise.resolve({ ok: false as const, errorCode: 'invalid_action_input', error: 'invalid_action_input' });
+          }
+          return execute({ kind: 'action.execute', actionId, input: parsed.data, requestId: options.actionRequestId,
+            witness: operation.witness, ...(operation.surface ? { surface: operation.surface } : {}),
+            ...(operation.executionRun ? { executionRun: operation.executionRun } : {}) }, authority, undefined, target.machineId);
+        },
+      } : {}),
       ...(operation.actionId === WORKFLOW_AUTHORING_ACTION_ID.draftSave || operation.actionId === USAGE_QUERY_ACTION_ID_V1 ? {
         executeOrdinaryChildAction: (actionId, input, options) => {
           const parsed = StrictJsonValueSchema.safeParse(input);

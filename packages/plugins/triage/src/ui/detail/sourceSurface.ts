@@ -29,7 +29,7 @@ import { renderSourceQualifiedId } from '../../corpus/identity/components.js';
  * unbound cannot prepare a review workspace, which is a fact the header states
  * before a press rather than after one.
  */
-const TRIAGE_PREPARE_REVIEW_WORKSPACE_ROLE_V1 = 'prepareReviewWorkspace';
+export const TRIAGE_PREPARE_REVIEW_WORKSPACE_ROLE_V1 = 'prepareReviewWorkspace';
 const TRIAGE_GET_SOURCE_ENTRY_ROLE_V1 = 'get';
 
 /**

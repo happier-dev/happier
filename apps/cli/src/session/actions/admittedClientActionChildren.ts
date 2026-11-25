@@ -8,11 +8,10 @@ import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/
 type AdmittedClientActionParent = Readonly<{
   accountId: string;
   sessionId: string;
-  executeChild: (
-    actionId: ActionId,
-    input: unknown,
-  ) => Promise<ActionExecuteResult>;
-}>;
+}> & (
+  | Readonly<{ executeChild(actionId: ActionId, input: unknown): Promise<ActionExecuteResult> }>
+  | Readonly<{ executeChildAtMachine(actionId: ActionId, input: unknown, machineId: string): Promise<ActionExecuteResult> }>
+);
 
 /**
  * Session-caller parents this daemon admitted and is still awaiting from the App.
@@ -57,10 +56,11 @@ export async function executeAdmittedClientActionChild(
     request.data.sessionId !== parent.sessionId
   )
     return refused('admission_unavailable');
-  const execution = await parent.executeChild(
-    request.data.actionId,
-    request.data.input,
-  );
+  const { actionId, input, targetMachineId } = request.data;
+  const execution = targetMachineId
+    ? 'executeChildAtMachine' in parent && await parent.executeChildAtMachine(actionId, input, targetMachineId)
+    : 'executeChild' in parent && await parent.executeChild(actionId, input);
+  if (!execution) return refused('admission_unavailable');
   return {
     v: 1,
     execution: execution.ok

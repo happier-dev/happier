@@ -312,6 +312,13 @@ the intent. An Action refusal appears in the same notice. If the host
 loses the create acknowledgement, it skips the Action. Use matching 0.3
 development versions of the SDK and host for this field.
 
+In unreleased 0.3, an Account Action with `execution.invokingUi: true` can
+declare an `execution.agentInvokingUi.when` input predicate. A matching
+Session Agent invocation asks the live App on the same Account to run the
+Action with its mounted UI. Triage uses this for explicit compose requests.
+The person reviews and submits the resulting editable New Session draft.
+If the App is unavailable, the Action returns a typed client error.
+
 ## Approval for a direct UI write (development)
 
 The unreleased 0.3 host API lets a direct Account write respect the same approval

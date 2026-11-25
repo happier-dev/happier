@@ -3,6 +3,8 @@ import { z } from '../../zodRuntimePolicy.js';
 
 import { PluginContributionIdentityV1Schema } from '../contributionIdentity.js';
 import { PluginUiRuntimeOccurrenceIdV1Schema } from '../ui/targetedContributions.js';
+import { ApprovalExecutionOriginV1Schema } from '../../approvals/approvalRequestV1.js';
+import { AgentStartSessionCallerV1Schema } from '../../account/settings/admitAgentStartV1.js';
 import { AgentRuntimeJsonValueV1Schema } from '../../runtime/agentSessionV1.js';
 import { asProtocolZod } from './internalProtocolZodAdapter.js';
 import { MessageActionReferenceV1Schema } from '../../sessions/messages/messageActionReferenceV1.js';
@@ -19,6 +21,13 @@ export const UiContributedActionExecuteRequestV1Schema = lazyZodSchema(() => z.s
   expectedContributorOccurrenceId: asProtocolZod(PluginUiRuntimeOccurrenceIdV1Schema),
   defaultSessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   requiredDangerLevel: z.optional(z.literal('safe')),
+  /** Authenticated daemon's original Session caller for Account UI authoring. */
+  invokingAccountAction: z.optional(z.strictObject({
+    accountId: z.string().check(z.minLength(1)),
+    caller: AgentStartSessionCallerV1Schema,
+    callerPermissionMode: ApprovalExecutionOriginV1Schema.shape.callerPermissionMode,
+    causalPermissionAuthority: ApprovalExecutionOriginV1Schema.shape.causalPermissionAuthority,
+  })),
 }));
 export type UiContributedActionExecuteRequestV1 = z.infer<
   typeof UiContributedActionExecuteRequestV1Schema

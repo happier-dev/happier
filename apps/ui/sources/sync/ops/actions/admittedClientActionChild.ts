@@ -27,6 +27,7 @@ export async function executeAdmittedClientActionChildAtMachine(
     sessionId: string;
     actionId: ActionId;
     input: unknown;
+    targetMachineId?: string;
     signal?: AbortSignal;
   }>,
 ): Promise<ActionExecuteResult> {
@@ -36,6 +37,7 @@ export async function executeAdmittedClientActionChildAtMachine(
     sessionId: params.sessionId,
     actionId: params.actionId,
     input: params.input,
+    ...(params.targetMachineId ? { targetMachineId: params.targetMachineId } : {}),
   });
   if (!request.success) {
     return { ok: false, errorCode: 'invalid_action_input', error: 'invalid_action_input' };

@@ -103,6 +103,13 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     executionRealm?: 'account';
     revalidateAccountExecution?(pluginId: string, signal?: AbortSignal): Promise<boolean>;
     readAccountExecutionSelection?(pluginId: string): import('@happier-dev/protocol/plugins/availability').PluginAccountExecutionSelectionV1 | null;
+    readAccountMachineTargetedContributions?(request: Readonly<{
+        targetPluginId: string;
+        pointId: string;
+        protocol: Readonly<{ id: string; version: number }>;
+        machineId: string;
+        signal?: AbortSignal;
+    }>): Promise<import('@happier-dev/cli-common/plugins/registration').AdmittedTargetedContributionSnapshot | null>;
     /** Host reads may launch an installed executable, but never acquire one implicitly. */
     resolveReadyManagedExecutable?(
         executable: ManagedExecutableRef,

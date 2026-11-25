@@ -28,7 +28,10 @@ import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions
 import { observeAccountChanges } from "@/api/observeAccountChanges";
 import type { ActionExecuteResult, ActionExecutorContext } from "@happier-dev/protocol";
 import type { RpcActionExecutorContext } from "@/rpc/handlers/_actionDispatchAdapter";
-import { sameStrictJsonValue } from "@happier-dev/protocol/json/strictJsonValue";
+import { projectNativeJsonValueForTransport, sameStrictJsonValue } from "@happier-dev/protocol/json/strictJsonValue";
+import { invokeHostAdmittedSignedReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { BACKUP_RECEIVER_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isDeploymentBackupConfigureNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import { arePluginMachineMaterializationRefsEqual } from "@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1";
 import { getActionSpec } from "@happier-dev/protocol/actions/actionSpecs";
 import { resolveRuntimeActionExecutionFamily } from "@happier-dev/protocol/actions/executor/dispatch";
@@ -60,6 +63,7 @@ import { readRequesterHomeWithinActionLifetime } from "@/daemon/sessionEncryptio
 import { createRequesterConnectedAccountPurposeBindingRuntime } from "@/daemon/connectedServices/purposeBindings/createRequesterConnectedAccountPurposeBindingRuntime";
 import { acquireAuthoritativePluginRuntimeRegistryLease } from "@/plugins/runtime/reload/runtimeLease";
 import { createSessionTranscriptFollowLeaseRegistry } from "@/api/session/transcriptQueries";
+import { createClientActionMachineRpcExecutor } from '@/plugins/runtime/invocation/actions/clientActionMachineRpc';
 import { createCliActionExecutorFromCredentials } from "@/session/actions/createCliActionExecutorFromCredentials";
 import { createMachineRecipeReadAction } from "@/machines/setup/machineRecipeActionDeps";
 import { createLocalServicesDaemonRestartPreparation, createLocalServicesDaemonRuntimeActionExecutor } from "@/daemon/local/services/actions/runtimeActionExecutor";
@@ -281,6 +285,7 @@ resolveServerFeaturesSnapshot?: () =>
         return snapshot;
       };
       let executionContext = context;
+      let admittedBackupSetup: Pick<Parameters<typeof invokeHostAdmittedSignedReviewedChildV1>[0], 'child' | 'receivingAdmission'> | undefined;
       let observedServerIdentityId: string | null = null;
       if (context?.externalActionExecutionAuthorization) {
         const actionSignal = context.signal;
@@ -341,6 +346,20 @@ resolveServerFeaturesSnapshot?: () =>
             ...(context.signal ? { signal: context.signal } : {}) });
         if (setupChild && movePacket && !admittedMoveChild) {
           return actionStartTargetUnavailableV1(context, 'credentialed_factory', 'target_binding_mismatch');
+        }
+        if (admittedMoveChild && childFamily === 'backup_receiver_setup'
+          && actionId === BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply.action
+          && context.machineAdmission && movePacket.externalActionExecution.reviewedChild
+          && isDeploymentBackupConfigureNativeAdmissionV1(binding.deploymentNativeAdmission)) {
+          if (binding.deploymentNativeAdmission.receiverInstallationId !== context.machineAdmission.installationId) {
+            return actionStartTargetUnavailableV1(context, 'credentialed_factory', 'target_binding_mismatch');
+          }
+          const { actionId, role, inputDigest } = movePacket.externalActionExecution.reviewedChild;
+          admittedBackupSetup = {
+            receivingAdmission: context.machineAdmission,
+            child: { actionId, role, inputDigest, environmentId: binding.deploymentNativeAdmission.environmentId,
+              input: projectNativeJsonValueForTransport(input) },
+          };
         }
         if (binding.machineId !== params.machineId && !archiveAdmission && !admittedMoveChild) {
           const installation = readInstallationIdentityIfExistsSync();
@@ -1190,6 +1209,7 @@ resolveServerFeaturesSnapshot?: () =>
         },
         credentials,
         clientActionExecute: createClientActionReverseDispatcher(() => params.getApiMachineForSessions()),
+        executeInvokingUiAction: createClientActionMachineRpcExecutor(params.getApiMachineForSessions),
         ...(observedServerIdentityId ? { machineRecipesRead: createMachineRecipeReadAction({
           homeId: observedServerIdentityId, machineId: params.machineId,
           ...(apiMachineForSessions ? { readMachineMetadataSnapshot: () => apiMachineForSessions.getMachineMetadataSnapshot() } : {}),
@@ -1657,6 +1677,12 @@ resolveServerFeaturesSnapshot?: () =>
       };
       // Native owners, including Project finite execution, attach observation
       // after approval. Recording an Ask here caches its receipt as execution.
+      if (admittedBackupSetup && executionContext) {
+        return await invokeHostAdmittedSignedReviewedChildV1({
+          ...admittedBackupSetup, context: executionContext,
+          execute: (_input, issuedContext) => executeAccepted(issuedContext),
+        });
+      }
       return await executeAccepted(executionContext);
     }), replay?.artifactId, context?.actionRequestId);
     return {

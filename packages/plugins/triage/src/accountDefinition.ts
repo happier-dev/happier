@@ -1,5 +1,7 @@
 import type { definePlugin, DefinePluginInput } from '@happier-dev/plugin-sdk';
 import { createTriageRunConfiguredActionHandler } from './actions/configuredActionRun.js';
+import { TRIAGE_PREPARE_REVIEW_WORKSPACE_ROLE_V1 } from './ui/detail/sourceSurface.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from './targetedContributions.js';
 import { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1, TriageRunConfiguredActionInputV1Schema, TriageRunConfiguredActionResultV1Schema } from './actions/configuredActionRunProtocol.js';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from './accountExecution.js';
@@ -89,7 +91,7 @@ type TriageActionMetadata = Omit<
 >;
 export type TriageAccountActionDeclarations = {
   readonly [TLocalId in keyof TriageAccountActionSchemas]: TriageActionMetadata & {
-    readonly execution: typeof TRIAGE_DATA_ACTION_EXECUTION_V1;
+    readonly execution: Extract<NonNullable<NonNullable<Parameters<typeof definePlugin>[0]['actions']>[string]['execution']>, { target: 'account' }>;
     readonly inputSchema: TriageAccountActionSchemas[TLocalId][0];
     readonly resultSchema: TriageAccountActionSchemas[TLocalId][1];
   };
@@ -99,6 +101,11 @@ export type TriageAccountActions = NonNullable<DefinePluginInput<TriageAccountAc
 // The catalog uses the invoking UI's Account storage, including in a browser with no Machine.
 const TRIAGE_ACTION_CATALOG_EXECUTION_V1 = { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true } as const;
 
+const TRIAGE_NEW_SESSION_COMPOSE_INPUT = { op: 'and', all: [
+  { op: 'eq', path: 'handoff.sessionChoice.kind', value: 'new' },
+  { op: 'eq', path: 'handoff.delivery', value: 'compose' },
+] } as const;
+
 /** Account registrations shared by the full declaration and portable activation. */
 export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
 [TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1]: {
@@ -107,7 +114,10 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         dangerLevel: 'writesLocal',
-        confirmationWhen: { presentUserUi: { op: 'eq', path: 'handoff.sessionChoice.kind', value: 'existing' } },
+        confirmationWhen: {
+          presentUserUi: { op: 'eq', path: 'handoff.sessionChoice.kind', value: 'existing' },
+          default: { op: 'not', predicate: TRIAGE_NEW_SESSION_COMPOSE_INPUT },
+        },
         sessionTarget: { field: 'handoff.sessionChoice.session', cardinality: 'one' },
         // Confirmed only when it goes to an existing Session (`confirmationWhen`): it sends, it starts nothing (N13).
         confirmation: {
@@ -122,7 +132,18 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         },
         inputSchema: TriageRunConfiguredActionInputV1Schema,
         resultSchema: TriageRunConfiguredActionResultV1Schema,
-        execution: { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true },
+        execution: {
+          ...TRIAGE_DATA_ACTION_EXECUTION_V1,
+          invokingUi: true,
+          agentInvokingUi: {
+            when: TRIAGE_NEW_SESSION_COMPOSE_INPUT,
+            preparation: {
+              point: { pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1.id,
+                protocol: TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1.protocol },
+              role: TRIAGE_PREPARE_REVIEW_WORKSPACE_ROLE_V1,
+            },
+          },
+        },
         run: createTriageRunConfiguredActionHandler(),
       },
 [TRIAGE_WORK_ITEMS_TRANSITION_ACTION_LOCAL_ID_V1]: {

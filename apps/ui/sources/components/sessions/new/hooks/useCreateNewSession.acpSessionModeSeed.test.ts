@@ -37,6 +37,7 @@ const localStorageBoundary = installLocalStorageMock();
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 installDisconnectedServerSocketBoundary(socket => { configureConnectedServerSocketBoundary(socket); });
 
+const newSessionPush = vi.hoisted(() => vi.fn<(route: unknown) => void>());
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => false));
 const modalShowSpy = vi.hoisted(() => vi.fn((dialog: { props?: { onCancel?: () => void }; chrome?: { testID?: string } }) => {
@@ -71,6 +72,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocke
 });
 
 installNewSessionScreenModelCommonModuleMocks({
+  routerConfig: { router: { push: newSessionPush } },
   modal: async () => ({
     Modal: {
       alert: modalAlertSpy,
@@ -603,7 +605,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     expect(sendMessageSpy).not.toHaveBeenCalled();
   });
 
-  it.each(['linked', 'refused', 'plain', 'confirmation', 'account-mismatch'] as const)('settles a New Session draft with an ordinary Triage Action (%s)', async scenario => {
+  it.each(['agent', 'linked', 'refused', 'plain', 'confirmation', 'account-mismatch'] as const)('settles a New Session draft with an ordinary Triage Action (%s)', async scenario => {
     const { useCreateNewSession, sessionSpawnNewRpcSpy, seedTemporaryDestination } = await setupHarness();
     const { seedAndOpenNewSession } = await import('../newSessionSeedComposer');
     const { readNewSessionDraftFromRepository } = await import('../../composer/newSessionDraftRepositoryAdapter');
@@ -614,9 +616,19 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     const { TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1, TriageLinkEntryToSessionInputV1Schema } =
       await import('../../../../../../../packages/plugins/triage/src/actions/sessionLinksProtocol');
     const { createTestkitCorpusCollections } = await import('../../../../../../../packages/plugins/triage/src/corpus/testkit/corpusCollections.test-support');
-    const { testkitEntryRef } = await import('../../../../../../../packages/plugins/triage/src/corpus/testkit/observations.test-support');
+    const { testkitEntryRef, testkitObservation } = await import('../../../../../../../packages/plugins/triage/src/corpus/testkit/observations.test-support');
+    const { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1: configuredActionId } =
+      await import('../../../../../../../packages/plugins/triage/src/actions/configuredActionRunProtocol');
+    const { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1: entryDetailId } =
+      await import('../../../../../../../packages/plugins/triage/src/actions/entryDetailProtocol');
+    const { TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1: reobserveId } =
+      await import('../../../../../../../packages/plugins/triage/src/actions/reobserveEntryProtocol');
+    const { TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1: readActionsId } =
+      await import('../../../../../../../packages/plugins/triage/src/actions/actionsCatalogProtocol');
     const { testkitConfiguredInstance, testkitReadOnlySourceSnapshot, TESTKIT_LINK_DISPLAY } =
       await import('../../../../../../../packages/plugins/triage/src/sessions/testkit/entrySessionTestkit.test-support');
+    const { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } =
+      await import('../../../../../../../packages/plugins/triage/src/targetedContributions');
     const { CORPUS_SOURCE_INSTANCES_COLLECTION_ID, CORPUS_SOURCE_INSTANCE_LIFECYCLE,
       CORPUS_SESSION_LINKS_COLLECTION_ID, CORPUS_SESSION_LINKS_INDEX_ID, CORPUS_USER_MARKS_COLLECTION_ID } =
       await import('../../../../../../../packages/plugins/triage/src/corpus/collections/ids');
@@ -626,9 +638,9 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     if (!accountLifetime) throw new Error('Expected creator Account custody');
     const scope = accountLifetime.scope;
     const draftScope = scenario === 'account-mismatch' ? await seedTemporaryDestination('unused-session') : scope;
-    const draftId = '00000000-0000-4000-8000-000000000058';
+    let draftId = '00000000-0000-4000-8000-000000000058';
     const { collections, control } = createTestkitCorpusCollections();
-    const entryRef = testkitEntryRef();
+    const entryRef = scenario === 'agent' ? testkitEntryRef({ kindId: 'issue' }) : testkitEntryRef();
     const configured = testkitConfiguredInstance();
     if (scenario !== 'refused') {
       control.sourceInstances.seed(toCorpusStoredValue({ instanceTag: 'a'.repeat(43),
@@ -653,6 +665,49 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       activate(api) {
         return TRIAGE_PLUGIN.activateAccount({ ...api, actions: {
           register(id, handler, options) {
+            if (scenario === 'agent' && id === configuredActionId) {
+              api.actions.register(id, (value, context) => {
+                const ui = context.ui;
+                if (!ui) throw new Error('Expected the invoking App to provide UI authoring');
+                // The source, Account catalog and project inventory are external reads.
+                // Keep the configured Action, mounted openNewSession and spawn/link real.
+                const executeAction = (async (reference: import('@happier-dev/plugin-sdk').PluginReference) => {
+                  if (typeof reference !== 'string' && reference.localId === reobserveId) {
+                    return { kind: 'observed', entryRef, observation: testkitObservation() };
+                  }
+                  if (typeof reference !== 'string' && reference.localId === entryDetailId) {
+                    return { kind: 'read', instance: configured, linkedSessions: [] };
+                  }
+                  if (typeof reference !== 'string' && reference.localId === readActionsId) {
+                    return { v: 1, availability: 'parsed', revision: '1', actions: [
+                      { actionId: 'custom-fix', label: 'Fix', enabled: true, appliesTo: ['issue'], profileId: null,
+                        workspaceMode: 'reference_only', target: { kind: 'agent', promptInvocationId: null,
+                          seededFallbackInstruction: 'Fix this issue.', delivery: 'compose' } },
+                    ] };
+                  }
+                  if (reference === 'projects.list') return { items: [], truncated: false };
+                  throw new Error('Unexpected read: ' + JSON.stringify(reference));
+                }) as typeof ui.executeAction;
+                return handler(value, { ...context, ui: { ...ui,
+                  async context() {
+                    const point = TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1;
+                    const target = { pluginId: manifest.id, occurrenceId: 'triage-release',
+                      sourceCustody: { kind: 'development' as const, registeredRootId: 'triage-root' } };
+                    return { accountScope: context.accountScope, targetedContributions: { target, points: [{
+                      pointId: point.id, protocols: [{ protocol: point.protocol,
+                        contributions: testkitReadOnlySourceSnapshot().contributions.map(source => ({
+                          contributor: { ...source.contributor, occurrenceId: 'test-source',
+                            sourceCustody: { kind: 'development' as const, registeredRootId: 'test-source-root' } },
+                          protocol: point.protocol, descriptor: source.descriptor, operations: [], surfaces: [],
+                        })),
+                      }],
+                    }] } };
+                  },
+                  executeAction,
+                } });
+              }, options);
+              return;
+            }
             if (id !== actionId) {
               api.actions.register(id, handler, options);
               return;
@@ -685,7 +740,37 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         expect(seedAndOpenNewSession({ scope: draftScope, seed, pluginId: manifest.id, isCurrent: () => true,
           createDraftId: () => draftId, navigateToNewSession: () => {} }).kind).toBe('opened');
       };
-      if (scenario === 'plain') open({ prompt: 'Address this entry' });
+      if (scenario === 'agent') {
+        const { createCurrentUiContributedActionRpcHandler } =
+          await import('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const declaration = installed.projection.actionsById[manifest.id + '/' + configuredActionId];
+        if (!declaration) throw new Error('Expected the configured Triage Action in the installing Account');
+        const receive = createCurrentUiContributedActionRpcHandler({
+          machineId: 'm1', ...scope, readProjection: () => installed.projection,
+          isCurrent: accountLifetime.isCurrent, execute: createDefaultActionExecutor().execute,
+        });
+        const entry = { entryRef, sourceInstanceId: configured.instance.sourceInstanceId };
+        newSessionPush.mockClear();
+        const opened = await receive({
+          v: 1, action: { pluginId: manifest.id, localId: configuredActionId }, surface: 'agent',
+          input: { v: 1, handoff: { task: 'fix', configuredActionId: 'custom-fix',
+            context: { kind: 'entry', entry }, evidence: [{ kind: 'entry', entry }],
+            sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery: 'compose' } },
+          actionRequestId: 'agent-configured-triage', expectedContributorOccurrenceId: declaration.occurrenceId,
+          invokingAccountAction: { accountId: scope.accountId,
+            caller: { kind: 'session', sessionId: 'agent-session', starterDepth: 0, turnDepth: 0 }, callerPermissionMode: 'default' },
+        });
+        expect(opened, JSON.stringify(opened)).toMatchObject({
+          ok: true, result: { handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } },
+        });
+        const route = newSessionPush.mock.calls[0]?.[0];
+        expect(route).toMatchObject({ pathname: '/new', params: { draftAccountId: scope.accountId, draftId: expect.any(String) } });
+        if (!route || typeof route !== 'object' || !('params' in route) || !route.params || typeof route.params !== 'object'
+            || !('draftId' in route.params) || typeof route.params.draftId !== 'string') throw new Error('Expected the authored draft route');
+        draftId = route.params.draftId;
+        expect(sessionSpawnNewRpcSpy).not.toHaveBeenCalled();
+      } else if (scenario === 'plain') open({ prompt: 'Address this entry' });
       else {
         expect(await requestTriageNewSessionAuthoringV1({
           version: () => ({ methods: ['openNewSession'] }),
@@ -704,11 +789,11 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         expect(sessionSpawnNewRpcSpy).toHaveBeenCalledTimes(1);
         expect(invocations, JSON.stringify({ alerts: modalAlertSpy.mock.calls, confirms: modalConfirmSpy.mock.calls,
           retainedIntent: Boolean(readNewSessionDraftFromRepository({ scope, draftId })?.postCreateAction) }))
-          .toEqual(scenario === 'linked' || scenario === 'refused' ? [{ sessionId: 'sess_new', accountScope: scope }] : []);
+          .toEqual(scenario === 'linked' || scenario === 'refused' || scenario === 'agent' ? [{ sessionId: 'sess_new', accountScope: scope }] : []);
         const rows = await collections.sessionLinks.query({
           index: CORPUS_SESSION_LINKS_INDEX_ID.bySession, prefix: ['sess_new'], order: 'asc',
         });
-        expect(rows.rows).toHaveLength(scenario === 'linked' ? 1 : 0);
+        expect(rows.rows).toHaveLength(scenario === 'linked' || scenario === 'agent' ? 1 : 0);
         expect(readNewSessionDraftFromRepository({ scope: draftScope, draftId })?.postCreateAction).toBeUndefined();
         if (scenario === 'confirmation') expect(modalShowSpy).toHaveBeenCalledWith(expect.objectContaining({
           chrome: expect.objectContaining({ testID: 'app-shell-transient-interaction-dialog' }),

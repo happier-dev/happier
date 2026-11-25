@@ -206,6 +206,14 @@ export type PluginActionExecutionV2 =
         account: Readonly<{ artifactId: string; exportName: string }>;
         /** Retain ordinary UI authoring on an invoking UI host; headless hosts remain portable. */
         invokingUi?: true;
+        /** Account Action inputs requiring the Agent’s invoking App for authoring. */
+        agentInvokingUi?: Readonly<{
+            when: InputPredicate;
+            preparation?: Readonly<{
+                point: Readonly<{ pointId: string; protocol: Readonly<{ id: string; version: number }> }>;
+                role: string;
+            }>;
+        }>;
     }>
     | Readonly<{
         target: 'client';

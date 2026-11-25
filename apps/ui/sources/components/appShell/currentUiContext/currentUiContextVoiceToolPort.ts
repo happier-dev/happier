@@ -48,6 +48,7 @@ import { registerCurrentUiContextActionPort } from './currentUiContextActionRunt
 import { useCurrentUiContextCommandBridge } from './CurrentUiContextCommands';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { readPluginUiAccountExecutableOrigin } from '@/sync/domains/plugins/ui/projectionOrigins';
 import { PluginActionSurfaceV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { unavailable } from './currentUiContextVoiceToolBinding';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
@@ -669,28 +670,62 @@ export function useCurrentUiContextVoiceToolPort(): CurrentUiContextVoiceToolPor
 export function createCurrentUiContributedActionRpcHandler(input: Readonly<{
     machineId: string;
     serverId: string;
+    accountId?: string;
     readProjection: () => PluginUiProjectionModel | null;
     isCurrent: () => boolean;
+    canExecute?: () => boolean;
     execute: PluginSurfaceHostActionExecute;
 }>) {
     return async (params: unknown, context?: Readonly<{ signal: AbortSignal }>) => {
         const parsed = UiContributedActionExecuteRequestV1Schema.safeParse(params);
         if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters', actionHandlerInvocation: 'notStarted' };
         const request = parsed.data;
-        const resolved = resolveCurrentAction(input.readProjection, request.action);
-        if (!input.isCurrent() || context?.signal.aborted || !resolved || resolved.kind !== 'machine' || resolved.action.execution.target !== 'client'
-            || resolved.origin.machineId !== input.machineId || resolved.origin.serverId !== input.serverId
-            || resolved.action.occurrenceId !== request.expectedContributorOccurrenceId) {
-            return { ok: false, errorCode: 'contributed_action_unavailable', error: 'current_ui_action_unavailable', actionHandlerInvocation: 'notStarted' };
+        const invokingAccount = request.invokingAccountAction;
+        const unavailable = () => ({ ok: false, errorCode: invokingAccount ? 'client_not_available' : 'contributed_action_unavailable',
+            error: 'current_ui_action_unavailable', actionHandlerInvocation: 'notStarted' });
+        const isCurrent = () => input.isCurrent() && input.canExecute?.() !== false && !context?.signal.aborted;
+        if (!isCurrent() || invokingAccount && (request.surface !== 'agent' || invokingAccount.accountId !== input.accountId)) {
+            return unavailable();
+        }
+        if (invokingAccount) {
+            const action = createPluginUiProjectedActionResolver(input.readProjection()?.actionsById)(request.action);
+            const origin = action ? readPluginUiAccountExecutableOrigin(action) : null;
+            // The ordinary Action front door acquires this occurrence's App registration.
+            if (!action || action.execution.target !== 'account' || !action.execution.agentInvokingUi
+                || origin?.accountId !== invokingAccount.accountId || origin.serverId !== input.serverId
+                || action.occurrenceId !== request.expectedContributorOccurrenceId) return unavailable();
+        } else {
+            const resolved = resolveCurrentAction(input.readProjection, request.action);
+            if (resolved?.kind !== 'machine' || resolved.action.execution.target !== 'client'
+                || resolved.origin.machineId !== input.machineId || resolved.origin.serverId !== input.serverId
+                || resolved.action.occurrenceId !== request.expectedContributorOccurrenceId) return unavailable();
         }
         try {
+            const requestId = request.actionRequestId;
             const result = await input.execute('action.invoke', { action: request.action, input: request.input,
                 ...(request.messageActionReference ? { messageActionReference: request.messageActionReference } : {}) }, {
                 surface: request.surface,
                 serverId: input.serverId,
                 ...(request.actionRequestId ? { actionRequestId: request.actionRequestId } : {}),
                 expectedContributedActionOccurrenceId: request.expectedContributorOccurrenceId,
-                ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
+                ...(invokingAccount ? {
+                    authority: 'account_automation' as const,
+                    actionCaller: invokingAccount.caller,
+                    callerPermissionMode: invokingAccount.callerPermissionMode,
+                    causalPermissionAuthority: invokingAccount.causalPermissionAuthority,
+                    defaultSessionId: invokingAccount.caller.sessionId,
+                    expectedAccountId: invokingAccount.accountId,
+                    ...(requestId ? { executeOrdinaryChildAction: async (actionId, childInput, options) => {
+                        const { executeAdmittedClientActionChildAtMachine } = await import('@/sync/ops/actions/admittedClientActionChild');
+                        return await executeAdmittedClientActionChildAtMachine({
+                            parent: { machineId: input.machineId, requestId },
+                            accountId: invokingAccount.accountId, serverId: input.serverId, sessionId: invokingAccount.caller.sessionId,
+                            actionId, input: childInput,
+                            ...(options?.externalActionTarget?.kind === 'machine' ? { targetMachineId: options.externalActionTarget.machineId } : {}),
+                            ...(options?.signal ? { signal: options.signal } : {}),
+                        });
+                    } } : {}),
+                } : request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
                 ...(request.requiredDangerLevel ? { requiredContributedActionDangerLevel: request.requiredDangerLevel } : {}),
                 ...(context?.signal ? { signal: context.signal } : {}),
             });

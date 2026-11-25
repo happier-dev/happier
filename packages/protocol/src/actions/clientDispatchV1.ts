@@ -227,6 +227,7 @@ export const UiActionChildExecuteRequestV1Schema = lazyZodSchema(() => z.strictO
   v: z.literal(1),
   parentRequestId: z.string().check(z.trim(), z.minLength(1)),
   sessionId: z.string().check(z.trim(), z.minLength(1)),
+  targetMachineId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   actionId: ActionIdSchema,
   input: z.unknown(),
 }).check(z.refine(request => (isWorkflowHostAdmittedChildActionIdV1(request.actionId)

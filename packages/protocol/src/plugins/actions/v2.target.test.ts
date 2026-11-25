@@ -11,6 +11,8 @@ import {
 import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from './protocolComposableSchema.js';
 import type { PluginLocalizedStringV2 } from '../contributions/publicTypes.js';
 import type { InputOptionValue } from '../../inputs/inputFields.js';
+import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
+import { compileProtocolJsonSchema } from './jsonSchemaCompiler.js';
 import {
   PluginActionExecutionV2Schema as RootPluginActionExecutionV2Schema,
   PluginActionInputHintsV2Schema as RootPluginActionInputHintsV2Schema,
@@ -21,6 +23,34 @@ const localized = { key: 'plugin.title', fallback: 'Title' };
 const daemonExecution = { target: 'daemon' } as const;
 
 describe('plugin executable contribution target grammar', () => {
+  it('preserves preparation role and point grammar in native and projected Account execution', () => {
+    const execution = {
+      target: 'account',
+      account: { artifactId: 'account-runtime', exportName: 'activateAccount' },
+      agentInvokingUi: {
+        when: { op: 'eq', path: 'prepare', value: true },
+        preparation: {
+          point: { pointId: 'connections', protocol: { id: 'happier.test/connections', version: 1 } },
+          role: 'connectionTest',
+        },
+      },
+    };
+    expect(PluginActionExecutionV2Schema.parse(execution)).toEqual(execution);
+    const validate = compileProtocolJsonSchema(
+      zodSchemaToJsonSchemaObject(PluginActionExecutionV2Schema, { target: 'draft-7' }),
+      'draft-07',
+    );
+    expect(validate(execution)).toBe(true);
+    for (const preparation of [
+      { ...execution.agentInvokingUi.preparation, role: 'bad role' },
+      { ...execution.agentInvokingUi.preparation, point: { ...execution.agentInvokingUi.preparation.point, pointId: 'bad.point' } },
+    ]) {
+      const invalid = { ...execution, agentInvokingUi: { ...execution.agentInvokingUi, preparation } };
+      expect(PluginActionExecutionV2Schema.safeParse(invalid).success).toBe(false);
+      expect(validate(invalid)).toBe(false);
+    }
+  });
+
   it('declares Environment approval independently of contextual placement scopes', () => {
     const action = {
       id: 'preview-status', title: localized, scopes: ['global'], surfaces: ['agent'],

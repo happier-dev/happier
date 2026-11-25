@@ -255,7 +255,7 @@ import type {
 import { createStablePluginComposerContentOwner } from './invocation/services/composerContent';
 import { projectContributedActionExecuteResult, type InvokeContributedAction } from './invocation/services/actions';
 import type { StableTargetedContributionsOwner } from './invocation/services/targetedContributions';
-import { createManifestTargetedContributionsService, mergeTargetedContributionManifestDeclarations, type TargetedContributionManifestSnapshot } from '@happier-dev/cli-common/plugins/registration';
+import { createManifestTargetedContributionsService, mergeTargetedContributionManifestDeclarations, resolveManifestTargetedContributions, type TargetedContributionManifestSnapshot } from '@happier-dev/cli-common/plugins/registration';
 import { createCredentialedTargetActionCurrentIntent } from '@/session/actions/approvals/credentialedTargetActionCurrentIntent';
 import { invokeAccountMachineSourceAction, resolveAccountMachineSourceActionMachine } from './invocation/actions/accountMachineActionTransport';
 import {
@@ -3327,7 +3327,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const readAccountMachineSourceDeclarations = params?.accountExecution
         ? createAccountMachineSourceDeclarationReader(params.accountExecution) : undefined;
     const readCurrentAccountTargetedDeclarations = async (targetPluginId: string, signal?: AbortSignal,
-        resolveMachine?: PluginInvocationServicesSeed['resolveAccountSourceMachine']): Promise<TargetedContributionManifestSnapshot> => {
+        resolveMachine?: PluginInvocationServicesSeed['resolveAccountSourceMachine'],
+        explicitMachineId?: string): Promise<TargetedContributionManifestSnapshot> => {
         const accountDeclarations = (authoritativeContributes.pluginDeclarations ?? []).flatMap(declaration => {
             const occurrenceId = readCurrentPluginOccurrenceId(declaration.pluginId);
             const sourceCustody = readCurrentPluginSourceCustody(declaration.pluginId);
@@ -3341,7 +3342,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             if (resolveMachine) {
                 const selection = await resolveMachine(signal);
                 if (selection.status === 'available') machineId = selection.machineId;
-            } else machineId = params?.accountExecution?.machineId;
+            } else machineId = explicitMachineId ?? params?.accountExecution?.machineId;
         } catch { signal?.throwIfAborted(); }
         if (machineId && params?.accountExecution) {
             try {
@@ -6885,7 +6886,13 @@ export async function resolveExecutablePluginRuntimeRegistry(
         }), scmAgentIsolation: params.agentIsolation } : {}),
         ...(accountActivationSources ? { executionRealm: 'account' as const,
             revalidateAccountExecution: accountActivationSources.revalidate,
-            readAccountExecutionSelection: accountActivationSources.readSelection } : {}),
+            readAccountExecutionSelection: accountActivationSources.readSelection,
+            async readAccountMachineTargetedContributions({ targetPluginId, pointId, protocol, machineId, signal }) {
+                const snapshot = await readCurrentAccountTargetedDeclarations(targetPluginId, signal, undefined, machineId);
+                return resolveManifestTargetedContributions(snapshot.declarations, snapshot.unavailablePlugins)
+                    .read({ targetPluginId, pointId, protocol });
+            },
+        } : {}),
         resolveReadyManagedExecutable: (executable, pluginId) =>
             executableResolver(executable, pluginId, undefined, { requireReady: true }),
         get projectManagedServices() {

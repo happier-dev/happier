@@ -2641,6 +2641,21 @@ need no additional field. This optional Account execution declaration is an
 unreleased 0.3 author-contract extension: matching Protocol, SDK, plugin and UI
 readers reload together; older strict development readers reject it. Omission
 retains the existing relay behavior. No wire epoch or persisted format changes.
+An Account Action can also declare `execution.agentInvokingUi.when` alongside
+`invokingUi: true` in 0.3 development source. The daemon sends a matching
+Session Agent invocation using the existing reverse Action RPC. That transport
+accepts an exact answering client or requires a single eligible App on the
+invoking Account. The App checks its current Account and plugin
+occurrence and runs ordinary Action admission with the Session caller.
+An unavailable App returns the typed client refusal. Triage uses this
+placement for explicit compose requests for a new Session. That draft-only
+input needs no confirmation by default. Explicit Account approval policy
+and the preparation Action's ordinary admission still apply. A declared
+`agentInvokingUi.preparation` names the target contribution point and role.
+When the person selects the Prepared Review operation, its reconstructed
+input returns to the daemon that holds the parent so ordinary Machine
+Action admission retains the Session caller and permission policy.
+
 The receiving daemon runs the Account plugin runtime and resolves selected
 Connected Account credentials through the incumbent purpose owner. Native mobile
 and desktop HTTP hosts retain direct Account execution when no subject Machine is
