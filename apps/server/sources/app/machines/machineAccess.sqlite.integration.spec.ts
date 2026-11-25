@@ -42,6 +42,7 @@ import { DATABASE_ACCESS_READ_ACTION_ID_V1, DATABASE_ACTIVITY_CANCEL_ACTION_ID_V
     DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_STATS_ENABLE_ACTION_ID_V1, DATABASE_STATS_READ_ACTION_ID_V1,
     DATABASE_STRUCTURE_READ_ACTION_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { PROJECT_DEFINITION_ACTION_IDS, PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
@@ -655,6 +656,24 @@ describe('Machine current access (real SQLite)', () => {
             expect(await access.resolveMachineAdmission({ actorAccountId: f.owner.id, machineId: f.machine.id, rpcMethod }))
                 .toMatchObject({ kind: 'admitted', role: 'manage' });
         }
+    });
+
+    // A raw managed acquire carries no signed root, so its controller runs it with its
+    // custodian's own sign-in. Home forwards one only where Manage already means full
+    // Machine control; a Use guest or a Team member relying on delegation needs the root (BL72).
+    it('forwards a raw managed acquire only for the custodian and Manage grantees, refusing Use and ungranted Accounts', async () => {
+        const f = await fixture();
+        const guest = await account();
+        const manager = await account();
+        const member = await account();
+        await grant(f.owner.id, f.machine.id, guest.id, 'view');
+        await grant(f.owner.id, f.machine.id, manager.id, 'admin');
+        const admit = (actorAccountId: string) => access.resolveMachineAdmission({ actorAccountId, machineId: f.machine.id,
+            rpcMethod: MANAGED_ACQUIRE_ACTION_ID_V1 });
+        expect(await admit(guest.id)).toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
+        expect(await admit(member.id)).toEqual({ kind: 'denied', code: 'access_denied' });
+        expect(await admit(manager.id)).toMatchObject({ kind: 'admitted', role: 'manage', custodianAccountId: f.owner.id });
+        expect(await admit(f.owner.id)).toMatchObject({ kind: 'admitted', role: 'manage' });
     });
 
     it('admits extension discovery with Use and profile mutations only with Manage', async () => {

@@ -7,6 +7,8 @@ import {
   ExternalActionDaemonDispatchRequestSchema,
   ExternalActionRequestEnvelopeSchema,
   EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
+  EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+  EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
   parseExternalActionDaemonDispatchResultV1,
   projectExternalActionApprovalDecisionAdmissionV1,
 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -148,6 +150,8 @@ type AcquireCase = Readonly<{
   /** Home's acquire routing refuses this member (for example, the delegation was withdrawn). */
   routingRefused?: true;
   guestEnrollment?: true;
+  /** The member's Session runs on a Machine another person holds custody of, as a Use guest. */
+  sessionHost?: 'custodian machine';
 }>;
 
 // A Session agent's managed acquire with agentStart on the member's installed
@@ -188,13 +192,21 @@ async function runMemberAcquire(acquire: AcquireCase) {
     acquire.delegated ? delegatedComputePlugin(acquire.guestEnrollment).plugin : undefined,
     undefined,
     {
-      ordinaryAccountSession: true,
-      credentials,
-      externalActionAccountId: 'requester',
+      // A Use guest's Session on another person's Machine runs on that custodian's
+      // daemon, which holds its own sign-in beside the requester's custody.
+      ...(acquire.sessionHost === 'custodian machine' ? {
+        credentials: { token: accountToken('custodian'), encryption: null },
+        externalActionAccountId: 'custodian',
+        machineAccess: { custodianAccountId: 'custodian', role: 'use' as const },
+      } : {
+        ordinaryAccountSession: true,
+        credentials,
+        externalActionAccountId: 'requester',
+        machineAccess: { custodianAccountId: 'requester', role: 'manage' as const },
+      }),
       accountActionCredentials: credentials,
       requesterCredentials: credentials,
       homeServerIdentityId: homeId,
-      machineAccess: { custodianAccountId: 'requester', role: 'manage' },
       accountSettings: { actionsSettingsV1: policyFor(acquire.memberPolicy) },
       resolveServerFeaturesSnapshot: () => ({
         status: 'ready',
@@ -832,4 +844,144 @@ it("a member's approved Agent acquire on a delegated Team preset that Home no lo
   expect(run.homeRelayed).toEqual([]);
   expect(run.mints.map(mint => mint.machineId)).not.toContain(OWNER_MACHINE_ID);
   expect(run.approvals('owner')).toEqual([]);
+}, 180_000);
+
+/** Every Home request from now on, with the Account its bearer names and the signed root it carries. */
+function recordHomeTraffic() {
+  const seen: { account: string | null; method: string; path: string; root: string | null; signed: boolean; body?: unknown }[] = [];
+  const header = (config: unknown, name: string) => {
+    const headers = (config as { headers?: Record<string, unknown> } | undefined)?.headers ?? {};
+    const value = Object.entries(headers).find(([key]) => key.toLowerCase() === name)?.[1];
+    return typeof value === 'string' ? value : null;
+  };
+  const record = (method: string, url: unknown, config: unknown, body?: unknown) => seen.push({ account: readRequestAccount(config),
+    method, path: new URL(String(url)).pathname, root: header(config, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER),
+    signed: header(config, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER) !== null, ...(body === undefined ? {} : { body }) });
+  const get = vi.mocked(axios.get).getMockImplementation()!;
+  const post = vi.mocked(axios.post).getMockImplementation()!;
+  vi.mocked(axios.get).mockImplementation(async (...args) => { record('GET', args[0], args[1]); return await get(...args); });
+  vi.mocked(axios.post).mockImplementation(async (...args) => { record('POST', args[0], args[2], args[1]); return await post(...args); });
+  const fetchBoundary = globalThis.fetch;
+  vi.stubGlobal('fetch', async (...args: Parameters<typeof fetch>) => {
+    const input = args[0];
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    record(args[1]?.method ?? 'GET', url, { headers: Object.fromEntries(new Headers(args[1]?.headers).entries()) });
+    return await fetchBoundary(...args);
+  });
+  return seen;
+}
+
+// What the owner's sign-in may reach while its controller serves a member's
+// delegated acquire: its own identity at Machine RPC ingress, its own Account
+// mode, and the preset the member's Home-signed root names. Every write about
+// the member's allocation spends that root instead (BL72, TS-SECURITY-12 N2).
+const OWNER_SIGN_IN_READS = new Set(['GET /v1/account/profile', 'GET /v1/account/encryption/currentness',
+  'POST /v1/machines/presets/get']);
+
+/** The member approves its delegated Agent acquire; the owner's controller serves it to the provider's typed answer. */
+async function runApprovedDelegatedAcquire() {
+  const run = await runMemberAcquire({ controller: 'owner machine', namesController: false, memberPolicy: 'ask', delegated: true });
+  const [ask] = run.approvals('requester');
+  const seen = recordHomeTraffic();
+  const decided = await run.approve(ask?.id);
+  const operationId = (decided as { response: { execution: { result: { execution: { result: { operation: { operationId: string } } } } } } })
+    .response.execution.result.execution.result.operation.operationId;
+  const terminal = await run.receiverManager!.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.get, { operationId, waitForTerminal: true },
+    { signal: run.h.signal, rpcContext: { machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'owner',
+      machineId: OWNER_MACHINE_ID, installationId: run.controller.installationId, role: 'manage', encryptionMode: 'plain' },
+      verifyMachineAdmissionCurrent: async () => true } });
+  return { run, seen, terminal };
+}
+
+it("a member's approved delegated acquire runs on the owner's controller as the member: each managed-row write and Home check spends the member's signed root, and the owner's sign-in reaches only its own identity, mode and the named preset", async () => {
+  const { run, seen, terminal } = await runApprovedDelegatedAcquire();
+  // The root Home signed for the owner's controller is the member's own invocation.
+  expect(run.homeRelayed.map(body => body.executionAuthorization?.binding)).toEqual([expect.objectContaining({
+    accountId: 'requester', custodianAccountId: 'owner', machineId: OWNER_MACHINE_ID, managedAcquireDelegation: true })]);
+  // The member's operation on the owner's Machine, settled with the provider's typed cause.
+  expect(terminal).toMatchObject({ kind: 'found', operation: { scope: { accountId: 'requester', machineId: OWNER_MACHINE_ID },
+    state: 'failed', error: { errorCode: 'provider_unavailable' } } });
+  const managedWrites = seen.filter(entry => entry.path.startsWith('/v1/machines/managed/controller/'));
+  expect(managedWrites.map(entry => entry.path.slice('/v1/machines/managed/controller/'.length)))
+    .toEqual(expect.arrayContaining(['admit', 'submit', 'report']));
+  // No managed-row write carries the owner's bearer; each one spends the member's root, signed by the controller installation.
+  for (const write of managedWrites) expect(write, write.path).toMatchObject({ account: null, root: 'member-acquire-root', signed: true });
+  // Every root Home is asked to verify during the acquire is bound to the member's Account.
+  const verified = seen.filter(entry => entry.path.endsWith('/execution-authorization/verify'));
+  expect(verified.length).toBeGreaterThan(0);
+  for (const check of verified) expect(check.body).toMatchObject({ binding: { accountId: 'requester' } });
+  // The owner's sign-in reads nothing of the owner's Account data for the member, and writes nothing.
+  const ownerRequests = seen.filter(entry => entry.account === 'owner');
+  expect(ownerRequests.map(entry => `${entry.method} ${entry.path}`).filter(request => !OWNER_SIGN_IN_READS.has(request)),
+    JSON.stringify(ownerRequests.map(({ body: _body, ...entry }) => entry))).toEqual([]);
+  // Its one preset read names the preset the member's signed envelope selected.
+  expect(ownerRequests.filter(entry => entry.path === '/v1/machines/presets/get').map(entry => entry.body))
+    .toEqual([{ homeId, id: 'team-preset' }]);
+  expect(run.approvals('owner')).toEqual([]);
+}, 180_000);
+
+it("the owner's controller refuses a member's delegated acquire root carrying another Account, or the owner's own, and a raw dispatch without a Home-signed root, with typed causes and nothing allocated or run as the owner", async () => {
+  // Control: the member's real relayed root reaches the controller and allocates once.
+  const { run, seen } = await runApprovedDelegatedAcquire();
+  expect(run.controllerSteps.filter(step => step.endsWith(' admit'))).toHaveLength(1);
+  const relayed = run.homeRelayed[0]!;
+  const signed = relayed.executionAuthorization!;
+  // Home answers verification for exactly the binding it signed under that token.
+  const post = vi.mocked(axios.post).getMockImplementation()!;
+  let homeVerifies = true;
+  vi.mocked(axios.post).mockImplementation(async (...args) => {
+    if (homeVerifies && new URL(String(args[0])).pathname.endsWith('/execution-authorization/verify'))
+      return { status: 200, data: { ok: JSON.stringify((args[1] as { binding?: unknown }).binding) === JSON.stringify(signed.binding) } };
+    return await post(...args);
+  });
+  const deliver = async (params: unknown, actorAccountId: string) => {
+    const before = { steps: run.controllerSteps.length, reports: run.controllerReports.length, seen: seen.length };
+    const result = await run.receiverManager!.handleRequest({ method: `${OWNER_MACHINE_ID}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
+      params, authorization: ACTION_API_SERVER_ORIGIN, machineAdmission: { actorAccountId, custodianAccountId: 'owner',
+        machineId: OWNER_MACHINE_ID, installationId: run.controller.installationId, role: 'manage', encryptionMode: 'plain' } },
+      undefined, 'authenticated_home_socket');
+    const requests = seen.slice(before.seen);
+    return { result, steps: run.controllerSteps.slice(before.steps), reports: run.controllerReports.length - before.reports,
+      ownerRequests: requests.filter(entry => entry.account === 'owner').map(entry => entry.path),
+      managedWrites: requests.filter(entry => entry.path.startsWith('/v1/machines/managed/')).map(entry => entry.path) };
+  };
+  const dispatch = (accountId: string, principalAccountId = accountId) => JSON.parse(JSON.stringify({
+    actionId: 'machines.managed.acquire', envelope: relayed.envelope, executionAuthorization: { ...signed, binding: { ...signed.binding, accountId } },
+    principal: { accountId: principalAccountId, authority: 'account_automation', authentication: { kind: 'terminal', tokenEpoch: 0 } },
+    placement: { machineId: OWNER_MACHINE_ID, target: relayed.envelope.target } })) as unknown;
+  const nothing = { steps: [], reports: 0, ownerRequests: [], managedWrites: [] };
+  const refusedEnvelope = { kind: 'invalid_request', errorCode: 'invalid_envelope', requestId: relayed.envelope.requestId };
+  const forbidden = { error: 'Forbidden', errorCode: 'RPC_FORBIDDEN', effectAttempted: false };
+  // A third Account, consistently swapped into the root, its principal and Home's admission.
+  expect(await deliver(dispatch('mallory'), 'mallory')).toEqual({ result: refusedEnvelope, ...nothing });
+  // The owner's own Account forged into the member's root.
+  expect(await deliver(dispatch('owner'), 'owner')).toEqual({ result: refusedEnvelope, ...nothing });
+  // Even where Home would wrongly verify the altered root, the controller codec is sealed to the member's binding.
+  homeVerifies = false;
+  expect(await deliver(dispatch('mallory'), 'mallory')).toEqual({ result: refusedEnvelope, ...nothing });
+  expect(await deliver(dispatch('owner'), 'owner')).toEqual({ result: refusedEnvelope, ...nothing });
+  homeVerifies = true;
+  // The member's root under another principal, or under another admitted actor.
+  expect(await deliver(dispatch('requester', 'mallory'), 'mallory')).toEqual({ result: forbidden, ...nothing });
+  expect(await deliver(dispatch('requester'), 'mallory')).toEqual({ result: forbidden, ...nothing });
+  // BL40 shape: the dispatch with the member's context and no Home-signed root.
+  const { executionAuthorization: _root, ...unsigned } = dispatch('requester') as Record<string, unknown>;
+  expect(await deliver(unsigned, 'requester')).toEqual({ result: forbidden, ...nothing });
+  expect(run.approvals('owner')).toEqual([]);
+}, 180_000);
+
+it("a Use guest's Session on another person's Machine acquires an owner's delegated Team preset as the guest: the Session host spends only the guest's sign-in, and the controller root Home signs is the guest's", async () => {
+  const run = await runMemberAcquire({ controller: 'owner machine', namesController: false, memberPolicy: 'allow', delegated: true,
+    sessionHost: 'custodian machine' });
+  expect(run.outcome, JSON.stringify(run.outcome)).toMatchObject({ ok: true, result: { kind: 'action.execution',
+    outcome: { ok: true, result: { status: 'accepted' } } } });
+  await vi.waitFor(() => expect(run.homeRelayResults).toHaveLength(1), { timeout: 60_000 });
+  // The Session host never authenticates with its custodian's own sign-in for the guest's acquire.
+  expect(run.homeRequests.filter(request => request.startsWith('custodian '))).toEqual([]);
+  // Home mints the controller root and receives the relay from the guest's own sign-in.
+  expect(run.mints.filter(mint => mint.machineId === OWNER_MACHINE_ID)).toHaveLength(1);
+  expect(run.homeRequests).toEqual(expect.arrayContaining(['requester POST /v1/actions/machines.managed.acquire/execution-authorization',
+    'requester POST /v1/actions/machines.managed.acquire']));
+  expect(run.homeRelayed.map(body => body.executionAuthorization?.binding)).toEqual([expect.objectContaining({
+    accountId: 'requester', custodianAccountId: 'owner', machineId: OWNER_MACHINE_ID, managedAcquireDelegation: true })]);
 }, 180_000);
