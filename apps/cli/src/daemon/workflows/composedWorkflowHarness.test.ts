@@ -172,7 +172,7 @@ vi.mock('@/session/transport/rpc/machineRpc', async importOriginal => {
 import { executeClaimedRun } from '@/daemon/automation/automationRunExecutor';
 import { startAutomationWorker } from '@/daemon/automation/automationWorker';
 import { createAutomationClaimClient } from '@/daemon/automation/automationClaimClient';
-import { retainWorkflowRequesterCredentials } from './requesterCustody';
+import { reconcileWorkflowRequesterCredentialScope, retainWorkflowRequesterCredentials } from './requesterCustody';
 import { dispatchActionFromRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import { createWorkflowActionExecutor } from '@/session/actions/workflowActionExecutor';
 import { createWorkflowDefinitionActions } from '@happier-dev/protocol/actions/executor/workflowDefinitions';
@@ -3582,8 +3582,27 @@ describe('composed Automation workflow claim and optional receipt', () => {
       reloadConfiguration();
       onTestFinished(() => { vi.unstubAllEnvs(); reloadConfiguration(); });
       const attribution = { serverId: configuration.activeServerId, machineId, installationId: 'installation', accountId };
+      const previousAutomationId = 'previous-habit';
+      const previousTriggerId = 'previous-stopped-session-trigger';
+      const currentTriggerId = 'stopped-session-trigger';
+      let granted = true;
       let claimed = false;
       let outcome: Awaited<ReturnType<typeof coordinate>> | 'requester_custody_unavailable' | undefined;
+      vi.spyOn(axios, 'request').mockImplementation(async request => {
+        expect(request.method).toBe('GET');
+        expect(request.url).toMatch(new RegExp(`/v3/automations/${previousAutomationId}$`));
+        expect(request.headers?.Authorization).toBe('Bearer guest-token');
+        return { status: 200, data: { id: previousAutomationId, name: 'Previous habit', description: null,
+          enabled: true, workflowDefinitionId: null, scopeSessionId: sessionId, targetType: null,
+          existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
+          templateCiphertext: 'opaque fixture',
+          assignments: granted ? [{ machineId, enabled: true, priority: 0, updatedAt: 1 }] : [],
+          triggers: [{ id: previousTriggerId, revision: 0, enabled: true, createdAt: 1, updatedAt: 1,
+            kind: 'sessionLifecycle', events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' },
+            status: { state: 'waiting', runId: null },
+            remainingOccurrences: null, triggerDefinitionEnvelope: 'opaque trigger fixture' }],
+        } };
+      });
       vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
         if (url.endsWith('/v1/account/profile')) {
           expect(options?.headers?.Authorization).toBe('Bearer guest-token');
@@ -3598,13 +3617,17 @@ describe('composed Automation workflow claim and optional receipt', () => {
         installationId: attribution.installationId, role: 'use', encryptionMode: 'plain' } as const;
       vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
         const authorization = options?.headers?.Authorization;
+        if (url.endsWith('/v3/automations/runs/workflow-storage') && body.operation === 'list') {
+          expect(authorization).toBe('Bearer guest-token');
+          return { data: { runs: [] } };
+        }
         if (url.endsWith(`/runs/${habitRunId}/requester-custody-unavailable`)) {
           expect(authorization).toBe('Bearer custodian-token');
           outcome = 'requester_custody_unavailable';
           return { data: { recorded: true } };
         }
         if (!url.endsWith('/v3/automations/runs/claim')) return await writeSessionReadiness(url, body);
-        if (claimed || authorization !== 'Bearer guest-token') return { data: { run: null, automation: null, accountCurrentness: null } };
+        if (!granted || claimed || authorization !== 'Bearer guest-token') return { data: { run: null, automation: null, accountCurrentness: null } };
         expect(body.scope).toBe('workflow');
         claimed = true;
         return { data: {
@@ -3626,9 +3649,19 @@ describe('composed Automation workflow claim and optional receipt', () => {
         } });
       try {
         await worker.refreshAssignments();
-        // The stopped Session's enabled trigger has already saved custody on the installed Machine.
-        await retainWorkflowRequesterCredentials({ scopeId: 'stopped-session-trigger', automationId, credentials,
-          attribution, homeServerIdentityId, happyHomeDir: directory });
+        const happyHomeDir = directory;
+        const savedCustody = { credentials, attribution, homeServerIdentityId, happyHomeDir };
+        const previousScope = { ...attribution, homeServerIdentityId, happyHomeDir, scopeId: previousTriggerId };
+        const previous = await retainWorkflowRequesterCredentials({ ...savedCustody, scopeId: previousTriggerId,
+          automationId: previousAutomationId });
+        await reconcileWorkflowRequesterCredentialScope(previousScope);
+        granted = false;
+        await reconcileWorkflowRequesterCredentialScope(previousScope);
+        await expect(readFile(previous.path)).rejects.toMatchObject({ code: 'ENOENT' });
+        // Interrupted atomic publication left scratch state for a different scope.
+        await writeFile(`${previous.path}.1234.${randomUUID()}.tmp`, '', { mode: 0o600 });
+        granted = true;
+        await retainWorkflowRequesterCredentials({ ...savedCustody, scopeId: currentTriggerId, automationId });
         // Home selects the admitted Automation owner for this manual occurrence.
         worker.handleServerUpdate({ id: 'stopped-session-run-now', seq: 1, createdAt: 1, body: {
           t: 'automation-run-updated', runId: habitRunId, automationId, state: 'queued', scheduledAt: 1,

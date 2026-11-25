@@ -109,15 +109,25 @@ export function requesterSessionCredentialDirectory(binding: Pick<RequesterCrede
     `home-${encodeURIComponent(binding.attribution.serverId)}`);
 }
 
-export function requesterSessionCredentialFilePrefix(binding: Pick<RequesterSessionCredentialBinding, 'scope'>): string {
+function requesterSessionCredentialFilePrefix(binding: Pick<RequesterSessionCredentialBinding, 'scope'>): string {
   return binding.scope === 'workspace_sync_relationship' ? 'relationship-'
     : binding.scope === 'workflow_trigger' ? 'workflow-trigger-' : 'session-';
+}
+
+const REQUESTER_SESSION_CREDENTIAL_FILE_SUFFIX = '.json';
+
+export function isPublishedRequesterSessionCredentialFileName(
+  name: string, binding: Pick<RequesterSessionCredentialBinding, 'scope'>,
+): boolean {
+  // Atomic writers publish the canonical name and use a .tmp suffix for scratch files.
+  return name.startsWith(requesterSessionCredentialFilePrefix(binding))
+    && name.endsWith(REQUESTER_SESSION_CREDENTIAL_FILE_SUFFIX);
 }
 
 export function requesterSessionCredentialPath(binding: Pick<RequesterCredentialCustodyBinding, 'happyHomeDir' | 'sessionId' | 'scope' | 'endpointRole'>
   & Readonly<{ attribution: Pick<RequesterWorkAttributionV1, 'serverId'> }>): string {
   return join(requesterSessionCredentialDirectory(binding),
-    `${requesterSessionCredentialFilePrefix(binding)}${encodeURIComponent(binding.sessionId)}.json`);
+    `${requesterSessionCredentialFilePrefix(binding)}${encodeURIComponent(binding.sessionId)}${REQUESTER_SESSION_CREDENTIAL_FILE_SUFFIX}`);
 }
 
 /** Only a private path travels to the child; failure never selects a global credential. */

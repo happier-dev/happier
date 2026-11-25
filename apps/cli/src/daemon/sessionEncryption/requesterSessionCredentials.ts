@@ -1,6 +1,6 @@
 import { CustodySchema, WorkspaceSyncManagedTargetCustodySchema, RequesterCredentialCustodyStoredReadSchema,
   type RequesterSessionCredentialBinding, type RequesterCredentialCustodyBinding, type ManagedWorkspaceSyncCredentialCustodyBinding,
-  requesterSessionCredentialPath, requesterSessionCredentialDirectory, requesterSessionCredentialFilePrefix,
+  requesterSessionCredentialPath, requesterSessionCredentialDirectory, isPublishedRequesterSessionCredentialFileName,
   type WorkspaceSyncSourceStandingAdmission } from './requesterSessionCustody';
 import type { ReadonlyTrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 export { REQUESTER_SESSION_CREDENTIAL_FILE_ENV, REQUESTER_SESSION_ID_ENV, type RequesterSessionCredentialBinding, requesterSessionCredentialPath, readRequesterSessionCredentialsForChild } from './requesterSessionCustody';
@@ -1004,7 +1004,7 @@ export async function listRequesterSessionCredentialBindings(input: Readonly<{
   try {
     const bindings: RequesterSessionCredentialReference[] = [];
     for (const name of names) {
-      if (!name.startsWith(requesterSessionCredentialFilePrefix(input))) continue;
+      if (!isPublishedRequesterSessionCredentialFileName(name, input)) continue;
       const path = join(directory, name);
       let contents: string;
       try { contents = await readPrivateOwnerFile(path); }
