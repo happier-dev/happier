@@ -152,7 +152,7 @@ const bundleCases = [
     },
     {
         name: 'portable targeted Action admission',
-        entry: resolve(import.meta.dirname, './host/registration/index.public.ts'),
+        entry: '@happier-dev/cli-common/plugins/registration',
         source: `export {
           createManifestTargetedContributionsService,
           requireAdmittedTargetedOperationExecutionBinding,
