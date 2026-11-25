@@ -1,10 +1,11 @@
-import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { build } from 'esbuild';
+
+import { fixtureCommandTimeoutMs, runBoundedFixtureCommand } from '../test-support/boundedFixtureCommand.js';
 
 it('rejects a native config-root write through the public skill contract kit', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'happier-skill-kit-native-write-'));
@@ -46,15 +47,12 @@ it('rejects a native config-root write through the public skill contract kit', a
       alias: { vitest: fileURLToPath(new URL('../../../../node_modules/vitest/dist/index.js', import.meta.url)) },
     });
     await writeFile(fixturePath, bundled.outputFiles[0]!.text);
-    const result = await new Promise<Readonly<{ exitCode: number | string; stdout: string; stderr: string }>>(resolve => {
-      execFile(process.execPath, [fileURLToPath(new URL('../../../../node_modules/vitest/vitest.mjs', import.meta.url)),
-        'run', '--root', directory, '--config', configPath, '--reporter=json'], (error, stdout, stderr) => {
-        resolve({ exitCode: error?.code ?? 0, stdout, stderr });
-      });
-    });
-    const report: unknown = JSON.parse(result.stdout);
-    expect(report !== null && typeof report === 'object' ? Reflect.get(report, 'numFailedTests') : null, result.stdout + result.stderr).toBeGreaterThan(0);
-    expect(result.exitCode, result.stdout + result.stderr).toBe(1);
-    expect(result.stdout).toContain('K5:');
+    const output = await runBoundedFixtureCommand('Native skill write fixture', directory, [
+      fileURLToPath(new URL('../../../../node_modules/vitest/vitest.mjs', import.meta.url)),
+      'run', '--root', directory, '--config', configPath, '--reporter=json',
+    ], { expectedExitCode: 1 });
+    const report: unknown = JSON.parse(output);
+    expect(report !== null && typeof report === 'object' ? Reflect.get(report, 'numFailedTests') : null, output).toBeGreaterThan(0);
+    expect(output).toContain('K5:');
   } finally { await rm(directory, { recursive: true, force: true }); }
-});
+}, fixtureCommandTimeoutMs + 5_000);

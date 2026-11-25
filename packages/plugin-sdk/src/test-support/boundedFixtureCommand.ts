@@ -6,6 +6,7 @@ const fixtureProcessTableTimeoutMs = 2_000;
 
 export type BoundedFixtureCommandOptions = Readonly<{
     timeoutMs?: number;
+    expectedExitCode?: number;
 }>;
 
 type BoundedFixtureCommandTerminationReason = 'timeout' | 'outputLimit';
@@ -230,7 +231,7 @@ export function runBoundedFixtureCommand(
             void Promise.all([
                 terminationPromise ?? Promise.resolve(),
             ]).then(() => {
-                if (childError !== undefined || terminationReason !== undefined || status !== 0) {
+                if (childError !== undefined || terminationReason !== undefined || status !== (options.expectedExitCode ?? 0)) {
                     finishWithError(commandFailure(
                         label,
                         status,
