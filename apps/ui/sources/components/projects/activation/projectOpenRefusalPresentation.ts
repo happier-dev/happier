@@ -29,6 +29,9 @@ export function projectOpenRefusalPresentation(code: string, gitRef: string | nu
     if (code === 'BACKEND_UNAVAILABLE') return shown(t('projects.open.hostingProviderUnavailable'), t('projects.open.hostingProviderUnavailableHint'));
     if (code === 'target_mismatch') return shown(t('projects.open.targetMismatch'), t('projects.open.targetMismatchHint'));
     if (code === 'machine_access_denied') return shown(t('projects.open.accessDenied'), t('projects.open.accessDeniedHint'));
+    // Home's Machine admission refused a request only the Machine's owner may make (Can manage is not enough).
+    if (code === 'custodian_only' || (failureCause && !('kind' in failureCause) && failureCause.errorCode === 'custodian_only'))
+        return shown(t('errors.custodianOnly'), t('projects.open.accessDeniedHint'));
     if (code.startsWith('requester_') || code === 'session_requester_unavailable' || code === 'machine_admission_unavailable')
         return shown(t('projects.open.accessUnconfirmed'), t('projects.open.accessUnconfirmedHint'));
     if (code === 'invalid_input') return shown(t('projects.open.requestUnreadable'), t('projects.open.requestUnreadableHint'));

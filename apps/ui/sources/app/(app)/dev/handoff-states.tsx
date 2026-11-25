@@ -3,9 +3,9 @@ import * as React from 'react';
 
 import { HandoffStatesSpecimen, type HandoffSpecimenFrame } from '@/components/dev/sessions/HandoffStatesSpecimen';
 
-const FRAMES: readonly HandoffSpecimenFrame[] = ['sheet', 'refused', 'creating', 'failed'];
+const FRAMES: readonly HandoffSpecimenFrame[] = ['sheet', 'refused', 'creating', 'failed', 'linkRefused'];
 
-/** Dev-only: the handoff sheet and progress over a real Session. `?session=<id>&frame=sheet|refused|creating|failed`. */
+/** Dev-only: the handoff sheet and progress over a real Session. `?session=<id>&frame=sheet|refused|creating|failed|linkRefused`. */
 export default function HandoffStatesDevScreen() {
     const params = useLocalSearchParams<{ session?: string; frame?: string }>();
     const frame = FRAMES.find(candidate => candidate === params.frame) ?? 'sheet';

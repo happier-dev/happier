@@ -38,6 +38,8 @@ import { useServerScopedMachine } from '@/sync/store/hooks';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
+import { formatActionFailureDetails } from '@/utils/errors/alertActionFailure';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 import type { ProjectManifestEditorModel } from './projectManifestEditorModel';
 import type { ProjectManifestActionClient } from './projectManifestActionClient';
@@ -511,9 +513,12 @@ function ProjectManifestEditorLeaf(
           testID="project-manifest-editor.error"
           tone="danger"
           title={t('projects.scripts.editor.saveFailed')}
+          // The shared Action failure owner says why; Details keep the code and its typed phase.
+          description={resolveActionExecutionErrorMessage({ errorCode: snapshot.error.code,
+            ...(snapshot.error.failureCause ? { failureCause: snapshot.error.failureCause } : {}) }, '', { closedCodesOnly: true }) || undefined}
           details={[
-            snapshot.error.code,
-            ...(snapshot.error.message ? [snapshot.error.message] : []),
+            ...presentSaveFailureDetails(snapshot.error),
+            ...(snapshot.error.message && snapshot.error.message !== snapshot.error.code ? [snapshot.error.message] : []),
           ]}
         />
       ) : null}
@@ -610,3 +615,12 @@ const styles = StyleSheet.create(() => ({
   raw: { flexGrow: 1, minHeight: HAPPIER_PAGE_METRICS.readingClipHeightPx },
   mono: { ...Typography.mono(), ...happierPageTextMetrics('rowDescription') },
 }));
+
+/** One labelled line per reference, as every Action failure's Details read; never prose. */
+function presentSaveFailureDetails(error: NonNullable<ReturnType<ProjectManifestEditorModel['getSnapshot']>['error']>): string[] {
+  const cause = error.failureCause && !('kind' in error.failureCause) ? error.failureCause : null;
+  return formatActionFailureDetails({ code: error.code, context: cause ? {
+    causePhase: cause.phase,
+    ...(cause.errorCode && cause.errorCode !== error.code ? { causeCode: cause.errorCode } : {}),
+  } : {} }).split('\n');
+}

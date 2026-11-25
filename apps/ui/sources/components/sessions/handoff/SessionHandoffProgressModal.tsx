@@ -27,7 +27,8 @@ import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ActionOperationDetailControls } from '@/components/inbox/actionOperations/ActionOperationDetailControls';
-import { resolveWorkspaceSyncErrorTranslationKey } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
+import { presentWorkspaceSyncFailure } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
+import { formatActionFailureDetails } from '@/utils/errors/alertActionFailure';
 import { SESSION_HANDOFF_SANDBOX_PRESET_REQUIRED, type ExecuteSessionHandoffActionResult } from '@/sync/domains/sessionHandoff/executeSessionHandoffAction';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { describeManagedCreationProgress } from '@/components/settings/machines/managed/managedCreationProgressPresentation';
@@ -614,9 +615,20 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
         ? presentProviderError(requestFailure?.error ?? operation?.error?.error)
         : null;
     const providerFailureMessage = providerFailure?.action ? t(providerFailure.descriptionKey) : null;
-    const operationFailureTranslationKey = operationFailureCode === SESSION_HANDOFF_SANDBOX_PRESET_REQUIRED
-        ? 'sessionHandoff.failure.targetRequiresSandboxPreset'
-        : resolveWorkspaceSyncErrorTranslationKey(operationFailureCode);
+    // The carried failure, read once by the Sync presenter: its typed cause decides the sentence, and the code
+    // and phase stay under Details the way the shared failure alert reveals them.
+    const carriedFailure = requestFailure ?? (operationFailed ? operation?.error : undefined);
+    const carriedCause = carriedFailure?.failureCause && !('kind' in carriedFailure.failureCause) ? carriedFailure.failureCause : null;
+    const failurePresentation = operationFailureCode && operationFailureCode !== SESSION_HANDOFF_SANDBOX_PRESET_REQUIRED
+        ? presentWorkspaceSyncFailure({ code: operationFailureCode, failureCause: carriedFailure?.failureCause,
+            details: carriedFailure && 'details' in carriedFailure ? carriedFailure.details : undefined },
+            undefined, t('sessionHandoff.failure.message'))
+        : null;
+    const failureTechnicalDetails = operationFailureCode ? formatActionFailureDetails({ code: operationFailureCode, context: {
+        ...(carriedCause ? { causePhase: carriedCause.phase } : {}),
+        ...(carriedCause?.errorCode && carriedCause.errorCode !== operationFailureCode ? { causeCode: carriedCause.errorCode } : {}),
+        ...(carriedFailure && 'requestId' in carriedFailure && carriedFailure.requestId ? { requestId: carriedFailure.requestId } : {}),
+    } }) : null;
     // While the machine is created, its step carries what is happening; the status line stays the handoff's own.
     const resolvedMessage =
         message
@@ -628,7 +640,9 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
             : isAwaitingUserResume
                 ? t('externalSessions.operationStatusNeedsResume')
                 : isFailureState
-                    ? providerFailureMessage ?? t(operationFailureTranslationKey ?? 'sessionHandoff.failure.message')
+                    ? providerFailureMessage ?? (operationFailureCode === SESSION_HANDOFF_SANDBOX_PRESET_REQUIRED
+                        ? t('sessionHandoff.failure.targetRequiresSandboxPreset')
+                        : failurePresentation?.message ?? t('sessionHandoff.failure.message'))
                     : operationCancelled
                         ? t('sessionHandoff.cancelled.message')
                         : t('sessionHandoff.progress.message'));
@@ -654,7 +668,8 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
     const operationTechnicalPhase = operationProgress?.kind === 'phase'
         ? operationProgress.phase
         : operationProgressLabel;
-    const hasTechnicalDetails = Boolean(operation || currentCheckpoint || summaryChips.length > 0 || progressStats.length > 0 || currentDetailLabel);
+    const hasTechnicalDetails = Boolean(operation || currentCheckpoint || summaryChips.length > 0 || progressStats.length > 0 || currentDetailLabel
+        || (isFailureState && failureTechnicalDetails));
     const [detailsExpanded, setDetailsExpanded] = React.useState(false);
     const resumeInFlightRef = React.useRef(false);
     const [resumeInFlight, setResumeInFlight] = React.useState(false);
@@ -864,6 +879,11 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
                         )}
                     >
                         <View style={styles.detailsBody}>
+                            {isFailureState && failureTechnicalDetails ? (
+                                <Text testID="session-handoff-failure-technical-details" style={styles.progressMetaText} selectable>
+                                    {failureTechnicalDetails}
+                                </Text>
+                            ) : null}
                             {operation ? (
                                 <View testID="session-handoff-operation-technical-details" style={styles.progressSection}>
                                     {operationTechnicalPhase ? (

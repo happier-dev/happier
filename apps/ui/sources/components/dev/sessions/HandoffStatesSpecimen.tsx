@@ -10,7 +10,7 @@ import { storage, useSessionListRenderable } from '@/sync/domains/state/storage'
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 
-export type HandoffSpecimenFrame = 'sheet' | 'refused' | 'creating' | 'failed';
+export type HandoffSpecimenFrame = 'sheet' | 'refused' | 'creating' | 'failed' | 'linkRefused';
 
 const MACHINE_NAME = 'Boat · Node 22';
 const noop = () => {};
@@ -52,6 +52,10 @@ export function HandoffStatesSpecimen(props: Readonly<{ sessionId: string | null
             component: SessionHandoffProgressModal,
             props: frame === 'creating'
                 ? { serverId, route, machineCreation: { name: MACHINE_NAME, progress: { kind: 'acquiring' as const } } }
+                // A handoff with a copy from another person's SOURCE, refused at relationship-owner selection.
+                : frame === 'linkRefused' ? { serverId, route, requestFailure: { ok: false as const, error: 'Forbidden', errorCode: 'RPC_FORBIDDEN',
+                    failureCause: { phase: 'workspace_sync.relationship_owner.select', errorClass: 'Error',
+                        errorCode: 'workspace_sync_requester_link_unavailable', httpStatus: null } } }
                 : {
                     serverId, route,
                     machineCreation: { name: MACHINE_NAME, progress: { kind: 'failed' as const, code: 'controller_unavailable' } },

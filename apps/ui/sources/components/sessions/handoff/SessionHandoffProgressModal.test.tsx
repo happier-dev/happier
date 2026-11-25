@@ -55,6 +55,22 @@ describe('SessionHandoffProgressModal', () => {
         expect(screen.getTextContent()).toContain('sessionHandoff.failure.targetRequiresSandboxPreset');
     });
 
+    it('says the carried cause of a refused handoff and keeps its code and phase under Details', async () => {
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        const screen = await renderScreen(<SessionHandoffProgressModal onClose={vi.fn()} setChrome={vi.fn()}
+            requestFailure={{ ok: false, error: 'Request failed', errorCode: 'RPC_FORBIDDEN',
+                failureCause: { phase: 'workspace_sync.relationship_owner.select', errorClass: 'Error',
+                    errorCode: 'workspace_sync_requester_link_unavailable', httpStatus: null } }} />);
+        expect(screen.findByTestId('session-handoff-progress-status')?.props.accessibilityLabel)
+            .toContain('workspaceSync.error.requesterLinkUnavailable');
+        expect(screen.getTextContent()).not.toContain('sessionHandoff.failure.message');
+        await expandProgressDetails(screen);
+        const details = screen.findByTestId('session-handoff-failure-technical-details');
+        expect(details).toBeTruthy();
+        expect(screen.getTextContent()).toContain('workspace_sync_requester_link_unavailable');
+        expect(screen.getTextContent()).toContain('workspace_sync.relationship_owner.select');
+    });
+
     it('says nothing moved when the new machine was not created, and offers another machine or Retry', async () => {
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
         const setChrome = vi.fn();

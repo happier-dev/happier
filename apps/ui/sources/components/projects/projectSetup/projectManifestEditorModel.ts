@@ -18,6 +18,7 @@ import {
   type ProjectToolchainSelectionV1,
   type ProjectNativeRefV1,
 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
+import { readActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { readProjectWorktreePortSlotsV1 } from '@happier-dev/protocol/workspaces/projectSetup/worktreePortsV1';
 import type { ProjectDefinitionWorkspace } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
@@ -60,7 +61,7 @@ export type ProjectManifestEditorSnapshot = Readonly<{
   dirty: boolean;
   saving: boolean;
   conflict: ProjectManifestEditorDefinition | null;
-  error: Readonly<{ code: string; message?: string }> | null;
+  error: Readonly<{ code: string; message?: string; failureCause?: ActionFailureCauseV1 }> | null;
 }>;
 
 type RetainedManifestDraft = Readonly<{
@@ -459,6 +460,9 @@ export function createProjectManifestEditorModel(
           error: {
             code,
             ...(error instanceof Error ? { message: error.message } : {}),
+            // The Action client carries the owner's typed cause for the editor's Details.
+            ...(error instanceof Error && 'failureCause' in error && error.failureCause !== undefined
+              ? { failureCause: readActionFailureCauseV1(error.failureCause) } : {}),
           },
         });
         return null;

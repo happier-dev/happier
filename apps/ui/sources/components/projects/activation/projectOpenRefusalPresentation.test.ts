@@ -70,6 +70,12 @@ describe('Project Open refusal presentation', () => {
         expect(shown.description).toBe(t('projects.open.failedHint'));
         expect(shown.details).toEqual(['project_open_unavailable', 'TypeError']);
     });
+    it('says a Machine admission refused for its owner only needs the owner, with both codes kept', () => {
+        const presentation = projectOpenRefusalPresentation('RPC_FORBIDDEN', null, undefined, null,
+            { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: 403 });
+        expect(presentation).toEqual({ title: t('errors.custodianOnly'), description: t('projects.open.accessDeniedHint'),
+            details: ['RPC_FORBIDDEN', 'custodian_only'] });
+    });
     it('names a subfolder the repository lacks and says what to fix, with the code behind Details (TL-A 11-08)', () => {
         const shown = projectOpenRefusalPresentation('repository_subfolder_missing', null, undefined, 'owner/repo', undefined, 'packages/missing');
         expect(shown.title).toBe(t('projects.open.subfolderMissing'));

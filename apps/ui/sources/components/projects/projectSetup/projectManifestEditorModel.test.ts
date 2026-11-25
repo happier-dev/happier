@@ -664,4 +664,23 @@ describe('project manifest editor model', () => {
       dirty: true,
     });
   });
+
+  it('keeps the typed cause of a refused save so Details can show its phase', async () => {
+    const { HappyError } = await import('@/utils/errors/errors');
+    const { createProjectManifestActionClient } = await import('./projectManifestActionClient');
+    const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: 403 };
+    // The Action front door is the client's boundary; the client and editor model below it are real.
+    const client = createProjectManifestActionClient({ workspace, expectedAccountId: 'alice',
+      execute: (async () => ({ ok: false, errorCode: 'RPC_FORBIDDEN', error: 'Forbidden', failureCause })) as never });
+    const thrown = await client.update({ expectedBasis: { kind: 'present', hash: originalHash }, bytes: initialBytes })
+      .catch((error: unknown) => error);
+    expect(thrown).toBeInstanceOf(HappyError);
+    expect((thrown as InstanceType<typeof HappyError>).failureCause).toMatchObject({ phase: 'rpc.admission.machine', errorCode: 'custodian_only' });
+    const model = createProjectManifestEditorModel({ workspace, expectedAccountId: 'alice', definition: present(initialBytes),
+      actions: { async update() { throw thrown; } } });
+    model.setRaw('{"version":1}');
+    await model.save();
+    expect(model.getSnapshot().error).toMatchObject({ code: 'RPC_FORBIDDEN',
+      failureCause: { phase: 'rpc.admission.machine', errorCode: 'custodian_only' } });
+  });
 });

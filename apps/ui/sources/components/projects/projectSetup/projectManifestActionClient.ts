@@ -19,7 +19,7 @@ import { ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1, type Artif
 import { ProjectSharedSetupV1Schema, PROJECT_SETUP_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import type { ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { ProjectSourcesUpdateInputV1Schema, ProjectSourcesUpdateOutputV1Schema, type ProjectSourcePublicationPatchV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema,
   type ProjectOrganizationUpdateInputV1 } from '@happier-dev/protocol/projects/projectOrganizationV1';
 import { ProjectSetupSetInputV1Schema, ProjectSetupSetOutputV1Schema,
@@ -53,7 +53,7 @@ type ActionInvocation = (
 type Execute = ActionInvocation & Readonly<{ confirmed?: ActionInvocation }>;
 type Outcome<T> =
   | Readonly<{ ok: true; value: T }>
-  | Readonly<{ ok: false; code: string; workerRefusal?: ProjectWorkerNoAcceptanceFailureDetailsV1 }>;
+  | Readonly<{ ok: false; code: string; workerRefusal?: ProjectWorkerNoAcceptanceFailureDetailsV1; failureCause?: ActionFailureCauseV1 }>;
 
 export type ProjectScriptSelection = ActionOperationProjectScriptSelection;
 
@@ -117,7 +117,7 @@ export function createProjectManifestActionClient(
           if (consent) throw Object.assign(new HappyError(consent.errorCode, false, { code: consent.errorCode }), { consent: consent.details });
           const worker = readProjectWorkerNoAcceptanceFailureV1(result);
           if (worker) throw Object.assign(new HappyError(worker.errorCode, false, { code: worker.errorCode }), { workerRefusal: worker.details });
-          return { ok: false, code: result.errorCode };
+          return { ok: false, code: result.errorCode, ...(result.failureCause ? { failureCause: result.failureCause } : {}) };
         }
         const approval = ActionApprovalRequestCreatedResultSchema.safeParse(
           result.result,
@@ -149,13 +149,16 @@ export function createProjectManifestActionClient(
       },
       failed: (code, failure) => {
         const worker = readProjectWorkerNoAcceptanceFailureV1(failure);
-        return { ok: false, code, ...(worker?.errorCode === code ? { workerRefusal: worker.details } : {}) };
+        return { ok: false, code, ...(worker?.errorCode === code ? { workerRefusal: worker.details } : {}),
+          ...(failure?.failureCause ? { failureCause: failure.failureCause } : {}) };
       },
       aborted: () => ({ ok: false, code: 'cancelled' }),
       ...(input.signal ? { signal: input.signal } : {}),
     });
     if (!outcome.ok)
-      throw Object.assign(new HappyError(outcome.code, false, { code: outcome.code }), {
+      // The owner's typed cause (phase, answering code) travels with the code for the editor's Details.
+      throw Object.assign(new HappyError(outcome.code, false, { code: outcome.code,
+        ...(outcome.failureCause ? { failureCause: outcome.failureCause } : {}) }), {
         ...(outcome.workerRefusal ? { workerRefusal: outcome.workerRefusal } : {}) });
     return outcome.value;
   }

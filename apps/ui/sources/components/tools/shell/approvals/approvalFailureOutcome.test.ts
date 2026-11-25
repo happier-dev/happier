@@ -181,6 +181,15 @@ describe('approval failure outcome', () => {
             nativeFailure: { ...nativeFailure, argv: 'private-native-argv' } } }).execution).not.toHaveProperty('details');
     });
 
+    it('says a member Project Open refused at Machine admission needs the owner, with the codes kept in details', () => {
+        const outcome = presentActionFailureOutcome({ errorCode: 'RPC_FORBIDDEN', error: 'Forbidden', effectAttempted: false,
+            failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: 403 } });
+        expect(outcome.reason).toBe(t('errors.custodianOnly'));
+        expect(outcome.reason).not.toContain('custodian_only');
+        expect(JSON.stringify(outcome.technicalDetails)).toContain('custodian_only');
+        expect(JSON.stringify(outcome.technicalDetails)).toContain('rpc.admission.machine');
+    });
+
     it('presents a retained Store Domain cause like the direct Add Domain failure', () => {
         const domain = DeploymentDomainFailureDetailsV1Schema.parse({ environmentId: 'environment-private', domainId: 'domain-private',
             step: 'native_execution', requiredFact: 'caddyAdminConfig',

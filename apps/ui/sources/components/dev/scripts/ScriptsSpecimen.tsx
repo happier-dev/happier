@@ -376,10 +376,12 @@ function seedRuns(frame: string) {
 const client = createProjectManifestActionClient({
   workspace: WORKSPACE,
   expectedAccountId: 'specimen',
+  // Saves are refused the way a member's Project file save is refused at Machine admission.
   execute: async () => ({
     ok: false,
-    errorCode: 'specimen',
-    error: 'specimen',
+    errorCode: 'RPC_FORBIDDEN',
+    error: 'Forbidden',
+    failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: 403 },
   }),
 });
 
