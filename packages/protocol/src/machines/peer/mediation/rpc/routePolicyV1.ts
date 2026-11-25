@@ -666,7 +666,7 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
   ...Object.entries(PROJECT_FINITE_ACTION_RPC_METHODS_V1).map(([actionId, method]) => actionSpecServerRequired(method, 'auth',
     'Finite Project execution requires its original admitted Action and exact Machine authority before the incumbent finite operation accepts work.', actionId, 'use', undefined, true)),
   ...Object.entries(PROJECT_DEFINITION_ACTION_RPC_METHODS_V1).map(([actionId, method]) => actionSpecServerRequired(method, 'auth',
-    'Project definitions require their original admitted Action; the receiving daemon places a grantee\'s own Project by its isolation policy.', actionId, 'use')),
+    'Project definitions retain their original admitted Action and custodian Machine access.', actionId, 'custodian_only')),
   ...Object.entries(WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS).map(([actionId, method]) => actionSpecServerRequired(method,
     'destructive_or_recovery_mutation', 'Workspace Sync controls retain the admitted requester and its Account relationship owner.',
     actionId, 'use', undefined, true)),

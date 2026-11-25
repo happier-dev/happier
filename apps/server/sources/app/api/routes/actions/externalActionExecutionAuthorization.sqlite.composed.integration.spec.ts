@@ -1295,35 +1295,6 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
-    // Owner ruling 2026-11-23 ~15:10Z: a guest's own Project work, including declaring scripts,
-    // is admitted for Use; the receiving daemon's placement owner decides isolation. Live
-    // refusal: build #149/#150 Home refused projects.manifest.update with custodian_only.
-    it('admits a Use guest\'s Project definition Actions and refuses an outsider and a withdrawn grant', async () => {
-        const fixture = await createFixture({ qualifiedPat: false });
-        const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
-        await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: guest.id, role: 'member' } });
-        const grant = await db.machineGrant.create({ data: { principalKind: 'team', machineId: fixture.machine.id, teamId: fixture.team.id,
-            accessLevel: 'view', createdByAccountId: fixture.account.id } });
-        const homeId = await getOrCreateServerIdentityId();
-        const workspace = { serverId: homeId, workspaceId: 'accepted', machineId: fixture.machine.id, rootPath: '/workspace/project' };
-        const { app } = await createApp(fixture.team.id);
-        const mint = async (accountId: string, actionId: 'projects.manifest.update' | 'projects.inspect') => app.inject({
-            method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
-            headers: { authorization: `Bearer ${await auth.createToken(accountId, undefined, { kind: 'account', authority: 'present_user' })}` },
-            payload: { v: 1, machineId: fixture.machine.id, envelope: { ...fixture.envelope, input: actionId === 'projects.inspect'
-                ? { workspace } : { workspace, expectedBasis: { kind: 'absent' }, bytes: '{"version":1}' } } } });
-        try {
-            for (const actionId of ['projects.manifest.update', 'projects.inspect'] as const) {
-                const admitted = await mint(guest.id, actionId);
-                expect(admitted.statusCode, admitted.body).toBe(200);
-            }
-            const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
-            expect((await mint(outsider.id, 'projects.manifest.update')).statusCode).not.toBe(200);
-            await db.machineGrant.delete({ where: { principalKind: 'team', machineId_teamId: { machineId: grant.machineId, teamId: grant.teamId } } });
-            expect((await mint(guest.id, 'projects.manifest.update')).statusCode).not.toBe(200);
-        } finally { await app.close(); }
-    });
-
     // Owner ruling 2026-11-23 ~15:10Z: a Use guest's own server Test is their own work; the
     // receiving daemon's placement owner decides isolation. Live refusal: build #154 Home refused
     // the guest's mcp.servers.test mint custodian_only (RU2 W31 G02, 00:51:21Z).
