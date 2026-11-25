@@ -79,8 +79,8 @@ export async function recoverUiDeploymentActionResult(params: Readonly<{
         const operation = await withActionAccountRequestSignal(account, context.signal, signal => observeActionOperationByRequestId({
             serverId: account.serverId, accountId: account.accountId, machineId, signal,
             requestIdentity: { actionId, requestId: readDeploymentActionOperationRequestIdV1(actionId, input) ?? requestId },
-            // A lost Create can precede publication. If no operation was found, the wizard can offer Check result.
-            waitForPublication: !isCreate,
+            // The reply can be lost before an operation is published. An empty lookup leaves recovery with the caller.
+            waitForPublication: false,
         }));
         account.assertCurrent();
         if (!operation) return execution;

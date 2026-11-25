@@ -1617,47 +1617,59 @@ it('tears down a person’s own UI Environment under Account Ask after confirmat
     expect(homes.artifacts(serverId).list()).toHaveLength(0);
 });
 
-it('returns the approved catalog Create outcome as uncertain when the response is lost and the Machine has no operation', async () => {
-    const actionId = 'deployments.environments.create';
-    const writer = requireAccount();
-    const machineId = 'catalog-controller';
-    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId: writer.serverIdentityId, mode: 'apply',
-        requestKey: 'catalog-create', name: 'Catalog app', newProject: { name: 'New Project', requestKey: 'new-project',
-            owner: { kind: 'account', accountId: writer.accountId } }, protection: 'nonProduction', purpose: 'standard',
-        deployerMode: 'managers', controllerMachineId: machineId,
-        definition: { from: 'catalogApp', templateRef: { sourceId: 'apps', itemId: 'app', version: '1',
-            ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } } },
-        firstTargetLink: { machines: [{ machineId, installationId: `installation-${machineId}` }] } });
-    await answerControllerAction(actionId, machineId, () => null,
-        () => ({ errorCode: 'invalid_encrypted_envelope', error: 'Request interrupted' }), undefined, true);
-    const requestId = 'catalog-create-http-request';
-    const operationReads: SocketRpcRequestPayload[] = [];
-    operationSocketBoundary = installDisconnectedServerSocketBoundary(socket => {
-        configureConnectedServerSocketBoundary(socket);
-        socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (_event, request: SocketRpcRequestPayload) => {
-            operationReads.push(request);
-            return { ok: true, result: { items: [], nextCursor: null } };
-        });
-    }, { serverUrl: writer.endpointUrl, token: writer.credentials.token });
-    const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
-    const controller = new AbortController();
-    let result: Awaited<ReturnType<typeof executor.executeConfirmed>> | undefined;
-    const run = executor.executeConfirmed(actionId, input, { ...uiHost, serverId,
-        expectedAccountId: writer.accountId, actionRequestId: requestId, signal: controller.signal });
-    void run.then(value => { result = value; });
-    try {
-        await vi.waitFor(() => expect(operationReads).toContainEqual(expect.objectContaining({
-            method: `${machineId}:${ACTION_OPERATION_RPC_METHODS_V2.list}`,
-            params: { requestIdentity: { actionId, requestId } },
-        })));
-        await vi.waitFor(() => expect(result).toMatchObject({ ok: false, errorCode: 'outcome_unknown' }));
-        expect(homes.requestsFor(`/v1/actions/${actionId}`)).toHaveLength(1);
-        expect(homes.artifacts(serverId).list()).toHaveLength(0);
-    } finally {
-        controller.abort();
-        await run;
-    }
-});
+it.each(['catalog Create', 'Deploy after reinstall'] as const)(
+    'returns the approved %s outcome as uncertain when its response is lost before operation publication', async scenario => {
+        const create = scenario === 'catalog Create';
+        const actionId = create ? 'deployments.environments.create' : 'deployments.deploy';
+        const writer = requireAccount();
+        const detail = createDeploymentEnvironmentDetailV1();
+        const machineId = create ? 'catalog-controller' : detail.environment.controllerMachineId;
+        const input = DeploymentActionInputSchemasV1[actionId].parse(create ? { serverId: writer.serverIdentityId, mode: 'apply',
+            requestKey: 'catalog-create', name: 'Catalog app', newProject: { name: 'New Project', requestKey: 'new-project',
+                owner: { kind: 'account', accountId: writer.accountId } }, protection: 'nonProduction', purpose: 'standard',
+            deployerMode: 'managers', controllerMachineId: machineId,
+            definition: { from: 'catalogApp', templateRef: { sourceId: 'apps', itemId: 'app', version: '1',
+                ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } } },
+            firstTargetLink: { machines: [{ machineId, installationId: `installation-${machineId}` }] },
+        } : { serverId: writer.serverIdentityId, environmentId: detail.environment.id, expectedRevision: 1,
+            requestKey: 'reinstall-deploy', targetLinkId: 'target', expectedTargetLinkRevision: 1, ...content });
+        if (!create) {
+            homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
+                ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
+            } });
+        }
+        await answerControllerAction(actionId, machineId, () => null,
+            () => ({ errorCode: 'invalid_encrypted_envelope', error: 'Request interrupted' }),
+            create ? undefined : { id: detail.environment.projectSourceId, revision: 1 }, true);
+        const requestId = 'lost-http-request';
+        const retainedRequestId = readDeploymentActionOperationRequestIdV1(actionId, input) ?? requestId;
+        const operationReads: SocketRpcRequestPayload[] = [];
+        operationSocketBoundary = installDisconnectedServerSocketBoundary(socket => {
+            configureConnectedServerSocketBoundary(socket);
+            socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (_event, request: SocketRpcRequestPayload) => {
+                operationReads.push(request);
+                return { ok: true, result: { items: [], nextCursor: null } };
+            });
+        }, { serverUrl: writer.endpointUrl, token: writer.credentials.token });
+        const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
+        const controller = new AbortController();
+        let result: Awaited<ReturnType<typeof executor.executeConfirmed>> | undefined;
+        const run = executor.executeConfirmed(actionId, input, { ...uiHost, serverId,
+            expectedAccountId: writer.accountId, actionRequestId: requestId, signal: controller.signal });
+        void run.then(value => { result = value; });
+        try {
+            await vi.waitFor(() => expect(operationReads, JSON.stringify({ result, actionRequests: homes.requestsFor(`/v1/actions/${actionId}`).length })).toContainEqual(expect.objectContaining({
+                method: `${machineId}:${ACTION_OPERATION_RPC_METHODS_V2.list}`,
+                params: { requestIdentity: { actionId, requestId: retainedRequestId } },
+            })));
+            await vi.waitFor(() => expect(result).toMatchObject({ ok: false, errorCode: 'outcome_unknown' }));
+            expect(homes.requestsFor(`/v1/actions/${actionId}`)).toHaveLength(1);
+            expect(homes.artifacts(serverId).list()).toHaveLength(0);
+        } finally {
+            controller.abort();
+            await run;
+        }
+    });
 
 it.each(['template applied', 'template partial', 'template reviewed partial', 'template front door', 'deploy front door', 'restore front door', 'restore failure front door'] as const)(
     'recovers a lost native Action response from its retained result (%s)', async scenario => {
