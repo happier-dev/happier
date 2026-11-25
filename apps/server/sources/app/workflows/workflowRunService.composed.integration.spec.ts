@@ -1733,6 +1733,67 @@ describe("workflowRunService (integration)", () => {
         }
     });
 
+    it.each([false, true])("publishes one Machine wake per parked frontier, including replay and sibling review (repark=%s)", async (repark) => {
+        const seeded = await seedPendingAdmission();
+        const siblingId = randomUUID();
+        const siblingEnvelope = progressEnvelope({ ...seeded, id: siblingId, sequence: 2n,
+            parentRecordId: seeded.rootId, memberOrdinal: 1n });
+        const checkpoint = checkpointEnvelope(seeded.accountId, seeded.runId, seeded.rootId, 3n);
+        await admitWorkflowInvocationsWithClaim({ ...seeded, expectedRevision: 2, checkpointEnvelope: checkpoint,
+            invocations: [{ id: siblingId, sequence: 2n, parentRecordId: seeded.rootId,
+                memberOrdinal: 1n, contentEnvelope: siblingEnvelope }] });
+        await commitWorkflowInvocationFact({ ...seeded.fact, lifecycle: "waiting_for_review" });
+        await commitWorkflowInvocationFact({ ...seeded.fact, invocationId: siblingId,
+            lifecycle: "waiting_for_review", contentEnvelope: siblingEnvelope });
+        await db.workflowRunInvocation.update({ where: { id: seeded.rootId }, data: { lifecycle: "running" } });
+
+        const { app, headers } = await createReviewStorageApp(seeded.accountId);
+        const machine = observeWorkflowMachineWake(seeded.accountId, seeded.machineId);
+        const queueWakes = () => machine.updates.filter(({ body }) => body.t === "automation-run-updated"
+            && body.runId === seeded.runId && body.state === "queued");
+        const claim = () => claimAutomationRun({ ...seeded, scope: "workflow", leaseDurationMs: 30_000,
+            recipeFeaturePolicy: { workflowsEnabled: true } });
+        const park = async () => {
+            const parent = await db.automationRun.findUniqueOrThrow({ where: { id: seeded.runId } });
+            return transitionWorkflowRun({ ...seeded, parentAttempt: parent.attempt, expectedRevision: parent.revision,
+                state: "waiting_for_review", checkpointEnvelope: checkpoint });
+        };
+        try {
+            await park();
+            expect((await claim()).run).toBeNull();
+            expect(machine.updates).toHaveLength(0);
+            for (const [ordinal, invocationId] of [seeded.invocationId, siblingId].entries()) {
+                if (ordinal === 1 && repark) {
+                    expect((await claim()).run).toMatchObject({ id: seeded.runId });
+                    await park();
+                    expect((await claim()).run).toBeNull();
+                    expect(queueWakes()).toHaveLength(1);
+                }
+                const memberOrdinal = BigInt(ordinal);
+                const held = await getWorkflowRunInvocation({ ...seeded, invocationId });
+                const payload = {
+                    operation: "invocations.complete_review", mode: "use_result", runId: seeded.runId,
+                    invocationId, invocationAttempt: "0", expectedContentRevision: held.invocation.index.contentRevision,
+                    accountCurrentness: await accountCurrentness(seeded.accountId),
+                    contentEnvelope: progressEnvelope({ ...seeded, id: invocationId, sequence: memberOrdinal + 1n,
+                        parentRecordId: seeded.rootId, memberOrdinal, result: "accepted",
+                        review: { decision: { kind: "use_result", requestedFromContentRevision: held.invocation.index.contentRevision } } }),
+                };
+                const release = () => app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage", headers, payload });
+                const response = await release();
+                expect(response.statusCode, response.body).toBe(200);
+                expect(queueWakes()).toHaveLength(repark ? ordinal + 1 : 1);
+                expect((await release()).statusCode).toBe(409);
+                expect(queueWakes()).toHaveLength(repark ? ordinal + 1 : 1);
+            }
+            expect((await claim()).run).toMatchObject({ id: seeded.runId });
+            expect(queueWakes()).toHaveLength(repark ? 2 : 1);
+        } finally {
+            machine.close();
+            await app.close();
+        }
+    });
+
     it.each(["pause", "cancel"] as const)("serializes Generate with %s without allocating work or dropping custody", async (control) => {
         for (const decisionFirst of [false, true]) {
             const seeded = await seedPendingAdmission();
