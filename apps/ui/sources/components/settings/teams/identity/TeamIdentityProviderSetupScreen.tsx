@@ -8,9 +8,13 @@ import {
 } from '@/components/settings/home/identity/ManagedIdentityProviderEditorScreen';
 import { useManagedIdentityProviders } from '@/components/settings/home/identity/useManagedIdentityProviders';
 import { ManagedGitHubAppEditorContent } from '@/components/settings/home/githubApps/ManagedGitHubAppEditorScreen';
+import { identityAdministrationFailureMessage } from '@/components/settings/identity/identityAdministrationFailure';
+import { presentTeamSignInRequired } from '@/components/teams/entry/teamSignInRequirement';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 
@@ -146,10 +150,31 @@ const TeamManagedOidcProviderEditorAdapter = React.memo(function TeamManagedOidc
         return { kind: 'completed' } as const;
     }, [props.address.serverId, props.address.teamId, props.connectionId, router]);
     if (providers.state.kind === 'unavailable') {
-        return <ItemGroup description={providers.state.failure.retryable ? t('teams.unavailable.offline') : t('identityAdministration.error')}><Item title={t('identityAdministration.error')} detail={providers.state.failure.retryable ? t('common.retry') : undefined} onPress={providers.state.failure.retryable ? providers.refresh : undefined} showChevron={false} /></ItemGroup>;
+        const { code, retryable } = providers.state.failure;
+        if (code === 'team_authentication_required') {
+            const signIn = presentTeamSignInRequired({
+                ...props.address, code, accepted: [], navigate: (href) => router.push(href),
+            });
+            return <ItemGroup><SurfaceStateCard
+                testID="team-identity-provider-editor"
+                kind="error"
+                size="line"
+                title={signIn.message}
+                action={{ ...signIn.action, testID: 'team-identity-provider-editor-sign-in' }}
+                accessibilitySemantics="alert"
+            /></ItemGroup>;
+        }
+        const canRetry = retryable && code !== 'team_authentication_unavailable';
+        return <ItemGroup><ItemLoadStateRows testID="team-identity-provider-editor" state={{
+            kind: 'failed',
+            reason: canRetry ? t('identityAdministration.companySignInReadFailed')
+                : identityAdministrationFailureMessage(code, 'team_managed_provider_read'),
+            onRetry: canRetry ? providers.refresh : undefined,
+            homeServerIds: canRetry ? [props.address.serverId] : undefined,
+        }} /></ItemGroup>;
     }
     if (providers.state.kind === 'ready' && !provider) {
-        return <ItemGroup><Item title={t('identityAdministration.error')} showChevron={false} /></ItemGroup>;
+        return <ItemGroup><Item title={t('identityAdministration.errorMissing')} mode="info" showChevron={false} /></ItemGroup>;
     }
     return <ManagedOidcProviderEditorContent
         scope={props.scope}

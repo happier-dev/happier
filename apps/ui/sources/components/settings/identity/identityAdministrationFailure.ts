@@ -301,7 +301,14 @@ export function resolveApprovalSettledReadFailure(
     };
 }
 
-export function identityAdministrationFailureMessage(code: string): string {
+export function identityAdministrationFailureMessage(code: string, context?: 'managed_provider_read' | 'team_managed_provider_read'): string {
+    if (context) {
+        if (code === 'identity_provider_invalid') return t('homeGovernance.invalidRead');
+        if (code === 'identity_provider_forbidden') {
+            return t(context === 'managed_provider_read' ? 'homeGovernance.forbiddenBody' : 'teams.errors.forbidden');
+        }
+        if (code === 'team_authentication_unavailable') return t('teams.credentials.externalApi.authenticationUnavailable');
+    }
     if (code.trim().toLowerCase() === 'workos_platform_unavailable') {
         return t('identityAdministration.errorWorkosPlatformUnavailable');
     }

@@ -8,10 +8,11 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHo
 import { managedIdentityProviderFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
 import { teamCapabilitiesFixture, teamSummaryFixture, teamIdentityConnectionFixture } from '@/dev/testkit/fixtures/teamFixtures';
 
+const routerPushMock = vi.hoisted(() => vi.fn());
 const routerReplaceMock = vi.hoisted(() => vi.fn());
 const openExternalUrlMock = vi.hoisted(() => vi.fn(async () => true));
 vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: openExternalUrlMock }));
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { replace: routerReplaceMock } }).module);
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { replace: routerReplaceMock, push: routerPushMock } }).module);
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({ translate: key => key }));
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
 // Generated app bytes are a build boundary; no identity catalog or owner is replaced.
@@ -20,7 +21,7 @@ vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts',
 }));
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
-const { TeamIdentityProviderSetupScreen } = await import('./TeamIdentityProviderSetupScreen');
+const { TeamIdentityProviderSetupScreen, TeamManagedIdentityProviderEditorScreen } = await import('./TeamIdentityProviderSetupScreen');
 const { Modal } = await import('@/modal');
 const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
@@ -77,8 +78,36 @@ beforeEach(async () => {
     harness.answer(serverId, providerValidatePath, { body: provider(5) });
     harness.answer(serverId, connectionCreatePath, { body: { connection: connection() } });
     routerReplaceMock.mockReset();
+    routerPushMock.mockReset();
     openExternalUrlMock.mockReset().mockResolvedValue(true);
     vi.mocked(Modal.confirm).mockReset().mockResolvedValue(true);
+});
+
+describe('Team-managed provider editor observation', () => {
+    it.each([
+        { status: 400, code: 'identity_provider_invalid', message: 'homeGovernance.invalidRead', signIn: false },
+        { status: 403, code: 'identity_provider_forbidden', message: 'teams.errors.forbidden', signIn: false },
+        { status: 403, code: 'team_authentication_required', message: 'session.access.authenticationRequired', signIn: true },
+        { status: 503, code: 'team_authentication_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable', signIn: false },
+    ])('shows the exact $code without a Retry', async ({ status, code, message, signIn }) => {
+        harness.answer(serverId, '/v1/identity/providers/list', { status, body: { error: code } });
+        const screen = await renderScreen(<TeamManagedIdentityProviderEditorScreen
+            serverId={serverId} teamId="team-1" connectionId="connection-1" providerId="provider-1"
+        />);
+
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.getTextContent().split(message)).toHaveLength(2);
+        expect(screen.findByTestId('team-identity-provider-editor-retry')).toBeNull();
+        expect(screen.findByTestId('identity-provider-name')).toBeNull();
+        if (signIn) {
+            await screen.pressByTestIdAsync('team-identity-provider-editor-sign-in');
+            const href = routerPushMock.mock.lastCall?.[0];
+            expect(new URL(href, 'https://app.example').pathname).toBe('/teams/team-1/sign-in');
+        } else {
+            expect(screen.findByTestId('team-identity-provider-editor-sign-in')).toBeNull();
+        }
+        expect(harness.requestsFor('/v1/identity/providers/list')).toHaveLength(1);
+    });
 });
 
 describe('TeamIdentityProviderSetupScreen through its real Action clients', () => {

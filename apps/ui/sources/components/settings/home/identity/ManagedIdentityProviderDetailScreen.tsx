@@ -127,7 +127,7 @@ const DetailContent = React.memo(function DetailContent(props: Readonly<{
                     state={{
                         kind: 'failed',
                         reason: state.failure.retryable ? t('identityAdministration.companySignInReadFailed')
-                            : identityAdministrationFailureMessage(state.failure.code),
+                            : identityAdministrationFailureMessage(state.failure.code, 'managed_provider_read'),
                         onRetry: state.failure.retryable ? refresh : undefined,
                         homeServerIds: state.failure.retryable ? [props.context.scope.serverId] : undefined,
                     }}
@@ -273,7 +273,7 @@ const DetailContent = React.memo(function DetailContent(props: Readonly<{
                         kind="error"
                         size="line"
                         title={state.failure.retryable ? t('homeGovernance.offlineNotice')
-                            : identityAdministrationFailureMessage(state.failure.code)}
+                            : identityAdministrationFailureMessage(state.failure.code, 'managed_provider_read')}
                         action={state.failure.retryable ? { testID: 'identity-provider-retry', label: t('common.retry'), onPress: refresh } : undefined}
                     />
                 </ItemGroup>

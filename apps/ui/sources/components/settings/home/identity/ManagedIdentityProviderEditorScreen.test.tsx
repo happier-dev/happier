@@ -7,7 +7,7 @@ import { findTestInstanceByTypeContainingText } from '@/dev/testkit/render/rende
 import { ManagedIdentityProviderV1Schema, MANAGED_IDENTITY_PROVIDER_ACTION_PATHS_V1, type ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/providers';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { homeGovernanceProjectionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 
 const networkResponse = vi.fn<(path: string, input: unknown) => Promise<HomeDomainAnswer>>();
 
@@ -25,8 +25,10 @@ installHomeGovernanceBoundaries(harness);
 const {
     EMPTY_MANAGED_OIDC_PROVIDER_DRAFT,
     ManagedOidcProviderEditorContent,
+    ManagedIdentityProviderEditorScreen,
     validateManagedIdentityProviderDraft,
 } = await import('./ManagedIdentityProviderEditorScreen');
+const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
 let serverId: string;
 
 function provider(revision: number): ManagedIdentityProviderV1 {
@@ -71,6 +73,55 @@ beforeEach(async () => {
     for (const path of Object.values(MANAGED_IDENTITY_PROVIDER_ACTION_PATHS_V1)) {
         harness.answer(serverId, path, { select: input => networkResponse(path, input) });
     }
+});
+
+describe('Home identity provider editor observation', () => {
+    it.each([
+        { status: 400, code: 'identity_provider_invalid', message: 'homeGovernance.invalidRead' },
+        { status: 403, code: 'identity_provider_forbidden', message: 'homeGovernance.forbiddenBody' },
+    ])('presents the settled $code on the provider editor', async ({ status, code, message }) => {
+        harness.answer(serverId, '/v1/home/governance/get', { body: homeGovernanceProjectionFixture() });
+        harness.answer(serverId, '/v1/identity/providers/list', { status, body: { error: code } });
+
+        const screen = await renderScreen(<ManagedIdentityProviderEditorScreen serverId={serverId} providerId="provider-1" />);
+
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.getTextContent().split(message)).toHaveLength(2);
+        expect(screen.findByTestId('identity-provider-editor-retry')).toBeNull();
+        expect(screen.findByTestId('identity-provider-name')).toBeNull();
+        expect(harness.requestsFor('/v1/identity/providers/list')).toHaveLength(1);
+    });
+
+    it('retains the draft without offering Retry after a settled refresh refusal', async () => {
+        harness.answer(serverId, '/v1/home/governance/get', { body: homeGovernanceProjectionFixture() });
+        harness.answer(serverId, '/v1/identity/providers/list', { body: { items: [provider(4)], unreadableCount: 0 } });
+        const screen = await renderScreen(<ManagedIdentityProviderEditorScreen serverId={serverId} providerId="provider-1" />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('identity-provider-name')?.props.value).toBe('Corporate OIDC'));
+        await act(async () => screen.changeTextByTestId('identity-provider-name', 'Draft name'));
+
+        harness.answer(serverId, '/v1/identity/providers/list', { status: 400, body: { error: 'identity_provider_invalid' } });
+        await act(async () => publishHomeAccountChange(serverId));
+
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('homeGovernance.invalidRead'));
+        expect(screen.getTextContent().split('homeGovernance.invalidRead')).toHaveLength(2);
+        expect(screen.findByTestId('identity-provider-refresh-retry')).toBeNull();
+        expect(screen.findByTestId('identity-provider-name')?.props.value).toBe('Draft name');
+    });
+
+    it('offers Retry for a temporary read failure and then displays the current editor', async () => {
+        harness.answer(serverId, '/v1/home/governance/get', { body: homeGovernanceProjectionFixture() });
+        harness.answer(serverId, '/v1/identity/providers/list', { status: 503, body: { error: 'unavailable' } });
+        const screen = await renderScreen(<ManagedIdentityProviderEditorScreen serverId={serverId} providerId="provider-1" />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('identity-provider-editor-retry')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('identityAdministration.companySignInReadFailed');
+
+        harness.answer(serverId, '/v1/identity/providers/list', { body: { items: [provider(4)], unreadableCount: 0 } });
+        await screen.pressByTestIdAsync('identity-provider-editor-retry');
+
+        await waitForHomeGovernance(() => expect(screen.findByTestId('identity-provider-name')?.props.value).toBe('Corporate OIDC'));
+        expect(screen.findByTestId('identity-provider-editor-retry')).toBeNull();
+        expect(harness.requestsFor('/v1/identity/providers/list')).toHaveLength(2);
+    });
 });
 
 describe('ManagedOidcProviderEditorContent', () => {

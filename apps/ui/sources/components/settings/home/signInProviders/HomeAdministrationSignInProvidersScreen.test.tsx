@@ -230,9 +230,9 @@ describe('Sign-in providers page', () => {
     });
 
     it.each([
-        { endpoint: 'managed provider', providerStatus: 403, connectionStatus: 200, testID: 'home-identity-providers-unavailable' },
-        { endpoint: 'WorkOS connection', providerStatus: 200, connectionStatus: 403, testID: 'home-workos-connections-unavailable' },
-    ])('presents the $endpoint access refusal once and without Retry', async ({ providerStatus, connectionStatus, testID }) => {
+        { endpoint: 'managed provider', providerStatus: 403, connectionStatus: 200, testID: 'home-identity-providers-unavailable', message: 'homeGovernance.forbiddenBody' },
+        { endpoint: 'WorkOS connection', providerStatus: 200, connectionStatus: 403, testID: 'home-workos-connections-unavailable', message: 'identityAdministration.errorForbidden' },
+    ])('presents the $endpoint access refusal once and without Retry', async ({ providerStatus, connectionStatus, testID, message }) => {
         const serverId = await harness.addHome({ name: 'Company Home', serverUrl: 'https://company-home-denied.example', accountId: 'admin-1' });
         harness.answer(serverId, '/v1/home/governance/get', { body: homeGovernanceProjectionFixture() });
         harness.answer(serverId, '/v1/home/settings/get', { body: homeSettingsProjectionFixture() });
@@ -244,7 +244,7 @@ describe('Sign-in providers page', () => {
 
         const screen = await renderScreen(<HomeAdministrationSignInProvidersScreen serverId={serverId} />);
         await waitForHomeGovernance(() => expect(screen.findByTestId(testID)).not.toBeNull());
-        expect(screen.getTextContent().match(/identityAdministration\.errorForbidden/g)).toHaveLength(1);
+        expect(screen.getTextContent().split(message)).toHaveLength(2);
         expect(screen.findByTestId(`${testID}-retry`)).toBeNull();
     });
 

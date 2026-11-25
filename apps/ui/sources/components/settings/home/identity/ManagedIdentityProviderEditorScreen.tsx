@@ -473,14 +473,17 @@ export const ManagedOidcProviderEditorContent = React.memo(function ManagedOidcP
         return <ItemGroup><SurfaceStateCard kind="loading" size="line" title={t('common.loading')} /></ItemGroup>;
     }
     const callbackUrl = provider?.callbackUrl ?? null;
+    const refreshRetryable = props.refreshFailure?.retryable && props.refreshFailure.code !== 'team_authentication_unavailable';
     return (
         <>
             {props.refreshFailure ? <AttentionBanner
                 testID={`${props.testIdPrefix ?? 'identity-provider'}-refresh-failed`}
                 title={t('identityAdministration.refreshFailed')}
-                description={props.refreshFailure.retryable ? t('identityAdministration.refreshFailedHint') : identityAdministrationFailureMessage(props.refreshFailure.code)}
+                description={refreshRetryable
+                    ? t('identityAdministration.refreshFailedHint')
+                    : identityAdministrationFailureMessage(props.refreshFailure.code, props.owner.kind === 'home' ? 'managed_provider_read' : 'team_managed_provider_read')}
                 announce="alert"
-                action={props.onRefreshRequested ? { label: t('common.retry'), onPress: props.onRefreshRequested, testID: `${props.testIdPrefix ?? 'identity-provider'}-refresh-retry`, loading: props.refreshing, disabled: props.refreshing } : null}
+                action={props.onRefreshRequested && refreshRetryable ? { label: t('common.retry'), onPress: props.onRefreshRequested, testID: `${props.testIdPrefix ?? 'identity-provider'}-refresh-retry`, loading: props.refreshing, disabled: props.refreshing } : null}
             /> : null}
             <ManagedOidcProviderFields ownerKind={props.owner.kind} draft={draft} isEdit={isEdit} advanced={advanced} editable={props.mutationsAvailable} onAdvancedChange={setAdvanced} onChange={update} inputRefs={inputRefs} validation={validation} testIdPrefix={props.testIdPrefix} />
             {callbackUrl ? (
@@ -526,9 +529,11 @@ const HomeManagedOidcProviderEditorAdapter = React.memo(function HomeManagedOidc
                     testID="identity-provider-editor"
                     state={{
                         kind: 'failed',
-                        reason: t('identityAdministration.companySignInReadFailed'),
+                        reason: providers.state.failure.retryable
+                            ? t('identityAdministration.companySignInReadFailed')
+                            : identityAdministrationFailureMessage(providers.state.failure.code, 'managed_provider_read'),
                         onRetry: providers.state.failure.retryable ? providers.refresh : undefined,
-                        homeServerIds: [props.context.scope.serverId],
+                        homeServerIds: providers.state.failure.retryable ? [props.context.scope.serverId] : undefined,
                     }}
                 />
             </ItemGroup>

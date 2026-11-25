@@ -114,7 +114,7 @@ export const ManagedIdentityProvidersSection = React.memo(function ManagedIdenti
                     state={{
                         kind: 'failed',
                         reason: state.failure.retryable ? t('identityAdministration.companySignInReadFailed')
-                            : identityAdministrationFailureMessage(state.failure.code),
+                            : identityAdministrationFailureMessage(state.failure.code, 'managed_provider_read'),
                         onRetry: state.failure.retryable ? refresh : undefined,
                         homeServerIds: state.failure.retryable ? [serverId] : undefined,
                     }}
@@ -138,7 +138,7 @@ export const ManagedIdentityProvidersSection = React.memo(function ManagedIdenti
                 /></SettingAnchor>
             )}
             description={state.stale && state.failure
-                ? (state.failure.retryable ? t('homeGovernance.offlineNotice') : identityAdministrationFailureMessage(state.failure.code))
+                ? (state.failure.retryable ? t('homeGovernance.offlineNotice') : identityAdministrationFailureMessage(state.failure.code, 'managed_provider_read'))
                 : state.unreadableCount > 0
                     ? t('identityAdministration.unreadable')
                     : t('homeGovernance.signInProviders.companySignInDescription')}
