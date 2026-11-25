@@ -23,6 +23,7 @@ const clipboardSet = vi.hoisted(() => vi.fn(async () => true));
 const modalConfirm = vi.hoisted(() => vi.fn<typeof import('@/modal')['Modal']['confirm']>(async () => true));
 const modalAlert = vi.hoisted(() => vi.fn<typeof import('@/modal')['Modal']['alert']>());
 const routerReplace = vi.hoisted(() => vi.fn());
+const routerPush = vi.hoisted(() => vi.fn());
 const navigationState = vi.hoisted(() => ({
     dispatch: vi.fn(),
     setOptions: vi.fn(),
@@ -59,7 +60,7 @@ installSettingsViewCommonModuleMocks({
         return createReactNativeNativeMock({ platformOS: 'ios' });
     },
     router: async () => ({
-        useRouter: () => ({ push: vi.fn(), back: vi.fn(), replace: routerReplace }),
+        useRouter: () => ({ push: routerPush, back: vi.fn(), replace: routerReplace }),
         useNavigation: () => ({ dispatch: navigationState.dispatch, setOptions: navigationState.setOptions }),
         useLocalSearchParams: () => ({}),
     }),
@@ -279,6 +280,34 @@ describe('TeamCredentialExternalApiScreen', () => {
         expect(screen.getTextContent()).toContain('teams.credentials.externalApi.homeDisclosure');
         expect(screen.getTextContent()).toContain('teams.credentials.externalApi.bearerDisclosure');
         expect(screen.getTextContent()).toContain('teams.credentials.externalApi.usageDisclosure');
+    });
+
+    it.each([
+        { status: 400, error: 'invalid_resource_input', label: 'teams.credentials.errors.invalidResourceRead' },
+        { status: 404, error: 'resource_not_found', label: 'teams.credentials.detail.notFound' },
+        { status: 403, error: 'resource_forbidden', label: 'teams.credentials.forbidden' },
+        { status: 403, error: 'team_authentication_required', label: 'teams.credentials.errors.teamAuthenticationRequired', signIn: true },
+        { status: 503, error: 'team_authentication_policy_unavailable', label: 'teams.credentials.externalApi.authenticationUnavailable' },
+        { status: 503, error: 'feature_disabled', label: 'teams.credentials.externalApi.unavailable' },
+        { status: 400, error: 'resource_corrupt', label: 'teams.credentials.externalApi.keysUnreadable' },
+    ] as const)('shows the API key list refusal $error and its real action', async (scenario) => {
+        routerPush.mockClear();
+        const serverId = await addManagedHome();
+        harness.answer(serverId, EXTERNAL_KEYS_LIST_PATH, { status: scenario.status, body: { error: scenario.error } });
+        const screen = await renderScreen(
+            <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
+        );
+
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(scenario.label));
+        expect(screen.findByTestId('team-credential-external-retry')).toBeNull();
+        expect(screen.findByTestId('team-credential-external-empty')).toBeNull();
+        expect(screen.findHostByTestId('team-credential-external-create')?.props.disabled).toBe(true);
+        if ('signIn' in scenario) {
+            await screen.pressByTestIdAsync('team-credential-external-sign-in');
+            expect(routerPush).toHaveBeenCalledWith(expect.stringContaining(`/teams/team-1/sign-in?serverId=${serverId}`));
+        } else {
+            expect(screen.findByTestId('team-credential-external-sign-in')).toBeNull();
+        }
     });
 
     it('keeps an initial key-list failure distinct from an empty snapshot and blocks creation until retry succeeds', async () => {

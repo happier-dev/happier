@@ -17787,6 +17787,7 @@ const polish: TeamsTranslationRoot = {
                 authenticationRequired: 'Przypisany członek musi autoryzować ten klucz, logując się do zespołu.',
                 authenticationUnavailable: 'Uwierzytelnianie zespołu jest niedostępne. Poproś administratora o sprawdzenie zasad logowania.',
                 keysLoadFailed: 'Nie udało się wczytać kluczy API.',
+                keysUnreadable: "Ten Home nie mógł odczytać zapisanych kluczy API dla tych poświadczeń.",
                 keysRetry: 'Spróbuj ponownie wczytać klucze',
                 keysEmpty: 'Nie ma jeszcze kluczy',
                 keysEmptyBody: 'Utworzenie pierwszego klucza włącza dostęp zewnętrzny; unieważnienie ostatniego go wyłącza.',

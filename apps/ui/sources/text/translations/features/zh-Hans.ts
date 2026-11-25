@@ -17635,6 +17635,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 authenticationRequired: '指定成员需要通过团队登录授权此密钥。',
                 authenticationUnavailable: '团队身份验证不可用。请团队管理员检查登录策略。',
                 keysLoadFailed: '无法加载 API 密钥。',
+                keysUnreadable: "此 Home 无法读取此凭据已保存的 API 密钥。",
                 keysRetry: '重新加载密钥',
                 keysEmpty: '还没有密钥',
                 keysEmptyBody: '创建第一个密钥会开启外部访问；撤销最后一个会关闭它。',

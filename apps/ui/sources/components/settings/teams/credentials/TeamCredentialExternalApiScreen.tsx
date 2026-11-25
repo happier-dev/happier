@@ -20,6 +20,7 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
 import { Modal } from '@/modal';
+import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
@@ -47,7 +48,8 @@ import {
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamCredentialExternalApiPath } from '../teamsRoutes';
-import { credentialApprovalFailureMessage, credentialFailureMessage } from './teamCredentialPresentation';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
+import { credentialApprovalFailureMessage, credentialFailureMessage, presentCredentialReadFailure } from './teamCredentialPresentation';
 import { useTeamCredentialResourceView } from './useTeamCredentialResourceView';
 import { useTeamCredentialExternalApiAvailability } from './useTeamCredentialExternalApiAvailability';
 import { TeamCredentialAudiencePicker } from './TeamCredentialAudiencePicker';
@@ -101,6 +103,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
     resourceId: string;
 }>) {
     const { context, resourceId } = props;
+    const readFailureAction = useTeamReadFailureAction(context.address);
     const view = useTeamCredentialResourceView({ context, resourceId, failureTestIDPrefix: 'team-credential-external-resource' });
     const canReadKeys = view.canManage || view.catalogResource?.mayBroker === true;
     const availability = useTeamCredentialExternalApiAvailability(context.scope.serverId);
@@ -112,7 +115,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
     });
     const [, keysChanged] = React.useReducer((revision: number) => revision + 1, 0);
     const [resolvedKey, setResolvedKey] = React.useState<string | null>(null);
-    const [listError, setListError] = React.useState(false);
+    const [listFailure, setListFailure] = React.useState<HomeDomainFailure<string> | null>(null);
     const [listing, setListing] = React.useState(false);
     const [busy, setBusy] = React.useState(false);
     const [label, setLabel] = React.useState('');
@@ -251,7 +254,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
             acceptedTarget.current = nextTarget;
             currentTargetKey.current = nextTarget.key;
             setResolvedKey(null);
-            setListError(false);
+            setListFailure(null);
             setListing(false);
             listingTargetKey.current = null;
             setBusy(false);
@@ -293,14 +296,15 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
             setResolvedKey(requestKey);
             if (outcome.kind === 'succeeded') {
                 setKeys(outcome.value.keys);
-                setListError(false);
+                setListFailure(null);
                 setNotice(null);
             } else {
-                if (isAuthoritativeScopedSnapshotRefusalKind(outcome.failure.kind)) {
+                if (isAuthoritativeScopedSnapshotRefusalKind(outcome.failure.kind)
+                    || outcome.failure.code === 'feature_disabled'
+                    || outcome.failure.code === 'team_authentication_policy_unavailable') {
                     teamCredentialExternalApiKeyObservations.apply(targetKey, currentBinding, null);
                 }
-                setListError(true);
-                setNotice(t('teams.credentials.externalApi.keysLoadFailed'));
+                setListFailure(outcome.failure);
             }
         } catch (error) {
             if (!signal?.aborted) throw error;
@@ -406,7 +410,18 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
     // trustworthy key snapshot. An initial read failure is not an empty list,
     // and a failed refresh must not enable a duplicate while currentness is
     // unknown. Previously acknowledged rows remain visible below for recovery.
-    const keyListTrusted = resolved && !listError;
+    const keyListTrusted = resolved && !listFailure;
+    const currentListFailure = resolved ? listFailure : null;
+    const listRefusal = !currentListFailure ? null
+        : currentListFailure.code === 'resource_corrupt'
+            ? { message: t('teams.credentials.externalApi.keysUnreadable'), action: undefined }
+            : currentListFailure.code === 'feature_disabled'
+                ? { message: t('teams.credentials.externalApi.unavailable'), action: undefined }
+                : presentCredentialReadFailure(currentListFailure, () => readFailureAction(currentListFailure, {
+                    testIDPrefix: 'team-credential-external',
+                    onPress: () => void reload(),
+                }));
+    const showListRefusal = listRefusal && listRefusal.message !== view.refusal?.message;
     const memberNames = new Map(roster.rows.map((member) => [member.id, formatAccountDisplayName(member.account)]));
 
     async function authorizeKey(key: TeamCredentialExternalApiKeySummaryV1) {
@@ -801,12 +816,13 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
                         showChevron={false}
                     />,
                 ]) : null}
-                {listError ? <Item
-                    testID="team-credential-external-retry"
-                    title={t('teams.credentials.externalApi.keysRetry')}
+                {showListRefusal ? <Item
+                    testID={listRefusal.action?.testID ?? 'team-credential-external-list-error'}
+                    title={listRefusal.message}
+                    subtitle={listRefusal.action?.label}
                     loading={listing}
                     disabled={listing}
-                    onPress={listing ? undefined : () => void reload()}
+                    onPress={listing ? undefined : listRefusal.action?.onPress}
                     showChevron={false}
                 /> : null}
             </ItemGroup>

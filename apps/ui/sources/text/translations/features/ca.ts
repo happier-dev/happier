@@ -17773,6 +17773,7 @@ const catalan: TeamsTranslationRoot = {
                 authenticationRequired: 'El membre assignat ha d’autoritzar aquesta clau amb l’inici de sessió de l’equip.',
                 authenticationUnavailable: 'L’autenticació de l’equip no està disponible. Demana a un administrador que revisi la política d’inici de sessió.',
                 keysLoadFailed: 'No s’han pogut carregar les claus d’API.',
+                keysUnreadable: "Aquest Home no ha pogut llegir les claus API desades d’aquesta credencial.",
                 keysRetry: 'Torna a carregar les claus',
                 keysEmpty: 'Encara no hi ha claus',
                 keysEmptyBody: 'Crear la primera clau activa l’accés extern; revocar l’última el desactiva.',

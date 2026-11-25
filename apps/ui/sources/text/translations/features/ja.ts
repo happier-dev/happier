@@ -17695,6 +17695,7 @@ const japanese: TeamsTranslationRoot = {
                 authenticationRequired: '割り当てられたメンバーがチームへのサインインでこのキーを承認する必要があります。',
                 authenticationUnavailable: 'チーム認証を利用できません。チーム管理者にサインインポリシーの確認を依頼してください。',
                 keysLoadFailed: 'API キーを読み込めませんでした。',
+                keysUnreadable: "この Home は、この認証情報に保存された API キーを読み取れませんでした。",
                 keysRetry: 'API キーをもう一度読み込む',
                 keysEmpty: 'キーはまだありません',
                 keysEmptyBody: '最初のキーを作成すると外部アクセスが有効になり、最後のキーを取り消すと無効になります。',

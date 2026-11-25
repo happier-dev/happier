@@ -17635,6 +17635,7 @@ const traditionalChinese: TeamsTranslationRoot = {
                 authenticationRequired: '指定成員需要透過團隊登入授權此金鑰。',
                 authenticationUnavailable: '團隊驗證無法使用。請團隊管理員檢查登入政策。',
                 keysLoadFailed: '無法載入 API 金鑰。',
+                keysUnreadable: "此 Home 無法讀取此憑證已儲存的 API 金鑰。",
                 keysRetry: '重新載入金鑰',
                 keysEmpty: '還沒有金鑰',
                 keysEmptyBody: '建立第一個金鑰會開啟外部存取；撤銷最後一個會關閉它。',

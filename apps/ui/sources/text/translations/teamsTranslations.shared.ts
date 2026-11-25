@@ -1008,6 +1008,7 @@ export const english = {
                 authenticationRequired: 'The assigned member needs to authorize this key with their Team sign-in.',
                 authenticationUnavailable: 'Team authentication is unavailable. Ask a Team administrator to check its sign-in policy.',
                 keysLoadFailed: 'API keys could not be loaded.',
+                keysUnreadable: "This Home couldn’t read the saved API keys for this credential.",
                 keysRetry: 'Try loading keys again',
                 keysEmpty: 'No keys yet',
                 keysEmptyBody: 'Creating the first key turns external access on; revoking the last one turns it off.',

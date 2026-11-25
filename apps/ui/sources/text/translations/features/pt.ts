@@ -17745,6 +17745,7 @@ const portuguese: TeamsTranslationRoot = {
                 authenticationRequired: 'O membro atribuído precisa autorizar esta chave com o seu início de sessão da equipa.',
                 authenticationUnavailable: 'A autenticação da equipa está indisponível. Peça a um administrador que verifique a política de início de sessão.',
                 keysLoadFailed: 'Não foi possível carregar as chaves de API.',
+                keysUnreadable: "Este Home não conseguiu ler as chaves de API guardadas desta credencial.",
                 keysRetry: 'Tentar carregar as chaves novamente',
                 keysEmpty: 'Ainda não há chaves',
                 keysEmptyBody: 'Criar a primeira chave liga o acesso externo; revogar a última desliga-o.',

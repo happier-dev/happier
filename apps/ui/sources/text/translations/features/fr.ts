@@ -17816,6 +17816,7 @@ const french: TeamsTranslationRoot = {
                 authenticationRequired: 'Le membre désigné doit autoriser cette clé avec sa connexion à l’équipe.',
                 authenticationUnavailable: 'L’authentification de l’équipe est indisponible. Demande à un administrateur de vérifier sa politique de connexion.',
                 keysLoadFailed: 'Impossible de charger les clés API.',
+                keysUnreadable: "Ce Home n’a pas pu lire les clés d’API enregistrées pour cet identifiant.",
                 keysRetry: 'Réessayer de charger les clés',
                 keysEmpty: 'Aucune clé',
                 keysEmptyBody: 'Créer la première clé active l’accès externe ; révoquer la dernière le désactive.',

@@ -17573,6 +17573,7 @@ const german: TeamsTranslationRoot = {
                 authenticationRequired: 'Das zugewiesene Mitglied muss diesen Schlüssel mit seiner Team-Anmeldung autorisieren.',
                 authenticationUnavailable: 'Die Team-Authentifizierung ist nicht verfügbar. Bitte einen Team-Administrator, die Anmelderichtlinie zu prüfen.',
                 keysLoadFailed: 'Die API-Schlüssel konnten nicht geladen werden.',
+                keysUnreadable: "Dieses Home konnte die gespeicherten API-Schlüssel für diese Zugangsdaten nicht lesen.",
                 keysRetry: 'API-Schlüssel erneut laden',
                 keysEmpty: 'Noch keine Schlüssel',
                 keysEmptyBody: 'Der erste Schlüssel schaltet den externen Zugriff ein; das Widerrufen des letzten schaltet ihn aus.',

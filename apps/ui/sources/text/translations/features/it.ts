@@ -17759,6 +17759,7 @@ const italian: TeamsTranslationRoot = {
                 authenticationRequired: 'Il membro assegnato deve autorizzare questa chiave con il proprio accesso al team.',
                 authenticationUnavailable: 'L’autenticazione del team non è disponibile. Chiedi a un amministratore di verificare i criteri di accesso.',
                 keysLoadFailed: 'Impossibile caricare le chiavi API.',
+                keysUnreadable: "Questo Home non è riuscito a leggere le chiavi API salvate per questa credenziale.",
                 keysRetry: 'Riprova a caricare le chiavi',
                 keysEmpty: 'Ancora nessuna chiave',
                 keysEmptyBody: 'Creare la prima chiave attiva l’accesso esterno; revocare l’ultima lo disattiva.',
