@@ -213,6 +213,7 @@ export async function registerMachineApprovalDecisionHomeHttp(app: FastifyInstan
     credentials: StoredCredentials;
     installation: Awaited<ReturnType<typeof readOrCreateInstallationIdentity>>;
     executor: ReturnType<typeof createCliActionExecutorHarness>['executor'];
+    retainedAction?: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>;
 }>) {
     const provenance = readAuthTokenProvenance(decodeJwtPayload(input.credentials.token), { allowLegacyHome: false });
     if (provenance?.provenance.kind !== 'account') throw new Error('Expected the fixture Account credential');
@@ -240,7 +241,6 @@ export async function registerMachineApprovalDecisionHomeHttp(app: FastifyInstan
     const actionId = 'approval.request.decide';
     const issued = new Map<string, ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>>();
     const mintPath = bindExternalActionExecutionAuthorizationHttpPathV1(actionId);
-    const verifyPath = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
     // This network fixture accepts only its existing bearer; caller input cannot select another principal.
     app.post(mintPath, async request => {
         expect(request.headers.authorization === `Bearer ${input.credentials.token}`, 'Unexpected fixture authorization bearer').toBe(true);
@@ -259,19 +259,27 @@ export async function registerMachineApprovalDecisionHomeHttp(app: FastifyInstan
         issued.set(authorization.token, authorization);
         return authorization;
     });
-    app.post(verifyPath, async request => {
-        const authorization = issued.get(String(request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]));
-        if (!authorization) throw new Error('Unknown decision admission');
-        const body = ExternalActionExecutionAuthorizationVerifyRequestV1Schema.parse(request.body);
-        expect(body.binding).toEqual(authorization.binding);
-        expect(verifyExternalActionMachineRequestV1({ authorizationToken: authorization.token,
-            effectActionId: authorization.binding.actionId, target: authorization.binding.target,
-            installationId: input.installation.installationId, requestId: authorization.binding.requestId,
-            method: 'POST', path: verifyPath, body, publicKey,
-            signature: String(request.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]),
-        })).toBe(true);
-        return ExternalActionExecutionAuthorizationVerifyResponseV1Schema.parse({ ok: true });
-    });
+    const registerVerify = (verifiedActionId: string) => {
+        const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(verifiedActionId);
+        app.post(path, async request => {
+            const token = String(request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]);
+            const authorization = input.retainedAction?.token === token ? input.retainedAction : issued.get(token);
+            if (authorization?.binding.actionId !== verifiedActionId) throw new Error('Unknown fixture admission');
+            const body = ExternalActionExecutionAuthorizationVerifyRequestV1Schema.parse(request.body);
+            expect(body.binding).toEqual(authorization.binding);
+            expect(verifyExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                effectActionId: authorization.binding.actionId, target: authorization.binding.target,
+                installationId: input.installation.installationId, requestId: authorization.binding.requestId,
+                method: 'POST', path, body, publicKey,
+                signature: String(request.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]),
+            })).toBe(true);
+            return ExternalActionExecutionAuthorizationVerifyResponseV1Schema.parse({ ok: true });
+        });
+    };
+    registerVerify(actionId);
+    if (input.retainedAction && input.retainedAction.binding.actionId !== actionId) {
+        registerVerify(input.retainedAction.binding.actionId);
+    }
     app.post(`/v1/actions/${actionId}`, async request => {
         expect(request.headers.authorization === `Bearer ${input.credentials.token}`, 'Unexpected fixture authorization bearer').toBe(true);
         const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.body);

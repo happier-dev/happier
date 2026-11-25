@@ -1,6 +1,15 @@
 import fastify from 'fastify';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApprovalRequestV2Schema, encodePlainArtifactStoredContent, SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol';
+import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { ApprovalRequestV2Schema, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
+    DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
+import { DeploymentDomainMachineTopologyV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { DeploymentChildRpcV1Schema } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { resolveApprovalExecutor } from '@happier-dev/protocol/approvals/resolveApprovalExecutor';
@@ -11,13 +20,13 @@ import { updateSettings } from '@/persistence';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
-import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
-import type { RpcHandler } from '@/api/rpc/types';
+import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createCliActionExecutorFromCredentials } from '../createCliActionExecutorFromCredentials';
 import { createCliActionExecutorHarness } from '../createCliActionExecutorHarness';
-import { registerAccountHomeHttp, registerPlainArtifactRoutes } from '../widgetApproval.testkit';
+import { createMachineApprovalReplayPreparer, registerAccountHomeHttp, registerPlainArtifactRoutes,
+    registerMachineApprovalDecisionHomeHttp } from '../widgetApproval.testkit';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -69,56 +78,97 @@ it.each([true, false])('replays Domain add with controller operation available=%
             const features = registerAccountHomeHttp(app, { accountId, serverId: homeId, settings: { actionsSettingsV1: actions } });
             const artifacts = registerPlainArtifactRoutes(app, accountId);
             vi.stubGlobal('fetch', async () => Response.json(features));
-            const input = { serverId: homeId, environmentId: 'environment', targetLinkId: 'runtime', requestKey: 'reviewed-domain',
-                    domainId: 'domain', expectedRevision: 3, expectedTargetLinkRevision: 2,
-                    contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1 };
+            const installation = await readOrCreateInstallationIdentity();
+            const privateKey = decodeBase64(installation.privateKey, 'base64url');
+            const environment = createDeploymentEnvironmentDetailV1();
+            environment.environment.serverId = homeId;
+            environment.environment.owner = { kind: 'account', accountId };
+            environment.environment.controllerMachineId = machineId;
+            delete environment.content.ingress;
+            const runtimeLink = environment.targetLinks[0]!.targetLink;
+            runtimeLink.machines = [machineId];
+            runtimeLink.members = [{ machineId, installationId: installation.installationId, state: 'active' }];
+            const input = { serverId: homeId, environmentId: environment.environment.id, targetLinkId: runtimeLink.id,
+                requestKey: 'reviewed-domain', domainId: 'domain', expectedRevision: environment.environment.revision,
+                expectedTargetLinkRevision: runtimeLink.revision, contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1 };
+            const target = { kind: 'machine' as const, machineId };
+            const envelope = { v: 1 as const, requestId: 'original-domain-request', target, input };
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'retained-domain-root', binding: {
+                serverIdentityId: homeId, accountId, authentication: { kind: 'account', tokenEpoch: 1 }, custodianAccountId: accountId,
+                admittedMachineRole: 'manage', machineId, installationId: installation.installationId, actionId, environmentId: input.environmentId,
+                requestId: envelope.requestId, accountEncryptionMode: 'plain', target,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), deploymentChildRoot: true,
+                deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, input),
+            } });
             const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
                 createdBy: { surface: 'system' }, requestedSurface: 'cli', actionId, actionArgs: input,
                 summary: 'Reviewed Domain change', approval: { flow: 'deferred', result: 'required' },
                 executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
-                    serverId, serverIdentityId: homeId, accountId, machineId, target: { kind: 'machine', machineId },
-                    actionId, requestId: 'original-domain-request' } });
+                    serverId, serverIdentityId: homeId, accountId, machineId, target, actionId, requestId: envelope.requestId,
+                    originalActionEnvelope: envelope, externalActionExecutionAuthorization: authorization,
+                    externalActionInputSignature: signExternalActionApprovalInputV1({ authorizationToken: authorization.token,
+                        actionId, input, target, privateKey }),
+                } });
             artifacts.seed('approval', encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request)),
                 encodePlainArtifactStoredContent({ body: JSON.stringify(request) }));
-            const machine = { id: machineId, kind: 'persistent', active: true, installationId: 'installation',
+            const machine = { id: machineId, kind: 'persistent', active: true, installationId: installation.installationId,
+                installationPublicKey: Buffer.from(decodeBase64(installation.publicKey, 'base64url')).toString('base64'),
                 revokedAt: null, replacedByMachineId: null,
                 access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
             app.get('/v1/machines', async () => [machine]);
             app.get(`/v1/machines/${machineId}`, async () => ({ machine }));
-            const environment = createDeploymentEnvironmentDetailV1();
-            environment.environment.id = input.environmentId;
-            environment.environment.serverId = homeId;
-            environment.environment.owner = { kind: 'account', accountId };
-            environment.environment.controllerMachineId = machineId;
-            app.get('/v1/deployments/environments/environment', async () => ({ ok: true,
+            for (const [id, kind, content] of [
+                [environment.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environment.content],
+                [runtimeLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, environment.targetLinks[0]!.content],
+                [input.contentArtifactId, DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1, { hostname: 'app.example.test', target: { service: 'web', containerPort: 8080 } }],
+            ] as const) artifacts.seed(id, encodePlainArtifactStoredContent({ kind, title: 'Domain' }),
+                encodePlainArtifactStoredContent({ body: JSON.stringify(content) }));
+            app.get(`/v1/deployments/environments/${input.environmentId}`, async () => ({ ok: true,
                 environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink) }));
             const writes: unknown[] = [];
-            app.post('/v1/deployments/environments/environment/domains', async httpRequest => {
+            app.post(`/v1/deployments/environments/${input.environmentId}/domains`, async httpRequest => {
                 writes.push(httpRequest.body);
                 // Home refusal is deliberately terminal: reaching it proves operation
                 // admission preceded storage without performing a native effect.
                 return { ok: false, error: 'deployment_conflict' };
             });
             const runtime = createHostActionOperationRuntime({ serverId: homeId, machineId, resolveAccountId: async () => accountId });
-            const { executor: daemon, deps } = createCliActionExecutorHarness({ credentials, token: credentials.token,
+            const native = createDaemonDeploymentActionDeps({ credentials, serverId: homeId, serverHttpBaseUrl: endpoint, machineId,
+                resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
+                runtime: { async acquire() { throw new Error('Domain Add cannot deploy an application'); } },
+            });
+            let receiving: ReturnType<typeof createCliActionExecutorHarness>['executor'];
+            const prepareApprovalExecutionAuthorization = createMachineApprovalReplayPreparer({ credentials,
+                machineId, serverId, serverIdentityId: homeId, serverHttpBaseUrl: endpoint, installation, executor: () => receiving });
+            const { executor: daemon } = createCliActionExecutorHarness({ credentials, token: credentials.token,
                 sessionId: 'cli-global', mode: 'plain', ctx: null, serverId, serverIdentityId: homeId,
-                serverHttpBaseUrl: endpoint, actionsSettingsProvider: policy }, {
+                serverHttpBaseUrl: endpoint, actionsSettingsProvider: policy, externalActionMachineInstallationId: installation.installationId,
+                externalActionMachineRequestPrivateKey: privateKey }, {
                 ...(operationAvailable ? { runActionOperation: runtime.runActionOperation } : {}),
+                deploymentAction: native.deploymentAction, prepareApprovalExecutionAuthorization,
                 isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
                     credentials, machineId, serverId, serverApiUrl: endpoint }),
             });
-            const handlers = new Map<string, RpcHandler>();
-            registerApprovalRpcHandlers({ rpcHandlerManager: { registerHandler: (method, handler) => handlers.set(method, handler) }, actionExecutor: daemon });
+            receiving = daemon;
+            const receiver = await registerMachineApprovalDecisionHomeHttp(app, { credentials, accountId, machineId,
+                serverId, serverIdentityId: homeId, serverHttpBaseUrl: endpoint, installation, executor: daemon, retainedAction: authorization });
             // HTTP and exact Machine RPC are external boundaries. The public
             // decision, placement, replay, operation and storage owners stay real.
             vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async rpcRequest => {
                 expect(rpcRequest.machineId).toBe(machineId);
-                const handler = handlers.get(rpcRequest.method);
-                if (!handler) throw new Error(`Unexpected RPC ${rpcRequest.method}`);
-                return await handler(rpcRequest.request, { signal: new AbortController().signal, callerAuthority: 'present_user',
-                    machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: accountId, custodianAccountId: accountId,
-                        machineId, installationId: machine.installationId, role: 'manage', encryptionMode: 'plain' }),
-                    verifyMachineAdmissionCurrent: async () => true });
+                if (rpcRequest.method === RPC_METHODS.DAEMON_DEPLOYMENT_CHILD) {
+                    const child = DeploymentChildRpcV1Schema.parse(rpcRequest.request);
+                    expect(child.kind).toBe('domainDiscover');
+                    return DeploymentDomainMachineTopologyV1Schema.parse({ machineId, installationId: installation.installationId,
+                        dockerEngineId: 'fixture-docker', privateNetworks: [], replicas: [], caddy: { status: 'ready', containerId: 'caddy',
+                            containerName: 'caddy', adminSocketPath: '/run/caddy/admin.sock', networkNames: [], servers: [
+                                { serverId: 'private', listen: [':8080'], tls: false, automaticHttpsDisabled: true, endpoints: [] },
+                                { serverId: 'public', listen: [':443'], tls: true, automaticHttpsDisabled: false,
+                                    endpoints: [{ hostAddress: '0.0.0.0', hostPort: 443, containerPort: 443 }] },
+                            ] } });
+                }
+                return await receiver.handleRequest({ method: `${machineId}:${rpcRequest.method}`,
+                    params: rpcRequest.request, callerAuthority: 'present_user' });
             });
             const caller = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
                 serverId, serverIdentityId: homeId, serverApiUrl: endpoint, actionsSettingsProvider: policy });
@@ -131,15 +181,6 @@ it.each([true, false])('replays Domain add with controller operation available=%
                         ok: false, errorCode: 'operation_unavailable',
                         error: 'operation_unavailable (deployment.domain.operation_acceptance_missing)',
                     } } });
-                    // Approval history retains safe prose but excludes arbitrary
-                    // details. The owning live result also carries the typed failureCause.
-                    expect(await deps.deploymentAction!(actionId, input, { surface: 'cli', authority: 'present_user',
-                        serverId, serverIdentityId: homeId, runtimeAccountId: accountId,
-                        actionRequestId: 'original-domain-request', actionCaller: { kind: 'host' } })).toMatchObject({
-                        ok: false, errorCode: 'operation_unavailable', details: { requiredFact: 'operationAcceptance' },
-                        failureCause: { phase: 'deployment.domain.operation_acceptance_missing', errorClass: 'Error',
-                            errorCode: null, httpStatus: null },
-                    });
                     expect(writes).toEqual([]);
                     return;
                 }
