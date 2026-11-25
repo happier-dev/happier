@@ -76,6 +76,7 @@ import type { ResolveManagedProviderPurposeBindingIntent } from '@/providers/man
 import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/runtimeCatalog';
 import type { ExecutionRunConnectedServicesSelectionReport } from './runtime/create';
 import { withExecutionRunHostRuntimeCleanup } from './hostRuntime/cleanup';
+import { createLazyExecutionRunHostRuntime } from './hostRuntime/lazy';
 import { borrowExecutionRunRuntimeTurn } from './hostRuntime/borrowedTurn';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import {
@@ -265,6 +266,33 @@ type ExecutionRunRuntimeCreateOptions = Readonly<{
   resolveProvidersFeatureEnabled?: () => boolean | Promise<boolean>;
   resolveAccountSettingsSnapshot?: import('@/settings/accountSettings/activeAccountSettingsSnapshot').AccountSettingsSnapshotResolver;
 }>;
+
+function bindRetainedRunProjectLaunch(
+  launch: ExecutionRunProjectLaunchContext | undefined,
+  authorization: NonNullable<ExecutionRunProjectLaunchContext['ingress']>['callerInputAuthorization'],
+): ExecutionRunProjectLaunchContext | undefined {
+  const ingress = launch?.ingress;
+  return launch && ingress && authorization ? {
+    ...launch,
+    forRunLifetime: signal => {
+      // Admission already selected the requester and Machine. Project/setup
+      // consume that selection under the Run's signal. New Account reads
+      // use the retained ports and their own credential checks.
+      const isCurrent = async () => !signal.aborted;
+      const bindActionContext = <T extends NonNullable<typeof ingress.localActionContext>>(context: T) => ({
+        ...context, signal, externalActionExecutionAuthorization: authorization, callerInputAuthorization: authorization,
+        verifyMachineAdmissionCurrent: isCurrent, operationProgress: undefined, operationOwnerUpdate: undefined,
+        operationAcceptance: undefined, operationCancellation: undefined, operationReview: undefined,
+      });
+      return { ...launch, isCurrent, requester: undefined, operation: undefined,
+        ingress: { ...ingress, signal, verifyMachineAdmissionCurrent: isCurrent, callerInputAuthorization: authorization,
+          requesterSessionBootstrap: undefined,
+          ...(ingress.localActionContext ? { localActionContext: bindActionContext(ingress.localActionContext) } : {}) },
+        ...(launch.setupAutostart ? { setupAutostart: { ...launch.setupAutostart, callerInputAuthorization: authorization,
+          context: bindActionContext(launch.setupAutostart.context) } } : {}) };
+    },
+  } : launch;
+}
 
 function isExecutionRunProfileCatalogResolution(
   value: unknown,
@@ -1717,30 +1745,34 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   }>): ExecutionRunHostRuntime {
     const run = opts.runId ? this.runs.get(opts.runId) ?? null : null;
     const resumeOptions = resolveExecutionRunResumeBackendOptions({ run });
-    const captured = opts.projectLaunchContext;
-    const prepareNativeOperation = captured?.prepareNativeOperation;
-    const projectLaunchContext = captured && prepareNativeOperation && run ? {
-      ...captured,
-      prepareNativeOperation: async (...input: Parameters<typeof prepareNativeOperation>) => {
-        const native = await prepareNativeOperation(...input);
-        const current = this.runs.get(run.runId);
-        if (current) {
-          const accountId = resolveExecutionRunRequesterAccountId(current, this.runtimeAccountId);
-          const executionAuthorization = captured.ingress?.callerInputAuthorization;
-          const scmComparisonOperations = native?.memberIdentity
-            ? runWithScmAccountScope(accountId, () => createMemberScmComparisonOperations({ native,
-              signal: native.signal }), executionAuthorization)
-            : undefined;
-          this.runs.set(run.runId, { ...current, scmComparisonOperations, executionAuthorization });
-        }
-        return native;
-      },
-    } : captured;
-    return this.createExecutionRunRuntime({
+    const observeProjectPlacement = <T extends ExecutionRunProjectLaunchContext>(captured: T): T => {
+      const prepareNativeOperation = captured.prepareNativeOperation;
+      return prepareNativeOperation && run ? {
+        ...captured,
+        prepareNativeOperation: async (...input: Parameters<typeof prepareNativeOperation>) => {
+          const native = await prepareNativeOperation(...input);
+          const current = this.runs.get(run.runId);
+          if (current) {
+            const accountId = resolveExecutionRunRequesterAccountId(current, this.runtimeAccountId);
+            const executionAuthorization = captured.ingress?.callerInputAuthorization;
+            const scmComparisonOperations = native?.memberIdentity
+              ? runWithScmAccountScope(accountId, () => createMemberScmComparisonOperations({ native,
+                signal: native.signal }), executionAuthorization)
+              : undefined;
+            this.runs.set(run.runId, { ...current, scmComparisonOperations, executionAuthorization });
+          }
+          return native;
+        },
+      } : captured;
+    };
+    const createRuntime = (
+      projectLaunchContext: ExecutionRunProjectLaunchContext | undefined,
+      resolveAccountSettingsSnapshot: ExecutionRunRuntimeCreateOptions['resolveAccountSettingsSnapshot'],
+    ) => this.createExecutionRunRuntime({
       ...(opts.functionTools ? { functionTools: opts.functionTools } : {}),
-      resolveAccountSettingsSnapshot: opts.resolveAccountSettingsSnapshot,
+      resolveAccountSettingsSnapshot,
       ...(run ? { callId: run.callId, sidechainId: run.sidechainId } : {}),
-      ...(projectLaunchContext ? { projectLaunchContext } : {}),
+      ...(projectLaunchContext ? { projectLaunchContext: observeProjectPlacement(projectLaunchContext) } : {}),
       ...(opts.runId ? { runId: opts.runId } : {}),
       ...(opts.controllerOccurrenceId ? { controllerOccurrenceId: opts.controllerOccurrenceId } : {}),
       backendId: opts.backendId,
@@ -1779,6 +1811,37 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         ? { connectedServices: resumeOptions.connectedServices }
         : {}),
       start: { ...resumeOptions.start, ...opts.start },
+    });
+    const launch = opts.projectLaunchContext;
+    const resolveAccountSettingsSnapshot = opts.resolveAccountSettingsSnapshot;
+    const runAccountId = run?.sessionId === null ? resolveExecutionRunRequesterAccountId(run, this.runtimeAccountId) : undefined;
+    if (!runAccountId || runAccountId === this.runtimeAccountId) return createRuntime(launch, resolveAccountSettingsSnapshot);
+
+    // Cold detached recovery has the same requester custody requirement as Start.
+    const capture = resolveAccountSettingsSnapshot?.captureForDetachedRun;
+    const requester = readRequesterAccountActionContext(launch?.ingress?.callerInputAuthorization);
+    if (!capture || requester?.authorization.binding.accountId !== runAccountId) {
+      throw createExecutionRunCodedError('provider_authorization_changed', 'requester_not_current');
+    }
+    return createLazyExecutionRunHostRuntime({
+      resolveRuntime: async signal => {
+        const retained = await capture(signal);
+        try {
+          if (retained.authorization?.binding.accountId !== runAccountId) {
+            throw createExecutionRunCodedError('provider_authorization_changed', 'requester_not_current');
+          }
+          const project = bindRetainedRunProjectLaunch(launch, retained.authorization);
+          const forRunLifetime = project?.forRunLifetime;
+          const runtime = createRuntime(project && forRunLifetime ? {
+            ...project,
+            forRunLifetime: lifetime => observeProjectPlacement(forRunLifetime(lifetime)),
+          } : project, retained.read);
+          return withExecutionRunHostRuntimeCleanup(runtime, retained.release);
+        } catch (error) {
+          await retained.release();
+          throw error;
+        }
+      },
     });
   }
 
@@ -2406,29 +2469,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       ...resolution,
       releaseAccountSnapshot: async () => { await admittedAccount?.release(); },
     } : resolution, options => {
-      const launch = params.projectLaunchContext;
-      const authorization = admittedAccount?.authorization;
-      const ingress = launch?.ingress;
-      const projectLaunchContext: ExecutionRunProjectLaunchContext | undefined = launch && ingress && authorization ? {
-        ...launch,
-        forRunLifetime: signal => {
-          // The Start already selected the requester and Machine. Project/setup
-          // consume that selection under the Run's signal. New Account reads
-          // use the retained ports and their own credential checks.
-          const isCurrent = async () => !signal.aborted;
-          const bindActionContext = <T extends NonNullable<typeof ingress.localActionContext>>(context: T) => ({
-            ...context, signal, externalActionExecutionAuthorization: authorization, callerInputAuthorization: authorization,
-            verifyMachineAdmissionCurrent: isCurrent, operationProgress: undefined, operationOwnerUpdate: undefined,
-            operationAcceptance: undefined, operationCancellation: undefined, operationReview: undefined,
-          });
-          return { ...launch, isCurrent, requester: undefined, operation: undefined,
-            ingress: { ...ingress, signal, verifyMachineAdmissionCurrent: isCurrent, callerInputAuthorization: authorization,
-              requesterSessionBootstrap: undefined,
-              ...(ingress.localActionContext ? { localActionContext: bindActionContext(ingress.localActionContext) } : {}) },
-            ...(launch.setupAutostart ? { setupAutostart: { ...launch.setupAutostart, callerInputAuthorization: authorization,
-              context: bindActionContext(launch.setupAutostart.context) } } : {}) };
-        },
-      } : launch;
+      const projectLaunchContext = bindRetainedRunProjectLaunch(params.projectLaunchContext, admittedAccount?.authorization);
       return this.createExecutionRunRuntime({ ...options, nativeSandbox,
         resolveAccountSettingsSnapshot: admittedAccount?.read ?? accountSnapshotResolver,
         ...(params.projectSetupOperation && !projectLaunchContext?.forRunLifetime ? { projectSetupOperation: params.projectSetupOperation } : {}),
