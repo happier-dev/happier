@@ -80,7 +80,7 @@ it.each([
     const screen = await renderScreen(<ApprovalReviewFacts actionId={TEAM_CREATE_ACTION_ID_V1} actionArgs={actionArgs}
         preview={null} serverId={home} testID="governance-review" />);
     try {
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain(name ?? t('common.unavailable')));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(name ?? t('approvals.referenceNameUnavailable')));
         if (name === null) expect(screen.getTextContent()).not.toContain(person.name);
         expect(screen.getTextContent()).not.toContain(person.accountId);
         await screen.pressByTestIdAsync('approvals.technical-details.header');
@@ -110,7 +110,8 @@ it('keeps the unreadable primary Team identity in Technical details', async () =
     const screen = await renderScreen(<ApprovalReviewFacts actionId={contextAction}
         actionArgs={{ sessionId, primaryTeamId: team.teamId }} preview={null} serverId={home} testID="governance-review" />);
     try {
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain(`${t('session.access.context')} ${t('common.unavailable')}`));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(`${t('session.access.context')} —`));
+        expect(screen.getTextContent()).toContain(t('approvals.referenceNameUnavailable'));
         expect(screen.getTextContent()).not.toContain(team.teamId);
         await screen.pressByTestIdAsync('approvals.technical-details.header');
         expect(screen.getTextContent()).toContain(team.teamId);
