@@ -8,6 +8,7 @@ const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 // The UI transport adapter delegates into the real Action executor; only its host ports are fixtures.
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({ createFrontDoorActionExecute: () => execute }));
 import { suggestDeploySetup } from './suggestDeploySetup';
+import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 
 const catalog: DeploySuggestionCatalogV1 = {
@@ -60,6 +61,45 @@ it('uses the first ready online Machine once and checks model output against the
     // A no-tools task runs in the Machine's home folder, which always exists (F-CWD: `<home>/src` may not).
     expect(start[1]).toMatchObject({ sessionId: null, cwd: '/home/alice', permissionMode: 'no_tools',
         intentInput: { input: { description: '  Bakery\n', catalog } } });
+});
+
+it('observes the same Suggest Run after the initial observation times out', async () => {
+    const controller = new AbortController();
+    const settled = terminal({ recommendations: [recommendation] });
+    let finished = false;
+    const read = vi.fn(async () => finished ? settled : {
+        run: { ...settled.run, status: 'running', finishedAtMs: undefined },
+    });
+    const progress = vi.fn();
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+        agentsModelsList: async () => ({ llmTaskRunner: { ok: true, source: 'auto', runner, title: 'Claude' } }),
+        executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'ready' }),
+        executionRunStart: async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }),
+        executionRunWait: async () => ({ ok: true, status: 'running', disposition: 'observation_timeout',
+            runId: 'run_1', timeoutMs: 12_000, observedAtMs: 13_000, deadlineAtMs: 13_000 }),
+        executionRunGet: read,
+    }));
+    execute.mockImplementation(executor.execute);
+    const address = { serverId: 'home', machineId: 'ready' };
+    const result = suggestDeploySetup({ serverId: address.serverId, description: 'Bakery',
+        catalog: { ...catalog, machines: catalog.machines.filter(machine => machine.machineId === address.machineId) },
+        signal: controller.signal, onProgress: progress });
+    try {
+        await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+        expect(progress).toHaveBeenCalledWith(expect.objectContaining({ kind: 'run', runId: 'run_1', stop: expect.any(Function) }));
+        finished = true;
+        notifyExecutionRunActivity(address, { runId: 'another-run' });
+        expect(read).toHaveBeenCalledTimes(1);
+        notifyExecutionRunActivity(address, { runId: 'run_1' });
+        await expect(result).resolves.toMatchObject({ kind: 'recommendations', recommendations: [recommendation] });
+        expect(read).toHaveBeenCalledTimes(2);
+        expect(execute.mock.calls.filter(row => row[0] === 'execution.run.start')).toHaveLength(1);
+        notifyExecutionRunActivity(address, { runId: 'run_1' });
+        expect(read).toHaveBeenCalledTimes(2);
+    } finally {
+        controller.abort();
+        await result;
+    }
 });
 
 it('reads one catalog for a question round and reuses it for the answered run', async () => {
@@ -128,6 +168,25 @@ it('returns per-Machine repair reasons without starting a run when no Agent is r
     expect(execute.mock.calls.filter(row => row[0] === 'deployments.suggestions.check')).toHaveLength(0);
 });
 
+it('preserves a refused Machine inventory read separately from an empty inventory', async () => {
+    let refused = false;
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+        registryActionExecute: async () => ({ pages: [] }),
+        connectedServiceAction: async () => ({ accounts: [], pools: [], healthBasis: 'credentials',
+            source: { completeness: 'complete', observedAtMs: 1 } }),
+        machinesList: async () => refused
+            ? { ok: false, errorCode: 'server_target_mismatch', errorMessage: 'Machine inventory belongs to another Home' }
+            : { items: [] },
+        deploymentSuggestionTargets: async () => ({ targets: catalog.targets, stores: [] }),
+        deploymentSuggestionForges: async () => catalog.forges,
+    }));
+    execute.mockImplementation(executor.execute);
+    const input = { serverId: 'home', description: 'Bakery' };
+    expect(await suggestDeploySetup(input)).toEqual({ kind: 'noAgent', machines: [] });
+    refused = true;
+    expect(await suggestDeploySetup(input)).toEqual({ kind: 'failed', stage: 'setup', code: 'server_target_mismatch' });
+});
+
 it('surfaces an explicit no-tools refusal through the existing per-Machine repair result', async () => {
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({ agentsModelsList: async () => ({ llmTaskRunner: {
         ok: false, errorCode: 'LLM_TASK_RUNNER_UNAVAILABLE', reason: 'no_matching_model', unavailableAgents: [],
@@ -141,7 +200,8 @@ it('surfaces an explicit no-tools refusal through the existing per-Machine repai
     expect(execute.mock.calls.map(row => row[0])).toEqual(['agents.models.list']);
 });
 
-it.each([false, true])('stops the accepted run once without hiding Stop failure (refused: %s)', async (refused) => {
+it.each(['stopped', 'succeeded', 'failed'] as const)(
+    'settles the accepted run once even when Stop is refused (%s)', async (status) => {
     const abort = new AbortController();
     let stops = 0;
     const resolvedRunner = { ...runner, permissionMode: 'no_tools' } as const;
@@ -149,15 +209,22 @@ it.each([false, true])('stops the accepted run once without hiding Stop failure 
         agentsModelsList: async () => ({ llmTaskRunner: { ok: true, source: 'explicit', runner: resolvedRunner } }),
         executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'ready' }),
         executionRunStart: async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }),
-        executionRunStop: async () => { stops++; return refused
-            ? { ok: false, errorCode: 'stop_refused', error: 'Stop refused' } : { ok: true }; },
-        executionRunWait: async () => ({ ok: true, status: 'succeeded', result: terminal({ recommendations: [recommendation] }) }),
+        executionRunStop: async () => { stops++; return status === 'stopped'
+            ? { ok: true } : { ok: false, errorCode: 'stop_refused', error: 'Stop refused' }; },
+        executionRunWait: async () => {
+            const result = terminal({ recommendations: [recommendation] });
+            return status === 'failed'
+                ? { ok: true, status: 'failed', result: { ...result, run: { ...result.run, status: 'failed',
+                    error: { code: 'permission_denied', message: 'Task refused' } } } }
+                : { ok: true, status: 'succeeded', result };
+        },
     }));
     execute.mockImplementation(executor.execute);
     expect(await suggestDeploySetup({ serverId: 'home', description: 'Bakery',
         catalog: { ...catalog, machines: catalog.machines.filter(machine => machine.machineId === 'ready') }, choice: runner, signal: abort.signal,
-        onProgress: event => { if (event.kind === 'run') abort.abort(); } })).toEqual(refused
-            ? { kind: 'failed', code: 'stop_refused', stage: 'run', runner: resolvedRunner } : { kind: 'stopped' });
+        onProgress: event => { if (event.kind === 'run') abort.abort(); } })).toMatchObject(status === 'stopped' ? { kind: 'stopped' }
+            : status === 'succeeded' ? { kind: 'recommendations', recommendations: [expect.objectContaining({ title: recommendation.title })] }
+            : { kind: 'failed', code: 'permission_denied', stage: 'run', runner: resolvedRunner });
     expect(stops).toBe(1);
     expect(execute.mock.calls.filter(row => row[0] === 'deployments.suggestions.check')).toHaveLength(0);
 });

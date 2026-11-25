@@ -47,7 +47,7 @@ type Phase =
     }>
   | Readonly<{
       kind: 'settled';
-      outcome: Exclude<DeploySuggestionOutcome, { kind: 'stopped' }>;
+      outcome: Exclude<DeploySuggestionOutcome, { kind: 'stopped' | 'stopRefused' }>;
       runner: Runner | null;
       /** The person skipped the questions that came with these cards. */
       skippedQuestions?: boolean;
@@ -159,7 +159,7 @@ export function useNewAppAutoSuggestions(
       },
     }).then((outcome) => {
       if (abort.current !== controller) return;
-      if (controller.signal.aborted && outcome.kind === 'failed') {
+      if (outcome.kind === 'stopRefused') {
         // Stop was asked and refused: the Run may still be going. Keep it on screen with the refusal.
         setPhase((current) => (current.kind === 'working' ? { ...current, stop: { refused: outcome.code } } : current));
         return;

@@ -10,6 +10,7 @@ import type { LlmTaskRunnerChoiceV1, LlmTaskRunnerConfigV1 } from '@happier-dev/
 import { type LlmTaskRunnerUnavailableAgentV1, type LlmTaskIdV1, LLM_TASK_DECLARATIONS_V1, LlmTaskRunnerResolutionWireV1Schema, needsLlmTaskRunnerCandidatesV1, resolveLlmTaskRunnerV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerSelection';
 
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { subscribeExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 
 const executeAction = createFrontDoorActionExecute();
 
@@ -17,7 +18,7 @@ export type LlmTaskRunResult =
     | { ok: true; terminal: ExecutionRunGetResponse }
     | { ok: false; error: string; errorCode?: string; runId?: string; outcome?: 'pending' | 'unknown'; reason?: 'no_ready_agent' | 'no_matching_model'; unavailableAgents?: readonly LlmTaskRunnerUnavailableAgentV1[];
         /** The settled Run's own typed error (its runtime issue included), when the Run itself failed. */
-        runError?: ExecutionRunError };
+        runError?: ExecutionRunError; stopRefused?: true };
 
 export type LlmTaskHostV1 =
     /** `machineId`: the Session's machine, where Auto resolves the runner; `agentTargetKey`: the Session's own Agent, which wins Auto's cost ties. */
@@ -101,6 +102,7 @@ export async function runLlmTaskInWorkspace(params: Readonly<{
     task: LlmTaskIdV1;
     instructions?: string;
     resolvedRunner?: LlmTaskRunnerConfigV1;
+    continueObservationAfterTimeout?: boolean;
     onStarted?: (runId: string) => void;
     signal?: AbortSignal;
     intent: 'task' | 'scm_commit_message';
@@ -130,40 +132,46 @@ export async function runLlmTaskInWorkspace(params: Readonly<{
     };
     const sessionId = params.host.kind === 'session' ? params.host.sessionId : null;
     params.signal?.addEventListener('abort', stopAcceptedRun, { once: true });
-    let startResult: ActionExecuteResult;
     try {
-        startResult = await executeAction(
-        'execution.run.start',
-        {
-            sessionId,
-            ...(params.host.kind === 'workspace' ? { cwd: params.host.workspace.rootPath } : {}),
-            kind: executionRunKindForIntent(params.intent),
-            intent: params.intent,
-            ...(params.instructions === undefined ? {} : { instructions: params.instructions }),
-            backendTarget: readBackendTargetRefV2(parseBackendTargetKeyV2(runner.modelSelection.agentTargetKey)),
-            ...projectSessionModelRefToExecutionModelSelection(runner.modelSelection),
-            ...(runner.connectedServices !== undefined ? { connectedServices: runner.connectedServices } : {}),
-            ...(runner.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: runner.sessionConfigOptionOverrides } : {}),
-            // Hard-safety: the task declares only `no_tools`, and the owner clamps every runner to it.
-            permissionMode: runner.permissionMode ?? LLM_TASK_DECLARATIONS_V1[params.task].permissionModes[0],
-            retentionPolicy: 'ephemeral',
-            runClass: 'bounded',
-            ioMode: 'request_response',
-            intentInput: params.intentInput,
-            waitForCompletion: true,
-        },
-        context,
+        const startResult = await executeAction(
+            'execution.run.start',
+            {
+                sessionId,
+                ...(params.host.kind === 'workspace' ? { cwd: params.host.workspace.rootPath } : {}),
+                kind: executionRunKindForIntent(params.intent),
+                intent: params.intent,
+                ...(params.instructions === undefined ? {} : { instructions: params.instructions }),
+                backendTarget: readBackendTargetRefV2(parseBackendTargetKeyV2(runner.modelSelection.agentTargetKey)),
+                ...projectSessionModelRefToExecutionModelSelection(runner.modelSelection),
+                ...(runner.connectedServices !== undefined ? { connectedServices: runner.connectedServices } : {}),
+                ...(runner.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: runner.sessionConfigOptionOverrides } : {}),
+                // Hard-safety: the task declares only `no_tools`, and the owner clamps every runner to it.
+                permissionMode: runner.permissionMode ?? LLM_TASK_DECLARATIONS_V1[params.task].permissionModes[0],
+                retentionPolicy: 'ephemeral',
+                runClass: 'bounded',
+                ioMode: 'request_response',
+                intentInput: params.intentInput,
+                waitForCompletion: true,
+            },
+            context,
         );
+        let result = readLlmTaskStartResult(startResult);
+        if (params.continueObservationAfterTimeout && params.host.kind === 'workspace'
+            && !result.ok && result.outcome === 'pending' && result.runId !== undefined) {
+            result = await observePendingWorkspaceRun(params.host, result.runId, params.signal);
+        }
+        if (!accepted.stop) return result;
+
+        const stopped = await accepted.stop;
+        if (stopped.ok) return { ok: false, error: 'Task cancelled', errorCode: 'cancelled', runId: accepted.runId };
+        if (result.ok || (result.runId !== undefined && result.outcome === undefined)) return result;
+        return { ...readActionError(stopped), runId: accepted.runId, outcome: 'unknown', stopRefused: true };
     } finally {
         params.signal?.removeEventListener('abort', stopAcceptedRun);
     }
+}
 
-    if (accepted.stop) {
-        const stopped = await accepted.stop;
-        if (!stopped.ok) return { ...readActionError(stopped), runId: accepted.runId, outcome: 'unknown' };
-        return { ok: false, error: 'Task cancelled', errorCode: 'cancelled', runId: accepted.runId };
-    }
-
+function readLlmTaskStartResult(startResult: ActionExecuteResult): LlmTaskRunResult {
     if (!startResult.ok) return readActionError(startResult);
 
     const started = ExecutionRunStartResponseSchema.safeParse(startResult.result);
@@ -189,8 +197,9 @@ export async function readLlmTaskRun(params: Readonly<{
     host: LlmTaskHostV1;
     runId: string;
     expectedStatus?: ExecutionRunStatus;
+    signal?: AbortSignal;
 }>): Promise<LlmTaskRunResult> {
-    const context = llmTaskActionContext(params.host);
+    const context = { ...llmTaskActionContext(params.host), ...(params.signal ? { signal: params.signal } : {}) };
     const sessionId = params.host.kind === 'session' ? params.host.sessionId : null;
 
     const terminalResult = await executeAction(
@@ -209,6 +218,60 @@ export async function readLlmTaskRun(params: Readonly<{
         return { ok: false, error: 'Task failed', runId: params.runId, outcome: 'unknown' };
     }
     return readLlmTaskRunResult(terminal.data, params.runId);
+}
+
+function observePendingWorkspaceRun(
+    host: Extract<LlmTaskHostV1, { kind: 'workspace' }>,
+    runId: string,
+    signal?: AbortSignal,
+): Promise<LlmTaskRunResult> {
+    if (signal?.aborted) return Promise.resolve(waitObservationFailure('cancelled', runId));
+
+    return new Promise((resolve, reject) => {
+        let active = true;
+        let reading = false;
+        let changed = false;
+        const dispose = () => {
+            active = false;
+            unsubscribe();
+            signal?.removeEventListener('abort', abort);
+        };
+        const abort = () => {
+            dispose();
+            resolve(waitObservationFailure('cancelled', runId));
+        };
+        const read = async () => {
+            if (reading) {
+                changed = true;
+                return;
+            }
+            reading = true;
+            try {
+                do {
+                    changed = false;
+                    const result = await readLlmTaskRun({ host, runId, ...(signal ? { signal } : {}) });
+                    if (!active) return;
+                    if (result.ok || result.outcome !== 'pending') {
+                        dispose();
+                        resolve(result);
+                        return;
+                    }
+                } while (changed);
+            } catch (error) {
+                if (!active) return;
+                dispose();
+                reject(error);
+            } finally {
+                reading = false;
+            }
+        };
+        const unsubscribe = subscribeExecutionRunActivity(host.workspace, ({ runId: observedRunId }) => {
+            if (observedRunId === null || observedRunId === runId) void read();
+        });
+        signal?.addEventListener('abort', abort, { once: true });
+        // Subscribe first so the reconciliation read cannot miss a concurrent settlement.
+        void read();
+    });
 }
 
 function readLlmTaskRunResult(terminal: ExecutionRunGetResponse, runId: string): LlmTaskRunResult {
