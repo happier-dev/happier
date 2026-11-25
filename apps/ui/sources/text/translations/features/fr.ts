@@ -17321,7 +17321,6 @@ const french: TeamsTranslationRoot = {
             },
         },
         settings: {
-            archiveDescription: 'L’archivage retire l’équipe des vues actives et arrête les accès basés sur l’équipe. Ses membres, groupes et historique sont conservés, et elle peut être restaurée.',
             logoSection: 'Logo',
             sessionDefaultsSection: "Nouvelles sessions",
             reviewDefaultsSection: "Nouvelles revues",

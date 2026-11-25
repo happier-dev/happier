@@ -17294,7 +17294,6 @@ const russian: TeamsTranslationRoot = {
             },
         },
         settings: {
-            archiveDescription: 'Архивация убирает команду из активных списков и прекращает доступ через команду. Участники, группы и история сохраняются, команду можно восстановить.',
             logoSection: 'Логотип',
             sessionDefaultsSection: "Новые сессии",
             reviewDefaultsSection: "Новые проверки",

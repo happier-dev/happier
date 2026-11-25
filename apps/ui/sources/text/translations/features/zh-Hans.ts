@@ -17140,7 +17140,6 @@ const simplifiedChinese: TeamsTranslationRoot = {
             },
         },
         settings: {
-            archiveDescription: '归档会将团队移出活动视图，并停止基于团队的访问。其成员、群组和历史记录会保留，且可以恢复。',
             logoSection: '标识',
             sessionDefaultsSection: "新会话",
             reviewDefaultsSection: "新审查",

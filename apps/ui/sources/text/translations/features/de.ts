@@ -17078,7 +17078,6 @@ const german: TeamsTranslationRoot = {
             },
         },
         settings: {
-            archiveDescription: 'Beim Archivieren verschwindet das Team aus den aktiven Ansichten und teambasierter Zugriff endet. Mitglieder, Gruppen und Verlauf bleiben erhalten, und es kann wiederhergestellt werden.',
             logoSection: 'Logo',
             sessionDefaultsSection: "Neue Sessions",
             reviewDefaultsSection: "Neue Reviews",

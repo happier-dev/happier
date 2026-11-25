@@ -17264,7 +17264,6 @@ const italian: TeamsTranslationRoot = {
             },
         },
         settings: {
-            archiveDescription: 'L’archiviazione toglie il team dalle viste attive e interrompe l’accesso basato sul team. Membri, gruppi e cronologia vengono conservati ed è possibile ripristinarlo.',
             logoSection: 'Logo',
             sessionDefaultsSection: "Nuove sessioni",
             reviewDefaultsSection: "Nuove revisioni",

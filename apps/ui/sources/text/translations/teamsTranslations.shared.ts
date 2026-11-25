@@ -510,7 +510,6 @@ export const english = {
             },
         },
         settings: {
-            archiveDescription: 'Archiving takes this Team out of active views and stops its Team-based access. Its members, Groups and history are kept, and you can restore it.',
             logoSection: 'Logo',
             sessionDefaultsSection: "New sessions",
             reviewDefaultsSection: "New reviews",

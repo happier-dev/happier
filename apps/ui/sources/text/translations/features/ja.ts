@@ -17200,7 +17200,6 @@ const japanese: TeamsTranslationRoot = {
             },
         },
         settings: {
-            archiveDescription: 'アーカイブするとチームはアクティブな表示から外れ、チームベースのアクセスが停止します。メンバー、グループ、履歴は保持され、復元できます。',
             logoSection: 'ロゴ',
             sessionDefaultsSection: "新しいセッション",
             reviewDefaultsSection: "新しいレビュー",

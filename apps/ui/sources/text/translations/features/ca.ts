@@ -17278,7 +17278,6 @@ const catalan: TeamsTranslationRoot = {
             },
         },
         settings: {
-            archiveDescription: 'Arxivar treu l’equip de les vistes actives i atura l’accés basat en l’equip. Es conserven els membres, els grups i l’historial, i es pot restaurar.',
             logoSection: 'Logo',
             sessionDefaultsSection: "Sessions noves",
             reviewDefaultsSection: "Revisions noves",

@@ -641,7 +641,7 @@ const TeamLifecycleSection = React.memo(function TeamLifecycleSection(props: Rea
     return (
         <ItemGroup surface="none">
             <SectionButtonRow
-                footnote={error ?? t('teams.settings.archiveDescription')}
+                footnote={error ?? t('teams.archive.archivedBody')}
                 footnoteTone={error ? 'danger' : 'secondary'}
                 footnoteTestID={error ? 'team-settings-lifecycle-error' : undefined}
                 trailing={(

@@ -17200,7 +17200,6 @@ const spanish: TeamsTranslationRoot = {
             },
         },
         settings: {
-            archiveDescription: 'Archivar quita el equipo de las vistas activas y detiene el acceso basado en el equipo. Se conservan sus miembros, grupos e historial, y se puede restaurar.',
             logoSection: 'Logo',
             sessionDefaultsSection: "Sesiones nuevas",
             reviewDefaultsSection: "Revisiones nuevas",

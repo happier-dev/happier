@@ -17140,7 +17140,6 @@ const traditionalChinese: TeamsTranslationRoot = {
             },
         },
         settings: {
-            archiveDescription: '封存會將團隊移出使用中的檢視，並停止以團隊為基礎的存取。其成員、群組與歷史記錄會保留，且可以還原。',
             logoSection: '標誌',
             sessionDefaultsSection: "新工作階段",
             reviewDefaultsSection: "新審查",

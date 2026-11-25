@@ -17250,7 +17250,6 @@ const portuguese: TeamsTranslationRoot = {
             },
         },
         settings: {
-            archiveDescription: 'Arquivar retira a equipa das vistas ativas e interrompe o acesso baseado na equipa. Os membros, grupos e histórico são mantidos, e pode ser restaurada.',
             logoSection: 'Logo',
             sessionDefaultsSection: "Novas sessões",
             reviewDefaultsSection: "Novas revisões",

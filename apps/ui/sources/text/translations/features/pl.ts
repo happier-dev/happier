@@ -17292,7 +17292,6 @@ const polish: TeamsTranslationRoot = {
             },
         },
         settings: {
-            archiveDescription: 'Archiwizacja usuwa zespół z aktywnych widoków i wstrzymuje dostęp oparty na zespole. Członkowie, grupy i historia zostają zachowane, a zespół można przywrócić.',
             logoSection: 'Logo',
             sessionDefaultsSection: "Nowe sesje",
             reviewDefaultsSection: "Nowe przeglądy",

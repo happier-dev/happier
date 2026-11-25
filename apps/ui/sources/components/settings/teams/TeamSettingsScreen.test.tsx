@@ -869,6 +869,7 @@ describe('TeamSettingsScreen', () => {
 
         const screen = await renderSettings(serverId);
         await waitForTestId(screen, 'team-settings-archive');
+        expect(screen.getTextContent()).toContain('teams.archive.archivedBody');
         const { Modal } = await import('@/modal');
         vi.mocked(Modal.confirm).mockClear();
         // The row opens a confirmation; the final confirm button owns the
