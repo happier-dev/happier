@@ -25,7 +25,7 @@ import { initialAutomationSessionLifecycleRemainingOccurrences } from '../../aut
 import { AutomationActionTriggerSchema, projectAutomationActionTriggerStructuralV1 } from '../../automations/automationActionTriggerV1.js';
 import { AutomationEncryptedTriggerDefinitionEnvelopeV1Schema } from '../../automations/automationTriggerDefinition.js';
 import { createAutomationPluginEventTriggerDefinitionV1, openAutomationTriggerDefinitionStoredEnvelopeV1, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '../../automations/automationTriggerDefinitionStoredContent.js';
-import { AutomationEventTriggerDefinitionStoredPayloadV1Schema } from '../../automations/automationEventV1.js';
+import { AutomationEventTriggerDefinitionStoredPayloadV1Schema, MAX_AUTOMATION_EVENT_FILTER_CLAUSES } from '../../automations/automationEventV1.js';
 import { markSessionListQueryResultV1 } from '../../sessions/awareness/action.js';
 import { ActionIdSchema } from '../actionIds.js';
 import { getActionSpec } from '../actionSpecs.js';
@@ -46,7 +46,7 @@ import type { ArtifactRevisionProvenanceV1, ArtifactSavedByV1 } from '../../arti
 import { createNightlyBackupsWorkflowV1 } from '../../workflows/builtins/backupExamples.js';
 import { prepareActionCompletionV1 } from '../actionCompletion.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
-import { AutomationDefinitionCreateRequestSchema } from '../../automations/automationApiV3.js';
+import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema } from '../../automations/automationApiV3.js';
 import { normalizePluginJsonSchema } from '../../plugins/actions/protocolComposableSchema.js';
 import { validateExecutionRunProfileResult } from '../../execution/runs/resultContract.js';
 
@@ -1352,37 +1352,44 @@ const deploymentEventTrigger = { kind: 'pluginEvent' as const, enabled: true,
   filter: null, maximumObservationAgeMs: null };
 
 describe('Account source watcher assignment', () => {
-  it.each(['plain', 'e2ee'] as const)('saves and edits a %s exact Health Link using the subject Home', async mode => {
-    const f = fixture();
+  it.each(['plain', 'e2ee'] as const)('preserves the subject Home, saved probe and full filter when saving and editing %s Health Links', async mode => {
     const encryption: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
       ? { kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }
       : { kind: 'available', witness: { mode: 'e2ee', version: 1, contentKeyFingerprint: 'current' },
         material: createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
           material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } }) };
-    const host = createAccountWorkflowTriggerActions({ automations: f.deps.automations, resolveEncryption: async () => encryption,
-      randomBytes: length => new Uint8Array(length).fill(3), resolveWorkflow: f.deps.resolveWorkflow,
-      resolveWorkflowTeamIds: f.deps.resolveWorkflowTeamIds, newId: () => crypto.randomUUID() });
     const subject = { kind: 'healthCheck' as const, serverId: 'portable-home', sourceInstanceId: 'health:api', checkId: 'ready' };
-    const eventRef = HEALTH_CHECK_EVENT_REFS_V1.failed;
-    const draft = (observingSince: number) => {
-      const sourceConfig = { v: 1 as const, serverId: 'env_local', nativeSourceInstanceId: subject.sourceInstanceId, observingSince };
-      return { ...deploymentEventTrigger, eventRef, subject, sourceConfig,
-        sourceInstanceId: createSavedHealthTransitionSourceInstanceIdV1(eventRef.localId, sourceConfig),
-        observationTransport: { kind: 'checkpointedPull' as const, watcherMaterializationRef: {
-          pluginId: eventRef.pluginId, machineId: project.machineId, materializationId: 'services' } } };
-    };
-    const saved = await host.add({ workflow, project, trigger: draft(100) });
-    const assertStoredSource = (observingSince: number) => {
-      const canonical = { ...draft(observingSince).sourceConfig, serverId: subject.serverId };
-      const stored = readAccountStoredPluginEventTriggerV1(f.rows.get(saved.set.automationId)!, saved.triggerId!, encryption);
-      expect.soft(stored.definition).toMatchObject({ subject, sourceConfig: canonical,
-        sourceInstanceId: createSavedHealthTransitionSourceInstanceIdV1(eventRef.localId, canonical) });
-    };
-    assertStoredSource(100);
-    const { enabled, ...replacement } = draft(200);
-    await host.update({ automationId: saved.set.automationId, triggerId: saved.triggerId,
-      expectedRevision: saved.set.revision, patch: { enabled, trigger: replacement } });
-    assertStoredSource(200);
+    const filter = { v: 1 as const, all: Array.from({ length: MAX_AUTOMATION_EVENT_FILTER_CLAUSES },
+      () => ({ op: 'eq' as const, field: '/checkId', value: subject.checkId })) };
+    for (const eventRef of [HEALTH_CHECK_EVENT_REFS_V1.failed, HEALTH_CHECK_EVENT_REFS_V1.recovered]) {
+      const f = fixture();
+      const host = createAccountWorkflowTriggerActions({ automations: f.deps.automations, resolveEncryption: async () => encryption,
+        randomBytes: length => new Uint8Array(length).fill(3), resolveWorkflow: f.deps.resolveWorkflow,
+        resolveWorkflowTeamIds: f.deps.resolveWorkflowTeamIds, newId: () => crypto.randomUUID() });
+      const draft = (observingSince: number) => {
+        const sourceConfig = { v: 1 as const, serverId: 'env_local', nativeSourceInstanceId: subject.sourceInstanceId, observingSince };
+        return { ...deploymentEventTrigger, eventRef, subject, sourceConfig, filter,
+          sourceInstanceId: createSavedHealthTransitionSourceInstanceIdV1(eventRef.localId, sourceConfig),
+          observationTransport: { kind: 'checkpointedPull' as const, watcherMaterializationRef: {
+            pluginId: eventRef.pluginId, machineId: project.machineId, materializationId: 'services' } } };
+      };
+      const saved = await host.add({ workflow, project, trigger: draft(100) });
+      const assertStoredSource = (observingSince: number) => {
+        const canonical = { ...draft(observingSince).sourceConfig, serverId: subject.serverId };
+        const row = AutomationDefinitionDetailSchema.parse(f.rows.get(saved.set.automationId));
+        const stored = readAccountStoredPluginEventTriggerV1(row, saved.triggerId!, encryption);
+        expect.soft(stored.trigger.eventRef).toEqual(eventRef);
+        expect.soft(stored.definition).toMatchObject({ subject,
+          sourceInstanceId: createSavedHealthTransitionSourceInstanceIdV1(eventRef.localId, canonical) });
+        expect.soft(stored.definition.sourceConfig).toEqual(canonical);
+        expect.soft(stored.definition.filter).toEqual(filter);
+      };
+      assertStoredSource(100);
+      const { enabled, ...replacement } = draft(200);
+      await host.update({ automationId: saved.set.automationId, triggerId: saved.triggerId,
+        expectedRevision: saved.set.revision, patch: { enabled, trigger: replacement } });
+      assertStoredSource(200);
+    }
   });
 
   it.each(['plain', 'e2ee'] as const)('enrolls %s health observations for failure and recovery and rebinds encrypted updates', async mode => {
