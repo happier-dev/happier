@@ -113,8 +113,8 @@ const InvitationsList = React.memo(function InvitationsList(props: Readonly<{
     context: TeamSectionContext;
     header?: React.ReactNode;
 }>) {
-    const readFailureAction = useTeamReadFailureAction();
     const { context } = props;
+    const readFailureAction = useTeamReadFailureAction(context.address);
     const [busy, setBusy] = React.useState(false);
     const [notice, setNotice] = React.useState<string | null>(null);
     /**
@@ -497,7 +497,11 @@ const InvitationsList = React.memo(function InvitationsList(props: Readonly<{
                         <AttentionBanner
                             testID="team-invitations-unavailable"
                             title={teamReadFailureLabel(invitations.error)}
-                            action={readFailureAction(invitations.error, { onPress: () => void invitations.reload(), testIDPrefix: 'team-invitations' })}
+                            action={readFailureAction(invitations.error, {
+                                onPress: () => void invitations.reload(),
+                                testIDPrefix: 'team-invitations',
+                                reloadsFirstPage: true,
+                            })}
                         />
                     ) : invitations.hasMore && invitations.rows.length > 0 ? (
                         <ItemGroup>

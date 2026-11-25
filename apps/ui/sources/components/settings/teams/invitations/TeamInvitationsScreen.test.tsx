@@ -167,6 +167,41 @@ afterEach(() => {
 });
 
 describe('TeamInvitationsScreen', () => {
+    it.each([
+        { status: 403, code: 'team_authentication_required', message: 'session.access.authenticationRequired', action: 'team-invitations-sign-in' },
+        { status: 503, code: 'team_authentication_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable', action: null },
+        { status: 503, code: 'unavailable', message: 'teams.errors.loadFailed', action: 'team-invitations-retry' },
+    ])('offers the recovery for the invitation read refusal $code', async ({ status, code, message, action }) => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, INVITATIONS_LIST_PATH, { status, body: { error: code } });
+        const screen = await renderInvitations(serverId);
+        await waitForTestId(screen, 'team-invitations-unavailable');
+        expect(screen.getTextContent()).toContain(message);
+        expect(screen.findByTestId('team-invitations-sign-in') !== null).toBe(action === 'team-invitations-sign-in');
+        expect(screen.findByTestId('team-invitations-retry') !== null).toBe(action === 'team-invitations-retry');
+    });
+
+    it('refreshes the invitation roster from page one when its cursor expires', async () => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, INVITATIONS_LIST_PATH, {
+            body: { items: [teamInvitationRowFixture()], nextCursor: 'expired', emailDelivery: 'available', linkDelivery: 'available' },
+        });
+        const screen = await renderInvitations(serverId);
+        await waitForTestId(screen, 'team-invitations-load-more');
+        harness.answer(serverId, INVITATIONS_LIST_PATH, { status: 400, body: { error: 'invalid_team_cursor' } });
+        await screen.pressByTestIdAsync('team-invitations-load-more');
+        await waitForTestId(screen, 'team-invitations-unavailable');
+        expect(screen.getTextContent()).toContain('teams.errors.listCursorExpired');
+        expect(screen.findByTestId('team-invitations-retry')).toBeNull();
+        harness.answer(serverId, INVITATIONS_LIST_PATH, {
+            body: { items: [], nextCursor: null, emailDelivery: 'available', linkDelivery: 'available' },
+        });
+        await screen.pressByTestIdAsync('team-invitations-reload');
+        await vi.waitFor(() => expect(screen.findByTestId('team-invitations-row:invitation-1')).toBeNull());
+        expect(harness.requestsFor(INVITATIONS_LIST_PATH).map(({ input }) =>
+            (input as { cursor?: string | null }).cursor ?? null)).toEqual([null, 'expired', null]);
+    });
+
     it('keeps observed invitations visible on return until a Home refusal withdraws them', async () => {
         const serverId = await addManagedHome();
         const row = 'team-invitations-row:invitation-1';
