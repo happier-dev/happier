@@ -2233,6 +2233,7 @@ export const ca: TranslationStructure = {
         confidentialSupplied: 'Proporcionat i mantingut ocult',
         linkRemoved: 'Aquest enllaç ja no existeix',
         unsafeDetailsTitle: 'Aquests detalls no es poden mostrar amb seguretat',
+        referenceNameUnavailable: "El seu nom no està disponible aquí. L’ID és a Detalls tècnics.",
         unsafeDetailsBody: 'Happier no ha pogut mostrar aquesta sol·licitud exactament tal com es va enviar, així que no es pot aprovar. Rebutja-la o demana que la tornin a enviar.',
         approveUnavailableHint: 'L\'aprovació no està disponible mentre aquests detalls no es puguin mostrar amb seguretat.',
         cannotRun: "Aquesta sol·licitud ja no es pot executar tal com es va enviar, així que no es pot aprovar. Denega-la o torna-la a demanar.",

@@ -315,8 +315,18 @@ const renderApprovalFieldText: HappierApprovalFieldsTextRender = (input) => <Tex
 const ApprovalReferenceResolve: HappierApprovalFieldResolve<ApprovalValueSource> = (props) => {
     const reading = useApprovalReferenceReading(props.source.reference, props.value, props.source.serverId,
         props.source.exactRead ? EXACT_READ : undefined);
-    return <>{props.children({ label: reading.label ?? nameApprovalReferenceLabel(props.label, props.source.reference, reading.named), value: readableApprovalReferenceText(props.source.reference, reading, props.source.referenceText), named: reading.named })}</>;
+    return <>{props.children({ label: reading.label ?? nameApprovalReferenceLabel(props.label, props.source.reference),
+        value: isUnnamedApprovalReference(props.source.reference, reading) ? UNNAMED_REFERENCE_VALUE
+            : readableApprovalReferenceText(props.source.reference, reading, props.source.referenceText), named: reading.named })}</>;
 };
+
+/** A value slot keeps its place for a reference this device cannot name: an em dash, never a word ("Unavailable"). */
+const UNNAMED_REFERENCE_VALUE = '—';
+
+/** The reference was read and has no name here; its exact id stays in Technical details. */
+function isUnnamedApprovalReference(reference: ApprovalReference | undefined, reading: ApprovalReferenceReading): boolean {
+    return reference !== undefined && reference.kind !== 'setting' && !reading.named && !reading.resolving;
+}
 
 /** The existing reader owns naming; an unresolved identity stays in Technical details. */
 export function readableApprovalReferenceText(reference: ApprovalReference | undefined, reading: ApprovalReferenceReading,
@@ -471,10 +481,13 @@ function ApprovalValueItem(props: Readonly<{
     const { row, columns, extras } = props;
     const source = row.source;
     const reading = useApprovalReferenceReading(source?.reference, row.value, source?.serverId ?? null, source?.exactRead ? EXACT_READ : undefined);
-    const label = nameApprovalReferenceLabel(row.label, source?.reference, reading.named);
+    const label = nameApprovalReferenceLabel(row.label, source?.reference);
+    const unnamed = isUnnamedApprovalReference(source?.reference, reading);
+    const note = unnamed ? [t('approvals.referenceNameUnavailable'), extras.note].filter(Boolean).join('\n') : extras.note;
     const title = (
         <FieldLayout label={label} columns={columns}>
-            <FieldValue value={readableApprovalReferenceText(source?.reference, reading, source?.referenceText)} names={extras.names} note={extras.note}
+            <FieldValue value={unnamed ? UNNAMED_REFERENCE_VALUE : readableApprovalReferenceText(source?.reference, reading, source?.referenceText)}
+                names={extras.names} note={note}
                 code={!reading.named && extras.kind === 'value' && extras.valueFormat === 'code'} />
         </FieldLayout>
     );
@@ -511,12 +524,10 @@ function formatApprovalTimestamp(value: string): string {
  * "Session", "Agent target" reads "Agent", "Model selection" reads "Model", a Home's server id reads
  * "Home". The exact value keeps its key in Technical details.
  */
-function nameApprovalReferenceLabel(label: string, reference: ApprovalReference | undefined, named: boolean): string {
+function nameApprovalReferenceLabel(label: string, reference: ApprovalReference | undefined): string {
     const handle = /(\s+(id|key|target|selection))+$/i;
-    if (!reference || !handle.test(label)) return label;
-    const displaysNameOrFallback = named || reference.kind === 'machinePreset' || reference.kind === 'machinePool'
-        || ('unavailableWithoutName' in reference && reference.unavailableWithoutName === true);
-    if (!displaysNameOrFallback) return label;
+    // The slot shows a name, a loading word or an em dash, never the handle itself, so the key is the thing's.
+    if (!reference || reference.kind === 'setting' || !handle.test(label)) return label;
     const stem = label.replace(handle, '');
     if (!stem) return label;
     return reference.kind === 'home' && /^server$/i.test(stem) ? t('common.home') : stem;

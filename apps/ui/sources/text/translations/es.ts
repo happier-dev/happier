@@ -2399,6 +2399,7 @@ export const es: TranslationStructure = {
     confidentialSupplied: "Proporcionado y mantenido oculto",
     linkRemoved: "Este vínculo ya no existe",
     unsafeDetailsTitle: "Estos detalles no se pueden mostrar de forma segura",
+    referenceNameUnavailable: "Su nombre no está disponible aquí. El ID está en Detalles técnicos.",
     unsafeDetailsBody: "Happier no pudo mostrar esta solicitud exactamente como se envió, por lo que no se puede aprobar. Recházala o pide que se envíe de nuevo.",
     approveUnavailableHint: "La aprobación no está disponible mientras estos detalles no se puedan mostrar de forma segura.",
     cannotRun: "Esta solicitud ya no puede ejecutarse tal como se envió, así que no se puede aprobar. Recházala o pídela de nuevo.",

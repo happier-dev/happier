@@ -368,6 +368,30 @@ it('names reviewed skills and the exact Home machine, keeping their ids in Techn
     expect(screen.getTextContent()).toContain(machineId);
 });
 
+it('names a Machine this device cannot read as an em dash with its reason, never an id label beside "Unavailable"', async () => {
+    const home = await upsertServerProfile({ name: 'Personal', serverUrl: 'https://other-machine-approval.test' });
+    profiles.push(home.id);
+    const machineId = 'machine-of-another-kit';
+    await act(async () => {
+        storage.setState({ settingsScope: { serverId: home.id, accountId: 'account' }, machineListByServerId: { [home.id]: [] } });
+    });
+    const screen = await renderScreen(<ActionApprovalFieldsCard anatomy="page" serverId={home.id}
+        presentation={describeApprovalActionFields({ actionId: 'machines.services.list', actionArgs: { serverId: home.id, machineId } })} />);
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    const text = screen.getTextContent();
+    expect(text).toContain('Machine');
+    expect(text).not.toContain('Machine ID');
+    expect(text).not.toContain(t('common.unavailable'));
+    expect(text).toContain('—');
+    expect(text).toContain(t('approvals.referenceNameUnavailable'));
+    expect(text).not.toContain(machineId);
+    // The exact id keeps its own key, one press away.
+    await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
+    expect(screen.getTextContent()).toContain('Machine ID');
+    expect(screen.getTextContent()).toContain(machineId);
+    await screen.unmount();
+});
+
 it('reads a workspace-sync request by its machine and the two folders it links, keeping the ids in Technical details', async () => {
     const home = await upsertServerProfile({ name: 'Personal', serverUrl: 'https://workspace-sync-approval.test' });
     profiles.push(home.id);
@@ -960,12 +984,12 @@ it('names a Workflow, a Run and a Project by what they are, and says so neutrall
 
         const unreadWorkflow = await read('workflow.definition.delete', { definitionId: '44444444-4444-4444-8444-444444444444' });
         await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
-        // An unread reference reads as the card's one neutral word; its id stays in Technical details.
-        expect(unreadWorkflow.getTextContent()).toContain(t('common.unavailable'));
+        // An unread reference keeps its slot with an em dash and one quiet reason; its id stays in Technical details.
+        expect(unreadWorkflow.getTextContent()).toContain(t('approvals.referenceNameUnavailable'));
         expect(unreadWorkflow.getTextContent()).not.toContain('44444444-4444-4444-8444-444444444444');
         const unreadRun = await read('workflow.run.cancel', { runId: 'run-not-visible', expectedRevision: 1 });
         await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
-        expect(unreadRun.getTextContent()).toContain(t('common.unavailable'));
+        expect(unreadRun.getTextContent()).toContain(t('approvals.referenceNameUnavailable'));
         expect(unreadRun.getTextContent()).not.toContain('run-not-visible');
 
         // A Project key reads by the Project's name on any Action, a plugin's included.
@@ -977,7 +1001,7 @@ it('names a Workflow, a Run and a Project by what they are, and says so neutrall
         const hidden = await renderScreen(<ActionApprovalFieldsCard anatomy="page" serverId={home.id}
             presentation={describeApprovalRequestFields({ kind: 'plugin_target_action', status: 'open', secretInputPaths: [],
                 input: { projectKey: 'project-not-visible' } })} />);
-        expect(hidden.getTextContent()).toContain(t('common.unavailable'));
+        expect(hidden.getTextContent()).toContain(t('approvals.referenceNameUnavailable'));
         expect(hidden.getTextContent()).not.toContain('project-not-visible');
     } finally {
         active.dispose();

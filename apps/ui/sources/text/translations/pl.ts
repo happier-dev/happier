@@ -2226,6 +2226,7 @@ export const pl: TranslationStructure = {
     confidentialSupplied: "Podano i ukryto",
     linkRemoved: "To łącze już nie istnieje",
     unsafeDetailsTitle: "Tych szczegółów nie można bezpiecznie wyświetlić",
+    referenceNameUnavailable: "Nazwa nie jest tu dostępna. Identyfikator znajdziesz w Szczegółach technicznych.",
     unsafeDetailsBody: "Happier nie mógł wyświetlić tego żądania dokładnie tak, jak zostało wysłane, więc nie można go zatwierdzić. Odrzuć je lub poproś o ponowne wysłanie.",
     approveUnavailableHint: "Zatwierdzenie jest niedostępne, dopóki tych szczegółów nie można bezpiecznie wyświetlić.",
     cannotRun: "Tej prośby nie można już wykonać w wysłanej postaci, więc nie można jej zatwierdzić. Odrzuć ją lub poproś o nią ponownie.",

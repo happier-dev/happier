@@ -2380,6 +2380,7 @@ export const ja: TranslationStructure = {
     confidentialSupplied: "指定済み（非表示）",
     linkRemoved: "このリンクはもう存在しません",
     unsafeDetailsTitle: "この内容は安全に表示できません",
+    referenceNameUnavailable: "ここでは名前を表示できません。ID は技術的な詳細にあります。",
     unsafeDetailsBody: "送信されたとおりに表示できなかったため、このリクエストは承認できません。拒否するか、再送を依頼してください。",
     approveUnavailableHint: "この内容を安全に表示できない間は承認できません。",
     cannotRun: "このリクエストは送信された内容のままでは実行できなくなったため、承認できません。拒否するか、もう一度依頼してください。",

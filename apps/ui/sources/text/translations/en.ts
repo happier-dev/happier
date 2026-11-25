@@ -1801,6 +1801,7 @@ const enApprovals = {
   confidentialSupplied: 'Supplied and kept hidden',
   linkRemoved: 'This link no longer exists',
   unsafeDetailsTitle: 'These details cannot be shown safely',
+  referenceNameUnavailable: "Its name isn’t available here. The ID is under Technical details.",
   unsafeDetailsBody:
     'Happier could not display this request exactly as it was sent, so it cannot be approved. Deny it, or ask for it to be sent again.',
   approveUnavailableHint:
