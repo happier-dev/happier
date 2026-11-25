@@ -45,6 +45,17 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
+import { createDaemonApprovalExecutionAuthorizationPreparer } from '@/daemon/externalActions/approvalExecutionAuthorization';
+import { assertDeploymentContentAuthorityForHost } from '@/deployments/deploymentDefinitionAdmission';
+
+// The installation identity file is the receiving Machine's filesystem boundary; the replay preparer reads it.
+const installationFile = vi.hoisted(() => ({ identity: null as null | { installationId: string; publicKey: string; privateKey: string } }));
+vi.mock('@/daemon/identity/store', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/daemon/identity/store')>();
+  return { ...actual, readInstallationIdentityIfExistsSync: (...args: Parameters<typeof actual.readInstallationIdentityIfExistsSync>) =>
+    installationFile.identity ? { ...actual.readInstallationIdentityIfExistsSync(...args), ...installationFile.identity }
+      : actual.readInstallationIdentityIfExistsSync(...args) };
+});
 
 let currentnessChannel: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>>;
 beforeEach(async () => { currentnessChannel = await createRequesterCurrentnessSocketHarness(); });
@@ -113,6 +124,20 @@ const cases = {
   },
 } as const;
 type CaseId = keyof typeof cases;
+// A Move replaces the runtime Link from its accepted Run (L16, 2026-11-25).
+const linkCase = {
+  input: {
+    // The accepted Move definition names its Home by identity, as the live Run did.
+    serverId: 'srv_deployment_home', environmentId: targetFields.environmentId, expectedRevision: targetFields.expectedRevision,
+    requestKey: 'workflow-move:link', targetId: 'own-server', role: 'runtime', targetKind: 'ownServer',
+    replacesLinkId: targetFields.targetLinkId, expectedTargetLinkRevision: 2,
+    machines: [{ machineId: targetFields.machineId, installationId: targetFields.installationId }],
+  },
+  result: { ok: true, environmentId: targetFields.environmentId, revision: targetFields.expectedRevision + 1,
+    targetLinkId: 'replacement-link', targetLinkRevision: 1 },
+} as const;
+const harnessCases = { ...cases, 'deployments.targets.link': linkCase };
+type HarnessCaseId = keyof typeof harnessCases;
 const workflowContext: ActionExecutorContext = {
   surface: 'agent',
   authority: 'account_automation',
@@ -131,7 +156,7 @@ const workflowContext: ActionExecutorContext = {
 };
 
 function harness(
-  actionId: CaseId,
+  actionId: HarnessCaseId,
   options: Readonly<{
     waived: boolean;
     mode?: 'plain' | 'e2ee';
@@ -141,9 +166,11 @@ function harness(
     approveAtCoordinator?: boolean;
     relayExecution?: ActionExecuteResult;
     differentReceipt?: (receipt: ApprovalRequestV2) => ApprovalRequestV2 | null;
+    /** The receiver opens its own Ask; the test replays that stored root at the receiver. */
+    linkReplay?: boolean;
   }> = { waived: true },
 ) {
-  const { input, result } = cases[actionId];
+  const { input, result } = harnessCases[actionId];
   const mode = options.mode ?? 'plain';
   const secret = new Uint8Array(32).fill(23);
   const credentials = { token: publisherToken, encryption: mode === 'e2ee'
@@ -169,16 +196,16 @@ function harness(
   const deploymentRestore = async () => DeploymentBackupRestoreResultV1Schema.parse(await receiverRestore());
   const receiver = options.productionReceiver ? createCliActionExecutorFromCredentials({
     credentials,
-    serverId: input.serverId,
+    serverId: targetFields.serverId,
     serverIdentityId: 'srv_deployment_home',
     serverApiUrl: 'https://deployment-home.test',
-    machineId: input.machineId,
+    machineId: targetFields.machineId,
     pluginActionExecutionOwner: 'current_process',
     deploymentBackupAction,
     deploymentRestore,
     runActionOperation: createHostActionOperationRuntime({
-      serverId: input.serverId,
-      machineId: input.machineId,
+      serverId: targetFields.serverId,
+      machineId: targetFields.machineId,
       resolveAccountId: async () => accountId,
     }).runActionOperation,
   }) : createActionExecutor({
@@ -200,20 +227,22 @@ function harness(
   });
   let receivedExecution: unknown;
   const environment = createDeploymentEnvironmentHeaderV1({
-    id: input.environmentId,
-    serverId: input.serverId,
-    controllerMachineId: input.machineId,
+    id: targetFields.environmentId,
+    serverId: targetFields.serverId,
+    controllerMachineId: targetFields.machineId,
   });
   vi.spyOn(axios, 'request').mockImplementation(async ({ url }) => {
     if (
       new URL(String(url)).pathname ===
-      `/v1/deployments/environments/${input.environmentId}`
+      `/v1/deployments/environments/${targetFields.environmentId}`
     ) {
       return { status: 200, data: { ok: true, environment, targetLinks: [] } };
     }
     if (new URL(String(url)).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
       return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
     }
+    // The receiving daemon's Machine inventory read; this Account has no managed Machines.
+    if (options.linkReplay && new URL(String(url)).pathname === '/v1/machines/managed/actions/list') return { status: 200, data: { machines: [] } };
     throw new Error(`Unexpected Home request ${String(url)}`);
   });
   vi.spyOn(axios, 'get').mockImplementation(async (url) => {
@@ -244,16 +273,16 @@ function harness(
     }
     if (path === '/v1/account/encryption/currentness')
       return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode }) };
-    if (path !== `/v1/machines/${input.machineId}`)
+    if (path !== `/v1/machines/${targetFields.machineId}`)
       throw new Error(`Unexpected Home read ${url}`);
     return {
       status: 200,
       data: {
         machine: {
-          id: input.machineId,
+          id: targetFields.machineId,
           kind: 'persistent',
           active: true,
-          installationId: input.installationId,
+          installationId: targetFields.installationId,
           storageMode: mode,
           ...(mode === 'e2ee' ? { metadata: createMachineContentCodec({
             encryptionMode: 'e2ee', encryptionKey: secret, encryptionVariant: 'legacy',
@@ -279,6 +308,9 @@ function harness(
     };
   });
   const homeCalls: string[] = [];
+  const dispatchedRoots: unknown[] = [];
+  let linkDelivery: Readonly<{ root: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>;
+    envelope: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>['envelope'] }> | undefined;
   const send = vi.spyOn(axios, 'post').mockImplementation(async (url, data) => {
     const path = new URL(url).pathname;
     if (path.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
@@ -298,11 +330,29 @@ function harness(
       expect(request).toMatchObject({
         machineId: 'workflow-publisher',
         workflowActionOrigin,
-        envelope: mode === 'plain' ? { v: 1, target, input: canonicalInput } : { v: 2, target },
+        // The backup operands are canonicalized here; the Link owner normalizes its own intent.
+        envelope: mode === 'plain' ? { v: 1, target, ...(actionId in cases ? { input: canonicalInput } : {}) } : { v: 2, target },
       });
-      return {
-        status: 200,
-        data: JSON.parse(JSON.stringify(ExternalActionExecutionAuthorizationV1Schema.parse({
+      return { status: 200, data: JSON.parse(JSON.stringify(homeRoot(request))) };
+    }
+    expect(path).toBe(`/v1/actions/${actionId}`);
+    // A Workflow proposal is minted by Home at dispatch; a minted root is relayed as issued.
+    const delivered = request.executionAuthorization ?? homeRoot(request);
+    dispatchedRoots.push(request.executionAuthorization);
+    if (actionId in cases) expect(request).toMatchObject({
+      machineId: targetFields.machineId,
+      executionAuthorization: {
+        token: 'home-proof',
+        binding: { workflowActionOrigin },
+      },
+    });
+    if (options.linkReplay) linkDelivery = { root: delivered, envelope: request.envelope };
+    return relay(request, delivered);
+  });
+  const homeRoot = (request: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>) => {
+    const workflowActionOrigin = request.workflowActionOrigin ?? request.executionAuthorization?.binding.workflowActionOrigin;
+    const canonicalInput = { ...input, serverId: 'srv_deployment_home' };
+    return ExternalActionExecutionAuthorizationV1Schema.parse({
           v: 1,
           token: 'home-proof',
           binding: {
@@ -311,13 +361,18 @@ function harness(
             authentication,
             accountEncryptionMode: mode,
             serverIdentityId: 'srv_deployment_home',
-            machineId: input.machineId,
-            installationId: input.installationId,
+            machineId: targetFields.machineId,
+            installationId: targetFields.installationId,
             actionId,
             requestId: request.envelope.requestId,
             target,
             workflowActionOrigin,
-            environmentId: input.environmentId,
+            ...(actionId === 'deployments.targets.link' ? { deploymentLinkAdmission: {
+              environmentId: targetFields.environmentId, owner: environment.owner,
+              replacement: { replacesLinkId: linkCase.input.replacesLinkId,
+                expectedTargetLinkRevision: linkCase.input.expectedTargetLinkRevision,
+                machines: linkCase.input.machines },
+            } } : { environmentId: targetFields.environmentId }),
             deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(
               actionId,
               canonicalInput,
@@ -330,19 +385,12 @@ function harness(
               request.envelope,
             ),
           },
-        }))),
-      };
-    }
-    expect(path).toBe(`/v1/actions/${actionId}`);
-    expect(request).toMatchObject({
-      machineId: input.machineId,
-      executionAuthorization: {
-        token: 'home-proof',
-        binding: { workflowActionOrigin },
-      },
-    });
-    if (options.actualReceiver || options.productionReceiver) {
-      const authorization = request.executionAuthorization!;
+        });
+  };
+  const relay = async (request: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>,
+    authorization: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>) => {
+    const workflowActionOrigin = authorization.binding.workflowActionOrigin;
+    if (options.actualReceiver || options.productionReceiver || options.linkReplay) {
       const receive = () => executeExternalAction({
         actionId,
         envelope: request.envelope,
@@ -350,16 +398,16 @@ function harness(
         executionAuthorization: authorization,
         currentMachineId: target.machineId,
         currentAccountId: accountId,
-        currentServerId: input.serverId,
+        currentServerId: targetFields.serverId,
         currentServerHttpBaseUrl: 'https://deployment-home.test',
-        currentInstallationId: input.installationId,
+        currentInstallationId: targetFields.installationId,
         verifyExecutionAuthorization: async () => true,
         externalActionMachineRequestPrivateKey: receiverKey.secretKey,
         resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
         executor: receiver,
         prepareRequesterAccountContext: request => prepareRequesterAccountActionContext({
           authorization: request.authorization, purpose: { kind: 'external_action' }, machineId: target.machineId,
-          installationId: input.installationId, installationPrivateKey: receiverKey.secretKey, serverId: input.serverId,
+          installationId: targetFields.installationId, installationPrivateKey: receiverKey.secretKey, serverId: targetFields.serverId,
           serverIdentityId: authorization.binding.serverIdentityId, serverHttpBaseUrl: 'https://deployment-home.test',
           ownCredentials: credentials, isCurrent: async () => true, createExecutor: () => receiver,
         }),
@@ -392,7 +440,7 @@ function harness(
         execution: options.relayExecution ?? { ok: true, result },
       }),
     };
-  });
+  };
   const installedBackup = vi.fn(
     async () =>
       ({
@@ -423,14 +471,14 @@ function harness(
     ? setScopedActionApprovalPreference({
         settings: normalizeActionsSettingsV1({}),
         actionId,
-        scope: { kind: 'environment', environmentId: input.environmentId },
+        scope: { kind: 'environment', environmentId: targetFields.environmentId },
         surface: 'agent',
         mode: 'waived',
       })
     : normalizeActionsSettingsV1({});
   const executorOptions = {
     credentials,
-    serverId: input.serverId,
+    serverId: targetFields.serverId,
     serverIdentityId: 'srv_deployment_home',
     serverApiUrl: 'https://deployment-home.test',
     machineId: 'workflow-publisher',
@@ -478,11 +526,12 @@ function harness(
     async approve() {
       return executor.execute('approval.request.decide', { artifactId: approvalId, decision: 'approve' }, {
         surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
-        runtimeAccountId: accountId, serverId: input.serverId, serverIdentityId: 'srv_deployment_home',
+        runtimeAccountId: accountId, serverId: targetFields.serverId, serverIdentityId: 'srv_deployment_home',
       });
     },
     send,
     homeCalls,
+    dispatchedRoots,
     installedBackup,
     installedRestore,
     installedOperation,
@@ -491,6 +540,57 @@ function harness(
     receiverRestore,
     get receivedExecution() { return receivedExecution; },
     get receiverAutomationReads() { return receiverAutomationReads; },
+    /**
+     * The receiving daemon's durable Ask replay (L16): its Artifact retains only the wire root, the
+     * production preparer reopens custody, and the production executor runs the Link content guard.
+     */
+    async replayLinkAtReceiver() {
+      if (!linkDelivery) throw new Error('The Link leaf was not delivered');
+      const stored = ExternalActionExecutionAuthorizationV1Schema.parse(JSON.parse(JSON.stringify(linkDelivery.root)));
+      const contentGuard: unknown[] = [];
+      const linkReceiver = createCliActionExecutorFromCredentials({
+        credentials, serverId: targetFields.serverId, serverIdentityId: 'srv_deployment_home',
+        serverApiUrl: 'https://deployment-home.test', machineId: targetFields.machineId,
+        pluginActionExecutionOwner: 'current_process',
+        externalActionMachineRequestPrivateKey: receiverKey.secretKey, externalActionMachineInstallationId: targetFields.installationId,
+        actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({}) },
+        deploymentAction: async (id, _input, context) => {
+          if (id === 'deployments.environments.get') return { ok: true, environment: { ...environment, serverId: targetFields.serverId }, targetLinks: [] } as never;
+          await assertDeploymentContentAuthorityForHost(context);
+          contentGuard.push(context.externalActionExecutionAuthorization?.binding.requestId);
+          return linkCase.result as never;
+        },
+      });
+      installationFile.identity = { installationId: targetFields.installationId,
+        publicKey: encodeBase64(receiverKey.publicKey, 'base64url'), privateKey: encodeBase64(receiverKey.secretKey, 'base64url') };
+      try {
+        const prepare = createDaemonApprovalExecutionAuthorizationPreparer({ machineId: targetFields.machineId,
+          serverId: targetFields.serverId, serverBaseUrl: 'https://deployment-home.test',
+          daemonWorkSignal: new AbortController().signal,
+          resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: targetFields.machineId, serverIdentityId: 'srv_deployment_home' }),
+          prepareRequesterAccountContext: request => prepareRequesterAccountActionContext({
+            authorization: request.authorization, purpose: { kind: 'external_action' }, machineId: targetFields.machineId,
+            installationId: targetFields.installationId, installationPrivateKey: receiverKey.secretKey, serverId: targetFields.serverId,
+            serverIdentityId: 'srv_deployment_home', serverHttpBaseUrl: 'https://deployment-home.test',
+            ownCredentials: credentials, isCurrent: async () => true, isCustodyCurrent: async () => true,
+            createExecutor: () => linkReceiver,
+          }),
+        });
+        const prepared = await prepare({ authorization: stored, originalActionEnvelope: linkDelivery.envelope });
+        if (!prepared) return { execution: { ok: false as const, errorCode: 'approval_stale', error: 'approval_stale' }, contentGuard };
+        try {
+          const caller = workflowContext.actionCaller!;
+          const execution = await linkReceiver.execute('deployments.targets.link', linkCase.input, {
+            surface: 'agent', authority: 'account_automation', serverId: targetFields.serverId,
+            serverIdentityId: 'srv_deployment_home', runtimeAccountId: accountId, actionRequestId: stored.binding.requestId,
+            actionCaller: caller, externalActionExecutionAuthorization: prepared.authorization, externalActionTarget: target,
+            originalActionEnvelope: linkDelivery.envelope, bypassApprovals: true,
+            approvedActionReplay: { artifactId: 'receiver-ask', origin: { surface: 'agent', caller, accountId } },
+          });
+          return { execution, contentGuard };
+        } finally { await prepared.dispose?.(); }
+      } finally { installationFile.identity = null; }
+    },
   };
 }
 
@@ -572,6 +672,55 @@ it.each(Object.keys(cases) as CaseId[])(
     ).toHaveBeenCalledTimes(1);
   },
 );
+
+it('seals the requester box on a Workflow runtime Link leaf for its receiver content custody (L16)', async () => {
+  const actionId = 'deployments.targets.link';
+  const run = harness(actionId);
+  const execution = await run.executor.execute(actionId, run.input, workflowContext);
+  // Without the box the receiver's Link content guard refuses
+  // requester_account_projection_missing after approval replay.
+  expect(run.homeCalls, JSON.stringify({ execution, roots: run.dispatchedRoots })).toEqual([
+    expect.stringMatching(/\/execution-authorization$/u),
+    `/v1/actions/${actionId}`,
+  ]);
+  expect(run.dispatchedRoots).toEqual([expect.objectContaining({
+    token: 'home-proof', requesterAccountContext: expect.any(Object),
+  })]);
+  expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true, result: run.result });
+});
+
+// L16 (2026-11-25): the receiver opened the Ask, a person approved it once, and its replay ran the Link
+// with no requester Account custody (requester_account_projection_missing).
+it('replays an approved Workflow Link at its receiver with requester custody on a required-E2EE Account (L16)', async () => {
+  const actionId = 'deployments.targets.link';
+  const run = harness(actionId, { waived: false, mode: 'e2ee', linkReplay: true });
+  const opened = await run.executor.execute(actionId, run.input, workflowContext);
+  const ask = { kind: 'approval_request_created', artifactId: 'receiver-ask', actionId };
+  expect.soft(run.receivedExecution, JSON.stringify({ opened, calls: run.homeCalls })).toMatchObject({ ok: true, result: ask });
+  expect.soft(opened).toMatchObject({ ok: true, result: ask });
+  // The person's single approval replays the stored root at the receiver; its Link content guard must pass.
+  const replayed = await run.replayLinkAtReceiver();
+  expect(replayed.execution, JSON.stringify(replayed.execution)).toMatchObject({ ok: true, result: run.result });
+  expect(replayed.contentGuard).toEqual(['workflow-run/backup-leaf/0']);
+});
+
+it('refuses a cross-Account Workflow Link leaf before dispatch instead of sending it without custody', async () => {
+  const actionId = 'deployments.targets.link';
+  const run = harness(actionId, { waived: false, linkReplay: true });
+  const memberRoot = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'member-run-root', binding: {
+    accountId: 'member-account', custodianAccountId: 'deployment-account', authentication: { kind: 'account', tokenEpoch: 1 },
+    accountEncryptionMode: 'plain', serverIdentityId: 'srv_deployment_home', machineId: 'workflow-publisher',
+    installationId: 'workflow-installation', actionId: 'workflow.run.start', requestId: 'member-run-start',
+    target: { kind: 'machine', machineId: 'workflow-publisher' }, requestEnvelopeDigest: 'a'.repeat(43) } });
+  const caller = workflowContext.actionCaller!;
+  if (caller.kind !== 'workflowRun') throw new Error('Expected the Workflow caller');
+  const execution = await run.executor.execute(actionId, run.input, { ...workflowContext,
+    actionCaller: { ...caller, authenticatedStarterV1: { requestRef: 'member-start',
+      requester: { accountId: 'member-account', serverId: 'srv_deployment_home' } },
+      authorization: { ...caller.authorization, externalActionExecutionAuthorization: memberRoot } } });
+  expect(execution, JSON.stringify({ execution, calls: run.homeCalls })).toMatchObject({ ok: false, errorCode: 'requester_credential_disclosure_required' });
+  expect(run.homeCalls.filter(path => path.startsWith('/v1/actions/'))).toEqual([]);
+});
 
 it('does not run or mint an unapproved Workflow backup step', async () => {
   const run = harness('deployments.backups.run', { waived: false });

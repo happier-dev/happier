@@ -39,6 +39,7 @@ import { sealSessionDataKeyBundleV0 } from '@happier-dev/protocol/crypto/session
 import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { computeEnvironmentSecretLaunchAdmissionDigestV1, type EnvironmentSecretLaunchAdmissionBodyV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
+import { projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 
 let server: Awaited<ReturnType<typeof startWorkflowApprovedOperationServer>>;
 beforeAll(async () => { server = await startWorkflowApprovedOperationServer(); }, 120_000);
@@ -93,6 +94,50 @@ it('binds native backup Workflow provenance to the assigned publisher and select
         projectDeploymentNativeAdmissionV1(actionId, { ...input, installationId: publisher.installationId }) })).toBe(false);
     expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...admission, publisherMachineId: receiver.id,
         deploymentNativeAdmission: native })).toBe(false);
+}, 120_000);
+
+it('binds a Data Move health read to the assigned Run and its exact receiver (L11 destinationHealth)', async () => {
+    const [publisher, receiver] = server.machines;
+    const runId = randomUUID();
+    const snapshot = await materializeWorkflowAcceptedSnapshotFixture({
+        definition: { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'wait', id: 'review',
+            document: { text: 'Review', references: [], attachments: [] }, result: { kind: 'text' } }] },
+        context: { source: { kind: 'inline' }, inputs: {}, machineId: publisher.id, executionTarget: { kind: 'session' },
+            workspaceTarget: { project: { machineId: publisher.id, directory: '/repo', checkoutRootPath: '/repo' } },
+            origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
+    });
+    await admitWorkflowRun({ accountId: server.accountId, machineId: publisher.id, runId,
+        accountCurrentness: server.currentness, origin: { kind: 'direct' }, acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(
+            sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+                binding: { v: 1, purpose: 'accepted_snapshot', accountId: server.accountId, runId }, acceptedSnapshot: snapshot })) });
+    await server.claim(publisher.id);
+    const actionId = 'deployments.health.read';
+    const requestId = `${runId}/${randomUUID()}/0`;
+    const target = { kind: 'machine' as const, machineId: receiver.id };
+    const environmentInstanceId = `${'e'.repeat(64)}--health-environment`;
+    const input = { serverId: server.homeId, environmentId: 'health-environment', machineId: receiver.id,
+        installationId: receiver.installationId, targetLinkId: 'health-link', deploymentId: 'deployment',
+        service: { kind: 'deployment', machineId: receiver.id, environmentId: 'health-environment', environmentInstanceId,
+            composeService: 'database', serviceId: `${environmentInstanceId}/database` } };
+    const envelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId, target, input });
+    const read = projectDeploymentReadAdmissionV1(actionId, input);
+    const admission = { accountId: server.accountId, serverIdentityId: server.homeId, actionId, requestId, target,
+        machineId: publisher.id, publisherMachineId: publisher.id, workflowActionOrigin: { runId, requestId },
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) };
+    // This gate proves the Run and the exact receiver. The root's read admission
+    // owner separately decides the Environment for the Run's Account at mint.
+    expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...admission, deploymentReadAdmission: read })).toBe(true);
+    expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...admission, deploymentReadAdmission: undefined })).toBe(false);
+    expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...admission, deploymentReadAdmission:
+        projectDeploymentReadAdmissionV1(actionId, { ...input, installationId: publisher.installationId }) })).toBe(false);
+    expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...admission, target: { kind: 'machine', machineId: publisher.id },
+        deploymentReadAdmission: read })).toBe(false);
+    expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...admission, publisherMachineId: receiver.id,
+        deploymentReadAdmission: read })).toBe(false);
+    expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...admission, accountId: randomUUID(),
+        deploymentReadAdmission: read })).toBe(false);
+    expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...admission, workflowActionOrigin: { runId: randomUUID(), requestId },
+        deploymentReadAdmission: read })).toBe(false);
 }, 120_000);
 
 it.each(['ask', 'trigger-template', 'e2ee', 'teardown', 'move-link', 'move-link-plain'] as const)('issues normal Workflow native provenance before receiver approval (%s)', async intent => {
@@ -496,6 +541,24 @@ it('admits installed Workflow deployment provenance at current placement without
             effectActionId: actionId, target: envelope.target!, installationId: receiver.installationId,
             requestId: envelope.requestId!, privateKey: receiver.keys.secretKey, method: 'POST', path, body: verifyBody }) } });
     expect((await verify()).status).toBe(200);
+    // L11 cutover: this Run's reviewed update of its own Environment passes the
+    // existing placement arm; another placement, Account or Run stays refused.
+    const cutoverActionId = 'deployments.environments.update';
+    const cutoverInput = { serverId: server.homeId, environmentId: created.environmentId, expectedRevision: linked.revision,
+        requestKey: randomUUID(), patch: { ingress: null } };
+    const cutoverEnvelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: `${runId}/${randomUUID()}/0`,
+        target: { kind: 'machine', machineId: receiver.id }, input: cutoverInput });
+    const cutover = { accountId: server.accountId, serverIdentityId: server.homeId, actionId: cutoverActionId,
+        requestId: cutoverEnvelope.requestId!, target: { kind: 'machine' as const, machineId: receiver.id },
+        machineId: publisher.id, publisherMachineId: publisher.id,
+        workflowActionOrigin: { runId, requestId: cutoverEnvelope.requestId! },
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(cutoverEnvelope),
+        deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(cutoverActionId, cutoverInput) };
+    expect(await hasCurrentExternalActionWorkflowOriginInTx(db, cutover)).toBe(true);
+    expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...cutover, target: { kind: 'machine', machineId: other.id } })).toBe(false);
+    expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...cutover, accountId: randomUUID() })).toBe(false);
+    expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...cutover,
+        workflowActionOrigin: { runId: randomUUID(), requestId: cutover.requestId } })).toBe(false);
     const acceptedOperationId = randomUUID();
     const nativeRequest = (requestPath: string, body: unknown, execution = authorization) => fetch(`${server.baseUrl}${requestPath}`, {
         method: 'POST', body: JSON.stringify(body), headers: {

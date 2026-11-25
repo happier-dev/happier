@@ -7,7 +7,7 @@ import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
     DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
     DEPLOYMENT_TARGET_LINK_ACTION_ID_V1,
     DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1,
-    isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    isDeploymentBackupActionIdV1, isDeploymentNativeReadActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isAutomationOriginRunPublisherTx } from '@/app/automations/automationTriggerCauseChain';
 import { canDeployDeploymentEnvironment, canTeardownDeploymentEnvironment, admitDeploymentMachineInTx } from '@/app/deployments/deploymentAdmission';
 import { loadDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
@@ -25,6 +25,7 @@ export type DeploymentWorkflowOriginInput = Readonly<{
     admittedMachineRole?: ExternalActionExecutionAuthorizationBindingV1['admittedMachineRole'];
     authentication?: Readonly<{ evidence?: readonly AuthTokenAuthenticationEvidenceV1[] }>;
     deploymentNativeAdmission?: DeploymentNativeAdmissionV1;
+    deploymentReadAdmission?: ExternalActionExecutionAuthorizationBindingV1['deploymentReadAdmission'];
     deploymentCandidatePublication?: ExternalActionExecutionAuthorizationBindingV1['deploymentCandidatePublication'];
     deploymentPreparationAdmission?: ExternalActionExecutionAuthorizationBindingV1['deploymentPreparationAdmission'];
     deploymentLinkAdmission?: Pick<NonNullable<ExternalActionExecutionAuthorizationBindingV1['deploymentLinkAdmission']>, 'environmentId' | 'replacement'>;
@@ -81,6 +82,14 @@ export async function hasCurrentDeploymentWorkflowOriginInTx(reader: Tx, input: 
         const native = input.deploymentNativeAdmission;
         return (native?.kind === 'backup' || native?.kind === 'restore') && native.actionId === input.actionId
             && native.machineId === input.target.machineId && native.installationId === target.installationId;
+    }
+    if (isDeploymentNativeReadActionIdV1(input.actionId)) {
+        // The root's read admission owner decides Environment access for the Run's
+        // Account; this gate binds that exact read to the Run and its receiver.
+        const read = input.deploymentReadAdmission;
+        return read !== undefined && read.actionId === input.actionId && 'machineId' in read
+            && read.machineId === input.target.machineId
+            && (!('installationId' in read) || read.installationId === target.installationId);
     }
     // Mint admitted definition Manage. Move runs finite SCM work on the selected
     // workspace; the active Run and installed receiver retain that admission.

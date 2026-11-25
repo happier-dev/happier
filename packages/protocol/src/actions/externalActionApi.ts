@@ -50,7 +50,7 @@ import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, 
   DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1,
   DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1,
-  DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, isDeploymentActionIdV1, isDeploymentPromoteActionIdV1, isDeploymentMembershipActionIdV1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+  DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, isDeploymentActionIdV1, isDeploymentNativeReadActionIdV1, isDeploymentPromoteActionIdV1, isDeploymentMembershipActionIdV1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { DeploymentReviewedCandidateV1Schema } from '../deployments/deploymentCandidatePublicationV1.js';
 import { DeploymentReadAdmissionV1Schema, DeploymentTelemetryReadFactsV1Schema, isDeploymentReadAdmissionActionIdV1, projectDeploymentReadAdmissionV1,
   type DeploymentReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
@@ -1480,6 +1480,9 @@ export function isExternalActionMachineWorkflowActionIdV1(actionId: string): boo
     || actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
     // A Run may replace a runtime Link (Move); Home admits only the replacement shape.
     || actionId === 'deployments.targets.link'
+    // Data Move health checks and its reviewed cutover; Home's read and native
+    // admission owners still decide the Environment for the Run's Account.
+    || isDeploymentNativeReadActionIdV1(actionId) || actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
     || isDeploymentDomainChildActionIdV1(actionId)
     || isDeploymentBackupActionIdV1(actionId) || actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
     || deploymentOperationForRootActionV1(actionId) !== undefined;

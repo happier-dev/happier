@@ -150,7 +150,7 @@ import { buildDiscussionModelSessionCreationProofPayloadV1, type SessionCreation
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { projectDiscussionModelParticipantLaunchV1 } from '@happier-dev/protocol/discussions/modelParticipantLaunch';
 import { isSessionStopChildRootV1, isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
-import { DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, isDeploymentBackupEvidenceActionIdV1, isDeploymentBackupActionIdV1, isDeploymentChildEffectActionIdV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentActionIdV1, isDeploymentBackupEvidenceActionIdV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readDeploymentChildRpcV1, type DeploymentChildRpcV1, doesDeploymentChildInputMatchRootV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import type { DeploymentChildRoutingV1 } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
 import { DeploymentDeployActionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
@@ -1468,10 +1468,10 @@ async function prepareOriginalAccountAction(
           externalActionOrigin: { homeId: input.serverIdentityId!, actionId, requestId: input.requestId,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin: workflowActionOrigin } } }) });
     const setupApply = actionId === 'machines.setup.apply' ? MachineSetupApplyInputV1Schema.safeParse(input.input) : null;
-    // Catalog Publish Prepare and template preparation open private Account content.
-    if (isDeploymentBackupActionIdV1(actionId) || isDeploymentChildEffectActionIdV1(actionId) || actionId === 'deployments.teardown'
-      || actionId === 'deployments.templates.instantiate' || actionId === 'deployments.environments.create'
-      || actionId === DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1
+    // A Deployment leaf that opens the requester's private Account content on its
+    // receiver carries the requester's own box; the Action spec owns that demand.
+    if (isDeploymentActionIdV1(actionId)
+      && doesExternalActionConsumeRequesterAccountContentV1({ actionId, input: input.input, target: input.target })
       || setupApply?.success) {
       // PAT authority never becomes the publisher's Account credential custody.
       if (workflowBinding && !('authentication' in workflowBinding)) return fail('admission_unavailable', 'dispatch.workflow_authentication');
