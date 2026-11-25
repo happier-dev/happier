@@ -236,7 +236,7 @@ async function emitPacketProjections({ gitIndex, replayedTree, scratch, projecti
   }
   const selected = path => {
     if (required.has(path)) return true;
-    if (cliConflict && tracked.has(path) && cliProjectionOwned(git, replayedTree, path)) return true;
+    if (cliConflict && tracked.has(path) && cliProjectionOwned(gitIndex, replayedTree, path)) return true;
     if (projections.fieldTitles && tracked.has(path) && path.startsWith(`${manifestAssetRoot}/declarations/`)) return true;
     for (const plugin of plugins) {
       if (path === `${CLI_PROJECTION_ROOT}/${bundledPluginManifestAssetRelativePath(plugin)}`
