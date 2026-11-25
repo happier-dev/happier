@@ -370,6 +370,7 @@ const SETTLED_ADDITIONAL_PROJECTION_EXPORTS = [
   'UsageModelPriceRates',
   'canPublishSessionResumeIdentity',
   'estimateUsageModelCost',
+  'formatMcpToolWireNameV1',
   'isRuntimeConfigUpdateOutcomeDeferred',
   'isSessionModeSelectionUnavailable',
   'isSessionPermissionShellToolName',
