@@ -20349,6 +20349,8 @@ settingsSession: {
               domainSetup: {
                 authorized: "Der Administratorzugriff für die Einrichtung ist bereit.",
                 accessRequired: "Richte den Administratorzugriff ein, um diese Domain hinzuzufügen.",
+                administratorOff: ({ machine }: { machine: string }) => `Der Administratorzugriff ist für ${machine} ausgeschaltet.`,
+                passwordlessUnavailable: ({ machine }: { machine: string }) => `Die Richtlinie erlaubt Administratorzugriff, aber ${machine} konnte ihn ohne Passwort nicht gewähren.`,
                 attendanceRequired: "Die Einrichtung braucht das Passwort des Administrators.",
                 unavailable: "Die Voraussetzungen für die Einrichtung konnten nicht geprüft werden.",
               },

@@ -20264,6 +20264,8 @@ settingsSession: {
           domainSetup: {
             authorized: "L’accesso amministratore è pronto per la configurazione.",
             accessRequired: "Configura l’accesso amministratore per aggiungere questo dominio.",
+            administratorOff: ({ machine }: { machine: string }) => `L’accesso come amministratore è disattivato su ${machine}.`,
+            passwordlessUnavailable: ({ machine }: { machine: string }) => `I criteri consentono l’accesso come amministratore, ma ${machine} non ha potuto concederlo senza una password.`,
             attendanceRequired: "La configurazione richiede la password dell’amministratore.",
             unavailable: "Non è stato possibile verificare i requisiti di configurazione.",
           },

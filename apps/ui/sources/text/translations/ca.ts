@@ -19066,6 +19066,8 @@ La meva pregunta: `,
               domainSetup: {
                 authorized: "L’accés d’administrador ja està a punt per a la configuració.",
                 accessRequired: "Configura l’accés d’administrador per afegir aquest domini.",
+                administratorOff: ({ machine }: { machine: string }) => `L’accés d’administrador està desactivat a ${machine}.`,
+                passwordlessUnavailable: ({ machine }: { machine: string }) => `La política permet l’accés d’administrador, però ${machine} no l’ha pogut concedir sense contrasenya.`,
                 attendanceRequired: "La configuració requereix la contrasenya de l’administrador.",
                 unavailable: "No s’han pogut comprovar els requisits de configuració.",
               },

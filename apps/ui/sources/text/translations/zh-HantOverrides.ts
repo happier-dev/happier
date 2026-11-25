@@ -14258,6 +14258,8 @@ settingsSession: {
                 domainSetup: {
                   authorized: "設定所需的管理員存取權已就緒。",
                   accessRequired: "設定管理員存取權以新增此網域。",
+                  administratorOff: ({ machine }: { machine: string }) => `${machine} 的管理員存取權已關閉。`,
+                  passwordlessUnavailable: ({ machine }: { machine: string }) => `原則允許管理員存取，但 ${machine} 無法在不使用密碼的情況下授予此權限。`,
                   attendanceRequired: "設定需要管理員密碼。",
                   unavailable: "無法檢查設定需求。",
                 },

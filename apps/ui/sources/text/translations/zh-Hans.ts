@@ -19882,6 +19882,8 @@ settingsSession: {
           domainSetup: {
             authorized: "设置所需的管理员访问权限已就绪。",
             accessRequired: "设置管理员访问权限以添加此域名。",
+            administratorOff: ({ machine }: { machine: string }) => `${machine} 的管理员访问权限已关闭。`,
+            passwordlessUnavailable: ({ machine }: { machine: string }) => `策略允许管理员访问，但 ${machine} 无法在不使用密码的情况下授予该权限。`,
             attendanceRequired: "设置需要管理员密码。",
             unavailable: "无法检查设置要求。",
           },

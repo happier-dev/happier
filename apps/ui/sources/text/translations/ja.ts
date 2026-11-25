@@ -20176,6 +20176,8 @@ settingsSession: {
           domainSetup: {
             authorized: "設定に必要な管理者アクセスの準備ができています。",
             accessRequired: "このドメインを追加するには管理者アクセスを設定してください。",
+            administratorOff: ({ machine }: { machine: string }) => `${machine} の管理者アクセスは無効です。`,
+            passwordlessUnavailable: ({ machine }: { machine: string }) => `ポリシーでは管理者アクセスが許可されていますが、${machine} ではパスワードなしで管理者アクセスを利用できませんでした。`,
             attendanceRequired: "設定には管理者のパスワードが必要です。",
             unavailable: "設定の要件を確認できませんでした。",
           },

@@ -1047,8 +1047,12 @@ describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER
     } finally { await screen.unmount(); controller.retire(); }
   });
 
-  it.each(['machine_admin_access_required', 'admin_access_unavailable'] as const)(
-    'names the serving Machine and opens its administrator setup when Domain Add returns %s', async (code) => {
+  it.each([
+    { code: 'machine_admin_access_required', cause: 'mode_none', reason: /administrator access is off for Fleet Edge/i },
+    { code: 'machine_admin_access_required', cause: 'not_preauthorized', reason: /policy allows.+Fleet Edge.+without a password/i },
+    { code: 'admin_access_unavailable', cause: undefined, reason: /needs administrator access on Machine Fleet Edge/i },
+  ] as const)(
+    'names the serving Machine and opens its administrator setup when Domain Add returns $code / $cause', async ({ code, cause, reason }) => {
     const { createMachineFixture, createMachineMetadataFixture } = await import('@/dev/testkit');
     const { storage } = await import('@/sync/domains/state/storage');
     storage.setState({ profileScope: { serverId: scope.serverId, accountId: scope.accountId } });
@@ -1059,6 +1063,9 @@ describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER
     const detail = createDeploymentEnvironmentDetailV1();
     const actions = { ...domainActions(detail), addDomain: vi.fn(async () => ({
       ok: false as const, error: code,
+      ...(cause ? { failureCause: {
+        phase: 'deployment.domain.native_execution', errorClass: 'Error', errorCode: cause, httpStatus: null,
+      } } : {}),
       details: {
         step: 'native_execution', machineId: 'origin-machine',
         operation: { serverId: 'home', machineId: 'controller-machine', operationId: 'domain-operation' },
@@ -1084,8 +1091,9 @@ describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER
         .find(node => String(node.props.testID).startsWith('project-deployments.outcome.refused'));
       await act(async () => { banner?.props.action?.onPress(); });
       expect(openRecovery).toHaveBeenCalledExactlyOnceWith('machineAdminAccess', { machineId: 'origin-machine' });
-      expect(banner?.props.description).toContain('Fleet Edge');
+      expect(banner?.props.description).toMatch(reason);
       expect(banner?.props.description).not.toMatch(/origin-machine|controller-machine|Controller/);
+      if (cause) expect(banner?.props.details).toEqual(expect.arrayContaining([expect.stringContaining(cause)]));
     } finally { await screen.unmount(); controller.retire(); }
   });
 

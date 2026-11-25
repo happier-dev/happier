@@ -23516,6 +23516,8 @@ const enProjects = {
         domainSetup: {
           authorized: "Administrator access is ready for setup.",
           accessRequired: "Set up administrator access to add this domain.",
+          administratorOff: ({ machine }: { machine: string }) => `Administrator access is off for ${machine}.`,
+          passwordlessUnavailable: ({ machine }: { machine: string }) => `The policy allows administrator access, but ${machine} couldn’t provide it without a password.`,
           attendanceRequired: "Setup requires the administrator's password.",
           unavailable: "Setup requirements could not be checked.",
         },

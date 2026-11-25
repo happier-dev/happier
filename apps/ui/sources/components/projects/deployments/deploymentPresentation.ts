@@ -10,7 +10,7 @@ import { t } from '@/text';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import type { DeploymentActorPresentation } from './useDeploymentActorPresentations';
 import { readDeploymentRefusal } from './deploymentActionOutcome';
-import { readDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryPresentationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { readDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryPresentationV1, type DeploymentRefusalRequestV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
@@ -565,9 +565,23 @@ export function deploymentActorIsViewer(actor: ActionActorV1 | null | undefined,
  * A refusal's recovery from its one owner, with the Machine it points at named as the person sees it everywhere else
  * ("NLDW3-5-36-33 · a729"), never by its raw id (QA-SWEEP-172 #201). The protocol owner names only the id it carries.
  */
-export function readDeploymentRefusalRecovery(...args: Parameters<typeof readDeploymentRefusalRecoveryV1>) {
-  const recovery = readDeploymentRefusalRecoveryV1(...args);
-  return recovery ? nameRecoveryMachine(recovery) : recovery;
+export function readDeploymentRefusalRecovery(
+  errorCode: string, details?: unknown, request?: DeploymentRefusalRequestV1, causeCode?: string | null,
+) {
+  const recovery = readDeploymentRefusalRecoveryV1(errorCode, details, request);
+  if (!recovery) return null;
+  const { destination, machineId } = recovery.nextAction;
+  const reason = destination === 'machineAdminAccess' && machineId && causeCode
+    ? describeDeploymentDomainAdminAccessRefusal(causeCode, recoveryMachineLabel(machineId)) : null;
+  return reason ? { ...recovery, remedy: reason } : nameRecoveryMachine(recovery);
+}
+
+/** The native refusal records why the Machine could not perform the change. The Machine owns its setup instructions. */
+function describeDeploymentDomainAdminAccessRefusal(causeCode: string | null | undefined, machineLabel: string | null): string | null {
+  const machine = machineLabel ?? t('machine.thisMachineInSentence');
+  if (causeCode === 'mode_none') return t('projects.deployments.review.domainSetup.administratorOff', { machine });
+  if (causeCode === 'not_preauthorized') return t('projects.deployments.review.domainSetup.passwordlessUnavailable', { machine });
+  return null;
 }
 
 /** The same for a failure's recovery (every refused code has one); every deployment refusal surface reads one of these two. */
@@ -578,10 +592,14 @@ export function readDeploymentFailureRecovery(...args: Parameters<typeof readDep
 function nameRecoveryMachine<T extends DeploymentFailureRecoveryPresentationV1>(recovery: T): T {
   const machineId = recovery.nextAction.kind === 'navigate' ? recovery.nextAction.machineId : undefined;
   if (!machineId || !recovery.remedy.includes(machineId)) return recovery;
+  const name = recoveryMachineLabel(machineId);
+  return name ? { ...recovery, remedy: recovery.remedy.split(machineId).join(name) } : recovery;
+}
+
+function recoveryMachineLabel(machineId: string): string | null {
   const state = getStorage().getState();
   // The refusal belongs to the Account in view; its Machine resolves in that Home's inventory.
-  const name = getSettledMachineDisplayName(resolveServerScopedMachine(state, state.profileScope?.serverId ?? null, machineId));
-  return name ? { ...recovery, remedy: recovery.remedy.split(machineId).join(name) } : recovery;
+  return getSettledMachineDisplayName(resolveServerScopedMachine(state, state.profileScope?.serverId ?? null, machineId));
 }
 
 /**

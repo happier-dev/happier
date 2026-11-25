@@ -20216,6 +20216,8 @@ settingsSession: {
           domainSetup: {
             authorized: "Доступ администратора готов к настройке.",
             accessRequired: "Настройте доступ администратора, чтобы добавить этот домен.",
+            administratorOff: ({ machine }: { machine: string }) => `Доступ администратора на машине ${machine} отключён.`,
+            passwordlessUnavailable: ({ machine }: { machine: string }) => `Политика разрешает доступ администратора, но машина ${machine} не смогла предоставить его без пароля.`,
             attendanceRequired: "Для настройки нужен пароль администратора.",
             unavailable: "Не удалось проверить требования к настройке.",
           },

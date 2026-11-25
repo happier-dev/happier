@@ -20087,6 +20087,8 @@ settingsSession: {
           domainSetup: {
             authorized: "Dostęp administratora jest gotowy do konfiguracji.",
             accessRequired: "Skonfiguruj dostęp administratora, aby dodać tę domenę.",
+            administratorOff: ({ machine }: { machine: string }) => `Dostęp administratora na urządzeniu ${machine} jest wyłączony.`,
+            passwordlessUnavailable: ({ machine }: { machine: string }) => `Zasady zezwalają na dostęp administratora, ale urządzenie ${machine} nie mogło go przyznać bez hasła.`,
             attendanceRequired: "Konfiguracja wymaga hasła administratora.",
             unavailable: "Nie udało się sprawdzić wymagań konfiguracji.",
           },

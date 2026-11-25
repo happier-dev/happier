@@ -132,23 +132,37 @@ describe('native confirmation of a carried executor review', () => {
     await screen.unmount();
   });
 
-  it('offers the refusing fleet Machine’s Security destination when an approved Domain Add fails', async () => {
+  it.each([
+    { cause: 'mode_none', reason: /administrator access is off for Fleet Holder/i },
+    { cause: 'not_preauthorized', reason: /policy allows.+Fleet Holder.+without a password/i },
+  ])('names $cause and opens the refusing fleet Machine’s Security when an approved Domain Add fails', async ({ cause, reason }) => {
+    const { preloadTranslations, setPreferredLanguageFromSettings } = await import('@/text');
+    await preloadTranslations('en');
+    setPreferredLanguageFromSettings('en');
     const { createMachineMetadataFixture } = await import('@/dev/testkit');
     const { storage } = await import('@/sync/domains/state/storage');
     const { ApprovalReviewFacts } = await import('./ApprovalReviewFacts');
+    const { presentActionFailureOutcome } = await import('@/components/tools/shell/approvals/approvalFailureOutcome');
     const { router } = await import('expo-router');
     storage.setState({ profileScope: { serverId: 'home', accountId: 'owner' } });
     storage.getState().applyMachines([
       createMachineFixture({ id: 'fleet-holder', metadata: createMachineMetadataFixture({ host: 'Fleet Holder' }) }),
     ], true, { sourceServerId: 'home', sourceAccountId: 'owner' });
+    const execution = { ok: false, errorCode: 'machine_admin_access_required', error: 'machine_admin_access_required',
+      executedAtMs: 3,
+      failureCause: { phase: 'deployment.domain.native_execution', errorClass: 'Error', errorCode: cause, httpStatus: null },
+      details: { environmentId: 'environment', domainId: 'domain', step: 'native_execution',
+        machineId: 'fleet-holder', operation: { serverId: 'home', machineId: 'controller', operationId: 'operation' } },
+    } as const;
     const screen = await renderScreen(<ApprovalReviewFacts actionId="deployments.domains.add"
       actionArgs={{}} serverId="home" testID="approvals" status="failed"
       preview={{ hostReviewedContent: { domainNativeSetup: [{ machineId: 'fleet-holder', status: 'authorized' }] } }}
-      execution={{ ok: false, errorCode: 'machine_admin_access_required', error: 'machine_admin_access_required',
-        executedAtMs: 3, details: { environmentId: 'environment', domainId: 'domain', step: 'native_execution',
-          machineId: 'fleet-holder', operation: { serverId: 'home', machineId: 'controller', operationId: 'operation' } } }} />);
+      execution={execution} />);
     try {
       const row = screen.findByTestId('approvals.domain-setup.fleet-holder');
+      const outcome = presentActionFailureOutcome(execution, 'deployment');
+      expect(outcome.reason).toMatch(reason);
+      expect(outcome.technicalDetails).toContainEqual(expect.objectContaining({ key: 'failure-cause-code', value: cause }));
       expect(screen.getTextContent()).toContain('Fleet Holder');
       expect(row?.props.onPress).toBeTypeOf('function');
       await screen.pressByTestIdAsync('approvals.domain-setup.fleet-holder');

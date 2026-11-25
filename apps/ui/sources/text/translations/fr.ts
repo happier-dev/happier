@@ -20136,6 +20136,8 @@ settingsSession: {
           domainSetup: {
             authorized: "L’accès administrateur est prêt pour la configuration.",
             accessRequired: "Configurez l’accès administrateur pour ajouter ce domaine.",
+            administratorOff: ({ machine }: { machine: string }) => `L’accès administrateur est désactivé sur ${machine}.`,
+            passwordlessUnavailable: ({ machine }: { machine: string }) => `La politique autorise l’accès administrateur, mais ${machine} n’a pas pu l’accorder sans mot de passe.`,
             attendanceRequired: "La configuration demande le mot de passe de l’administrateur.",
             unavailable: "Les prérequis de configuration n’ont pas pu être vérifiés.",
           },

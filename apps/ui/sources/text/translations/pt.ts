@@ -20368,6 +20368,8 @@ settingsSession: {
           domainSetup: {
             authorized: "O acesso de administrador está pronto para a configuração.",
             accessRequired: "Configure o acesso de administrador para adicionar este domínio.",
+            administratorOff: ({ machine }: { machine: string }) => `O acesso de administrador está desativado em ${machine}.`,
+            passwordlessUnavailable: ({ machine }: { machine: string }) => `A política permite o acesso de administrador, mas ${machine} não conseguiu concedê-lo sem uma senha.`,
             attendanceRequired: "A configuração exige a palavra-passe do administrador.",
             unavailable: "Não foi possível verificar os requisitos de configuração.",
           },
