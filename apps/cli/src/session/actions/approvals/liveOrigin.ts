@@ -67,7 +67,7 @@ export function createLiveCliApprovalOrigin(params: Readonly<{
       } };
     } catch (error) { await dispose(invocation); throw error; }
   };
-  const publish = async <Result extends Readonly<{ artifactId: string }>>(args: Readonly<{ request: LiveRequest }>,
+  const publish = async <Result extends Readonly<{ artifactId: string; request?: LiveRequest }>>(args: Readonly<{ request: LiveRequest }>,
     create: () => Promise<Result>): Promise<Result> => {
     const invocation = current.getStore();
     const request = args.request;
@@ -86,6 +86,7 @@ export function createLiveCliApprovalOrigin(params: Readonly<{
     const published = gate();
     const waiting = gate();
     let artifactId: string | null = null;
+    let publishedRequest = request;
     let closed = false;
     const manager = new RpcHandlerManager({ scopePrefix: originScope, encryptionMode: 'plain' });
     manager.registerHandler<unknown, ActionExecuteResult>(LIVE_CLI_APPROVAL_DECIDE_METHOD, async (input, transport) => {
@@ -99,7 +100,7 @@ export function createLiveCliApprovalOrigin(params: Readonly<{
         || parsed.data.decision !== 'approve') return failure('approval_stale');
       if (!await waiting.promise || closed || context.signal?.aborted) return failure('approval_origin_unavailable');
       transport.signal.throwIfAborted();
-      return await decidingSubject.run({ artifactId: parsed.data.artifactId, request },
+      return await decidingSubject.run({ artifactId: parsed.data.artifactId, request: publishedRequest },
         () => params.decide(parsed.data, { ...context, authority: 'present_user' }));
     });
     const connection = createUserScopedSocketConnection({ token: params.token, serverUrl: params.serverUrl,
@@ -144,6 +145,8 @@ export function createLiveCliApprovalOrigin(params: Readonly<{
         throw Object.assign(new Error('approval_origin_unavailable'), { code: 'approval_origin_unavailable' });
       }
       const result = await create();
+      // A rejoined Ask keeps the subject of the record that won creation.
+      publishedRequest = result.request ?? request;
       artifactId = result.artifactId;
       published.resolve(true);
       return result;

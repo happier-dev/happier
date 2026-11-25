@@ -1145,7 +1145,7 @@ describe('daemon managed Machine Action factory', () => {
         expect(nativeEffects).toEqual([]);
     });
     it.each(['cleanup', 'rearmed-wake', 'stale-running-wake', 'denied-wake', 'retired-wake', 'reconnected-wake', 'cleanup-native-refused',
-        'finite-disconnected-wake', 'finite-cancelled-wake', 'finite-concurrent-wake'] as const)(
+        'finite-disconnected-wake', 'finite-cancelled-wake', 'finite-concurrent-wake', 'finite-rejoined-start-ask'] as const)(
         'resumes %s through the remote app replay adapter and actual live operation', async purpose => {
         const wake = !purpose.startsWith('cleanup');
         const denied = purpose === 'denied-wake';
@@ -1153,7 +1153,8 @@ describe('daemon managed Machine Action factory', () => {
         const reconnected = purpose === 'reconnected-wake';
         const finite = purpose.startsWith('finite-');
         const finiteCancelled = purpose === 'finite-cancelled-wake';
-        const concurrent = purpose === 'finite-concurrent-wake';
+        const rejoinStartAsk = purpose === 'finite-rejoined-start-ask';
+        const concurrent = purpose === 'finite-concurrent-wake' || rejoinStartAsk;
         let nativeStarted!: () => void;
         const nativePowerStarted = new Promise<void>(resolve => { nativeStarted = resolve; });
         let releasePower!: () => void;
@@ -1522,6 +1523,31 @@ describe('daemon managed Machine Action factory', () => {
                 rearmed = false;
                 runtime!.notifyChanged();
             }
+            if (rejoinStartAsk) {
+                const submit = submitConcurrent;
+                if (!submit) throw new Error('Missing finite RPC submitter');
+                await operations.handlers.cancel({ operationId: 'cleanup-operation' });
+                expect(await execution).toMatchObject({ ok: false, errorCode: 'cancelled' });
+                expect(storedApproval().status).toBe('open');
+
+                const waitingSends = await Promise.all(['second', 'third', 'fourth'].map(root => submit(root)));
+                await vi.waitFor(() => expect([...approvalArtifacts.keys()].some(id =>
+                    getSharedBlockingApprovalCoordinator().getLiveWaiterCount(id) === 1)).toBe(true));
+                expect([...approvalArtifacts.keys()]).toEqual([artifact.id]);
+                expect(effects).toEqual([]);
+                const replay = replayLiveCliApproval({ artifactId: artifact.id, request: asked, decision: 'approve',
+                    context: decisionContext, account: approvingAccount });
+                const decision = await Promise.race([nativePowerStarted.then(() => null), replay]);
+                if (decision !== null) expect(decision).toMatchObject({ ok: true });
+                releasePower();
+                expect(await replay).toMatchObject({ ok: true });
+                for (const send of waitingSends) {
+                    expect(await send.terminal).toMatchObject({ ok: true, result: { kind: 'accepted', managedId: machine.id } });
+                }
+                expect(effects).toEqual(['power', 'bootstrap', 'exec']);
+                expect(storedApproval()).toMatchObject({ status: 'executed' });
+                return;
+            }
             if (concurrent) {
                 if (!submitConcurrent) throw new Error('Missing finite RPC submitter');
                 const submit = submitConcurrent;
@@ -1569,7 +1595,7 @@ describe('daemon managed Machine Action factory', () => {
                     expect.objectContaining({ ok: true }), expect.objectContaining({ ok: false, errorCode: 'cancelled' }),
                     expect.objectContaining({ ok: true })]);
                 await Promise.all(replays);
-                expect(effects).toEqual(['power', 'bootstrap']);
+                expect(effects).toEqual(['power', 'bootstrap', 'exec']);
                 expect(await operations.handlers.getV2({ operationId: separate.operationId, waitForTerminal: true })).toMatchObject({
                     kind: 'found', operation: { requestId: 'separate-machine', state: 'cancelled',
                         domainRef: { kind: 'managedMachine', id: otherMachine.id } } });
@@ -1587,7 +1613,7 @@ describe('daemon managed Machine Action factory', () => {
                     kind: 'found', operation: { requestId: 'after-completion', state: 'failed',
                         error: { errorCode: 'admission_unavailable' } } });
                 expect(approvalArtifacts.size).toBe(2);
-                expect(effects).toEqual(['power', 'bootstrap']);
+                expect(effects).toEqual(['power', 'bootstrap', 'exec']);
                 return;
             }
             const replay = reconnected ? undefined : retired || finiteCancelled ? await operations.handlers.cancel({ operationId: 'cleanup-operation' })
@@ -1599,7 +1625,7 @@ describe('daemon managed Machine Action factory', () => {
             expect(outcome, JSON.stringify({ outcome, effects, controllerPaths })).toMatchObject({ result: retired || reconnected || finiteCancelled ? { ok: false, errorCode: 'cancelled' }
                 : denied ? { ok: false, errorCode: 'approval_rejected' }
                     : nativeRefused ? { ok: false, errorCode: 'provider_unavailable', details: nativeDetails } : { ok: true } });
-            expect(effects).toEqual(denied || retired || reconnected || finiteCancelled ? [] : wake ? ['power', 'bootstrap'] : ['destroy']);
+            expect(effects).toEqual(denied || retired || reconnected || finiteCancelled ? [] : wake ? ['power', 'bootstrap', 'exec'] : ['destroy']);
             if (!wake && !nativeRefused) {
                 expect(readRetirementApproval('matching-delete-approval')).toMatchObject({ status: 'canceled' });
                 expect(readRetirementApproval('other-delete-approval')).toMatchObject({ status: 'open' });

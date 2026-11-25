@@ -608,6 +608,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                         || purpose.data.target.origin.kind !== 'finite-command') return false;
                     const target = purpose.data.target;
                     return target.homeId === finiteTarget.homeId && target.managedId === finiteTarget.managedId
+                        && target.expectedIntentRevision === finiteTarget.expectedIntentRevision
                         && target.enrolledMachineId === finiteTarget.enrolledMachineId
                         && target.controller?.machineId === finiteTarget.controller?.machineId
                         && target.controller?.installationId === finiteTarget.controller?.installationId;

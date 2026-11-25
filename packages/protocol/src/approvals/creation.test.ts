@@ -8,13 +8,14 @@ import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from 
 import { ApprovalRequestPublicReadSchema } from './approvalRequestPublicRead.js';
 import { buildApprovalRequestArtifactHeaderV1, buildTargetActionApprovalArtifactHeaderV1 } from './approvalArtifactHeaderV1.js';
 import { ApprovalRequestV2Schema, StoredApprovalRequestSchema, type ApprovalRequestV2 } from './approvalRequestV1.js';
-import { assertApprovalRequestCreationBinding, createApprovalRequestArtifact, deriveApprovalRequestArtifactId } from './creation.js';
+import { assertApprovalRequestCreationBinding, createApprovalRequestArtifact, deriveApprovalRequestArtifactId, deriveManagedStartApprovalRequestIdV1 } from './creation.js';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from './targetActionApprovalRequestV1.js';
 import { settleTargetActionApprovalReplayInputs } from './targetActionApprovalRequestTransition.js';
 import { sealExternalActionRequestV2 } from '../actions/externalActionEncryption.js';
 import { ExternalActionExecutionAuthorizationV1Schema, projectExternalActionDeploymentNativeEnvelopeAdmissionV1 } from '../actions/externalActionApi.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '../actions/externalActionExecutionAuthorization.js';
 import { isDeploymentChildRootActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
+import { MANAGED_POWER_SET_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
 
 function proposal(value = 'private-value'): ApprovalRequestV2 {
   const actionId = 'identity.providers.secret.replace';
@@ -48,6 +49,30 @@ function persistence() {
 }
 
 describe('approval Artifact request identity', () => {
+  it('preserves a denied Start and creates only one new Ask when Send is tried again at the same revision', async () => {
+    const home = persistence();
+    const actionId = MANAGED_POWER_SET_ACTION_ID_V1;
+    const actionArgs = { homeId: 'home-identity', managedId: 'guest', intent: 'start', when: 'now', expectedRevision: 3 };
+    const request = ApprovalRequestV2Schema.parse({
+      ...proposal(), actionId, actionArgs, summary: 'Start managed Machine', requestedSurface: 'cli',
+      approval: { flow: 'blocking', result: 'required' },
+      requestInputDigest: computeActionInputApprovalDigestV1(actionId, actionArgs),
+      executionOriginV1: { ...proposal().executionOriginV1, authority: 'account_automation', surface: 'cli',
+        machineId: 'controller', actionId, requestId: deriveManagedStartApprovalRequestIdV1(actionArgs) },
+    });
+    const first = await home.create(request);
+    const denied = { ...request, status: 'rejected' as const, updatedAtMs: 2, decision: { kind: 'reject' as const, decidedAtMs: 2 } };
+    home.rows.set(first.artifactId, { header: buildApprovalRequestArtifactHeaderV1(denied), body: JSON.stringify(denied), access: 'owner' });
+    expect(await home.create(request)).toMatchObject({ artifactId: first.artifactId, request: { status: 'rejected' } });
+
+    const sends = await Promise.all(Array.from({ length: 3 }, () => home.create({ ...request, createdAtMs: 3, updatedAtMs: 3 })));
+    expect(new Set(sends.map(send => send.artifactId)).size).toBe(1);
+    expect(sends[0]!.artifactId).not.toBe(first.artifactId);
+    expect(sends.map(send => send.request.status)).toEqual(['open', 'open', 'open']);
+    expect(home.rows.size).toBe(2);
+    expect(home.rows.get(first.artifactId)?.body).toBe(JSON.stringify(denied));
+  });
+
   it.each([
     { actionId: 'deployments.domains.add', input: { serverId: 'home', environmentId: 'environment', domainId: 'domain',
       expectedRevision: 3, targetLinkId: 'runtime', expectedTargetLinkRevision: 2, requestKey: 'domain-add',

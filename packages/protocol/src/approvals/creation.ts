@@ -1,8 +1,10 @@
 import { computeCanonicalDomainSeparatedHexDigest } from '../crypto/canonicalDigest.js';
 import type { ApprovalRequestConflictFieldV1 } from '../actions/actionExecutionResult.js';
-import { deriveAccountScopedArtifactIdV1, resolveAccountScopedArtifactIdV1, type ArtifactIdScopeV1 } from '../artifacts/idScope.js';
+import { deriveAccountScopedArtifactIdV1, derivePrivateArtifactSourceIdV1, resolveAccountScopedArtifactIdV1, type ArtifactIdScopeV1 } from '../artifacts/idScope.js';
 import { encodeExternalActionResolvedTargetV1 } from '../actions/externalActionExecutionAuthorization.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
+import { MANAGED_POWER_SET_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
+import { ManagedPowerInputV1Schema } from '../machines/managed/actionsV1.js';
 import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1, buildTargetActionApprovalArtifactHeaderV1, type ApprovalArtifactHeaderV1 } from './approvalArtifactHeaderV1.js';
 import { ApprovalRequestSchema, isHistoricalPublishApprovalRequestV2, type ApprovalRequest, type CurrentApprovalRequest, type ApprovalRequestV2 } from './approvalRequestV1.js';
 import { settleApprovalRequestReplayInputs } from './approvalRequestTransition.js';
@@ -21,6 +23,31 @@ function isTargetActionRequest(request: ApprovalRequest | TargetActionApprovalRe
 function requestIdentity(request: CreationRequest): CapturedRequest | null {
   if (!isTargetActionRequest(request)) return request.v === 2 ? request : null;
   return request.executionOriginV1 ? request : null;
+}
+
+/** Identity of the installed policy's Ask, independent of the Sends that observe it. */
+export function deriveManagedStartApprovalRequestIdV1(input: Readonly<{
+  homeId: string; managedId: string; expectedRevision: number;
+}>): string {
+  return computeCanonicalDomainSeparatedHexDigest('happier.managed-machine.start-approval.v1',
+    [input.homeId, input.managedId, String(input.expectedRevision)]);
+}
+
+function isManagedStartPolicyRequest(request: CreationRequest): boolean {
+  if (isTargetActionRequest(request) || request.v !== 2 || request.actionId !== MANAGED_POWER_SET_ACTION_ID_V1
+    || request.approval?.flow !== 'blocking') return false;
+  const origin = request.executionOriginV1;
+  if (origin.authority !== 'account_automation' || origin.caller.kind !== 'host'
+    || origin.externalActionExecutionAuthorization || request.requesterConfirmation) return false;
+  const input = ManagedPowerInputV1Schema.safeParse(request.actionArgs);
+  return input.success && input.data.when === 'now' && (input.data.intent === 'start' || input.data.intent === 'resume')
+    && origin.requestId === deriveManagedStartApprovalRequestIdV1(input.data);
+}
+
+function wasRefusedBeforeStart(request: CreationRequest): boolean {
+  return request.status === 'rejected' || request.status === 'canceled'
+    || (!isTargetActionRequest(request) && request.v === 2 && request.status === 'failed'
+      && request.execution?.effectAttempted === false);
 }
 
 export class ApprovalRequestConflict extends Error {
@@ -243,13 +270,23 @@ export async function createApprovalRequestArtifact(input: CreationInput<Approva
   if (!parsed.success) throw new ApprovalRequestInvalid(parsed.error.issues);
   const request = parsed.data;
   const identity = requestIdentity(request);
-  const resolved = identity ? await resolveAccountScopedArtifactIdV1({
-    accountId: input.accountId ?? identity.executionOriginV1?.accountId ?? '',
-    sourceId: deriveApprovalRequestSourceId(identity, input.accountId),
-    read: artifactId => readExisting(input.read, artifactId),
+  const accountId = input.accountId ?? identity?.executionOriginV1?.accountId ?? '';
+  const read = (artifactId: string) => readExisting(input.read, artifactId);
+  let resolved = identity ? await resolveAccountScopedArtifactIdV1({
+    accountId, sourceId: deriveApprovalRequestSourceId(identity, input.accountId), read,
   }) : { artifactId: input.newId(), idScope: undefined, artifact: null };
+  const managedStart = isManagedStartPolicyRequest(request);
+  while (resolved.artifact) {
+    const existing = rejoin(resolved.artifact, request);
+    // A fresh attempt after refusal can ask again. A Send already waiting
+    // on the same attempt consumes that refusal from the captured record.
+    if (!managedStart || existing.updatedAtMs >= request.createdAtMs || !wasRefusedBeforeStart(existing)) {
+      return { artifactId: resolved.artifactId, request: existing };
+    }
+    const sourceId = derivePrivateArtifactSourceIdV1(`managed-start-after:${resolved.artifactId}`, null);
+    resolved = await resolveAccountScopedArtifactIdV1({ accountId, sourceId, read });
+  }
   const { artifactId, idScope } = resolved;
-  if (resolved.artifact) return { artifactId, request: rejoin(resolved.artifact, request) };
   let created: StoredArtifact | void = undefined;
   try {
     const header = isTargetActionRequest(request) ? buildTargetActionApprovalArtifactHeaderV1(request)

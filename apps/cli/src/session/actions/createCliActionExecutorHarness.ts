@@ -371,10 +371,7 @@ export function createCliActionExecutorHarness(
       const signedApprovalStore = signedApprovalStoreForRequest(args.request);
       const result = await liveOrigin.publish(args, () => signedApprovalStore
         ? signedApprovalStore.approvalsCreate(args) : originalApprovalsCreate(args));
-      const artifactId = typeof (result as { artifactId?: unknown }).artifactId === 'string'
-        ? (result as { artifactId: string }).artifactId
-        : null;
-      if (artifactId) coordinator.notifyApprovalUpdated({ artifactId, request: args.request });
+      coordinator.notifyApprovalUpdated({ artifactId: result.artifactId, request: result.request ?? args.request });
       return result;
     };
   }

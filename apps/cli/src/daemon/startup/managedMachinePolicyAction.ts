@@ -1,5 +1,7 @@
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionExecutorDeps, createActionExecutor } from '@happier-dev/protocol';
+import { deriveManagedStartApprovalRequestIdV1 } from '@happier-dev/protocol/approvals/creation';
+import { MANAGED_DELETE_ACTION_ID_V1, MANAGED_POWER_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -29,12 +31,19 @@ export async function executeManagedMachinePolicyAction<Machine extends ManagedM
             && machine.retention.effect === 'stop' && (machine.desired === 'stop' || machine.desired === 'suspend'))) {
         return await input.runApproved(context);
     }
-    const actionId = machine.desired === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set';
+    const actionId = machine.desired === 'delete' ? MANAGED_DELETE_ACTION_ID_V1 : MANAGED_POWER_SET_ACTION_ID_V1;
     const actionInput = {
         homeId: machine.homeId, managedId: machine.id, intent: machine.desired,
         when: 'now', expectedRevision: machine.intentRevision,
         ...(machine.desired === 'delete' ? { reviewedDependencies: true } : {}),
     };
+    // The approved effect is this Machine's Start at the reviewed revision.
+    // Each Send retains its original identity and operation receipt outside the Ask.
+    const actionRequestId = input.purpose.kind === 'accepted-input-start'
+        && (machine.desired === 'start' || machine.desired === 'resume')
+        && !context.externalActionExecutionAuthorization && !context.externalActionCredential
+        ? deriveManagedStartApprovalRequestIdV1(actionInput)
+        : context.actionRequestId;
     let settledMachine: Machine | undefined;
     let approvedFailure: Readonly<{ error: unknown }> | undefined;
     const result = await input.createExecutor({
@@ -54,7 +63,8 @@ export async function executeManagedMachinePolicyAction<Machine extends ManagedM
             catch (error) { approvedFailure = { error }; throw error; }
             return { kind: 'accepted', managedId: settledMachine.id, intentRevision: settledMachine.intentRevision, operation: { operationId } };
         },
-    }).execute(actionId, actionInput, { ...context, authority: 'account_automation', actionCaller: { kind: 'host' }, serverId: input.serverId });
+    }).execute(actionId, actionInput, { ...context, actionRequestId, authority: 'account_automation',
+        actionCaller: { kind: 'host' }, serverId: input.serverId });
     if (!result.ok) {
         if (approvedFailure) throw approvedFailure.error;
         throw Object.assign(new Error(result.error), { code: result.errorCode, actionFailure: result });
