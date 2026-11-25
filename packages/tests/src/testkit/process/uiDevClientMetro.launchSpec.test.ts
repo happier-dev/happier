@@ -29,6 +29,7 @@ describe('uiDevClientMetro launch spec', () => {
         port: 19_081,
         host: 'localhost',
         clearCache: true,
+        env: { NODE_ENV: 'test', BABEL_ENV: 'test' },
       }),
     ).toEqual({
       command: process.execPath,
@@ -43,6 +44,7 @@ describe('uiDevClientMetro launch spec', () => {
         '--clear',
       ],
       cwd: uiWorkspaceDir,
+      env: { NODE_ENV: 'development', BABEL_ENV: 'development' },
     });
   });
 
@@ -63,10 +65,12 @@ describe('uiDevClientMetro launch spec', () => {
         port: 19_082,
         host: 'localhost',
         clearCache: true,
+        env: { NODE_ENV: 'test', BABEL_ENV: 'test' },
         noDev: true,
       }),
     ).toMatchObject({
       args: expect.arrayContaining(['--dev-client', '--no-dev', '--clear']),
+      env: { NODE_ENV: 'production', BABEL_ENV: 'production' },
     });
   });
 

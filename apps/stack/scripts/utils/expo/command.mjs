@@ -212,6 +212,11 @@ export async function ensureExpoWorkspacePrepared({ projectDir, env = process.en
   return await ensureWorkspacePackagesBuiltForComponent(projectDir, { quiet, env });
 }
 
+export function withExpoStartProcessMode(env, { noDev = false } = {}) {
+  const mode = noDev ? 'production' : 'development';
+  return { ...env, NODE_ENV: mode, BABEL_ENV: mode };
+}
+
 export async function expoExec({
   dir,
   projectDir,
@@ -225,7 +230,10 @@ export async function expoExec({
   const workspaceDepsDir = projectDir ?? runnerDir;
   env = { ...(env ?? process.env) };
   const developmentStart = args?.[0] === 'start';
-  if (developmentStart) env.HAPPIER_STACK_DEV_AUTO_REFRESH_DEPS = '1';
+  if (developmentStart) {
+    env = withExpoStartProcessMode(env, { noDev: args.includes('--no-dev') });
+    env.HAPPIER_STACK_DEV_AUTO_REFRESH_DEPS = '1';
+  }
   await withExpoPreparationEnv(env, async (preparationEnv) => {
     await ensureDepsInstalled(runnerDir, ensureDepsLabel, { quiet, env: preparationEnv });
     await ensureExpoWorkspacePrepared({ projectDir: workspaceDepsDir, quiet, env: preparationEnv, startup: developmentStart });
@@ -275,7 +283,10 @@ export async function expoSpawn({
   const workspaceDepsDir = projectDir ?? runnerDir;
   env = { ...(env ?? process.env) };
   const developmentStart = args?.[0] === 'start';
-  if (developmentStart) env.HAPPIER_STACK_DEV_AUTO_REFRESH_DEPS = '1';
+  if (developmentStart) {
+    env = withExpoStartProcessMode(env, { noDev: args.includes('--no-dev') });
+    env.HAPPIER_STACK_DEV_AUTO_REFRESH_DEPS = '1';
+  }
   await withExpoPreparationEnv(env, async (preparationEnv) => {
     // Managed development already prepared dependencies. Other commands
     // still prepare mandatory component outputs here.

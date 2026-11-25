@@ -601,6 +601,8 @@ describe('uiWebExport (cache clearing)', () => {
       env: {
         ...process.env,
         EXPO_PUBLIC_DEBUG: '1',
+        NODE_ENV: 'test',
+        BABEL_ENV: 'test',
         HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `cache-bust-${Date.now()}`,
       },
     });
@@ -610,6 +612,7 @@ describe('uiWebExport (cache clearing)', () => {
         throw new Error('expected export env to be captured');
       }
       const exportEnv: NodeJS.ProcessEnv = capturedEnv;
+      expect(exportEnv).toMatchObject({ NODE_ENV: 'production', BABEL_ENV: 'production' });
       expect(exportEnv.HAPPIER_UI_METRO_CACHE_VERSION_BUST ?? '').toMatch(/^[a-f0-9]{16,}$/u);
     } finally {
       await ui.stop();

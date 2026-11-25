@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildExpoDevEnv } from './expo_dev.mjs';
+import { fileURLToPath } from 'node:url';
+import { buildExpoDevEnv, resolveMetroConfigFingerprint } from './expo_dev.mjs';
 
 test('buildExpoDevEnv does not inject auth auto-restore env vars', () => {
   const baseEnv = {
@@ -126,4 +127,17 @@ test('buildExpoDevEnv does not set EXPO_APP_SLUG in dev-client mode (slug must m
   });
 
   assert.equal(env.EXPO_APP_SLUG, undefined);
+});
+
+test('Stack Metro uses development mode and the same cache identity independently of the parent mode', async () => {
+  const baseEnv = { NODE_ENV: 'test', BABEL_ENV: 'test' };
+  const env = buildExpoDevEnv({ baseEnv, apiServerUrl: 'http://localhost:3005', wantWeb: true });
+  assert.equal(env.NODE_ENV, 'development');
+  assert.equal(env.BABEL_ENV, 'development');
+  assert.deepEqual(baseEnv, { NODE_ENV: 'test', BABEL_ENV: 'test' });
+  const projectDir = fileURLToPath(new URL('../../../../../apps/ui', import.meta.url));
+  assert.equal(
+    await resolveMetroConfigFingerprint({ projectDir, env }),
+    await resolveMetroConfigFingerprint({ projectDir, env: baseEnv }),
+  );
 });

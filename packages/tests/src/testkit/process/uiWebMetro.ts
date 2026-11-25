@@ -106,8 +106,12 @@ function resolveUiWebMetroSpawnEnv(params: Readonly<{
   // In "no-dev" mode we force `CI=1` to avoid Expo interactive prompts/noise and to
   // better match production behavior. When running with dev enabled, allow callers
   // to opt out of CI so React errors are not minified and debugging is practical.
+  const mode = params.noDev ? 'production' : 'development';
   const baseEnv: NodeJS.ProcessEnv = buildUiWebExpoProcessEnv({
     ...params.env,
+    // Expo preserves inherited NODE_ENV, and Expo Router skips app-root inlining in test mode.
+    NODE_ENV: mode,
+    BABEL_ENV: mode,
     EXPO_NO_TELEMETRY: '1',
     EXPO_NO_INTERACTIVE: '1',
     EXPO_UNSTABLE_WEB_MODAL: '1',

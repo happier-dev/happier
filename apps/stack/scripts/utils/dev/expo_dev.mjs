@@ -29,6 +29,7 @@ import {
   resolveExpoBin,
   reapExpoPluginUiArtifacts,
   withExpoPreparationEnv,
+  withExpoStartProcessMode,
 } from '../expo/command.mjs';
 import { pathExists } from '../fs/fs.mjs';
 import { killProcessTree } from '../proc/proc.mjs';
@@ -123,8 +124,9 @@ export async function resolveMetroConfigFingerprint({ projectDir, env = process.
     installDir, env,
   });
   if (!inputs.length && completedGeneration === null) return 'missing';
+  const processEnv = withExpoStartProcessMode(env);
   const transformEnv = ['HAPPIER_UI_WORKLETS_BUNDLE_MODE', 'HAPPIER_UI_METRO_CACHE_VERSION_BUST', 'NODE_ENV', 'BABEL_ENV']
-    .map(name => [name, String(env[name] ?? '')]);
+    .map(name => [name, String(processEnv[name] ?? '')]);
   return `sha256:${createHash('sha256').update(JSON.stringify({ inputs, completedGeneration, transformEnv })).digest('hex')}`;
 }
 
@@ -191,7 +193,7 @@ export function buildExpoDevEnv({
   expoTailscaleIp = '',
   expoPublicHost = '',
 } = {}) {
-  const env = { ...(baseEnv || process.env) };
+  const env = withExpoStartProcessMode(baseEnv ?? process.env);
   delete env.CI;
 
   // Remote Dev Target workers have no display server. Expo uses this supported

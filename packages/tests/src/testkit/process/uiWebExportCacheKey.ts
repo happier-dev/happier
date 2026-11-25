@@ -1,12 +1,20 @@
 import { resolveUiWebSourceFingerprint } from './uiWebSourceFingerprint';
 
+export function resolveUiWebExportMode(env: NodeJS.ProcessEnv): 'development' | 'production' {
+  return String(env.HAPPIER_E2E_UI_WEB_EXPORT_NODE_ENV ?? '').trim().toLowerCase() === 'development'
+    ? 'development'
+    : 'production';
+}
+
 function buildUiWebExportEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const debug = String(env.EXPO_PUBLIC_DEBUG ?? '1').trim() || '1';
+  const mode = resolveUiWebExportMode(env);
   return {
     ...process.env,
     ...env,
     CI: '1',
-    NODE_ENV: 'production',
+    NODE_ENV: mode,
+    BABEL_ENV: mode,
     EXPO_NO_TELEMETRY: '1',
     EXPO_PUBLIC_DEBUG: debug,
     EXPO_PUBLIC_POSTHOG_KEY: String(env.EXPO_PUBLIC_POSTHOG_KEY ?? 'phc-clear-export').trim() || 'phc-clear-export',
@@ -29,6 +37,7 @@ export function buildUiWebExportCacheKey(env: NodeJS.ProcessEnv): string {
       || key === 'EAS_BUILD_PROFILE'
       || key === 'EXPO_UPDATES_CHANNEL'
       || key === 'NODE_ENV'
+      || key === 'BABEL_ENV'
     )
     .sort(([left], [right]) => left.localeCompare(right));
 

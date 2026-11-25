@@ -40,11 +40,14 @@ export function resolveUiDevClientMetroLaunchSpec(params: Readonly<{
   host: string;
   clearCache: boolean;
   noDev?: boolean;
+  env: NodeJS.ProcessEnv;
 }>): Readonly<{
   command: string;
   args: string[];
   cwd: string;
+  env: NodeJS.ProcessEnv;
 }> {
+  const mode = params.noDev ? 'production' : 'development';
   return {
     command: process.execPath,
     args: [
@@ -62,6 +65,7 @@ export function resolveUiDevClientMetroLaunchSpec(params: Readonly<{
       ...(params.clearCache ? ['--clear'] : []),
     ],
     cwd: params.uiWorkspaceDir,
+    env: { ...params.env, NODE_ENV: mode, BABEL_ENV: mode },
   };
 }
 
@@ -140,11 +144,12 @@ export async function startUiDevClientMetro(params: {
     host: metroHost,
     clearCache,
     noDev,
+    env: params.env,
   });
   const proc = spawnLoggedProcess({
     ...launchSpec,
     env: {
-      ...params.env,
+      ...launchSpec.env,
       CI: '1',
       EXPO_NO_TELEMETRY: '1',
       BROWSER: 'none',

@@ -10,7 +10,7 @@ import { runLoggedCommand } from './spawnProcess';
 import { buildUiWebExpoProcessEnv, readPositiveEnvInt } from './uiWebEnv';
 import type { StartedUiWeb } from './uiWebTypes';
 import { terminateProcessTreeByPid } from './processTree';
-import { buildUiWebExportCacheKey } from './uiWebExportCacheKey';
+import { buildUiWebExportCacheKey, resolveUiWebExportMode } from './uiWebExportCacheKey';
 import { redactHarnessLogText } from './harnessLogRedaction';
 import { type TestProcessLease, withTestProcessLease } from './testProcessLease';
 import {
@@ -372,8 +372,7 @@ function buildRuntimeConfig(env: NodeJS.ProcessEnv): UiWebRuntimeConfig {
 
 function buildExportEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const debug = String(env.EXPO_PUBLIC_DEBUG ?? '1').trim() || '1';
-  const nodeEnvRaw = String(env.HAPPIER_E2E_UI_WEB_EXPORT_NODE_ENV ?? 'production').trim().toLowerCase();
-  const nodeEnv = nodeEnvRaw === 'development' ? 'development' : 'production';
+  const nodeEnv = resolveUiWebExportMode(env);
   const metroCacheVersionBust = createHash('sha256')
     .update(buildUiWebExportCacheKey(env))
     .digest('hex')
@@ -383,6 +382,7 @@ function buildExportEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     ...env,
     CI: '1',
     NODE_ENV: nodeEnv,
+    BABEL_ENV: nodeEnv,
     EXPO_NO_TELEMETRY: '1',
     EXPO_NO_INTERACTIVE: '1',
     EXPO_PUBLIC_DEBUG: debug,
