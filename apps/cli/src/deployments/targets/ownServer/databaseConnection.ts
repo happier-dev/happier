@@ -11,7 +11,7 @@ import type { PostgresqlConnection } from '@happier-dev/databases/connection/pos
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { environmentSecretBindingIdentityV1, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
-import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
+import { MACHINE_NATIVE_DATA_READ_KIND, machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import type { DatabaseConnectionOperationRunner } from '@happier-dev/databases/connection';
 import type { StoredCredentials } from '@/persistence';
 import { readEnvironmentDataRoleLaunchAdmissionForHost } from '../../secrets/readEnvironmentSecretLaunchAdmissionForHost';
@@ -52,7 +52,7 @@ export async function openOwnServerDatabaseConnectionForHost(input: Readonly<{
         const signal = AbortSignal.any([input.signal, scope.handle.retirementSignal]);
         // The watched Resource holds the verified session. Native exclusion
         // covers connection setup and each scheduled database operation.
-        const operation = { operationId: input.operationId, kind: 'dataQuery' };
+        const operation = { operationId: input.operationId, kind: write ? 'dataQuery' : MACHINE_NATIVE_DATA_READ_KIND };
         const runOperation: DatabaseConnectionOperationRunner = (execute, requestSignal) =>
             machineNativeEffectAdmission.run({ operation: { ...operation, signal: requestSignal ?? signal }, keys },
                 effect => machineNativeEffectAdmission.runStage(effect, execute));

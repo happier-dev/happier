@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createMachineNativeEffectAdmission, machineNativeEffectAdmission, type MachineNativeEffectContext, type MachineNativeEffectKey } from './machineNativeEffectAdmission';
+import { createMachineNativeEffectAdmission, MACHINE_NATIVE_DATA_READ_KIND, machineNativeEffectAdmission, type MachineNativeEffectContext, type MachineNativeEffectKey } from './machineNativeEffectAdmission';
 import { applyMachineSetup } from '@/machines/setup/applyMachineSetup';
 import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
 import type { PtyExitEvent, PtyProcess, PtyProvider } from '@/terminal/pty/provider';
@@ -519,6 +519,27 @@ describe('Machine native effect admission', () => {
             await owner.run({ operation: { operationId: 'deploy-B', kind: 'deploy' }, keys: [project('B')] }, async () => { competingEffects++; });
             expect(competingEffects).toBe(1);
         } finally { native.resolve(); await deploy; }
+    });
+
+    it('admits concurrent database reads on one service together while writers and lifecycle effects still exclude them', async () => {
+        const owner = createMachineNativeEffectAdmission();
+        const reading = deferred();
+        // A Workbench Console reads size and statements on the same service at once.
+        const size = owner.run({ operation: { operationId: 'size', kind: MACHINE_NATIVE_DATA_READ_KIND }, keys: [project('A')] }, async () => reading.promise);
+        try {
+            expect(await owner.run({ operation: { operationId: 'statements', kind: MACHINE_NATIVE_DATA_READ_KIND }, keys: [project('A')] }, async () => 'statements'))
+                .toBe('statements');
+            await expect(owner.run({ operation: { operationId: 'deploy-A', kind: 'deploy' }, keys: [project('A')] }, async () => {}))
+                .rejects.toMatchObject({ code: 'effect_in_progress', actionOperationId: 'size' });
+            await expect(owner.run({ operation: { operationId: 'writer', kind: 'dataQuery' }, keys: [project('A')] }, async () => {}))
+                .rejects.toMatchObject({ code: 'effect_in_progress', actionOperationId: 'size' });
+        } finally { reading.resolve(); await size; }
+        const deploying = deferred();
+        const deploy = owner.run({ operation: { operationId: 'deploy-A', kind: 'deploy' }, keys: [project('A')] }, async () => deploying.promise);
+        try {
+            await expect(owner.run({ operation: { operationId: 'during-deploy', kind: MACHINE_NATIVE_DATA_READ_KIND }, keys: [project('A')] }, async () => {}))
+                .rejects.toMatchObject({ code: 'effect_in_progress', actionOperationId: 'deploy-A' });
+        } finally { deploying.resolve(); await deploy; }
     });
 
     it('uses app equality and engine scope while allowing unrelated apps and portable setup', async () => {

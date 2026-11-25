@@ -91,6 +91,13 @@ function conflicts(left: MachineNativeEffectKey, right: MachineNativeEffectKey):
     return keyIdentity(left) === keyIdentity(right);
 }
 
+/** Read-only database operations exclude lifecycle effects and writers, not each other:
+ * the engine owns concurrency between reader connections. */
+export const MACHINE_NATIVE_DATA_READ_KIND = 'dataRead';
+function sharesDatabaseService(left: MachineNativeEffectOperation, right: MachineNativeEffectOperation): boolean {
+    return left.kind === MACHINE_NATIVE_DATA_READ_KIND && right.kind === MACHINE_NATIVE_DATA_READ_KIND;
+}
+
 /** One target-daemon owner. Full coordinates are admitted once from the native
  * render. This is native exclusion, independent of Action approval and receipts. */
 export function createMachineNativeEffectAdmission() {
@@ -251,8 +258,9 @@ export function createMachineNativeEffectAdmission() {
                 input.operation.signal?.throwIfAborted();
                 // No await between conflict inspection and acquisition: the entire
                 // rendered set is admitted atomically, with no partial acquisition.
-                const incumbent = [...active].find(incumbent => input.allNative === true || incumbent.allNative
-                    || keys.some(key => incumbent.keys.some(other => conflicts(key, other))));
+                const incumbent = [...active].find(incumbent => !sharesDatabaseService(input.operation, incumbent.context.operation)
+                    && (input.allNative === true || incumbent.allNative
+                    || keys.some(key => incumbent.keys.some(other => conflicts(key, other)))));
                 if (!incumbent) break;
                 // Broad setup impact is safe through serialization. Uncertain native
                 // custody still needs its producer's proof; nested work cannot wait on itself.
