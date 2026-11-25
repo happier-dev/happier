@@ -1,3 +1,6 @@
+import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
+import type { Profile } from '@/sync/domains/profiles/profile';
+import { shouldHideQuotaForCredentialStatus } from '@/sync/domains/connectedServices/shouldHideQuotaForCredentialStatus';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { readRegisteredStorageState, subscribeRegisteredStorageState, subscribeRegisteredStorageMachineUpdates } from '@/sync/domains/state/storageStateReaderBridge';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -208,10 +211,31 @@ export function getUsageQueryMachineInvalidationKey(machines: Readonly<Record<st
     return consumedMachineKey(readUsageMachineFacts(machines, nowMs, scope), consumers);
 }
 
+type QuotaAccount = Profile['connectedAccountsV4'][number];
+
+export function readUsageQuotaAccounts(accounts: readonly QuotaAccount[]): QuotaAccount[] {
+    return accounts.filter(account => !shouldHideQuotaForCredentialStatus(account.status)
+        && isConnectedServiceUsageCapable(account.ref.service));
+}
+
+function quotaAccountInput({ lastUsedAt: _lastUsedAt, ...account }: QuotaAccount) {
+    return account;
+}
+
+function changedQuotaSourceKeys(before: readonly QuotaAccount[], after: readonly QuotaAccount[]): string[] {
+    if (before === after || before.length === after.length && before.every((row, index) => row === after[index])) return [];
+    const bySource = (accounts: readonly QuotaAccount[]) => new Map(accounts.map(account =>
+        [createCanonicalJsonSigningInput({ bindingKind: 'account', ref: account.ref }), quotaAccountInput(account)]));
+    const previous = bySource(before);
+    const current = bySource(after);
+    return [...new Set([...previous.keys(), ...current.keys()])].filter(key =>
+        !sameStrictJsonValue(previous.get(key), current.get(key)));
+}
+
 export type UsageQueryStateInvalidation = 'quota-inputs' | 'quota-pool-inputs' | 'quota-projection-inputs' | 'material-inputs' | 'projection-inputs';
 
 /** State invalidation for the Account-owned Usage Resource; not a second data reader. */
-export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQueryStateInvalidation) => void,
+export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQueryStateInvalidation, quotaSourceKeys?: readonly string[]) => void,
     readMachineConsumers: (machines: Readonly<Record<string, Machine>>) => UsageQueryMachineConsumers = () => NO_MACHINE_CONSUMERS,
     observe: (attach: () => () => void) => () => void = attach => attach()): ((() => void) & Readonly<{ reconcile(): void }>) | null {
     const readInputs = () => {
@@ -223,15 +247,13 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQu
     };
     // Credential activity does not change quota facts or their admission. The
     // persisted Usage change signal separately wakes new provider observations.
-    const readAccountInputs = (accounts: ReturnType<typeof readInputs>[1]) => accounts?.map(({ lastUsedAt: _lastUsedAt, ...account }) => account);
+    const readAccountInputs = (accounts: ReturnType<typeof readInputs>[1]) => accounts?.map(quotaAccountInput);
     const readMachineFacts = (machines: ReturnType<typeof readInputs>[3], nowMs: number, scope: ServerAccountScope | null | undefined) => {
         const facts = readUsageMachineFacts(machines ?? {}, nowMs, scope);
         return { facts, byId: new Map(facts.map(fact => [fact.id, fact])) };
     };
     let observedInputs = readInputs();
-    const readUsageCapabilities = () => JSON.stringify(readRegisteredStorageState()?.profile.connectedAccountsV4
-        .map(account => isConnectedServiceUsageCapable(account.ref.service)) ?? []);
-    let observedUsageCapabilities = readUsageCapabilities();
+    let observedQuotaAccounts = readUsageQuotaAccounts(observedInputs[1] ?? []);
     let observedMachineFacts = readMachineFacts(observedInputs[3], Date.now(), observedInputs[0]);
     let observedReachabilityRevision = readMachineRequestReachabilityRevision();
     const reconcile = (refreshMachineFacts = false) => {
@@ -275,14 +297,16 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQu
         // Connected accounts, groups and pool selectors serve allowance demand.
         const materialInputsChanged = [0, 4].some(index => changedInputs[index]) || sessionMachineAdmissionChanged;
         const quotaPoolInputsChanged = [1, 2].some(index => changedInputs[index]) || machineAdmissionChanged;
+        const quotaAccounts = changedInputs[1] ? readUsageQuotaAccounts(inputs[1] ?? []) : observedQuotaAccounts;
+        const quotaSourceKeys = quotaPoolInputsChanged ? changedQuotaSourceKeys(observedQuotaAccounts, quotaAccounts) : undefined;
         observedInputs = inputs;
-        observedUsageCapabilities = readUsageCapabilities();
+        observedQuotaAccounts = quotaAccounts;
         observedMachineFacts = machineFacts;
         // A synchronous Resource invalidation can re-enter admission. Those
         // reads already consume these facts, including this request revision.
         observedReachabilityRevision = reachabilityRevision;
         if (changed) invalidate(materialInputsChanged ? 'material-inputs' : quotaPoolInputsChanged ? 'quota-pool-inputs'
-            : changedInputs[7] ? 'quota-projection-inputs' : 'projection-inputs');
+            : changedInputs[7] ? 'quota-projection-inputs' : 'projection-inputs', materialInputsChanged ? undefined : quotaSourceKeys);
     };
     const reconcileMissedInputs = () => reconcile(readMachineRequestReachabilityRevision() !== observedReachabilityRevision);
     const dispose = observe(() => {
@@ -311,10 +335,10 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQu
             })) reconcile(true);
         });
         const unwatchRegistry = subscribeConnectedServiceRegistry(() => {
-            const capabilities = readUsageCapabilities();
-            if (capabilities === observedUsageCapabilities) return;
-            observedUsageCapabilities = capabilities;
-            invalidate('quota-inputs');
+            const accounts = readUsageQuotaAccounts(readInputs()[1] ?? []);
+            const sourceKeys = changedQuotaSourceKeys(observedQuotaAccounts, accounts);
+            observedQuotaAccounts = accounts;
+            if (sourceKeys.length) invalidate('quota-inputs', sourceKeys);
         });
         return () => {
             unwatchState?.();
