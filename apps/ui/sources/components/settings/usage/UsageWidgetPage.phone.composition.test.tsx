@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { UsageAnalyticsQueryBatchRequestSchema, type UsageAnalyticsQueryRequest, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
-import { UsageScore } from '@happier-dev/plugin-ui/presentation';
+import { HappierDataMetric, UsageScore } from '@happier-dev/plugin-ui/presentation';
 import { UsageSessionEvidenceRequestSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { executeUsageAction } from '@happier-dev/protocol/actions/executor/usageActions';
 import { resolveUsagePageAggregation, type UsageQueryBatchResult } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
@@ -303,6 +303,22 @@ it('holds the phone header to one line while the page reads', async () => {
     expect(line()!.props.reason).toBe(t('usage.board.page.loading'));
     const actions = (line()!.props.actions ?? (line()!.props.action ? [line()!.props.action] : [])) as readonly { testID?: string }[];
     expect(actions.map(action => action.testID)).toEqual(['usage-page.header.reading.detail']);
+  } finally { readHeld = null; release(); }
+});
+
+// r223 #66: Cost facts lead with figures, so their first read holds figure-shaped room (the shared pending metric),
+// never generic list rows that grow by a figure's height when the read lands.
+it('holds Cost facts first read in its figure-led shape', async () => {
+  let release = () => {};
+  const promise = new Promise<Response>(resolve => { release = () => resolve(Response.json({ error: 'unavailable' }, { status: 503 })); });
+  readHeld = { promise, release };
+  try {
+    const phone = await renderUsagePage('costs');
+    await waitForHomeGovernance(() => expect(phone.findAllByType(SurfaceFreshnessLine)
+      .some(line => line.props.testID === 'usage-page.header.reading')).toBe(true));
+    const pending = () => phone.findAllByType(HappierDataMetric).filter(metric => metric.props.pending === true);
+    await waitForHomeGovernance(() => expect(pending().length).toBeGreaterThan(0));
+    expect(pending().map(metric => metric.props.size)).toEqual(['hero', 'stat', 'stat', 'stat', 'stat']);
   } finally { readHeld = null; release(); }
 });
 

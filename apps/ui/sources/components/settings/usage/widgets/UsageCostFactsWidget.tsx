@@ -6,6 +6,8 @@ import { ChartDatum, formatHappierDataValue, HappierDataMetric } from '@happier-
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
 import { getPreferredLanguage, t } from '@/text';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { useRegisterUsageBodyReadingPlaceholder } from './usageBodyHeightMemory';
 import {
   UsageBodyInsufficient,
   UsageCoverageLine,
@@ -165,8 +167,36 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
   );
 }
 
+/** Room for a line whose words arrive with the read: drawn nowhere, it only holds the line. */
+const HELD_LINE = '\u00a0';
+
+/**
+ * Cost facts' first read in the shape that lands (r223 #66): the lead figure, the row of labelled facts (four, as an
+ * Account with every kind of money draws them; a phone wraps them 2 × 2), the overlap note and the prices line, each held by the shared pending metric (the declarative loading mechanism, fc934452b71), not three list rows.
+ */
+export function UsageCostFactsReading(props: Readonly<{ testID: string }>) {
+  const chartTheme = useUsagePluginTheme();
+  useRegisterUsageBodyReadingPlaceholder();
+  return (
+    <View style={styles.body} testID={props.testID} aria-busy>
+      <HappierDataMetric theme={chartTheme} size="hero" pending label={t('usage.cost')} value={0} caption={HELD_LINE} />
+      <View style={styles.grid}>
+        {[0, 1, 2, 3].map((index) => (
+          <View key={index} style={styles.cell}>
+            <HappierDataMetric theme={chartTheme} size="stat" pending showLabel label={HELD_LINE} value={0} caption={HELD_LINE} />
+          </View>
+        ))}
+      </View>
+      {/* The overlap note under the figures and the prices line keep their lines. */}
+      <UsageBodyNote testID={`${props.testID}.note`}>{HELD_LINE}</UsageBodyNote>
+      <View style={styles.pricesRoom} />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create((theme) => ({
   body: { gap: 16 },
+  pricesRoom: { minHeight: HAPPIER_PAGE_METRICS.smallControlHeightPx },
   grid: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 24, rowGap: 18 },
   // Two figures share a phone row (lab d2views P, 2×2): two bases and the gap fit a 390 px sheet's column.
   cell: { flexGrow: 1, flexBasis: 128, minWidth: 0 },

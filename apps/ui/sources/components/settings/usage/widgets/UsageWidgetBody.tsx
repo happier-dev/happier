@@ -19,7 +19,7 @@ import { UsageDailyWidget, useUsageDailyChartShape } from './UsageDailyWidget';
 import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { UsagePeriodSummaryWidget } from './UsagePeriodSummaryWidget';
-import { UsageCostFactsWidget } from './UsageCostFactsWidget';
+import { UsageCostFactsReading, UsageCostFactsWidget } from './UsageCostFactsWidget';
 import { UsageFlowWidget } from './UsageFlowWidget';
 import { UsageEfficiencyWidget } from './UsageEfficiencyWidget';
 import { UsageBreakdownsWidget } from './UsageBreakdownsWidget';
@@ -213,6 +213,8 @@ function UsageQueryWidgetContent(props: UsageWidgetBodyInput & Readonly<{
       );
     // Pending is never zero: the rows' space is held until the first facts arrive.
     if (readingShape) return <UsageBodyReading testID={`${props.testID}.loading`} shape={readingShape} />;
+    // Cost facts lead with figures: its first read holds a figure-led block, never list rows (r223 #66).
+    if (props.id === 'usage_cost_facts') return <UsageCostFactsReading testID={`${props.testID}.loading`} />;
     return (
       <ItemLoadStateRows
         testID={`${props.testID}.loading`}
