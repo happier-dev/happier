@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync, statfsSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -42,10 +42,20 @@ function existingParent(path) {
 export function observeWorkerFilesystem(path) {
   const parent = existingParent(path);
   const result = spawnSync('df', ['-Pk', parent], { encoding: 'utf8' });
-  const fields = result.stdout?.trim().split('\n').at(-1)?.trim().split(/\s+/);
-  const totalBytes = Number(fields?.[1]) * 1024, availableBytes = Number(fields?.[3]) * 1024;
-  if (result.error || result.status !== 0 || !Number.isSafeInteger(totalBytes) || !Number.isSafeInteger(availableBytes)
-    || totalBytes <= 0 || availableBytes < 0) throw new Error(`worker free-space observation unavailable for ${path}`);
+  let totalBytes;
+  let availableBytes;
+  if (result.error?.code === 'ENOENT') {
+    const { bsize, blocks, bavail } = statfsSync(parent);
+    totalBytes = bsize * blocks;
+    availableBytes = bsize * bavail;
+  } else if (result.status === 0) {
+    const fields = result.stdout?.trim().split('\n').at(-1)?.trim().split(/\s+/);
+    totalBytes = Number(fields?.[1]) * 1024;
+    availableBytes = Number(fields?.[3]) * 1024;
+  }
+  if (!Number.isSafeInteger(totalBytes) || !Number.isSafeInteger(availableBytes) || totalBytes <= 0 || availableBytes < 0) {
+    throw new Error(`worker free-space observation unavailable for ${path}`);
+  }
   return { device: String(statSync(parent).dev), totalBytes, availableBytes };
 }
 
