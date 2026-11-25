@@ -18,14 +18,14 @@ export type CliActionFailure = Readonly<{
 }>;
 
 class CliActionFailureError extends Error {
-  constructor(readonly actionFailure: ActionExecuteFailure) {
-    super(actionFailure.error);
+  constructor(readonly actionFailure: ActionExecuteFailure, message: string) {
+    super(message);
   }
 }
 
 /** Retain the owning failure intact until the command's single output boundary. */
-export function throwCliActionFailure(failure: ActionExecuteFailure): never {
-  throw new CliActionFailureError(failure);
+export function throwCliActionFailure(failure: ActionExecuteFailure, message = failure.error): never {
+  throw new CliActionFailureError(failure, message);
 }
 
 export type NormalizedCliActionExecuteResult =
@@ -135,6 +135,14 @@ export function projectCliActionFailure(failure: CliActionFailure, requestId?: s
     ...(failure.effectAttempted !== undefined ? { effectAttempted: failure.effectAttempted } : {}),
     ...(failure.goalControlFailure ? { goalControlFailure: failure.goalControlFailure } : {}),
   };
+}
+
+export function formatCliActionFailureText(message: string, failure: CliActionFailure): string {
+  const diagnosticLine = [
+    ...(failure.failureCause ? [`Phase: ${failure.failureCause.phase}`] : []),
+    ...(failure.requestId ? [`requestId: ${failure.requestId}`] : []),
+  ].join('; ');
+  return diagnosticLine ? `${message}\n${diagnosticLine}` : message;
 }
 
 /** Every thrown Action failure consumes the Protocol owner's typed carrier. */

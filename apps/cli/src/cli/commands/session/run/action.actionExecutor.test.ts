@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
@@ -15,6 +15,40 @@ vi.mock('@/session/services/resolveSessionTransportContext', () => ({
 }));
 
 describe('happier session run action (action executor)', () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it.each([true, false])('preserves Action refusal output with diagnostics supplied: %s', async (withDiagnostics) => {
+    const diagnostics = withDiagnostics ? {
+      failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: null },
+      requestId: 'refusal-request-1125',
+      effectAttempted: false,
+    } : {};
+    const refusal = { ok: false, errorCode: 'target_unavailable', error: 'target refused', ...diagnostics };
+    const argv = ['run', 'action', 'sess-1', 'run-1', 'action-1'];
+    const deps = { readCredentialsFn: async () => ({ token: 'token_test', encryption: null }) };
+    const { handleSessionCommand } = await import('../handleSessionCommand');
+    const output = captureConsoleJsonOutput();
+    const previousExitCode = process.exitCode;
+    try {
+      execute.mockResolvedValueOnce(refusal);
+      await handleSessionCommand([...argv, '--json'], deps);
+      expect(output.json()).toEqual({
+        v: 1,
+        ok: false,
+        kind: 'session_run_action',
+        error: { code: 'target_unavailable', message: 'target refused', ...diagnostics },
+      });
+
+      execute.mockResolvedValueOnce(refusal);
+      await expect(handleSessionCommand(argv, deps)).rejects.toHaveProperty('message', withDiagnostics
+        ? 'target refused\nPhase: execution_authorization; requestId: refusal-request-1125'
+        : 'target refused');
+    } finally {
+      output.restore();
+      process.exitCode = previousExitCode;
+    }
+  });
+
   it('routes through ActionExecutor with the expected action id and args', async () => {
     execute.mockResolvedValueOnce({
       ok: true,

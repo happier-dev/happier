@@ -400,6 +400,11 @@ print as they arrive. Use `--follow --jsonl` when another program consumes the
 stream: each emitted line is one compact history row. `--follow --json` is
 rejected because it cannot represent a multi-line stream.
 
+In 0.3 development builds, an Action refusal in history output preserves
+`error.failureCause` (including `phase` and `errorCode`), `error.requestId`, and
+`error.effectAttempted` when supplied. This applies to snapshot JSON and follow
+JSONL. Text output adds a line with the phase and request ID when available.
+
 Use `compact` when you want a simpler text-focused view.
 Human compact output limits each long row to 24 lines or 2,000 characters and
 marks it as truncated; use `--json` when you need the full text.
@@ -697,6 +702,11 @@ happier session run stream-start <session-id-or-prefix-or-tag> <run-id> "message
 happier session run stream-read <session-id-or-prefix-or-tag> <run-id> <stream-id> --cursor 0 --json
 happier session run stream-cancel <session-id-or-prefix-or-tag> <run-id> <stream-id> --json
 ```
+
+In 0.3 development builds, a refused `session run action` preserves
+`error.failureCause` (including `phase` and `errorCode`), `error.requestId`, and
+`error.effectAttempted` in JSON when supplied. Text output adds a line with the
+phase and request ID when available.
 
 Input to a session-owned run is ordinary session input with one explicit
 destination, so it shares the session send command, its pending admission and its

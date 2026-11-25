@@ -8,7 +8,10 @@ import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/json
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeTranscriptHistoryResult } from '@/session/services/transcript/transcriptHistoryRows';
 import {
+  formatCliActionFailureText,
   normalizeActionExecuteResult,
+  projectCliActionFailure,
+  throwCliActionFailure,
   type NormalizedCliActionExecuteResult,
 } from './shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
@@ -33,9 +36,11 @@ type SessionActionExecutor = Pick<ReturnType<typeof createCliActionExecutorFromC
 function throwNormalizedActionError(
   result: Extract<NormalizedCliActionExecuteResult, { ok: false }>,
 ): never {
-  throw Object.assign(new Error(result.errorMessage ?? result.errorCode), {
-    code: result.errorCode,
-  });
+  const message = result.errorMessage ?? result.errorCode;
+  if (result.failureCause || result.requestId || result.effectAttempted !== undefined) {
+    throwCliActionFailure({ ...result, error: message }, formatCliActionFailureText(message, result));
+  }
+  throw Object.assign(new Error(message), { code: result.errorCode });
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -303,15 +308,11 @@ export async function cmdSessionHistory(
       await printJsonEnvelope({
         ok: false,
         kind: 'session_history',
-        error: {
-          code: normalized.errorCode,
-          ...(normalized.candidates ? { candidates: normalized.candidates } : {}),
-          ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}),
-        },
+        error: projectCliActionFailure(normalized),
       });
       return;
     }
-    throw new Error(normalized.errorCode);
+    throw new Error(formatCliActionFailureText(normalized.errorCode, normalized));
   }
 
   if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_history', json, result: normalized.data })) {

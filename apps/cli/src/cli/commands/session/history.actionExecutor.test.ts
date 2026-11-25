@@ -29,6 +29,60 @@ describe('happier session history (action executor)', () => {
     createCliActionExecutorFromCredentials.mockClear();
   });
 
+  it.each([true, false])('preserves Action refusal output with diagnostics supplied: %s', async (withDiagnostics) => {
+    const diagnostics = withDiagnostics ? {
+      failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: null },
+      requestId: 'refusal-request-1125',
+      effectAttempted: false,
+    } : {};
+    const refusal = { ok: false, errorCode: 'target_unavailable', error: 'target refused', ...diagnostics };
+    const argv = ['history', 'sess-1'];
+    const deps = { readCredentialsFn: async () => ({ token: 'token_test', encryption: null }) };
+    const output = captureConsoleJsonOutput();
+    const previousExitCode = process.exitCode;
+    try {
+      execute.mockResolvedValueOnce(refusal);
+      await handleSessionCommand([...argv, '--json'], deps);
+      expect(output.json()).toEqual({
+        v: 1,
+        ok: false,
+        kind: 'session_history',
+        error: { code: 'target_unavailable', message: 'target refused', ...diagnostics },
+      });
+
+      execute.mockResolvedValueOnce(refusal);
+      await expect(handleSessionCommand(argv, deps)).rejects.toHaveProperty('message', withDiagnostics
+        ? 'target_unavailable\nPhase: execution_authorization; requestId: refusal-request-1125'
+        : 'target_unavailable');
+    } finally {
+      output.restore();
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('retains candidates on a transcript refusal', async () => {
+    const candidates = ['sess-1', 'sess-2'];
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { ok: false, errorCode: 'session_ambiguous', error: 'choose a session', candidates },
+    });
+
+    const output = captureConsoleJsonOutput();
+    const previousExitCode = process.exitCode;
+    try {
+      await cmdSessionHistory(['history', 'sess', '--json'], {
+        readCredentialsFn: async () => ({ token: 'token_test', encryption: null }),
+      });
+      expect(output.json()).toEqual({
+        v: 1, ok: false, kind: 'session_history',
+        error: { code: 'session_ambiguous', message: 'choose a session', candidates },
+      });
+    } finally {
+      output.restore();
+      process.exitCode = previousExitCode;
+    }
+  });
+
   it('rejects --follow with --json before reading transcript history', async () => {
     const output = captureConsoleJsonOutput();
     try {
@@ -296,12 +350,18 @@ describe('happier session history (action executor)', () => {
     }
   });
 
-  it('maps a follow failure to one JSONL family envelope and releases the lease once', async () => {
+  it.each([true, false])('reports one follow refusal and releases the lease with diagnostics supplied: %s', async (withDiagnostics) => {
+    const diagnostics = withDiagnostics ? {
+      failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: null },
+      requestId: 'follow-request-1125',
+      effectAttempted: false,
+    } : {};
     execute
       .mockResolvedValueOnce({
         ok: false,
         errorCode: 'server_unreachable',
         error: 'daemon unavailable',
+        ...diagnostics,
       })
       .mockResolvedValueOnce({ ok: true, result: { ok: true, released: true } });
 
@@ -325,8 +385,17 @@ describe('happier session history (action executor)', () => {
         v: 1,
         ok: false,
         kind: 'session_history',
-        error: { code: 'server_unreachable', message: 'daemon unavailable' },
+        error: { code: 'server_unreachable', message: 'daemon unavailable', ...diagnostics },
       }]);
+
+      execute
+        .mockResolvedValueOnce({ ok: false, errorCode: 'server_unreachable', error: 'daemon unavailable', ...diagnostics })
+        .mockResolvedValueOnce({ ok: true, result: { ok: true, released: true } });
+      await expect(handleSessionCommand(['history', 'sess-1', '--follow'], {
+        readCredentialsFn: async () => ({ token: 'token_test', encryption: null }),
+      })).rejects.toHaveProperty('message', withDiagnostics
+        ? 'daemon unavailable\nPhase: execution_authorization; requestId: follow-request-1125'
+        : 'daemon unavailable');
     } finally {
       output.restore();
     }

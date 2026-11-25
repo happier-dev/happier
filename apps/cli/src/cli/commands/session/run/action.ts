@@ -9,7 +9,9 @@ import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommand
 import { assertSessionCommandArguments } from '@/cli/commands/session/shared/assertSessionCommandArguments';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import {
+  formatCliActionFailureText,
   normalizeActionExecuteResult,
+  projectCliActionFailure,
   unwrapCliActionSuccessPayload,
 } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { cmd, fail } from '@happier-dev/cli-common/output';
@@ -102,11 +104,11 @@ export async function cmdSessionRunAction(
       await printJsonEnvelope({
         ok: false,
         kind: 'session_run_action',
-        error: { code: normalized.errorCode, ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}) },
+        error: projectCliActionFailure(normalized),
       });
       return;
     }
-    throw new Error(normalized.errorMessage ?? normalized.errorCode);
+    throw new Error(formatCliActionFailureText(normalized.errorMessage ?? normalized.errorCode, normalized));
   }
 
   const runPayload = unwrapCliActionSuccessPayload(normalized.data);
