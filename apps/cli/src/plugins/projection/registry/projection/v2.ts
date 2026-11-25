@@ -512,14 +512,16 @@ function projectAttributedPluginDiagnostics(params: Readonly<{
     installedPackages: readonly PluginCatalogEntry[];
     diagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
     occurredAtMs: number;
+    selection?: 'settings';
 }>): readonly PluginDiagnosticRecordV1[] {
-    const metadataByPluginId = collectPluginDiagnosticMetadata(params);
+    let metadataByPluginId: ReturnType<typeof collectPluginDiagnosticMetadata> | undefined;
     const records: PluginDiagnosticRecordV1[] = [];
     for (const pluginId of Object.keys(params.diagnosticsByPluginId).sort()) {
         const diagnostics = (params.diagnosticsByPluginId[pluginId] ?? []).filter((diagnostic) => (
             diagnostic.contribution !== undefined
         ));
         if (diagnostics.length === 0) continue;
+        metadataByPluginId ??= collectPluginDiagnosticMetadata(params);
         const plugin = metadataByPluginId.get(pluginId);
         if (!plugin) {
             throw new Error(`Missing current plugin metadata for attributed diagnostic '${pluginId}'`);
@@ -532,6 +534,7 @@ function projectAttributedPluginDiagnostics(params: Readonly<{
             host: 'daemon',
             platform: process.platform,
             occurredAtMs: params.occurredAtMs,
+            selection: params.selection,
         }));
     }
     return Object.freeze(records);
@@ -1009,7 +1012,13 @@ export function buildPluginSettingsProjectionV2(params: Readonly<{
     registry: ResolvedContributionRegistry;
     generation: number;
 }>): PluginProjectionV2 {
-    const diagnostics: PluginDiagnosticRecordV1[] = [];
+    const diagnostics = [...projectAttributedPluginDiagnostics({
+        registry: params.registry,
+        installedPackages: [],
+        diagnosticsByPluginId: params.registry.pluginDiagnosticsByPluginId,
+        occurredAtMs: Date.now(),
+        selection: 'settings',
+    })];
     return {
         ...createEmptyPluginProjectionV2(params.generation),
         settingsById: buildSettingsById(params.registry, diagnostics),

@@ -159,13 +159,26 @@ export function projectPluginCompatibilityDiagnostics(params: Readonly<{
   host: PluginDiagnosticHostV1;
   platform: string;
   occurredAtMs: number;
+  selection?: 'settings';
 }>): readonly PluginDiagnosticRecordV1[] {
-  return Object.freeze(params.diagnostics.map((diagnostic, ordinal) => (
-    enrichPluginDiagnosticRecord({
-      code: diagnostic.code,
+  const records: PluginDiagnosticRecordV1[] = [];
+  for (const [ordinal, diagnostic] of params.diagnostics.entries()) {
+    let code: string = diagnostic.code;
+    let { details } = diagnostic;
+    if (code === 'plugin_contribution_skipped' && diagnostic.contribution && details
+      && typeof details === 'object' && !Array.isArray(details)
+      && typeof details.code === 'string' && details.code.startsWith('PLUGIN_SETTINGS_')) {
+      const { code: cause, ...facts } = details;
+      code = cause;
+      details = facts;
+    } else if (params.selection === 'settings') {
+      continue;
+    }
+    records.push(enrichPluginDiagnosticRecord({
+      code,
       severity: 'error',
       message: diagnostic.message,
-      ...(diagnostic.details === undefined ? {} : { details: diagnostic.details }),
+      ...(details === undefined ? {} : { details }),
     }, {
       ordinal,
       plugin: params.plugin,
@@ -175,8 +188,9 @@ export function projectPluginCompatibilityDiagnostics(params: Readonly<{
       host: params.host,
       platform: params.platform,
       occurredAtMs: params.occurredAtMs,
-    })
-  )));
+    }));
+  }
+  return Object.freeze(records);
 }
 
 function toIdentity(candidate: PluginContributionIntrospectionCandidate): PluginContributionIntrospectionIdentityV1 {

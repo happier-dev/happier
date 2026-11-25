@@ -19,6 +19,7 @@ export type CanonicalPluginManifestIngestionDiagnostic = Omit<PluginManifestInge
     pluginId?: string;
     contributionId?: string;
     fieldId?: string;
+    settingsCode?: PluginLocalSettingsDeclarationError['code'] | PluginSettingsProjectionError['code'];
   }>;
 
 /** One ingestion diagnostic for a settings declaration failure; never carries the error's free-form reason. */
@@ -69,6 +70,7 @@ export function ingestCanonicalPluginManifest(
     if (errors.length) {
       const invalid = new Set(errors.map(error => error.contributionId));
       for (const error of errors) diagnostics.push({ code: 'plugin_contribution_skipped',
+        settingsCode: error.code,
         pluginId: error.pluginId, contributionId: manifest.contributes.notificationChannels.find(channel => (
           notificationChannelSettingsContributionId(channel.id) === error.contributionId
         ))?.id ?? error.contributionId,

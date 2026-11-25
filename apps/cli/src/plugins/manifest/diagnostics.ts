@@ -37,6 +37,8 @@ export function projectPluginManifestCompatibilityDiagnostic(
       ...(attributed ? { contribution: { pluginId: diagnostic.pluginId!, localId: diagnostic.contributionId! } } : {}),
       details: { ...(diagnostic.path ? { path: [...diagnostic.path] } : {}),
         ...(diagnostic.reason ? { reason: diagnostic.reason } : {}),
+        ...(diagnostic.settingsCode ? { code: diagnostic.settingsCode } : {}),
+        ...(diagnostic.fieldId ? { fieldId: diagnostic.fieldId } : {}),
         ...(diagnostic.unavailableSource ? { unavailableSource: diagnostic.unavailableSource } : {}) },
     };
   }
