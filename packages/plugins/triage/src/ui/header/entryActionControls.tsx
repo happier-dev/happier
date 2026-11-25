@@ -122,8 +122,6 @@ export type TriageEntryActionControlsPropsV1 = Readonly<{
   sourceWrite?: TriageDetailPrimaryWriteV1;
   /** The source's name as the reader knows it ("GitHub"), for the copy that says whose answer the write reports. */
   sourceLabel?: string;
-  /** An inline section under the action row (the source's own changes, opened from ⋯); forms never ride inside a menu. */
-  section?: React.ReactNode;
   /**
    * Receives the primary agent action's Start and Send to a Session while it can start (`null` otherwise), so the
    * story's agent chapter offers the same press through this one controller rather than a second start path.
@@ -718,8 +716,6 @@ export function TriageEntryActionControls(
         </Row>
       )}
       {props.sourceWrite?.feedback == null ? null : props.sourceWrite.feedback}
-      {/* On a phone the band stays one row: the detail places the open section in its story, not in the band. */}
-      {compact ? null : props.section ?? null}
     </Stack>
   );
 }

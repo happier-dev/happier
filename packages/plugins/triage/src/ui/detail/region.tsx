@@ -241,12 +241,12 @@ function TriageDetailPageTitle(): React.ReactElement {
 }
 
 const DETAIL_HEADER_SCROLL_STYLE_V1 = Object.freeze({ flexGrow: 0, flexShrink: 1, maxHeight: '45%' as const });
-/** An open form (the source's own changes) is what the reader came for: it takes the room, the story stays in sight below. */
-const DETAIL_HEADER_SCROLL_OPEN_STYLE_V1 = Object.freeze({ flexGrow: 0, flexShrink: 1, maxHeight: '80%' as const });
 /** The pinned footer a pushed detail ends its column with: the entry's action controls. */
 export const TRIAGE_DETAIL_FOOTER_TEST_ID_V1 = 'triage-detail-footer';
-/** The open task editor, shown in place of the entry's story. */
+/** The open task (the task editor, or the source's own changes), shown in place of the entry's story. */
 export const TRIAGE_DETAIL_TASK_EDITOR_TEST_ID_V1 = 'triage-detail-task-editor';
+/** The story while a task holds its place: still mounted, so its tab, scroll and source state come back on Cancel. */
+const DETAIL_PARKED_STYLE_V1 = Object.freeze({ display: 'none' as const });
 /** The entry's attention reason chip, wherever the detail places it. */
 export const TRIAGE_DETAIL_ATTENTION_TEST_ID_V1 = 'triage-detail-attention';
 const DETAIL_FILL_STYLE_V1 = Object.freeze({ flex: 1, minWidth: 0, minHeight: 0 });
@@ -627,9 +627,6 @@ function TriageEntryScopedActionRegion(props: Readonly<{
             onPress: props.sourceChangesOpen ? props.actionsNavigation.close : props.actionsNavigation.open,
           }]),
         ]}
-        {...(props.sourceActions === undefined ? {} : {
-          section: props.sourceChangesOpen ? props.sourceActions : null,
-        })}
         {...(props.onAgentEntry === undefined ? {} : { onAgentEntry: props.onAgentEntry })}
         {...(props.onReviewEntry === undefined ? {} : { onReviewEntry: props.onReviewEntry })}
       /> : (
@@ -1448,8 +1445,13 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       </Stack>;
   };
   const renderDetail = (actionRegion: React.ReactElement | null, task: TriageEditTaskPlacementV1, detailBody: React.ReactElement) => {
+  // One open task takes the story's place: the task editor, or the source's own changes opened from the action row's ⋯
+  // (publishing or changing at the source is one task, not a form stacked over the PR's tabs). A task's own story
+  // holds its editor in the Notes chapter instead.
+  const openTask = task.form !== null && !(isTask && composition.kind === 'whole') ? task.form
+    : actionRegionShown && sourceChangesOpen && sourceActions !== undefined ? sourceActions : null;
   // Pushed with tabs, the title and facts ride at the top of the story that scrolls; elsewhere they keep their band.
-  const headerInStory = props.pushed === true && composition.kind === 'tabs' && entryMount !== null && task.form === null;
+  const headerInStory = props.pushed === true && composition.kind === 'tabs' && entryMount !== null && openTask === null;
   const headerContents = (
     <>
       <TriageDetailHeaderView
@@ -1476,7 +1478,8 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       {/* The task's Status keeps its own width at the start of the facts (lab t1 phone), never a bar. */}
       {sessionFocus || (actionRegionShown && !pinned) ? null : task.status == null ? null : <Row>{task.status}</Row>}
       {sessionFocus ? null : task.controls}
-      {sessionFocus || (actionRegionShown && !(pinned && sourceChangesOpen)) ? null : sourceActions}
+      {/* Without an action row there is no ⋯ to open the source's changes from: they stay under the facts. */}
+      {sessionFocus || actionRegionShown ? null : sourceActions}
     </>
   );
   return props.lastKnown === true ? (
@@ -1496,19 +1499,20 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     {/* The Collection's detail body owns the edge (given `detailHeader`); the footer below spans the detail. */}
     <Stack gap="medium" style={DETAIL_FILL_STYLE_V1}>
       {headerInStory ? null : (
-      <ScrollArea clipContentOverflow style={sourceChangesOpen ? DETAIL_HEADER_SCROLL_OPEN_STYLE_V1 : DETAIL_HEADER_SCROLL_STYLE_V1}>
+      <ScrollArea clipContentOverflow style={DETAIL_HEADER_SCROLL_STYLE_V1}>
       <Stack gap="small">{headerContents}</Stack>
       </ScrollArea>
       )}
-      {/* A task's own story holds its editor in the Notes chapter. Elsewhere an open editor takes the story's place
-          (the header keeps at most part of the pane), and Cancel or Save gives it back. */}
-      {task.form === null || (isTask && composition.kind === 'whole') ? (headerInStory ? (
-        // A pushed (phone) detail's title and facts lead the story and scroll away with it (lab merged-detail-*-phone).
-        <TriageDetailPageLeadProvider lead={<Stack gap="small"><TriageDetailPageTitle />{headerContents}</Stack>}>
+      {/* An open task takes the story's place (the header keeps at most part of the pane), and Cancel or Save gives
+          it back. The story stays mounted behind it, so the tab, scroll and source state it held return unchanged. */}
+      <Stack style={openTask === null ? DETAIL_FILL_STYLE_V1 : DETAIL_PARKED_STYLE_V1}>
+        {/* A pushed (phone) detail's title and facts lead the story and scroll away with it (lab merged-detail-*-phone). */}
+        <TriageDetailPageLeadProvider lead={headerInStory ? <Stack gap="small"><TriageDetailPageTitle />{headerContents}</Stack> : null}>
           {detailBody}
         </TriageDetailPageLeadProvider>
-      ) : detailBody) : (
-        <ScrollArea style={DETAIL_FILL_STYLE_V1} testID={TRIAGE_DETAIL_TASK_EDITOR_TEST_ID_V1}>{task.form}</ScrollArea>
+      </Stack>
+      {openTask === null ? null : (
+        <ScrollArea style={DETAIL_FILL_STYLE_V1} testID={TRIAGE_DETAIL_TASK_EDITOR_TEST_ID_V1}>{openTask}</ScrollArea>
       )}
     </Stack>
     {pinned ? <DetailsPaneFooter testID={TRIAGE_DETAIL_FOOTER_TEST_ID_V1}>{actionRegion}</DetailsPaneFooter> : null}

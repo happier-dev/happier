@@ -1826,6 +1826,40 @@ describe('opening a row into the source detail', () => {
             input: { reason: 'inaccurate' } });
     });
 
+    it('gives an open source-changes section the story’s place and returns the same story on Cancel', async () => {
+        const shell = await mountShell({ activeSurface: true, securityAlert: true,
+            subPath: buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: {
+                source: SOURCE, kindId: 'dependabot-alert', collisionScope: 'example/repository', entryId: '17',
+            } }),
+        });
+        await measureFillRegion(1440);
+        await act(async () => { await vi.waitFor(() => { expect(document.body.textContent).toContain('What’s exposed'); }); });
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        let storyText: Node | null = null;
+        while (storyText === null && walker.nextNode() !== null) {
+            if (walker.currentNode.textContent?.includes('What’s exposed') === true) storyText = walker.currentNode;
+        }
+        const story = storyText?.parentElement ?? null;
+        expect(story).not.toBeNull();
+        const shown = (node: Element) => {
+            for (let at: Element | null = node; at !== null; at = at.parentElement) {
+                if (getComputedStyle(at).display === 'none') return false;
+            }
+            return true;
+        };
+        expect(shown(story!)).toBe(true);
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'More actions' })); });
+        await act(async () => { await shell.press(await shell.getByRole('menuitem', { name: 'Change on Example forge' })); });
+        await vi.waitFor(() => shell.getByRole('radio', { name: 'Risk is tolerable for this project' }));
+        // The open section is the page's body: the story steps aside, kept mounted with its tab and scroll.
+        expect(shown(story!)).toBe(false);
+        expect(story!.isConnected).toBe(true);
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Cancel' })); });
+        await expect(shell.queryByRole('radio', { name: 'Risk is tolerable for this project' })).resolves.toBeUndefined();
+        expect(story!.isConnected).toBe(true);
+        expect(shown(story!)).toBe(true);
+    });
+
     it('round-trips an external source primary write through the real detail bridge without another detail read', async () => {
         const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: {
             source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17',
