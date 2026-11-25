@@ -54,17 +54,32 @@ it('retains native deployment identity validation in the Action result', () => {
 it('retains service forward acquisition failures and their cause', () => {
     const native = Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' });
     const error = privateServiceForwardAcquisitionError(native);
-    expect(error.cause).toBeDefined();
-    expect(normalizeActionExecutorThrownError(error)).toMatchObject({ errorCode: 'private_service_destination_unreachable' });
+    const failure = projectDeploymentException(error);
+    const receipt = projectDeploymentReceiptInvestigationV1({
+        failure: projectDeploymentReceiptFailure(failure, 'activate'),
+    }).failure;
+    expect(receipt).toMatchObject({ code: 'private_service_destination_unreachable',
+        failureCause: { phase: 'deployment.reference.acquire', errorCode: 'ECONNREFUSED' } });
+    expect(readDeploymentRefusalRecoveryV1(failure.errorCode, receipt)).toMatchObject({
+        nextAction: { destination: 'machines' },
+    });
+    expect(JSON.stringify(receipt)).not.toContain('connection refused');
 });
 
 it.each(['git_selection_unavailable', 'not_found'])('retains source acquisition translation and its cause for %s', code => {
     let caught: unknown;
     try { rethrowDeploymentSourceAcquisitionFailure(Object.assign(new Error('selection unavailable'), { code })); }
     catch (error) { caught = error; }
-    expect(caught).toHaveProperty('cause');
-    expect(normalizeActionExecutorThrownError(caught)).toMatchObject({ errorCode: 'deployment_source_unavailable',
+    const failure = projectDeploymentException(caught);
+    const receipt = projectDeploymentReceiptInvestigationV1({
+        failure: projectDeploymentReceiptFailure(failure, 'activate'),
+    }).failure;
+    expect(receipt).toMatchObject({ code: 'deployment_source_unavailable',
         failureCause: { phase: 'deployment.source.acquire', errorCode: code } });
+    expect(readDeploymentRefusalRecoveryV1(failure.errorCode, receipt)).toMatchObject({
+        nextAction: { destination: code === 'not_found' ? 'review' : 'source' },
+    });
+    expect(JSON.stringify(receipt)).not.toContain('selection unavailable');
 });
 
 it('retains Domain materialization validation in the Action result', () => {
