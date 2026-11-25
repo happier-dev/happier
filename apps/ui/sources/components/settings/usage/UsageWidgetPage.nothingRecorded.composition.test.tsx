@@ -74,7 +74,8 @@ afterEach(async () => {
 });
 
 describe('a period with nothing recorded', () => {
-  it('says so once for the page, with the next step, and the bodies do not repeat it (C first use)', async () => {
+  // A Session's own page has no period to widen and starting another Session is not its next step (acceptance r230 #83).
+  it.each([[undefined, true], ['session-1', false]] as const)('says so once for the page (Session %s: Start a session %s), and the bodies do not repeat it (C first use)', async (sessionId, startOffered) => {
     const artifacts = createArtifactStoreBoundary({
       ownerAccountId: () => 'account-a',
       encryptionMode: 'plain',
@@ -121,6 +122,7 @@ describe('a period with nothing recorded', () => {
           <AppPaneProvider>
             <CurrentUiContextProvider>
               <UsageWidgetPage
+                {...(sessionId ? { sessionId } : {})}
                 initialFilters={{
                   layoutId: 'usage',
                   period: '7days',
@@ -151,11 +153,12 @@ describe('a period with nothing recorded', () => {
       screen.findAllHostsByTestId('usage-page.header.nothingRecorded'),
     ).toHaveLength(1);
     expect(
-      screen.findHostByTestId('usage-page.header.nothingRecordedAction'),
-    ).not.toBeNull();
+      screen.findHostByTestId('usage-page.header.nothingRecordedAction') !== null,
+    ).toBe(startOffered);
     // The cause is said once, by the page, short enough for a phone's one header line; each card holds one quiet line.
     const text = screen.getTextContent();
     expect(text.split(t('usage.board.page.noUsageTitle')).length - 1).toBe(1);
     expect(text).not.toContain(t('usage.board.page.noUsageReason'));
+    expect(text).not.toContain(t('usage.board.work.emptyReason'));
   });
 });

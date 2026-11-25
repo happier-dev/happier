@@ -263,7 +263,10 @@ export function planWindowStatement(
   nowMs: number,
 ): Readonly<{ kind: 'used_up' | 'depletes' | 'at_reset' | 'reset_only' | 'unavailable'; text: string; tone: 'quiet' | 'warning' }> {
   const unavailable = window.paceUnavailable ?? 'not_derived';
-  if (unavailable !== 'stale' && window.remainingFraction !== null && window.remainingFraction <= 0) {
+  // Used up is the value's fact: nothing comes back before the reset, so an older 0% whose reset is still ahead is used
+  // up too. Only once that reset has passed (or none was reported) does an old reading say nothing about now (r230 #75).
+  const spentUntilReset = unavailable !== 'stale' || (window.resetAtMs !== null && window.resetAtMs > nowMs);
+  if (spentUntilReset && window.remainingFraction !== null && window.remainingFraction <= 0) {
     return {
       kind: 'used_up',
       text: [t('usage.board.plans.cellUsedUp'), window.resetAtMs === null ? null
@@ -316,6 +319,16 @@ export function planExclusionText(
 }
 
 /** An account as people know it: the service's bare mark, its plan or name, and the identity beside it. */
+/**
+ * Same names told apart only by a trailing number: the shared name, then the number on a line of its own ("Muse
+ * account 2"), so a cut at the end of the name never takes the number with it. One presenter for every narrow place
+ * that names an account (Resets lanes, Limits tiles; r226 #64, r229 #80).
+ */
+export function planAccountNumberedLines(name: UsagePlanAccountName): Readonly<{ title: string; detail: string }> | null {
+  return name.numbered ? { title: name.numbered.label, detail: t('connectedServicesCollection.accountLabelNumbered',
+    { service: name.serviceLabel, number: name.numbered.number }) } : null;
+}
+
 export function UsagePlanIdentity(
   props: Readonly<{
     name: UsagePlanAccountName;
@@ -334,8 +347,10 @@ export function UsagePlanIdentity(
   // line: in a narrow column the identity goes under the name, elsewhere it follows it on the same line and gives way
   // first. Cut at its end, an address keeps its local part whole and gives up its domain (acceptance 11-21 #4: a middle
   // cut left "c…ier.dev", a wrap broke every address at "@").
+  const numbered = props.column ? planAccountNumberedLines(props.name) : null;
   const split = (props.column || props.compact) && props.name.primaryLabel && props.name.identity
-    ? { primary: props.name.primaryLabel, identity: props.name.identity } : null;
+    ? { primary: props.name.primaryLabel, identity: props.name.identity }
+    : numbered ? { primary: numbered.title, identity: numbered.detail } : null;
   const qualifier = [props.name.qualifier, props.detail]
     .filter(Boolean)
     .join(' · ');

@@ -106,6 +106,20 @@ function formatExactCoachValue(value: number, unit: UsageCoachFinding['measureme
         : formatHappierDataValue(value, getPreferredLanguage());
 }
 
+type CoachMetric = UsageCoachFinding['measurements'][number]['metric'];
+/** Measurements that count things: their noun agrees with the count in every locale ("1 approval request", r230 #85). */
+const COUNTED_COACH_METRICS = ['permission_requests', 'compactions', 'duplicate_injections', 'unchanged_reads',
+  'failed_repetitions', 'unused_mcp_bindings'] as const satisfies readonly CoachMetric[];
+type CountedCoachMetric = (typeof COUNTED_COACH_METRICS)[number];
+const isCountedCoachMetric = (metric: CoachMetric): metric is CountedCoachMetric =>
+  (COUNTED_COACH_METRICS as readonly CoachMetric[]).includes(metric);
+
+function coachMetricLabel(measurement: UsageCoachFinding['measurements'][number]): string {
+  const { metric } = measurement;
+  return isCountedCoachMetric(metric) ? t(`usage.board.coach.metric_${metric}`, { count: measurement.value })
+    : t(`usage.board.coach.metric_${metric as Exclude<CoachMetric, CountedCoachMetric>}`);
+}
+
 function formatMeasurement(
   measurement: UsageCoachFinding['measurements'][number],
   precision?: 'exact',
@@ -113,7 +127,7 @@ function formatMeasurement(
   if (precision === 'exact') {
     const value = measurement.metric === 'cache_hit_ratio' ? formatHappierDataExactShare(measurement.value, getPreferredLanguage())
       : formatExactCoachValue(measurement.value, measurement.unit, measurement.currency);
-    return `${value} ${t(`usage.board.coach.metric_${measurement.metric}`)}`;
+    return `${value} ${coachMetricLabel(measurement)}`;
   }
   const value =
     measurement.unit === 'currency'
@@ -128,7 +142,7 @@ function formatMeasurement(
               // A ratio reads as the share it is ("0% of input from cache"), never a bare "0".
               ? `${Math.round(measurement.value * 100)}%`
               : new Intl.NumberFormat().format(measurement.value);
-  return `${value} ${t(`usage.board.coach.metric_${measurement.metric}`)}`;
+  return `${value} ${coachMetricLabel(measurement)}`;
 }
 
 function measurementHidesPrecision(measurement: UsageCoachFinding['measurements'][number]) {
@@ -350,7 +364,9 @@ export function UsageCoachWidget(props: UsageBodyProps) {
     ...(sessionsChecked !== undefined ? [{ key: 'sessions', label: t('usage.board.coach.summarySessions'), value: sessionsChecked,
       caption: usagePeriodPhrase(props.query) }] : []),
     ...(!reading ? [{ key: 'insufficient', label: t('usage.board.coach.summaryNeedEvidence'), value: insufficient.length,
-      caption: clear.length ? t('usage.board.coach.summaryClearCaption', { count: clear.length }) : undefined }] : []),
+      // Every figure in the band keeps its caption line, so the row reads in one rhythm (r230 #84).
+      caption: clear.length ? t('usage.board.coach.summaryClearCaption', { count: clear.length })
+        : t('usage.board.coach.summaryOfChecks', { count: checked }) }] : []),
     ...(disabled.length ? [{ key: 'disabled', label: t('usage.board.coach.summaryOff'), value: disabled.length }] : []),
   ];
   // On Overview the Coach is a strip of up to three findings (lab wgusage-CD); its own view lists all.
@@ -750,7 +766,7 @@ const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
             {finding.measurements.map((measurement, index) => {
               const visual = <Text style={[styles.evidence, text('subtitle')]}>{formatMeasurement(measurement)}</Text>;
               return measurementHidesPrecision(measurement) ? <ChartDatum key={index} testID={`${props.testID}.measurement.${index}.detail`}
-                datum={{ label: t(`usage.board.coach.metric_${measurement.metric}`), value: formatMeasurement(measurement, 'exact') }}>{visual}</ChartDatum>
+                datum={{ label: coachMetricLabel(measurement), value: formatMeasurement(measurement, 'exact') }}>{visual}</ChartDatum>
                 : <React.Fragment key={index}>{visual}</React.Fragment>;
             })}
           </View>

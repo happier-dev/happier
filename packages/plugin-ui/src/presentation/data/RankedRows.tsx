@@ -10,6 +10,8 @@ export type RankedRowsProps = Readonly<{
   rows: readonly Readonly<{ id: string; label: string; value: number | null; color?: string; annotation?: string }>[];
   basis?: string; unknownLabel?: string; size?: 'inline' | 'tile' | 'full'; testID?: string;
   barAppearance?: HappierDataRowsProps['proportionAppearance'];
+  /** One bar scale shared with sibling lists: the amount a full bar stands for (see `HappierDataRows`). */
+  barScale?: number;
   renderRow?: (row: RankedRowsProps['rows'][number], visual: ReactNode) => ReactNode;
   renderIdentity?: (row: RankedRowsProps['rows'][number], visual: ReactNode) => ReactNode;
   rowDatums?: HappierDataRowsProps['rowDatums'];
@@ -30,7 +32,7 @@ export function RankedRows(props: RankedRowsProps) {
     {props.basis ? <HappierText style={text.caption}>{props.basis}</HappierText> : null}
     <HappierDataRows theme={props.theme} label={props.label} testID={props.testID}
       rowIds={props.rows.map(row => row.id)} proportionColors={props.rows.map(row => row.color ?? props.theme.colors.accent)} showProportionShares={false}
-      proportionAppearance={props.barAppearance} valueFormatter={props.valueFormatter}
+      proportionAppearance={props.barAppearance} proportionScale={props.barScale} valueFormatter={props.valueFormatter}
       rowLeads={props.leads ? props.rows.map(row => props.leads![row.id]) : undefined}
       rowTrails={props.trails ? props.rows.map(row => props.trails![row.id]) : undefined}
       rowShares={props.total !== undefined && props.total !== null && Number.isFinite(props.total) && props.total > 0

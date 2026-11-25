@@ -36,6 +36,11 @@ export type HappierDataRowsProps = Readonly<{
     minimumVisibleFraction?: number; fillOpacity?: number; zeroFillOpacity?: number; trackColor?: string;
   }>;
   showProportionShares?: boolean;
+  /**
+   * The amount a full bar stands for, when sibling lists share one scale (the largest amount across them). A list's
+   * own largest amount still fills its bar when it is larger. Absent: this list's largest amount fills the bar.
+   */
+  proportionScale?: number;
   /** Visible ink for numeric cells (compact "317M"); assistive technology keeps the exact value. */
   valueFormatter?: (value: number) => string;
   /** One identity mark per row (an agent's glyph), drawn before its title. */
@@ -113,10 +118,13 @@ export function HappierDataRows(props: HappierDataRowsProps) {
   const interactive = useChartInteractionAvailable();
   const proportionIndex = props.columns.findIndex((column) => column.proportion === true);
   const trailingIndex = props.columns.findIndex((column, index) => index > 0 && column.trailing === true && column.proportion !== true);
-  const shares = proportionIndex < 0 ? [] : resolveHappierDataShares(props.rows.map((row) => {
+  const amounts = proportionIndex < 0 ? [] : props.rows.map((row) => {
     const value = row[proportionIndex];
     return typeof value === 'number' ? value : 0;
-  }));
+  });
+  // A shared scale takes part in the largest amount only; it has no row of its own.
+  const shares = proportionIndex < 0 ? [] : props.proportionScale === undefined ? resolveHappierDataShares(amounts)
+    : resolveHappierDataShares([...amounts, props.proportionScale]).slice(0, amounts.length);
   const pending = pendingRowIndexes(props);
   const hasFactsLine = props.columns.some((_, index) => index > 0 && index !== proportionIndex && index !== trailingIndex);
   return (

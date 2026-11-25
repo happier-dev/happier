@@ -21,6 +21,29 @@ const paint = { accent: '#007aff', paper: '#ffffff', dark: false };
 
 describe('Sky of days', () => {
 
+  it('draws the day still running as an open star that no run line reaches (acceptance r227 #76)', () => {
+    const start = Date.UTC(2026, 10, 16);
+    const days = (partial: boolean) => Array.from({ length: 10 }, (_, index) => ({
+      date: new Date(start + index * 86_400_000).toISOString().slice(0, 10), state: 'active' as const,
+      value: index === 9 ? 2 : 60 + index, leader: null, ...(partial && index === 9 ? { partial: true } : {}),
+    }));
+    const draw = (partial: boolean) => {
+      const mount = mountThroughReactNativeWeb(<UsageSkyOfDays theme={SURFACE_CONTEXT_THEME_FIXTURE} paint={paint} agents={agents}
+        model={{ encoding: 'amount', colourBy: 'intensity', days: days(partial) }} labels={labels} label="Sky of days" width={640} testID="sky" />);
+      try {
+        const open = [...mount.container.querySelectorAll('svg circle')].filter(node => node.getAttribute('fill') === paint.paper).length;
+        const runEnds = [...mount.container.querySelectorAll('svg path')].map(node => node.getAttribute('d') ?? '')
+          .filter(d => /^M[\d.]+,[\d.]+L/.test(d)).map(d => Math.max(...[...d.matchAll(/L([\d.]+),/g)].map(match => Number(match[1]))));
+        return { open, reach: Math.max(0, ...runEnds) };
+      } finally { mount.unmount(); }
+    };
+    const finished = draw(false);
+    const running = draw(true);
+    expect([finished.open, running.open]).toEqual([0, 1]);
+    // The run line stops at the day before: it ends further left than when the last day is finished.
+    expect(running.reach).toBeLessThan(finished.reach);
+  });
+
   it('keeps each drawing\'s gradients its own when two Skies share one page (wide and phone editions)', () => {
     const model: UsageSkyModel = { encoding: 'amount', colourBy: 'leadingAgent', days: [
       { date: '2026-09-01', state: 'active', value: 90, leader: { kind: 'agent', agentId: 'claude' } },

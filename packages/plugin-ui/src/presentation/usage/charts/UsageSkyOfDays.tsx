@@ -50,6 +50,11 @@ export type UsageSkyDay = Readonly<{
   /** Ordinal level 1–4 for an active day on an ordinal model. */
   level?: 1 | 2 | 3 | 4 | null;
   leader?: UsageSkyLeader | null;
+  /**
+   * The day is still running (today): its star is drawn open, and it joins no run line and no average band, so a
+   * morning's small amount never reads as a collapse after the days before it.
+   */
+  partial?: boolean;
 }>;
 
 export type UsageSkyRun = Readonly<{ days: number }> &
@@ -128,6 +133,7 @@ type Star = Readonly<{
   level: 1 | 2 | 3 | 4;
   key: string;
   leader: UsageSkyLeader | null;
+  partial: boolean;
 }>;
 
 /**
@@ -463,6 +469,19 @@ export function UsageSkyOfDays(props: UsageSkyOfDaysProps) {
             {geometry.stars.map((star) => {
               const radius = starRadius(star.level, small, geometry.scale);
               const rare = !ordinal;
+              const openKey = byAgent && star.leader?.kind === 'agent' ? star.leader.agentId : 'accent';
+              if (star.partial)
+                return (
+                  <Circle
+                    key={`s${star.index}`}
+                    cx={r1(star.x)}
+                    cy={r1(star.y)}
+                    r={r1(radius - 0.5)}
+                    fill={props.paint.paper}
+                    stroke={colourOf(openKey)}
+                    strokeWidth={1.2}
+                  />
+                );
               if (byAgent && star.leader?.kind === 'unknown')
                 return (
                   <Circle
@@ -698,7 +717,10 @@ function layoutSky(
         level: level(value),
         key: day.date,
         leader: day.leader ?? null,
+        partial: day.partial === true,
       });
+      // A running day's star stands alone: no run line or average reaches it.
+      if (day.partial) positions[index] = null;
     } else floor.push({ index, x: x(index), unknown: day.state === 'unknown' });
   });
   stars.sort((a, b) => a.level - b.level);
@@ -732,10 +754,12 @@ function layoutSky(
   }
   const indexOf = (date: string | undefined) =>
     date === undefined ? -1 : days.findIndex((day) => day.date === date);
+  // A named run that ends on the running day is drawn up to the day before it.
   const isNamed = (start: number, end: number) =>
     [model.best, model.current].some(
       (run) =>
-        run && indexOf(run.startDate) === start && indexOf(run.endDate) === end,
+        run && indexOf(run.startDate) === start
+          && (indexOf(run.endDate) === end || (indexOf(run.endDate) === end + 1 && days[end + 1]?.partial === true)),
     );
   const runs: { path: string; named: boolean }[] = [];
   let start = -1;

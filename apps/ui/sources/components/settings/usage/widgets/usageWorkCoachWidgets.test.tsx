@@ -20,7 +20,7 @@ import { UsageAgentMark, usagePeriodPhrase } from './usageBodyKit';
 import { usageCostKindPhrase } from '../usageCostPresentation';
 import { router } from 'expo-router';
 import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
-import { ChartDatum, HappierDataTable, HappierDataMetric, HappierDataRows, IntervalTimeline, OutcomeFunnel, OutcomeScatter, RankedRows } from '@happier-dev/plugin-ui/presentation';
+import { ChartDatum, HappierDataTable, HappierDataMetric, HappierDataRows, HappierProgress, IntervalTimeline, OutcomeFunnel, OutcomeScatter, RankedRows } from '@happier-dev/plugin-ui/presentation';
 import { DEFAULT_USAGE_COACH_PREFERENCES_V1 } from '@happier-dev/protocol/account/settings/usageCoachPreferencesV1';
 import {
   getUsageQueryKey,
@@ -1227,6 +1227,32 @@ describe('Work and Coach widget bodies', () => {
       .toEqual([1, 1]);
   });
 
+  it('draws every Session value group against one bar scale, so a small linked Session never fills a bar (acceptance r230 #82)', async () => {
+    const sized = (id: string, sessionId: string, turnId: string, total: number) =>
+      ({ ...contribution(id, sessionId, turnId), tokens: { ...tokens, total } });
+    const work = allocateUsageOutcomes({ contributions: [sized('small', 's1', 't1', 100), sized('big', 's2', 't2', 10_000)],
+      evidence: [evidence('s1', 't1', 7)] });
+    const screen = await renderScreen(<UsageSessionValueWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
+      slice={{ ...slice, work }} id="usage_session_value" testID="value" />);
+    const linked = screen.findAllByType(RankedRows).find(node => node.props.testID !== 'value.unlinked')!;
+    const bar = (id: string) => screen.findAllByType(HappierProgress).find(node => node.props.testID === `${id}-bar-0`)?.props.value as number;
+    expect([bar(linked.props.testID as string), bar('value.unlinked')]).toEqual([0.01, 1]);
+  });
+
+  it('groups Session value counts by locale, like every other Usage count (acceptance r230 #86)', async () => {
+    const readings = Array.from({ length: 1001 }, (_, index) => contribution(`row-${index}`, `row-${index}`, null));
+    const work = allocateUsageOutcomes({ contributions: readings, evidence: [] });
+    let caption: string | null = null;
+    const screen = await renderScreen(<WidgetFrameBodyCaptionContext.Provider value={next => { caption = next ?? caption; }}>
+      <UsageSessionValueWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
+        slice={{ ...slice, work }} id="usage_session_value" testID="value" />
+    </WidgetFrameBodyCaptionContext.Provider>);
+    const grouped = (1001).toLocaleString();
+    expect(caption).toBe(t('usage.board.work.valueCaption', { count: grouped }));
+    expect(screen.getTextContent()).toContain(`· ${grouped}`);
+    expect(screen.getTextContent()).not.toContain('· 1001');
+  });
+
   it('qualifies hidden Session value rows only after they are shown', async () => {
     const readings = Array.from({ length: 9 }, (_, index) => contribution(`row-${index}`, `row-${index}`, null));
     readings[8] = { ...readings[8]!, tokens: { ...tokens, input: 1, output: 0, reasoning: null, cacheRead: null,
@@ -1396,7 +1422,8 @@ describe('Work and Coach widget bodies', () => {
       const text = screen.getTextContent();
       expect.soft(text.includes(t('usage.board.page.sessionRecipientFigure'))).toBe(level === 'view');
       expect.soft(text.includes(t('usage.board.page.thisSession'))).toBe(level === 'owner');
-      expect.soft(text.includes(t('usage.board.work.emptyReason'))).toBe(level === 'owner');
+      // A Session's own page never draws the dashboard's empty line, for its owner either (r230 #83).
+      expect.soft(text.includes(t('usage.board.work.emptyReason'))).toBe(false);
       await screen.unmount();
     } finally { storage.setState(previous, true); }
   });
@@ -2205,7 +2232,7 @@ describe('Work and Coach widget bodies', () => {
     const finding = coach.findings[0]!;
     const meta = screen.findByTestId('coach.finding.compaction_storms.meta')!;
     const metaText = String(meta.props.children);
-    expect(metaText).toContain(`${finding.measurements[0]!.value} ${t(`usage.board.coach.metric_${finding.measurements[0]!.metric}`)}`);
+    expect(metaText).toContain(`${finding.measurements[0]!.value} ${t(`usage.board.coach.metric_${finding.measurements[0]!.metric as 'compactions'}`, { count: finding.measurements[0]!.value })}`);
     // Mechanism words (observation counts, evidence coverage) are method facts, not the finding's line.
     const evidenceLine = t('usage.board.coach.evidenceLine', { count: finding.evidence.length,
       coverage: t(`usage.board.coach.coverage_${finding.coverage}`) });
@@ -2217,6 +2244,18 @@ describe('Work and Coach widget bodies', () => {
       slice={{ ...slice, pending: true, coach: { ...coach, currentness: 'stale', asOfMs: 1100 } }} />);
     expect(screen.findByTestId('coach.finding.compaction_storms.evidence')).toBeTruthy();
     expect(screen.getTextContent()).toContain(evidenceLine);
+  });
+
+  it('says a count of one in the singular, through the copy owner (acceptance r230 #85)', async () => {
+    const first = coach.findings[0]!;
+    const one = { ...coach, findings: [{ ...first, measurements: first.measurements.map(measurement =>
+      measurement.metric === 'compactions' ? { ...measurement, value: 1 } : measurement) }, ...coach.findings.slice(1)] };
+    const screen = await renderScreen(<UsageCoachWidget {...props} slice={{ ...slice, coach: one }} id="usage_coach" testID="coach" />);
+    await screen.pressByTestIdAsync('coach.finding.compaction_storms.why-header');
+    const text = screen.findByTestId('coach.finding.compaction_storms.evidence.measurements')!
+      .findAll(node => typeof node.props.children === 'string').map(node => node.props.children).join(' ');
+    expect(text).toContain('1 compaction');
+    expect(text).not.toContain('1 compactions');
   });
 
   it('lists a finding\'s many observations behind Why as a led list with Show all, not a wall of lines', async () => {
@@ -2256,7 +2295,7 @@ describe('Work and Coach widget bodies', () => {
     const measurementsText = measurements.findAll(node => typeof node.props.children === 'string')
       .map(node => node.props.children).join(' ');
     const observedCompactions = coach.findings[0]!.measurements.find(measurement => measurement.metric === 'compactions')!;
-    expect(measurementsText).toContain(`${observedCompactions.value} ${t('usage.board.coach.metric_compactions')}`);
+    expect(measurementsText).toContain(`${observedCompactions.value} ${t('usage.board.coach.metric_compactions', { count: observedCompactions.value })}`);
     expect(screen.getTextContent()).not.toContain(coach.findings[0]!.basis.method);
     await screen.pressByTestIdAsync('coach.finding.compaction_storms.evidence.diagnostics-header');
     expect(screen.getTextContent()).toContain(coach.findings[0]!.basis.method);

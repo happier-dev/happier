@@ -1,7 +1,8 @@
 import { useMemo, type ReactElement } from 'react';
 import { View } from 'react-native';
 
-import { useOptionalHappierUiTypography } from '../../environment/context.js';
+import { useOptionalHappierUiLocalization, useOptionalHappierUiTypography } from '../../environment/context.js';
+import { formatHappierDataValue } from '../data/dataModel.js';
 import type { HappierUiTheme } from '../../environment/types.js';
 import { HappierTextLinkButton } from '../interaction/TextLinkButton.js';
 import { HappierText } from '../text/Text.js';
@@ -62,6 +63,7 @@ export function HappierListOverflowFooter(
   props: HappierListOverflowFooterProps,
 ): ReactElement | null {
   const typography = useOptionalHappierUiTypography();
+  const locale = useOptionalHappierUiLocalization()?.locale;
   const styles = useMemo(() => {
     const meta = resolveHappierTypeRoleStyle('meta', props.theme, typography);
     const link = resolveHappierTypeRoleStyle(
@@ -88,7 +90,7 @@ export function HappierListOverflowFooter(
   const labels = props.labels ?? {};
   const toggle = props.expanded
     ? (labels.showLess ?? 'Show less')
-    : `${props.complete === false ? (labels.showAvailable ?? 'Show available') : (labels.showAll ?? 'Show all')} · ${props.total}`;
+    : `${props.complete === false ? (labels.showAvailable ?? 'Show available') : (labels.showAll ?? 'Show all')} · ${formatHappierDataValue(props.total, locale)}`;
   return (
     <View
       testID={props.testID}

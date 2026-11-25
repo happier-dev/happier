@@ -89,6 +89,9 @@ export function projectUsageSkyModel(calendar: UsageAgentCalendar, metric: Usage
   const byDate = new Map(calendar.days.map((bucket) => [bucket.date, bucket]));
   const dates = periodDates(calendar);
   const field = METRIC_FIELDS[metric];
+  // The day the reference falls in, while the period still runs: drawn as partial, never as a finished day (r227 #76).
+  const running = referenceMs >= calendar.period.startMs && referenceMs < calendar.period.endMs
+    ? resolveUsageCalendarInstant(referenceMs, calendar.timeZoneOffsetMinutes).date : null;
   const days: UsageSkyDay[] = dates.map((date) => {
     const bucket = byDate.get(date);
     if (!bucket) return { date, state: emptyCalendarMetric(calendar, metric) === 0 ? 'inactive' : 'unknown' };
@@ -96,7 +99,7 @@ export function projectUsageSkyModel(calendar: UsageAgentCalendar, metric: Usage
     if (value === null) return { date, state: 'unknown' };
     if (value <= 0) return { date, state: 'inactive', value: 0 };
     const leader = bucket.leaders[field];
-    return { date, state: 'active', value,
+    return { date, state: 'active', value, ...(date === running ? { partial: true } : {}),
       leader: leader.status === 'leading' && leader.agentIds[0] ? { kind: 'agent', agentId: leader.agentIds[0] }
         : leader.status === 'tied' && leader.agentIds.length >= 2 ? { kind: 'tie', agentIds: [leader.agentIds[0]!, leader.agentIds[1]!, ...leader.agentIds.slice(2)] }
         : leader.status === 'unattributed' || (leader.status === 'tied' && leader.agentIds.length < 2) ? { kind: 'unknown' } : null };

@@ -24,8 +24,6 @@ import {
   type UsageBodyProps,
   leadingUsageRows,
   UsageShowAllRows,
-  useUsageSessionRecipient,
-  usageQuerySingleSession,
 } from './usageBodyKit';
 import { useUsageWork } from './useUsageWork';
 import { partitionUsageWorkMoneyRows, projectUsageSessionValuePlots, type UsageWorkSessionRow } from './usageWorkPresentation';
@@ -54,7 +52,6 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
   const agentColor = useUsageAgentColor();
   const presentation = useWidgetPresentation();
   const rowMetrics = usePageRowMetrics('list');
-  const viewerOwn = useUsageSessionRecipient(usageQuerySingleSession(props.query), props.serverId);
   const outside = <UsageOutsideSessions serverId={props.serverId} query={props.query} testID={`${props.testID}.outside`} />;
   const { summary, format, datum, basisLabel, captioned, sessionLabel, openSession } = useUsageWork(
     props.slice,
@@ -65,7 +62,8 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
   useWidgetFrameBodyCaption(
     props.query.session !== null ? null
       : summary
-        ? t('usage.board.work.valueCaption', { count: summary.sessions.length })
+        // Grouped by locale like every other Usage count ("1,325 sessions", r230 #86).
+        ? t('usage.board.work.valueCaption', { count: summary.sessions.length.toLocaleString() })
         : usagePeriodPhrase(props.query),
   );
   if (!summary) {
@@ -92,8 +90,9 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
   }
   if (summary.sessions.length === 0)
     return (
-      // A viewer given access to this Session reads their own zero in the autopsy's figures: not an empty dashboard.
-      <View>{viewerOwn ? null : <UsageBodyInsufficient
+      // A Session's own page (its owner, or a viewer given access reading their own zero) answers in the autopsy's
+      // figures: not with a dashboard's empty state (r226 #62, r230 #83).
+      <View>{props.query.session !== null ? null : <UsageBodyInsufficient
         testID={`${props.testID}.empty`}
         replacesContent={false}
         title={t('usage.board.work.emptyTitle')}
@@ -122,8 +121,13 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
       rows: summary.sessions.filter((row) => row.outcomes.length === 0),
     },
   ].flatMap(group => partitionUsageWorkMoneyRows(group.rows, props.query.metric)
-    .map(part => ({ ...group, ...part, key: `${group.id}:${part.key}`,
+    .map(part => ({ ...group, ...part, key: `${group.id}:${part.key}`, scaleKey: part.key,
       lead: leadingUsageRows(part.rows, expandedGroups.includes(group.id)) })));
+  // One bar scale for every group of one unit, so a small PR-linked Session never draws the full bar a far larger
+  // unlinked one draws beneath it (r230 #82). Every row counts, shown or behind Show all, so expanding keeps the scale.
+  const barScales = new Map<string, number>();
+  for (const group of groups) for (const row of group.rows) if (row.amount !== null && Number.isFinite(row.amount))
+    barScales.set(group.scaleKey, Math.max(barScales.get(group.scaleKey) ?? 0, row.amount));
   const fromPartsNote = usageTokensFromPartsNote(groups.flatMap(group => group.lead.rows.map(row => row.tokensFromParts)));
   const width = presentation?.geometry?.width ?? 0;
   const showScatter =
@@ -238,6 +242,7 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
             barAppearance={{
               fillOpacity: group.id === 'unlinked' ? 0.35 : undefined,
             }}
+            barScale={barScales.get(group.scaleKey)}
             rows={lead.rows
               .map((row) => ({
                 id: row.sessionId,

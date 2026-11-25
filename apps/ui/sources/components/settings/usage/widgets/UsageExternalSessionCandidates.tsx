@@ -139,7 +139,7 @@ export function UsageExternalSessionCandidates(props: Readonly<{
     // The page's explicit Browse still reaches offscreen Sources; only their drawn controls defer.
     const render = (candidates: React.ReactNode) => props.children ? props.children(candidates) : candidates;
     if (!visible) return render(null);
-    if (!historyAllowed) return render(pageBrowse ? null : <View style={styles.action}><RoundButton size="small" display="inverted"
+    if (!historyAllowed) return render(pageBrowse ? null : <View style={styles.action}><RoundButton size="small" display="secondary"
         title={t('externalSessions.browseTitle')} testID={`${props.testID}.browse`} disabled={!props.online}
         onPress={() => { void commands.invoke('browse'); }} /></View>);
     if (!outside.length) return render(null);
@@ -207,7 +207,7 @@ export function OutsideBrowsePage(props: Readonly<{ testID: string; children: Re
     return <View testID={props.testID}>
         {/* The row is held at the button's drawn height while a Source may still wait for Browse; never an empty control. */}
         {waiting.size > 0 || expected.size > 0 ? <View testID={`${props.testID}.browseRow`} style={styles.action}>
-            {waiting.size > 0 ? <RoundButton size="small" display="inverted"
+            {waiting.size > 0 ? <RoundButton size="small" display="secondary"
                 title={t('externalSessions.browseTitle')} testID={`${props.testID}.browse`}
                 onPress={() => { void commands.invoke('browse'); }} /> : null}
         </View> : null}

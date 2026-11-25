@@ -13884,7 +13884,7 @@ settingsSession: {
             citation_price_catalog: "價格目錄",
             diagnostics: "診斷識別碼",
             observationsTitle: "已記錄的觀察",
-            metric_unused_mcp_bindings: "未使用的 MCP 綁定",
+            metric_unused_mcp_bindings: (_: { count: number }) => "未使用的 MCP 綁定",
             citationsTitle: "來源",
             hiddenFindings: ({ count }: { count: string | number }) => `隱藏的發現（${count}）`,
             digestDescription: ({ duration }: { duration: string }) => `工作流程可依此檢視的篩選條件查看最近 ${duration} 的用量並通知你。請選擇執行時間與位置。`,

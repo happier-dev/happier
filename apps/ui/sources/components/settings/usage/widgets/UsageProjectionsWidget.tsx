@@ -347,19 +347,23 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
             ))}
           </UsageMeterStack>
         ) : null}
-        {quietReason ? (
-          <Text style={[styles.quiet, text.detail]} testID={`${props.testID}.sharedReason`}>
-            {sharedReason
-              ? t('usage.board.plans.paceSharedReason', { reason: sharedReason })
-              : t('usage.board.plans.paceSharedReasonSome', { count: repeatedCount, reason: quietReason })}
-          </Text>
-        ) : null}
         <UsageShowAllRows label={t(`usage.widgets.${props.id}`)} testID={`${props.testID}.showAll`} total={live.length}
           hidden={lead.hidden} expanded={expanded} onToggle={() => setExpanded((value) => !value)}
           unlisted={unreported.length ? t('usage.board.plans.unreportedWindows', { count: unreported.length }) : null} />
-        {spent > 0 ? (
-          <Text style={[styles.quiet, text.detail]} testID={`${props.testID}.usedUp`}>
-            {t('usage.board.plans.projectionsUsedUp', { count: spent })}
+        {/* Why windows have no projection and how many are used up are one footnote line, not a pile (r223 #51). */}
+        {quietReason || spent > 0 ? (
+          <Text style={[styles.quiet, text.detail]} testID={`${props.testID}.footnote`}>
+            {quietReason ? (
+              <Text testID={`${props.testID}.sharedReason`}>
+                {sharedReason
+                  ? t('usage.board.plans.paceSharedReason', { reason: sharedReason })
+                  : t('usage.board.plans.paceSharedReasonSome', { count: repeatedCount, reason: quietReason })}
+              </Text>
+            ) : null}
+            {quietReason && spent > 0 ? ' · ' : null}
+            {spent > 0 ? (
+              <Text testID={`${props.testID}.usedUp`}>{t('usage.board.plans.projectionsUsedUp', { count: spent })}</Text>
+            ) : null}
           </Text>
         ) : null}
         {/* The run-out alert lands inside the body's remembered height; no line is held for one that may come. */}

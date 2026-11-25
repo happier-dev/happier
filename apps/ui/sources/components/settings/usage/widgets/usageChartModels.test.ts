@@ -784,6 +784,14 @@ describe('Usage chart models', () => {
     const led = [bucket(0, { tokens: 900, eventCount: 3 }, [], { tokens: { status: 'leading', agentIds: ['codex'], includesUnknown: false } })];
     expect(projectUsageSkyModel(calendar({ days: led }), 'tokens', 'leadingAgent', START + 2 * DAY).colourBy).toBe('leadingAgent');
   });
+  // r227 #76: at 11 AM the running day is a small amount, never a finished day the line dives to.
+  it('marks only the day still running as partial on Sky of days', () => {
+    const days = [bucket(3, { tokens: 900, eventCount: 3 }), bucket(4, { tokens: 10, eventCount: 1 })];
+    const running = projectUsageSkyModel(calendar({ days }), 'tokens', 'intensity', START + 4 * DAY + 11 * HOUR);
+    expect(running.days.map(day => day.partial === true)).toEqual([false, false, false, false, true]);
+    const ended = projectUsageSkyModel(calendar({ days }), 'tokens', 'intensity', START + 5 * DAY + HOUR);
+    expect(ended.days.some(day => day.partial)).toBe(false);
+  });
   it('does not turn an absent day of partial evidence into measured inactivity', () => {
     const model = projectUsageSkyModel(
       calendar({ coverage: { ...coverage, busy: 'partial' } }),

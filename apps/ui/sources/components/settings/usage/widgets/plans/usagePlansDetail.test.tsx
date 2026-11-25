@@ -997,7 +997,7 @@ it('keeps the reported reset when pace has no window and labels a truly expired 
     };
     return projectProviderAccountUsageQuotaReadV1({ input: { source: fixture.source }, current, nowMs: now });
   };
-  const expired = read('expired', 100, now - 2 * HOUR, true);
+  const expired = read('expired', 60, now - 2 * HOUR, true);
   const resetOnly = read('reset', 30, now, false);
   expect(expired.pace[0]?.value).toMatchObject({ status: 'unavailable', reason: 'stale' });
   expect(resetOnly.pace[0]?.value).toMatchObject({ status: 'unavailable', reason: 'unknown_window' });
@@ -1016,8 +1016,32 @@ it('keeps the reported reset when pace has no window and labels a truly expired 
   expect(screen.findAllByType(BurnUpChart)).toHaveLength(0);
   expectProjectionRowReading(screen, 'proj.window.reset.weekly', 'caption', ['Weekly', '70% left', '23h']);
   expectProjectionRowReading(screen, 'proj.window.expired.weekly', 'freshness', [
-    'Weekly', '0% left', t('surfaceState.asOf', { time: formatAsOfTime(now - 2 * HOUR, now) }), '23h', expiredText,
+    'Weekly', '40% left', t('surfaceState.asOf', { time: formatAsOfTime(now - 2 * HOUR, now) }), '23h', expiredText,
   ]);
+});
+
+it('counts a used-up window by its value, even when its reading is past the reading horizon (acceptance r230 #75)', async () => {
+  const now = Date.now();
+  const read = (accountId: string, resetAtMs: number) => {
+    const fixture = quotaRead(accountId, now - 2 * 60_000, [
+      { meterId: 'weekly', label: 'Weekly', usedPct: 100, resetAtMs, windowDurationMs: 7 * DAY },
+    ], {}, { staleAfterMs: 60_000 });
+    return projectProviderAccountUsageQuotaReadV1({ input: { source: fixture.source }, current: fixture.current!, nowMs: now });
+  };
+  const spent = read('spent', now + DAY);
+  const renewed = read('renewed', now - HOUR);
+  const live = quotaRead('live', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30, resetAtMs: now + DAY, windowDurationMs: 7 * DAY }]);
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  const screen = await renderPlanAccessibility(<WidgetPresentationProvider value={{ size: 'medium',
+    footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' }, geometry: { width: 520, height: 260 } }}>
+    <UsageProjectionsWidget {...bodyProps([spent, renewed, live])} id="usage_projections" testID="proj" />
+  </WidgetPresentationProvider>);
+  // Nothing comes back before the reset: an older 0% with its reset ahead is still used up, never an "old" row.
+  expect(screen.findByTestId('proj.window.spent.weekly')).toBeFalsy();
+  expect(screen.findByTestId('proj.usedUp')).toBeTruthy();
+  expect(screen.getTextContent()).toContain(t('usage.board.plans.projectionsUsedUp', { count: 1 }));
+  // Its reset has passed, so the old 0% says nothing about now: it stays listed with its age.
+  expect(screen.findByTestId('proj.window.renewed.weekly')).toBeTruthy();
 });
 
 it('keeps the old value and reset after a retained comparison expires', async () => {

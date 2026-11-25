@@ -607,7 +607,8 @@ function resolveUsagePageNotice(
   retry: (() => void) | null,
   history: UsagePageHistoryFact | null | undefined,
   layouts: Readonly<{ retry: () => void }> | null | undefined,
-  startSession: () => void,
+  /** Absent on a Session's own page: starting another Session is not that page's next step (r230 #83). */
+  startSession: (() => void) | null,
 ): UsagePageNotice | null {
   const { pending, failure, newerServer, partial } = facts;
   // A refusal is disclosed independently. This line owns recovery for the unread data and Views.
@@ -638,7 +639,8 @@ function resolveUsagePageNotice(
     return { testID: 'usage-page.header.nothingRecorded', tone: 'neutral',
       // The title alone fits a phone's one header line; Start a session is the reason's next step.
       reason: t('usage.board.page.noUsageTitle'),
-      action: { label: t('usage.board.coach.firstUseAction'), onPress: startSession, testID: 'usage-page.header.nothingRecordedAction' } };
+      ...(startSession ? { action: { label: t('usage.board.coach.firstUseAction'), onPress: startSession,
+        testID: 'usage-page.header.nothingRecordedAction' } } : {}) };
   }
   if (newerServer) return { testID: 'usage-page.header.newerServer', reason: newerServer, tone: 'neutral' };
   if (facts.workOffline) return { testID: 'usage-page.header.workOffline', reason: t('usage.board.page.workMachinesOffline'), tone: 'neutral' };
@@ -700,7 +702,7 @@ function UsagePageHeader(
       </SurfaceFreshnessOnSheetProvider>
     );
     const resolved = resolveUsagePageNotice(props.appsShown ? { ...props.facts, nothingRecorded: false } : props.facts,
-      retry, history, layouts, startSession);
+      retry, history, layouts, props.sessionId ? null : startSession);
     const showFreshness = !!resolved || olderReadAtMs !== null || olderSource !== null;
     if (!scopeRefusal && !showFreshness) return null;
     const testID = resolved?.testID ?? 'usage-page.header.freshness';
