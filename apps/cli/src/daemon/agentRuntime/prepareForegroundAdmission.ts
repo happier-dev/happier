@@ -34,6 +34,7 @@ import { resolveCliFeatureDecisionForServer } from '@/features/featureDecisionSe
 import { prepareDirectProviderLaunch, type DirectProviderLaunchResult } from '@/providers/lifecycle/prepareDirectLaunch';
 import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 import { projectChildEnvironmentLaunchError } from '../spawn/projectChildEnvironmentFailure';
+import { readSettledMachineIsolationPolicy } from '../agentIsolation/sessionPreparation';
 import { createRuntimeProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
 import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
 import {
@@ -135,6 +136,12 @@ function refusal(
   error: Extract<ForegroundAgentRuntimeAdmissionResponseV1, { ok: false }>['error'],
 ): Extract<ForegroundAgentRuntimeAdmissionResponseV1, { ok: false }> {
   return { ok: false, error };
+}
+
+function refuseUnreadMachineIsolationPolicy(message: string) {
+  return refusal({ kind: 'launch_error', code: 'target_unavailable', message,
+    agentIsolationRefusal: { reason: 'metadata_unavailable', phase: 'native_execution_preparation' },
+  });
 }
 
 function unsupportedForegroundRuntime(
@@ -555,9 +562,17 @@ export async function prepareForegroundAgentRuntimeAdmission(
     return refusal(createProviderErrorV1('provider_authorization_changed', { machineId: request.machineId }));
   }
   if (!request.existingSessionId && !request.vendorResumeId && dependencies.readMachineMetadataSnapshot) {
-    const snapshot = dependencies.readMachineMetadataSnapshot();
-    if (snapshot.status !== 'ready') return { ok: false,
-      error: { kind: 'launch_error', code: 'target_unavailable', message: 'Machine isolation policy is unavailable.' } };
+    const snapshot = await readSettledMachineIsolationPolicy({
+      read: dependencies.readMachineMetadataSnapshot,
+      isUnread: snapshot => snapshot.status !== 'ready',
+      awaitReadable: dependencies.agentIsolation?.awaitReadable,
+      signal: dependencies.signal,
+    });
+    if (snapshot.status !== 'ready') {
+      return refuseUnreadMachineIsolationPolicy(
+        'Machine isolation policy is unavailable. Wait for the Machine to reconnect and try again. If it still fails, ask the Machine manager to check the daemon.',
+      );
+    }
     const { readMachineIsolationPolicyV1 } = await import('@happier-dev/protocol/machines/machineIsolationV1');
     try {
       const policy = readMachineIsolationPolicyV1(snapshot.metadata);
@@ -567,7 +582,9 @@ export async function prepareForegroundAgentRuntimeAdmission(
         error: { kind: 'launch_error', code: 'target_unavailable', message: 'This Machine starts new Sessions through its daemon.' },
         sessionSpawnRequired: { machineId: request.machineId } };
     } catch {
-      return { ok: false, error: { kind: 'launch_error', code: 'target_unavailable', message: 'Machine isolation policy is unreadable.' } };
+      return refuseUnreadMachineIsolationPolicy(
+        'Machine isolation policy is unreadable. Ask the Machine manager to check its isolation settings.',
+      );
     }
   }
   const readAccountSettingsSnapshot = () => readForegroundAccountSnapshot(dependencies);

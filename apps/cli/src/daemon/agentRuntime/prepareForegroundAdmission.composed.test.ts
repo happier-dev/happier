@@ -102,6 +102,43 @@ describe('foreground admission composed real Provider authorization seam', () =>
       expect(await fixture.bootstrapFiles()).toEqual([]);
     });
   });
+  it.each(['ready', 'unavailable'] as const)('admits a cold foreground Codex start only after Machine binding settles %s', async status => {
+    await withForegroundProviderFixture({}, async fixture => {
+      const firstRead = Promise.withResolvers<void>();
+      const binding = Promise.withResolvers<void>();
+      let published = false;
+      const result = fixture.prepare({ profileId: undefined, selection: undefined }, {
+        agentIsolation: { read: () => undefined, awaitReadable: () => binding.promise },
+        readMachineMetadataSnapshot: () => {
+          firstRead.resolve();
+          if (!published || status === 'unavailable') return { status: 'unavailable' };
+          return { status: 'ready', metadataVersion: 1, metadata: {
+            isolationPolicyV1: { configuredSandboxes: { local: {
+              provisioner: { pluginId: 'acme.sandbox', localId: 'sandbox' }, presetId: 'preset',
+            } }, workKinds: {
+              sessions: { kind: 'sandbox', configuredSandboxId: 'local', lifecycle: 'fresh' },
+              botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' },
+            } },
+          } };
+        },
+      });
+      await firstRead.promise;
+      published = true;
+      binding.resolve();
+
+      const response = ForegroundAgentRuntimeAdmissionResponseV1Schema.parse(await result);
+      if (status === 'ready') {
+        expect(response).toMatchObject({ ok: false, sessionSpawnRequired: { machineId: 'machine-1' } });
+      } else {
+        expect(response).toMatchObject({ ok: false, error: {
+          kind: 'launch_error', code: 'target_unavailable',
+          agentIsolationRefusal: { reason: 'metadata_unavailable', phase: 'native_execution_preparation' },
+        } });
+        expect(response).not.toHaveProperty('sessionSpawnRequired');
+      }
+      expect(await fixture.bootstrapFiles()).toEqual([]);
+    });
+  });
   it('keeps the missing native CLI cause at the strict foreground admission sink', async () => {
     await withForegroundProviderFixture({}, async fixture => {
       vi.stubEnv(resolveAgentCliOverrideEnvKey('codex'), join(fixture.home, 'missing-agent-cli'));

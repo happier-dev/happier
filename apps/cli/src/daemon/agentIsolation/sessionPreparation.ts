@@ -10,13 +10,26 @@ import { selectHostRequesterExecutionIdentity, assertHostRequesterExecutionAdmis
   refuseIsolationNotReady } from './agentIsolationLaunchPolicy';
 
 /** No timer: the request's own cancellation bounds a wait on a readiness that may never come. */
-function untilSettledOrAborted(readable: Promise<void>, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.resolve();
+function untilSettledOrAborted(readable: Promise<void>, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
   return new Promise(resolve => {
-    const done = () => { signal.removeEventListener('abort', done); resolve(); };
-    signal.addEventListener('abort', done, { once: true });
+    const done = () => { signal?.removeEventListener('abort', done); resolve(); };
+    signal?.addEventListener('abort', done, { once: true });
     void readable.then(done, done);
   });
+}
+
+/** Both Machine work-kind and native Agent isolation read the same daemon binding. */
+export async function readSettledMachineIsolationPolicy<T>(input: Readonly<{
+  read(): T;
+  isUnread(snapshot: T): boolean;
+  awaitReadable?: HostAgentIsolationLaunchContext['awaitReadable'];
+  signal?: AbortSignal;
+}>): Promise<T> {
+  const snapshot = input.read();
+  if (!input.awaitReadable || !input.isUnread(snapshot) || input.signal?.aborted) return snapshot;
+  await untilSettledOrAborted(input.awaitReadable(), input.signal);
+  return input.signal?.aborted ? snapshot : input.read();
 }
 
 /** Private admitted sources remain distinct: current Account custody never
@@ -39,20 +52,17 @@ export function createSessionAgentIsolationMemberPreparation(options: Readonly<{
       savedSecretOperationContext: Pick<RequesterSessionRuntimeContext['bootstrap']['savedSecretOperationContext'], 'machineAdmission'>;
     }> }> | null | undefined,
     lifetimeSignal: AbortSignal,
-    accountSource?: SessionAgentIsolationAccountSource,
+    accountSourceInput?: SessionAgentIsolationAccountSource | ((signal: AbortSignal) => Promise<SessionAgentIsolationAccountSource | undefined>),
   ): PrepareAgentIsolationMember => async input => {
     const signal = input.signal ? AbortSignal.any([lifetimeSignal, input.signal]) : lifetimeSignal;
     signal.throwIfAborted();
     const birth = requester?.bootstrap;
-    let policy = options.agentIsolation?.read();
     const awaitReadable = options.agentIsolation?.awaitReadable;
-    if (awaitReadable && isHostAgentIsolationPolicyUnread(policy)) {
-      // A start in the first seconds after a daemon start waits once for Machine
-      // registration (or this request's cancellation), then decides on the real policy.
-      await untilSettledOrAborted(awaitReadable(), signal);
-      policy = options.agentIsolation?.read();
-      if (policy && isHostAgentIsolationPolicyUnread(policy)) refuseIsolationNotReady(policy.status, 'agent_isolation_unavailable', 'exec');
-    }
+    const policy = await readSettledMachineIsolationPolicy({
+      read: () => options.agentIsolation?.read(), isUnread: isHostAgentIsolationPolicyUnread, awaitReadable, signal,
+    });
+    if (awaitReadable && policy && isHostAgentIsolationPolicyUnread(policy))
+      refuseIsolationNotReady(policy.status, 'agent_isolation_unavailable', 'exec');
     const isolationEnabled = policy?.enabled === true;
     let identity: HostRequesterExecutionIdentity;
     let homeServerIdentityId: string;
@@ -65,6 +75,8 @@ export function createSessionAgentIsolationMemberPreparation(options: Readonly<{
       // Both native placements retain the admitted Account source. A missing
       // historical Session requester never becomes focused-Account authority.
       if (!isolationEnabled) return undefined;
+      const accountSource = typeof accountSourceInput !== 'function' ? accountSourceInput
+        : policy?.memberProvisioning === 'linuxUsersV1' ? await accountSourceInput(signal) : undefined;
       if (!accountSource || accountSource.origin.machineId !== options.machineId
         || !accountSource.origin.serverIdentityId) throw new PluginError({ code: 'agent_isolation_unavailable',
           message: 'Ordinary Session requester custody is unavailable', retryable: false });

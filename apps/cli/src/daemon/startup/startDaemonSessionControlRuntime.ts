@@ -6866,13 +6866,11 @@ export async function startDaemonSessionControlRuntime(
               ),
             };
           }
-          let accountSource: SessionAgentIsolationAccountSource | undefined;
-          const isolation = params.agentIsolation?.read();
-          if (!requester && isolation?.enabled && isolation.memberProvisioning === 'linuxUsersV1') {
+          const resolveAccountSource = async (signal: AbortSignal): Promise<SessionAgentIsolationAccountSource | undefined> => {
             const accountLifetime = getActiveAccountSettingsSnapshotLifetimeToken();
             const host = await captureFreshAgentIsolationAccountSource(signal);
-            if (host && !request.existingSessionId) accountSource = host;
-            else if (host && request.existingSessionId && capturedOrdinarySession) {
+            if (host && !request.existingSessionId) return host;
+            if (host && request.existingSessionId && capturedOrdinarySession) {
               const custody = await readOrdinaryRequesterSessionAccountCustodyForHost({
                 happyHomeDir: configuration.happyHomeDir, serverId: params.requesterSessionCustodyServerId ?? params.serverId,
                 serverHttpBaseUrl: params.serverBaseUrl, sessionId: request.existingSessionId, machineId: params.machineId,
@@ -6888,9 +6886,9 @@ export async function startDaemonSessionControlRuntime(
                 captured: { session: capturedOrdinarySession, homeServerIdentityId: host.origin.serverIdentityId,
                   hostAccountAgent: host.hostAccountAgent },
               });
-              if (custody) accountSource = { kind: 'ordinarySession', custody, origin: host.origin };
+              if (custody) return { kind: 'ordinarySession', custody, origin: host.origin };
             }
-          }
+          };
           const activateSessionPurposeBindings = requester
             ? requester.activateSessionPurposeBindings
             : params.activateSessionPurposeBindings;
@@ -6912,7 +6910,7 @@ export async function startDaemonSessionControlRuntime(
               readMachineMetadataSnapshot: () => params.getApiMachineForSessions()?.getMachineMetadataSnapshot() ?? { status: 'unavailable' },
               agentIsolation: params.agentIsolation,
               prepareAgentIsolationMember: prepareSessionAgentIsolationMember(requester,
-                AbortSignal.any([signal, shutdownCancellationDomains.daemonWorkSignal]), accountSource),
+                AbortSignal.any([signal, shutdownCancellationDomains.daemonWorkSignal]), resolveAccountSource),
               signal: AbortSignal.any([signal, shutdownCancellationDomains.daemonWorkSignal]),
               isSessionAccountCurrent: isForegroundAccountCurrent,
               connectedAccountRequestAuth: connectedAccountRequestAuthService,

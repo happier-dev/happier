@@ -96,6 +96,7 @@ export function startDaemonMachineRegistrationRuntime(
       | 'connectedServiceQuotasLoopHandle'
     >;
     onMachineSyncRuntime: Parameters<typeof startDaemonMachineRegistration>[0]['onMachineSyncRuntime'];
+    onRegistrationSettled?: Parameters<typeof startDaemonMachineRegistration>[0]['onRegistrationSettled'];
     filesystemAccessPolicy: Parameters<typeof startDaemonMachineRegistration>[0]['bootstrapRuntime']['filesystemAccessPolicy'];
     takeoverRequested: boolean;
     preferredHost: string;
@@ -176,5 +177,6 @@ export function startDaemonMachineRegistrationRuntime(
       connectedServiceQuotasLoopHandle: params.connectedServiceQuotasLoopHandle,
     },
     onMachineSyncRuntime: params.onMachineSyncRuntime,
+    ...(params.onRegistrationSettled ? { onRegistrationSettled: params.onRegistrationSettled } : {}),
   });
 }

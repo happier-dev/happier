@@ -210,12 +210,14 @@ describe('startMachineRegistrationRetryLoop', () => {
     }
   });
 
-  it('does not arm readiness wake after a terminal content-key mismatch', async () => {
+  it('settles a terminal content-key mismatch without arming a readiness wake', async () => {
     vi.useFakeTimers();
     const retryWakeSource = createRetryWakeSourceHarness();
+    const onRegistrationSettled = vi.fn();
 
     const params = createLoopParams({
       machineRegistrationRetryWakeSource: retryWakeSource.source,
+      onRegistrationSettled,
     });
     const registrationRequest = vi.mocked(params.api.getOrCreateMachine);
     registrationRequest.mockRejectedValueOnce(
@@ -224,6 +226,7 @@ describe('startMachineRegistrationRetryLoop', () => {
 
     startMachineRegistrationRetryLoop(params);
     await flushTimers();
+    expect(onRegistrationSettled).toHaveBeenCalledOnce();
 
     retryWakeSource.setReady();
     await vi.advanceTimersByTimeAsync(10_000);

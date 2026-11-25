@@ -1921,8 +1921,8 @@ export async function startDaemon(
         if (!machine) throw new Error('agent_isolation_unavailable');
         return machine.prepareAgentIsolationMember(input);
       },
-      // The snapshot below is unread until registration assigns apiMachineForSessions,
-      // which happens right before this settles.
+      // Registration settles after assigning apiMachineForSessions or after it
+      // has stopped trying. A settled binding can still have unreadable content.
       awaitReadable: () => machineProviderBindingSettled,
       read() {
         const snapshot = apiMachineForSessions?.getAgentIsolationSnapshot()
@@ -3801,6 +3801,7 @@ export async function startDaemon(
     const machineRegistrationRuntime = startDaemonMachineRegistrationRuntime({
       api,
       credentials,
+      onRegistrationSettled: resolveMachineProviderBindingSettled,
       metadataForRegistration,
       initialDaemonState,
       processEnv: process.env,

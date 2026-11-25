@@ -38,6 +38,7 @@ export type StartMachineRegistrationRetryLoopParams = Readonly<{
   isQuiescing?: () => boolean;
   machineRegistrationRetryWakeSource?: MachineRegistrationRetryWakeSource | null;
   onMachineRegistered: (input: OnMachineRegisteredInput) => Promise<void>;
+  onRegistrationSettled?: () => void;
 }>;
 
 export type MachineRegistrationRetryLoopHandle = Readonly<{
@@ -134,6 +135,7 @@ export function startMachineRegistrationRetryLoop(
   const stopRetryWakeSourceOnce = async (): Promise<void> => {
     if (didStopRetryWakeSource) return;
     didStopRetryWakeSource = true;
+    params.onRegistrationSettled?.();
     await stopMachineRegistrationRetryWakeSource(params.machineRegistrationRetryWakeSource);
   };
 

@@ -23,16 +23,21 @@ vi.mock('@/daemon/agentIsolation/runMemberNativeOperation', async importOriginal
 }));
 
 describe('foreground Agent CLI launch admission', () => {
-  it.skipIf(process.platform !== 'linux')('hands a fresh owner Codex terminal to the admitted isolated Session launch', async () => {
+  it.skipIf(process.platform !== 'linux').each(['owner', 'cold separated member'] as const)(
+    'hands a fresh %s Codex terminal to the admitted isolated Session launch', async entry => {
     await withRealForegroundAdmissionFixture({}, async fixture => {
       const machineId = 'machine-1';
-      const accountId = 'fixture-owner';
+      const accountId = entry === 'owner' ? 'fixture-owner' : 'fixture-member';
       const serverIdentityId = 'fixture-home';
+      const firstMetadataRead = Promise.withResolvers<void>();
+      const binding = Promise.withResolvers<void>();
+      let published = entry === 'owner';
       const agentIsolation: HostAgentIsolationLaunchContext = {
-        read: () => ({
-          enabled: true, memberProvisioning: 'linuxUsersV1',
-          status: { kind: 'effective', platform: 'linux' }, workspaceRoots: [],
-        }),
+        awaitReadable: () => binding.promise,
+        read: () => published
+          ? { enabled: true, memberProvisioning: 'linuxUsersV1',
+            status: { kind: 'effective', platform: 'linux' }, workspaceRoots: [] }
+          : { enabled: true, status: { kind: 'unavailable', code: 'metadata_unavailable' }, workspaceRoots: [] },
         prepareMember: async ({ requesterIdentity }) => ({
           identity: {
             ...deriveAgentIsolationMemberIdentity(requesterIdentity),
@@ -45,19 +50,25 @@ describe('foreground Agent CLI launch admission', () => {
       };
       const prepareAgentIsolationMember = createSessionAgentIsolationMemberPreparation({
         machineId, custodianAccountId: accountId, agentIsolation,
-      })(null, new AbortController().signal, {
+      })(null, new AbortController().signal, async () => published ? {
         kind: 'freshAccount',
         origin: { machineId, serverIdentityId },
         hostAccountAgent: { accountId, custodianAccountId: accountId, machineId, installationId: 'guest-installation' },
-      });
+      } : undefined);
 
-      // Plain `happier codex` in the owner's person terminal has Happier sign-in
-      // and no daemon-spawned runtime descriptor or Connected Account choice.
-      const result = ForegroundAgentRuntimeAdmissionResponseV1Schema.parse(await fixture.prepare({}, {
-        readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
+      // Plain `happier codex` has Happier sign-in and no daemon-spawned runtime descriptor.
+      const admission = fixture.prepare({}, {
+        readMachineMetadataSnapshot: () => {
+          firstMetadataRead.resolve();
+          return published ? { status: 'ready', metadataVersion: 1, metadata: {} } : { status: 'unavailable' };
+        },
         agentIsolation,
         prepareAgentIsolationMember,
-      }));
+      });
+      await firstMetadataRead.promise;
+      published = true;
+      binding.resolve();
+      const result = ForegroundAgentRuntimeAdmissionResponseV1Schema.parse(await admission);
       expect(result).toMatchObject({
         ok: false,
         error: { failureCause: { phase: 'foreground.member_runtime_descriptor' } },
