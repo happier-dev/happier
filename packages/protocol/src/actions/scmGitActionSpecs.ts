@@ -1980,7 +1980,7 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS: readonly [
   defineScmActionSpec({
     id: 'scm.diffSummary.commitPlan.recover', approval: {result: 'required'}, title: 'Reconcile an uncertain commit outcome',
     description: 'Resolve recorded Git publication without retrying or rolling back.',
-    safety: 'safe', placements: [], sideEffectClass: 'read',
+    safety: 'safe', placements: [], sideEffectClass: 'write',
     bindings: { rpcMethod: 'scm.diffSummary.commitPlan.recover', sdkMethod: 'scm.diffSummary.commitPlan.recover', mcpToolName: 'scm_diff_summary_commit_plan_recover', voiceClientToolName: 'recoverScmCommitPlan' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     inputSchema: ScmCommitPlanControlInputSchema, outputSchema: ScmDiffSummaryResultResponseSchema,

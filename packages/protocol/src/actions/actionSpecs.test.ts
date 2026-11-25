@@ -124,6 +124,7 @@ it.each([
   ['session.usageLimit.consumeResetCredit', 'external'],
   ['agents.acp.backends.upsert', 'write'],
   ['agents.acp.backends.delete', 'write'],
+  ['scm.diffSummary.commitPlan.recover', 'write'],
 ] as const)('publishes the effect of %s in Action discovery', (actionId, effect) => {
   expect(serializeActionSpec(getActionSpec(actionId))).toMatchObject({ id: actionId, sideEffectClass: effect });
 });
