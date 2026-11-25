@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import { AccountSettingsSchema, ApprovalRequestV2Schema, FeaturesResponseSchema } from '@happier-dev/protocol';
+import { ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactMutationHttpV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -125,6 +126,15 @@ it.each(([
     }
     if (url.endsWith('/v1/artifacts/read')) return { status: 200, data: artifactReadResponse(body,
       id => id === artifact.id ? artifact : null).data };
+    if (url.endsWith('/v1/artifacts/approval')) {
+      const updated = ArtifactJsonUpdateHttpInputV1Schema.parse(body);
+      if (updated.expectedHeaderVersion !== artifact.headerVersion || updated.expectedBodyVersion !== artifact.bodyVersion) {
+        return { status: 200, data: { success: false, error: 'version-mismatch' } };
+      }
+      artifact = { ...artifact, header: updated.header ?? artifact.header, body: updated.body ?? artifact.body,
+        headerVersion: artifact.headerVersion + 1, bodyVersion: artifact.bodyVersion + 1 };
+      return { status: 200, data: { success: true, headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } };
+    }
     if (url.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
     const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
     const envelope = ExternalActionRequestEnvelopeSchema.parse(carrier.success ? carrier.data.envelope : body);
@@ -180,11 +190,12 @@ it.each(([
   const resource = await createResourceDataKey({ credentials, mode });
   const sealArtifact = (value: unknown) => resource.mode === 'plain' ? encodePlainArtifactStoredContent(value)
     : encodeBase64(encryptWithDataKey(value, resource.dataKey));
-  const artifact = { id: 'approval', ownerAccountId: accountId, access: 'owner', encryptionMode: mode, publicAudience: 'none',
+  const initialArtifact = { id: 'approval', ownerAccountId: accountId, access: 'owner', encryptionMode: mode, publicAudience: 'none',
     dataEncryptionKey: resource.dataEncryptionKey ?? ARTIFACT_PLAIN_DATA_KEY_MARKER,
     header: sealArtifact(buildApprovalRequestArtifactHeaderV1(stored)),
     body: sealArtifact({ body: JSON.stringify(stored) }),
     headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 2 };
+  let artifact = initialArtifact;
   const deps = createCliActionDeps({ credentials, token, ...sessionCrypto, sessionId: '', serverId,
     serverIdentityId: serverId, serverHttpBaseUrl: 'https://approval-home.test' });
   const verifyExecutionAuthorization: VerifyExternalActionExecutionAuthorization = input =>
@@ -214,12 +225,18 @@ it.each(([
     expect([...delivered]).toEqual(deliveryFailure === 'lost_ack' ? ['approval-result:approval'] : []);
     return;
   }
+  let recordedDelivery: unknown;
   if (canRelay) {
     // The hosting origin has its authenticated Machine transport. Settle its
     // already-recorded outcome before the standalone deciding CLI rejoins it.
-    expect(await receiver.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, {
+    const originResult = await receiver.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, {
       surface: 'cli', authority: 'present_user', runtimeAccountId: accountId, serverId, serverIdentityId: serverId,
-    })).toMatchObject({ ok: true, result: { status } });
+    });
+    expect(originResult).toMatchObject({ ok: true, result: { status, delivery: { status: 'accepted' } } });
+    if (!originResult.ok || !originResult.result || typeof originResult.result !== 'object' || !('delivery' in originResult.result)) {
+      throw new Error('Missing original delivery receipt');
+    }
+    recordedDelivery = originResult.result.delivery;
     sessionActive = false;
   }
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -230,7 +247,7 @@ it.each(([
     // The run record answers the decision; a restricted credential's refused
     // delivery is its own receipt beside it, never the decision's failure.
     expect(result, JSON.stringify(result)).toMatchObject(canRelay
-      ? { ok: true, result: { status } }
+      ? { ok: true, result: { status, delivery: recordedDelivery } }
       : { ok: true, result: { status, delivery: { status: 'rejected', code: 'session_input_target_unavailable' } } });
   }
   for (const authored of admittedInputs) {
@@ -240,9 +257,8 @@ it.each(([
   expect([...delivered]).toEqual(canRelay ? ['approval-result:approval'] : []);
   expect(origin.readMachineAdmissionRequests()).toBe(canRelay ? 1 : 0);
   if ('standaloneCredential' in scenario) {
-    // Each standalone rejoin reaches the same origin publisher, regardless of
-    // principal, instead of minting another attributed input at the CLI.
-    expect(outcomeReplayArtifacts).toEqual([{ artifactId: 'approval' }, { artifactId: 'approval' }]);
+    // Both standalone principals read the saved delivery without reaching the origin again.
+    expect(outcomeReplayArtifacts).toEqual([]);
   }
   if (canRelay) {
     if (!stored.executionOriginV1) throw new Error('Missing stored execution origin');
@@ -256,6 +272,8 @@ it.each(([
   }
   if (mode === 'e2ee') {
     const originalInput = UserMessageSchema.parse(admittedInputs[0]);
+    // Exercise recovery when Session input exists and its delivery receipt was never saved.
+    artifact = initialArtifact;
     // A matching localId is insufficient when the retained result differs.
     origin.setRetainedContent('approval-result:approval', sealSessionStoredContent({ ...sessionCrypto, payload: {
       ...originalInput, content: { type: 'text', text: 'different outcome' },
@@ -264,6 +282,7 @@ it.each(([
       surface: 'cli', authority: 'present_user', runtimeAccountId: accountId, serverId, serverIdentityId: serverId,
     })).toMatchObject({ ok: true, result: { status, delivery: { status: 'rejected', code: 'session_input_idempotency_conflict' } } });
     // Never reinterpret a plain envelope as the E2EE Session's retained input.
+    artifact = initialArtifact;
     origin.setRetainedContent('approval-result:approval', { t: 'plain', v: originalInput });
     const plainEnvelope = await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, {
       surface: 'cli', authority: 'present_user', runtimeAccountId: accountId, serverId, serverIdentityId: serverId,
