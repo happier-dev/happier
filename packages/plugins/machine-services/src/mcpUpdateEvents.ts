@@ -1,7 +1,7 @@
 import { computeCanonicalDomainSeparatedDigest, createCanonicalJsonSigningInput, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
-import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
+import { createPluginEventAutomationSetupResultV1JsonSchema, PluginEventAutomationSetupResultV1Schema } from '@happier-dev/plugin-sdk/events';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import { createRetainedFactEventSource } from './retainedFactSource.js';
 
@@ -31,8 +31,12 @@ export const mcpUpdateEventActions = { [`${eventId}/setup`]: {
         const config = source.parse({ ...setup.parse(input), observingSince: context.invokedAtMs });
         const server = await readServer(context, config.mcpServerId);
         if (!server || server.origin?.kind !== 'registry') throw new PluginError({ code: 'target_unavailable', message: 'The registry MCP server is unavailable.' });
-        return { v: 1 as const, sourceInstanceId: `mcp-update:${computeCanonicalDomainSeparatedDigest('happier.mcp.update.source.v1',
-            [config.mcpServerId, String(config.observingSince)])}`, sourceContractVersion: 1, sourceConfig: config, displayLabel: config.mcpServerId };
+        const result = { v: 1 as const, sourceInstanceId: `mcp-update:${computeCanonicalDomainSeparatedDigest('happier.mcp.update.source.v1',
+            [config.mcpServerId, String(config.observingSince)])}`, sourceContractVersion: 1, sourceConfig: config,
+            displayLabel: (server.title?.trim() || server.name).normalize('NFC') };
+        if (PluginEventAutomationSetupResultV1Schema.safeParse(result).success) return result;
+        const alias = { ...result, displayLabel: server.name };
+        return PluginEventAutomationSetupResultV1Schema.safeParse(alias).success ? alias : { ...result, displayLabel: 'MCP server' };
     },
 } };
 export const mcpUpdateEvents = { [eventId]: { declaration: {

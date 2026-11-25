@@ -1,7 +1,7 @@
 import { computeCanonicalDomainSeparatedDigest, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
-import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
+import { createPluginEventAutomationSetupResultV1JsonSchema, PluginEventAutomationSetupResultV1Schema } from '@happier-dev/plugin-sdk/events';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import { createRetainedFactEventSource } from './retainedFactSource.js';
 
@@ -26,8 +26,10 @@ export const managedSetupEventActions = { [`${eventId}/setup`]: {
         const config = source.parse({ ...setup.parse(input), observingSince: context.invokedAtMs });
         const machine = await readMachine(context, config);
         if (machine.id !== config.managedId || machine.homeId !== config.homeId) throw new PluginError({ code: 'target_unavailable', message: 'The managed Machine is unavailable.' });
-        return { v: 1 as const, sourceInstanceId: `managed-setup:${computeCanonicalDomainSeparatedDigest('happier.managed.setup.source.v1',
-            [config.homeId, config.managedId, String(config.observingSince)])}`, sourceContractVersion: 1, sourceConfig: config, displayLabel: config.managedId };
+        const result = { v: 1 as const, sourceInstanceId: `managed-setup:${computeCanonicalDomainSeparatedDigest('happier.managed.setup.source.v1',
+            [config.homeId, config.managedId, String(config.observingSince)])}`, sourceContractVersion: 1, sourceConfig: config,
+            displayLabel: machine.launch?.name.trim().normalize('NFC') || 'Managed Machine' };
+        return PluginEventAutomationSetupResultV1Schema.safeParse(result).success ? result : { ...result, displayLabel: 'Managed Machine' };
     },
 } };
 export const managedSetupEvents = { [eventId]: { declaration: {

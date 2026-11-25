@@ -2,6 +2,34 @@ import { describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
 import { manifest, plugin } from './manifest.js';
 
+it('names agent Event setup sources from their admitted records', async () => {
+    const kit = await createPluginTestkit({ manifest, module: plugin });
+    const serverId = 'mcp-record-1';
+    const managedId = 'managed-record-1';
+    const execute = vi.fn(async (actionId: string) => actionId === 'machines.managed.get' ? {
+        id: managedId, homeId: 'home', custodianAccountId: 'owner', allocation: 'unsubmitted',
+        launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'Build guest', choices: {} },
+        creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+    } : {
+        status: 'present', revision: 1, authority: 'active', complete: true, bindings: [], diagnostics: [],
+        server: {
+            id: serverId, name: 'handbook', title: 'Engineering handbook', transport: 'stdio',
+            stdio: { command: 'echo', args: [] }, env: {}, createdAt: 1, updatedAt: 1,
+            origin: { kind: 'registry', provenance: { sourceId: 'builtin:mcp-registry', format: 'mcp-registry',
+                sourceUrl: 'https://registry.modelcontextprotocol.io', itemId: 'example/handbook',
+                ref: { kind: 'version', version: 'v1' }, importedAt: 1 } },
+        },
+    });
+    const services = { actions: { execute } } satisfies PluginTestServicesFixture;
+    try {
+        const selected = await kit.invokeAction('mcp-update-available/setup', { v: 1, mcpServerId: serverId }, { surface: 'agent', services });
+        expect(selected).toMatchObject({ sourceConfig: { mcpServerId: serverId }, displayLabel: 'Engineering handbook' });
+        const managed = await kit.invokeAction('managed-machine-setup-failed/setup', { v: 1, homeId: 'home', managedId }, { surface: 'agent', services });
+        expect(managed).toMatchObject({ sourceConfig: { managedId }, displayLabel: 'Build guest' });
+    } finally { await kit.dispose(); }
+});
+
 describe('Machine presence producer availability', () => {
     it.each(['machine-offline', 'machine-online'])('sets up %s for any Machine without reading an inventory', async eventId => {
         const kit = await createPluginTestkit({ manifest, module: plugin });
