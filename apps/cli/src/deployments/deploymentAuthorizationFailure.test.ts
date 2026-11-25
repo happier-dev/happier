@@ -66,9 +66,11 @@ it.each([[401, true], [403, true], [401, false], [403, false]] as const)(
         dispatchReceipt: async () => { throw new Error('No deploy effect may occur'); } });
     const child = await deps.deploymentAction!('deployments.receipts.list', { serverId: 'home', environmentId: 'retained' }, {});
     const parent = readDeploymentAuthorizationFailure(child);
-    const phase = classified ? 'home.authorization.deployment_child_http' : 'home.authorization.signed_request';
-    expect(parent).toMatchObject({ errorCode: 'action_forbidden',
-        failureCause: { phase, errorClass: 'HttpStatusError', httpStatus: status } });
+    const failureCause = status === 403 && !classified
+        ? { phase: 'deployment.authorization.home_deployment_http_forbidden', errorClass: 'Error', httpStatus: null }
+        : { phase: classified ? 'home.authorization.deployment_child_http' : 'home.authorization.signed_request',
+            errorClass: 'HttpStatusError', httpStatus: status };
+    expect(parent).toMatchObject({ errorCode: 'action_forbidden', failureCause });
     if (classified) expect(parent).toMatchObject({ details: {
         requiredFact: 'deployment_child_http',
     } });
@@ -78,10 +80,7 @@ it.each([[401, true], [403, true], [401, false], [403, false]] as const)(
     const normalized = normalizeActionExecuteResult(retained);
     if (normalized.ok) throw new Error('Refusal cannot become success');
     const output = projectCliActionFailure(normalized);
-    const reason = classified ? 'home_signed_authorization_rejected:deployment_child_http'
-        : status === 401 ? 'home_signed_authorization_rejected' : 'home_deployment_http_forbidden';
-    expect(output).toMatchObject({ code: 'action_forbidden', message: `action_forbidden (${reason})`,
-        failureCause: { phase, errorClass: 'HttpStatusError', httpStatus: status } });
+    expect(output).toMatchObject({ code: 'action_forbidden', failureCause });
     if (classified) {
         expect(output).toMatchObject({ details: { requiredFact: 'deployment_child_http' } });
         expect.soft(output).not.toHaveProperty('details.remedy', expect.stringMatching(/\b(?:update|upgrade)\b/i));
