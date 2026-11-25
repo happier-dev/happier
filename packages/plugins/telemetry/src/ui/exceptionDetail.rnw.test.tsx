@@ -233,14 +233,12 @@ describe('the Happier exception detail', () => {
       okRead,
     );
     await vi.waitFor(async () => {
-      await expect(page.getByText('Resolved in')).resolves.toBeDefined();
+      await expect(page.getByRole('group', { name: 'Resolved in: v1.42, Resolved in' })).resolves.toBeDefined();
     });
-    await expect(page.getByText('v1.42')).resolves.toBeDefined();
-    await expect(page.getByText('~312')).resolves.toBeDefined();
+    await expect(page.getByRole('group', { name: 'Events: ~312, Events' })).resolves.toBeDefined();
     await vi.waitFor(async () => {
-      await expect(page.getByText('287')).resolves.toBeDefined();
+      await expect(page.getByRole('group', { name: 'Requests affected: 287, Requests affected' })).resolves.toBeDefined();
     });
-    await expect(page.getByText('Requests affected')).resolves.toBeDefined();
     await expect(page.getByText('Last 7 days')).resolves.toBeDefined();
     // One read serves the trend and the first occurrence page; the window is whole hours over seven days.
     expect(calls).toHaveLength(1);
@@ -256,7 +254,7 @@ describe('the Happier exception detail', () => {
       okRead,
     );
     await vi.waitFor(async () => {
-      await expect(page.getByText('~312')).resolves.toBeDefined();
+      await expect(page.getByRole('group', { name: 'Events: ~312, Events' })).resolves.toBeDefined();
     });
     expect(calls).toEqual([]);
   });

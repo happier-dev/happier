@@ -21,11 +21,19 @@ it('returns canonical committed evidence on the selected Environment trace throu
     const lease = await localCaptureBackground.acquireRuntime({ signal: abort.signal, services: { storage } });
     const environment = { kind: 'environment', serverId: 'home', environmentId: 'production' } as const;
     const admissions: unknown[] = [];
+    type DeploymentDatabases = NonNullable<PluginServices['deploymentDatabases']>;
     const deployments = {
-        admitTelemetryRead: async (input: unknown) => { admissions.push(input); },
-    } as NonNullable<PluginServices['deploymentDatabases']>;
+        async admitTelemetryRead(input) {
+            admissions.push(input);
+            return {
+                environment: { ...input, revision: 1 },
+                collectorMachineId: 'collector',
+                capabilities: { queries: true, traces: true, appLlmCost: false },
+            };
+        },
+    } satisfies Pick<DeploymentDatabases, 'admitTelemetryRead'>;
     const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN,
-        services: { storage, deploymentDatabases: deployments } });
+        services: { storage, deploymentDatabases: deployments as DeploymentDatabases } });
     try {
         const partition = captureSourcePartition(environment, undefined);
         await lease.runtime.store.write([{ id: 'request', worktree: partition, kind: 'span', source: 'otlp', at: 100,
