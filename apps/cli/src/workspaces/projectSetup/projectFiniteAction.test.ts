@@ -95,7 +95,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { TerminalStreamReadResponseSchema, decodeTerminalStreamBytesFrame } from '@happier-dev/protocol/terminal/stream';
 import { ACTION_OPERATION_PROGRESS_LABEL_MAX_LENGTH_V1, ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { authorizeMachineRpcRequest, readMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
-import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { selectHostRequesterExecutionIdentity, type HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 
 import { createWorkspaceSyncTargetAuthority } from '@/workspaces/sync/workspaceSyncTargetAuthority';
@@ -1362,7 +1362,12 @@ describe('authenticated finite Project Action owner', () => {
                     publicKey: Buffer.from(privateKey.subarray(32)).toString('base64url'),
                     privateKey: Buffer.from(privateKey).toString('base64url'),
                 });
+                // These custody scenarios run on a Machine whose owner disabled isolation.
+                const agentIsolation: HostAgentIsolationLaunchContext = {
+                    read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }),
+                };
                 const installed = createInstalledProjectFiniteRuntime({
+                    agentIsolation,
                     api: { getMachine: async () => { throw new Error('Unexpected Machine HTTP read'); } },
                     credentials: h.runtime.credentials!, externalActionAccountId: 'owner',
                     finiteServerId: 'home', finiteServerHttpBaseUrl: 'https://home.example', registeredMachineId: 'machine',
@@ -1385,9 +1390,13 @@ describe('authenticated finite Project Action owner', () => {
                 const client: ApiMachineClient = Object.assign(Object.create(ApiMachineClient.prototype), {
                     machine: { id: 'machine' }, machineRpcWorkingDirectory: h.root,
                     filesystemAccessPolicy: { kind: 'restrictedRoots', roots: [h.root] },
-                    rpcLifecycleRegistrations: [{ resolveProjectFiniteRuntime: (currentIngress: RpcHandlerContext) => installed({
-                        operationRuntime: h.operationRuntime, terminalSessions: h.terminalSessions,
-                    }, currentIngress) }],
+                    lifecycleDependencies: { agentIsolation },
+                    rpcLifecycleRegistrations: [{ resolveProjectFiniteRuntime: async (currentIngress: RpcHandlerContext) => {
+                        const runtime = await installed({ operationRuntime: h.operationRuntime, terminalSessions: h.terminalSessions }, currentIngress);
+                        return runtime ? { ...runtime, requesterIdentity: selectHostRequesterExecutionIdentity({
+                            rpcContext: currentIngress, hostHomeServerIdentityId: 'stable-home',
+                        }) } : null;
+                    } }],
                 });
                 const read = async () => client.createProjectDefinitionAction('home', await createInspectionIngress())({
                     actionId, input: { workspace: h.address }, context: { serverId: 'home' } });
@@ -1513,7 +1522,12 @@ describe('authenticated finite Project Action owner', () => {
         const client: ApiMachineClient = Object.assign(Object.create(ApiMachineClient.prototype), {
             machine: { id: 'machine' }, machineRpcWorkingDirectory: h.root,
             filesystemAccessPolicy: { kind: 'restrictedRoots', roots: [h.root] },
-            rpcLifecycleRegistrations: [{ resolveProjectFiniteRuntime: async () => h.runtime }],
+            lifecycleDependencies: { agentIsolation: {
+                read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }),
+            } satisfies HostAgentIsolationLaunchContext },
+            rpcLifecycleRegistrations: [{ resolveProjectFiniteRuntime: async (ingress: RpcHandlerContext) => ({
+                ...h.runtime, requesterIdentity: selectHostRequesterExecutionIdentity({ rpcContext: ingress, hostHomeServerIdentityId: 'home' }),
+            }) }],
         });
         const action = client.createProjectDefinitionAction('home', h.context);
         const artifactReads = () => h.get.mock.calls.filter(([url]) => String(url).includes('/v1/artifacts/setup')).length;
@@ -1584,7 +1598,12 @@ describe('authenticated finite Project Action owner', () => {
         const client: ApiMachineClient = Object.assign(Object.create(ApiMachineClient.prototype), {
             machine: { id: 'machine' }, machineRpcWorkingDirectory: h.root,
             filesystemAccessPolicy: { kind: 'restrictedRoots', roots: [h.root] },
-            rpcLifecycleRegistrations: [{ resolveProjectFiniteRuntime: async () => runtime }],
+            lifecycleDependencies: { agentIsolation: {
+                read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }),
+            } satisfies HostAgentIsolationLaunchContext },
+            rpcLifecycleRegistrations: [{ resolveProjectFiniteRuntime: async (currentIngress: RpcHandlerContext) => ({
+                ...runtime, requesterIdentity: selectHostRequesterExecutionIdentity({ rpcContext: currentIngress, hostHomeServerIdentityId: 'stable-home' }),
+            }) }],
         });
         const action = Reflect.apply(client.createProjectDefinitionAction, client, ['home', ingress]);
         const inspect = () => action({ actionId: 'projects.inspect', input: { workspace: h.address }, context: { serverId: 'home' } });
