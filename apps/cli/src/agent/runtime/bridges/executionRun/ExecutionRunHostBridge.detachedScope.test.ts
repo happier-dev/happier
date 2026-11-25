@@ -989,6 +989,59 @@ describe('ExecutionRunHostBridge detached task scope', () => {
       } finally { await manager.dispose(); }
     });
 
+    it.each([
+      { case: 'a registered value', secrets: ['postgres'] },
+      { case: 'no registered values', secrets: [] },
+    ])('releases a detached approval answered outside the Run operation once, with $case, storing every grant in its masked form', async ({ secrets }) => {
+      let state: AgentState = {};
+      const store = new AgentStateRequestStore({ logPrefix: '[test]', target: { scopeId: 'detached-approval', readState: () => state,
+        updateState: async update => { state = update(state); } } });
+      const command = 'psql postgres -c "select 1"';
+      const grant = { allowedTools: ['Bash(psql postgres:*)'], execPolicyAmendment: { command: ['psql', 'postgres'] },
+        updatedPermissions: [{ type: 'addRules', behavior: 'allow', destination: 'session', rules: [{ toolName: 'Bash', ruleContent: 'psql postgres:*' }] }] };
+      const delivered: unknown[] = [];
+      let requestId = ''; let finishTurn: (() => void) | undefined;
+      runtimeFactoryMock.createExecutionRunBridgeRuntime.mockImplementation((options: { getPermissionRequestStore?: ExecutionRunPermissionRequestStoreProvider;
+        controllerOccurrenceId: string; runId: string; callId: string; sidechainId: string; backendId: string }) => createTestExecutionRunHostRuntime({
+        // The exec owner registers the Project environment it materialized for this launch.
+        onProvisionRuntime: () => { for (const secret of secrets) registerSessionTranscriptSecret(secret); },
+        onSendPrompt: async () => {
+          const currentStore = options.getPermissionRequestStore?.();
+          if (!currentStore?.publishRequestAndWait) throw new Error('Missing exact Run input store');
+          const envelope = buildExecutionRunPermissionRequestEnvelope({ sessionId: null, runId: options.runId, callId: options.callId,
+            sidechainId: options.sidechainId, backendId: options.backendId, runtimeKind: 'native_agent_session', controllerOccurrenceId: options.controllerOccurrenceId,
+            providerRequestId: 'native-bash', permissionMode: 'default', providerPayload: { command }, toolName: 'Bash', reason: 'Run psql' });
+          requestId = buildRunScopedExecutionPermissionRequestId({ runId: options.runId, controllerOccurrenceId: options.controllerOccurrenceId, providerRequestId: 'native-bash' });
+          await currentStore.publishRequestAndWait({ requestId, toolName: 'Bash', toolInput: { command }, createdAt: 1, responseTarget: envelope.responseTarget,
+            nativeChoices: { requirementId: 'occurrence', source: 'test-agent', choices: [{ id: 'session', label: 'Allow psql for this Run',
+              decision: 'approved_for_session', scope: 'session', response: { approved: true, ...grant } }] } });
+        },
+        // The provider boundary: the Agent receives the person's answer here.
+        onRespondToPermission: async (_requestId, _approved, response) => { delivered.push(response); return { delivered: true }; },
+        onWaitForTurnCompletion: async () => await new Promise<void>(resolve => { finishTurn = resolve; }) }));
+      const manager = new ExecutionRunHostBridge({ parentProvider: TEST_BACKEND_ID, cwd: process.cwd(), sendAcp: async () => {} });
+      try {
+        const started = await manager.start({ sessionId: null, intent: 'agent', backendTarget: { kind: 'builtInAgent', agentId: TEST_BACKEND_ID },
+          instructions: 'Query the database', localInputId: 'approval-input', permissionMode: 'default',
+          retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'request_response', getPermissionRequestStore: () => store });
+        await vi.waitFor(() => expect(state.requests?.[requestId]).toBeDefined());
+        // The person's answer arrives through its own Action call, outside every Run operation.
+        expect(await manager.completePermissionRequest(started.runId, { requestId,
+          nativeChoice: { requirementId: 'occurrence', choiceId: 'session' } })).toEqual({ ok: true });
+        // The Agent is released exactly once, with the working (raw) grant.
+        expect(delivered).toEqual([expect.objectContaining({ decision: 'approved_for_session', ...grant })]);
+        const { nativeChoices: _offer, ...completed } = state.completedRequests?.[requestId] ?? {};
+        if (secrets.length) {
+          expect(JSON.stringify(completed)).not.toContain('postgres');
+          expect(completed).toMatchObject({ status: 'approved', arguments: { command: `psql ${TRANSCRIPT_SECRET_REDACTED} -c "select 1"` },
+            allowedTools: [`Bash(psql ${TRANSCRIPT_SECRET_REDACTED}:*)`], execPolicyAmendment: { command: ['psql', TRANSCRIPT_SECRET_REDACTED] },
+            updatedPermissions: [{ rules: [{ toolName: 'Bash', ruleContent: `psql ${TRANSCRIPT_SECRET_REDACTED}:*` }] }] });
+        } else {
+          expect(state.completedRequests?.[requestId]).toMatchObject({ status: 'approved', arguments: { command }, ...grant });
+        }
+      } finally { finishTurn?.(); await manager.dispose(); }
+    });
+
     it('masks a provider runtime-ended message delivered outside the Run operation that launched it', async () => {
       let emitRuntimeEvent: ((event: ExecutionRunHostRuntimeEvent) => void) | undefined;
       const runtime = {

@@ -5,7 +5,7 @@ import type { AgentState } from '@/api/types';
 import { AgentStateRequestStore, type PermissionResponseClaim } from './agentStateRequestStore';
 import { createPermissionRequestCoordinator } from './permissionRequestCoordinator';
 import { runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
-import { registerSessionTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { registerSessionTranscriptSecret, runInExecutionRunTranscriptSecretScope } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 class FakeSession {
     sessionId = 'session-test';
@@ -1036,12 +1036,15 @@ describe('PermissionRequestCoordinator', () => {
         await coordinator.dispose();
     });
 
-    it('settles an answer delivered outside the hosted Session whose launch secret redacted the stored request', async () => {
+    it.each([
+        { scope: 'hosted Session', enter: <T>(run: () => T) => runInHostedSessionScope({}, run) },
+        { scope: 'detached Run', enter: <T>(run: () => T) => runInExecutionRunTranscriptSecretScope(new Map(), run) },
+    ])('settles an answer delivered outside the $scope whose launch secret redacted the stored request', async ({ enter }) => {
         const secret = 'fake-scoped-launch-secret-4c1e';
         const { coordinator, session } = createHarness();
         const request = { ...bashRequest, requestId: 'scoped-secret-request', toolInput: { command: ['bash', '-lc', `echo ${secret}`] } };
-        // Published inside the Session: its stored entry is redacted with the Session's secret.
-        const { pending, context } = await runInHostedSessionScope({}, async () => {
+        // Published inside its scope: the stored entry is redacted with that scope's secret.
+        const { pending, context } = await enter(async () => {
             registerSessionTranscriptSecret(secret);
             const pending = coordinator.requestDecision(request);
             await vi.waitFor(() => expect(session.agentState.requests?.[request.requestId]).toBeDefined());

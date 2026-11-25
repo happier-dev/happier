@@ -24,7 +24,7 @@
  * there, and that Run's result, profile and Run writers mask with it.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { bindToHostedSessionScope, readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { NativePermissionChoicesV1Schema, type NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 
 const processSecrets = new Map<string, number>();
@@ -47,6 +47,20 @@ function readOwnScopeSecrets(create: boolean): Map<string, number> | undefined {
  */
 export function runInExecutionRunTranscriptSecretScope<T>(secrets: Map<string, number>, run: () => T): T {
     return executionRunSecrets.run(secrets, run);
+}
+
+/**
+ * Retain the caller's own secret scope (the hosted Session's and the detached Run's) when a later
+ * write or comparison for its content runs from another async context, such as a queued store write
+ * or a person's answer arriving through its own call.
+ */
+export function bindToTranscriptSecretScope<TArgs extends unknown[], TResult>(
+    callback: (...args: TArgs) => TResult,
+): (...args: TArgs) => TResult {
+    const hostedBound = bindToHostedSessionScope(callback);
+    const run = executionRunSecrets.getStore();
+    if (!run) return hostedBound;
+    return (...args) => executionRunSecrets.run(run, hostedBound, ...args);
 }
 
 function registerIn(store: Map<string, number>, secret: string): () => void {

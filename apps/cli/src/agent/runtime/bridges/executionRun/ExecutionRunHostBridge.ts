@@ -3896,6 +3896,15 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     runId: string,
     params: ExecutionRunPermissionCompletionInput,
   ): Promise<Readonly<{ ok: true } | { ok: false; errorCode: string; error: string }>> {
+    // The person's answer arrives through its own call; the request's stored form and its comparisons use this Run's scope.
+    return await runInExecutionRunTranscriptSecretScope(this.readRunTranscriptSecrets(runId),
+      () => this.completePermissionRequestInRunSecretScope(runId, params));
+  }
+
+  private async completePermissionRequestInRunSecretScope(
+    runId: string,
+    params: ExecutionRunPermissionCompletionInput,
+  ): Promise<Readonly<{ ok: true } | { ok: false; errorCode: string; error: string }>> {
     const run = this.runs.get(runId) ?? null;
     if (!run || run.status !== 'running') {
       return { ok: false, errorCode: run ? 'execution_run_not_allowed' : 'execution_run_not_found', error: 'Not running' };

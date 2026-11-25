@@ -22,7 +22,7 @@ import type {
     PermissionResponseClaimSettlement,
 } from './agentStateRequestStore';
 import { isSameAgentStateCompletedGrant, isSameAgentStateRequestArguments, isSameAgentStateRequestOccurrence } from './agentStateRequestStore';
-import { bindToHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { bindToTranscriptSecretScope } from '@/api/session/client/transport/transcriptSecretRedaction';
 import {
     isPermissionRequestOwnedByPlugin,
     isPermissionRequestOwnedByPluginTurn,
@@ -226,8 +226,8 @@ type PendingPermissionRequest<TResult> = {
     owner?: PermissionRequestOwner;
     status: 'live' | 'detached';
     /**
-     * Runs work for this occurrence in the hosted Session that admitted it. Its stored projection is
-     * redacted with that Session's transcript secrets; an answer or cancellation can arrive on a
+     * Runs work for this occurrence in the secret scope that admitted it (its hosted Session or
+     * detached Run). Its stored projection is redacted with that scope's secrets; an answer or cancellation can arrive on a
      * callback outside it, so raw-versus-stored comparisons and stored writes run here.
      */
     withAdmittingSession: <R>(run: () => R) => R;
@@ -360,7 +360,7 @@ export class PermissionRequestCoordinator<TResult> {
                 : {}),
             ...(owner ? { owner } : {}),
             status: 'live',
-            withAdmittingSession: bindToHostedSessionScope(runInPlace),
+            withAdmittingSession: bindToTranscriptSecretScope(runInPlace),
             waiters: new Map(),
             cancelReason: null,
             completionPersistence: null,
@@ -1234,7 +1234,7 @@ function createPendingRequestFromOutstanding<TResult>(
             : {}),
         ...(outstanding.owner ? { owner: outstanding.owner } : {}),
         status: 'live',
-        withAdmittingSession: bindToHostedSessionScope(runInPlace),
+        withAdmittingSession: bindToTranscriptSecretScope(runInPlace),
         waiters: new Map(),
         cancelReason: null,
         completionPersistence: null,

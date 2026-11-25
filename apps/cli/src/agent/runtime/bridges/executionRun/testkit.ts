@@ -33,7 +33,7 @@ export type TestExecutionRunHostRuntimeOptions = Readonly<{
         meta?: PromptMeta,
     ) => void | Promise<void>;
     onCancel?: (runtimeId: string) => void | Promise<void>;
-    onRespondToPermission?: (requestId: string, approved: boolean) => RuntimePermissionResponseOutcome | Promise<RuntimePermissionResponseOutcome>;
+    onRespondToPermission?: (requestId: string, approved: boolean, response?: import('@/agent/permissions/BasePermissionHandler').PermissionResult) => RuntimePermissionResponseOutcome | Promise<RuntimePermissionResponseOutcome>;
     onWaitForTurnCompletion?: (timeoutMs?: number | null) => void | Promise<void>;
     onDispose?: () => void | Promise<void>;
 }>;
@@ -85,8 +85,9 @@ export function createTestExecutionRunHostRuntime(
         },
         ...(opts.onRespondToPermission
             ? {
-                async respondToPermission(requestId: string, approved: boolean) {
-                    return await opts.onRespondToPermission!(requestId, approved);
+                async respondToPermission(requestId: string, approved: boolean, response?: import('@/agent/permissions/BasePermissionHandler').PermissionResult) {
+                    return response === undefined ? await opts.onRespondToPermission!(requestId, approved)
+                        : await opts.onRespondToPermission!(requestId, approved, response);
                 },
             }
             : {}),

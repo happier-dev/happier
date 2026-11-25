@@ -14,8 +14,7 @@ import type { PermissionRequestPushSender } from '@/agent/permissions/BasePermis
 import { logger } from '@/ui/logger';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { deepEqual } from '@/utils/deterministicJson';
-import { redactAgentStatePermissionChoiceOffer, redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
-import { bindToHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { bindToTranscriptSecretScope, redactAgentStatePermissionChoiceOffer, redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { isAgentStateRequestCoveredByCompletedRequests, type AgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { SessionPermissionApprovalReviewerClaimV1Schema, SessionPermissionAccountUserDecisionActorV1Schema, SessionPermissionExternalHumanDecisionActorV1Schema, SessionPermissionIdempotencyKeyV1Schema, SessionPermissionSourceRefV1Schema, SessionPermissionSourceRevisionOrEpochV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
@@ -1079,9 +1078,9 @@ export class AgentStateRequestStore {
     }
 
     async completeRequest(params: AgentStateRequestCompletion): Promise<boolean> {
-        // A fallback entry takes its stored form with the caller's Session secrets, wherever the write runs.
-        // The completed entry takes its stored form with the caller's Session secrets, wherever the write runs.
-        const toStoredCompletedEntry = bindToHostedSessionScope(redactAgentStateRequestContent);
+        // The completed (or fallback) entry takes its stored form with the caller's own secrets (its hosted
+        // Session's or detached Run's), wherever the write runs.
+        const toStoredCompletedEntry = bindToTranscriptSecretScope(redactAgentStateRequestContent);
         if (!params.applicationAcknowledged) {
             const state = this.target.readState();
             const responseTarget = readResponseTarget(state?.requests?.[params.requestId]?.responseTarget);
@@ -1332,8 +1331,8 @@ export class AgentStateRequestStore {
          */
         isCurrent?: () => boolean;
     }>): Promise<boolean> {
-        // The completed entry takes its stored form with the caller's Session secrets, wherever the write runs.
-        const toStoredCompletedEntry = bindToHostedSessionScope(redactAgentStateRequestContent);
+        // The completed entry takes its stored form with the caller's own secrets, wherever the write runs.
+        const toStoredCompletedEntry = bindToTranscriptSecretScope(redactAgentStateRequestContent);
         const completedRequestIds = new Set<string>();
         let didRecordCompletedRequest = false;
         const publication = this.pendingPublications.get(params.requestId);
