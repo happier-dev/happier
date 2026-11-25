@@ -701,7 +701,8 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     while (mode === 'run' && args[runServiceIndex] === '--env') runServiceIndex += 2;
     const runService = mode === 'run' ? args[runServiceIndex] : undefined;
     const commandService = runService ? runModel?.services?.[runService] : undefined;
-    state.commands = [...(state.commands || []), { mode, args: args.slice(offset), running: !!outcome.hold,
+    const argv = args.slice((mode === 'run' ? runServiceIndex : offset + 2) + 1);
+    state.commands = [...(state.commands || []), { mode, argv, running: !!outcome.hold,
         ...(commandService ? { imageConfigDigest: imageFor(commandService.image)?.image.configDigest,
             environmentMatchesExpected: Object.entries(outcome.expectedServiceValues?.environment || {})
                 .every(([name, value]) => commandService.environment?.[name] === value) } : {}) }]; save();
@@ -1209,10 +1210,10 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
         /** Test verifier reads actual finite native-boundary evidence, not an admission stub. */
         async readCompletedCommand(argv: readonly string[]): Promise<number | null> {
             const state = JSON.parse(await readFile(statePath, 'utf8')) as { commands?: readonly {
-                mode: string; args: readonly string[]; running: boolean; completed?: boolean; exitCode?: number;
+                mode: string; argv: readonly string[]; running: boolean; completed?: boolean; exitCode?: number;
             }[] };
             const command = state.commands?.find(row => row.mode === 'run' && row.completed && !row.running
-                && row.args.length === 8 + argv.length && argv.every((arg, index) => row.args[index + 8] === arg));
+                && row.argv.length === argv.length && argv.every((arg, index) => row.argv[index] === arg));
             return typeof command?.exitCode === 'number' ? command.exitCode : null;
         },
         async holdCommandReplies(hold: boolean) {
