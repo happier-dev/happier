@@ -24,10 +24,12 @@ export function buildSessionCollaborationRouteHref(input: Readonly<{
     serverId?: string | null;
     cockpitEnabled: boolean;
     focusTarget?: SessionCollaborationFocusTarget;
+    shareDirectory?: 'team';
 }>): string {
     // `top` is the ordinary entry: it selects the destination's default mode and
     // requests no focus move, so it carries no one-shot semantic focus intent.
     const query = {
+        ...(input.shareDirectory ? { shareDirectory: input.shareDirectory } : {}),
         ...(input.focusTarget && input.focusTarget !== 'top' ? { collaborationFocus: input.focusTarget } : {}),
     };
     return buildSessionDestinationRouteHref({
@@ -75,6 +77,7 @@ export function useOpenSessionCollaboration(input: Readonly<{
     pane?: Pick<AppPaneScopeApi, 'openRight' | 'setRightTab'>;
     replace?: boolean;
     focusTarget?: SessionCollaborationFocusTarget;
+    shareDirectory?: 'team';
 }>): (handoff?: SessionCollaborationHandoff) => void {
     const router = useRouter();
     const cockpitNavigation = useSessionCockpitSurfaceNavigation();
@@ -86,6 +89,7 @@ export function useOpenSessionCollaboration(input: Readonly<{
     const setRightTab = input.pane?.setRightTab;
     const replace = input.replace === true;
     const focusTarget = input.focusTarget ?? 'top';
+    const shareDirectory = input.shareDirectory;
 
     return React.useCallback((handoff?: SessionCollaborationHandoff) => {
         if (!sessionId) return;
@@ -103,8 +107,8 @@ export function useOpenSessionCollaboration(input: Readonly<{
             setRightTab('collaboration');
             return;
         }
-        const href = buildSessionCollaborationRouteHref({ sessionId, serverId, cockpitEnabled, focusTarget });
+        const href = buildSessionCollaborationRouteHref({ sessionId, serverId, cockpitEnabled, focusTarget, shareDirectory });
         if (replace) router.replace(href as Href);
         else router.push(href as Href);
-    }, [cockpitEnabled, switchCockpitSurface, focusTarget, openRight, replace, router, serverId, sessionId, setRightTab]);
+    }, [cockpitEnabled, switchCockpitSurface, focusTarget, openRight, replace, router, serverId, sessionId, setRightTab, shareDirectory]);
 }

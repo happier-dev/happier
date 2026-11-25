@@ -4,6 +4,7 @@ import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol/sessions
 import type { createSessionAccessActionChip } from '@/components/sessions/agentInput/definitions/createSessionAccessActionChip';
 import { useSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { reconcileSessionAccessDraftForHome } from '@/sync/domains/session/access/sessionAccessDraftReconciliation';
 
 import { SessionAccessEditor } from './SessionAccessEditor';
@@ -59,6 +60,8 @@ function sameAccessDraft(
  */
 export function useNewSessionAccessDraft(input: Readonly<{
     targetServerId: string | null;
+    draftId: string;
+    draftScope: ServerAccountScope | null;
     initialAccess?: SessionInitialAccessDraftV1 | null;
     initialPrimaryTeamId?: string | null;
     /**
@@ -215,6 +218,8 @@ export function useNewSessionAccessDraft(input: Readonly<{
     }, []);
     const controller = useNewSessionAccessDraftController({
         scope: scope ?? { serverId: serverId ?? '', accountId: '' },
+        draftId: input.draftId,
+        draftScope: input.draftScope,
         access,
         primaryTeamId,
         availability,

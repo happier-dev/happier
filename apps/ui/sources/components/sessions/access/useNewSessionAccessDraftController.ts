@@ -6,12 +6,15 @@ import { useRouter, type Href } from '@/components/appShell/workspace/destinatio
 import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
+import { buildNewSessionDraftContinueRoute } from '@/components/sessions/drafts/newSessionDraftNavigation';
+import { useNewSessionHostNavigation, useNewSessionHostParams } from '@/components/sessions/new/navigation/newSessionHost';
 import { presentTeamSignInRequired } from '@/components/teams/entry/teamSignInRequirement';
 import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
 import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
+import { getTempData, storeTempData } from '@/utils/sessions/tempDataStore';
 
 import { useSessionAccessTeamNames } from './useSessionAccessTeamNames';
 import { projectSessionAccessChipSummary } from './projectSessionAccessChipSummary';
@@ -31,7 +34,14 @@ import type {
 } from './sessionAccessEditorTypes';
 
 const ACCESS_LEVEL_OPTIONS: readonly SessionAccessLevel[] = ['view', 'edit', 'admin'];
-const NEW_SESSION_SIGN_IN_ORIGIN = { pathname: '/new', search: '' } as const;
+
+type TeamSignInIntent = Readonly<{
+    kind: 'newSessionTeamSignIn';
+    draftId: string;
+    draftScope: ServerAccountScope;
+    scope: ServerAccountScope;
+    teamId: string;
+}>;
 
 function principalKindLabel(subject: PrincipalRefV1): string {
     return subject.kind === 'account' ? t('session.access.account')
@@ -67,6 +77,8 @@ function projectCreationDecisionPolicy(decision: SessionAccessCreationDecisionV1
  */
 export function useNewSessionAccessDraftController(input: Readonly<{
     scope: ServerAccountScope;
+    draftId: string;
+    draftScope: ServerAccountScope | null;
     access: SessionInitialAccessDraftV1 | null;
     primaryTeamId: string | null;
     availability: SessionCollaborationAvailability;
@@ -81,7 +93,18 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     onChange: (next: SessionInitialAccessDraftV1 | null) => void;
     onPrimaryTeamIdChange: (next: string | null) => void;
 }>): SessionAccessEditorController & Readonly<{ placementPending: boolean }> {
-    const { access, availability, demanded, onChange, onPrimaryTeamIdChange, primaryTeamId, scope } = input;
+    const { access, availability, demanded, draftId, draftScope, onChange, onPrimaryTeamIdChange, primaryTeamId, scope } = input;
+    const { teamSignInIntentId } = useNewSessionHostParams<{ teamSignInIntentId?: string }>();
+    const { router: hostRouter } = useNewSessionHostNavigation();
+    const draftServerId = draftScope?.serverId;
+    const draftAccountId = draftScope?.accountId;
+    const teamSignInOrigin = React.useMemo(() => {
+        if (!draftServerId || !draftAccountId) {
+            return { pathname: '/new', search: new URLSearchParams({ draftId }).toString() };
+        }
+        const { pathname, params } = buildNewSessionDraftContinueRoute(draftId, { serverId: draftServerId, accountId: draftAccountId });
+        return { pathname, search: new URLSearchParams({ ...params, spawnServerId: scope.serverId }).toString() };
+    }, [draftId, draftServerId, draftAccountId, scope.serverId]);
     const viewerProfile = useShareViewerProfile(scope);
     const [query] = React.useState(createSessionAccessQuery);
     const setQuery = query.write;
@@ -153,7 +176,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     // contract; it must not cause the detailed directory to mount in the chip.
     const directory = useSessionAccessDirectory({
         scope, availability, contextTeams, operations: {}, revision,
-        teamSignInOrigin: NEW_SESSION_SIGN_IN_ORIGIN,
+        teamSignInOrigin,
         enabled: editable && demanded,
     });
     const creationDecisionRevision = React.useRef(0);
@@ -243,8 +266,22 @@ export function useNewSessionAccessDraftController(input: Readonly<{
         && creationRefusal === null && primaryTeamPolicy === null;
     const signInReason = React.useMemo(() => signInRefusal ? presentTeamSignInRequired({
         code: signInRefusal.code, teamId: signInRefusal.teamId, serverId: scope.serverId,
-        accepted: signInRefusal.accepted, origin: NEW_SESSION_SIGN_IN_ORIGIN, navigate: (href) => routerRef.current.push(href as Href),
-    }) : null, [scope.serverId, signInRefusal]);
+        accepted: signInRefusal.accepted,
+        origin: () => {
+            if (!contextRefusal || !draftServerId || !draftAccountId) return teamSignInOrigin;
+            // A return URL can reopen a draft. Only a choice made in that draft may change its Team.
+            const intentId = storeTempData({
+                kind: 'newSessionTeamSignIn', draftId,
+                draftScope: { serverId: draftServerId, accountId: draftAccountId },
+                scope: { serverId: scope.serverId, accountId: scope.accountId },
+                teamId: contextRefusal.teamId,
+            } satisfies TeamSignInIntent);
+            const query = new URLSearchParams(teamSignInOrigin.search);
+            query.set('teamSignInIntentId', intentId);
+            return { pathname: teamSignInOrigin.pathname, search: query.toString() };
+        },
+        navigate: (href) => routerRef.current.push(href as Href),
+    }) : null, [contextRefusal, draftId, draftServerId, draftAccountId, scope.serverId, scope.accountId, signInRefusal, teamSignInOrigin]);
     // Signing in again on this Home is the natural boundary: the decision is read again then, not polled.
     React.useEffect(() => subscribeHomeCredentialChange((event) => {
         if (event.serverId !== scope.serverId) return;
@@ -409,6 +446,17 @@ export function useNewSessionAccessDraftController(input: Readonly<{
         }
         submitContext(teamId, target);
     }, [creationDecision?.requiredByPolicy, creationRefusal, editable, primaryTeamDecisionPending, primaryTeamId, primaryTeamPolicy, primaryTeamPolicyUnavailable, submitContext]);
+
+    React.useEffect(() => {
+        if (typeof teamSignInIntentId !== 'string' || !editable || !scope.accountId || !draftScope
+            || primaryTeamDecisionPending) return;
+        const intent = getTempData<TeamSignInIntent>(teamSignInIntentId);
+        hostRouter.setParams({ teamSignInIntentId: undefined });
+        if (intent?.kind !== 'newSessionTeamSignIn' || intent.draftId !== draftId
+            || !areServerAccountScopesEqual(intent.draftScope, draftScope)
+            || !areServerAccountScopesEqual(intent.scope, scope)) return;
+        setContext(intent.teamId);
+    }, [draftId, draftScope, editable, hostRouter, primaryTeamDecisionPending, scope, setContext, teamSignInIntentId]);
 
     const actions = React.useMemo<SessionAccessEditorActions>(() => ({
         setQuery,

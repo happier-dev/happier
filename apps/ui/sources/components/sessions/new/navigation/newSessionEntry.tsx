@@ -118,7 +118,12 @@ export function NewSessionShellHostProvider(props: React.PropsWithChildren) {
         kind: 'docked', createdSessionPresentation: 'inPlace', onHandedOff,
     }), [embeddedHost, onHandedOff]);
     const retained = enabled && visible;
-    const shown = retained && screen === pathname;
+    // The docked /new entry is a redirect. Seat its composer on the page the redirect reveals.
+    const enteringFromRoute = retained && screen === '/new';
+    const shown = retained && pathname !== '/new' && (screen === pathname || enteringFromRoute);
+    React.useLayoutEffect(() => {
+        if (enteringFromRoute && pathname !== '/new') setScreen(pathname);
+    }, [enteringFromRoute, pathname]);
     const value = React.useMemo<NewSessionShellHost>(() => ({ enabled, host, visible: shown, retained, collapsed, focusRequest, origin, open, close, collapse, returnToHost }),
         [host, enabled, shown, retained, collapsed, focusRequest, origin, open, close, collapse, returnToHost] as const);
     React.useLayoutEffect(() => close(), [scope?.serverId, scope?.accountId, close]);

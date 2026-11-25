@@ -19,11 +19,12 @@ import { resolveTeamSignInDestination } from '@/components/teams/entry/teamSignI
 
 const shareCandidateAvailability = vi.hoisted(() => ({ value: false }));
 const routerPush = vi.hoisted(() => vi.fn());
+const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string> }));
 
 vi.mock('expo-router', async (importOriginal) => {
     const original = await importOriginal<Record<string, unknown>>();
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return { ...original, ...createExpoRouterMock({ router: { push: routerPush } }).module };
+    return { ...original, ...createExpoRouterMock({ params: () => routeParams.current, router: { push: routerPush } }).module };
 });
 
 afterEach(() => {
@@ -31,6 +32,7 @@ afterEach(() => {
     shareCandidateAvailability.value = false;
     resetRuntimeFetch();
     routerPush.mockClear();
+    routeParams.current = {};
     vi.restoreAllMocks();
 });
 
@@ -84,6 +86,7 @@ vi.mock('./sessionShareCandidateAvailability', async (importOriginal) => {
 vi.mock('./SessionAccessEditor', () => ({ SessionAccessEditor: 'SessionAccessEditor' }));
 
 const scope = { serverId: 'home-one', accountId: 'creator' };
+const draftId = '88945c12-15d4-427f-b7c0-d37cd1c31a21';
 
 describe('reconcileSessionAccessDraftForHome', () => {
     const access: SessionInitialAccessDraftV1 = {
@@ -116,7 +119,7 @@ function Probe(props: Readonly<{
     const [access, setAccess] = React.useState(props.initial);
     const [primaryTeamId, setPrimaryTeamId] = React.useState<string | null>(props.initialPrimaryTeamId ?? null);
     const controller = useNewSessionAccessDraftController({
-        scope: props.scope ?? scope, access, primaryTeamId, availability: props.availability,
+        scope: props.scope ?? scope, draftId, draftScope: props.scope ?? scope, access, primaryTeamId, availability: props.availability,
         homeReconciled: props.homeReconciled === true,
         demanded: props.demanded !== false,
         onChange: setAccess, onPrimaryTeamIdChange: setPrimaryTeamId,
@@ -492,6 +495,8 @@ function AccessDraftProbe(props: Readonly<{
     onReady: (state: NewSessionAccessDraftState) => void;
 }>) {
     const state = useNewSessionAccessDraft({
+        draftId,
+        draftScope: { serverId: props.serverId, accountId: 'creator' },
         targetServerId: props.serverId,
         initialAccess: props.sourceAccess,
         initialPrimaryTeamId: props.sourcePrimaryTeamId,
@@ -919,18 +924,23 @@ describe('useNewSessionAccessDraft repository currentness', () => {
         expect(latest!.model.context?.options.find((option) => option.teamId === 'team-local')?.blockedReason).toBeUndefined();
     });
 
-    it('says which sign-in a Team needs and leads there, while Private stays a choice', async () => {
+    it.each(['selected', 'attempted'])('resumes a %s Team choice after the required sign-in, with Private still a choice', async (choice) => {
         const profile = await upsertServerProfile({ name: 'Restricted decision Home', serverUrl: 'https://restricted-decision.example.test' });
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({
             token: `e30.${Buffer.from(JSON.stringify({ sub: 'creator' })).toString('base64url')}.signature`,
         });
         creationDecisionNetworkMode.enabled = true;
+        let signedIn = false;
         setRuntimeFetch(async (url, init) => {
             const parsed = new URL(String(url));
             if (parsed.pathname === '/v1/auth/ping') return new Response('{}');
             if (parsed.pathname === '/v1/session-access/principals/resolve') {
                 const body = JSON.parse(String(init?.body ?? '{}')) as { creationTeamId?: string };
                 if (!body.creationTeamId) return new Response(JSON.stringify({ v: 1, principals: [] }));
+                if (signedIn) return new Response(JSON.stringify({ v: 1, principals: [], creationDecision: {
+                    v: 1, teamId: 'team-willow', teamName: 'Willow Design Studio', requiredByPolicy: false,
+                    defaultGrant: null, externalSharingPolicy: 'allowed',
+                } }));
                 // Exactly what the Home answers a member whose current sign-in this Team does not accept.
                 return new Response(JSON.stringify({ v: 1, principals: [], creationDecision: null, creationRefusal: {
                     v: 1, teamId: 'team-willow', teamName: 'Willow Design Studio',
@@ -940,8 +950,11 @@ describe('useNewSessionAccessDraft repository currentness', () => {
             return new Response('{}', { status: 404 });
         });
         let latest: Controller | null = null;
-        await renderScreen(<Probe initial={null} initialPrimaryTeamId="team-willow" availability="available"
+        const initialPrimaryTeamId = choice === 'selected' ? 'team-willow' : null;
+        const mountDraft = () => renderScreen(<Probe initial={null} initialPrimaryTeamId={initialPrimaryTeamId} availability="available"
             scope={{ serverId: profile.id, accountId: 'creator' }} onReady={(controller) => { latest = controller; }} />);
+        const before = await mountDraft();
+        if (choice === 'attempted') await act(async () => latest!.actions.setContext('team-willow'));
         const expected = t('teams.errors.signInRequired', { methods: t('teams.errors.signInMethodRecoveryKey') });
         await vi.waitFor(() => expect(latest!.model.context?.options.find((option) => option.teamId === 'team-willow')
             ?.blockedReason?.message).toBe(expected));
@@ -958,12 +971,26 @@ describe('useNewSessionAccessDraft repository currentness', () => {
         }
         const url = new URL(String(routerPush.mock.lastCall?.[0]), 'https://app.test');
         expect(url.pathname).toBe('/teams/team-willow/sign-in');
-        expect(resolveTeamSignInDestination({ teamId: 'team-willow', serverId: profile.id,
-            returnTo: url.searchParams.get('returnTo') })).toBe('/new');
+        const destination = new URL(resolveTeamSignInDestination({ teamId: 'team-willow', serverId: profile.id,
+            returnTo: url.searchParams.get('returnTo') }), 'https://app.test');
+        expect(destination.pathname).toBe('/new');
+        expect(destination.searchParams.get('draftId')).toBe(draftId);
+        expect(destination.searchParams.get('draftServerId')).toBe(profile.id);
+        expect(destination.searchParams.get('draftAccountId')).toBe('creator');
+        expect(destination.searchParams.get('spawnServerId')).toBe(profile.id);
         expect(context.unavailableReason).toBeUndefined();
         expect(latest!.model.notice).toBeUndefined();
         expect(context.options.find((option) => option.teamId === null)?.blockedReason).toBeUndefined();
         expect(JSON.stringify(context)).not.toContain(t('session.access.contextPolicyUnavailable'));
+
+        await before.unmount();
+        signedIn = true;
+        routeParams.current = Object.fromEntries(destination.searchParams);
+        const after = await mountDraft();
+        await vi.waitFor(() => expect(latest!.model.context?.primaryTeamId).toBe('team-willow'));
+        await vi.waitFor(() => expect(latest!.model.context?.options.find((option) => option.teamId === 'team-willow')
+            ?.blockedReason).toBeUndefined());
+        await after.unmount();
     });
 
     it('retries an unavailable creation decision through the existing content retry action', async () => {

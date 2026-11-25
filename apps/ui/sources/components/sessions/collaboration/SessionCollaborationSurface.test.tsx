@@ -1019,6 +1019,7 @@ describe('SessionCollaborationSurface', () => {
                 route.pathname = sessionUrl.pathname;
                 route.params = { id: 'same-id', ...Object.fromEntries(sessionUrl.searchParams) };
                 expect(route.params.collaborationFocus).toBe('access');
+                expect(route.params.shareDirectory ?? null).toBe(url.searchParams.get('shareDirectory'));
                 const screen = await mountPeople();
                 await vi.waitFor(() => expect(route.readParams().collaborationFocus).toBeUndefined());
                 return screen;
@@ -1049,11 +1050,10 @@ describe('SessionCollaborationSurface', () => {
             signedIn = true;
             const destination = resolveTeamSignInDestination({ teamId: team.id, serverId: home.id,
                 returnTo: signInUrl.searchParams.get('returnTo') });
-            expect(destination).toBe(shareHref);
+            expect(new URL(destination, 'https://app.test').searchParams.get('serverId')).toBe(home.id);
             const after = await followShareLink(destination);
-            await vi.waitFor(() => expect(after.findByTestId(browseTeams)).not.toBeNull());
-            await after.pressByTestIdAsync(browseTeams);
             await vi.waitFor(() => expect(after.findByTestId(row)).not.toBeNull());
+            expect(route.readParams().shareDirectory).toBeUndefined();
             await after.pressByTestIdAsync(row);
             await vi.waitFor(() => expect(writeGrant).toHaveBeenCalledWith(expect.objectContaining({ sessionId: target.sessionId, subject })));
             await after.pressByTestIdAsync('session-access-editor:collaboration:list:header:leading:back-chip');

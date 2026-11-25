@@ -9,6 +9,7 @@ import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSet
 const boundary = vi.hoisted(() => ({
   width: 1440,
   pathname: '/',
+  params: {} as Record<string, string>,
   push: vi.fn(),
   replace: vi.fn(),
 }));
@@ -39,6 +40,7 @@ vi.mock(
       router: { push: boundary.push, replace: boundary.replace },
       // The route the shell is on: a navigation changes it and the shell renders the new screen.
       pathname: () => boundary.pathname,
+      params: () => boundary.params,
     }).module,
 );
 vi.mock('expo-linear-gradient', () => ({ LinearGradient: 'LinearGradient' }));
@@ -99,12 +101,13 @@ function Entry() {
   );
 }
 
-function Journey() {
+function Journey(props: Readonly<{ route?: React.ReactNode }> = {}) {
   return (
     <NavigationContext.Provider value={createNavigationPropMock()}>
       <HeaderHeightContext.Provider value={0}>
         <NewSessionShellHostProvider>
           <Entry />
+          {props.route}
           <NewSessionDockedHost>
             <Pressable testID="page" />
           </NewSessionDockedHost>
@@ -158,6 +161,7 @@ describe('web shell Docked composer', () => {
     await account.reset();
     boundary.width = 1440;
     boundary.pathname = '/';
+    boundary.params = {};
     getStorage()
       .getState()
       .applyLocalSettings(
@@ -437,6 +441,40 @@ describe('web shell Docked composer', () => {
     } finally {
       await screen.unmount();
     }
+  });
+
+  it.each([1440, 390])('reopens the exact composer after Team sign-in at width %s', async (width) => {
+    boundary.width = width;
+    const { screen, input, state } = await openDockedDraft('Keep this draft after sign-in');
+    const draftId = state().draftId;
+    const { buildNewSessionDraftContinueRoute } = await import('@/components/sessions/drafts/newSessionDraftNavigation');
+    const { teamSignInOrigin, resolveTeamSignInDestination } = await import('@/components/teams/entry/teamSignInHome');
+    const { default: NewSessionRoute } = await import('@/app/(app)/new');
+    const scope = getStorage().getState().settingsScope!;
+    const origin = buildNewSessionDraftContinueRoute(draftId, scope);
+    const destination = new URL(resolveTeamSignInDestination({
+      teamId: 'team-willow',
+      serverId: scope.serverId,
+      returnTo: teamSignInOrigin({ pathname: origin.pathname, search: new URLSearchParams(origin.params).toString() }),
+    }), 'https://app.test');
+
+    boundary.pathname = '/teams/team-willow/sign-in';
+    await screen.update(<Journey />);
+    expect(state().visible).toBe(false);
+
+    boundary.pathname = destination.pathname;
+    boundary.params = Object.fromEntries(destination.searchParams);
+    await screen.update(<Journey route={<NewSessionRoute />} />);
+    expect(boundary.replace).toHaveBeenCalledWith('/');
+
+    boundary.pathname = '/';
+    boundary.params = {};
+    await screen.update(<Journey />);
+    await vi.waitFor(() => {
+      expect(state()).toMatchObject({ draftId, visible: true });
+      expect(input()?.props.value).toBe('Keep this draft after sign-in');
+    });
+    await screen.unmount();
   });
 
   it('keeps the phone-width dock full width, without a resize edge or collapse', async () => {

@@ -17,6 +17,8 @@ export type ShareSheetProps<TRow extends ShareGrantRowModel> = Readonly<{
     primaryAction?: NonNullable<React.ComponentProps<typeof HappierShareSheet>['done']> & Readonly<{ loading?: boolean }>;
     /** A host's explicit navigation intent opens a row without replacing the sheet or its state. */
     openRowRequest?: Readonly<{ key: string }>;
+    /** An entry can resume the directory step the person was using. */
+    openDirectoryRequest?: ShareDirectoryKind;
     testID: string;
     /**
      * A floating host's bound for the sheet's list. The list owns its own scroll (SelectionList contract), so a
@@ -38,7 +40,10 @@ export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetPro
     React.useEffect(() => {
         if (props.openRowRequest) setExpanded(props.openRowRequest.key);
     }, [props.openRowRequest]);
-    const [directoryKind, setDirectoryKind] = React.useState<ShareDirectoryKind | undefined>();
+    const [directoryKind, setDirectoryKind] = React.useState(props.openDirectoryRequest);
+    React.useEffect(() => {
+        if (props.openDirectoryRequest) setDirectoryKind(props.openDirectoryRequest);
+    }, [props.openDirectoryRequest]);
     const [copiedPath, setCopiedPath] = React.useState<string | null>(null);
     // Suggestions appear once someone starts adding and stay for the sheet's life: hiding them again on
     // blur would pull a row out from under the click that blurred the field. A compact popover is the

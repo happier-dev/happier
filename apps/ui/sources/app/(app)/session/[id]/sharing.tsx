@@ -26,14 +26,17 @@ import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
  */
 export function SessionSharingCompatibilityRoute() {
     const { theme } = useUnistyles();
-    const params = useLocalSearchParams<{ id: string; serverId?: string }>();
+    const params = useLocalSearchParams<{ id: string; serverId?: string; shareDirectory?: string }>();
     const sessionId = normalizeSessionId(params.id);
     const serverId = readSessionRouteServerId(params);
     const target = React.useMemo(
         () => (sessionId ? { sessionId, serverId } : null),
         [sessionId, serverId],
     );
-    const openCollaboration = useOpenSessionCollaboration({ target, replace: true, focusTarget: 'access' });
+    const openCollaboration = useOpenSessionCollaboration({
+        target, replace: true, focusTarget: 'access',
+        shareDirectory: params.shareDirectory === 'team' ? 'team' : undefined,
+    });
 
     React.useEffect(() => {
         if (!target) return;

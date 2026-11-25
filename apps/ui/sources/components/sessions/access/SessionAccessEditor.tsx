@@ -1,3 +1,4 @@
+import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import * as React from 'react';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
@@ -10,6 +11,12 @@ import { useOpenBotTemplate } from '@/components/sessions/bots/templates/openBot
 /** The session share sheet: the one `ShareSheet` with the session adapter. */
 export function SessionAccessEditor(props: SessionAccessEditorProps): React.ReactElement {
     const { model, actions, presentation, onRequestClose, testID = 'session-access-editor' } = props;
+    const { shareDirectory } = useLocalSearchParams<{ shareDirectory?: string }>();
+    const router = useRouter();
+    const openTeamDirectory = presentation === 'full' && shareDirectory === 'team';
+    React.useEffect(() => {
+        if (openTeamDirectory) router.setParams({ shareDirectory: undefined });
+    }, [openTeamDirectory, router]);
     // The editor is the one subscriber to the typed search: a key re-renders this field and its
     // result list, never the host that mounted the controller.
     const query = useSessionAccessQueryText(props.query);
@@ -44,5 +51,5 @@ export function SessionAccessEditor(props: SessionAccessEditorProps): React.Reac
         directory: { query, sections: model.directory.sections },
     };
     return <ShareSheet host={SHARE_SHEET_HOST} model={sheetModel} actions={actions} adapter={adapter} presentation={presentation}
-        onRequestClose={onRequestClose} openRowRequest={props.openRowRequest} testID={testID} />;
+        onRequestClose={onRequestClose} openRowRequest={props.openRowRequest} openDirectoryRequest={openTeamDirectory ? 'team' : undefined} testID={testID} />;
 }

@@ -1204,6 +1204,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
     }, [worktreeParam]);
 
     const accessDraftState = useNewSessionAccessDraft({
+        draftId,
+        draftScope,
         targetServerId: targetServerId ?? null,
         initialAccess: persistedDraft?.access !== undefined
             ? persistedDraft.access

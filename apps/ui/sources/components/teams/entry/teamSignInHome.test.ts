@@ -145,4 +145,22 @@ describe('teamSignInOrigin', () => {
         expect(teamSignInOrigin({ pathname: '/', search: '?draft=abc' })).toBe('/');
         expect(teamSignInOrigin(null)).toBeNull();
     });
+
+    it('carries only draft identity or Share directory state for explicit origins', () => {
+        const draft = new URLSearchParams({
+            draftId: '88945c12-15d4-427f-b7c0-d37cd1c31a21',
+            draftServerId: 'home-a',
+            draftAccountId: 'creator',
+            spawnServerId: 'home-b',
+            prompt: 'private draft',
+            path: '/private/folder',
+            token: 'secret',
+        });
+        expect(teamSignInOrigin({ pathname: '/new', search: draft.toString() }))
+            .toBe('/new?draftId=88945c12-15d4-427f-b7c0-d37cd1c31a21&draftServerId=home-a&draftAccountId=creator&spawnServerId=home-b');
+        expect(teamSignInOrigin({ pathname: '/', search: draft.toString() })).toBe('/');
+        expect(teamSignInOrigin({ pathname: '/session/s-1/sharing',
+            search: 'serverId=home-a&shareDirectory=team&draftId=other&token=secret&unrelated=1' }))
+            .toBe('/session/s-1/sharing?serverId=home-a&shareDirectory=team');
+    });
 });

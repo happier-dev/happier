@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/protocol/auth/keyChallenge';
 
 import {
+    getSavedHomeConnectionAddress,
     getServerProfileById,
     isServerProfilePersonalHomeBootstrapCompleted,
 } from '@/sync/domains/server/serverProfiles';
@@ -29,13 +30,13 @@ export function resolveHomeAuthenticationTarget(target: HomeTargetInput): Resolv
     if (target.kind === 'saved_profile') {
         const profile = getServerProfileById(target.profileRef);
         const serverIdentityId = String(profile?.serverIdentityId ?? '').trim();
-        const endpointUrl = String(profile?.serverUrl ?? '').trim();
-        const canonicalServerUrl = String(profile?.canonicalServerUrl ?? endpointUrl).trim();
-        if (!profile || !serverIdentityId || !endpointUrl || !canonicalServerUrl) return null;
+        const addressAnchorUrl = String(profile?.serverUrl ?? '').trim();
+        const canonicalServerUrl = String(profile?.canonicalServerUrl ?? addressAnchorUrl).trim();
+        if (!profile || !serverIdentityId || !addressAnchorUrl || !canonicalServerUrl) return null;
         return {
-            endpointUrl,
+            endpointUrl: getSavedHomeConnectionAddress({ serverIdentityId, canonicalServerUrl }),
             canonicalServerUrl,
-            addressAnchorUrl: endpointUrl,
+            addressAnchorUrl,
             serverId: profile.id,
             serverIdentityId,
         };

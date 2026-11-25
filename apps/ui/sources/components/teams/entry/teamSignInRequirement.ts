@@ -45,7 +45,7 @@ export function presentTeamSignInRequired(
     serverId: string;
     /** The Team's accepted sign-ins as this member reads them; empty when not known here. */
     accepted: readonly TeamAcceptedAuthenticationV1[];
-    origin?: TeamSignInOriginAddress;
+    origin?: TeamSignInOriginAddress | (() => TeamSignInOriginAddress);
     navigate: (href: string) => void;
   }>,
 ): Readonly<{
@@ -68,7 +68,7 @@ export function presentTeamSignInRequired(
           teamSignInReturnPath({
             teamId: input.teamId,
             serverId: input.serverId,
-            returnTo: teamSignInOrigin(input.origin ?? readCurrentRouteAddress()),
+            returnTo: teamSignInOrigin(typeof input.origin === 'function' ? input.origin() : input.origin ?? readCurrentRouteAddress()),
           }),
         ),
     },

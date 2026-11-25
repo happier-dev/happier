@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
+
 import { resolveHomeAuthenticationTarget } from './resolveHomeAuthenticationTarget';
 
 describe('resolveHomeAuthenticationTarget', () => {
@@ -22,6 +24,23 @@ describe('resolveHomeAuthenticationTarget', () => {
             addressAnchorUrl: 'https://home-b.example.test',
             serverId: 'home-b',
             serverIdentityId: 'home-b',
+        });
+    });
+
+    it('uses the saved Home’s selected public address for authentication', async () => {
+        const serverIdentityId = 'srv_auth_address';
+        const canonicalServerUrl = 'http://auth-home.localhost:3033';
+        const enteredUrl = 'https://auth-home.example.test';
+        const profile = await adoptHomeProfile({
+            descriptor: { serverUrl: canonicalServerUrl, canonicalServerUrl, homeServerIdentityId: serverIdentityId },
+            source: 'url',
+            addressSelection: { serverIdentityId, enteredUrl, canonicalServerUrl, useCanonical: false },
+        });
+
+        expect(resolveHomeAuthenticationTarget({ kind: 'saved_profile', profileRef: profile.id })).toMatchObject({
+            endpointUrl: enteredUrl,
+            canonicalServerUrl,
+            serverIdentityId,
         });
     });
 

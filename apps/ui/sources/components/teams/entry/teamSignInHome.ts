@@ -155,11 +155,10 @@ export function teamSignInReturnPath(params: Readonly<{
     return search ? `${pathname}?${search}` : pathname;
 }
 
-/**
- * The query parameters that reopen the page a sign-in was asked from: the Session destination's Home and its open
- * pane (Share lives in the People pane). Nothing else of the address is carried.
- */
-const TEAM_SIGN_IN_ORIGIN_PARAMS = ['serverId', 'right'] as const;
+// Each explicit return surface carries only the state its existing entry point needs.
+const TEAM_SIGN_IN_PAGE_PARAMS = ['serverId', 'right'] as const;
+const TEAM_SIGN_IN_DRAFT_PARAMS = ['draftId', 'draftServerId', 'draftAccountId', 'spawnServerId', 'teamSignInIntentId'] as const;
+const TEAM_SIGN_IN_SHARE_PARAMS = ['serverId', 'shareDirectory'] as const;
 
 export type TeamSignInOriginAddress = Readonly<{ pathname: string; search: string }>;
 
@@ -168,7 +167,10 @@ export function teamSignInOrigin(address: TeamSignInOriginAddress | null): strin
     if (!address) return null;
     const current = new URLSearchParams(address.search);
     const kept = new URLSearchParams();
-    for (const name of TEAM_SIGN_IN_ORIGIN_PARAMS) {
+    const names = address.pathname === '/new' ? TEAM_SIGN_IN_DRAFT_PARAMS
+        : /^\/session\/[^/]+\/sharing$/.test(address.pathname) ? TEAM_SIGN_IN_SHARE_PARAMS
+        : TEAM_SIGN_IN_PAGE_PARAMS;
+    for (const name of names) {
         const value = current.get(name);
         if (value !== null) kept.set(name, value);
     }
