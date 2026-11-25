@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
+import { TelemetryKeyFlowConfigV1Schema } from '@happier-dev/plugin-sdk/database';
 import {
   createPluginUiTestkit,
   createSurfaceContextFixture,
@@ -403,27 +404,17 @@ it('adds a declared contributed kind with its closed configuration through the s
       config: { monitorId: 'shop' }, binding: { kind: 'healthCheck' } })] }) })]);
 });
 
-// J5: an installed kind with variants, a list of records and a nested threshold (the telemetry Key flow's
-// declared shape) is authored through typed fields that round-trip into its saved configuration.
-it.each(['new', 'saved', 'from-route'] as const)('authors a Key flow through its declared schema (%s)', async mode => {
+// The manifest round-trip sorts property keys, putting Spend's costMode before its kind.
+const keyFlowSchema: JsonValue = JSON.parse(JSON.stringify(TelemetryKeyFlowConfigV1Schema.jsonSchema,
+  (key, value: unknown) => key === 'properties' && value && typeof value === 'object'
+    ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left < right ? -1 : Number(left > right)))
+    : value,
+));
+
+it.each(['new', 'saved', 'from-route', 'from-route-to-spend'] as const)('authors a Key flow through its declared schema (%s)', async mode => {
   const saved = mode === 'saved';
-  const text = { type: 'string', minLength: 1 };
-  const keyFlowSchema = { type: 'object', additionalProperties: false, required: ['environmentId', 'serviceName', 'measure', 'windowMs', 'threshold'],
-    properties: {
-      environmentId: text, serviceName: text, serviceVersion: text,
-      measure: { anyOf: [
-        { type: 'object', additionalProperties: false, required: ['kind', 'routes', 'statistic'], properties: {
-          kind: { type: 'string', const: 'route' },
-          routes: { type: 'array', minItems: 1, items: { type: 'object', additionalProperties: false, required: ['method', 'route'],
-            properties: { method: text, route: text } } },
-          statistic: { type: 'string', enum: ['p95', 'p50', 'errorRate'] } } },
-        { type: 'object', additionalProperties: false, required: ['kind', 'metricName'], properties: {
-          kind: { type: 'string', const: 'runtime' }, metricName: text } },
-      ] },
-      windowMs: { type: 'integer', exclusiveMinimum: 0 },
-      threshold: { type: 'object', additionalProperties: false, required: ['operator', 'value'], properties: {
-        operator: { anyOf: [{ const: 'above' }, { const: 'below' }] }, value: { type: 'number' } } },
-    } };
+  const spend = mode === 'from-route-to-spend';
+  const seeded = mode === 'from-route' || spend;
   const existing = { checkId: 'saved-checkout', kind: { pluginId: 'happier.telemetry', localId: 'key-flow' },
     binding: { kind: 'healthCheck' },
     config: { environmentId: 'env-prod', serviceName: 'billing-api',
@@ -432,9 +423,9 @@ it.each(['new', 'saved', 'from-route'] as const)('authors a Key flow through its
     periodMs: 300_000, consecutiveFailuresBeforeAlerting: 3,
   } as const;
   const { page, settled } = await mount({ initialInput: { v: 1,
-    subject: mode === 'from-route' ? { kind: 'environment', environmentId: 'env-prod' } : subject,
+    subject: seeded ? { kind: 'environment', environmentId: 'env-prod' } : subject,
     ...(saved ? { checks: [existing], selectedCheckId: existing.checkId } : {}),
-    ...(mode === 'from-route' ? { newContributedCheck: { kind: existing.kind,
+    ...(seeded ? { newContributedCheck: { kind: existing.kind,
       config: { environmentId: existing.config.environmentId, serviceName: existing.config.serviceName,
         measure: existing.config.measure } } } : {}),
   } }, {
@@ -445,9 +436,18 @@ it.each(['new', 'saved', 'from-route'] as const)('authors a Key flow through its
   if (saved) {
     await vi.waitFor(() => expect(field('Route')?.value).toBe('/checkout'));
     expect(field('Value')?.value).toBe('450');
-  } else if (mode === 'from-route') {
-    await vi.waitFor(() => expect(field('Route')?.value).toBe('/checkout'));
-    expect(field('Method')?.value).toBe('POST');
+  } else if (seeded) {
+    const measure = await page.findByRole('button', { name: 'Measure: Route' });
+    if (spend) {
+      await act(async () => { await page.press(measure); });
+      await expect(page.getByRole('menuitemradio', { name: 'Route' })).resolves.toBeDefined();
+      await expect(page.getByRole('menuitemradio', { name: 'Runtime' })).resolves.toBeDefined();
+      await act(async () => { await page.press(await page.getByRole('menuitemradio', { name: 'Spend' })); });
+      await expect(page.getByRole('button', { name: 'Measure: Spend' })).resolves.toBeDefined();
+    } else {
+      expect(field('Route')?.value).toBe('/checkout');
+      expect(field('Method')?.value).toBe('POST');
+    }
     expect(field('Service name')?.value).toBe('billing-api');
     expect((await addButton(page)).state?.disabled).toBe(true);
     await type('Window ms', '600000');
@@ -468,7 +468,8 @@ it.each(['new', 'saved', 'from-route'] as const)('authors a Key flow through its
   expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({
     checks: [expect.objectContaining({ checkId: saved ? existing.checkId : 'key-flow', kind: existing.kind,
       config: { environmentId: 'env-prod', serviceName: 'billing-api',
-        measure: { kind: 'route', routes: [{ method: 'POST', route: '/checkout' }], statistic: 'p95' },
+        measure: spend ? { kind: 'spend', costMode: 'api_equivalent' }
+          : { ...existing.config.measure, statistic: mode === 'new' ? 'p50' : 'p95' },
         windowMs: 600_000, threshold: { operator: 'above', value: 800 } } })] }) })]);
 });
 

@@ -62,19 +62,19 @@ function variants(
   schema: Schema,
 ): readonly Readonly<{ tag: string; value: string; schema: Schema }>[] | null {
   if (!Array.isArray(schema.anyOf)) return null;
-  const found = schema.anyOf.map(schemaOf).map((option) => {
-    const tagged = properties(option).find(
-      ([, property]) => typeof property.const === 'string',
-    );
-    return tagged
-      ? { tag: tagged[0], value: tagged[1].const as string, schema: option }
-      : null;
-  });
-  return found.every((item) => item !== null) &&
-    found.length > 0 &&
-    found.every((item) => item!.tag === found[0]!.tag)
-    ? (found as { tag: string; value: string; schema: Schema }[])
-    : null;
+  const options = schema.anyOf.map(schemaOf);
+  const first = options[0];
+  if (!first) return null;
+
+  for (const [tag, property] of properties(first)) {
+    if (typeof property.const !== 'string') continue;
+    const values = options.map((option) => schemaOf(record(option.properties)[tag]).const);
+    if (values.every((value): value is string => typeof value === 'string') &&
+        new Set(values).size === options.length) {
+      return values.map((value, index) => ({ tag, value, schema: options[index]! }));
+    }
+  }
+  return null;
 }
 
 /** The starting draft: declared defaults, the first choice of an enum or variant, one empty record in a required list. */
