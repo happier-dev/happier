@@ -122,22 +122,35 @@ describe('current workload aggregate', () => {
             kind: { pluginId: 'happier.machine.services', localId: 'http' },
             binding: { kind: 'domain', domainId: domain.id, targetLinkId: targetLink.id, condition: 'domain_probe_failed' },
             config: {}, periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 });
-        edge.publish({ sourceInstanceId: 'saved', sourceRevision: '1', checkId: check.checkId, kind: 'http',
+        const proof = { sourceInstanceId: 'saved', sourceRevision: '1', checkId: check.checkId, kind: 'http',
             caller: { pluginId: 'happier.machine.services', machineId: observer.machineId, materializationId: 'installed' },
             occurrenceId: 'occurrence', check, environment, targetLink, domain, observer,
-            result: finiteHealthCheckResult({ observer, vantage: 'outside' }, 'http', 1000, 995, 'down', { reason: 'connection' }) });
+            result: finiteHealthCheckResult({ observer, vantage: 'outside' }, 'http', 1000, 995, 'down', { reason: 'connection' }) } as const;
+        edge.publish(proof);
+        const readEdge = vi.fn(edge.read);
         const input = { environment: createDeploymentEnvironmentDetailV1({ environment,
                 targetLinks: [{ targetLink, content: {} }] }), receipts: (async function* () {})(),
             signal: new AbortController().signal, observedAtMs: 1000,
             local: { machineId: 'controller', installationId: 'installation-controller',
                 rows: { read: () => { throw new Error('no retained native handle'); }, subscribe: () => ({ dispose() {} }) },
                 resolve: () => null },
-            edge };
+            edge: { ...edge, read: readEdge } };
         const lease = await observeNativeWorkload(input);
         expect(lease?.snapshot()).toMatchObject({ n: 2, edgeUnreachable: true,
             members: expect.arrayContaining([expect.objectContaining({ machineId: 'edge', status: 'down' })]) });
+        readEdge.mockClear();
+        const otherEnvironment = createDeploymentEnvironmentHeaderV1({ ...environment,
+            id: 'other-environment', runtimeTargetLinkId: 'other-link' });
+        const otherLink = createDeploymentTargetLinkHeaderV1({ ...targetLink, id: 'other-link', environmentId: otherEnvironment.id });
+        edge.publish({ ...proof, environment: otherEnvironment, targetLink: otherLink,
+            domain: { ...domain, id: 'other-domain', environmentId: otherEnvironment.id, targetLinkId: otherLink.id },
+            check: { ...check, binding: { kind: 'domain', domainId: 'other-domain', targetLinkId: otherLink.id,
+                condition: 'domain_probe_failed' } } });
+        edge.withdrawDomain(otherEnvironment.id, 'other-domain');
+        expect(readEdge).not.toHaveBeenCalled();
         // A Domain mutation retires the old check result at the controller's next action boundary.
         edge.withdrawDomain(environment.id, domain.id);
+        expect(readEdge).toHaveBeenCalledTimes(1);
         expect(lease?.snapshot()).toMatchObject({ edgeUnreachable: false,
             members: expect.arrayContaining([expect.objectContaining({ machineId: 'edge', status: 'unknown' })]) });
         lease?.dispose();

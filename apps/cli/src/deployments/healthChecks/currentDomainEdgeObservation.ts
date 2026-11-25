@@ -12,7 +12,7 @@ type Entry = Readonly<{ environmentId: string; targetLinkId: string; sourceInsta
     domainObservation: DeploymentCurrentDomainObservationV1; tlsKind?: 'custom' | 'managed' }>;
 type EdgeEntry = Entry & Readonly<{ observation: DeploymentHealthObservationV1 }>;
 type Scope = Readonly<{ environmentId: string; targetLinkId: string; domainIds?: readonly string[] }>;
-type Listener = Readonly<{ callback: () => void; scope?: Scope }>;
+type Listener = Readonly<{ callback: () => void; scope: Scope }>;
 const statusRank = { up: 0, degraded: 1, unknown: 2, down: 3 } as const;
 
 /** Runtime-only current facts from the incumbent saved-check observer, never its transition cursor. */
@@ -24,7 +24,6 @@ export function createCurrentDomainEdgeObservation() {
     const emit = (environmentId: string, targetLinkId: string, edgeChanged: boolean, domainIds: readonly string[]) => {
         if (!edgeChanged && !domainIds.length) return;
         for (const { callback, scope } of listeners) {
-            if (!scope) { callback(); continue; }
             if (scope.environmentId !== environmentId || scope.targetLinkId !== targetLinkId) continue;
             const selectedDomains = scope.domainIds;
             if (selectedDomains ? domainIds.some(id => selectedDomains.includes(id)) : edgeChanged) callback();
@@ -136,7 +135,7 @@ export function createCurrentDomainEdgeObservation() {
         reconcile(isCurrent: (entry: Entry) => boolean) {
             remove(entry => !isCurrent(entry));
         },
-        subscribe(callback: () => void, scope?: Scope) {
+        subscribe(callback: () => void, scope: Scope) {
             const listener = { callback, scope };
             listeners.add(listener);
             return { dispose() { listeners.delete(listener); } };

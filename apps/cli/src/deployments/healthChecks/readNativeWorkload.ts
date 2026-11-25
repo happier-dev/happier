@@ -1,19 +1,17 @@
 import type { DeploymentEnvironmentDetailV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentMemberVersionProjectionV1, createDeploymentHealthAggregateLeaseV1,
-    type DeploymentHealthServicesObservationV1, type DeploymentHealthObservationV1, type DeploymentHealthAggregateLeaseV1 } from '@happier-dev/deployments';
+    type DeploymentHealthServicesObservationV1, type DeploymentHealthAggregateLeaseV1 } from '@happier-dev/deployments';
 import type { EnvironmentProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import type { MachineServiceRowV1 } from '@happier-dev/protocol';
 import type { createMachineServiceRowProjection } from '@/daemon/local/services/launch/machineServiceRowProjection';
+import type { CurrentDomainEdgeObservation } from './currentDomainEdgeObservation';
 
 type NativeWorkloadInput = Readonly<{
     environment: DeploymentEnvironmentDetailV1;
     receipts: AsyncIterable<DeploymentReceiptDetailV1>;
     signal: AbortSignal;
     observedAtMs: number;
-    edge?: Readonly<{
-        read(environmentId: string, targetLinkId: string): DeploymentHealthObservationV1 | null;
-        subscribe(listener: () => void): Readonly<{ dispose(): void }>;
-    }>;
+    edge?: Pick<CurrentDomainEdgeObservation, 'read' | 'subscribe'>;
     local: Readonly<{ machineId: string; installationId: string;
         rows: Pick<ReturnType<typeof createMachineServiceRowProjection>, 'read' | 'subscribe'>;
         resolve(identity: Pick<EnvironmentProjectManagedServiceHandle['identity'], 'machineId' | 'environmentId' | 'composeService'>): EnvironmentProjectManagedServiceHandle | null }>;
@@ -89,7 +87,7 @@ export async function observeNativeWorkload(input: NativeWorkloadInput): Promise
     });
     const edgeSubscription = input.edge?.subscribe(() => {
         if (health.isCurrent()) health.adopt({ environment, targetLink, observations: currentObservations() });
-    });
+    }, { environmentId: environment.id, targetLinkId: targetLink.id });
     health.retirementSignal.addEventListener('abort', () => { subscription.dispose(); edgeSubscription?.dispose(); }, { once: true });
     if (health.retirementSignal.aborted) { subscription.dispose(); edgeSubscription?.dispose(); }
     return health;

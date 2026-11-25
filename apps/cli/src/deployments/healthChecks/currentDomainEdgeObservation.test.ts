@@ -46,10 +46,8 @@ describe('current saved Domain observations', () => {
             targetLinkId: targetLink.id, revision: 1, state: 'active', contentArtifactId: 'artifact-domain',
             contentHeaderVersion: 1, contentBodyVersion: 1, createdByAccountId: 'account', createdAtMs: 1000, updatedAtMs: 1000 });
         const current = createCurrentDomainEdgeObservation();
-        let wakes = 0;
         let domainWakes = 0;
         let edgeWakes = 0;
-        current.subscribe(() => wakes++);
         current.subscribe(() => domainWakes++, { environmentId: environment.id,
             targetLinkId: targetLink.id, domainIds: [domain.id] });
         current.subscribe(() => edgeWakes++, { environmentId: environment.id, targetLinkId: targetLink.id });
@@ -72,12 +70,10 @@ describe('current saved Domain observations', () => {
         expect(current.read(environment.id, targetLink.id)).toBeNull();
         expect(edgeWakes).toBe(0);
         expect(domainWakes).toBe(2);
-        const semanticWakes = wakes;
         publish('certificate', 2000);
-        expect(wakes).toBe(semanticWakes);
+        expect(domainWakes).toBe(2);
         expect(current.readDomainProofs(environment.id, targetLink.id)[1]?.domainObservation.result.observedAt).toBe(2000);
         publish('certificate', 2000, 4000);
-        expect(wakes).toBe(semanticWakes + 1);
         expect(domainWakes).toBe(3);
         expect(edgeWakes).toBe(0);
         current.reconcile(() => false);
