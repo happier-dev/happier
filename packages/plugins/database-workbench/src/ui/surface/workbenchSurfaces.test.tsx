@@ -20,7 +20,7 @@ import {
 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1, type PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automations';
-import { DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1, type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
+import { DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1, DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1, type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import type { JsonValue, PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
 import { computeSha256HexDigest, createCanonicalJsonSigningInput, PluginError } from '@happier-dev/plugin-sdk';
@@ -32,7 +32,7 @@ import {
   type PluginUiTestkitExecuteActionInput,
   type PluginUiTestkitHostHandlers,
 } from '@happier-dev/plugin-sdk/testing';
-import { encodeBase64, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import { encodeBase64, formatSharedSavedSecretRefV1, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { Button } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { HappierPageChromeProvider } from '@happier-dev/plugin-ui/presentation';
@@ -536,7 +536,8 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
-  it('reviews the signed Railway preview and applies its exact SQL before opening the database', async () => {
+  it.each(['applied', 'recoverable binding failure', 'binding failure without a secret'] as const)(
+    'reviews the signed Railway preview and handles %s', async (outcome) => {
     const target = { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
         targetLinkId: 'link', contribution: { pluginId: 'happier.deploy.railway-data', contributionId: 'postgresql' },
         platformProjectId: 'project', branchId: 'branch', database: 'billing_dev' } as const;
@@ -545,14 +546,33 @@ describe('Database workbench surfaces', () => {
     const digest = `sha256:${computeSha256HexDigest(content)}`;
     const statements = ['CREATE ROLE happier_read LOGIN', 'GRANT CONNECT ON DATABASE billing_dev TO happier_read'];
     const create = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
+    const attach = databaseActionLocalIdV1(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1);
+    const savedSecretRef = formatSharedSavedSecretRefV1('billing-reader');
+    const resourceRevision = 3;
+    const attachTitle = 'Use existing read-only login';
+    const bindingFailureMessage = outcome === 'recoverable binding failure'
+      ? 'The database login and its Saved Secret were created, but binding it did not complete. Use the existing read-only login to finish.'
+      : 'The database login was created, but its Saved Secret was not saved.';
     let configured = false;
     const daemon = daemonAnswers([connected]);
-    const execute = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async ({ input }) => {
+    const execute = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async ({ action, input }) => {
+      if (action === attach) {
+        expect(input).toEqual({ target, savedSecretRef, resourceRevision });
+        configured = true;
+        return { ok: true, result: { ok: true, status: 'configured' } };
+      }
       if (input && typeof input === 'object' && 'mode' in input && input.mode === 'preview') {
         return { ok: true, result: { ok: true, status: 'review', role: 'happier_read', statements,
           endpointTrust: 'encrypted_unverified' } };
       }
       expect(input).toEqual({ target, mode: 'apply', role: 'happier_read', statements });
+      if (outcome !== 'applied') {
+        return { ok: false, errorCode: 'database_read_role_binding_failed', error: bindingFailureMessage,
+          effectAttempted: true, details: { role: 'happier_read',
+            ...(outcome === 'recoverable binding failure' ? { savedSecretRef, resourceRevision } : {}) },
+          failureCause: { phase: 'deployment.bindings.prepare.destination', errorClass: 'Error',
+            errorCode: 'deployment_conflict', httpStatus: null } };
+      }
       configured = true;
       return { ok: true, result: { ok: true, status: 'configured' } };
     });
@@ -566,6 +586,10 @@ describe('Database workbench surfaces', () => {
           renderIcon: () => null,
           renderMarkdown: () => null,
           renderPopover: () => null,
+          ...(outcome === 'applied' ? {} : {
+            renderSavedSecretChoiceList: ({ selectedRef }: { selectedRef: string | null }) =>
+              <span>{selectedRef === savedSecretRef ? 'Saved read-only URL selected' : 'Choose a saved URL'}</span>,
+          }),
           renderActionControl: ({ control: bound, presentation }) =>
             <Button title={presentation.title} disabled={!bound || presentation.disabled}
               onPress={() => control.press(presentation.title)} />,
@@ -589,9 +613,11 @@ describe('Database workbench surfaces', () => {
     });
     try {
       await settle(20);
-      await fixture.press(await fixture.getByRole('button', { name: 'Use existing read-only login' }));
-      expect(await fixture.getByText('Saved secrets are unavailable on this host.')).toBeTruthy();
-      await fixture.press(await fixture.getByRole('button', { name: 'Back to setup options' }));
+      if (outcome === 'applied') {
+        await fixture.press(await fixture.getByRole('button', { name: attachTitle }));
+        expect(await fixture.getByText('Saved secrets are unavailable on this host.')).toBeTruthy();
+        await fixture.press(await fixture.getByRole('button', { name: 'Back to setup options' }));
+      }
       await fixture.press(await fixture.getByRole('button', { name: 'Create read-only login' }));
       await settle(20);
       expect(execute.mock.calls.map(([{ action, input }]) => ({ action, input })))
@@ -602,6 +628,22 @@ describe('Database workbench surfaces', () => {
       expect(configured).toBe(false);
       await fixture.press(await fixture.getByRole('button', { name: 'Create read-only login' }));
       await settle(20);
+      if (outcome !== 'applied') {
+        expect(await fixture.getByText(bindingFailureMessage)).toBeTruthy();
+        expect(configured).toBe(false);
+        expect(execute.mock.calls.map(([{ action }]) => action)).toEqual([create, create]);
+        if (outcome === 'binding failure without a secret') {
+          expect(await fixture.queryByRole('button', { name: attachTitle })).toBeUndefined();
+          return;
+        }
+        await fixture.press(await fixture.getByRole('button', { name: attachTitle }));
+        expect(await fixture.getByText('Saved read-only URL selected')).toBeTruthy();
+        expect(await fixture.queryByRole('button', { name: 'Create read-only login' })).toBeUndefined();
+        expect(execute.mock.calls).toHaveLength(2);
+        await fixture.press(await fixture.getByRole('button', { name: 'Use this login' }));
+        await settle(20);
+        expect(execute.mock.calls.map(([{ action }]) => action)).toEqual([create, create, attach]);
+      }
       expect(configured).toBe(true);
       expect(await fixture.findByRole('button', { name: 'invoices' })).toBeTruthy();
       expect(daemon.mock.calls.map(([request]) => request.action))

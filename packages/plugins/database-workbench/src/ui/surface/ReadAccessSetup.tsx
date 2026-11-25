@@ -2,6 +2,7 @@ import * as React from 'react';
 import {
   DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1,
   DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1,
+  DatabaseReadAccessAttachInputV1Schema,
   DatabaseReadAccessSetupResultV1Schema,
   type DatabaseManagedDeploymentTargetV1,
   type DatabaseReadAccessSetupResultV1,
@@ -27,7 +28,7 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
   const [secret, setSecret] = React.useState<SavedSecretChoiceSelection | null>(null);
   const [notice, setNotice] = React.useState<
     | Readonly<{ kind: 'pending' | 'unexpected'; text: string }>
-    | Readonly<{ kind: 'failure'; execution: PluginActionExecution }>
+    | Readonly<{ kind: 'failure'; execution: PluginActionExecution; recovery: SavedSecretChoiceSelection | null }>
     | null
   >(null);
   const title = t('plugins.database.readSetup.title', 'Set up read-only access');
@@ -35,6 +36,12 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
   const createTitle = t('plugins.database.readSetup.create', 'Create read-only login');
   const unexpected = t('plugins.database.readSetup.unknown', 'Could not verify the setup result.');
   const unavailable = t('plugins.database.readSetup.actionUnavailable', 'This host can’t confirm the read-only login.');
+
+  function openAttach(selection = secret) {
+    setNotice(null);
+    setSecret(selection);
+    setAttaching(true);
+  }
 
   function settled(execution: PluginUiActionControlExecution, expected: 'review' | 'configured') {
     const result = projectPluginActionControlExecutionV1(execution, t);
@@ -53,11 +60,17 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
     } else if (isPluginActionConfirmationDeclined(result)) {
       setNotice(null);
     } else if (result.status === 'error' || result.status === 'outcomeUnknown') {
-      setNotice({ kind: 'failure', execution: result });
+      const details = result.code === 'database_read_role_binding_failed' ? result.details : undefined;
+      const recovery = details && typeof details === 'object' && 'savedSecretRef' in details && 'resourceRevision' in details
+        ? DatabaseReadAccessAttachInputV1Schema.safeParse({ target, savedSecretRef: details.savedSecretRef, resourceRevision: details.resourceRevision })
+        : null;
+      setNotice({ kind: 'failure', execution: result,
+        recovery: recovery?.success ? { ref: recovery.data.savedSecretRef, resourceRevision: recovery.data.resourceRevision } : null });
     }
   }
 
-  const failure = notice?.kind === 'failure' ? <Action.Failure execution={notice.execution} />
+  const failure = notice?.kind === 'failure' ? <Action.Failure execution={notice.execution}
+    onRetry={notice.recovery ? () => openAttach(notice.recovery) : undefined} retryLabel={attachTitle} />
     : notice?.kind === 'unexpected' ? <ErrorState layout="line" title={notice.text} /> : undefined;
   if (!attaching && !review) {
     return <SurfaceState kind="unavailable" size="page" title={title}
@@ -66,7 +79,7 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
       live={notice?.kind === 'pending' ? { text: notice.text } : undefined}
       alternative={<Row gap="small" wrap justify="center">
         <Button title={attachTitle} variant="secondary" size="small" disabled={notice?.kind === 'pending'}
-          onPress={() => { setNotice(null); setAttaching(true); }} />
+          onPress={() => openAttach()} />
         <Action.Control action={createAction} title={createTitle} variant="plain" disabled={notice?.kind === 'pending'}
           controller={{
             prepare: () => { setNotice(null); return { input: projectNativeJsonValueForTransport({ target, mode: 'preview' }) }; },
