@@ -1,20 +1,11 @@
 import { ARTIFACT_HTML_BUNDLE_MIME_V1, artifactHtmlBundleFromBodyV1, type ArtifactHtmlBundleV1 } from './artifactHtmlV1.js';
 import { ArtifactWorkspaceSourceV1Schema } from './artifactBinaryV1.js';
-import { z } from '../zodRuntimePolicy.js';
-import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ArtifactHtmlBundleV1Schema } from './artifactHtmlV1.js';
 import { UiSurfaceCapabilityRequestV1Schema, type UiSurfaceCapabilityRequestV1 } from '../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
 import { resolveHostedWebAssetContentTypeV1 } from '../plugins/ui/hostedWebAssetMime.js';
 import { encodeBase64 } from '../crypto/base64.js';
 
-/** Acquisition intent is Action input only; stored HTML always carries a by-value bundle. */
-export const ArtifactWorkspacePublicationSourceV1Schema = lazyZodSchema(() => z.strictObject({
-  path: z.string().check(z.minLength(1)),
-  entrypoint: z.optional(z.lazy(() => ArtifactHtmlBundleV1Schema.shape.entrypoint)),
-  workspace: z.optional(z.strictObject({
-    machineId: z.string().check(z.minLength(1)), rootPath: z.string().check(z.minLength(1)),
-  })),
-}));
+export { ArtifactWorkspacePublicationSourceV1Schema } from './artifactHtmlV1.js';
 
 function forbiddenWorkspaceSource(): Error {
   return Object.assign(new Error('artifact_source_forbidden'), { code: 'artifact_source_forbidden' });

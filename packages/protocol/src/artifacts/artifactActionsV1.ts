@@ -12,7 +12,7 @@ import { ArtifactBlobReferenceV1Schema, ArtifactBodyV1Schema, ArtifactRevisionPr
 import { ARTIFACT_ACTION_IDS_V1, STORAGE_INVENTORY_READ_ACTION_ID_V1 } from './artifactActionIdsV1.js';
 export { ARTIFACT_ACTION_IDS_V1, STORAGE_INVENTORY_READ_ACTION_ID_V1 } from './artifactActionIdsV1.js';
 import { ArtifactRevisionV1Schema } from './artifactRevisionV1.js';
-import { ArtifactWorkspacePublicationSourceV1Schema } from './artifactWorkspaceFileV1.js';
+import { ArtifactWorkspacePublicationSourceV1Schema } from './artifactHtmlV1.js';
 import { UiSurfaceCapabilityRequestV1Schema } from '../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
 import { RoleArtifactV1Schema } from '../prompts/roles/roleArtifactV1.js';
 import { LaunchProfileArtifactV1Schema } from '../launchProfiles/launchProfileArtifactV1.js';

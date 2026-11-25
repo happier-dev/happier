@@ -20,7 +20,7 @@ import { SessionBoardTabIdSchema, SessionSurfaceItemIdSchema } from './ids.js';
 import { SessionSurfaceItemV1Schema, SessionSurfaceItemDestinationV1Schema, isSessionSurfaceItemIdentityCorrespondingV1, type SessionSurfaceItemV1 } from './item.js';
 import { readSessionVisualCapabilitiesV1, persistSessionVisualEffectivePolicyV1 } from './visualPolicy.js';
 import { getWidgetSizeFootprintV1, resolveSessionBoardWidgetSizeV1, resolveWidgetSizeChoicesV1, type WidgetSizeV1 } from '../../widgets/widgetPresentationV1.js';
-import { ArtifactWorkspacePublicationSourceV1Schema } from '../../artifacts/artifactWorkspaceFileV1.js';
+import { ArtifactWorkspacePublicationSourceV1Schema } from '../../artifacts/artifactHtmlV1.js';
 import { UiSurfaceCapabilityRequestV1Schema, UiSurfaceNetworkPolicyV1Schema } from '../../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
 import { SessionBoardItemWidthSchema, SessionBoardItemFrameStyleSchema, SessionBoardLayoutV1Schema } from './layout.js';
 import {

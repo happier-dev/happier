@@ -33,6 +33,15 @@ export const GeneratedArtifactHtmlBundleV1Schema = lazyZodSchema(() => defineHtm
 ));
 export type ArtifactHtmlBundleV1 = z.infer<typeof ArtifactHtmlBundleV1Schema>;
 
+/** Acquisition intent is Action input only; stored HTML always carries a by-value bundle. */
+export const ArtifactWorkspacePublicationSourceV1Schema = lazyZodSchema(() => z.strictObject({
+  path: z.string().check(z.minLength(1)),
+  entrypoint: z.optional(z.lazy(() => ArtifactHtmlBundleV1Schema.shape.entrypoint)),
+  workspace: z.optional(z.strictObject({
+    machineId: z.string().check(z.minLength(1)), rootPath: z.string().check(z.minLength(1)),
+  })),
+}));
+
 export function isArtifactHtmlHeaderV1(header: unknown): boolean {
   return header !== null && typeof header === 'object' && !Array.isArray(header) && Reflect.get(header, 'kind') === 'html';
 }
