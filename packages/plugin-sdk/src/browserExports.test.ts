@@ -302,9 +302,27 @@ describe('browser-safe package exports', () => {
         ))).toEqual([]);
     }, 60_000);
 
-    it('keeps the public Event Automation setup-result schema out of Node-only Protocol branches', async () => {
+    it.each([
+        {
+            surface: 'public Event Automation setup-result',
+            entry: './events/index.browser.ts',
+            exports: [
+                'PluginEventAutomationSetupResultV1Schema',
+                'PluginEventAutomationHistoryGapResetActionInputV1JsonSchema',
+                'PluginEventAutomationHistoryGapResetActionInputV1Schema',
+                'PluginEventAutomationHistoryGapResetActionResultV1JsonSchema',
+                'PluginEventAutomationHistoryGapResetActionResultV1Schema',
+            ],
+        },
+        {
+            surface: 'Deployment receipt Events',
+            entry: './events/deploymentReceipts.ts',
+            exports: ['DeploymentReceiptEventSetupV1ProtocolSchema', 'DeploymentReceiptChangedEventV1ProtocolSchema',
+                'readDeploymentAccountChangeV1'],
+        },
+    ])('keeps $surface out of Node-only Protocol branches', async ({ entry, exports }) => {
         const packageJson = readPackageJson(new URL('../package.json', import.meta.url));
-        const eventsEntry = resolve(import.meta.dirname, './events/index.browser.ts');
+        const eventsEntry = resolve(import.meta.dirname, entry);
         const emittedModules = new Set<string>();
         expect(packageJson.exports?.['./events']).toMatchObject({
             types: './dist/events/index.d.ts',
@@ -324,13 +342,7 @@ describe('browser-safe package exports', () => {
                 },
                 load(id) {
                     if (id !== '\0virtual:plugin-events-browser-realm-entry') return null;
-                    return `export {
-                        PluginEventAutomationSetupResultV1Schema,
-                        PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
-                        PluginEventAutomationHistoryGapResetActionInputV1Schema,
-                        PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
-                        PluginEventAutomationHistoryGapResetActionResultV1Schema,
-                    } from ${JSON.stringify(eventsEntry)};`;
+                    return `export { ${exports.join(', ')} } from ${JSON.stringify(eventsEntry)};`;
                 },
                 generateBundle() {
                     for (const id of this.getModuleIds()) emittedModules.add(id);
@@ -368,7 +380,7 @@ describe('browser-safe package exports', () => {
             .find((item) => item.type === 'chunk' && item.isEntry);
         expect(entryChunk?.type).toBe('chunk');
         if (!entryChunk || entryChunk.type !== 'chunk') {
-            throw new Error('Vite did not emit the Plugin Event Automation setup-result entry chunk');
+            throw new Error('Vite did not emit the Plugin Event entry chunk');
         }
         expect(entryChunk.code).not.toContain('node:crypto');
     }, 60_000);

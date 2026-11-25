@@ -3,7 +3,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ActionOperationAddressV1Schema } from '../actions/operations/addressV1.js';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
 import { DeploymentStateV1Schema } from './deploymentStateV1.js';
-import { DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
+import { DeploymentFailureRecoveryV1Schema } from './deploymentFailureFactsV1.js';
 import { DeploymentPreviewCleanupV1Schema } from './deploymentTeardownVolumesV1.js';
 
 /** Accepted deployment outcomes shared by semantic parents and storage transports. */

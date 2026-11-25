@@ -11,13 +11,13 @@ import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '../artifacts/deploymentArti
 import { ActionInputIssueSchema } from '../actions/executor/actionInputValidation.js';
 import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 import { DeploymentEnvironmentRefV1Schema } from './deploymentEnvironmentRefV1.js';
-import { AutomationPluginEventRefSchema, type AutomationPluginEventTrigger } from '../automations/automationTriggerProjectionV1.js';
+import type { AutomationPluginEventTrigger } from '../automations/automationTriggerProjectionV1.js';
 import type { HealthCheckSubjectV1 } from './healthCheckSubjectV1.js';
 import { AutomationEventFilterV1Schema } from '../automations/automationEventFilterV1.js';
 import { AutomationEventSourceInstanceIdV1Schema } from '../automations/automationEventJsonBoundsV1.js';
-import { AutomationTriggerIdSchema } from '../automations/automationTriggerIdentity.js';
+import { AutomationPluginEventRefSchema, AutomationTriggerIdSchema } from '../automations/automationTriggerIdentity.js';
 import { AutomationIdV1Schema } from '../automations/automationIdV1.js';
-import { DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
+import { DeploymentFailureRecoveryV1Schema } from './deploymentFailureFactsV1.js';
 import { DeploymentReviewRevisionV1Schema } from './deploymentSourceLabelV1.js';
 import { DeploymentReceiptOperationV1Schema, DeploymentStateV1Schema } from './deploymentStateV1.js';
 import * as receiptResult from './deploymentReceiptResultV1.js';
@@ -222,4 +222,50 @@ export function readDeploymentReceiptEventFailureV1(reference: DeploymentArtifac
   if (!('failure' in opened.body)) return { ok: true, failure: null };
   const failure = DeploymentReceiptFailureV1Schema.safeParse(opened.body.failure);
   return failure.success ? { ok: true, failure: failure.data } : deploymentArtifactReadFailureV1('content');
+}
+
+export const DeploymentAccountChangeHintV1Schema = lazyZodSchema(() => z.strictObject({
+  deployment: z.strictObject({ projectSourceId: z.optional(id), environmentId: id,
+    deploymentId: z.optional(id), activityChanged: z.optional(z.literal(true)),
+    revision: revision }).check(z.refine(value => value.activityChanged !== true || value.deploymentId === undefined)),
+}));
+export type DeploymentAccountChangeIdentityV1 = Readonly<{ projectSourceId?: string; environmentId: string; deploymentId?: string; activityChanged?: true }>;
+
+/** Producer-known Source routing survives both durable hints and content-free socket wakes. */
+export function buildDeploymentAccountChangeV1(input: DeploymentAccountChangeIdentityV1 & Readonly<{ revision: number }>) {
+  const hint = DeploymentAccountChangeHintV1Schema.parse({ deployment: input });
+  const environment = encodeURIComponent(hint.deployment.environmentId);
+  const identity = hint.deployment.activityChanged === true ? `deployment-activity:${environment}`
+    : hint.deployment.deploymentId === undefined ? `deployment-environment:${environment}`
+    : `deployment-receipt:${environment}:${encodeURIComponent(hint.deployment.deploymentId)}`;
+  const entityId = hint.deployment.projectSourceId === undefined ? identity
+    : `${identity}:${encodeURIComponent(hint.deployment.projectSourceId)}`;
+  return { kind: 'account' as const, entityId, hint };
+}
+
+/** Reads both durable hints and the existing content-free socket entity-id wake. */
+export function readDeploymentAccountChangeV1(change: Readonly<{ kind: string; entityId: string; hint?: unknown }>): DeploymentAccountChangeIdentityV1 | null {
+  if (change.kind !== 'account') return null;
+  try {
+    const parts = change.entityId.split(':');
+    const isReceipt = parts[0] === 'deployment-receipt';
+    const activityChanged = parts[0] === 'deployment-activity' ? true : undefined;
+    const legacyLength = isReceipt ? 3 : 2;
+    if ((!isReceipt && !activityChanged && parts[0] !== 'deployment-environment') || (parts.length !== legacyLength && parts.length !== legacyLength + 1)) return null;
+    const environmentId = id.parse(decodeURIComponent(parts[1]!));
+    const deploymentId = isReceipt ? id.parse(decodeURIComponent(parts[2]!)) : undefined;
+    // Retained unqualified feed rows stay conservative; no consumer guesses their Source.
+    const projectSourceId = parts.length === legacyLength ? undefined
+      : id.parse(decodeURIComponent(parts[legacyLength]!));
+    if (change.hint !== undefined) {
+      const hint = DeploymentAccountChangeHintV1Schema.safeParse(change.hint);
+      if (!hint.success || hint.data.deployment.environmentId !== environmentId
+        || hint.data.deployment.deploymentId !== deploymentId
+        || hint.data.deployment.projectSourceId !== projectSourceId
+        || hint.data.deployment.activityChanged !== activityChanged) return null;
+    }
+    return { environmentId, ...(deploymentId === undefined ? {} : { deploymentId }),
+      ...(activityChanged ? { activityChanged } : {}),
+      ...(projectSourceId === undefined ? {} : { projectSourceId }) };
+  } catch { return null; }
 }

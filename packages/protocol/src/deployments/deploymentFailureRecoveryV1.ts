@@ -7,19 +7,16 @@ import { projectActionFailureRecoveryV1 } from '../actions/actionExecutionResult
 import { OpenProjectInputV1Schema, OpenProjectRefusalV1Schema, type OpenProjectInputV1 } from '../projects/openProjectV1.js';
 import { DeploymentIdentifierV1Schema } from './deploymentIdentifiersV1.js';
 import { DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1 } from './deploymentActionIdsV1.js';
+import {
+    DeploymentImageResolutionFailureV1Schema, DeploymentFailureRecoveryV1Schema,
+    DeploymentNativeActivationFailureV1Schema,
+} from './deploymentFailureFactsV1.js';
 
-export const DeploymentImageResolutionFailureV1Schema = lazyZodSchema(() => z.strictObject({
-    kind: z.literal('deploymentImageResolutionFailure'),
-    service: z.string().check(z.regex(/^[a-z0-9_.-]+$/iu)),
-    reference: z.optional(z.string().check(z.regex(/^(?!.*:\/\/)[a-z0-9._:/@\[\]-]+$/iu))),
-    reason: z.enum([
-        'deployment_image_not_found',
-        'deployment_image_pull_denied',
-        'deployment_image_rate_limited',
-        'deployment_network_unavailable',
-        'native_compose_command_failed',
-    ]),
-}));
+export {
+    DeploymentImageResolutionFailureV1Schema, DeploymentFailureRecoveryV1Schema,
+    DeploymentNativeComposeFailureV1Schema, type DeploymentNativeComposeFailureV1,
+    DeploymentNativeActivationFailureV1Schema, type DeploymentNativeActivationFailureV1,
+} from './deploymentFailureFactsV1.js';
 
 export function describeDeploymentImageResolutionFailureV1(failure: z.infer<typeof DeploymentImageResolutionFailureV1Schema>): string {
     const image = failure.reference ? `image ${failure.reference} for service ${failure.service}` : `the image for service ${failure.service}`;
@@ -31,30 +28,6 @@ export function describeDeploymentImageResolutionFailureV1(failure: z.infer<type
         case 'native_compose_command_failed': return `Docker could not resolve ${image} from its registry.`;
     }
 }
-
-/** Native Compose failures disclose the command token and a masked diagnostic excerpt, never arguments. */
-export const DeploymentNativeComposeFailureV1Schema = lazyZodSchema(() => z.strictObject({
-    subcommand: z.string().check(z.regex(/^[a-z][a-z-]*$/u)),
-    exitStatus: z.number().check(z.int()),
-    stderrTail: z.optional(z.string()),
-}));
-export type DeploymentNativeComposeFailureV1 = z.infer<typeof DeploymentNativeComposeFailureV1Schema>;
-
-/** Existing activation evidence publishes names and exit status, never runnable environment values or raw logs. */
-export const DeploymentNativeActivationFailureV1Schema = lazyZodSchema(() => z.strictObject({
-    service: DeploymentImageResolutionFailureV1Schema.shape.service,
-    exitStatus: z.number().check(z.int(), z.positive()),
-    missingVariable: z.optional(z.string().check(z.regex(/^[A-Z_][A-Z0-9_]*$/u))),
-}));
-export type DeploymentNativeActivationFailureV1 = z.infer<typeof DeploymentNativeActivationFailureV1Schema>;
-
-/** The fallback names the unavailable result, never an invented provider prerequisite. */
-export const DeploymentFailureRecoveryV1Schema = lazyZodSchema(() => z.strictObject({
-    requiredFact: z.literal('deploymentActionResult'),
-    nativeCompose: z.optional(DeploymentNativeComposeFailureV1Schema),
-    nativeActivation: z.optional(DeploymentNativeActivationFailureV1Schema),
-    remedy: z.string().check(z.trim(), z.minLength(1)),
-}));
 
 /** Presentation intents open existing editors/readers; they never execute or retry a mutation.
  * `source` opens the deployment's existing Source detail, including Repository and checkouts.
@@ -494,10 +467,11 @@ export function projectDeploymentFailureRecoveryV1<T extends Record<string, unkn
     });
 }
 
-/** Retain the serving Machine and its remedy together for live and stored Domain recovery. */
+/** Retain the named remedy in the closed Domain failure. Live Action navigation uses the exact Machine field. */
 export function projectDeploymentDomainFailureStorageDetailsV1(errorCode: string, details: unknown): unknown {
     if (!isRecord(details) || !readDomainAdminRecoveryMachineId(details, errorCode)) return details;
-    return projectDeploymentFailureRecoveryV1(details, errorCode);
+    const { machineId: _recoveryMachineId, ...stored } = projectDeploymentFailureRecoveryV1(details, errorCode);
+    return stored;
 }
 
 /**

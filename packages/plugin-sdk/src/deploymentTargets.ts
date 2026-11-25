@@ -38,7 +38,7 @@ export { deploymentTargetRoleWithNativeSelectorV1 } from '@happier-dev/protocol/
 export { hasDeploymentTargetPreparationCoordinatesV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export { DeploymentDomainTunnelOwnershipV1ProtocolSchema, DeploymentDomainTunnelDispositionV1ProtocolSchema,
     type DeploymentDomainTunnelOwnershipV1, type DeploymentDomainTunnelDispositionV1 }
-    from '@happier-dev/protocol/deployments/deploymentDomainV1';
+    from '@happier-dev/protocol/deployments/deploymentDomainProviderResultV1';
 
 /** Response limits are detected after sending the request. A write may already have taken effect. */
 export function projectDeploymentTargetHttpFailureV1(error: unknown, intent: 'read' | 'write', phase: string): unknown {
@@ -158,4 +158,4 @@ export type DeploymentTargetAuthorDefinitionV1 =
     }>);
 
 export { DeploymentDomainDnsRecordInputV1ProtocolSchema, DeploymentDomainDnsRecordResultV1ProtocolSchema,
-    type DeploymentDomainDnsRecordInputV1, type DeploymentDomainDnsRecordResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+    type DeploymentDomainDnsRecordInputV1, type DeploymentDomainDnsRecordResultV1 } from '@happier-dev/protocol/deployments/deploymentDomainDnsV1';

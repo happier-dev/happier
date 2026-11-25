@@ -45,3 +45,10 @@ export const AutomationTriggerKindSchema = lazyZodSchema(() => z.enum([
   'ciFailed',
 ]));
 export type AutomationTriggerKind = z.infer<typeof AutomationTriggerKindSchema>;
+
+/** Portable Event address, independent of the trigger's runtime projection. */
+export const AutomationPluginEventRefSchema = lazyZodSchema(() => z.strictObject({
+  pluginId: z.string().check(z.minLength(1)),
+  localId: z.string().check(z.minLength(1)),
+}));
+export type AutomationPluginEventRef = z.infer<typeof AutomationPluginEventRefSchema>;

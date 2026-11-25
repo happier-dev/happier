@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { AutomationEventSourceStatusV1Schema, AutomationEventSourceCatalogStatusStateV1Schema, UNSIGNED_DECIMAL_BIGINT_SCHEMA } from './automationEventSourceStatusV1.js';
 import { AutomationEventPositiveSafeIntegerV1Schema } from './automationColumnBoundsV1.js';
-import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from './automationTriggerIdentity.js';
+import { AutomationPluginEventRefSchema, AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from './automationTriggerIdentity.js';
 import { AutomationScheduleTriggerSchema } from './automationTriggerDefinition.js';
 import { AutomationActionTriggerStructuralV1Schema, AutomationActionConsentTriggerSchema } from './automationActionTriggerV1.js';
 import { AutomationSessionLifecycleStructuralConfigurationSchema } from './automationSessionLifecycle.js';
@@ -10,6 +10,8 @@ import { AutomationRunLifecycleTriggerSchema } from './automationRunLifecycle.js
 import { PluginMachineMaterializationRefV1Schema } from '../plugins/availability/materializationRefV1.js';
 import { PluginJsonSchemaV2Schema } from '../plugins/contributions/publicTypes.js';
 const TIMESTAMP_SCHEMA = z.number().check(z.int(), z.nonnegative(), z.int());
+export { AutomationPluginEventRefSchema, type AutomationPluginEventRef } from './automationTriggerIdentity.js';
+
 const IDENTIFIER_SCHEMA = z.string().check(z.minLength(1));
 
 /**
@@ -26,12 +28,6 @@ export const AutomationEventSourceCatalogStatusSchema = lazyZodSchema(() => z.st
 export type AutomationEventSourceCatalogStatus = z.infer<
   typeof AutomationEventSourceCatalogStatusSchema
 >;
-
-export const AutomationPluginEventRefSchema = lazyZodSchema(() => z.strictObject({
-  pluginId: IDENTIFIER_SCHEMA,
-  localId: IDENTIFIER_SCHEMA,
-}));
-export type AutomationPluginEventRef = z.infer<typeof AutomationPluginEventRefSchema>;
 
 export const AutomationCheckpointedPullObservationSchema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('checkpointedPull'),
