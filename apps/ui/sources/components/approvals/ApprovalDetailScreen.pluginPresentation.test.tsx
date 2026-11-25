@@ -134,18 +134,16 @@ it.each(['refused', 'lost', 'settled-success'] as const)('shows the settled plug
     const { Modal } = await import('@/modal');
     expect(decisionRequests()).toHaveLength(1);
     expect(screen.findByTestId('approvals.approve')).toBeNull();
+    expect(Modal.alert).not.toHaveBeenCalled();
     if (response === 'settled-success') {
         expect(screen.getTextContent()).toContain('approvals.status.executed');
-        expect(Modal.alert).not.toHaveBeenCalled();
     } else {
-        expect(screen.getTextContent()).toContain('approvals.status.failed');
-        // RU2 R52: the failure alert must retain the recorded effect's typed cause.
-        expect(Modal.alert).toHaveBeenCalledWith('common.error', 'errors.scmOutcomeUnknown', expect.any(Array));
-        const buttons = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2];
-        const details = buttons?.find(button => button.text === 'approvals.technicalDetails');
-        expect(details).toBeDefined();
-        details?.onPress?.();
-        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', 'plugin_action_outcome_unknown');
+        const text = screen.getTextContent();
+        expect(text.split('approvals.status.failed')).toHaveLength(2);
+        expect(text).toContain('errors.scmOutcomeUnknown');
+        await screen.pressByTestIdAsync('approvals.technical-details.header');
+        expect(screen.getTextContent()).toContain('plugin_action_outcome_unknown');
+        expect(decisionRequests()).toHaveLength(1);
     }
 });
 
