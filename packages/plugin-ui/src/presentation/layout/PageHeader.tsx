@@ -1,5 +1,5 @@
 import { createContext, isValidElement, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
-import { View } from 'react-native';
+import { Platform, Text, View } from 'react-native';
 
 import { useOptionalHappierUiPalette, useOptionalHappierUiTheme, useOptionalHappierUiTypography } from '../../environment/context.js';
 import { HAPPIER_SKELETON_BAR, HappierSkeletonBlock } from '../feedback/Skeleton.js';
@@ -161,6 +161,13 @@ export type HappierPageHeaderTextRender = (input: Readonly<{
   mono?: boolean;
 }>) => ReactNode;
 
+/** The app text host renders the accessory in the same text flow as the heading. */
+export const HappierPageHeaderInlineTitleContext = createContext<
+  ((input: Parameters<HappierPageHeaderTextRender>[0], inlineEnd: ReactNode) => ReactNode) | null
+>(null);
+
+const inlineTitleAccessoryStyle = { marginStart: 8, verticalAlign: 'middle' } as const;
+
 /** Package-private binding from the public PageHeader adapter; not an author physical-ref prop. */
 export const HappierPageHeadingBindingContext = createContext<((target: HappierFocusable | null) => void) | undefined>(undefined);
 
@@ -225,6 +232,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   const defaultRenderText = useDefaultPageTextRender(props.metaIdCopy);
   const { metricScale } = useHappierTextPresentation({});
   const renderText = props.renderText ?? defaultRenderText;
+  const renderInlineTitle = useContext(HappierPageHeaderInlineTitleContext);
   const showTitle = props.showTitle !== false;
   // An empty list of facts is no facts: the header draws no meta line and keeps no gap for one.
   const meta = props.meta !== undefined && props.meta.length > 0 ? props.meta : undefined;
@@ -395,9 +403,19 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   ) : null;
 
   const wrapPart = props.wrapPart ?? null;
-  const renderedTitle = showTitle ? renderPageText(props.title, titleRole, renderText, true) : null;
+  // Web can put the accessory in the title's text flow and center each line independently.
+  // Native paragraphs group their descendants for accessibility, so the native accessory stays a sibling.
+  const inlineTitle = showTitle && Platform.OS === 'web' && centered && renderInlineTitle &&
+    props.titleAccessory && typeof props.title === 'string' && props.title
+    ? renderInlineTitle({ role: titleRole, text: props.title, header: true }, <>
+      {/* The word joiner keeps the action beside the last word. */}
+      <Text>{'\u2060'}</Text>
+      <View style={inlineTitleAccessoryStyle}>{props.titleAccessory}</View>
+    </>)
+    : null;
+  const renderedTitle = showTitle ? inlineTitle ?? renderPageText(props.title, titleRole, renderText, true) : null;
   const title = renderedTitle && wrapPart ? wrapPart('title', renderedTitle) : renderedTitle;
-  const titleLine = title && props.titleAccessory ? (
+  const titleLine = title && props.titleAccessory && !inlineTitle ? (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
       <View style={{ flexShrink: 1, minWidth: 0 }}>{title}</View>
       {props.titleAccessory}

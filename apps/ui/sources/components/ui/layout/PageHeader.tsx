@@ -4,6 +4,7 @@ import { Dimensions, Platform, View, type StyleProp, type ViewStyle } from 'reac
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     HappierPageHeader,
+    HappierPageHeaderInlineTitleContext,
     HappierPageHeaderPlaceholder,
     HappierPageHeaderMetaId,
     happierPageTextMetrics,
@@ -314,7 +315,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
         : props.description;
 
     return (
-        <>
+        <HappierPageHeaderInlineTitleContext.Provider value={renderPageTitle}>
         {props.primaryAction || props.cancelAction || props.actions || props.menu || props.navigationTrailing ? (
             <NavigationHeaderActions primary={primaryInPage || primaryInPageAlways ? null : props.primaryAction ?? null} cancel={props.cancelAction ?? null}
                 actions={barActions} trailing={props.navigationTrailing}
@@ -344,7 +345,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
             wrapPart={props.wrapPart}
             testID={props.testID}
         />
-        </>
+        </HappierPageHeaderInlineTitleContext.Provider>
     );
 });
 
@@ -407,14 +408,31 @@ export function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrima
 }
 
 /** A page title wraps before it ends in an ellipsis, by the one title line rule (`usePageTitleMaxLines`). */
-function PageTitleText(props: Readonly<{ header: boolean; style: React.ComponentProps<typeof Text>['style']; children: React.ReactNode }>) {
+function PageTitleText(props: Readonly<{
+    header: boolean;
+    style: React.ComponentProps<typeof Text>['style'];
+    children: string;
+    inlineEnd?: React.ReactNode;
+}>) {
     const maxLines = usePageTitleMaxLines();
     return (
         // The page's own title is its level-one heading; react-native-web's bare `heading` role reads as level 2.
         <Text accessibilityRole={props.header ? 'header' : undefined} aria-level={props.header ? 1 : undefined}
-            numberOfLines={maxLines} style={props.style}>
-            {props.children}
+            accessibilityLabel={props.inlineEnd ? props.children : undefined}
+            // Keep an attached action visible and reachable when a long name spans several lines.
+            numberOfLines={props.inlineEnd ? undefined : maxLines}
+            style={[props.style, props.inlineEnd ? { textAlign: 'center' } : null]}>
+            {props.children}{props.inlineEnd}
         </Text>
+    );
+}
+
+function renderPageTitle(input: Parameters<HappierPageHeaderTextRender>[0], inlineEnd?: React.ReactNode) {
+    return (
+        <PageTitleText header={input.header} inlineEnd={inlineEnd}
+            style={input.role === 'heroTitle' ? stylesheet.heroTitle : stylesheet.title}>
+            {input.text}
+        </PageTitleText>
     );
 }
 
@@ -424,9 +442,7 @@ export const renderPageHeaderText: HappierPageHeaderTextRender = (input) => inpu
 ) : input.role === 'pageTitle' || input.role === 'heroTitle' ? (
     // An entity named by data (a Session titled by its first prompt) can be any length: the title stops
     // (PageTitleText), and the DOM text and screen readers still carry all of it.
-    <PageTitleText header={input.header === true} style={input.role === 'heroTitle' ? stylesheet.heroTitle : stylesheet.title}>
-        {input.text}
-    </PageTitleText>
+    renderPageTitle(input)
 ) : (
     <Text
         accessibilityRole={input.header ? 'header' : undefined}

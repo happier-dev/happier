@@ -5,9 +5,11 @@ import { createRoot } from 'react-dom/client';
 import { Text, View } from 'react-native';
 import { expect, it, vi } from 'vitest';
 import { HappierPageHeader } from '@happier-dev/plugin-ui/presentation';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { installWebLayoutBridge, measureWebLayout } from '@/dev/testkit/render/measureWebLayout';
+import { PageHeader } from '../PageHeader';
 import { PageHeaderMenu } from '../PageHeaderEntityParts';
 
 vi.mock('react-native', async () => vi.importActual('react-native-web'));
@@ -15,6 +17,50 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
 installWebLayoutBridge();
+
+it('centers a wrapped editable title at 375px and keeps the rename button with the last line', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const title = 'C61-SAVE-OPUS remembered three';
+    const facts = 'API key · End-to-end encrypted';
+    try {
+        await act(async () => root.render(<PageHeader
+            testID="credential-header"
+            alwaysShowTitle
+            compactPresentation="centered"
+            title={title}
+            leading={<View testID="credential-mark" style={{ width: 40, height: 40 }} />}
+            meta={[{ key: 'facts', text: facts }]}
+            titleAccessory={<IconButton testID="credential-rename" accessibilityLabel="Rename"
+                icon={<View style={{ width: 15, height: 15 }} />} variant="plain" onPress={() => {}} />}
+        />));
+        const layout = await measureWebLayout(host, {
+            viewport: { width: 375, height: 600 },
+            texts: [title, facts],
+            settle: replay => act(replay),
+        });
+        const titleBox = layout.textRects(title)[0]!;
+        const lines = titleBox.textFragments!.filter(line => (line.top + line.bottom) / 2 <= titleBox.bottom);
+        const centerX = ({ left, right }: { left: number; right: number }) => (left + right) / 2;
+        const axis = centerX(layout.rect('credential-mark'));
+        const pencil = layout.rect('credential-rename');
+        expect(lines.length).toBeGreaterThan(1);
+        const first = lines[0]!;
+        const last = lines.at(-1)!;
+        expect(Math.abs(centerX(layout.textRects(facts)[0]!) - axis)).toBeLessThanOrEqual(1);
+        expect(Math.abs(centerX(first) - axis)).toBeLessThanOrEqual(1);
+        expect((pencil.top + pencil.bottom) / 2).toBeGreaterThan(last.top);
+        expect((pencil.top + pencil.bottom) / 2).toBeLessThan(last.bottom);
+        expect(pencil.left - last.right).toBeGreaterThanOrEqual(0);
+        expect(pencil.left - last.right).toBeLessThanOrEqual(titleBox.fontSize!);
+        expect(Math.abs(centerX({ left: last.left, right: pencil.right }) - axis)).toBeLessThanOrEqual(1);
+        expect(pencil.receivesPointer).toBe(true);
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
 
 it.each([610, 800, 1200])('keeps the title readable beside a long readout in a %spx pane', async width => {
     const host = document.createElement('div');

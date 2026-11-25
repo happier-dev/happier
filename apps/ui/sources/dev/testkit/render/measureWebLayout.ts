@@ -36,6 +36,8 @@ export type WebLayoutRect = Readonly<{
     clipped?: boolean;
     /** The element's rendered text, as a reader sees it. */
     text?: string;
+    /** The rendered line fragments of a box requested through `texts`. */
+    textFragments?: readonly WebLayoutRect[];
     /**
      * Whether a pointer at the box's centre reaches this element (or a descendant): false when another
      * element, even an invisible one, sits on top of it and takes the click.
@@ -319,7 +321,7 @@ export async function measureWebLayout(container: HTMLElement, options: Readonly
             for (const element of Array.from(document.querySelectorAll('[data-testid]'))) {
                 byTestId.push([element.getAttribute('data-testid') ?? '', box(element)]);
             }
-            const byText: Array<[string, ReturnType<typeof box>]> = [];
+            const byText: Array<[string, ReturnType<typeof box> & Pick<WebLayoutRect, 'textFragments'>]> = [];
             for (const element of Array.from(document.querySelectorAll('body *'))) {
                 const own = Array.from(element.childNodes).filter((node) => node.nodeType === Node.TEXT_NODE)
                     .map((node) => node.textContent ?? '').join('');
@@ -331,7 +333,16 @@ export async function measureWebLayout(container: HTMLElement, options: Readonly
                         const computed = getComputedStyle(node);
                         if (computed.opacity === '0' || computed.visibility === 'hidden' || computed.display === 'none') { visible = false; break; }
                     }
-                    if (visible) byText.push([own, box(element)]);
+                    if (visible) {
+                        const textFragments = Array.from(element.childNodes).filter(node => node.nodeType === Node.TEXT_NODE)
+                            .flatMap(node => {
+                                const range = document.createRange();
+                                range.selectNodeContents(node);
+                                return Array.from(range.getClientRects(), ({ top, bottom, left, right, width, height }) =>
+                                    ({ top, bottom, left, right, width, height }));
+                            });
+                        byText.push([own, { ...box(element), textFragments }]);
+                    }
                 }
             }
             return { byTestId, byText };
