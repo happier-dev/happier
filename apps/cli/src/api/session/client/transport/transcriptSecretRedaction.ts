@@ -151,11 +151,55 @@ function readActiveSecrets(): readonly string[] | undefined {
         .sort((left, right) => right.length - left.length);
 }
 
+type PermissionGrantFields = Readonly<{ allowedTools?: unknown; updatedPermissions?: unknown; execPolicyAmendment?: unknown }>;
+
+function readExecPolicyCommand(amendment: unknown): readonly unknown[] | undefined {
+    if (amendment === null || typeof amendment !== 'object' || Array.isArray(amendment)) return undefined;
+    const command = (amendment as Readonly<Record<string, unknown>>).command;
+    return Array.isArray(command) ? command : undefined;
+}
+
+function redactPermissionGrantFields<T extends PermissionGrantFields>(record: T, secrets: readonly string[]): T {
+    const allowedTools = Array.isArray(record.allowedTools)
+        ? mapArray(record.allowedTools, tool => typeof tool === 'string' ? redactString(tool, secrets) : tool) : record.allowedTools;
+    const updatedPermissions = record.updatedPermissions === undefined ? undefined : redactValue(record.updatedPermissions, secrets);
+    const command = readExecPolicyCommand(record.execPolicyAmendment);
+    const maskedCommand = command && mapArray(command, part => typeof part === 'string' ? redactString(part, secrets) : part);
+    if (allowedTools === record.allowedTools && updatedPermissions === record.updatedPermissions && maskedCommand === command) return record;
+    return {
+        ...record,
+        ...(allowedTools !== record.allowedTools ? { allowedTools } : {}),
+        ...(updatedPermissions !== record.updatedPermissions ? { updatedPermissions } : {}),
+        ...(maskedCommand !== command ? { execPolicyAmendment: { ...record.execPolicyAmendment as object, command: maskedCommand } } : {}),
+    };
+}
+
 /**
- * A native choice offer's Agent-authored prose (choice labels, rule previews, response reasons and
- * the subagent label) is content; requirement and choice ids, decisions, scopes, responses and
- * follow-up Actions stay exact. An offer that does not parse is masked whole: it can over-mask,
- * never leak. Shared by the request store and the message writer.
+ * The one stored form of the command-derived grants a permission answer carries: its allowed tool
+ * rules, updated permissions and exec-policy amendment command pass the transcript redactor, while
+ * every other field (decision, mode, approval) stays exact. A request completion and each choice of
+ * a native offer take this same form, so a pending offer and its completed copy store one grant
+ * form. Delivery never reads it: the Agent receives its own offer's raw grant.
+ */
+export function redactPermissionGrants<T extends PermissionGrantFields>(record: T): T {
+    const secrets = readActiveSecrets();
+    return secrets ? redactPermissionGrantFields(record, secrets) : record;
+}
+
+/** Whether a stored grant (see `redactPermissionGrants`) carries the mask, so it cannot be delivered as a grant. */
+export function containsPermissionGrantMask(record: PermissionGrantFields): boolean {
+    const strings = (value: unknown): boolean => typeof value === 'string' ? containsTranscriptSecretMask(value)
+        : Array.isArray(value) ? value.some(strings)
+            : value !== null && typeof value === 'object' && Object.values(value).some(strings);
+    return strings(record.allowedTools) || strings(record.updatedPermissions) || strings(readExecPolicyCommand(record.execPolicyAmendment));
+}
+
+/**
+ * A native choice offer's Agent-authored content (choice labels, rule previews, response reasons,
+ * the subagent label, and each response's grants in their one stored form) is masked; requirement
+ * and choice ids, decisions, scopes, modes and follow-up Actions stay exact. An offer that does not
+ * parse is masked whole: it can over-mask, never leak. Shared by the request store and the message
+ * writer.
  */
 export function redactAgentStatePermissionChoiceOffer(value: unknown): unknown {
     if (value == null) return value;
@@ -172,7 +216,8 @@ export function redactAgentStatePermissionChoiceOffer(value: unknown): unknown {
             ...choice,
             label: prose(choice.label),
             ...(choice.rulePreview !== undefined ? { rulePreview: prose(choice.rulePreview) } : {}),
-            ...(choice.response.reason !== undefined ? { response: { ...choice.response, reason: prose(choice.response.reason) } } : {}),
+            response: redactPermissionGrantFields(choice.response.reason !== undefined
+                ? { ...choice.response, reason: prose(choice.response.reason) } : choice.response, secrets),
         })),
     } satisfies NativePermissionChoicesV1;
 }

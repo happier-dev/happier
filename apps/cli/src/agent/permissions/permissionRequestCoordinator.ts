@@ -22,7 +22,7 @@ import type {
     PermissionResponseClaimSettlement,
 } from './agentStateRequestStore';
 import { isSameAgentStateCompletedGrant, isSameAgentStateRequestArguments, isSameAgentStateRequestOccurrence } from './agentStateRequestStore';
-import { bindToTranscriptSecretScope } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { bindToTranscriptSecretScope, containsPermissionGrantMask } from '@/api/session/client/transport/transcriptSecretRedaction';
 import {
     isPermissionRequestOwnedByPlugin,
     isPermissionRequestOwnedByPluginTurn,
@@ -399,6 +399,33 @@ export class PermissionRequestCoordinator<TResult> {
         if (request.nativeChoices === undefined || deepEqual(entry.nativeChoices, request.nativeChoices)) return;
         this.store.publishRequest({ ...request, createdAt: entry.createdAt });
         entry.nativeChoices = request.nativeChoices;
+    }
+
+    /**
+     * The grant delivered for one answered choice of the stored offer. The stored offer decides which
+     * offer and choices exist; its grants are stored masked when they held a registered secret, so a
+     * masked grant is replaced by the waiting Agent's own raw offer for the same requirement and
+     * choice. A pending request whose masked grant has no raw copy here (the runner restarted and the
+     * Agent has not asked again) has no deliverable grant: `null`, and the person is asked again. A
+     * stored grant without the mask is delivered as stored. A request this coordinator does not
+     * deliver keeps its stored form, which then only identifies the answer: one no longer pending,
+     * or one whose response target (a child Run's own permission owner) delivers from its own offer.
+     */
+    readNativeChoiceGrant(
+        requestId: string,
+        requirementId: string,
+        choice: NativePermissionChoicesV1['choices'][number],
+    ): NativePermissionChoicesV1['choices'][number]['response'] | null {
+        if (!containsPermissionGrantMask(choice.response)) return choice.response;
+        const entry = this.pendingRequests.get(requestId);
+        if (!entry) {
+            const outstanding = this.store.readOutstandingRequest(requestId);
+            if (!outstanding || outstanding.responseTarget) return choice.response;
+        }
+        const live = entry?.nativeChoices?.requirementId === requirementId
+            ? entry.nativeChoices.choices.find(candidate => candidate.id === choice.id)?.response : undefined;
+        // A rejoined entry the Agent has not re-offered still holds the stored copy.
+        return live && !deepEqual(live, choice.response) ? live : null;
     }
 
     getResponseContext(requestId: string): PermissionRequestCoordinatorContext | null {
@@ -1183,7 +1210,8 @@ function isCompatibleOutstandingRequest(
 ): boolean {
     if (
         outstanding.toolName !== request.toolName
-        || !deepEqual(outstanding.toolInput, request.toolInput)
+        // The stored row holds its input in the masked stored form; the Agent's re-ask is raw.
+        || !isSameAgentStateRequestArguments(outstanding.toolInput, request.toolInput)
         || !deepEqual(outstanding.responseTarget ?? null, request.responseTarget ?? null)
         || !permissionSourcesEqual(outstanding.source, request.source)
         || (outstanding.lifetime !== undefined && outstanding.lifetime !== (request.lifetime ?? 'turn'))

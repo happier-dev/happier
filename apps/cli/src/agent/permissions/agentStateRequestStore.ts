@@ -14,7 +14,7 @@ import type { PermissionRequestPushSender } from '@/agent/permissions/BasePermis
 import { logger } from '@/ui/logger';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { deepEqual } from '@/utils/deterministicJson';
-import { bindToTranscriptSecretScope, redactAgentStatePermissionChoiceOffer, redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { bindToTranscriptSecretScope, redactAgentStatePermissionChoiceOffer, redactPermissionGrants, redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { isAgentStateRequestCoveredByCompletedRequests, type AgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { SessionPermissionApprovalReviewerClaimV1Schema, SessionPermissionAccountUserDecisionActorV1Schema, SessionPermissionExternalHumanDecisionActorV1Schema, SessionPermissionIdempotencyKeyV1Schema, SessionPermissionSourceRefV1Schema, SessionPermissionSourceRevisionOrEpochV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
@@ -1883,21 +1883,15 @@ export function isSameAgentStateCompletedGrant(
 /**
  * The one stored form of a request or completed entry: its Agent-authored content (tool input,
  * offer and question prose, and the command-derived grants a completion records: allowed tools,
- * updated permissions and an exec-policy amendment) passes the transcript redactor, while tool
- * names, ids, keys and routing stay exact. Both stored and local occurrences take this form before
+ * updated permissions and an exec-policy amendment, the same grant projection each native offer
+ * choice takes) passes the transcript redactor, while tool names, ids, keys and routing stay exact. Both stored and local occurrences take this form before
  * they are compared. A session grant whose command held a secret is therefore not restored after a
  * reload: the person sees the prompt again.
  */
 function redactAgentStateRequestContent(entry: Record<string, unknown>): void {
     if (entry.arguments !== undefined) entry.arguments = redactTranscriptSecrets(entry.arguments);
-    if (Array.isArray(entry.allowedTools)) {
-        entry.allowedTools = entry.allowedTools.map(tool => typeof tool === 'string' ? redactTranscriptSecrets(tool) : tool);
-    }
-    if (entry.updatedPermissions !== undefined) entry.updatedPermissions = redactTranscriptSecrets(entry.updatedPermissions);
-    const amendment = clonePlainObjectToNullProto(entry.execPolicyAmendment);
-    if (amendment && Array.isArray(amendment.command)) {
-        entry.execPolicyAmendment = { ...amendment, command: amendment.command.map(part => typeof part === 'string' ? redactTranscriptSecrets(part) : part) };
-    }
+    const grants = redactPermissionGrants(entry);
+    if (grants !== entry) Object.assign(entry, grants);
     if (entry.nativeChoices) entry.nativeChoices = redactAgentStatePermissionChoiceOffer(entry.nativeChoices);
     const question = entry.questionV1 as SessionQuestionContextV1 | undefined;
     if (question) {

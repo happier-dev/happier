@@ -183,6 +183,12 @@ export interface PermissionResult {
 }
 
 /**
+ * The stored offer's chosen grant is masked and no raw copy of it is held for the waiting Agent
+ * (the runner restarted before the Agent asked again): the request stays pending and is asked again.
+ */
+const NATIVE_CHOICE_GRANT_UNAVAILABLE = 'native_choice_grant_unavailable';
+
+/**
  * Outcome of routing an inbound permission/user-action response to a pending request.
  *
  * `not_found` means the explicit request id is unknown (never seen / already gone) — the caller must
@@ -191,7 +197,7 @@ export interface PermissionResult {
 export type PermissionResponseRoutingResult =
     | { status: 'resolved' }
     | { status: 'not_found' }
-    | { status: 'invalid' };
+    | { status: 'invalid'; cause?: typeof NATIVE_CHOICE_GRANT_UNAVAILABLE };
 
 /**
  * Typed RPC result for `session.permission.respond` / `session.user_action.answer` / `permission`.
@@ -1838,6 +1844,9 @@ export abstract class BasePermissionHandler {
                     ok: false,
                     errorCode: 'permission_response_invalid',
                     requestId: requestIdFor(response),
+                    ...(outcome.cause ? { failureCause: {
+                        phase: 'rpc.handler.permission.native_choice', errorCode: outcome.cause, errorClass: 'RpcError', httpStatus: null,
+                    } } : {}),
                 } as const;
             }
             return undefined;
@@ -2702,7 +2711,7 @@ export abstract class BasePermissionHandler {
                     approved: params.input.decision === 'allow',
                     decision: params.input.decision === 'allow' ? 'approved' : 'denied',
                 }, context);
-                if (!response) return null;
+                if (!response || response === NATIVE_CHOICE_GRANT_UNAVAILABLE) return null;
                 if (response.nativeChoice) {
                     const choice = context.nativeChoices?.choices.find(candidate => candidate.id === response.nativeChoice?.choiceId);
                     if (!choice) return null;
@@ -3612,21 +3621,26 @@ export abstract class BasePermissionHandler {
         context: PermissionRequestCoordinatorContext,
         relationship?: 'owner' | 'sharedApprover',
         admitted = false,
-    ): PermissionResponse | null {
+    ): PermissionResponse | typeof NATIVE_CHOICE_GRANT_UNAVAILABLE | null {
         let selected = response;
         let nativeScope: NativePermissionChoicesV1['choices'][number]['scope'] | undefined;
+        let grant: NativePermissionChoicesV1['choices'][number]['response'] | null | undefined;
         if (context.nativeChoices !== undefined) {
             const native = resolveNativePermissionChoice(context.nativeChoices, response.nativeChoice
                 ?? resolvePlainNativePermissionChoice(context.nativeChoices ?? undefined, response));
             if (!native) return null;
             const { choice } = native;
             nativeScope = choice.scope;
+            grant = this.requestCoordinator.readNativeChoiceGrant(context.requestId, native.answer.requirementId, choice);
             // An exact offered requirement identifies the native occurrence.
             // Bind choice-only answers to its owned turn; explicit turns still
             // pass through the shared custody check unchanged.
             const turnId = response.turnId ?? context.turnId;
             selected = {
-                ...native.response,
+                ...(grant ?? choice.response),
+                approved: native.response.approved,
+                decision: native.response.decision,
+                nativeChoice: native.response.nativeChoice,
                 id: response.id,
                 ...(turnId !== undefined ? { turnId } : {}),
                 ...(response.answeringClientCategory !== undefined ? { answeringClientCategory: response.answeringClientCategory } : {}),
@@ -3634,7 +3648,8 @@ export abstract class BasePermissionHandler {
         } else if (response.nativeChoice !== undefined || response.approved === undefined
             || !isPermissionResponseAuthorityValid({ response, context })) return null;
         if (!admitted && !evaluatePermissionResponseAuthorityV1({ response: selected, nativeScope, relationship }).allowed) return null;
-        return selected;
+        // Never deliver a stored (masked) grant: the Agent would apply a different rule.
+        return grant === null ? NATIVE_CHOICE_GRANT_UNAVAILABLE : selected;
     }
 
     private async handleIncomingPermissionResponse(
@@ -3660,6 +3675,7 @@ export abstract class BasePermissionHandler {
             } : null);
             if (nativeContext) {
                 const canonical = this.resolveIncomingPermissionResponse(response, nativeContext, actor?.relationship, Boolean(options?.admittedRemoteRecord));
+                if (canonical === NATIVE_CHOICE_GRANT_UNAVAILABLE) return { status: 'invalid', cause: canonical };
                 if (!canonical) return { status: 'invalid' };
                 response = canonical;
             } else if (response.nativeChoice !== undefined) return { status: 'not_found' };

@@ -14,6 +14,10 @@ import { SessionActionConfirmationsV1Schema } from '@happier-dev/protocol/sessio
 import { readSharedMetadataActionConfirmationState } from '@happier-dev/session-core/pending';
 import { createDeferred } from '@/testkit/async/deferred';
 import { registerSessionPermissionRpcHandlers } from '@/rpc/handlers/sessionPermissions';
+import { registerTranscriptSecret, TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { resolveNativePermissionChoice } from './nativePermissionChoice';
+import { createExecutionRunPermissionHandler } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
+import { readExecutionRunPermissionResponseFromDispatch } from '@/agent/runtime/bridges/executionRun/executionRunPermissionResponseTarget';
 
 beforeEach(() => {
   resetActiveAccountSettingsSnapshotForTests();
@@ -915,5 +919,212 @@ describe('native offered permission ingress', () => {
     await expect(pending).resolves.toMatchObject({ decision: 'approved', nativeChoice: answer.nativeChoice });
     expect(applied).toHaveLength(2);
     await handler.reset();
+  });
+});
+
+describe('native offer grants: stored masked, delivered raw from the waiting Agent', () => {
+  const SECRET = 'pg-secret-9f2';
+  const command = ['psql', `postgresql://app:${SECRET}@db/app`];
+  const toolInput = { command: command.join(' ') };
+  // Offer shapes as each Agent plugin's own builder produces them:
+  // codex core/permissionChoices.ts, claude permissions/permissionChoices.ts, opencode server/permissionBridge.ts,
+  // pi rpc/operations.ts, muse interactions.ts (Muse offers no grant fields).
+  const codexOffer = (requirementId = 'codex-approval-1'): NativePermissionChoicesV1 => ({ requirementId, source: 'codex', choices: [
+    { id: 'accept', label: 'Allow once', decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } },
+    { id: 'acceptForSession', label: 'Allow for this session', decision: 'approved_for_session', scope: 'session', response: { approved: true, decision: 'approved_for_session' } },
+    { id: 'execpolicy:2', label: 'Allow this command rule', decision: 'approved_execpolicy_amendment', scope: 'localPersistent',
+      rulePreview: command.join(' '), response: { approved: true, decision: 'approved_execpolicy_amendment', execPolicyAmendment: { command } } },
+    { id: 'decline', label: 'Deny', decision: 'denied', scope: 'once', response: { approved: false, decision: 'denied' } },
+    { id: 'cancel', label: 'Stop', decision: 'abort', scope: 'once', response: { approved: false, decision: 'abort' } },
+  ] });
+  const claudeOffer = (cmd: string): NativePermissionChoicesV1 => ({ requirementId: 'toolu_claude_1', source: 'claude', choices: [
+    { id: 'allow', label: 'Allow once', decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } },
+    { id: 'always_allow', label: 'Allow Bash for this session', decision: 'approved', scope: 'session', rulePreview: 'Bash',
+      response: { approved: true, decision: 'approved', allowedTools: ['Bash'], updatedPermissions: [{ type: 'addRules', behavior: 'allow', destination: 'session', rules: [{ toolName: 'Bash' }] }] } },
+    { id: 'allow_command', label: `Allow ${cmd} for this session`, decision: 'approved', scope: 'session', rulePreview: `Bash(${cmd}:*)`,
+      response: { approved: true, decision: 'approved', allowedTools: [`Bash(${cmd}:*)`],
+        updatedPermissions: [{ type: 'addRules', behavior: 'allow', destination: 'session', rules: [{ toolName: 'Bash', ruleContent: `${cmd}:*` }] }] } },
+    { id: 'deny', label: 'Deny', decision: 'denied', scope: 'once', response: { approved: false, decision: 'denied' } },
+    { id: 'stop', label: 'Stop', decision: 'abort', scope: 'session', response: { approved: false, decision: 'abort', mode: 'read-only' } },
+  ] });
+  const sessionToolOffer = (source: 'opencode' | 'pi', toolName: string): NativePermissionChoicesV1 => ({ requirementId: `${source}-ask-1`, source, choices: [
+    { id: 'allow', label: 'Allow once', decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } },
+    { id: 'allow_session', label: 'Allow for this session', decision: 'approved_for_session', scope: 'session',
+      response: { approved: true, decision: 'approved_for_session', allowedTools: [toolName] } },
+    { id: 'deny', label: 'Deny', decision: 'denied', scope: 'once', response: { approved: false, decision: 'denied' } },
+    { id: 'stop', label: 'Stop', decision: 'abort', scope: 'once', response: { approved: false, decision: 'abort' } },
+  ] });
+  const museOffer: NativePermissionChoicesV1 = { requirementId: JSON.stringify({ approvalId: 'a-1', sourceIndex: 1 }), source: 'muse', choices: [
+    { id: 'allow_once', label: 'Allow once', decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } },
+    { id: 'allow_session', label: 'Allow bash for this session', decision: 'approved_for_session', scope: 'session', response: { approved: true, decision: 'approved_for_session' } },
+    { id: 'deny', label: 'Deny', decision: 'denied', scope: 'once', allowsFeedback: true, response: { approved: false, decision: 'denied' } },
+  ] };
+  const masked = (text: string) => text.split(SECRET).join(TRANSCRIPT_SECRET_REDACTED);
+  const exactFacts = (offer: NativePermissionChoicesV1) => ({ requirementId: offer.requirementId, source: offer.source,
+    choices: offer.choices.map(({ id, decision, scope, response }) => ({ id, decision, scope,
+      response: { approved: response.approved, decision: response.decision, mode: response.mode } })) });
+
+  // The Agent harness boundary: its native request waits here, and `applied` is what it receives.
+  const askAgent = (handler: ProviderEnforcedPermissionHandler, requestId: string, tool: string, input: unknown, nativeChoices: NativePermissionChoicesV1) => {
+    const applied: PermissionResult[] = [];
+    const decision = handler.handleToolCall(requestId, tool, input, {
+      nativeChoices, acknowledgeDecisionApplication: async result => { applied.push(result); } });
+    void decision.catch(() => undefined);
+    return { applied, decision };
+  };
+  const delivered = (offer: NativePermissionChoicesV1, choiceId: string) =>
+    resolveNativePermissionChoice(offer, { requirementId: offer.requirementId, choiceId })!.result;
+
+  it('stores a Codex execpolicy offer masked, delivers its exact raw command rule once, and stores the completion masked', async () => {
+    const release = registerTranscriptSecret(SECRET);
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as never, { logPrefix: '[Codex grant]' });
+    const offer = codexOffer();
+    try {
+      const agent = askAgent(handler, 'codex-call', 'bash', toolInput, offer);
+      await vi.waitFor(() => expect(session.agentState.requests['codex-call']).toBeDefined());
+      const pending = session.agentState.requests['codex-call'];
+      expect(JSON.stringify(pending)).not.toContain(SECRET);
+      expect(pending.nativeChoices.choices[2]).toEqual({ ...offer.choices[2], rulePreview: masked(command.join(' ')),
+        response: { ...offer.choices[2]!.response, execPolicyAmendment: { command: command.map(masked) } } });
+      expect(exactFacts(pending.nativeChoices)).toEqual(exactFacts(offer));
+
+      await expect(session.rpcHandlerManager.handlers.get('session.permission.respond')!({ id: 'codex-call',
+        nativeChoice: { requirementId: offer.requirementId, choiceId: 'execpolicy:2' } })).resolves.toBeUndefined();
+      await expect(agent.decision).resolves.toEqual(delivered(offer, 'execpolicy:2'));
+      expect(agent.applied).toEqual([delivered(offer, 'execpolicy:2')]);
+      expect(agent.applied[0]!.execPolicyAmendment).toEqual({ command });
+
+      const completed = session.agentState.completedRequests['codex-call'];
+      expect(JSON.stringify(completed)).not.toContain(SECRET);
+      expect(completed).toMatchObject({ decision: 'approved_execpolicy_amendment' });
+      expect(completed.nativeChoices.choices[2].response.execPolicyAmendment).toEqual({ command: command.map(masked) });
+    } finally { release(); await handler.reset(); }
+  });
+
+  const reloadedRunner = (stored: import('@/api/types').AgentState) => {
+    // A new runner process reads the Session's committed Agent state; the Agent's native request
+    // died with the old process, so only the stored (masked) offer remains until the Agent asks again.
+    const session = new FakeSession();
+    session.agentState = structuredClone(stored);
+    const handler = new ProviderEnforcedPermissionHandler(session as never, { logPrefix: '[Reloaded runner]' });
+    return { session, handler };
+  };
+  const storedPendingCodexRequest = async () => {
+    const first = new FakeSession();
+    const original = new ProviderEnforcedPermissionHandler(first as never, { logPrefix: '[Original runner]' });
+    askAgent(original, 'codex-call', 'bash', toolInput, codexOffer());
+    await vi.waitFor(() => expect(first.agentState.requests['codex-call']).toBeDefined());
+    const stored = structuredClone(first.agentState);
+    await original.reset();
+    return stored;
+  };
+
+  it('delivers the raw rule to an answer resolved through the stored occurrence once the Agent asks again after a reload', async () => {
+    const release = registerTranscriptSecret(SECRET);
+    try {
+      const { session, handler } = reloadedRunner(await storedPendingCodexRequest());
+      try {
+        const offer = codexOffer();
+        const agent = askAgent(handler, 'codex-call', 'bash', toolInput, offer);
+        await new Promise(resolve => setImmediate(resolve));
+        // Another device answers on the predecessor route, resolved against the stored occurrence.
+        await expect(session.rpcHandlerManager.handlers.get('permission')!({ id: 'codex-call',
+          nativeChoice: { requirementId: offer.requirementId, choiceId: 'execpolicy:2' } })).resolves.toBeUndefined();
+        await expect(agent.decision).resolves.toEqual(delivered(offer, 'execpolicy:2'));
+        expect(agent.applied).toEqual([delivered(offer, 'execpolicy:2')]);
+        expect(JSON.stringify(session.agentState.completedRequests['codex-call'])).not.toContain(SECRET);
+      } finally { await handler.reset(); }
+    } finally { release(); }
+  });
+
+  it('refuses a masked stored rule with no waiting Agent, keeps the request pending, and delivers the raw rule after the Agent asks again', async () => {
+    const release = registerTranscriptSecret(SECRET);
+    try {
+      const { session, handler } = reloadedRunner(await storedPendingCodexRequest());
+      const rpc = session.rpcHandlerManager.handlers.get('session.permission.respond')!;
+      const answer = { id: 'codex-call', nativeChoice: { requirementId: 'codex-approval-1', choiceId: 'execpolicy:2' } };
+      try {
+        await expect(rpc(answer)).resolves.toEqual({ ok: false, errorCode: 'permission_response_invalid', requestId: 'codex-call',
+          failureCause: { phase: 'rpc.handler.permission.native_choice', errorCode: 'native_choice_grant_unavailable', errorClass: 'RpcError', httpStatus: null } });
+        expect(session.agentState.requests['codex-call']).toBeDefined();
+        expect(session.agentState.completedRequests['codex-call']).toBeUndefined();
+
+        const offer = codexOffer();
+        const agent = askAgent(handler, 'codex-call', 'bash', toolInput, offer);
+        await new Promise(resolve => setImmediate(resolve));
+        await expect(rpc(answer)).resolves.toBeUndefined();
+        await expect(agent.decision).resolves.toEqual(delivered(offer, 'execpolicy:2'));
+        expect(agent.applied).toEqual([delivered(offer, 'execpolicy:2')]);
+      } finally { await handler.reset(); }
+    } finally { release(); }
+  });
+
+  it('lets a child Run answered in its parent Session deliver its own raw grant through the response target', async () => {
+    const release = registerTranscriptSecret(SECRET);
+    const session = new FakeSession();
+    new ProviderEnforcedPermissionHandler(session as never, { logPrefix: '[Parent Session]' });
+    const store = session.getAgentStateRequestStore()!;
+    // The child Run's own permission owner holds the live raw offer; the parent holds no waiter.
+    const run = createExecutionRunPermissionHandler({ permissionMode: 'default', backendId: 'codex',
+      getPermissionRequestStore: () => store,
+      publishPendingRequest: async request => { await store.publishRequestAndWait({ ...request, createdAt: 1,
+        responseTarget: { kind: 'execution_run_host_bridge' } }); } });
+    store.registerResponseTargetHandler('execution_run_host_bridge', async dispatch => {
+      const response = readExecutionRunPermissionResponseFromDispatch(dispatch);
+      const outcome = response === null ? null : await run.respondToPermissionRequest(dispatch.requestId, response);
+      return outcome !== null && outcome !== false;
+    }, { application: 'beforeCompletion' });
+    const offer = codexOffer();
+    try {
+      const decision = run.handleToolCall('child-call', 'bash', toolInput, { nativeChoices: offer, source: 'codex' });
+      await vi.waitFor(() => expect(session.agentState.requests['child-call']).toBeDefined());
+      expect(JSON.stringify(session.agentState.requests['child-call'])).not.toContain(SECRET);
+      await expect(session.rpcHandlerManager.handlers.get('session.permission.respond')!({ id: 'child-call',
+        nativeChoice: { requirementId: offer.requirementId, choiceId: 'execpolicy:2' } })).resolves.toBeUndefined();
+      await expect(decision).resolves.toEqual(delivered(offer, 'execpolicy:2'));
+      expect(JSON.stringify(session.agentState.completedRequests['child-call'])).not.toContain(SECRET);
+    } finally { release(); store.dispose(); }
+  });
+
+  it.each([
+    { agent: 'codex', tool: 'bash', input: toolInput, offer: codexOffer(), choiceId: 'execpolicy:2' },
+    { agent: 'claude', tool: 'Bash', input: toolInput, offer: claudeOffer('psql'), choiceId: 'allow_command' },
+    { agent: 'opencode', tool: 'bash', input: { patterns: ['psql *'] }, offer: sessionToolOffer('opencode', 'bash'), choiceId: 'allow_session' },
+    { agent: 'pi', tool: 'mcp__db__query', input: { sql: 'select 1' }, offer: sessionToolOffer('pi', 'mcp__db__query'), choiceId: 'allow_session' },
+    { agent: 'muse', tool: 'bash', input: toolInput, offer: museOffer, choiceId: 'allow_session' },
+  ])('stores and delivers the $agent offer byte-identically when no secret is registered', async ({ tool, input, offer, choiceId }) => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as never, { logPrefix: '[No secret]' });
+    try {
+      const agent = askAgent(handler, 'plain-call', tool, input, offer);
+      await vi.waitFor(() => expect(session.agentState.requests['plain-call']).toBeDefined());
+      expect(session.agentState.requests['plain-call'].nativeChoices).toEqual(offer);
+      await expect(session.rpcHandlerManager.handlers.get('session.permission.respond')!({ id: 'plain-call',
+        nativeChoice: { requirementId: offer.requirementId, choiceId } })).resolves.toBeUndefined();
+      await expect(agent.decision).resolves.toEqual(delivered(offer, choiceId));
+      expect(session.agentState.completedRequests['plain-call'].nativeChoices).toEqual(offer);
+    } finally { await handler.reset(); }
+  });
+
+  it.each([
+    { agent: 'muse', tool: 'bash', offer: museOffer, choiceId: 'allow_session' },
+    { agent: 'claude', tool: 'Bash', offer: claudeOffer('main'), choiceId: 'allow_command' },
+    { agent: 'codex', tool: 'bash', offer: codexOffer('native-1'), choiceId: 'acceptForSession' },
+    { agent: 'codex', tool: 'bash', offer: codexOffer('native-1'), choiceId: 'execpolicy:2' },
+  ])('resolves a $agent approval ($choiceId) with control words and a tool name registered as secret values', async ({ tool, offer, choiceId }) => {
+    const releases = ['native', 'main', 'true', '1', 'Bash'].map(registerTranscriptSecret);
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as never, { logPrefix: '[Over-mask]' });
+    try {
+      const agent = askAgent(handler, 'overmask-call', tool, { command: 'git main' }, offer);
+      await vi.waitFor(() => expect(session.agentState.requests['overmask-call']).toBeDefined());
+      expect(exactFacts(session.agentState.requests['overmask-call'].nativeChoices)).toEqual(exactFacts(offer));
+      await expect(session.rpcHandlerManager.handlers.get('session.permission.respond')!({ id: 'overmask-call',
+        nativeChoice: { requirementId: offer.requirementId, choiceId } })).resolves.toBeUndefined();
+      await expect(agent.decision).resolves.toEqual(delivered(offer, choiceId));
+      expect(agent.applied).toEqual([delivered(offer, choiceId)]);
+      expect(session.agentState.completedRequests['overmask-call']).toMatchObject({ decision: offer.choices.find(choice => choice.id === choiceId)!.decision });
+    } finally { for (const release of releases) release(); await handler.reset(); }
   });
 });
