@@ -2,7 +2,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Duplex, PassThrough } from 'node:stream';
+import { Duplex } from 'node:stream';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -16,7 +16,7 @@ import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision
 import { attachSessionHolderWorkspaceClient, openSessionHolderWorkspaceChannel, openSessionHolderWorkspaceClient, spawnSessionHolderChild, type SessionHolderChild, type SessionHolderTarget } from '@/subprocess/supervision/sessionHolder';
 
 import { createHolderWorkspaceSource } from './holderWorkspaceSource';
-import { runWithWorkspaceSource, type WorkspaceSourcePlacement } from './workspaceSource';
+import { runWithWorkspaceSource, workspaceTargetUnavailable, type WorkspaceSourcePlacement } from './workspaceSource';
 import { createScmBackendRegistry } from '@/scm/registry';
 import { createWorkspaceSyncSeedExport } from '@/workspaces/sync/workspaceSyncSeedTransfer';
 import { readTransferPayloadChunk } from '@/machines/transfer/transferPayloadSource';
@@ -25,7 +25,6 @@ import { applyManagedWorkspaceReturn, prepareManagedWorkspaceReturnFromStage } f
 import { scanWorkspaceManifest } from '@/scm/workspace/workspaceExportPackaging/scanWorkspaceManifest';
 import { prepareEnrolledWorkspaceReturn, prepareEnrolledWorkspaceReturnChildren } from '@/workspaces/sync/enrolledWorkspaceReturn';
 import { runManagedWorkspaceReturnTarget } from '@/workspaces/sync/managedWorkspaceReturnTarget';
-import { runWorkspaceEffectWorker } from '@/workspaces/activation/workspaceEffectWorker';
 
 /**
  * The target workspace source runs every operation through the Session's
@@ -197,8 +196,13 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
         const staged = join(dir, 'stage');
         const guest = join(root, 'applied-project');
         const file = 'return-apply-sentinel.txt';
+        await Promise.all([mkdir(original), mkdir(staged), mkdir(guest)]);
+        const workspaceHolder = spawn(holderExecutable!, ['workspace', '--root', guest], {
+            stdio: ['pipe', 'pipe', 'ignore'], env: { ...process.env, HOME: dir },
+        });
+        const holderFinished = new Promise<void>(resolve => workspaceHolder.once('close', () => resolve()));
+        const channel = Duplex.from({ readable: workspaceHolder.stdout, writable: workspaceHolder.stdin });
         try {
-            await Promise.all([mkdir(original), mkdir(staged), mkdir(guest)]);
             const before = 'same original bytes\n';
             const after = 'reviewed guest change\n';
             await Promise.all([
@@ -209,7 +213,8 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
             const registry = createScmBackendRegistry([]);
             const baseline = await scanWorkspaceManifest({ workspaceRoot: original, scmRegistry: registry });
             const source = createHolderWorkspaceSource({
-                id: 'target:return-apply', rootPath: original, guestRootPath: guest, holder, helperPath: helperExecutable!,
+                id: 'target:return-apply', rootPath: original, guestRootPath: guest,
+                holder: openSessionHolderWorkspaceChannel(channel), helperPath: helperExecutable!,
             });
             const sessionId = 'managed-return-apply';
             const accountId = 'return-review-account';
@@ -226,41 +231,30 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
             await expect(readFile(join(original, file), 'utf8')).resolves.toBe(before);
             await expect(source.readFile(join(original, file))).resolves.toEqual(Buffer.from(before));
 
-            const workers: Promise<void>[] = [];
+            let authorityCurrent = true;
             const withManagedTarget: NonNullable<Parameters<typeof applyManagedWorkspaceReturn>[0]['withManagedTarget']> =
                 async (selected, apply) => {
                     expect(selected).toEqual(workspace);
-                    // Provider transport substitutes only the guest filesystem and process boundary.
-                    // The private effect protocol and its native guarded replacement run unchanged.
-                    const signal = new AbortController().signal;
-                    await runManagedWorkspaceReturnTarget({ rootPath: guest, operationId: 'reviewed-return', signal, apply,
-                        target: {
-                            home: dir,
-                            ensureWorkspaceRuntime: async () => ({ binaryPath: '/guest/happier' }),
-                            openChannel: (argv, lifetime) => {
-                                const input = new PassThrough(), output = new PassThrough();
-                                const channel = Duplex.from({ readable: output, writable: input });
-                                const worker = runWorkspaceEffectWorker([], { input, output, signal: lifetime,
-                                    currentDirectory: () => argv[4]! }).finally(() => output.end());
-                                workers.push(worker);
-                                void worker.catch(error => channel.destroy(error));
-                                return channel;
-                            },
-                        } });
+                    await runManagedWorkspaceReturnTarget({ source, rootPath: selected.rootPath,
+                        signal: new AbortController().signal, assertCurrentAuthority: async () => {
+                            if (!authorityCurrent) throw workspaceTargetUnavailable();
+                        }, apply });
                 };
-            try {
-                const apply = () => runWithScmAccountScope(accountId, () => applyManagedWorkspaceReturn({ ...applyInput, withManagedTarget }));
-                await writeFile(join(guest, file), 'later guest edit\n');
-                await expect(apply()).rejects.toMatchObject({ code: 'conflict_changed', details: { appliedPaths: [], path: file } });
-                await expect(readFile(join(guest, file), 'utf8')).resolves.toBe('later guest edit\n');
-                await writeFile(join(guest, file), before);
-                await expect(apply()).resolves.toEqual({ appliedPaths: [file], conflicts: [] });
-                await expect(readFile(join(original, file), 'utf8')).resolves.toBe(before);
-                await expect(source.readFile(join(original, file))).resolves.toEqual(Buffer.from(after));
-            } finally {
-                await Promise.all(workers);
-            }
+            const apply = () => runWithScmAccountScope(accountId, () => applyManagedWorkspaceReturn({ ...applyInput, withManagedTarget }));
+            authorityCurrent = false;
+            await expect(apply()).rejects.toMatchObject({ code: 'workspace_target_unavailable' });
+            await expect(readFile(join(guest, file), 'utf8')).resolves.toBe(before);
+            authorityCurrent = true;
+            await writeFile(join(guest, file), 'later guest edit\n');
+            await expect(apply()).rejects.toMatchObject({ code: 'conflict_changed', details: { appliedPaths: [], path: file } });
+            await expect(readFile(join(guest, file), 'utf8')).resolves.toBe('later guest edit\n');
+            await writeFile(join(guest, file), before);
+            await expect(apply()).resolves.toEqual({ appliedPaths: [file], conflicts: [] });
+            await expect(readFile(join(original, file), 'utf8')).resolves.toBe(before);
+            await expect(source.readFile(join(original, file))).resolves.toEqual(Buffer.from(after));
         } finally {
+            workspaceHolder.stdin.end();
+            await holderFinished;
             await rm(guest, { recursive: true, force: true });
             await rm(dir, { recursive: true, force: true });
         }

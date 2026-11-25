@@ -190,8 +190,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     deploymentRuntimeMachine?: true; waiveDeploymentChild?: true; additionalActionIds?: readonly ActionId[];
     workspaceReturn?: Readonly<{
       sessions: Map<string, ReturnType<typeof createSessionRecordFixture>>;
-      openTarget: NonNullable<import('@/api/apiMachine').ApiMachineClientLifecycleDependencies['openManagedProjectWorkspace']>
-        & NonNullable<Parameters<typeof createProductionDaemonWorkspaceSyncRuntime>[0]['openManagedProjectWorkspace']>;
+      openTarget: NonNullable<import('@/api/apiMachine').ApiMachineClientLifecycleDependencies['openManagedProjectWorkspace']>;
     }>;
   }>) {
   const returnFixture = cliPolicy?.workspaceReturn;
@@ -1286,7 +1285,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     })]);
     const composed = await createProductionDaemonWorkspaceSyncRuntime({ happyHomeDir: configuration.happyHomeDir,
       activeServerDir: configuration.activeServerDir, activeServerId: 'srv_n2', localMachineId: target.machineId,
-      releaseChannel: 'publicdev', credentials, openManagedProjectWorkspace: returnFixture.openTarget }, {
+      releaseChannel: 'publicdev', credentials }, {
       materializeLocalSeed: request => materializeLocalWorkspaceSyncSeed({ ...request, registry }),
     });
     workerWorkspaceSync = composed;

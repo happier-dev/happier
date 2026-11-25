@@ -53,7 +53,7 @@ import { configuration, reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { openProject, materializeProjectSyncOnSource } from '@/workspaces/activation/openProject';
 import { execFile, spawn } from 'node:child_process';
-import { Duplex, PassThrough } from 'node:stream';
+import { Duplex } from 'node:stream';
 import { openSessionHolderWorkspaceChannel } from '@/subprocess/supervision/sessionHolder';
 import { createHolderWorkspaceSource } from '@/workspaces/source/holderWorkspaceSource';
 import { runWithScmAccountScope } from '@/scm/accountScope';
@@ -2232,19 +2232,18 @@ describe('Project Open RPC', () => {
       expect(copies).toBe(1);
       expect(mutations).toBe(writesBeforeRefusal);
       if (sourceShape === 'managed-workspace') {
-        // On the SSH transport boundary, the holder and effect worker operate on
+        // On the SSH transport boundary, the holder operates on
         // the guest fixture. The controller has a distinct tree at the selected path.
         const holderPath = resolveSessionHolderExecutablePath();
         const helperPath = resolveProcessCustodySupportExecutable();
         if (!holderPath || !helperPath) throw new Error('Session holder and process custody are required for managed copy and Return');
-        const holder = spawn(holderPath, ['workspace', '--root', guestDisk], { stdio: ['pipe', 'pipe', 'inherit'] });
+        const holder = spawn(holderPath, ['workspace', '--root', guestDisk], { stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, HOME: fixture } });
         const channel = Duplex.from({ readable: holder.stdout, writable: holder.stdin });
         const holderFinished = new Promise<void>(resolve => holder.once('close', () => resolve()));
         const guestSource = createHolderWorkspaceSource({ id: managedAddress.managedId, rootPath: root, guestRootPath: guestDisk,
           holder: openSessionHolderWorkspaceChannel(channel), helperPath });
         const registry = createScmBackendRegistry([]);
         const updated = 'change from the controller Session';
-        const workers: Promise<void>[] = [];
         try {
           const baseline = await scanWorkspaceManifest({ workspaceRoot: targetPath, scmRegistry: registry });
           const stagedPath = join(targetPath, 'content.txt');
@@ -2260,26 +2259,15 @@ describe('Project Open RPC', () => {
             sessionId, returnId: preview.returnId, paths: ['content.txt'], activeServerDir: fixture,
             withManagedTarget: async (selected, apply) => {
               expect(selected).toEqual(managedAddress);
-              await runManagedWorkspaceReturnTarget({ rootPath: guestDisk, operationId: preview.returnId,
-                signal: context.signal, apply, target: {
-                  home: fixture, ensureWorkspaceRuntime: async () => ({ binaryPath: '/guest/happier' }),
-                  openChannel: (argv, signal) => {
-                    const input = new PassThrough(), output = new PassThrough();
-                    const stream = Duplex.from({ readable: output, writable: input });
-                    const worker = runWorkspaceEffectWorker([], { input, output, signal,
-                      currentDirectory: () => argv[4]! }).finally(() => output.end());
-                    workers.push(worker);
-                    void worker.catch(error => stream.destroy(error));
-                    return stream;
-                  },
-                } });
+              await runManagedWorkspaceReturnTarget({ source: guestSource, rootPath: selected.rootPath,
+                signal: context.signal, assertCurrentAuthority: async () => {}, apply });
             },
           }))).resolves.toEqual({ appliedPaths: ['content.txt'], conflicts: [] });
           await expect(readFile(join(guestDisk, 'content.txt'), 'utf8')).resolves.toBe(updated);
           await expect(readFile(join(root, 'content.txt'), 'utf8')).resolves.toBe('controller Source bytes');
         } finally {
           holder.stdin.end();
-          await Promise.all([holderFinished, ...workers]);
+          await holderFinished;
         }
       }
     } finally { await sync.shutdown(); await rm(fixture, { recursive: true, force: true }); }

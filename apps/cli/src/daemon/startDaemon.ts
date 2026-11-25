@@ -4287,7 +4287,6 @@ export async function startDaemon(
               localMachineId: registeredMachineId,
               releaseChannel: configuration.publicReleaseRing,
               credentials,
-              openManagedProjectWorkspace,
               openManagedWorkspaceTarget: ({ workspace, relationshipId, requesterAccountId, lifetime }) =>
                 managedMachinePolicyAdapter.openWorkspaceSyncTarget({ managedId: workspace.managedId,
                   workspace, relationshipId, requesterAccountId, lifetime,

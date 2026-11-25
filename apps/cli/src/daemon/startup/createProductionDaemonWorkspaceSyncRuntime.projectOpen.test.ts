@@ -32,6 +32,7 @@ import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requ
 import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createPlainProjectAccountRefRow, createProjectAccountRowsHttpBoundary, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import { readProjectAccountRows, withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
+import { registerManagedWorkspaceTarget } from '@/daemon/sessions/sessionTargetWorkspaces';
 import { openProject } from '@/workspaces/activation/openProject';
 import { createStartedProductionDaemonWorkspaceSyncRuntime as createProductionDaemonWorkspaceSyncRuntime } from './createProductionDaemonWorkspaceSyncRuntime.testkit';
 import { acquireWorkspaceSyncTestScmRuntime, createWorkspaceSyncNativeProcessTestBoundary } from './createProductionDaemonWorkspaceSyncRuntime.testkit';
@@ -278,7 +279,7 @@ it.each(['workspace', 'admitted Source', 'plain folder with external hosting'] a
   expect(native.commands.some(command => command.t === 'terminate')).toBe(true);
 });
 
-it('uses the fresh Apply requester’s exact workspace row before opening the original guest', async () => {
+it('requires the current Apply requester’s exact workspace row and retained holder', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'managed-return-custody-'));
   onTestFinished(() => rm(directory, { recursive: true, force: true }));
   const serverId = 'srv_return_custody';
@@ -313,15 +314,9 @@ it('uses the fresh Apply requester’s exact workspace row before opening the or
   });
   onTestFinished(() => { get.mockRestore(); post.mockRestore(); });
   const native = createWorkspaceSyncNativeProcessTestBoundary();
-  const opened: Array<{ workspace: typeof workspace; requesterAccountId: string }> = [];
-  const transportUnavailable = Object.assign(new Error('Fixture transport stopped at guest open'), { code: 'fixture_native_not_connected' });
   const runtime = await createProductionDaemonWorkspaceSyncRuntime({ happyHomeDir: directory,
     activeServerDir: join(directory, 'server'), activeServerId: serverId, localMachineId: controller.machineId,
     releaseChannel: 'publicdev', credentials: installed,
-    openManagedProjectWorkspace: async request => {
-      opened.push({ workspace: request.workspace, requesterAccountId: request.requesterAccountId });
-      throw transportUnavailable;
-    },
   }, { ...native.factories, getProjectSnapshot: () => null, subscribeProjectSnapshot: () => () => {},
     resolveRootOwnershipDirectory: () => join(directory, 'locks') });
   onTestFinished(() => runtime.stop());
@@ -343,12 +338,27 @@ it('uses the fresh Apply requester’s exact workspace row before opening the or
   } satisfies import('@/api/rpc/types').RpcHandlerContext;
   const apply = runtime.workspaceSync.withManagedReturnTarget;
   if (!apply || workspace.kind !== 'managed') throw new Error('Managed Return Apply must be installed');
-  await expect(apply(context, workspace, async () => {})).rejects.toMatchObject({ code: 'workspace_target_unavailable' });
+  const lifetime = new AbortController();
+  onTestFinished(() => lifetime.abort());
+  const register = (requesterAccountId: string, signal = lifetime.signal) => registerManagedWorkspaceTarget({
+    workspace, requesterAccountId, target: { lifetime: signal, holderPath: 'holder', helperPath: 'helper',
+      openChannel: () => { throw new Error('No guest channel is needed when the reviewed selection is empty'); } },
+  });
+  register('owner');
+  const use = vi.fn(async () => {});
+  await expect(apply(context, workspace, use)).rejects.toMatchObject({ code: 'workspace_target_unavailable' });
   memberRows = [createPlainProjectAccountRefRow({ ...ref, controller: { ...controller, installationId: 'replaced-installation' } })];
-  await expect(apply(context, workspace, async () => {})).rejects.toMatchObject({ code: 'workspace_target_unavailable' });
-  expect(opened).toEqual([]);
+  register('member');
+  await expect(apply(context, workspace, use)).rejects.toMatchObject({ code: 'workspace_target_unavailable' });
+  expect(use).not.toHaveBeenCalled();
   memberRows = [row];
-  await expect(apply(context, workspace, async () => {})).rejects.toBe(transportUnavailable);
-  expect(opened).toEqual([{ workspace, requesterAccountId: 'member' }]);
-  expect(rowReaders).toEqual(Array(3).fill(`Bearer ${member.token}`));
+  lifetime.abort();
+  await expect(apply(context, workspace, use)).rejects.toMatchObject({ code: 'workspace_target_unavailable' });
+  expect(use).not.toHaveBeenCalled();
+  const replacement = new AbortController();
+  onTestFinished(() => replacement.abort());
+  register('member', replacement.signal);
+  await expect(apply(context, workspace, use)).resolves.toBeUndefined();
+  expect(use).toHaveBeenCalledOnce();
+  expect(rowReaders).toEqual(Array(4).fill(`Bearer ${member.token}`));
 });

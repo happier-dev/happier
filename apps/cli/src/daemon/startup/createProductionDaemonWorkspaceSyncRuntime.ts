@@ -26,13 +26,12 @@ import { isDeepStrictEqual } from 'node:util';
 import type { WorkspaceManifest } from '@happier-dev/protocol/workspaces/manifestSchema';
 import { captureManagedWorkspaceReturnStage } from '@/workspaces/sync/managedWorkspaceReturn';
 import { runManagedWorkspaceReturnTarget } from '@/workspaces/sync/managedWorkspaceReturnTarget';
-import { workspaceTargetUnavailable } from '@/workspaces/source/workspaceSource';
+import { selectWorkspaceSource, workspaceTargetUnavailable } from '@/workspaces/source/workspaceSource';
 import { readAcceptedManagedWorkspaceRefFromRows } from '@/workspaces/acceptedManagedWorkspace';
-import type { ManagedProjectWorkspaceTargetRequest, ManagedSessionTarget } from '@/machines/managed/acquire';
 import { reconcileManagedWorkspacePostMaterialization } from '@/scm/workspace/workspacePostMaterialization';
 import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
 import { runWithHolderWorkspaceSource } from '@/workspaces/source/holderWorkspaceSource';
-import { resolveSessionTargetWorkspaceTransfer } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { resolveSessionTargetWorkspace, resolveSessionTargetWorkspaceTransfer } from '@/daemon/sessions/sessionTargetWorkspaces';
 
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
@@ -576,8 +575,6 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     privateCheckout?: PrivateProjectCheckoutOpenRuntime;
     openManagedWorkspaceTarget?(request: Readonly<{ workspace: ManagedWorkspaceRefV2; relationshipId: string;
       requesterAccountId: string; lifetime: AbortSignal }>): Promise<ManagedWorkspaceSyncTarget>;
-    openManagedProjectWorkspace?: (request: Omit<ManagedProjectWorkspaceTargetRequest, 'holder'>) =>
-      Promise<Pick<ManagedSessionTarget, 'home' | 'ensureWorkspaceRuntime' | 'openChannel'>>;
     agentIsolation?: HostAgentIsolationLaunchContext;
     requesterMachineAdmissionBoundary?: RequesterSessionMachineAdmissionBoundary;
     requestDirectTransferPayloadFile?: (input: Readonly<{
@@ -3381,22 +3378,21 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       const requester = readRequesterAccountActionContext(context.callerInputAuthorization);
       const binding = context.callerInputAuthorization?.binding;
       const accountId = context.machineAdmission?.actorAccountId;
-      const openTarget = input.openManagedProjectWorkspace;
-      if (!requester || !binding || !accountId || binding.accountId !== accountId || !openTarget) {
-        throw workspaceTargetUnavailable();
-      }
-      const lifetime = new AbortController();
-      const signal = AbortSignal.any([context.signal, lifetime.signal]);
-      try {
-        const accepted = await readAcceptedManagedWorkspaceRefFromRows({ credentials: requester.credentials,
-          sessionCustody: { serverId: semanticServerId, accountId, serverHttpBaseUrl: requester.serverHttpBaseUrl,
-            isCurrent: requester.isCustodyCurrent ?? requester.isCurrent },
-          serverId: semanticServerId, signal,
-        }, requester.serverHttpBaseUrl, workspace);
-        if (!accepted) throw workspaceTargetUnavailable();
-        const target = await openTarget({ workspace, requesterAccountId: accountId, lifetime: signal });
-        await runManagedWorkspaceReturnTarget({ target, rootPath: workspace.rootPath, operationId: binding.requestId, signal, apply });
-      } finally { lifetime.abort(); }
+      if (!requester || !binding || !accountId || binding.accountId !== accountId) throw workspaceTargetUnavailable();
+      const { signal } = context;
+      const accepted = await readAcceptedManagedWorkspaceRefFromRows({ credentials: requester.credentials,
+        sessionCustody: { serverId: semanticServerId, accountId, serverHttpBaseUrl: requester.serverHttpBaseUrl,
+          isCurrent: requester.isCustodyCurrent ?? requester.isCurrent },
+        serverId: semanticServerId, signal,
+      }, requester.serverHttpBaseUrl, workspace);
+      if (!accepted) throw workspaceTargetUnavailable();
+      const placement = { workspace, requesterAccountId: accountId };
+      const source = await selectWorkspaceSource(placement, resolveSessionTargetWorkspace);
+      await runManagedWorkspaceReturnTarget({ source, rootPath: workspace.rootPath, signal, apply,
+        assertCurrentAuthority: async () => {
+          if (resolveSessionTargetWorkspace(placement) !== source) throw workspaceTargetUnavailable();
+        },
+      });
     },
     materializeManagedProjectTarget,
     captureHandoffWorkspace,
