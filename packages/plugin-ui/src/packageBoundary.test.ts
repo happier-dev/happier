@@ -439,6 +439,8 @@ describe('author package boundary', () => {
         ] : []),
         { from: './index.public.js', names: '*', typeOnly: false },
         ...(specifier === './presentation' ? [
+          { from: './layout/PageHeader.js', names: ['HappierPageHeaderInlineTitleContext'], typeOnly: false },
+          { from: './interaction/textActionEdge.js', names: ['HappierTextActionEdgeContext'], typeOnly: false },
           { from: './media/gestureMapping.js', names: ['fillViewTransform'], typeOnly: false },
           { from: './layout/PageCountLine.js', names: ['formatHappierPageCount', 'HappierPageCountLine', 'HappierPageCountLineTextRender', 'HappierPageCountPart', 'HappierPageCountTone'], typeOnly: false },
           { from: './collection/CollectionList.js', names: ['HappierListRowFollowedContext', 'HappierListRowPrecedesSelectedContext', 'HappierListRowRule', 'resolveHappierCollectionRowTextStartPx', 'resolveHappierListRowRuleShown'], typeOnly: false },
@@ -448,6 +450,8 @@ describe('author package boundary', () => {
           { from: './layout/Surface.js', names: ['HappierMaterialPlaneTransfer', 'useContainingHappierMaterialPlane'], typeOnly: false },
           { from: './collection/semantics.js', names: ['resolveHappierRovingTabStop'], typeOnly: false },
           { from: './content/CollapsibleBody.js', names: ['HappierCollapsibleBody', 'HappierCollapsibleBodyActionProps'], typeOnly: false },
+          { from: './automations/AutomationsSection.js', names: ['HappierAutomationsSection', 'HappierAutomationsSectionBindings'], typeOnly: false },
+          { from: './automations/AutomationSubjectPicker.js', names: ['HappierAutomationSubjectPicker', 'HappierAutomationSubjectPickerRow'], typeOnly: false },
         ] : []),
       ]);
     }
