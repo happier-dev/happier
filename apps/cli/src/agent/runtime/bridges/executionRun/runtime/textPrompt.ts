@@ -9,6 +9,7 @@ import type {
 
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import { ExecutionRunErrorSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 
@@ -55,7 +56,7 @@ function projectUnsupportedRunFailure(message?: string) {
 function readCanonicalTextResult(result: ActionExecuteResult): string {
   if (!result.ok) {
     if (result.errorCode === 'unsupported') throw projectUnsupportedRunFailure(result.error);
-    throw stableFailure(result.errorCode);
+    throw createActionExecuteFailureError(result);
   }
 
   const started = readRecord(result.result);
@@ -66,9 +67,11 @@ function readCanonicalTextResult(result: ActionExecuteResult): string {
   }
   const observation = readRecord(wait.result);
   if (wait.status !== 'succeeded') {
-    const failure = readRecord(readRecord(observation.run).error);
-    if (failure.code === 'unsupported') throw projectUnsupportedRunFailure(normalizeNonEmptyString(failure.message));
-    throw stableFailure('execution_run_failed');
+    const failure = ExecutionRunErrorSchema.safeParse(readRecord(observation.run).error);
+    if (!failure.success) throw stableFailure('execution_run_failed');
+    const { code, message, inputDispatch, details, runtimeIssueV1, uxDiagnostic } = failure.data;
+    if (code === 'unsupported') throw projectUnsupportedRunFailure(message);
+    throw Object.assign(new Error(message ?? code), { code, inputDispatch, details, runtimeIssueV1, uxDiagnostic });
   }
 
   const output = observation.latestToolResult;
