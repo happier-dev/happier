@@ -451,10 +451,10 @@ describe('shared Account workflow run owner', () => {
     });
 
   it.each([
-    { outcome: 'refused', scope: 'repository', title: 'Code review · Repository' },
-    { outcome: 'unresolved', scope: 'repository', title: 'Code review · Repository' },
-    { outcome: 'accepted', scope: 'repository', title: 'Code review · Repository' },
-    { outcome: 'accepted', scope: 'changes', title: 'Code review · Changes' },
+    { outcome: 'refused', scope: 'repository', title: '/repo' },
+    { outcome: 'unresolved', scope: 'repository', title: '/repo' },
+    { outcome: 'accepted', scope: 'repository', title: '/repo' },
+    { outcome: 'accepted', scope: 'changes', title: 'Working tree changes' },
   ] as const)('settles a composed Review only when its Workflow admission is definitely $outcome ($scope)', async ({ outcome, scope, title }) => {
     const records = createInMemoryReviewRecordPortV1();
     let workflowWrites = 0;
@@ -533,7 +533,7 @@ describe('shared Account workflow run owner', () => {
       expect(await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} }))
         .toMatchObject({ metadataByRunId: { [admitted.run.id]: { kind: 'available', value: { title } } } });
       expect(storageOperations).toEqual(['list']);
-      expect(record?.title).toBe(scope === 'repository' ? '/repo' : 'Working tree changes');
+      expect(record?.title).toBe(title);
     }
   });
 

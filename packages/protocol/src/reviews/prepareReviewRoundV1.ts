@@ -78,7 +78,7 @@ type ReviewRoundPreparationInputV1 = Omit<ReviewPrepareRoundInputV1, 'reviewRoun
 );
 
 /** The admitted comparison names a new Review; later rounds retain its stored title. */
-function preparedReviewTitle(input: ReviewStartInput, source?: ScmComparisonSource): string {
+export function preparedReviewTitleV1(input: ReviewStartInput, source?: ScmComparisonSource): string {
   const pullRequest = input.scmPullRequestReviewScope?.pullRequest;
   const knownTitle = readRecord(pullRequest).title;
   if (typeof knownTitle === 'string' && knownTitle.trim()) return knownTitle.trim();
@@ -127,10 +127,10 @@ export async function prepareReviewRoundV1(input: ReviewRoundPreparationInputV1,
   const roster = reviewReviewerIdsForStartV1(input.reviewInput);
   const retried = isNewRound ? readRetriedReviewerIds(input.previousRoundContext, roster) : undefined;
   const reviewRound = 'reviewStart' in input ? await deps.reviewRecords.start({ ...input.reviewStart,
-    title: preparedReviewTitle(input.reviewInput, comparison?.source ?? comparisonCapture?.source),
+    title: preparedReviewTitleV1(input.reviewInput, comparison?.source ?? comparisonCapture?.source),
     startedAt: deps.startedAt, signal: deps.signal,
   }) : isNewRound ? await deps.reviewRecords.start({
-    reviewId: input.reviewRound.reviewId, title: preparedReviewTitle(input.reviewInput, comparison?.source ?? comparisonCapture?.source),
+    reviewId: input.reviewRound.reviewId, title: preparedReviewTitleV1(input.reviewInput, comparison?.source ?? comparisonCapture?.source),
     subjectKind: comparison ? 'comparison' : 'repository', sourceKind: deps.sourceKind ?? 'workflow',
     reviewerIds: retried ?? roster,
     reviewerDisplayNames: reviewReviewerDisplayNamesForStartV1(input.reviewInput),

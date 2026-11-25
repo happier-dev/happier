@@ -28,7 +28,7 @@ import { createActionExecuteFailureError, isActionOutcomeUnknownErrorCodeV1, pro
 import { captureReviewComparisonV1, dispatchReviewRoundAction, resolveReviewComparisonTargetV1 } from './rounds.js';
 import type { ScmComparison } from '../../../scm/comparison.js';
 import { ScmStatusSnapshotResponseSchema } from '../../../scm/index.js';
-import { prepareReviewRoundV1, resolveReviewComparisonSourceV1 } from '../../../reviews/prepareReviewRoundV1.js';
+import { prepareReviewRoundV1, preparedReviewTitleV1, resolveReviewComparisonSourceV1 } from '../../../reviews/prepareReviewRoundV1.js';
 import { collectReviewRoundOutcomes, dispatchReviewSettlementAction } from './settlement.js';
 import { invokeHostReviewedChildV1 } from '../deploymentRoleChild.js';
 import type { JsonObject } from '../../../json/strictJsonValue.js';
@@ -36,15 +36,8 @@ import { SessionStatusResultSchema } from '../../../sessions/control/contract.js
 import { AgentsBackendsListOutputSchema } from '../../agentBackendInventory.js';
 import { buildQualifiedPluginContributionKey } from '../../../plugins/contributionIdentity.js';
 import { reviewStartExecutionRunCompletion } from '../../specs/executionRunCompletion.js';
-import type { ReviewSubjectKindV1 } from '../../../reviews/reviewArtifactV1.js';
 
 export { reviewScopeForInput } from '../../../reviews/reviewEngines.js';
-
-const REVIEW_SUBJECT_TITLES = {
-  comparison: 'Changes',
-  repository: 'Repository',
-  pull_request: 'Pull request',
-} as const satisfies Record<ReviewSubjectKindV1, string>;
 
 async function readReviewTranscriptInput(sourceSession: NonNullable<ReviewStartInput['sourceSession']>,
   execute: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>,
@@ -433,7 +426,6 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             return [key, { displayName: item?.label, agentId }] as const;
           })));
           const composedRunId = globalThis.crypto.randomUUID();
-          const reviewKind = 'Code review';
           const { reviewRound } = await prepareReviewRoundV1({ reviewInput,
             ...(initialComparison ? { comparison: initialComparison } : {}),
             ...(comparisonCapture ? { comparisonCapture: comparisonCapture.input } : {}),
@@ -485,7 +477,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             parent: { actionId, input: parsed.data as JsonObject }, context: workflowContext,
             child: { action: 'workflow.run.start', role: 'workflow.run.start', input: {
               runId: composedRunId, source: { kind: 'inline', definition: built.definition }, inputs: built.inputs,
-              metadata: { title: `${reviewKind} · ${REVIEW_SUBJECT_TITLES[subjectKind]}` },
+              metadata: { title: preparedReviewTitleV1(reviewInput, initialComparison?.source ?? comparisonCapture?.input.source) },
             } as JsonObject },
             execute: (input, context, childId) => executeHostChild(childId, input, context),
           });
