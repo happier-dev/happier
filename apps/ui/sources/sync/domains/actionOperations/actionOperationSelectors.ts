@@ -1,4 +1,4 @@
-import { isMachineSetupOperationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isMachineSetupOperationActionIdV1, MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readActionOperationTaskQuestionV1, type ActionOperationSudoQuestionV1,
     type ActionOperationTaskQuestionV1 } from '@happier-dev/protocol/actions/operations/taskQuestionV1';
@@ -217,6 +217,8 @@ function isUnseen(
     if (!isActionOperationTerminal(operation.snapshot.state)) return false;
     const key = actionOperationAddressKey({ serverId: operation.serverId, operationId: operation.snapshot.operationId });
     const seen = state.seenAtByOperationKey.get(key);
+    // Setup attempts have distinct operation IDs. A correction to an acknowledged receipt stays acknowledged.
+    if (seen && operation.snapshot.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1) return false;
     return seen === undefined || operation.snapshot.revision > seen.revision;
 }
 

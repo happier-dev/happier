@@ -1474,12 +1474,6 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
     // This coordinator captures one admitted Account credential; it never follows ambient Account changes.
     isCurrent: () => params.execution.credentials.token === params.token,
   });
-  const onCommittedTransition = params.onCommittedTransition
-    ?? createWorkflowRunCommittedNotificationHandler({
-      secretSources: params.execution.secretSources,
-      expoPushSender: createWorkflowRunPushNotificationClient(params.token),
-      followSource: { token: params.token, serverHttpBaseUrl: resolveServerHttpBaseUrl() },
-    });
   const onReviewEntered = params.onReviewEntered ?? createWorkflowRunReviewEntryNotificationHandler({
     secretSources: params.execution.secretSources,
     expoPushSender: createWorkflowRunPushNotificationClient(params.token),
@@ -2545,7 +2539,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         }
       }
       durableStore.applyParentTransition(committed, rootTerminal);
-      await onCommittedTransition({ run: committed, result });
+      await params.onCommittedTransition?.({ run: committed, result });
       return result;
     }
   };

@@ -44,7 +44,8 @@ import { ManagedControllerV1Schema } from '../../machines/managed/managedMachine
 import { ManagedResourceV1Schema, MachineProvisionerNativeCauseV1Schema, ManagedGuestHomeNetworkHintV1Schema } from '../../machines/managed/providerFactsV1.js';
 import { MachineAdministratorUsernameV1Schema } from '../../machines/adminAccessV1.js';
 import { ActionApprovalRequestCreatedResultSchema, ActionOperationCredentialUseV1Schema, ActionFailureCauseV1Schema,
-  ActionExecuteFailureSchema, readActionFailureCauseV1, UNKNOWN_ACTION_FAILURE_CAUSE_V1, type ActionExecuteResult } from '../actionExecutionResult.js';
+  ActionExecuteFailureSchema, isActionOutcomeUnknownErrorCodeV1, readActionFailureCauseV1,
+  UNKNOWN_ACTION_FAILURE_CAUSE_V1, type ActionExecuteResult } from '../actionExecutionResult.js';
 import { WorkspaceExecutionConfigAddressV1Schema } from '../../workspaces/projectWorkerPreferencesV1.js';
 import { ActionOperationIdentifierV1Schema, ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1 } from './identifierV1.js';
 import { ActionOperationProgressPhaseV1Schema } from './progressV1.js';
@@ -915,6 +916,11 @@ export function canAdvanceActionOperationSnapshotV1(current: ActionOperationSnap
   if (incoming.operationId !== current.operationId || incoming.actionId !== current.actionId
     || incoming.scope.accountId !== current.scope.accountId || incoming.scope.machineId !== current.scope.machineId
     || incoming.scope.sessionId !== current.scope.sessionId || incoming.revision <= current.revision) return false;
+  if (current.state === 'failed' && current.error?.errorCode === 'action_outcome_unknown'
+    && !canResumeDeploymentTeardownOperationV1(current)) {
+    return incoming.state === 'succeeded' || (incoming.state === 'failed' && incoming.error !== undefined
+      && !isActionOutcomeUnknownErrorCodeV1(incoming.error.errorCode));
+  }
   if (['succeeded', 'failed', 'cancelled'].includes(current.state) && incoming.state !== current.state
     && !(canResumeDeploymentTeardownOperationV1(current) && incoming.state !== 'accepted')) return false;
   return !(current.state === 'running' && incoming.state === 'accepted');

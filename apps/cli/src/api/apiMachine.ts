@@ -1289,6 +1289,10 @@ export class ApiMachineClient {
         return this.actionOperationRuntime.store.findByRequestIdentity(...args);
     }
 
+    settleCombinedSetupRun(run: Parameters<HostActionOperationRuntime['store']['settleCombinedSetupRun']>[0]): void {
+        this.actionOperationRuntime.store.settleCombinedSetupRun(run);
+    }
+
     runActionOperation(request: Parameters<HostActionOperationRuntime['runActionOperation']>[0]) {
         return runHostActionOperation(observed => this.observeActionExecution(observed), request);
     }

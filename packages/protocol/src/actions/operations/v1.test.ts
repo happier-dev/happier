@@ -29,6 +29,7 @@ import {
   ActionOperationListV2RequestSchema,
   ActionOperationListV1ResponseSchema,
   ActionOperationSnapshotPushV1Schema,
+  canAdvanceActionOperationSnapshotV1,
   projectActionOperationSnapshotForV1Reader,
   readActionOperationTerminalResultV1,
   projectActionOperationListSnapshotV1,
@@ -48,6 +49,30 @@ const baseSnapshot = {
 } as const;
 
 describe('Action operation v1 contract', () => {
+  it('accepts a known outcome only at a newer revision of the same uncertain operation', () => {
+    const link = { operationId: baseSnapshot.operationId, runId: 'setup-run' };
+    const base = { ...baseSnapshot, actionId: 'machines.setup.apply', startedAt: 110, settledAt: 120, result: link };
+    const unknown = ActionOperationSnapshotV1Schema.parse({ ...base, revision: 3, state: 'failed',
+      error: { errorCode: 'action_outcome_unknown', error: 'Outcome unknown' } });
+    const succeeded = ActionOperationSnapshotV1Schema.parse({ ...base, revision: 4, state: 'succeeded' });
+    const failed = ActionOperationSnapshotV1Schema.parse({ ...base, revision: 4, state: 'failed',
+      error: { errorCode: 'platform_unsupported', error: 'Platform unsupported' } });
+    expect(canAdvanceActionOperationSnapshotV1(unknown, failed)).toBe(true);
+    for (const revision of [2, 3]) {
+      expect(canAdvanceActionOperationSnapshotV1(unknown, { ...succeeded, revision })).toBe(false);
+    }
+    for (const scope of [{ ...base.scope, accountId: 'other-account' }, { ...base.scope, machineId: 'other-machine' },
+      { ...base.scope, sessionId: 'other-session' }]) {
+      expect(canAdvanceActionOperationSnapshotV1(unknown, { ...succeeded, scope })).toBe(false);
+    }
+    for (const state of ['running', 'accepted', 'cancelled'] as const) {
+      expect(canAdvanceActionOperationSnapshotV1(unknown, { ...succeeded, state })).toBe(false);
+      expect(canAdvanceActionOperationSnapshotV1(succeeded, { ...succeeded, state, revision: 5 })).toBe(false);
+    }
+    expect(canAdvanceActionOperationSnapshotV1(succeeded, { ...failed, revision: 5 })).toBe(false);
+    expect(canAdvanceActionOperationSnapshotV1(failed, { ...succeeded, revision: 5 })).toBe(false);
+    expect(canAdvanceActionOperationSnapshotV1(unknown, succeeded)).toBe(true);
+  });
   it('accepts serialized target import diagnostics only on the matching Session handoff refusal', () => {
     const details = { diagnostics: [{ code: 'transcript_identity_changed', details: { pathKind: 'transcript_file' } }] };
     const error = { errorCode: 'target_identity_conflict', error: 'Target import refused', details };

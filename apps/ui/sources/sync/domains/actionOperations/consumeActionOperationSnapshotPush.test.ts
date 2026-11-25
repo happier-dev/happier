@@ -30,6 +30,33 @@ const readSnapshot = (operationId: string) => getActionOperation({
 });
 
 describe('consumeActionOperationSnapshotPush', () => {
+    it.each(['succeeded', 'failed'] as const)('updates an acknowledged uncertain Setup to %s without returning it to Inbox', async state => {
+        const store = createActionOperationStore();
+        const address = { serverId: 'home-1', operationId: snapshot.operationId };
+        const error = { errorCode: 'action_outcome_unknown', error: 'Outcome unknown' };
+        const unknown = ActionOperationSnapshotV1Schema.parse({ ...snapshot, actionId: 'machines.setup.apply',
+            revision: 3, state: 'failed', settledAt: 3, error, result: { operationId: snapshot.operationId, runId: 'setup-run' } });
+        const advanced = ActionOperationSnapshotV1Schema.parse({ ...unknown, revision: 4, state,
+            error: state === 'failed' ? { errorCode: 'platform_unsupported', error: 'Platform unsupported' } : undefined });
+        store.mergeSnapshots({ serverId: address.serverId, snapshots: [unknown], snapshotComplete: true });
+        expect(store.markTerminalSeen(address)).toBe(true);
+        const readSnapshot = vi.fn(async () => ({ kind: 'found' as const, operation: advanced }));
+        const push = async (operation: ActionOperationSnapshotV1) => await consumeActionOperationSnapshotPush({
+            update: { type: 'action-operation-updated', machineId: operation.scope.machineId, content: { t: 'plain', v: operation } },
+            accountEncryptionMode: 'plain', accountId: 'account-1', sourceServerId: address.serverId, store, readSnapshot,
+        });
+
+        await push({ ...advanced, scope: { ...advanced.scope, machineId: 'another-machine' } });
+        expect(readSnapshot).not.toHaveBeenCalled();
+        expect(actionOperationSelectors.selectById(store.getSnapshot(), address)?.snapshot).toEqual(unknown);
+        await push(advanced);
+        await push(advanced);
+        expect(readSnapshot).toHaveBeenCalledTimes(1);
+        expect(actionOperationSelectors.selectById(store.getSnapshot(), address)?.snapshot).toMatchObject({
+            state, revision: 4, result: unknown.result, ...(advanced.error ? { error: advanced.error } : {}),
+        });
+        expect(actionOperationSelectors.selectInbox(store.getSnapshot())).toEqual([]);
+    });
     it.each(['running', 'succeeded'] as const)('retains historical state and scopes a definitive missing read to its live operation (%s)', async state => {
         const store = createActionOperationStore();
         const other = { ...snapshot, operationId: 'other-operation' };

@@ -1644,10 +1644,14 @@ Run address before returning acceptance and saves the terminal snapshot when
 it observes settlement. The replacement daemon opens the existing encrypted
 device-local receipt and can return a saved terminal snapshot without Home.
 If the daemon lost the observer while the receipt was pending, the operation
-reports `action_outcome_unknown` with the linked Run address. The original
-requester transport is held in process memory. Recovery leaves execution with
-the existing Run owner. A daemon that predates combined receipt support skips
-the new file prefix and can still open its existing operation history.
+reports `action_outcome_unknown` with the linked Run address. If the replacement
+daemon sees that exact requester and Machine's Run commit a success or a typed
+failure, it saves the result at a newer operation revision with the same Run
+address. Current readers can merge that newer owner revision. If the daemon
+misses the commit, the uncertain receipt and its Run link remain available.
+The original requester transport is held in process memory. Recovery leaves
+execution with the existing Run owner. A daemon that predates combined receipt
+support skips the new file prefix and can still open its operation history.
 
 A confirmed failed Action interrupts its Run and retains the failed invocation
 for exact retry. Interruption keeps recovery custody pending; the combined Setup

@@ -9,6 +9,7 @@ import type {
   ActionOperationStateV1,
 } from '@happier-dev/protocol/actions';
 import type { ActionOperationListV2Request } from '@happier-dev/protocol/actions/operations/v1';
+import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows';
 
 import type { ActionOperationQueryScope, ActionOperationScope, DeploymentTokenOperationOrigin, ManagedCreationContinuationResult } from './actionOperationTypes';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1, MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -409,6 +410,25 @@ export function createActionOperationStore(options?: Readonly<{
         const { observation: _observation, error: _error, ...running } = current;
         return { ...running, revision: current.revision + 1, result: { operationId, runId } };
       }, true);
+    },
+
+    settleCombinedSetupRun(run: Pick<WorkflowRunSummaryV1, 'id' | 'ownerAccountId' | 'machineId' | 'state' | 'errorCode'>): void {
+      const error = run.state === 'failed' && run.errorCode
+        ? { errorCode: run.errorCode, error: run.errorCode, effectAttempted: true } : undefined;
+      if (run.state !== 'succeeded' && !error) return;
+      for (const [operationId, metadata] of invocationMetadata) {
+        if (metadata.setupRunId !== run.id) continue;
+        const current = snapshots.get(operationId);
+        if (!current || !inScope(current, { accountId: run.ownerAccountId, machineId: run.machineId })
+          || current.state !== 'failed' || current.error?.errorCode !== 'action_outcome_unknown') continue;
+        store.project({
+          ...current,
+          revision: current.revision + 1,
+          settledAt: lifecycleTime(current),
+          state: error ? 'failed' : 'succeeded',
+          error,
+        });
+      }
     },
 
     canRetainSetupRestart: projectOpenReceiptPersistence != null,

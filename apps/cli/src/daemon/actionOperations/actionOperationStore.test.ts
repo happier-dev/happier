@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createActionOperationStore } from './actionOperationStore';
+import { createActionOperationRunner } from './actionOperationRunner';
+import { getActionSpec } from '@happier-dev/protocol/actions';
 import { ActionOperationGetV1ResponseSchema, ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { ActionOperationSnapshotV1Schema as PredecessorActionOperationSnapshotV1Schema } from './testFixtures/predecessorActionOperationV1';
 import { buildDeploymentBackupActionInputV1, DeploymentBackupRunResultV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
@@ -14,6 +16,53 @@ import { prepareProjectOpenReceiptPersistence } from './projectOpenReceiptPersis
 const ACCOUNT_SCOPE = { accountId: 'account-1', machineId: 'machine-1' } as const;
 
 describe('action operation store', () => {
+  it.each(['succeeded', 'failed'] as const)('settles a hydrated Setup receipt from its exact committed Run (%s)', async state => {
+    const directory = await mkdtemp(join(tmpdir(), 'setup-run-receipt-'));
+    try {
+      const open = () => prepareProjectOpenReceiptPersistence({ directory: join(directory, 'receipts'),
+        keyPath: join(directory, 'key.json'), accountId: ACCOUNT_SCOPE.accountId, machineId: ACCOUNT_SCOPE.machineId });
+      const setup = getActionSpec('machines.setup.apply');
+      const reader = { ...ACCOUNT_SCOPE, accountId: 'another-account' };
+      const link = { operationId: 'setup-operation', runId: 'setup-run' };
+      const request = { actionId: setup.id, scope: ACCOUNT_SCOPE, requestId: 'setup-request', input: {},
+        execute: vi.fn(async () => ({ ok: true as const, result: link })) };
+      const first = createActionOperationStore({ projectOpenReceiptPersistence: await open(), now: () => 100 });
+      first.create({ ...request, operationId: link.operationId, title: setup.title, inputIdentity: '{}', cancellation: 'unsupported' });
+      first.markRunning(link.operationId);
+      first.retainCombinedSetupRun(link.operationId, link.runId);
+      const published = vi.fn();
+      const restored = createActionOperationStore({ projectOpenReceiptPersistence: await open(), now: () => 200, onSnapshot: published });
+      const replay = createActionOperationRunner({ store: restored, resolveAction: () => ({
+        actionId: setup.id, title: setup.title, operation: setup.operation,
+      }) });
+      const unknown = restored.get(ACCOUNT_SCOPE, link.operationId)!;
+      expect(unknown).toMatchObject({ state: 'failed', result: link, error: { errorCode: 'action_outcome_unknown' } });
+      await expect(replay.observe(request)).resolves.toMatchObject({ ok: false, errorCode: 'action_outcome_unknown' });
+      const commit = { id: link.runId, ownerAccountId: ACCOUNT_SCOPE.accountId, machineId: ACCOUNT_SCOPE.machineId, state,
+        ...(state === 'failed' ? { errorCode: 'platform_unsupported' } : {}) };
+      const success = { ...unknown, revision: unknown.revision + 1, state: 'succeeded' as const, error: undefined };
+      restored.project({ ...success, scope: { ...ACCOUNT_SCOPE, machineId: 'another-machine' } });
+      restored.project({ ...success, revision: unknown.revision });
+      restored.settleCombinedSetupRun({ ...commit, id: 'another-run' });
+      restored.settleCombinedSetupRun({ ...commit, ownerAccountId: reader.accountId });
+      restored.settleCombinedSetupRun({ ...commit, machineId: 'another-machine' });
+      expect(restored.get(ACCOUNT_SCOPE, link.operationId)).toEqual(unknown);
+      expect(published).not.toHaveBeenCalled();
+      restored.settleCombinedSetupRun(commit);
+      restored.settleCombinedSetupRun(commit);
+      const advanced = restored.get(ACCOUNT_SCOPE, link.operationId);
+      expect(advanced).toMatchObject({ state, result: link, revision: unknown.revision + 1 });
+      expect(restored.get(reader, link.operationId)).toBeNull();
+      expect(published).toHaveBeenCalledTimes(1);
+      expect(createActionOperationStore({ projectOpenReceiptPersistence: await open(), now: () => 201 })
+        .get(ACCOUNT_SCOPE, link.operationId)).toEqual(advanced);
+      await expect(replay.observe(request)).resolves.toMatchObject(state === 'succeeded'
+        ? { ok: true, result: link } : { ok: false, errorCode: 'platform_unsupported' });
+      expect(request.execute).not.toHaveBeenCalled();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it('distinguishes an unopened receipt store from a first Backup receipt write failure', () => {
     const createBackup = (store: ReturnType<typeof createActionOperationStore>) => store.create({
       operationId: 'backup', scope: ACCOUNT_SCOPE, actionId: 'deployments.backups.run',

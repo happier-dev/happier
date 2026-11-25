@@ -66,7 +66,7 @@ import {
 } from './recovery';
 import { createWorkflowInvocationRecoveryObserver, resolveWorkflowAuthorizedSession, resolveWorkflowSessionConversation } from './invocationRecoveryObserver';
 import { createWorkflowRunStorageClient } from './workflowRunStorageClient';
-import { createWorkflowRunReviewEntryNotificationHandler } from '@/notifications/activity/dispatchWorkflowRunUpdateNotification';
+import { createWorkflowRunCommittedNotificationHandler, createWorkflowRunReviewEntryNotificationHandler } from '@/notifications/activity/dispatchWorkflowRunUpdateNotification';
 import { WorkflowSessionCompositionError } from './sessionStepExecutor';
 import { deriveWorkflowSessionCreationTag } from './workflowSessionStartup';
 import { lookupSessionsByTags } from '@/session/transport/http/sessionsHttp';
@@ -285,6 +285,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
     isAcceptedAuthorizationCurrent,
     createCoordinatorForMachine(input: Readonly<{
       machineId: string;
+      onCommittedTransition?: Parameters<typeof createProductionWorkflowRunCoordinator>[0]['onCommittedTransition'];
       sessionStartup?: import('./sessionStepExecutor').WorkflowSessionStartup;
       postWorkflowMessage?: import('./production').WorkflowProductionExecutionDeps['postWorkflowMessage'];
       requesterWorkAttributionV1?: RequesterWorkAttributionV1;
@@ -412,11 +413,20 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
         });
       };
       const openTarget = input.openManagedProjectWorkspace;
+      const notifyCommittedTransition = createWorkflowRunCommittedNotificationHandler({
+        secretSources: params.secretSources,
+        expoPushSender: createWorkflowRunPushNotificationClient(params.credentials.token),
+        followSource: { token: params.credentials.token, serverHttpBaseUrl: resolveServerHttpBaseUrl() },
+      });
       return createProductionWorkflowRunCoordinator({
         token: params.credentials.token,
         ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
         accountId: params.accountId,
         machineId: input.machineId,
+        onCommittedTransition: async transition => {
+          await input.onCommittedTransition?.(transition);
+          await notifyCommittedTransition(transition);
+        },
         resolveAccountEncryption: async (signal) => await resolveAvailableEncryption(params.credentials, signal),
         isAcceptedAuthorizationCurrent,
         ...(admissionDrain ? { waitForNewWorkAdmission: (signal?: AbortSignal) =>

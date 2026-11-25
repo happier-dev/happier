@@ -293,6 +293,7 @@ export function createDaemonMachineBootstrapRuntime(
     externalActionIngressOwner?: ExternalActionIngressOwner;
     createWorkflowRunCoordinatorForMachine?: (input: Readonly<{
       machineId: string;
+      onCommittedTransition?: Parameters<typeof createProductionWorkflowRunCoordinator>[0]['onCommittedTransition'];
       requesterCredentials?: StoredCredentials;
       requesterWorkAttributionV1?: RequesterWorkAttributionV1;
       savedSecretOperationContext?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
@@ -712,6 +713,10 @@ export function createDaemonMachineBootstrapRuntime(
               fromRunClaim: true, machineAdmission: claim.machineAdmission });
             const coordinate = await params.createWorkflowRunCoordinatorForMachine!({
               machineId: runtimeMachineId,
+              onCommittedTransition: ({ run }) => {
+                try { automationApiMachine.settleCombinedSetupRun(run); }
+                catch { logger.warnLocalFile('[Workflow] Could not save the committed Setup receipt', { runId: run.id }); }
+              },
               requesterCredentials: selectedCredentials,
               savedSecretOperationContext,
               ...(selectedAttribution ? { requesterWorkAttributionV1: selectedAttribution } : {}),
