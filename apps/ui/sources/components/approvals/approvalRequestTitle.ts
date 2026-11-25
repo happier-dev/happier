@@ -6,6 +6,8 @@ import { readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/ac
 import type { ParsedApprovalArtifactBodyV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 
 import { t } from '@/text';
+import { useEnvironmentName } from '@/components/projects/deployments/useEnvironmentName';
+import { readPluginEventTriggerApprovalEnvironmentId, readPluginEventTriggerApprovalSummary } from './approvalFieldValues';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { buildApprovalPreviewSummary } from '@happier-dev/protocol/actions/actionExecutor';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -25,6 +27,7 @@ export type ApprovalRequestTitleInput = Pick<ActionApprovalPresentationInput, 'e
     status?: ApprovalRequest['status'];
     preview?: unknown;
     subject?: string | null;
+    triggerEnvironmentName?: string | null;
     /** Session ids the request carries; a legacy " — <id>" suffix naming one of them is dropped. */
     sessionIds?: ReadonlyArray<string | null | undefined>;
 }>;
@@ -77,7 +80,8 @@ export function resolveApprovalRequestTitle(
     ? readPluginInstallApprovalPendingReview(input.preview)?.review.displayName.trim()
       || (generated ? readPluginInstallSourceName(input.actionArgs) : null)
     : WidgetLayoutFragmentActionIdV1Schema.safeParse(actionId).success
-      ? readWidgetLayoutFragmentApprovalNameV1(input.actionArgs, input.preview) : null;
+      ? readWidgetLayoutFragmentApprovalNameV1(input.actionArgs, input.preview)
+      : generated && !subject ? readPluginEventTriggerApprovalSummary(input, input.triggerEnvironmentName) : null;
   const title = subjectName && actionTitle ? `${actionTitle} · ${subjectName}` :
     generated
       ? (presentation.title ?? actionTitle ?? t('inbox.work.rows.approvalUntitled'))
@@ -154,5 +158,8 @@ export function useApprovalRequestTitle(input: ApprovalRequestTitleInput, server
   const reference = readActionApprovalSubject({ ...input, actionId: input.actionId ?? '' });
   const reading = useApprovalReferenceReading(reference, reference?.id ?? '', serverId);
   // A subject still being read is not a name yet; the title gains it once the read lands.
-  return resolveApprovalRequestTitle({ ...input, incomingDiscussionNames, subject: reading.named && !reading.resolving ? reading.text : null });
+  const environmentId = readPluginEventTriggerApprovalEnvironmentId(input);
+  const { name: triggerEnvironmentName } = useEnvironmentName(serverId, environmentId);
+  return resolveApprovalRequestTitle({ ...input, incomingDiscussionNames, triggerEnvironmentName,
+      subject: reading.named && !reading.resolving ? reading.text : null });
 }

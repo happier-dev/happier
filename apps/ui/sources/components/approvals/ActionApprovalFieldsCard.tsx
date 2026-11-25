@@ -20,12 +20,17 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { TechnicalDetailsDisclosure, type TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
+import { useEnvironmentName } from '@/components/projects/deployments/useEnvironmentName';
 import { readPluginUiHostTypography } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { Text } from '@/components/ui/text/Text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { resolveViewportClass } from '@/utils/platform/viewportClass';
 import { getTranslationValue, t, tLoose } from '@/text';
-import type { ApprovalActionFieldsPresentation } from './approvalFieldValues';
+import {
+    readPluginEventTriggerApprovalEnvironmentId,
+    readPluginEventTriggerApprovalSummary,
+    type ApprovalActionFieldsPresentation,
+} from './approvalFieldValues';
 import { presentPluginInstallApprovalRows } from './pluginInstallApprovalFacts';
 import { useApprovalReferenceReading, type ApprovalReferenceReading } from './approvalReferenceReading';
 import { readActionApprovalSubject } from './actionApprovalPresentation';
@@ -169,6 +174,11 @@ export const ActionApprovalFieldsCard = React.memo(function ActionApprovalFields
     const presentation = React.useMemo(() => demoteSelfReferences(demoteAskingSessionTarget(props.presentation, askingSessionId),
         props.serverId, viewer), [askingSessionId, props.presentation, props.serverId, viewer]);
     const reading = { ...props, presentation, detailsOpen, setDetailsOpen };
+    const triggerEnvironmentId = (props.anatomy === 'page' || detailsOpen) && props.request
+        ? readPluginEventTriggerApprovalEnvironmentId(props.request) : null;
+    if (triggerEnvironmentId && props.request && props.serverId) {
+        return <PluginEventTriggerApprovalFields {...reading} request={props.request} environmentId={triggerEnvironmentId} />;
+    }
     if (props.request && isDiscussionReplyActionIdV1(props.request.actionId) && (props.anatomy === 'page' || detailsOpen)) return (
         <DiscussionReplyApprovalFields request={props.request} serverId={props.serverId ?? null}>
             {presentation => <ApprovalFieldsReading {...reading} presentation={presentation} />}
@@ -192,6 +202,19 @@ type ApprovalFieldsReadingProps = React.ComponentProps<typeof ActionApprovalFiel
     setDetailsOpen: React.Dispatch<React.SetStateAction<boolean>>;
     homeSettingsRegistry?: ReadonlyMap<string, HomeSettingEntryV1>;
 }>;
+
+function PluginEventTriggerApprovalFields(props: ApprovalFieldsReadingProps & Readonly<{
+    request: ApprovalFieldsRequest;
+    environmentId: string;
+}>) {
+    const { name } = useEnvironmentName(props.serverId ?? null, props.environmentId);
+    const presentation = React.useMemo(() => {
+        const value = name ? readPluginEventTriggerApprovalSummary(props.request, name) : null;
+        return value ? { ...props.presentation, rows: props.presentation.rows.map(row =>
+            row.kind === 'value' && row.path === 'trigger.summary' ? { ...row, value } : row) } : props.presentation;
+    }, [name, props.presentation, props.request]);
+    return <ApprovalFieldsReading {...props} presentation={presentation} />;
+}
 
 function HomeSettingsApprovalFields(props: ApprovalFieldsReadingProps) {
     const { binding } = useServerCredentialAccountScopeBinding(props.serverId);

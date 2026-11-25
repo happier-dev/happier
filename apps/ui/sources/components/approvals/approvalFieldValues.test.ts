@@ -7,7 +7,35 @@ import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/s
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import { WORKFLOW_TRIGGER_ADD_ACTION_ID, WORKFLOW_TRIGGER_UPDATE_ACTION_ID } from '@happier-dev/protocol/actions/workflowTriggerActionIds';
 import { formatTriggerSummary } from '@/components/workflows/triggers/formatTriggerSummary';
+import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
+import { resolveApprovalRequestTitle } from './approvalRequestTitle';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+
+it('names the plugin Event and its check in approval details and the generated Inbox title', () => {
+    const actionId = WORKFLOW_TRIGGER_ADD_ACTION_ID;
+    const actionArgs = { observationOnly: { kind: 'observationOnly' },
+        trigger: { kind: 'pluginEvent', enabled: true, eventRef: HEALTH_CHECK_EVENT_REFS_V1.status,
+            sourceInstanceId: 'check-source', sourceContractVersion: 1, displayLabel: 'Saved health checks', filter: null, maximumObservationAgeMs: null,
+            observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+                machineId: 'eedc2422-b42b-478d-97b1-af9b530d5f08', pluginId: HEALTH_CHECK_EVENT_REFS_V1.status.pluginId, materializationId: 'check-install',
+            } },
+            sourceConfig: { v: 1, subject: { kind: 'environment', environmentId: 'qa-environment' },
+                checks: [{ checkId: 'http', kind: { pluginId: HEALTH_CHECK_EVENT_REFS_V1.status.pluginId, localId: 'http' },
+                    binding: { kind: 'healthCheck' }, config: { endpoint: 'http://127.0.0.1:8080/health', expectStatus: 200 },
+                    periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1 }], investigation: { mode: 'inbox' } } },
+    };
+    const summary = describeApprovalRequestFields({ actionId, actionArgs }, 'QA environment').rows;
+    expect(summary.find(row => row.path === 'trigger.summary')).toMatchObject({
+        value: expect.stringMatching(/health check changes status.*QA environment/i),
+    });
+    expect(summary.find(row => row.path === 'observationOnly')).toMatchObject({ technical: true });
+    const title = resolveApprovalRequestTitle({ actionId, actionArgs, storedTitle: getActionSpec(actionId).title,
+        triggerEnvironmentName: 'QA environment' }).title;
+    expect(title).toContain('Add workflow trigger');
+    const when = summary.find(row => row.path === 'trigger.summary');
+    if (when?.kind !== 'value') throw new Error('Expected the When row');
+    expect(title).toContain(when.value);
+});
 
 it.each([WORKFLOW_TRIGGER_ADD_ACTION_ID, WORKFLOW_TRIGGER_UPDATE_ACTION_ID])('reads %s as its trigger summary', actionId => {
     const trigger = { kind: 'schedule', schedule: { kind: 'once', scheduledAt: 1795166538066 } } as const;

@@ -1,6 +1,7 @@
 import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1, type AutomationSessionLifecycleEvent, type AutomationSessionLifecycleSubjectV1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import type { AutomationRunLifecycleTrigger } from '@happier-dev/protocol/automations/automationRunLifecycle';
 import { AutomationActionOutcomeV1Schema } from '@happier-dev/protocol/automations/automationActionIdentityV1';
+import { readServiceCheckDefinitions, serviceCheckTitle } from '@/components/projects/deployments/serviceCheckPresentation';
 import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { AutomationActionConsentTrigger, AutomationActionTrigger } from '@happier-dev/protocol/automations/automationActionTriggerV1';
@@ -110,7 +111,7 @@ export type TriggerSummarySource =
         schedule: Readonly<{ kind: 'once'; scheduledAt: number }>
             | Readonly<{ kind: 'cron' | 'interval'; scheduleExpr: string | null; everyMs: number | null }>;
     }>
-    | (Pick<AutomationPluginEventTrigger, 'kind' | 'eventRef'> & Readonly<{ displayLabel?: string }>
+    | (Pick<AutomationPluginEventTrigger, 'kind' | 'eventRef'> & Readonly<{ displayLabel?: string; sourceConfig?: unknown }>
         & Partial<Pick<AutomationPluginEventTrigger, 'observation'>>
         & Partial<Pick<AutomationPluginEventDefinitionTrigger, 'observationTransport'>>)
     | Readonly<{ kind: 'prComment' | 'ciFailed'; pullRequest?: Readonly<{ repository: string; number: number }> }>
@@ -189,6 +190,7 @@ export type TriggerSummaryContext = Readonly<{
     localize?: PluginLocalizedTextResolver;
     /** A mounted Action catalog may supply its already-localized contributed titles. */
     actionTitle?: (actionId: string) => string | undefined;
+    eventEnvironmentName?: string | null;
     subjectTitle?: (subject: NonNullable<AutomationActionTrigger['subject']>) => string | undefined;
 }>;
 
@@ -328,13 +330,22 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
                     : t('workflows.triggers.summary.schedule');
         case 'pluginEvent': {
             const label = trigger.displayLabel?.trim();
-            if (label) return label;
             const health = readHealthEventSummary(trigger.eventRef);
-            if (health) return health;
-            // A declared title and a retained identity read in the same "When …" voice (NF-30).
-            const title = readDeclaredEventTitle(trigger, context) ?? readOfflineEventName(trigger.eventRef);
-            if (title === null) return t('workflows.triggers.kind.pluginEvent');
-            return context?.form === 'name' ? title : t('workflows.triggers.summary.event', { event: title });
+            const declaredTitle = health ? null : readDeclaredEventTitle(trigger, context);
+            // Older plugin triggers can carry a whole title in displayLabel. Keep it when the
+            // declaration is unavailable and we have no localized title for this event.
+            if (!health && !declaredTitle && label) return label;
+            const title = declaredTitle ?? (health ? null : readOfflineEventName(trigger.eventRef));
+            const event = health ?? (title === null ? t('workflows.triggers.kind.pluginEvent')
+                : context?.form === 'name' ? title : t('workflows.triggers.summary.event', { event: title }));
+            const check = health && trigger.sourceConfig !== undefined
+                ? readServiceCheckDefinitions({ sourceConfig: trigger.sourceConfig })?.[0] : undefined;
+            const environmentName = context?.eventEnvironmentName;
+            const environmentNames = environmentName && check?.titleTarget?.kind === 'environment'
+                ? new Map([[check.titleTarget.id, environmentName]]) : undefined;
+            const subject = label && (!health || label !== 'Saved health checks') && label !== title && label !== event
+                ? label : check ? serviceCheckTitle(check, environmentNames).title : environmentName;
+            return subject ? [event, subject].join(' · ') : event;
         }
         case 'sessionLifecycle':
             return t(`workflows.triggers.kind.${readSessionLifecycleKind(trigger.events)}`);

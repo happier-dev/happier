@@ -9,36 +9,72 @@ import { WORKFLOW_TRIGGER_ADD_ACTION_ID, WORKFLOW_TRIGGER_UPDATE_ACTION_ID } fro
 import { WorkflowTriggerAddRequestV1Schema, WorkflowTriggerUpdateRequestV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
+import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
+import { HealthCheckSourceConfigV1Schema } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { formatTriggerSummary } from '@/components/workflows/triggers/formatTriggerSummary';
 import { t } from '@/text';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 
+type TriggerApprovalInput = Readonly<{ actionId?: string | null; actionArgs?: unknown }>;
+
+function readTriggerApproval(input: TriggerApprovalInput) {
+    const add = input.actionId === WORKFLOW_TRIGGER_ADD_ACTION_ID ? WorkflowTriggerAddRequestV1Schema.safeParse(input.actionArgs) : null;
+    const update = input.actionId === WORKFLOW_TRIGGER_UPDATE_ACTION_ID ? WorkflowTriggerUpdateRequestV1Schema.safeParse(input.actionArgs) : null;
+    const added = add?.success ? add.data : null;
+    const updated = update?.success ? update.data : null;
+    const trigger = added?.trigger ?? updated?.patch.trigger;
+    if (!trigger || (trigger.kind === 'sessionLifecycle' && !('events' in trigger))) return null;
+    return { added, updated, trigger };
+}
+
+function formatTriggerApprovalSummary(change: NonNullable<ReturnType<typeof readTriggerApproval>>, environmentName?: string | null): string {
+    const summary = formatTriggerSummary(change.trigger, { eventEnvironmentName: environmentName });
+    return change.added?.trigger.enabled === false ? `${summary} · ${t('common.disabled')}` : summary;
+}
+
+export function readPluginEventTriggerApprovalSummary(input: TriggerApprovalInput, environmentName?: string | null): string | null {
+    const change = readTriggerApproval(input);
+    return change?.trigger.kind === 'pluginEvent' ? formatTriggerApprovalSummary(change, environmentName) : null;
+}
+
+/** Where a retained Event request supplies only a resource identity. */
+export function readPluginEventTriggerApprovalEnvironmentId(input: TriggerApprovalInput): string | null {
+    const change = readTriggerApproval(input);
+    if (change?.trigger.kind !== 'pluginEvent') return null;
+    const observation = change.added?.observationOnly?.deploymentEnvironment;
+    if (observation) return observation.environmentId;
+    if (change.trigger.subject?.kind === 'environment') return change.trigger.subject.environmentId;
+    const event = change.trigger.eventRef;
+    if (event.pluginId !== HEALTH_CHECK_EVENT_REFS_V1.status.pluginId || event.localId !== HEALTH_CHECK_EVENT_REFS_V1.status.localId) return null;
+    const source = HealthCheckSourceConfigV1Schema.safeParse(change.trigger.sourceConfig);
+    return source.success && source.data.subject.kind === 'environment' ? source.data.subject.environmentId : null;
+}
+
 function presentTriggerDetails(
     input: Parameters<typeof describeProtocolApprovalRequestFields>[0],
     presentation: ReturnType<typeof describeProtocolApprovalRequestFields>,
+    environmentName?: string | null,
 ): ReturnType<typeof describeProtocolApprovalRequestFields> {
     if (presentation.unrepresentable || !('actionArgs' in input)) return presentation;
-    const added = input.actionId === WORKFLOW_TRIGGER_ADD_ACTION_ID ? WorkflowTriggerAddRequestV1Schema.safeParse(input.actionArgs) : null;
-    const updated = input.actionId === WORKFLOW_TRIGGER_UPDATE_ACTION_ID ? WorkflowTriggerUpdateRequestV1Schema.safeParse(input.actionArgs) : null;
-    const trigger = added?.success ? added.data.trigger : updated?.success ? updated.data.patch.trigger : undefined;
-    if (!trigger || (trigger.kind === 'sessionLifecycle' && !('events' in trigger))) return presentation;
-    const summary = formatTriggerSummary(trigger);
-    const value = added?.success && !added.data.trigger.enabled ? `${summary} · ${t('common.disabled')}` : summary;
+    const change = readTriggerApproval(input);
+    if (!change) return presentation;
+    const { added, updated } = change;
+    const value = formatTriggerApprovalSummary(change, environmentName);
     return { ...presentation, rows: [
         { kind: 'value', path: 'trigger.summary', title: t('workflows.sentence.when'), value },
         ...presentation.rows.flatMap((row): typeof presentation.rows => {
             if (row.kind !== 'value') return [row];
-            if (row.path === 'project' && added?.success && added.data.project) {
+            if (row.path === 'project' && added?.project) {
                 return [{ ...row, technical: true }, { kind: 'value', path: 'project.directory',
-                    title: t('workflows.sentence.rows.folder'), value: added.data.project.directory }];
+                    title: t('workflows.sentence.rows.folder'), value: added.project.directory }];
             }
-            if (row.path === 'patch' && updated?.success) {
-                const { trigger: _summarized, ...otherChanges } = updated.data.patch;
+            if (row.path === 'patch' && updated) {
+                const { trigger: _summarized, ...otherChanges } = updated.patch;
                 if (Object.keys(otherChanges).length === 0) return [{ ...row, technical: true }];
                 const remaining = describeProtocolStructuredFields({ result: { patch: otherChanges } })?.rows[0];
                 return remaining?.kind === 'value' ? [{ ...remaining, title: row.title }] : [{ ...row, technical: true }];
             }
-            return [row.path === 'trigger' || row.path === 'automationId' || row.path === 'triggerId'
+            return [row.path === 'trigger' || row.path === 'automationId' || row.path === 'triggerId' || row.path === 'observationOnly'
                 ? { ...row, technical: true } : row];
         }),
     ] };
@@ -51,8 +87,8 @@ export function describeApprovalActionFields(input: Parameters<typeof describePr
 }
 
 /** Immediate and retained reviews disclose the same evaluated facts with the UI's quantity formatter. */
-export function describeApprovalRequestFields(input: Parameters<typeof describeProtocolApprovalRequestFields>[0]) {
-    return presentTriggerDetails(input, describeProtocolApprovalRequestFields(input, { formatDataBytes: formatHappierDataBytes }));
+export function describeApprovalRequestFields(input: Parameters<typeof describeProtocolApprovalRequestFields>[0], environmentName?: string | null) {
+    return presentTriggerDetails(input, describeProtocolApprovalRequestFields(input, { formatDataBytes: formatHappierDataBytes }), environmentName);
 }
 
 /** Keep Protocol's admission decision and adapt its disclosure through the same UI presenter. */

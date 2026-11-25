@@ -224,6 +224,14 @@ describe('formatTriggerSummary', () => {
     });
 });
 
+it('keeps the health event title alongside a selected check name', () => {
+    const eventRef = { pluginId: 'happier.machine.services', localId: 'health-check-failed' };
+    expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef, displayLabel: 'HTTP · Production' }))
+        .toBe('workflows.triggers.summary.offlineHealthFailed · HTTP · Production');
+    expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef, displayLabel: 'Saved health checks' }))
+        .toBe('workflows.triggers.summary.offlineHealthFailed');
+});
+
 describe('formatTriggerSetSummary', () => {
     it('says Off before a trigger that will not fire, in the same words as a trigger row', () => {
         const first = `workflows.triggers.summary.everyDayAt(time=${formatClockTime({ hour: 2, minute: 0 })})`;
