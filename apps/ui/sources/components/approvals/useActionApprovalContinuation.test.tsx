@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
@@ -12,13 +14,15 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { teamCapabilitiesFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { createAgentApprovalRequest, decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { createAgentApprovalRequest, createUiApprovalRequest, decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import {
     createHomeGovernanceHarness,
     installHomeGovernanceBoundaries,
     waitForHomeGovernance,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
+import { installReactDomPortalBoundaryForTests } from '@/dev/testkit/mocks/reactDom';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createActionApprovalContinuation, type ActionApprovalContinuation } from './actionApprovalContinuation';
@@ -49,7 +53,6 @@ vi.mock('react-native-reanimated', async () => (await import('@/dev/testkit/mock
 installHomeGovernanceBoundaries(harness);
 const { useActionApprovalContinuation } = await import('./useActionApprovalContinuation');
 const { SplitCanvasHost } = await import('@/components/appShell/splitCanvas/components/SplitCanvasHost');
-const { createIdentityAdministrationClient } = await import('@/components/settings/teams/identity/identityAdministrationClient');
 const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
 const { createUsageCoachController } = await import('@/components/settings/usage/widgets/usageCoachController');
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
@@ -127,6 +130,47 @@ async function renderContinuation(serverId: string, onExecuted: () => void = vi.
         serverId,
         onExecuted,
     }), { initialProps: { scopeKey: `${serverId}:${ACCOUNT_ID}` }, wrapper });
+}
+
+async function nativeDecisionButton(screen: Awaited<ReturnType<typeof renderScreen>>, decision: 'approve' | 'reject') {
+    const testId = `actions.confirmation-review.decision-${decision}`;
+    return await waitForHomeGovernance(() => {
+        if (screen.findByTestId(testId)) return testId;
+        const alertId = decision === 'approve' ? 'web-modal-confirm' : 'web-modal-cancel';
+        expect(screen.findByTestId(alertId)).not.toBeNull();
+        return alertId;
+    });
+}
+
+/** The shared testkit mounts the real review card without the renderer's external DOM portal and exit frames. */
+async function mountActionReviewHost() {
+    const { Modal } = await import('@/modal');
+    const { module } = createModalModuleMock({ renderCustomModals: true });
+    let answerAlert: ((value: boolean) => void) | undefined;
+    const show = vi.spyOn(Modal, 'show').mockImplementation(module.Modal.show);
+    const hide = vi.spyOn(Modal, 'hide').mockImplementation(module.Modal.hide);
+    const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(() => new Promise<boolean>(resolve => {
+        answerAlert = resolve;
+    }));
+    return {
+        Provider: module.ModalProvider,
+        async decision(screen: Awaited<ReturnType<typeof renderScreen>>, approve: boolean) {
+            const answer = await waitForHomeGovernance(() => {
+                const testId = `actions.confirmation-review.decision-${approve ? 'approve' : 'reject'}`;
+                if (screen.findByTestId(testId)) return () => act(() => screen.pressByTestId(testId));
+                expect(answerAlert).toBeDefined();
+                const answer = answerAlert!;
+                return () => { answerAlert = undefined; answer(approve); };
+            });
+            return answer;
+        },
+        dispose() {
+            answerAlert?.(false);
+            show.mockRestore();
+            hide.mockRestore();
+            confirm.mockRestore();
+        },
+    };
 }
 
 describe('useActionApprovalContinuation', () => {
@@ -234,11 +278,7 @@ describe('useActionApprovalContinuation', () => {
         } finally { releaseApproved(); await deciding; }
     });
 
-    it.each([
-        { kind: 'visibility' as const, loseTerminalWrite: false },
-        { kind: 'widget_size' as const, loseTerminalWrite: false },
-        { kind: 'visibility' as const, loseTerminalWrite: true },
-    ])('retains the shared Home layout operation for $kind until its durable approval produces the actual layout receipt (terminal write lost: $loseTerminalWrite)', async ({ kind, loseTerminalWrite }) => {
+    it.each(['visibility', 'widget_size'] as const)('keeps the shared Home layout write for %s pending until native review and its layout receipt', async (kind) => {
         const serverId = await addApprovalHome();
         await harness.requireUiApproval(serverId, kind === 'visibility' ? 'home.hub.layout.update' : 'widgets.item.size.set');
         const { useHomeHubArtifactLayout, useHomeHubLayoutWritePending } = await import('@/components/hub/layout/useHomeHubArtifactLayout');
@@ -246,9 +286,8 @@ describe('useActionApprovalContinuation', () => {
         const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
         const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
-        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
-        const profile = (await import('@/sync/domains/server/serverProfiles')).getServerProfileById(serverId)!;
-        const credentials = (await TokenStorage.getCredentialsForServerUrl(profile.serverUrl))!;
+        const { ModalProvider } = await import('@/dev/testkit/render/workflowRunBrowserModalBoundary');
+        const credentials = connection!.credentials;
         const previous = storage.getState();
         const previousApplied = getAppliedActiveServerSnapshot();
         const previousAvailable = isAppliedActiveServerRuntimeAvailable();
@@ -272,95 +311,53 @@ describe('useActionApprovalContinuation', () => {
             phase: 'current' as const, interactionEnabled: true, machineId: null, serverId, platform: 'web' as const,
             accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' as const },
             reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} };
-        function AccountShell({ children }: React.PropsWithChildren) {
-            return <InjectedAuthProvider credentials={credentials}><AppShellPluginUiProjectionValueProvider value={projection}>{children}</AppShellPluginUiProjectionValueProvider></InjectedAuthProvider>;
-        }
         function ContentProbe() { content = useHomeHubLayout(); contentRenders++; return null; }
         function Probe() {
             layout = useHomeHubArtifactLayout();
             isWriting = useHomeHubLayoutWritePending();
             return kind === 'visibility' ? <HomeLayoutEditor /> : null;
         }
-        const screen = await renderScreen(<AccountShell><Probe /><ContentProbe /></AccountShell>);
-        let originMounted = true;
-        let retained: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        function shell(origin: string) {
+            return (
+                <InjectedAuthProvider credentials={credentials}>
+                    <AppShellPluginUiProjectionValueProvider value={projection}>
+                        <ModalProvider><Probe key={origin} /><ContentProbe /></ModalProvider>
+                    </AppShellPluginUiProjectionValueProvider>
+                </InjectedAuthProvider>
+            );
+        }
+        const screen = await renderScreen(shell('origin'));
+        const portal = installReactDomPortalBoundaryForTests();
         let settled = false;
-        let operation!: Promise<void>;
+        let operation: Promise<void> | undefined;
         try {
-            await waitForHomeGovernance(() => expect(layout!.status).toBe('ready'));
+            await waitForHomeGovernance(() => expect(layout?.status).toBe('ready'));
             const beforeContent = content;
             const beforeRenders = contentRenders;
-            await act(async () => {
+            act(() => {
                 operation = layout!.dispatch(kind === 'visibility' ? { kind: 'visibility', sectionId: 'setup', hidden: true }
                     : { kind: 'widget_size', instanceId: 'checks', size: 'wide' }, { rethrow: true });
                 void operation.then(() => { settled = true; }, () => { settled = true; });
             });
-            await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(kind === 'visibility' ? 1 : 2));
+            const confirm = await nativeDecisionButton(screen, 'approve');
             expect(settled).toBe(false);
             expect(contentRenders).toBe(beforeRenders);
             expect(content).toBe(beforeContent);
             expect(isWriting).toBe(true);
             expect(layout!.failedIntent).toBeUndefined();
             expect(layout!.layout.hidden).not.toContain('setup');
-            const artifactId = harness.artifacts(serverId).list().find(artifact => harness.artifacts(serverId).readPlainBody(artifact.id)?.includes('"actionId"'))!.id;
             if (kind === 'visibility') {
-                const path = `/v1/artifacts/${artifactId}`;
-                harness.answer(serverId, `GET ${path}`, { dispatchThenFail: true });
-                const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
-                await act(async () => { publishHomeAccountChange(serverId, [artifactId]); storage.setState({ endpointStatus: 'offline' }); });
+                await act(async () => { storage.setState({ endpointStatus: 'offline' }); });
                 expect(screen.findByTestId('home-unreachable')).not.toBeNull();
                 expect(settled).toBe(false);
-                expect(layout!.failedIntent).toBeUndefined();
-                harness.answer(serverId, `GET ${path}`, { select: async () => {
-                    const pendingResponse = harness.artifacts(serverId).handle(path, { method: 'GET' });
-                    if (!pendingResponse) throw new Error('Approval Artifact read route unavailable');
-                    const response = await pendingResponse;
-                    return { status: response.status, body: await response.json() };
-                } });
                 await act(async () => { storage.setState({ endpointStatus: 'online' }); });
-                retained = await renderScreen(<AccountShell><Probe /></AccountShell>);
-                await screen.unmount();
-                originMounted = false;
-                expect(settled).toBe(false);
-            }
-            if (loseTerminalWrite) {
-                const path = `/v1/artifacts/${artifactId}`;
-                const { decodePlainArtifactStoredContent } = await import('@happier-dev/protocol/storage/artifactStoredContent');
-                harness.answer(serverId, `POST ${path}`, { select: async input => {
-                    const wire = input && typeof input === 'object' && 'body' in input ? input.body : null;
-                    const content = typeof wire === 'string' ? decodePlainArtifactStoredContent(wire) : null;
-                    const body = content && typeof content === 'object' && 'body' in content ? content.body : null;
-                    const request = ApprovalRequestV2Schema.safeParse(typeof body === 'string' ? JSON.parse(body) : null);
-                    if (request.success && request.data.status === 'executed') return { dispatchThenFail: true };
-                    const pendingResponse = harness.artifacts(serverId).handle(path, { method: 'POST', body: JSON.stringify(input) });
-                    if (!pendingResponse) throw new Error('Approval Artifact update route unavailable');
-                    const response = await pendingResponse;
-                    return { status: response.status, body: await response.json() };
-                } });
-            }
-            const decision = await decideApprovalAsInbox(serverId, artifactId, 'approve');
-            if (loseTerminalWrite) {
-                expect(decision).toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown' });
-                expect(harness.artifacts(serverId).readPlainBody(artifactId)).toContain('"status":"executing"');
-                const account = await captureLazyActionAccountContext(serverId);
-                try {
-                    const { createHomeHubArtifactPortV1, buildHomeHubArtifactIdV1 } = await import('@happier-dev/protocol/home');
-                    expect((await createHomeHubArtifactPortV1(account.homeHubArtifactTransport, { accountId: ACCOUNT_ID }).read()).hidden).toEqual(['setup']);
-                    const homeId = buildHomeHubArtifactIdV1(ACCOUNT_ID);
-                    const beforeWrites = harness.requestsFor(`/v1/artifacts/${homeId}`).filter(request => request.input !== null).length;
-                    const beforeApprovals = harness.artifacts(serverId).list().length;
-                    await act(async () => { await layout!.retry(); });
-                    expect(harness.requestsFor(`/v1/artifacts/${homeId}`).filter(request => request.input !== null)).toHaveLength(beforeWrites);
-                    expect(harness.artifacts(serverId).list()).toHaveLength(beforeApprovals);
-                } finally { account.dispose(); }
+                await screen.update(shell('retained'));
                 expect(settled).toBe(false);
                 expect(isWriting).toBe(true);
-                expect(layout!.failedIntent).toBeUndefined();
-                return;
             }
-            expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
-            await act(async () => { await operation; });
-            expect(settled).toBe(true);
+            act(() => screen.pressByTestId(confirm));
+            await waitForHomeGovernance(() => expect(settled).toBe(true));
+            await operation;
             expect(isWriting).toBe(false);
             expect(layout!.status).toBe('ready');
             if (kind === 'visibility') expect(layout!.layout.hidden).toEqual(['setup']);
@@ -368,11 +365,48 @@ describe('useActionApprovalContinuation', () => {
                 instance: expect.objectContaining({ id: 'checks' }), size: 'wide' }]));
             expect(layout!.failedIntent).toBeUndefined();
         } finally {
-            if (originMounted) await screen.unmount();
-            await retained?.unmount();
-            storage.setState(previous, true);
-            publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
+            try { await screen.unmount(); } finally {
+                portal.restore();
+                storage.setState(previous, true);
+                publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
+            }
         }
+    });
+
+    it('keeps an Agent layout approval pending when its terminal Artifact write is lost after the layout commits', async () => {
+        const serverId = await addApprovalHome();
+        const artifactId = await createAgentApprovalRequest({ serverId, actionId: 'home.hub.layout.update',
+            actionInput: { intent: { kind: 'visibility', sectionId: 'setup', hidden: true } },
+            actionRequestId: 'layout-terminal-write-lost',
+        });
+        const refreshed = vi.fn();
+        const hook = await renderContinuation(serverId, refreshed);
+        act(() => hook.getCurrent().requestApproval(artifactId));
+        const path = `/v1/artifacts/${artifactId}`;
+        const { decodePlainArtifactStoredContent } = await import('@happier-dev/protocol/storage/artifactStoredContent');
+        harness.answer(serverId, `POST ${path}`, { select: async input => {
+            const wire = input && typeof input === 'object' && 'body' in input ? input.body : null;
+            const content = typeof wire === 'string' ? decodePlainArtifactStoredContent(wire) : null;
+            const body = content && typeof content === 'object' && 'body' in content ? content.body : null;
+            const request = ApprovalRequestV2Schema.safeParse(typeof body === 'string' ? JSON.parse(body) : null);
+            if (request.success && request.data.status === 'executed') return { dispatchThenFail: true };
+            const response = await harness.artifacts(serverId).handle(path, { method: 'POST', body: JSON.stringify(input) });
+            if (!response) throw new Error('Approval Artifact update route unavailable');
+            return { status: response.status, body: await response.json() };
+        } });
+        await expect(decideApprovalAsInbox(serverId, artifactId, 'approve')).resolves.toMatchObject({
+            ok: false, errorCode: 'approval_execution_outcome_unknown',
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().approvalStatus).toBe('executing'));
+        expect(hook.getCurrent().approvalId).toBe(artifactId);
+        expect(hook.getCurrent().approvalPending).toBe(true);
+        expect(refreshed).not.toHaveBeenCalled();
+        const account = await captureLazyActionAccountContext(serverId);
+        try {
+            const { createHomeHubArtifactPortV1 } = await import('@happier-dev/protocol/home');
+            expect((await createHomeHubArtifactPortV1(account.homeHubArtifactTransport, { accountId: ACCOUNT_ID }).read()).hidden)
+                .toEqual(['setup']);
+        } finally { account.dispose(); }
     });
 
     it('shows an issued approval as executing while its Home is unreachable and consumes the later receipt', async () => {
@@ -391,13 +425,15 @@ describe('useActionApprovalContinuation', () => {
         const { ApprovalDecisionBar } = await import('./ApprovalDecisionBar');
         const { t } = await import('@/text');
         const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifactId} serverId={serverId} />);
-        let decision!: Promise<void>;
+        let decision: Promise<void> | undefined;
         try {
             await waitForHomeGovernance(() => {
                 expect(screen.findAllByType(ApprovalDecisionBar)).toHaveLength(1);
                 expect(screen.findAllByType(ApprovalDecisionBar)[0]?.props.approve?.disabled).toBe(false);
             });
-            await act(async () => { decision = screen.pressByTestIdAsync('approvals.approve'); });
+            // Start the real decision, then keep the held Home reply outside React's act scope.
+            const approve = screen.findAllByType(ApprovalDecisionBar)[0].props.approve;
+            act(() => { decision = Promise.resolve(approve.onPress()); });
             await waitForHomeGovernance(() => expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(1));
             await act(async () => { storage.setState({ endpointStatus: 'offline' }); });
             await waitForHomeGovernance(() => {
@@ -410,6 +446,7 @@ describe('useActionApprovalContinuation', () => {
             expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(1);
         } finally {
             respond();
+            await act(async () => { await decision; });
             await screen.unmount();
             storage.setState(previous, true);
             publishAppliedActiveServerSnapshot(applied, available);
@@ -425,8 +462,7 @@ describe('useActionApprovalContinuation', () => {
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         storage.setState({ profileScope: { serverId, accountId: ACCOUNT_ID }, profile: AccountProfileSchema.parse({ id: ACCOUNT_ID }) });
         const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'personal' };
-        let profileAccountId = ACCOUNT_ID;
-        harness.answer(serverId, '/v1/account/profile', { select: () => ({ body: AccountProfileSchema.parse({ id: profileAccountId,
+        harness.answer(serverId, '/v1/account/profile', { select: () => ({ body: AccountProfileSchema.parse({ id: ACCOUNT_ID,
             connectedAccountsV4: [{ ref: account, status: 'connected', authenticationModeId: 'oauth', configurationReady: true,
                 configurationRevision: null, revisionSemantics: 'legacy_unfenced', credentialRevision: null }] }) }) });
         harness.answer(serverId, '/v1/account/entity-rows/connected-metadata/acknowledgements', {
@@ -464,7 +500,11 @@ describe('useActionApprovalContinuation', () => {
             return <UsageSubscriptionPriceEditor account={projectedAccount()} serverId={serverId} testID="price"
                 onSettled={() => { refreshed(); refresh(); }} />;
         }
-        const screen = await renderScreen(<Editor />);
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const review = await mountActionReviewHost();
+        const screen = await renderMountedCurrentUiContext(<review.Provider><Editor /></review.Provider>);
+        const { router } = await import('expo-router');
+        vi.mocked(router.push).mockClear();
         const { FieldTextInput } = await import('@/components/ui/forms/FieldTextInput');
         const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
         const save = () => screen.findAllByType(RoundButton).find(node => node.props.testID === 'price.save')!;
@@ -472,7 +512,6 @@ describe('useActionApprovalContinuation', () => {
         const edit = async (amount: string, currency: string) => {
             await act(async () => { field('amount').props.onChangeText(amount); field('currency').props.onChangeText(currency); });
         };
-        let release = () => {};
         try {
             expect(screen.findByTestId('price.amount')).toBeNull();
             await screen.pressByTestIdAsync('price-header');
@@ -481,84 +520,48 @@ describe('useActionApprovalContinuation', () => {
             expect(save().props.disabled).toBe(true);
             await edit('17', 'eur');
             expect(save().props.disabled).toBe(false);
-            // The rendered entry point runs the real front door; UI custody is deferred despite required-result metadata.
-            await screen.pressByTestIdAsync('price.save');
-            await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
+            // The person's own Save is reviewed here (one confirmation, in place, 2026-10-30).
+            act(() => screen.pressByTestId('price.save'));
+            const reject = await review.decision(screen, false);
             expect(save().props.disabled).toBe(true);
+            expect(harness.artifacts(serverId).list()).toEqual([]);
             expect(record.entries).toEqual([]);
-            const rejectedId = harness.artifacts(serverId).list().at(-1)!.id;
-            await expect(decideApprovalAsInbox(serverId, rejectedId, 'reject')).resolves.toMatchObject({ ok: true });
+            reject();
             await waitForHomeGovernance(() => expect(save().props.disabled).toBe(false));
-            expect(screen.findAllByProps({ accessibilityRole: 'alert' }).length).toBeGreaterThan(0);
-            const { NoticeLine } = await import('@/components/ui/lists/NoticeLine');
-            const { t } = await import('@/text');
-            const notice = () => screen.findAllByType(NoticeLine).find(node => node.props.testID === 'price.failed');
-            expect(notice()?.props.title).toBe(t('usage.board.plans.approvalDeclined'));
+            expect(screen.findByTestId('price.failed')).not.toBeNull();
             expect(record.entries).toEqual([]);
             expect(refreshed).not.toHaveBeenCalled();
-            await screen.pressByTestIdAsync('price.save');
-            await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(2));
-            expect(notice()).toBeUndefined();
-            const acceptedId = harness.artifacts(serverId).list().at(-1)!.id;
-            const accepted = await decideApprovalAsInbox(serverId, acceptedId, 'approve');
-            expect(accepted, JSON.stringify(accepted)).toMatchObject({ ok: true, result: { status: 'executed' } });
-            await waitForHomeGovernance(() => expect(save().props.disabled).toBe(false));
-            expect(refreshed).toHaveBeenCalledTimes(1);
+
+            act(() => screen.pressByTestId('price.save'));
+            const approve = await review.decision(screen, true);
+            expect(screen.findByTestId('price.failed')).toBeNull();
+            approve();
+            await waitForHomeGovernance(() => expect(refreshed).toHaveBeenCalledTimes(1));
+            expect(save().props.disabled).toBe(false);
             expect(record.entries).toMatchObject([{ subject: { kind: 'account', account }, subscriptionMonthlyPrice: { amount: 17, currency: 'EUR' } }]);
-            await screen.pressByTestIdAsync('price.clear');
-            await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(3));
-            const clearedId = harness.artifacts(serverId).list().at(-1)!.id;
-            await expect(decideApprovalAsInbox(serverId, clearedId, 'approve')).resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
+
+            act(() => screen.pressByTestId('price.clear'));
+            const approveRemoval = await review.decision(screen, true);
+            approveRemoval();
             await waitForHomeGovernance(() => expect(refreshed).toHaveBeenCalledTimes(2));
             expect(record.entries).toEqual([]);
-            const reply = new Promise<void>(resolve => { release = resolve; });
-            let committed = false;
-            harness.answer(serverId, `POST ${path}`, { select: raw => {
-                const mutation = ConnectedPresentationRowMutationV1Schema.parse(raw);
-                if (mutation.content?.t !== 'plain') throw new Error('Expected keyless price metadata');
-                record = mutation.content.v; revision += 1; committed = true;
-                return { body: { status: 'updated', revision, cursor: revision }, respondAfter: reply };
-            } });
-            await edit('17', 'EUR');
-            await screen.pressByTestIdAsync('price.save');
-            await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(4));
-            const oldAccountId = harness.artifacts(serverId).list().at(-1)!.id;
-            // Keep the genuine HTTP reply open without keeping React's async act scope open around it.
-            const deciding = createDefaultActionExecutor({ resolveServerIdForSessionId: () => null }).execute(
-                'approval.request.decide', { artifactId: oldAccountId, decision: 'approve' }, { surface: 'ui', serverId });
-            await waitForHomeGovernance(() => expect(committed).toBe(true));
-            await harness.switchAccount(serverId, 'account-b');
-            await harness.requireUiApproval(serverId, 'connectedServices.subscription.price.set');
-            profileAccountId = 'account-b';
-            act(() => storage.setState({ profileScope: { serverId, accountId: 'account-b' }, profile: AccountProfileSchema.parse({ id: 'account-b' }) }));
-            expect(field('amount').props.value).toBe('');
-            expect(field('currency').props.value).toBe('');
-            release();
-            await act(async () => { await deciding; });
-            // The old Account committed its own write; its late reply must not refresh the new editor.
-            expect(refreshed).toHaveBeenCalledTimes(2);
-            // The same mounted editor is immediately usable under its new Account, not stuck pending.
-            record = { v: 1, entries: [] }; revision = 1;
-            const previousApprovals = harness.artifacts(serverId).list().length;
-            await edit('23', 'USD');
-            expect(save().props.disabled).toBe(false);
-            await screen.pressByTestIdAsync('price.save');
-            await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(previousApprovals + 1));
-            expect(save().props.disabled).toBe(true);
-            const newAccountApprovalId = harness.artifacts(serverId).list().at(-1)!.id;
-            await expect(decideApprovalAsInbox(serverId, newAccountApprovalId, 'approve')).resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
-            await waitForHomeGovernance(() => expect(refreshed).toHaveBeenCalledTimes(3));
-            expect(save().props.disabled).toBe(false);
-            expect(record.entries).toMatchObject([{ subject: { kind: 'account', account }, subscriptionMonthlyPrice: { amount: 23, currency: 'USD' } }]);
+            expect(harness.artifacts(serverId).list()).toEqual([]);
+            expect(router.push).not.toHaveBeenCalled();
+
+            const agentRequest = await createAgentApprovalRequest({ serverId, actionId: 'connectedServices.subscription.price.set',
+                actionInput: { account, price: { amount: 29, currency: 'USD' } }, actionRequestId: 'agent-price' });
+            expect(harness.artifacts(serverId).list()).toEqual([expect.objectContaining({ id: agentRequest })]);
+            expect(ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(agentRequest)!)))
+                .toMatchObject({ status: 'open', requestedSurface: 'agent' });
+            expect(record.entries).toEqual([]);
         } finally {
-            release();
-            await act(async () => screen.unmount());
+            try { await screen.unmount(); } finally { review.dispose(); }
             storage.setState({ profileScope: previous.profileScope, profile: previous.profile });
             publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
         }
     });
 
-    it('restores Coach digest retry after Inbox rejection and consumes its approved Automation receipt', async () => {
+    it('restores Coach digest retry after native review cancellation and consumes its approved Automation receipt', async () => {
         const serverId = await addApprovalHome();
         harness.answer(serverId, 'GET /v1/machines/machine-a', {
             body: { machine: createPlainMachineRowFixture({ id: 'machine-a', accountId: ACCOUNT_ID }) },
@@ -587,37 +590,50 @@ describe('useActionApprovalContinuation', () => {
             return { body: row };
         } });
         const account = await captureLazyActionAccountContext(serverId);
-        const hook = await renderContinuation(serverId);
+        const review = await mountActionReviewHost();
+        const screen = await renderScreen(<review.Provider />);
         const controller = createUsageCoachController({ lifetime: account.accountLifetime,
-            executor: createDefaultActionExecutor({ resolveServerIdForSessionId: () => null }),
-            onApproval: hook.getCurrent().requestApproval });
+            executor: createDefaultActionExecutor({ resolveServerIdForSessionId: () => null }) });
         const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
         const suggestion = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!.coach!.digestSuggestion!;
         const project = { machineId: 'machine-a', directory: '/repo' };
         const trigger = { kind: 'schedule' as const, enabled: true,
             schedule: { kind: 'interval' as const, scheduleExpr: null, everyMs: 60_000, timezone: null } };
+        let attempt: ReturnType<typeof controller.createDigest> | undefined;
         try {
+            attempt = controller.createDigest(suggestion, project, trigger);
+            const cancel = await review.decision(screen, false);
             expect(rows.size).toBe(0);
-            await act(async () => { await controller.createDigest(suggestion, project, trigger); });
-            const rejectedId = controller.getSnapshot().approval!.request.artifactId;
-            expect(hook.getCurrent().approvalId).toBe(rejectedId);
+            cancel();
+            await waitForHomeGovernance(() => expect(controller.getSnapshot().error?.failure.errorCode).toBe('approval_canceled'));
+            await expect(attempt).resolves.toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+            expect(controller.getSnapshot()).toMatchObject({
+                pending: [], approval: null, digest: null, error: { failure: { errorCode: 'approval_canceled' } },
+            });
             expect(rows.size).toBe(0);
-            await expect(decideApprovalAsInbox(serverId, rejectedId, 'reject')).resolves.toMatchObject({ ok: true });
-            await waitForHomeGovernance(() => expect(controller.getSnapshot()).toMatchObject({
-                pending: [], approval: null, digest: null, error: { failure: { errorCode: 'approval_rejected' } } }));
+
+            attempt = controller.createDigest(suggestion, project, trigger);
+            const confirm = await review.decision(screen, true);
             expect(rows.size).toBe(0);
-            await act(async () => { await controller.createDigest(suggestion, project, trigger); });
-            const approvedId = controller.getSnapshot().approval!.request.artifactId;
-            expect(approvedId).not.toBe(rejectedId);
-            await waitForHomeGovernance(() => expect(hook.getCurrent().approvalId).toBe(approvedId));
-            await expect(decideApprovalAsInbox(serverId, approvedId, 'approve')).resolves.toMatchObject({
-                ok: true, result: { status: 'executed' } });
-            await waitForHomeGovernance(() => expect(controller.getSnapshot()).toMatchObject({
-                pending: [], approval: null, error: null, digest: { queryKey: suggestion.queryKey } }));
+            confirm();
+            await waitForHomeGovernance(() => expect(controller.getSnapshot().digest?.queryKey).toBe(suggestion.queryKey));
+            await expect(attempt).resolves.toMatchObject({ ok: true });
+            expect(controller.getSnapshot()).toMatchObject({
+                pending: [], approval: null, error: null, digest: { queryKey: suggestion.queryKey },
+            });
+            expect(harness.artifacts(serverId).list()).toHaveLength(0);
             const receipt = controller.getSnapshot().digest!;
             expect(rows.get(receipt.result.set.automationId)).toMatchObject({ enabled: true,
                 assignments: [{ machineId: project.machineId }], triggers: [{ kind: 'schedule', enabled: true }] });
-        } finally { controller.dispose(); account.dispose(); await hook.unmount(); }
+        } finally {
+            controller.dispose();
+            account.dispose();
+            try {
+                await screen.unmount();
+            } finally {
+                review.dispose();
+            }
+        }
     });
 
     it('retains the approval in its originating flow without navigation and delivers its executed result exactly once', async () => {
@@ -679,25 +695,38 @@ describe('useActionApprovalContinuation', () => {
     it('leaves projection refresh with a caller that owns completion beyond Action admission', async () => {
         const serverId = await addApprovalHome();
         answerRename(serverId);
-        const artifactId = await openRenameApproval(serverId, 'caller-owned-completion');
+        const actionId = 'teams.update';
+        const actionInput = { v: 1, teamId: 'team-1', name: 'Renamed' };
+        const artifactId = await createUiApprovalRequest({ serverId, actionId, actionInput, actionRequestId: 'caller-owned-completion' });
+        const readReceipt = () => ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId)!));
+        expect(readReceipt()).toMatchObject({ status: 'open', actionId, requestedSurface: 'ui',
+            executionOriginV1: { surface: 'ui', authority: 'present_user', caller: { kind: 'host' }, accountId: ACCOUNT_ID },
+        });
         const refresh = vi.fn();
         const hook = await renderContinuation(serverId, refresh);
-        const received: unknown[] = [];
+        const received = vi.fn();
+        const failed = vi.fn();
         const scope = createServerAccountScope(serverId, ACCOUNT_ID);
         if (!scope) throw new Error('Expected the originating Home scope');
         const continuation = createActionApprovalContinuation({
             artifactId,
-            actionId: 'teams.update',
+            actionId,
             scope,
-            expectedInput: { v: 1, teamId: 'team-1', name: 'Renamed' },
+            expectedInput: actionInput,
             refreshAfterExecution: false,
-            onSucceeded: (value: unknown) => { received.push(value); },
-            onFailed: vi.fn(),
+            onSucceeded: received,
+            onFailed: failed,
         });
 
         act(() => hook.getCurrent().requestApproval(continuation));
-        await decideApprovalAsInbox(serverId, artifactId, 'approve');
-        await waitForHomeGovernance(() => expect(received).toHaveLength(1));
+        await expect(decideApprovalAsInbox(serverId, artifactId, 'approve')).resolves.toMatchObject({
+            ok: true, result: { status: 'executed' },
+        });
+        expect(readReceipt()).toMatchObject({ status: 'executed', execution: { ok: true } });
+        await waitForHomeGovernance(() => expect(received).toHaveBeenCalledExactlyOnceWith(
+            expect.objectContaining({ name: 'Renamed' }),
+        ));
+        expect(failed).not.toHaveBeenCalled();
 
         expect(hook.getCurrent().approvalId).toBeNull();
         expect(hook.getCurrent().approvalPending).toBe(false);
@@ -732,8 +761,8 @@ describe('useActionApprovalContinuation', () => {
 
     it('delivers both concurrently registered read results even when the Inbox decides the second first', async () => {
         const serverId = await addApprovalHome();
-        await harness.requireUiApproval(serverId, 'teams.identity.connections.list');
-        harness.answer(serverId, '/v1/teams/identity/connections/list', {
+        const identityReadPath = '/v1/teams/identity/connections/list';
+        harness.answer(serverId, identityReadPath, {
             body: {
                 items: [], eligibleProviders: [], memberSignInUrl: null,
                 admissionModeApplicability: { v: 1, modes: {
@@ -747,21 +776,54 @@ describe('useActionApprovalContinuation', () => {
             body: { items: [], nextCursor: null },
         });
         const hook = await renderContinuation(serverId);
-        const scope = createServerAccountScope(serverId, ACCOUNT_ID)!;
-        const client = createIdentityAdministrationClient(scope, { onApprovalPending: hook.getCurrent().requestApproval });
+        const scope = createServerAccountScope(serverId, ACCOUNT_ID);
+        if (!scope) throw new Error('Expected the originating Home scope');
         const firstResult = vi.fn();
         const secondResult = vi.fn();
-        await act(async () => { await client.execute('teams.identity.connections.list', { v: 1, teamId: 'team-1' }, { onApprovalSucceeded: firstResult }); });
-        await harness.requireUiApproval(serverId, 'teams.directory.sources.list');
-        await act(async () => { await client.executeDirectory('teams.directory.sources.list', { v: 1, teamId: 'team-1' }, { onApprovalSucceeded: secondResult }); });
-        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(2));
-        const artifactIdFor = (actionId: string) => harness.artifacts(serverId).list().find((row) => {
-            const body = harness.artifacts(serverId).readPlainBody(row.id);
-            return body !== null && ApprovalRequestV2Schema.parse(JSON.parse(body)).actionId === actionId;
-        })!.id;
-        const firstId = artifactIdFor('teams.identity.connections.list');
-        const secondId = artifactIdFor('teams.directory.sources.list');
+        const firstFailure = vi.fn();
+        const secondFailure = vi.fn();
+        const reads = [
+            { actionId: 'teams.identity.connections.list', onSucceeded: firstResult, onFailed: firstFailure },
+            { actionId: 'teams.directory.sources.list', onSucceeded: secondResult, onFailed: secondFailure },
+        ] as const;
+        const actionInput = { v: 1, teamId: 'team-1' };
+        await harness.requireUiApproval(serverId, reads[0].actionId);
+        const { createIdentityAdministrationClient } = await import('@/components/settings/teams/identity/identityAdministrationClient');
+        const review = await mountActionReviewHost();
+        const screen = await renderScreen(<review.Provider />);
+        const controller = new AbortController();
+        try {
+            const client = createIdentityAdministrationClient(scope);
+            const presentRead = client.execute(reads[0].actionId, actionInput, { signal: controller.signal });
+            const approve = await review.decision(screen, true);
+            expect(harness.artifacts(serverId).list()).toEqual([]);
+            approve();
+            await expect(presentRead).resolves.toMatchObject({ ok: true, value: { items: [], eligibleProviders: [] } });
+            expect(harness.artifacts(serverId).list()).toEqual([]);
+            expect(harness.requestsFor(identityReadPath)).toHaveLength(1);
+        } finally {
+            controller.abort();
+            try { await screen.unmount(); } finally { review.dispose(); }
+        }
+
+        const artifactIds: string[] = [];
+        // Outstanding Agent requests have Inbox items with their original execution bindings.
+        for (const read of reads) {
+            const artifactId = await createAgentApprovalRequest({ serverId, actionId: read.actionId, actionInput,
+                actionRequestId: read.actionId });
+            const receipt = ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId)!));
+            expect(receipt).toMatchObject({ status: 'open', requestedSurface: 'agent' });
+            expect(receipt.executionOriginV1).toBeDefined();
+            artifactIds.push(artifactId);
+            act(() => hook.getCurrent().requestApproval(createActionApprovalContinuation({
+                ...read, artifactId, scope, expectedInput: actionInput, expectedExecutionOrigin: receipt.executionOriginV1,
+            })));
+        }
+        const [firstId, secondId] = artifactIds;
+        if (!firstId || !secondId) throw new Error('Expected both read approvals');
+        expect(hook.getCurrent().approvalId).toBe(firstId);
         await expect(decideApprovalAsInbox(serverId, secondId, 'approve')).resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
+        expect(firstResult).not.toHaveBeenCalled();
         await expect(decideApprovalAsInbox(serverId, firstId, 'approve')).resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
 
         await waitForHomeGovernance(() => {
@@ -770,8 +832,10 @@ describe('useActionApprovalContinuation', () => {
         });
         expect(firstResult).toHaveBeenCalledWith(expect.objectContaining({ items: [], eligibleProviders: [] }));
         expect(secondResult).toHaveBeenCalledWith({ items: [], nextCursor: null });
+        expect(firstFailure).not.toHaveBeenCalled();
+        expect(secondFailure).not.toHaveBeenCalled();
         expect(hook.getCurrent().approvalId).toBeNull();
-        expect(harness.requestsFor('/v1/teams/identity/connections/list')).toHaveLength(1);
+        expect(harness.requestsFor(identityReadPath)).toHaveLength(2);
         expect(harness.requestsFor('/v1/teams/team-1/directory-sources')).toHaveLength(1);
     });
 
