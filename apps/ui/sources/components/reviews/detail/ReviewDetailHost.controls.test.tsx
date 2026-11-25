@@ -111,19 +111,27 @@ it('leads with one Implement primary while findings await, and keeps selection b
 
 it('shows a fixed finding as Fixed, counts it on its chip and never offers to implement it again', async () => {
   const reviewId = 'fixed-finding-review';
+  const roundSummary = 'Captured round verification';
   const fixed = buildReviewCommentFixture({ id: 'fixed-root', threadId: 'fixed-root', reviewId,
     accountId: 'alice', state: 'resolved', reviewTriageStatus: 'accept', roundOrdinal: 1, findingIdentity: '8'.repeat(64),
     finding: { id: 'fixed-finding', title: 'Fixed finding', summary: 'Already fixed', severity: 'high', category: 'correctness' } });
   const pending = buildReviewCommentFixture({ id: 'still-pending', threadId: 'still-pending', reviewId,
     accountId: 'alice', state: 'open', roundOrdinal: 1, findingIdentity: '9'.repeat(64),
     finding: { id: 'still-pending-finding', title: 'Pending finding', summary: 'Waiting', severity: 'medium', category: 'correctness' } });
+  const human: ReviewHumanStateV1 = { reviewId, roundOrdinal: 1, requests: [], verdicts: [],
+    needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: true, requestedVerdict: false,
+      pendingDecisions: true, canSubmitVerdict: false } };
   fixture = await createSessionFilesViewFixture({ serverUrl: 'https://fixed-finding-review.test', request: async url => {
+    if (new URL(String(url)).pathname === '/v1/reviews/get') return Response.json({
+      review: { reviewId, projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct',
+        state: 'completed', currentRoundOrdinal: 1, startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2,
+        counts: { total: 2, needsDecision: 1 } }, human });
     if (new URL(String(url)).pathname === '/v1/reviews/comments') return Response.json({ items: [fixed, pending].map(storePlainReviewCommentFixture), cursor: null });
     return Response.json({}, { status: 404 });
   } });
   const artifact: DecryptedArtifact = { id: reviewId, sourceServerId: fixture.scope.serverId, title: 'Fixed finding', isDecrypted: true,
     header: { kind: 'review.v1', v: 1, reviewId, title: 'Fixed finding' },
-    body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: [], runs: [] }] }),
+    body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: [], runs: [], summary: roundSummary }] }),
     ownerAccountId: 'alice', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
   fixture.artifacts.replaceStoredRow(createPlainArtifactHttpFixture(artifact, 'alice'));
   const { ReviewDetailHost } = await import('./ReviewDetailHost');
@@ -141,7 +149,15 @@ it('shows a fixed finding as Fixed, counts it on its chip and never offers to im
     const view = screen.findByType(ReviewDetailView);
     expect(view.props.primaryAction ?? null).toBeNull();
     expect(view.props.menu.some((item: { id: string }) => item.id === 'implement')).toBe(false);
-    expect(screen.findHostByTestId('review-findings:filter:fixed')).not.toBeNull();
+    // Totals belong to the filter chips; the shared glance keeps the verdict followed by the round's facts.
+    expect(screen.findHostByTestId('review-findings:filter:all')?.props.accessibilityLabel).toBe(`${t('common.all')} 2`);
+    expect(screen.findHostByTestId('review-findings:filter:fixed')?.props.accessibilityLabel).toBe(`${t('reviewWalkthrough.detail.fixed')} 1`);
+    const facts = screen.findHostByTestId('review-detail:facts');
+    expect(facts?.children).toEqual([roundSummary]);
+    const verdict = screen.findHostByTestId('review-detail:glance');
+    const lines = verdict?.findAll(node => typeof node.type === 'string'
+      && (node.props.testID === 'review-detail:facts' || node.children.includes(view.props.glance.sentence)));
+    expect(lines?.map(node => node === facts ? 'facts' : 'verdict')).toEqual(['verdict', 'facts']);
   } finally { await screen.unmount(); }
 });
 

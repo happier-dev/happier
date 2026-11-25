@@ -28,6 +28,7 @@ function byTestId(root: Element, testID: string): HTMLElement | null {
 describe('HappierReviewSummary for plugin authors', () => {
   it('draws the Review, its verdict and its first findings, and opens a finding from its row', () => {
     const opened = vi.fn();
+    const glance = { sentence: '2 blockers found', tone: 'attention', facts: ['3 findings', '1 of 2 verified'] } as const;
     const mounted = mountThroughReactNativeWeb(
       inSurface(
         <HappierReviewSummary
@@ -35,7 +36,7 @@ describe('HappierReviewSummary for plugin authors', () => {
           heading="Review"
           subject="#2481"
           status={{ label: 'Needs decision', tone: 'quiet' }}
-          glance={{ sentence: '2 blockers found', tone: 'attention', facts: ['3 findings'] }}
+          glance={glance}
           rows={[
             { rowId: 'f1', severity: 'blocker', severityLabel: 'Blocker', title: 'Retry loses the socket', reviewer: 'Claude' },
             { rowId: 'f2', severity: 'high', severityLabel: 'High', title: 'Backoff never resets', reviewer: 'Codex' },
@@ -49,7 +50,11 @@ describe('HappierReviewSummary for plugin authors', () => {
     );
     try {
       const card = byTestId(mounted.container, 'pr-review')!;
-      expect(card.textContent).toContain('2 blockers found');
+      const content = card.textContent ?? '';
+      const glanceParts = [glance.sentence, ...glance.facts];
+      for (const part of glanceParts) expect(content.split(part)).toHaveLength(2);
+      expect(glanceParts.map(part => content.indexOf(part)))
+        .toEqual([...glanceParts.map(part => content.indexOf(part))].sort((left, right) => left - right));
       expect(card.textContent).toContain('#2481');
       expect(byTestId(card, 'review-summary:row:f2')?.textContent).toContain('Backoff never resets');
       expect(byTestId(card, 'more')).not.toBeNull();
