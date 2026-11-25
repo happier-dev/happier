@@ -672,12 +672,15 @@ it('a failed suggestion says so and keeps the owner’s code under Details, neve
     await screen.pressByTestIdAsync('newApp.continue');
     await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A bakery page'));
     await screen.pressByTestIdAsync('newApp.auto.suggest');
-    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
-    const failed = () => screen.findAllByType(SurfaceStateCard).find((node) => node.props.testID === 'newApp.auto.failed');
+    const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+    const failed = () => screen.findAllByType(AttentionBanner).find((node) => node.props.testID === 'newApp.auto.failed');
     await waitForHomeGovernance(() => expect(failed()).toBeTruthy());
-    expect(failed()!.props.kind).toBe('error');
-    expect(typeof failed()!.props.diagnosticCode, 'the typed code a person can hand to support').toBe('string');
-    expect(failed()!.props.diagnosticCode.length).toBeGreaterThan(0);
+    expect(failed()!.props.tone).toBe('danger');
+    const [code] = failed()!.props.details as readonly string[];
+    expect(typeof code, 'the typed code a person can hand to support').toBe('string');
+    expect(code.length).toBeGreaterThan(0);
+    // The person's words stay on the step to change before Try again (DESIGN-ACCEPT-3).
+    expect(screen.findByTestId('newApp.auto.description')?.props.value).toBe('A bakery page');
     await screen.unmount();
   } finally {
     await standardCleanup();
@@ -694,10 +697,11 @@ async function failedSuggestionReason(name: string, overrides: Ports) {
     await screen.pressByTestIdAsync('newApp.continue');
     await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A bakery page'));
     await screen.pressByTestIdAsync('newApp.auto.suggest');
-    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
-    const failed = () => screen.findAllByType(SurfaceStateCard).find((node) => node.props.testID === 'newApp.auto.failed');
+    const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+    const failed = () => screen.findAllByType(AttentionBanner).find((node) => node.props.testID === 'newApp.auto.failed');
     await waitForHomeGovernance(() => expect(failed()).toBeTruthy());
-    const { reason, diagnosticCode } = failed()!.props as { reason: string; diagnosticCode: string };
+    const reason = failed()!.props.description as string;
+    const diagnosticCode = (failed()!.props.details as readonly string[] | undefined)?.[0];
     const { LlmTaskRunnerPicker } = await import('@/components/settings/llmTasks/LlmTaskRunnerPicker');
     // The runner control the failed card offers: Settings' own picker, for the same task.
     const picker = screen.findAllByType(LlmTaskRunnerPicker).find((node) => node.props.task === 'deploy_suggestion');
@@ -740,6 +744,8 @@ it('a run that hit a usage limit names the Machine it ran on and offers choosing
     } } } }),
   });
   expect(reason).toContain('devbox');
+  const { t } = await import('@/text');
+  expect(reason.startsWith(t('session.usageLimitRecovery.banner.title')), 'the cause reads first, then where it ran').toBe(true);
   expect(runnerPicker).toBe(true);
 });
 
@@ -785,9 +791,9 @@ it('when every suggestion is dropped it says it couldn’t suggest, and Try agai
     await waitForHomeGovernance(() =>
       expect(screen.findByTestId('newApp.auto.nothing')).toBeTruthy(),
     );
-    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
-    const nothing = screen.findAllByType(SurfaceStateCard).find((node) => node.props.testID === 'newApp.auto.nothing');
-    expect(nothing?.props.diagnosticCode, 'why the answer was dropped stays under Details').toBe('unknown_id');
+    const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+    const nothing = screen.findAllByType(AttentionBanner).find((node) => node.props.testID === 'newApp.auto.nothing');
+    expect(nothing?.props.details?.[0], 'why the answer was dropped stays under Details').toBe('unknown_id');
     await screen.pressByTestIdAsync('newApp.auto.tryAgain');
     await waitForHomeGovernance(() =>
       expect(calls('execution.run.start')).toHaveLength(2),

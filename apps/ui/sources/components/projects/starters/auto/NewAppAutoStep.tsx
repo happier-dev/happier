@@ -3,7 +3,6 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -131,43 +130,9 @@ export function NewAppAutoStep(
     );
   }
 
-  if (view.kind === 'failed') {
-    // A failure keeps the owner's typed code behind Details (DESIGN.md "Error and recovery copy").
-    return (
-      <View>
-      <SurfaceStateCard
-        testID="newApp.auto.failed"
-        kind="error"
-        title={t('newApp.auto.nothingTitle')}
-        reason={view.reason}
-        diagnosticCode={view.code}
-        action={{ label: t('newApp.auto.tryAgain'), onPress: props.onTryAgain, testID: 'newApp.auto.tryAgain' }}
-        secondaryAction={{ label: t('newApp.auto.chooseStarter'), onPress: props.onChooseStarter, testID: 'newApp.auto.chooseStarter' }}
-      />
-      {view.runner ? <FailedRunnerChoice serverId={view.runner.serverId} machineId={view.runner.machineId}
-        {...(view.runner.limited ? { limited: view.runner.limited } : {})} /> : null}
-      </View>
-    );
-  }
-
-  if (view.kind === 'nothing') {
-    return (
-      <SurfaceStateCard
-        testID="newApp.auto.nothing"
-        // Dropped parts are a warning whose reasons stay behind Details; an empty answer is only empty.
-        kind={view.code ? 'warning' : 'empty'}
-        iconName="sparkle"
-        title={t('newApp.auto.nothingTitle')}
-        reason={t('newApp.auto.nothingBody')}
-        diagnosticCode={view.code}
-        action={{ label: t('newApp.auto.tryAgain'), onPress: props.onTryAgain, testID: 'newApp.auto.tryAgain' }}
-        secondaryAction={{ label: t('newApp.auto.chooseStarter'), onPress: props.onChooseStarter, testID: 'newApp.auto.chooseStarter' }}
-      />
-    );
-  }
-
   return (
-    <View testID={`newApp.auto.${view.kind}`}>
+    // A failed or empty answer names its notice with the state's id; the step around it is the step.
+    <View testID={view.kind === 'failed' || view.kind === 'nothing' ? 'newApp.auto.step' : `newApp.auto.${view.kind}`}>
       {/* The description leads the step under the title band, as the start step's search does (jdF-autoNoAgent). */}
       <ItemGroup surface="none" header="none">
         <FieldTextInput
@@ -191,6 +156,23 @@ export function NewAppAutoStep(
             onState={props.onQuestionState} />
         </ItemGroup>
       ) : null}
+      {view.kind === 'failed' || view.kind === 'nothing' ? (
+        // A suggestion that failed or found nothing is the step's notice under the description, as no-agent's is: the
+        // words stay to change before Try again, and the cause reads first with its code behind Details.
+        <AttentionBanner
+          testID={`newApp.auto.${view.kind}`}
+          tone={view.kind === 'failed' ? 'danger' : 'warning'}
+          announce={view.kind === 'failed' ? 'alert' : 'status'}
+          title={t('newApp.auto.nothingTitle')}
+          description={view.kind === 'failed' ? view.reason : t('newApp.auto.nothingBody')}
+          {...(view.code ? { details: [view.code] } : {})}
+          actionPlacement="below"
+          action={{ label: t('newApp.auto.tryAgain'), onPress: props.onTryAgain, testID: 'newApp.auto.tryAgain' }}
+          secondaryAction={{ label: t('newApp.auto.chooseStarter'), onPress: props.onChooseStarter, testID: 'newApp.auto.chooseStarter' }}
+        />
+      ) : null}
+      {view.kind === 'failed' && view.runner ? <FailedRunnerChoice serverId={view.runner.serverId} machineId={view.runner.machineId}
+        {...(view.runner.limited ? { limited: view.runner.limited } : {})} /> : null}
       {view.kind === 'working' && checklist ? (
         // The checklist is the card under its title (one card, as the Setup tab's run); where the work runs is the
         // section's description, on its inset.

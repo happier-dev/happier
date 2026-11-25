@@ -445,6 +445,45 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
 
+  it('Configure says what its Review waits for, first empty field first: the image, its port, then the new Project’s name (DESIGN-ACCEPT-3)', async () => {
+    const serverId = await homes.addHome({ name: 'Deploy configure', serverUrl: 'https://draft-steps-configure.test', accountId: 'alice',
+      serverIdentityId: `srv_${'7'.repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    const frames: DeploymentDraftFrame[] = [];
+    try {
+      homes.answer(serverId, 'GET /v1/projects/sources', { body: { ok: true, sources: [], coverage: { complete: true, nextCursor: null } } });
+      await publishMachineInventoryForTest(account.accountLifetime.scope, [
+        createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() }),
+      ]);
+      const steps = { onFrame: (frame: DeploymentDraftFrame) => { frames.push(frame); }, onExit: () => {} };
+      function ImageDraft() {
+        const projectChoice = useDeploymentProjectChoice({ lifetime: account.accountLifetime, initiallyNew: true });
+        return <DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId={null} projectChoice={projectChoice}
+          definitionKind="image" phone={false} actions={createDeploymentActions(account.accountLifetime)} steps={steps}
+          onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />;
+      }
+      const screen = await renderScreen(<ImageDraft />);
+      const frame = () => frames[frames.length - 1]!;
+      const field = (id: string) => screen.findAllByType(FieldTextInput).find((node) => node.props.testID === id);
+      const settle = (check: () => void) => waitForHomeGovernance(async () => { await act(async () => {}); check(); });
+      await settle(() => expect(frame().primary.disabled).toBe(false));
+      await act(async () => frame().press());
+      await settle(() => expect(frame().step).toBe('configure'));
+      const { t } = await import('@/text');
+      expect(frame().primary.disabled).toBe(true);
+      expect(frame().waitingFor).toBe(t('newApp.deploy.configureNeeds.image'));
+      await act(async () => field('project-deployments.draft.imageName')!.props.onChangeText('nginx:1.27-alpine'));
+      await settle(() => expect(frame().waitingFor).toBe(t('newApp.deploy.configureNeeds.port')));
+      await act(async () => field('project-deployments.draft.imagePort')!.props.onChangeText('80'));
+      await settle(() => expect(frame().waitingFor).toBe(t('newApp.deploy.configureNeeds.project')));
+      await act(async () => field('project-deployments.draft.project.newName')!.props.onChangeText('Studio invoices'));
+      await settle(() => expect(frame().primary.disabled).toBe(false));
+      expect(frame().waitingFor ?? null).toBeNull();
+      await screen.unmount();
+    } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
+  });
+
   it('one notice per cause: a target refusal for a Machine that is not answering is said once, by that Machine (journey-deploy revFail)', async () => {
     const serverId = await homes.addHome({ name: 'Deploy notice', serverUrl: 'https://draft-steps-notice.test', accountId: 'alice',
       serverIdentityId: `srv_${'8'.repeat(32)}`, currentAccount: true });

@@ -659,7 +659,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         : autoKind === 'recommendations' ? adjustingNow ? t('newApp.deploy.nothingCreated') : auto.suggestedBy
         : autoKind === 'noAgent' ? t('newApp.auto.descriptionKept')
         : null :
-    deployStep === 'where' && deployFrame?.waitingFor ? deployFrame.waitingFor :
+    (deployStep === 'where' || deployStep === 'configure') && deployFrame?.waitingFor ? deployFrame.waitingFor :
     deployStep === 'where' || deployStep === 'configure' ? t('newApp.deploy.nothingCreated') :
     deployStep === 'review' && deployFrame?.refused ? t('newApp.deploy.plan.nothingWasCreated') :
     // A phone's start footer has room for its actions only (lab jdF-srcp), like the auto step's.

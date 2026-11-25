@@ -146,6 +146,10 @@ type Copy = Readonly<{
     nothingCreated: string;
     /** Where's Continue waits for an answering Machine (a deploy, also a platform's, runs from one) (DESIGN-ACCEPT-2 W7). */
     waitMachine: string;
+    /** Configure's Review waits for what is still empty, said in the footer as Where's wait is (DESIGN-ACCEPT-3). */
+    configureNeeds: Readonly<{ image: string; port: string; project: string }>;
+    /** Configure's port row: what the number is (journey-deploy imgCfg). */
+    imagePortDescription: string;
     platformNeedsMachine: (p: Readonly<{ platform: string }>) => string;
     review: string;
     whereDescription: (p: Name) => string;
@@ -417,6 +421,8 @@ export const newAppTranslations: Readonly<
       change: 'Change',
       nothingCreated: 'Nothing is created yet',
       waitMachine: 'Needs an online Machine to continue',
+      configureNeeds: { image: 'Add the image to continue', port: 'Add the port it listens on to continue', project: 'Name the project to continue' },
+      imagePortDescription: 'The port the app listens on inside the container',
       platformNeedsMachine: ({ platform }) => `${platform} deploys from one of your Machines, and none is online.`,
       review: 'Review',
       whereDescription: ({ name }) => `Choose where ${name} runs. You can move it later.`,
@@ -661,6 +667,8 @@ export const newAppTranslations: Readonly<
       change: 'Canvia',
       nothingCreated: 'Encara no es crea res',
       waitMachine: 'Cal una Machine en línia per continuar',
+      configureNeeds: { image: 'Afegeix la imatge per continuar', port: 'Afegeix el port on escolta per continuar', project: 'Posa nom al projecte per continuar' },
+      imagePortDescription: 'El port on escolta l’aplicació dins del contenidor',
       platformNeedsMachine: ({ platform }) => `${platform} desplega des d’una de les teves Machines, i cap no és en línia.`,
       review: 'Revisa',
       whereDescription: ({ name }) => `Tria on s’executa ${name}. Ho pots moure més tard.`,
@@ -905,6 +913,8 @@ export const newAppTranslations: Readonly<
       change: 'Ändern',
       nothingCreated: 'Noch wird nichts erstellt',
       waitMachine: 'Zum Fortfahren muss eine Machine online sein',
+      configureNeeds: { image: 'Gib das Image an, um fortzufahren', port: 'Gib den Port an, auf dem es lauscht, um fortzufahren', project: 'Benenne das Projekt, um fortzufahren' },
+      imagePortDescription: 'Der Port, auf dem die App im Container lauscht',
       platformNeedsMachine: ({ platform }) => `${platform} deployt von einer deiner Machines aus, und keine ist online.`,
       review: 'Prüfen',
       whereDescription: ({ name }) => `Wähle, wo ${name} läuft. Du kannst es später verschieben.`,
@@ -1149,6 +1159,8 @@ export const newAppTranslations: Readonly<
       change: 'Cambiar',
       nothingCreated: 'Aún no se crea nada',
       waitMachine: 'Hace falta una Machine en línea para continuar',
+      configureNeeds: { image: 'Añade la imagen para continuar', port: 'Añade el puerto en el que escucha para continuar', project: 'Pon nombre al proyecto para continuar' },
+      imagePortDescription: 'El puerto en el que escucha la app dentro del contenedor',
       platformNeedsMachine: ({ platform }) => `${platform} despliega desde una de tus Machines, y ninguna está en línea.`,
       review: 'Revisar',
       whereDescription: ({ name }) => `Elige dónde se ejecuta ${name}. Puedes moverlo después.`,
@@ -1393,6 +1405,8 @@ export const newAppTranslations: Readonly<
       change: 'Modifier',
       nothingCreated: 'Rien n’est encore créé',
       waitMachine: 'Une Machine en ligne est nécessaire pour continuer',
+      configureNeeds: { image: 'Ajoutez l’image pour continuer', port: 'Ajoutez le port d’écoute pour continuer', project: 'Nommez le projet pour continuer' },
+      imagePortDescription: 'Le port sur lequel l’app écoute dans le conteneur',
       platformNeedsMachine: ({ platform }) => `${platform} déploie depuis l’une de vos Machines, et aucune n’est en ligne.`,
       review: 'Vérifier',
       whereDescription: ({ name }) => `Choisissez où ${name} s’exécute. Vous pourrez le déplacer plus tard.`,
@@ -1637,6 +1651,8 @@ export const newAppTranslations: Readonly<
       change: 'Cambia',
       nothingCreated: 'Non viene ancora creato nulla',
       waitMachine: 'Serve una Machine online per continuare',
+      configureNeeds: { image: 'Aggiungi l’immagine per continuare', port: 'Aggiungi la porta su cui ascolta per continuare', project: 'Dai un nome al progetto per continuare' },
+      imagePortDescription: 'La porta su cui l’app ascolta dentro il container',
       platformNeedsMachine: ({ platform }) => `${platform} distribuisce da una delle tue Machine, e nessuna è online.`,
       review: 'Rivedi',
       whereDescription: ({ name }) => `Scegli dove viene eseguita ${name}. Puoi spostarla in seguito.`,
@@ -1881,6 +1897,8 @@ export const newAppTranslations: Readonly<
       change: '変更',
       nothingCreated: 'まだ何も作成されません',
       waitMachine: '続行するにはオンラインの Machine が必要です',
+      configureNeeds: { image: '続行するにはイメージを入力してください', port: '続行するには待ち受けポートを入力してください', project: '続行するにはプロジェクト名を入力してください' },
+      imagePortDescription: 'コンテナ内でアプリが待ち受けるポート',
       platformNeedsMachine: ({ platform }) => `${platform} はあなたの Machine のいずれかからデプロイしますが、オンラインの Machine がありません。`,
       review: '確認',
       whereDescription: ({ name }) => `${name} を実行する場所を選びます。あとで移動できます。`,
@@ -2125,6 +2143,8 @@ export const newAppTranslations: Readonly<
       change: 'Zmień',
       nothingCreated: 'Nic jeszcze nie jest tworzone',
       waitMachine: 'Aby kontynuować, potrzebna jest Machine online',
+      configureNeeds: { image: 'Podaj obraz, aby kontynuować', port: 'Podaj port, na którym nasłuchuje, aby kontynuować', project: 'Nazwij projekt, aby kontynuować' },
+      imagePortDescription: 'Port, na którym aplikacja nasłuchuje w kontenerze',
       platformNeedsMachine: ({ platform }) => `${platform} wdraża z jednej z twoich Machines, a żadna nie jest online.`,
       review: 'Przejrzyj',
       whereDescription: ({ name }) => `Wybierz, gdzie działa ${name}. Możesz to później przenieść.`,
@@ -2369,6 +2389,8 @@ export const newAppTranslations: Readonly<
       change: 'Alterar',
       nothingCreated: 'Nada é criado ainda',
       waitMachine: 'É preciso uma Machine online para continuar',
+      configureNeeds: { image: 'Adicione a imagem para continuar', port: 'Adicione a porta em que escuta para continuar', project: 'Dê um nome ao projeto para continuar' },
+      imagePortDescription: 'A porta em que o app escuta dentro do contêiner',
       platformNeedsMachine: ({ platform }) => `O ${platform} implanta a partir de uma das suas Machines, e nenhuma está online.`,
       review: 'Rever',
       whereDescription: ({ name }) => `Escolha onde ${name} é executado. Pode mudá-lo depois.`,
@@ -2613,6 +2635,8 @@ export const newAppTranslations: Readonly<
       change: 'Изменить',
       nothingCreated: 'Пока ничего не создаётся',
       waitMachine: 'Чтобы продолжить, нужна Machine в сети',
+      configureNeeds: { image: 'Укажите образ, чтобы продолжить', port: 'Укажите порт, который он слушает, чтобы продолжить', project: 'Назовите проект, чтобы продолжить' },
+      imagePortDescription: 'Порт, который приложение слушает внутри контейнера',
       platformNeedsMachine: ({ platform }) => `${platform} развёртывает с одной из ваших Machines, но ни одна не в сети.`,
       review: 'Проверить',
       whereDescription: ({ name }) => `Выберите, где работает ${name}. Это можно изменить позже.`,
@@ -2853,6 +2877,8 @@ export const newAppTranslations: Readonly<
       change: '更改',
       nothingCreated: '尚未创建任何内容',
       waitMachine: '需要一台在线的 Machine 才能继续',
+      configureNeeds: { image: '添加镜像后才能继续', port: '添加它监听的端口后才能继续', project: '为项目命名后才能继续' },
+      imagePortDescription: '应用在容器内监听的端口',
       platformNeedsMachine: ({ platform }) => `${platform} 从你的某台 Machine 部署，但目前没有在线的 Machine。`,
       review: '检查',
       whereDescription: ({ name }) => `选择 ${name} 在哪里运行。之后可以移动。`,
@@ -3093,6 +3119,8 @@ export const newAppTranslations: Readonly<
       change: '變更',
       nothingCreated: '尚未建立任何內容',
       waitMachine: '需要一台在線的 Machine 才能繼續',
+      configureNeeds: { image: '新增映像檔後才能繼續', port: '新增它監聽的連接埠後才能繼續', project: '為專案命名後才能繼續' },
+      imagePortDescription: '應用程式在容器內監聽的連接埠',
       platformNeedsMachine: ({ platform }) => `${platform} 從你的某台 Machine 部署，但目前沒有在線的 Machine。`,
       review: '檢查',
       whereDescription: ({ name }) => `選擇 ${name} 在哪裡執行。之後可以移動。`,

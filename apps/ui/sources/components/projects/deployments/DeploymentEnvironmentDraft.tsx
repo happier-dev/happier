@@ -127,7 +127,7 @@ export type DeploymentDraftStep = 'where' | 'configure' | 'review';
 /** What a stepped host needs to frame the current step: its facts for the summary, and the step's one action. */
 export type DeploymentDraftFrame = Readonly<{
   step: DeploymentDraftStep;
-  /** Where's Continue is disabled for want of an answering Machine: what it waits for, for the host's footer. */
+  /** What the step's disabled action waits for, for the host's footer: an answering Machine on Where, an empty field on Configure. */
   waitingFor?: string | null;
   /** The answered Where: a platform's name or the Machine's. */
   runsOn: Readonly<{ kind: 'machine' | 'platform'; title: string | null }> | null;
@@ -609,6 +609,14 @@ export const DeploymentEnvironmentDraft = React.memo(
       && !machines.some(answers);
     const whereWaitingFor = draftStep === 'where' && platformDefinitionAccepted && !platformNeedsMachine
       && (chosen === null || !answers(chosen)) ? t('newApp.deploy.waitMachine') : null;
+    // Configure's Review waits for what the person still has to fill, first empty field first, in the footer where Where's
+    // wait is said (DESIGN-ACCEPT-3): an image draft's image and port, then the new Project's name.
+    const imageDraft = definitionKind === 'image' && (props.copyFrom === undefined || props.copyFrom === null) && props.catalogApp == null;
+    const configureWaitingFor = draftStep !== 'configure' ? null
+      : imageDraft && imageName.trim().length === 0 ? t('newApp.deploy.configureNeeds.image')
+      : imageDraft && !imagePortValid ? t('newApp.deploy.configureNeeds.port')
+      : props.projectChoice && projectSelection == null ? t('newApp.deploy.configureNeeds.project')
+      : null;
     const pressStep = useEventCallback(() => {
       if (draftStep !== 'where') { void save(); return; }
       if (!whereReady) return;
@@ -646,13 +654,13 @@ export const DeploymentEnvironmentDraft = React.memo(
     const frame = React.useMemo((): DeploymentDraftFrame => ({
       step: draftStep,
       runsOn: runsOnKind ? { kind: runsOnKind, title: runsOnTitle } : null,
-      waitingFor: whereWaitingFor,
+      waitingFor: whereWaitingFor ?? configureWaitingFor,
       source: sourceTitle ? { title: sourceTitle, note: sourceNote } : null,
       appName,
       refused: draftStep === 'review' && !partial && !createOutcomeUnknown && refusal?.kind === 'refused',
       primary: { title: primary.title, disabled: primary.disabled, loading: primary.loading, testID: primary.testID },
       press: pressStep, back: backStep, toWhere,
-    }), [draftStep, runsOnKind, runsOnTitle, whereWaitingFor, sourceTitle, sourceNote, appName, partial, createOutcomeUnknown, refusal, primary.title, primary.disabled,
+    }), [draftStep, runsOnKind, runsOnTitle, whereWaitingFor, configureWaitingFor, sourceTitle, sourceNote, appName, partial, createOutcomeUnknown, refusal, primary.title, primary.disabled,
       primary.loading, primary.testID, pressStep, backStep, toWhere]);
     const stepsHost = React.useRef(props.steps);
     stepsHost.current = props.steps;
@@ -1044,12 +1052,15 @@ export const DeploymentEnvironmentDraft = React.memo(
                     if (key === refusedDomainKey) setRefusal(null);
                   }} />
               ) : definitionKind === 'image' ? <>
-              <Item title={t('managedMachines.config.image')} accessoryLayout={stepped ? 'adaptive' : 'stacked'} showChevron={false}
+              {/* Each field says what it takes, as the source tile and journey-deploy imgCfg do (DESIGN-ACCEPT-3). */}
+              <Item title={t('managedMachines.config.image')} subtitle={t('newApp.builtImageSubtitle')}
+                accessoryLayout={stepped ? 'adaptive' : 'stacked'} showChevron={false}
                 rightElement={<FieldTextInput testID="project-deployments.draft.imageName"
                   accessibilityLabel={t('managedMachines.config.image')} value={imageName}
                   onChangeText={setImageName} monospace autoCapitalize="none" autoComplete="off" />}
               />
-              <Item title={t('projects.deployments.domainFieldPort')} accessoryLayout={stepped ? 'adaptive' : 'stacked'} showChevron={false}
+              <Item title={t('projects.deployments.domainFieldPort')} subtitle={t('newApp.deploy.imagePortDescription')}
+                accessoryLayout={stepped ? 'adaptive' : 'stacked'} showChevron={false}
                 rightElement={<FieldTextInput testID="project-deployments.draft.imagePort"
                   accessibilityLabel={t('projects.deployments.domainFieldPort')} value={imagePort}
                   onChangeText={setImagePort} monospace autoCapitalize="none" autoComplete="off" />}

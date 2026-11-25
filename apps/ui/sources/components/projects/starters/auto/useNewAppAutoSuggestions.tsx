@@ -406,12 +406,12 @@ function presentMachine(
 }
 
 /**
- * Why the suggestion failed, said for where it failed: a Run's cause in the run card's words (a usage limit is the
- * limit, with its reset when the usage owner has one) after the Machine and Agent it ran on, anything earlier as
+ * Why the suggestion failed, said for where it failed: a Run's cause first, in the run card's words (a usage limit is
+ * the limit, with its reset when the usage owner has one), then the Machine and Agent it ran on; anything earlier as
  * Happier not reaching an agent.
  */
 function failedReason(outcome: Extract<DeploySuggestionOutcome, { kind: 'failed' }>, runner: Runner | null): string {
     if (outcome.stage === 'setup') return t('newApp.auto.failedSetupBody');
     const run = presentExecutionRunFailureSummary(outcome.runError ?? { code: outcome.code });
-    return [runner ? runsOnLine(runner) : null, run.summary, run.reset].filter(Boolean).join(' · ');
+    return [run.summary, run.reset, runner ? runsOnLine(runner) : null].filter(Boolean).join(' · ');
 }
