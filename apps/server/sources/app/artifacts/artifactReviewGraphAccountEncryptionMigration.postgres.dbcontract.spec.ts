@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
@@ -10,16 +10,27 @@ import { createSqlReviewCommentStore } from '@/app/reviews/comments/store';
 import { resolveReviewAccessInTx } from '@/app/reviews/reviewAccess';
 import { createReviewCommentAccountEncryptionMigrationPersistenceInTx } from '@/app/reviews/comments/accountEncryptionMigrationPersistence';
 import { readArtifactAccountEncryptionMigrationRowsInTx, migrateArtifactAccountEncryptionInTx } from './artifactWriteService';
+import { executeReviewCommentTransportV1 } from '@happier-dev/protocol/reviews/comments/transport';
+import type { ReviewCommentResourceCryptoV1 } from '@happier-dev/protocol/reviews/comments/content';
+import { computeCanonicalDomainSeparatedKeyedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
+import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { registerReviewCommentRoutes } from '@/app/reviews/comments/routes';
+import { updateAccountEncryptionMode } from '@/app/api/routes/account/updateAccountEncryptionMode';
+import { initEncrypt } from '@/modules/encrypt';
 
 const ownerId = randomUUID();
 const recipientId = randomUUID();
 const reviewId = randomUUID();
 let connected = false;
+const previousMasterSecret = process.env.HANDY_MASTER_SECRET;
 beforeAll(async () => {
     if (!process.env.HAPPIER_DB_CONTRACT_CONTAINER_ID) throw new Error('Review conversion requires the disposable DB-contract runner');
     initDbPostgres();
     await db.$connect();
     connected = true;
+    process.env.HANDY_MASTER_SECRET ??= 'review-recipient-conversion-test-only';
+    await initEncrypt();
     await db.account.createMany({ data: [ownerId, recipientId].map(id => ({ id, publicKey: id, encryptionMode: 'plain' })) });
     await db.artifact.create({ data: { id: reviewId, accountId: ownerId, kind: deriveArtifactStoredKindV1({ kind: REVIEW_ARTIFACT_KIND_V1 }),
         header: Buffer.from(encodePlainArtifactStoredContent({ kind: REVIEW_ARTIFACT_KIND_V1, title: 'Review' }), 'base64'),
@@ -34,6 +45,80 @@ afterAll(async () => {
     await db.artifact.deleteMany({ where: { id: reviewId } });
     await db.account.deleteMany({ where: { id: { in: [ownerId, recipientId] } } });
     await db.$disconnect();
+    if (previousMasterSecret === undefined) delete process.env.HANDY_MASTER_SECRET;
+    else process.env.HANDY_MASTER_SECRET = previousMasterSecret;
+});
+
+it('preserves recipient-authored resource ciphertext when that recipient converts from E2EE to Plain', async () => {
+    const owner = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
+    const recipient = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
+    const encryptedReviewId = randomUUID();
+    try {
+        await db.artifact.create({ data: { id: encryptedReviewId, accountId: owner.id,
+            kind: deriveArtifactStoredKindV1({ kind: REVIEW_ARTIFACT_KIND_V1 }),
+            header: randomBytes(40), body: randomBytes(40), dataEncryptionKey: randomBytes(80),
+            reviewMetadata: { create: { subjectKind: 'comparison', sourceKind: 'direct', state: 'completed',
+                currentRoundOrdinal: 1, startedAt: new Date(1) } } } });
+        await db.artifactGrant.create({ data: { artifactId: encryptedReviewId, principalKind: 'account', accountId: recipient.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        // The authorized client's resource-key crypto is the boundary; transport, HTTP and PostgreSQL stay real.
+        const resourceKey = randomBytes(32);
+        const resource: ReviewCommentResourceCryptoV1 = { reviewId: encryptedReviewId, mode: 'e2ee',
+            seal: async value => {
+                const nonce = randomBytes(12);
+                const cipher = createCipheriv('aes-256-gcm', resourceKey, nonce);
+                const bytes = Buffer.concat([cipher.update(JSON.stringify(value)), cipher.final()]);
+                return { t: 'encrypted', c: Buffer.concat([nonce, cipher.getAuthTag(), bytes]).toString('base64') };
+            },
+            open: async envelope => {
+                if (envelope.t !== 'encrypted') throw new Error('Expected resource ciphertext');
+                const bytes = Buffer.from(envelope.c, 'base64');
+                const decipher = createDecipheriv('aes-256-gcm', resourceKey, bytes.subarray(0, 12));
+                decipher.setAuthTag(bytes.subarray(12, 28));
+                return JSON.parse(Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString()) as unknown;
+            },
+            commitment: (purpose, input) => computeCanonicalDomainSeparatedKeyedDigest(resourceKey,
+                'happier:review-comment-resource-commitment:v1', [encryptedReviewId, purpose, input]),
+        };
+        await withAuthenticatedTestApp(registerReviewCommentRoutes, async app => {
+            const request = async (request: Parameters<Parameters<typeof executeReviewCommentTransportV1>[0]['request']>[0]) => {
+                const response = await app.inject({ method: request.method.toUpperCase() as 'GET' | 'POST', url: request.path,
+                    headers: { 'x-test-user-id': recipient.id }, payload: request.body, query: request.query });
+                expect(response.statusCode, response.body).toBe(200);
+                return response.json() as unknown;
+            };
+            const input = { reviewId: encryptedReviewId, roundOrdinal: 1, body: 'Recipient encrypted finding',
+                anchor: { kind: 'file', filePath: 'recipient-private.ts' }, snapshot: { kind: 'none', capturedAt: 1 },
+                authorIntent: 'open', clientMutationId: randomUUID() };
+            const create = await executeReviewCommentTransportV1({ actionId: 'reviews.comments.create', input,
+                context: { accountId: recipient.id, mode: 'e2ee', material: null, resource },
+                actor: { kind: 'user', userId: recipient.id }, randomBytes, request });
+            expect(create).toMatchObject({ comment: { accountId: owner.id, reviewId: encryptedReviewId,
+                author: { kind: 'user', userId: recipient.id }, body: input.body } });
+            const before = (await readArtifactAccountEncryptionMigrationRowsInTx(db, owner.id))[0]!;
+            expect(before.reviewGraph!.comments).toHaveLength(1);
+            expect(before.reviewGraph!.comments[0]!.stored.sensitiveEnvelope).toMatchObject({ t: 'encrypted' });
+            expect(before.reviewGraph!.comments[0]!.events).toHaveLength(1);
+            expect(await createReviewCommentAccountEncryptionMigrationPersistenceInTx(db).readInventory(recipient.id)).toEqual([]);
+            const serialized = JSON.stringify(before.reviewGraph);
+            expect(serialized).not.toContain(input.body);
+            expect(serialized).not.toContain('recipient-private.ts');
+            expect(await updateAccountEncryptionMode({ accountId: recipient.id, mode: 'plain' }))
+                .toMatchObject({ status: 'updated', mode: 'plain' });
+            expect((await db.account.findUniqueOrThrow({ where: { id: recipient.id } })).encryptionMode).toBe('plain');
+            expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).encryptionMode).toBe('e2ee');
+            const after = (await readArtifactAccountEncryptionMigrationRowsInTx(db, owner.id))[0]!;
+            expect(after).toEqual(before);
+            const commentId = before.reviewGraph!.comments[0]!.stored.structural.id;
+            expect(await executeReviewCommentTransportV1({ actionId: 'reviews.comments.get', input: { commentId, reviewId: encryptedReviewId },
+                context: { accountId: recipient.id, mode: 'e2ee', material: null, resource },
+                actor: { kind: 'user', userId: recipient.id }, randomBytes, request }))
+                .toMatchObject({ comment: { id: commentId, body: input.body, anchor: input.anchor } });
+        });
+    } finally {
+        await db.artifact.deleteMany({ where: { id: encryptedReviewId } });
+        await db.account.deleteMany({ where: { id: { in: [owner.id, recipient.id] } } });
+    }
 });
 
 it('keeps attached content out of Account conversion and commits the complete resource graph or rolls it back', async () => {
