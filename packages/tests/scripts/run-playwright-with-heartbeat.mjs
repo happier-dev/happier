@@ -56,6 +56,7 @@ if (process.platform === 'linux' && !process.env.CI && !process.env.HAPPIER_HEAV
 
   await runHeartbeatWrappedCommand({
     toolName: 'playwright',
+    runLogBaseDir: resolve(repoRoot, '.project/logs/e2e'),
     config,
     diagnosticPath: process.env.HAPPIER_CI_DIAGNOSTIC_PATH
       || resolve(repoRoot, '.project/logs/e2e/playwright-heartbeat-diagnostic.ndjson'),

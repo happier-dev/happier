@@ -19,11 +19,14 @@ describe('resolveVitestGlobalSetupPaths', () => {
     expect(paths.lockPath).toBe(resolve('/repo', '.project', 'tmp', 'cli-dist-build.lock'));
   });
 
-  it('uses the historical repo-local shared snapshot paths when no e2e logs dir is provided', () => {
+  it.each([
+    {},
+    { HAPPIER_E2E_OWNED_RUN_LOGS_DIR: resolve('/repo', '.project', 'logs', 'e2e', 'default-run') },
+  ])('uses shared snapshots for the default logs namespace (%j)', env => {
     const paths = resolveVitestGlobalSetupPaths({
       rootDir: '/repo',
       lane: 'core-fast',
-      env: {},
+      env,
     });
 
     expect(paths.setupDir).toBe(resolve('/repo', '.project', 'tmp', 'vitest-global-setup', 'core-fast'));

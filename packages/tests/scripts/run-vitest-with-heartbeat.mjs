@@ -108,6 +108,7 @@ const invocation = resolvePnpmCommandInvocation(childArgs, { npmExecPath: '' });
 
 await runHeartbeatWrappedCommand({
   toolName: 'vitest',
+  runLogBaseDir: resolve(repoRoot, '.project/logs/e2e'),
   config: normalizedConfig,
   diagnosticPath,
   command: invocation.command,

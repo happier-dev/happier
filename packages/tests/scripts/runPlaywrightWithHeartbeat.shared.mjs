@@ -1,5 +1,5 @@
-import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { mkdir, mkdtemp, rename, rm, unlink, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
 import { runManagedChildCommand } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
 import { createTestTempDirectory } from '../../../scripts/testing/process/temporaryDirectories.mjs';
@@ -162,6 +162,17 @@ export async function runHeartbeatWrappedCommand(params) {
   }
 
   let spawnOptions = params.spawnOptions;
+  const childEnv = spawnOptions.env ?? process.env;
+  let ownedRunLogDir;
+  if (!childEnv.HAPPIER_E2E_LOGS_DIR?.trim()) {
+    await mkdir(params.runLogBaseDir, { recursive: true });
+    const stamp = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
+    ownedRunLogDir = await mkdtemp(join(params.runLogBaseDir, `${stamp}-${params.toolName}-run-`));
+    spawnOptions = {
+      ...spawnOptions,
+      env: { ...childEnv, HAPPIER_E2E_OWNED_RUN_LOGS_DIR: ownedRunLogDir },
+    };
+  }
   if (params.toolName === 'playwright') {
     const { root } = createTestTempDirectory('happier-playwright-');
     spawnOptions = {
@@ -242,7 +253,15 @@ export async function runHeartbeatWrappedCommand(params) {
     // eslint-disable-next-line no-console
     console.error(`[tests] cgroup reported ${oomKillDelta} OOM-killed process(es) during ${commandMetadata.tool}`);
   }
-  // eslint-disable-next-line no-console
+  if (ownedRunLogDir && exitCode === 0) {
+    try {
+      await rm(ownedRunLogDir, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(`[tests] could not remove passing run logs at ${ownedRunLogDir}: ${error.message}`);
+    }
+  } else if (ownedRunLogDir) {
+    console.error(`[tests] retained run logs at ${ownedRunLogDir}`);
+  }
   console.log(`[tests] completed in ${elapsedSeconds(startedAt)}s with code ${exitCode}`);
   process.exit(exitCode);
 }

@@ -14,6 +14,7 @@ export function runHeartbeatWrappedCommand(params: {
   args: string[];
   config: string;
   toolName: string;
+  runLogBaseDir: string;
   diagnosticPath?: string;
   spawnOptions: {
     stdio: 'inherit';
