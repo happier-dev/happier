@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { readScmSnapshotCounts } from '@/scm/refresh/scmEntriesDemand';
 import type { PaneHeaderLine } from '@/components/appShell/panes/paneHeaderSlot';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
@@ -67,6 +68,12 @@ describe('useRepositoryTreePaneChrome', () => {
     // A pending fact keeps its room unseen; with nothing to fill it, the place line would float off its edge.
     const line = await readLine(null, false);
     expect(line?.segments).toEqual(['sessionGitPane.header.folderOnMachine']);
+  });
+
+  it('shows the authoritative change count without a changed-file list', async () => {
+    const counts = readScmSnapshotCounts(snapshot(true));
+    const line = await readLine({ ...counts, summary: { ...counts.summary!, changedFiles: 7 } });
+    expect(line?.segments[1]).toBe('sessionGitPane.header.changed:7');
   });
 
   it('names no change fact for a folder that is not a repository', async () => {

@@ -35,9 +35,13 @@ describe('searchWorkspaceFileContents', () => {
     it('searches the admitted managed filesystem instead of the controller root', async () => {
         const workspace = { v: 2 as const, serverId: scope.serverId, kind: 'managed' as const, workspaceId: 'project', managedId: 'guest',
             controller: { machineId: scope.machineId, installationId: 'installation' }, rootPath: scope.rootPath };
-        rpc.call.mockResolvedValue({ ok: true, files: [], hasMore: false, coverage: 'complete' });
-        await searchWorkspaceFileContents({ scope: { ...scope, workspace }, accountLifetime: lifetime(), query: 'needle' });
-        expect(rpc.call).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ workspace }) }));
+        const files = [{ path: 'src/a.ts', matches: [{ line: 1, column16: 1, length16: 6, text: 'needle', before: [], after: [] }] }];
+        rpc.call.mockResolvedValue({ ok: true, files, hasMore: false, coverage: 'complete' });
+        await expect(searchWorkspaceFileContents({ scope: { ...scope, workspace }, accountLifetime: lifetime(), query: 'needle' }))
+            .resolves.toEqual({ items: files, hasMore: false, coverage: 'complete' });
+        expect(rpc.call).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            method: 'daemon.workspaceFiles.search.v1', payload: expect.objectContaining({ query: 'needle', workspace }),
+        }));
     });
 
     it('requests the displayed two context lines from the exact Home and Account without rewriting query text', async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 
 import { createMachineFixture, renderScreen } from '@/dev/testkit';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -29,6 +30,36 @@ function machine(id: string, name: string): Machine {
 }
 
 describe('SessionPlacementChips', () => {
+  it('commits the remote Where chip only when the controller presence changes', async () => {
+    const { storage } = await import('@/sync/domains/state/storage');
+    const controller = { ...machine('workspace-controller', 'Controller'), active: true, activeAt: Date.now(), presenceProtocolVersion: 1 as const };
+    const saved = storage.getState();
+    const source = { sourceServerId: 'server-a' };
+    storage.getState().applyMachines([controller], true, source);
+    storage.getState().markMachineListSettled(source.sourceServerId);
+    storage.getState().applyMachineActivityUpdates([{ id: controller.id, active: true, activeAt: controller.activeAt + 1 }], source);
+    const commits = vi.fn();
+    const screen = await renderScreen(<React.Profiler id="remote-where" onRender={commits}>
+      <SessionMachineField presentation="chip" testID="where" serverId="server-a" title="Where"
+        machineId={controller.id} machines={[controller]} managedName="Guest" />
+    </React.Profiler>);
+    try {
+      expect(screen.getTextContent()).toContain('Guest');
+      expect(commits).toHaveBeenCalled();
+      commits.mockClear();
+      const publish = (active: boolean, activeAt: number) => act(async () => {
+        storage.getState().applyMachineActivityUpdates([{ id: controller.id, active, activeAt }], source);
+      });
+      await publish(true, controller.activeAt + 2);
+      expect(commits).not.toHaveBeenCalled();
+      await publish(false, controller.activeAt + 3);
+      expect(commits).toHaveBeenCalledTimes(1);
+    } finally {
+      await screen.unmount();
+      storage.setState(saved, true);
+    }
+  });
+
   it('keeps a fixed Machine visible but not choosable when the host offers no Machine move', async () => {
     const { NewSessionMachineSelectionContent } =
       await import('@/components/sessions/new/components/NewSessionMachineSelectionContent');

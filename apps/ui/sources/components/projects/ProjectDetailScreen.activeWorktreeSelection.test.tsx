@@ -191,6 +191,48 @@ function rootPath(screen: Awaited<ReturnType<typeof mount>>) {
 }
 
 describe('ProjectDetailScreen active worktree selection', () => {
+    it('opens one managed checkout observation and does not redraw on an unchanged heartbeat', async () => {
+        const controller = createMachineFixture({ id: 'machine-1', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
+        const source = { sourceServerId: runtime.serverId };
+        storage.getState().applyMachines([controller], true, source);
+        storage.getState().markMachineListSettled(runtime.serverId);
+        storage.getState().applyMachineActivityUpdates([{ id: controller.id, active: true, activeAt: controller.activeAt + 1 }], source);
+        workspaceRef = { v: 2, kind: 'managed', id: 'wr_1', serverId: runtime.serverId,
+            managedId: 'guest', controller: { machineId: controller.id, installationId: 'installation' },
+            rootPath: '/repo', projectKey: 'project-alpha', createdAtMs: 1 };
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [workspaceRef] });
+        daemon.mockImplementation(async (request: { method: string; payload?: {
+            observationOnly?: boolean; sinceRevision?: number;
+        }; signal?: AbortSignal }) => {
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot };
+            if (request.method !== RPC_METHODS.SCM_WORKSPACE_WATCH) throw new Error(`Unexpected RPC ${request.method}`);
+            if (!request.payload?.observationOnly && request.payload?.sinceRevision === undefined) return { status: 'ready', revision: 1 };
+            return new Promise(resolve => request.signal?.addEventListener('abort', () => resolve({ status: 'cancelled' }), { once: true }));
+        });
+        const commits = vi.fn();
+        const screen = await renderScreen(<runtime.Wrapper><React.Profiler id="remote-project-page" onRender={commits}>
+            <ProjectDetailScreen workspaceRefId="wr_1" serverId={runtime.serverId} page="context" />
+        </React.Profiler></runtime.Wrapper>);
+        const methods = () => daemon.mock.calls.map(([request]) => request.method);
+        await vi.waitFor(() => expect(methods().filter(method => method === RPC_METHODS.SCM_STATUS_SNAPSHOT)).toHaveLength(2));
+        expect(methods().filter(method => method === RPC_METHODS.SCM_WORKSPACE_WATCH)).toHaveLength(3);
+        expect(methods()).toHaveLength(5);
+        expect(commits).toHaveBeenCalled();
+        commits.mockClear();
+        const rpcCount = daemon.mock.calls.length;
+        const publish = (active: boolean, activeAt: number) => act(async () => {
+            storage.getState().applyMachineActivityUpdates([{ id: controller.id, active, activeAt }], source);
+        });
+        await publish(true, controller.activeAt + 2);
+        expect(commits).not.toHaveBeenCalled();
+        expect(daemon).toHaveBeenCalledTimes(rpcCount);
+        await publish(false, controller.activeAt + 3);
+        expect(daemon).toHaveBeenCalledTimes(rpcCount);
+        expect(commits).toHaveBeenCalled();
+        expect(commits.mock.calls.length).toBeLessThanOrEqual(2);
+        await screen.unmount();
+    });
+
     it('keeps the accepted managed checkout available to the bottom terminal owner', async () => {
         const { ProjectPagePaneScopeHost } = await import('./detail/PluginProjectPageBody');
         const { resolveProjectTerminalScope } = await import('./detail/projectTerminalScope');

@@ -25,6 +25,11 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
     (await import('@/dev/testkit/mocks/serverScopedRpc')).createServerScopedMachineRpcBoundaryMock(rpc));
 
 const scope = { serverId: 'watch-home', machineId: 'watch-machine', rootPath: '/watch-repo' };
+const managedScope = { ...scope, workspace: {
+    v: 2, kind: 'managed', serverId: scope.serverId, rootPath: scope.rootPath,
+    workspaceId: 'remote-project', managedId: 'guest',
+    controller: { machineId: scope.machineId, installationId: 'controller-installation' },
+} } as const;
 const initial = ScmWorkingSnapshotSchema.parse({
     projectKey: 'watch-machine:/watch-repo', fetchedAt: 1,
     repo: { isRepo: true, rootPath: scope.rootPath, backendId: 'git', mode: '.git' },
@@ -65,6 +70,8 @@ describe('presented workspace push through Session and Project demand', () => {
             storage.getState().updateWorkspaceScmSnapshot({ ...scope, rootPath }, null);
             storage.getState().updateWorkspaceScmSnapshotError({ ...scope, rootPath }, null);
         }
+        storage.getState().updateWorkspaceScmSnapshot(managedScope, null);
+        storage.getState().updateWorkspaceScmSnapshotError(managedScope, null);
         const machine = createMachineFixture({ id: scope.machineId, activeAt: Date.now(), presenceProtocolVersion: 1 });
         const session = createSessionFixture({ id: 'watch-session', serverId: scope.serverId,
             metadata: { ...createSessionFixture().metadata!, machineId: machine.id, path: scope.rootPath } });
@@ -271,6 +278,53 @@ describe('presented workspace push through Session and Project demand', () => {
         expect(getCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: '' })).toBeNull();
         await project.unmount();
         expect(liveSubscriptions).toBe(0);
+    });
+
+    it('keeps one managed Project observation, reads status once per change, and makes no idle RPCs', async () => {
+        let renders = 0;
+        const project = await renderHook(() => {
+            renders++;
+            return useWorkspaceScmSnapshotController(managedScope, { detail: 'summary' });
+        });
+        await advance(0);
+        expect(project.getCurrent().snapshot?.branch.head).toBe('main');
+        expect(liveSubscriptions).toBe(1);
+        const methods = () => rpc.mock.calls.map(([request]) => request.method);
+        expect(methods().filter(method => method === RPC_METHODS.SCM_STATUS_SNAPSHOT)).toHaveLength(2);
+        expect(methods().filter(method => method === RPC_METHODS.SCM_WORKSPACE_WATCH)).toHaveLength(3);
+        const settled = methods().length;
+        const rendered = renders;
+        await advance(600_000);
+        expect(methods()).toHaveLength(settled);
+        expect(renders).toBe(rendered);
+        current = { ...initial, branch: { ...initial.branch, head: 'guest-edit' } };
+        await act(async () => {
+            change?.({ status: 'changed', revision: ++revision });
+            await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(methods().slice(settled)).toEqual(expect.arrayContaining([
+            RPC_METHODS.SCM_STATUS_SNAPSHOT, RPC_METHODS.SCM_WORKSPACE_WATCH,
+        ]));
+        expect(methods()).toHaveLength(settled + 2);
+        expect(project.getCurrent().snapshot?.branch.head).toBe('guest-edit');
+        expect(renders - rendered).toBe(1);
+        await project.unmount();
+        expect(liveSubscriptions).toBe(0);
+        await advance(600_000);
+        expect(methods()).toHaveLength(settled + 2);
+    });
+
+    it('keeps a stopped managed Project on its typed result without polling', async () => {
+        rpc.mockResolvedValueOnce({ success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: 'managed_power_required' });
+        const project = await renderHook(() => useWorkspaceScmSnapshotController(managedScope, { detail: 'summary' }));
+        await advance(0);
+        expect(project.getCurrent().error).toMatchObject({ errorCode: 'managed_power_required', nextAction: { kind: 'start_workspace' } });
+        expect(statusReads()).toBe(1);
+        expect(liveSubscriptions).toBe(0);
+        const settled = rpc.mock.calls.length;
+        await advance(600_000);
+        expect(rpc).toHaveBeenCalledTimes(settled);
+        await project.unmount();
     });
 
     it('discovers the repository from a cold nested Session before sharing its observation with Project', async () => {

@@ -6,7 +6,7 @@ import type {
   PaneHeaderLineSegment,
 } from '@/components/appShell/panes/paneHeaderSlot';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
-import { selectScmChangedFiles } from '@/scm/scmStatusFiles';
+import { selectScmChangedFileCount } from '@/scm/scmStatusFiles';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
@@ -33,7 +33,7 @@ export function useRepositoryTreePaneChrome(
   const { rootPath, machineName, scmSnapshot, changesReadable } = input;
   // Unknown until read; a folder that is not a repository, or one out of reach and never read, has no change fact.
   const changedCount = scmSnapshot == null ? (changesReadable ? 'pending' as const : null)
-    : scmSnapshot.repo.isRepo ? selectScmChangedFiles(scmSnapshot).length : null;
+    : scmSnapshot.repo.isRepo ? selectScmChangedFileCount(scmSnapshot) : null;
   const paneHeaderLine = React.useMemo((): PaneHeaderLine | null => {
     const folder = leafFolderName(rootPath);
     const place =

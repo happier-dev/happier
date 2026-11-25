@@ -149,6 +149,37 @@ describe('Project Open rendered choices', () => {
         expect(screen.findAll(node => node.type === DropdownMenu && node.props.testID === 'projects.open.where')).toHaveLength(0);
     });
 
+    it('renders the managed folder form only for a changed controller presence fact', async () => {
+        const draftId = '00000000-0000-4000-8000-000000000081';
+        const scope = { serverId: 'home', accountId: 'account' };
+        const { machine } = await seedOpenDraft(draftId);
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { writeProjectOpenDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const controller = { ...machine, presenceProtocolVersion: 1 as const };
+        storage.setState({ machines: { [controller.id]: controller }, machineListByServerId: { home: [controller] } });
+        const source = { sourceServerId: scope.serverId };
+        storage.getState().applyMachineActivityUpdates([{ id: controller.id, active: true, activeAt: controller.activeAt + 1 }], source);
+        writeProjectOpenDraft({ scope, draftId, patch: { selection: { serverId: scope.serverId, machineId: controller.id,
+            source: { kind: 'folder', path: '/remote/workspace' }, materialization: { kind: 'attach',
+                targetManaged: { managedId: 'guest', controller: { machineId: controller.id, installationId: 'install' } } } } } });
+        const commits = vi.fn();
+        const screen = await renderScreen(<React.Profiler id="managed-open-form" onRender={commits}>
+            <ProjectOpenScreen routeParams={{ draftId, serverId: scope.serverId }} />
+        </React.Profiler>);
+        await vi.waitFor(() => expect(screen.findByTestId('projects.open.where.row')).toBeTruthy());
+        await act(async () => {});
+        expect(commits).toHaveBeenCalled();
+        commits.mockClear();
+        const publish = (active: boolean, activeAt: number) => act(async () => {
+            storage.getState().applyMachineActivityUpdates([{ id: controller.id, active, activeAt }], source);
+        });
+        await publish(true, controller.activeAt + 2);
+        expect(commits).not.toHaveBeenCalled();
+        await publish(false, controller.activeAt + 3);
+        expect(commits).toHaveBeenCalledTimes(1);
+        await screen.unmount();
+    });
+
     it('opens a managed checkout elsewhere by copying it to the selected controller Machine', async () => {
         const scope = { serverId: 'home', accountId: 'account' };
         const { machine } = await seedOpenDraft('00000000-0000-4000-8000-000000000081', scope);
