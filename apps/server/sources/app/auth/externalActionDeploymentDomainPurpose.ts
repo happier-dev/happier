@@ -13,7 +13,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 export type DomainHttpPurpose = Readonly<{ kind: 'transition'; input: DeploymentDomainTransitionInputV1 }>
     | Readonly<{ kind: 'secret-facts'; input: EnvironmentSecretLaunchAdmissionInputV1;
         materialization: Extract<EnvironmentSecretLaunchAdmissionInputV1['materialization'], { kind: 'domain' }> }>
-    | Readonly<{ kind: 'membership-content-read'; artifactId: string }>
+    | Readonly<{ kind: 'domain-content-read'; artifactId: string }>
     | Readonly<{ kind: 'prepared-content'; input: DeploymentDomainPreparedContentInputV1 }>
     | Readonly<{ kind: 'admission'; input: DeploymentDomainAddAdmissionInputV1 | DeploymentDomainRemoveAdmissionInputV1 }>;
 
@@ -30,9 +30,11 @@ export function readExternalActionDeploymentDomainPurpose(binding: ExternalActio
         && deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, effectActionId) === effectActionId;
     const membershipAdd = isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
         && isDeploymentDomainAddActionIdV1(effectActionId);
-    if (membershipAdd && proof.reviewedChild === undefined) {
+    // A Deploy's membership and a teardown's reviewed removal read back the
+    // retained Domain content of their own admitted job, under that job's receipt.
+    if ((membershipAdd || teardownRemoval) && proof.reviewedChild === undefined) {
         const artifactId = readArtifactId();
-        if (artifactId !== null) return { kind: 'membership-content-read', artifactId };
+        if (artifactId !== null) return { kind: 'domain-content-read', artifactId };
     }
     if ((!isDeploymentDomainChildActionIdV1(binding.actionId) || effectActionId !== binding.actionId) && !reviewedCreate && !teardownRemoval && !membershipAdd
         || proof.method.toUpperCase() !== 'POST'

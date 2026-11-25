@@ -40,7 +40,7 @@ import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_
     DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1,
     DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1,
     DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1,
-    DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1, isDeploymentDomainAddActionIdV1,
+    DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1, isDeploymentDomainAddActionIdV1, isDeploymentDomainRemoveActionIdV1,
     isDeploymentDomainMetadataReadActionIdV1, isDeploymentMembershipActionIdV1,
     isDeploymentReceiptReadActionIdV1,
     type DeploymentDomainMetadataReadActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -1012,21 +1012,23 @@ export async function readDeploymentDomainPreparationHttpPurpose(tx: Tx, binding
     admittedEnvironmentId?: string,
     acceptedReceipt = false,
     preparationRead?: Readonly<{ artifact: boolean; environment: boolean }>,
-    membershipContentRead?: Readonly<{ artifactId: string; environmentId?: string }>,
+    domainContentRead?: Readonly<{ artifactId: string; environmentId?: string }>,
 ): Promise<boolean | null> {
     const reviewed = binding.actionId !== effectActionId ? proof.reviewedChild : undefined;
     const admission = reviewed?.deploymentNativeAdmission ?? binding.deploymentNativeAdmission;
-    if (!isDeploymentDomainAddActionIdV1(effectActionId)
-        || deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, effectActionId) !== effectActionId) return null;
-    if (isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
+    if (deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, effectActionId) !== effectActionId) return null;
+    // Membership and teardown-removal reads are confined to retained Domain content of the
+    // accepted job's Environment. Writes consume the accepted Domain capture at their existing owners.
+    const teardownRemoval = binding.actionId === 'deployments.teardown' && isDeploymentDomainRemoveActionIdV1(effectActionId);
+    if (teardownRemoval || isDeploymentDomainAddActionIdV1(effectActionId)
+        && isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
         && reviewed?.actionId !== effectActionId) {
-        // Membership reads are confined to retained Domain content of the accepted job's Environment.
-        // Writes consume the accepted Domain capture at their existing owners.
-        return membershipContentRead
-            ? isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, membershipContentRead.artifactId,
-                membershipContentRead.environmentId, 'retainedDomainArtifact')
+        return domainContentRead
+            ? isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, domainContentRead.artifactId,
+                domainContentRead.environmentId, 'retainedDomainArtifact')
             : null;
     }
+    if (!isDeploymentDomainAddActionIdV1(effectActionId)) return null;
     if (binding.actionId !== effectActionId && (!reviewed
         || reviewed.actionId !== effectActionId || !reviewed.role.startsWith('template.domain:'))) return false;
     if (!isDeploymentDomainNativeAdmissionV1(admission) || admission.actionId !== effectActionId

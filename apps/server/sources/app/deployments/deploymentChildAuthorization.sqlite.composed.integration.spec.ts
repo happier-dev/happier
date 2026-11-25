@@ -76,7 +76,7 @@ import { ProjectSourcesReadOutputV1Schema, ProjectSourcesUpdateInputV1Schema,
     ProjectSourceRepositorySelectorV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { type EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
-import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { DeploymentDomainContentV1Schema, DeploymentDomainTransitionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { readDeploymentDomainArtifactV1, readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
 import { DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -1165,6 +1165,79 @@ describe('deployment children retain their controller Action authority', () => {
         });
     }
     registerRetainedMembershipDomainCases();
+
+    // App Delete with an assigned Domain (Railway replay, 2026-11-25): the provider removed the
+    // Domain, then Home refused the changed-content readback and the Delete stopped half done.
+    it('admits every Home call of a teardown-reviewed Domain removal and nothing outside its job', async () => {
+        const f = await fixture('account', 'account', { readableEnvironment: true });
+        const input = { ...f.input, reason: 'manual' as const };
+        const envelope = { ...f.originalActionEnvelope, requestId: crypto.randomUUID(), input };
+        const digest = computeExternalActionRequestEnvelopeDigestV1(envelope);
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId: 'deployments.teardown', machineId: f.controller.id, target: envelope.target,
+            requestId: envelope.requestId, requestEnvelopeDigest: digest }, { input });
+        await db.deployment.update({ where: { id: f.receipt.id }, data: {
+            operation: 'teardown', state: 'running', acceptedRequestEnvelopeDigest: digest,
+        } });
+        const assigned = await f.content('deployment-domain.v1', DeploymentDomainContentV1Schema.parse({
+            hostname: 'assigned.example.test', target: { service: 'api', containerPort: 8080 } }));
+        const created = await db.deploymentDomain.create({ data: { environmentId: f.environment.id,
+            targetLinkId: f.link.id, createdByAccountId: f.account.id, state: 'active', ...assigned } });
+        // The removal admission's provider custody, stamped with this teardown request before the provider effect.
+        const placement = { serverId, accountId: f.account.id, environmentId: f.environment.id, targetLinkId: f.link.id,
+            domainId: created.id, controller: { machineId: f.controller.id, installationId: f.controller.installationId },
+            actionOperationId: f.receipt.actionOperationId!, requestId: envelope.requestId };
+        const reference = (row: Readonly<{ contentArtifactId: string; contentHeaderVersion: number; contentBodyVersion: number }>) => ({
+            contentArtifactId: row.contentArtifactId, contentHeaderVersion: row.contentHeaderVersion, contentBodyVersion: row.contentBodyVersion });
+        const domain = await db.deploymentDomain.update({ where: { id: created.id }, data: { state: 'removing',
+            capturedPlacements: { kind: 'provider', placement, installationPublicKey: 'controller-installation-key',
+                content: reference(created), environmentContent: reference(f.environment), targetLinkContent: reference(f.link),
+                requestEnvelopeDigest: digest } } });
+        const sibling = await db.deploymentEnvironment.create({ data: { ...f.environment, id: crypto.randomUUID(),
+            ...await f.content('deployment-environment.v1') } });
+        const siblingLink = await db.deploymentTargetLink.create({ data: { ...f.link, id: crypto.randomUUID(),
+            environmentId: sibling.id, ...await f.content('deployment-target-link.v1') } });
+        const foreign = await db.deploymentDomain.create({ data: { environmentId: sibling.id,
+            targetLinkId: siblingLink.id, createdByAccountId: f.account.id, state: 'active', ...await f.content('deployment-domain.v1') } });
+        const unrelated = await f.content('deployment-domain.v1');
+        const target = envelope.target;
+        const verify = (effectActionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>) =>
+            verifyExternalActionDomainExecutionRequest({ authorizationToken: authorization.token, effectActionId,
+                encodedTarget: encodeExternalActionResolvedTargetV1(target), method: request.method, path: request.path,
+                body: request.body, machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId, target, installationId: f.controller.installationId, requestId: envelope.requestId,
+                    ...request, privateKey: f.controller.keys.secretKey }) });
+        const read = (artifactId: string, effectActionId = 'deployments.domains.remove') =>
+            verify(effectActionId, { method: 'GET', path: `/v1/artifacts/${artifactId}` });
+        // The readback of the removed Domain's changed content, signed with its reviewed removal.
+        expect(await read(domain.contentArtifactId)).not.toBeNull();
+        for (const artifactId of [foreign.contentArtifactId, unrelated.contentArtifactId, f.environment.contentArtifactId]) {
+            expect.soft(await read(artifactId), 'A teardown Domain read cannot spend Account-wide Artifact access').toBeNull();
+        }
+        expect(await verify('deployments.domains.remove', { method: 'DELETE', path: `/v1/artifacts/${domain.contentArtifactId}` })).toBeNull();
+        // The removal's settled transition, then the teardown root's own history read.
+        const transitionPath = `/v1/deployments/environments/${encodeURIComponent(f.environment.id)}/domains/${encodeURIComponent(domain.id)}/transitions`;
+        const observation = { state: 'removed' as const, placement };
+        const transition = DeploymentDomainTransitionInputV1Schema.parse({ serverId, environmentId: f.environment.id,
+            domainId: domain.id, expectedDomainRevision: domain.revision, observations: [], providerObservation: { ...observation,
+                proof: signMachineInstallationProof({ privateKey: f.controller.keys.secretKey,
+                    payload: deploymentDomainProviderObservationProofPayloadV1({ expectedDomainRevision: domain.revision, observation }) }) } });
+        expect(await verify('deployments.domains.remove', { method: 'POST', path: transitionPath, body: transition })).not.toBeNull();
+        const list = getActionSpec('deployments.receipts.list');
+        if (!list.serverTransport) throw new Error('Receipt history needs its canonical transport');
+        const listInput = DeploymentReceiptListInputV1Schema.parse({ serverId, environmentId: f.environment.id });
+        const listAddress = bindHomeDomainHttpRequestV1({ transport: list.serverTransport, inputSchema: list.inputSchema, input: listInput });
+        expect(await verifyExternalActionDomainExecutionRequest({ authorizationToken: authorization.token,
+            effectActionId: 'deployments.receipts.list', encodedTarget: encodeExternalActionResolvedTargetV1(target),
+            method: 'GET', path: listAddress.path, body: undefined, routeInput: listInput,
+            machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                effectActionId: 'deployments.receipts.list', target, installationId: f.controller.installationId,
+                requestId: envelope.requestId, method: 'GET', path: listAddress.path, privateKey: f.controller.keys.secretKey }) })).not.toBeNull();
+        // Once the teardown job settles, the same readback is refused (the next Delete re-admits).
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'failed' } });
+        expect(await read(domain.contentArtifactId)).toBeNull();
+    });
 
     it('reconciles joining membership under an accepted existing-Environment template Deploy root', async () => {
         const f = await fixture('account', 'account', { templateRoot: true });
