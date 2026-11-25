@@ -230,6 +230,36 @@ describe('registerHappierMcpBuiltInTools', () => {
     } finally { await client.close(); await server.close(); }
   });
 
+  it('keeps a thrown tool error message out of the Agent transcript', async () => {
+    const tool = { name: 'change_title', title: 'Change title', description: 'Change title',
+      inputSchema: z.strictObject({ title: z.string() }), outputSchema: z.strictObject({ success: z.boolean() }) };
+    const server = new McpServer({ name: 'thrown-error-test', version: '1.0.0' });
+    const bridge = createActionToolExecutorBridge({ surface: 'mcp',
+      executor: createActionExecutor(createUnavailableActionTransportDeps()) });
+    const privatePath = '/home/alice/.happier/private-profile/access.key';
+    const tokenShaped = 'hsk_live_0123456789abcdefABCDEF';
+    registerHappierMcpBuiltInTools(server, {
+      sessionId: 'sess-1', surface: 'mcp',
+      toolInventory: prepareHappierMcpToolInventory({ sessionId: 'sess-1',
+        inventory: { tools: [tool], actionToolNameToId: new Map() } }),
+      // Rename is a server write boundary; a vendor failure there carries arbitrary text.
+      deps: { ...bridge, changeTitle: async () => { throw new Error(`open ${privatePath} failed with ${tokenShaped}`); },
+        resolveActionOptions: args => bridge.resolveActionOptions(args, 'sess-1') },
+    });
+    const client = new Client({ name: 'thrown-error-client', version: '1.0.0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const failed = await client.callTool({ name: 'change_title', arguments: { title: 'Any' } });
+      expect(failed).toMatchObject({ isError: true, content: [{ type: 'text' }] });
+      const text = JSON.stringify(failed);
+      expect(JSON.parse((failed.content as Array<{ text: string }>)[0]!.text)).toEqual({ errorCode: 'tool_failed', error: 'tool_failed' });
+      expect(text).not.toContain(privatePath);
+      expect(text).not.toContain(tokenShaped);
+    } finally { await client.close(); await server.close(); }
+  });
+
   it('contains malformed structured output at the MCP boundary and keeps healthy calls available', async () => {
     const tool = { name: 'change_title', title: 'Change title', description: 'Change title',
       inputSchema: z.strictObject({ title: z.string() }), outputSchema: z.strictObject({ success: z.boolean() }) };

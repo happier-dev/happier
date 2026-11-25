@@ -3,6 +3,9 @@ import { isPluginError, type PluginServices } from '@happier-dev/plugin-sdk';
 import { parsePluginHostActionInvocation } from '@happier-dev/plugin-sdk/actions';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { actionInputIssueFailure, actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
+import { z } from 'zod/mini';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createHappierActionIngressExecutor } from '@/agent/permissions/happierActionPermission';
 import { resolveHappierMcpServerConfig } from '@/agent/runtime/createHappierMcpBridge';
@@ -28,10 +31,25 @@ export async function createNativeRunHappierMcpBridge(input: Readonly<{
           executor: {
             async execute(actionId, rawInput, context) {
                 try {
+                    // Input refusals use the Action executor's content-free repair envelope,
+                    // the answer a Session's Agent gets for the same input; never rejected values.
                     const contribution = parseQualifiedPluginActionId(actionId);
-                    if (contribution) return { ok: true, result: await input.services.actions.execute(contribution,
-                        StrictJsonValueSchema.parse(rawInput), { signal: context?.signal ?? input.signal }) };
-                    const request = parsePluginHostActionInvocation(actionId, rawInput);
+                    if (contribution) {
+                        const json = StrictJsonValueSchema.safeParse(rawInput);
+                        if (!json.success) return actionInputValidationFailure(json.error);
+                        return { ok: true, result: await input.services.actions.execute(contribution,
+                            json.data, { signal: context?.signal ?? input.signal }) };
+                    }
+                    if (!PluginInvocableActionIdSchema.safeParse(actionId).success) {
+                        return actionInputIssueFailure({ code: 'unknown_action', path: ['actionId'] });
+                    }
+                    let request: ReturnType<typeof parsePluginHostActionInvocation>;
+                    try {
+                        request = parsePluginHostActionInvocation(actionId, rawInput);
+                    } catch (error) {
+                        if (error instanceof z.core.$ZodError) return actionInputValidationFailure(error);
+                        throw error;
+                    }
                     return { ok: true, result: await input.services.actions.execute(request.actionId, request.input,
                         { signal: context?.signal ?? input.signal }) };
                 } catch (error) {

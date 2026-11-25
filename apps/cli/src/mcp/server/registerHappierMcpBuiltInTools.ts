@@ -358,15 +358,11 @@ export function registerHappierMcpBuiltInTools(
 
                     return formatHappierMcpToolFailure(result);
                 } catch (error) {
-                    const errorText = error instanceof Error ? error.message : String(error);
-                    let payload = '{"errorCode":"tool_failed","error":"tool_failed"}';
-                    try {
-                        payload = JSON.stringify({ errorCode: error instanceof SessionMediaUnavailableError ? error.code : 'tool_failed', error: errorText });
-                    } catch {
-                        // ignore
-                    }
+                    // A thrown message is unclassified text (paths, validator or vendor prose):
+                    // the Agent gets only the closed code, as projected failures do.
+                    const errorCode = error instanceof SessionMediaUnavailableError ? error.code : 'tool_failed';
                     return {
-                        content: [{ type: 'text' as const, text: payload }],
+                        content: [{ type: 'text' as const, text: JSON.stringify({ errorCode, error: errorCode }) }],
                         isError: true as const,
                     };
                 } finally {

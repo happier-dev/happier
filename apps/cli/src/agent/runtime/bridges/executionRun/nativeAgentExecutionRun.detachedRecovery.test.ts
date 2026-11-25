@@ -23,6 +23,7 @@ import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { requireSessionHolderExecutablePath } from '@/subprocess/supervision/sessionHolder';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
@@ -272,6 +273,17 @@ it('publishes admitted detached Run Action discovery without granting hands-off 
                         } });
                         expect(read.isError).not.toBe(true);
                         expect(JSON.stringify(read.content)).toContain(repository.headCommit);
+                        // A Run's Agent gets the same content-free repair envelope as a Session's Agent.
+                        const rejected = 'private-rejected-limit-value';
+                        const refused = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
+                            actionId: 'scm.log.list', input: { limit: rejected, skip: 0 },
+                        } }));
+                        expect(refused.isError).toBe(true);
+                        const failure = refused.content.find(item => item.type === 'text');
+                        if (failure?.type !== 'text') throw new Error('Missing MCP refusal payload');
+                        expect(JSON.parse(failure.text)).toMatchObject({ errorCode: 'invalid_parameters',
+                            details: { issues: expect.arrayContaining([expect.objectContaining({ path: ['limit'] })]) } });
+                        expect(failure.text).not.toContain(rejected);
                     } finally { await client.close(); }
                 } finally { await launch.release(); }
                 heldMaterial = undefined;
