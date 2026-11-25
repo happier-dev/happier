@@ -213,6 +213,38 @@ beforeEach(async () => {
 afterEach(standardCleanup);
 
 describe('TeamCredentialCreateScreen', () => {
+    it.each([
+        { status: 400, error: 'invalid_resource_input', label: 'teams.credentials.errors.invalidResourceRead' },
+        { status: 404, error: 'not_found_or_not_visible', label: 'teams.errors.notFound' },
+        { status: 403, error: 'forbidden', label: 'teams.credentials.forbidden' },
+        { status: 403, error: 'team_authentication_required', label: 'teams.credentials.errors.teamAuthenticationRequired', recovery: 'sign-in' },
+        { status: 503, error: 'team_authentication_policy_unavailable', label: 'teams.credentials.externalApi.authenticationUnavailable' },
+        { status: 503, error: 'feature_disabled', label: 'teams.credentials.errors.featureDisabled' },
+        { status: 503, error: 'temporarily_unavailable', label: 'teams.errors.loadFailed', recovery: 'retry' },
+    ] as const)('explains the source chooser refusal $error with its recovery', async (scenario) => {
+        const serverId = await addHome();
+        answerViewer(serverId, true);
+        harness.answer(serverId, SOURCES_PATH, { status: scenario.status, body: { error: scenario.error } });
+        const screen = await renderCreate(serverId);
+        await vi.waitFor(() => {
+            expect(screen.getTextContent()).toContain(scenario.label);
+        });
+        const recovery = 'recovery' in scenario ? scenario.recovery : null;
+        expect(screen.getTextContent()).not.toContain('teams.credentials.create.sourceEmpty');
+        expect(screen.findByTestId('team-credential-create-source-sign-in') !== null).toBe(recovery === 'sign-in');
+        expect(screen.findByTestId('team-credential-create-source-retry') !== null).toBe(recovery === 'retry');
+        if (recovery === 'sign-in') {
+            await screen.pressByTestIdAsync('team-credential-create-source-sign-in');
+            expect(routerPush).toHaveBeenCalledWith(expect.stringContaining(`/teams/team-1/sign-in?serverId=${serverId}`));
+        } else if (recovery === 'retry') {
+            harness.answer(serverId, SOURCES_PATH, {
+                body: { candidates: [teamCredentialSourceCandidateFixture()], supportedKinds: ['connected_pool'], brokerPresentation: emptyBrokerPresentation() },
+            });
+            await screen.pressByTestIdAsync('team-credential-create-source-retry');
+            await vi.waitFor(() => expect(screen.findByTestId('team-credential-create-source')?.props.disabled).not.toBe(true));
+        }
+    });
+
     it('keeps the observed source chooser on return and waits for fresh choices before enabling it', async () => {
         const serverId = await addHome();
         answerViewer(serverId, true);

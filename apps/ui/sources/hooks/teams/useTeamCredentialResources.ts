@@ -370,7 +370,9 @@ export function useTeamCredentialSourceCandidates(params: Readonly<{
             setState({ key, lifetime, result: outcome.value, status: 'ready', error: null });
             return;
         }
-        const withdrawn = isAuthoritativeScopedSnapshotRefusalKind(outcome.failure.kind);
+        const withdrawn = isAuthoritativeScopedSnapshotRefusalKind(outcome.failure.kind)
+            || outcome.failure.code === 'feature_disabled'
+            || outcome.failure.code === 'team_authentication_policy_unavailable';
         if (withdrawn) teamCredentialSourceCandidateObservations.apply(key, currentBinding, null);
         setState({ key, lifetime, result: withdrawn ? null : previous, status: 'error', error: outcome.failure });
     }, [active, address, currentBinding, key]);

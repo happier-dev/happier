@@ -27,8 +27,9 @@ import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelC
 import { getPreferredLanguage, t } from '@/text';
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 import { teamCredentialCreatePath, teamCredentialDetailPath } from '../teamsRoutes';
-import { credentialApprovalFailureMessage, credentialDirectExportFailureMessage, credentialFailureMessage, deliveryModeLabel, limitMetricLabel, limitPeriodLabel, limitSubjectKindLabel, presentCredentialListReadFailure, requestProtocolKindLabel, sessionUsePolicyLabel, sourceKindLabel } from './teamCredentialPresentation';
+import { credentialApprovalFailureMessage, credentialDirectExportFailureMessage, credentialFailureMessage, deliveryModeLabel, limitMetricLabel, limitPeriodLabel, limitSubjectKindLabel, presentCredentialListReadFailure, presentCredentialSourceReadFailure, requestProtocolKindLabel, sessionUsePolicyLabel, sourceKindLabel } from './teamCredentialPresentation';
 import { TeamCredentialAudiencePicker } from './TeamCredentialAudiencePicker';
 import { useOpenedTeamCredentialBrokerPoolNames } from './teamCredentialPrivateLabels';
 import { TeamCredentialSourcePicker } from './TeamCredentialSourcePicker';
@@ -73,6 +74,7 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
         machines: providerMachines,
     });
     const providerSourceOffers = providerConnections.offers;
+    const readFailureAction = useTeamReadFailureAction(context.address);
     const sources = useTeamCredentialSourceCandidates({ scope: context.scope, address: context.address, enabled: featureEnabled && mayOffer, providerSourceOffers });
     const brokerPoolDisplayNames = useOpenedTeamCredentialBrokerPoolNames({
         scope: context.scope,
@@ -342,6 +344,12 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
         && sources.supportedKinds.includes('provider_connection');
     const sourcePickerLoading = (sources.status === 'loading' && !sources.hasObservation)
         || (sources.candidates.length === 0 && providerCatalogLoading);
+    const sourceFailure = sources.error;
+    const sourceRefusal = sourceFailure ? presentCredentialSourceReadFailure(sourceFailure, () => readFailureAction(sourceFailure, {
+        testIDPrefix: 'team-credential-create-source',
+        onPress: () => void sources.reload(),
+    })) : null;
+    const noSources = sources.candidates.length === 0;
     const missingRequirements = [
         selected === null ? t('teams.credentials.detail.sourceLabel') : null,
         name.trim().length === 0 ? t('teams.credentials.edit.nameLabel') : null,
@@ -357,10 +365,26 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
 
     return <>
         {/* The page header already says "Share a credential"; the source group opens with what sharing does. */}
-        <ItemGroup description={sources.supportedKinds.length < 3 ? t('teams.credentials.create.sourceUnsupported') : t('teams.credentials.subtitle')}>
-            <TeamCredentialSourcePicker candidates={sources.candidates} selected={selected} disabled={busy || sources.status === 'loading'} unavailableReason={sourcePickerLoading ? t('common.loading') : sources.candidates.length === 0 ? t('teams.credentials.create.sourceEmpty') : null} onSelect={chooseSource} />
+        <ItemGroup description={sources.hasObservation && sources.supportedKinds.length < 3
+            ? t('teams.credentials.create.sourceUnsupported')
+            : t('teams.credentials.subtitle')}>
+            <TeamCredentialSourcePicker
+                candidates={sources.candidates}
+                selected={selected}
+                disabled={busy || sources.status === 'loading'}
+                unavailableReason={sourcePickerLoading ? t('common.loading')
+                    : noSources ? (sourceRefusal?.message ?? t('teams.credentials.create.sourceEmpty'))
+                    : null}
+                onSelect={chooseSource}
+            />
+            {sourceRefusal && !noSources ? <Item title={sourceRefusal.message} showChevron={false} /> : null}
+            {sourceRefusal?.action ? <Item
+                testID={sourceRefusal.action.testID}
+                title={sourceRefusal.action.label}
+                onPress={sourceRefusal.action.onPress}
+                showChevron={false}
+            /> : null}
         </ItemGroup>
-        {sources.error ? <ItemGroup description={credentialFailureMessage(sources.error)}><Item testID="team-credential-create-source-retry" title={t('teams.unavailable.retry')} onPress={() => void sources.reload()} showChevron={false} /></ItemGroup> : null}
         {providerConnections.error && sources.supportedKinds.includes('provider_connection') ? <ItemGroup description={t('teams.credentials.requestPolicy.catalogUnavailable')}><Item testID="team-credential-create-provider-source-retry" title={t('teams.unavailable.retry')} onPress={() => void providerConnections.refresh()} showChevron={false} /></ItemGroup> : null}
         <ItemGroup title={t('teams.credentials.edit.nameLabel')}><Item title={t('teams.credentials.edit.nameLabel')} accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput testID="team-credential-create-name" value={name} onChangeText={value => { setNameEdited(true); patchResourceDraft({ name: value }); }} placeholder={t('teams.credentials.edit.namePlaceholder')} accessibilityLabel={t('teams.credentials.edit.nameLabel')} maxLength={NAME_MAX_LENGTH} editable={!busy} />} /></ItemGroup>
         <ItemGroup title={t('teams.credentials.edit.ceilingLabel')} description={credentialDirectExportFailureMessage(selected?.candidate.directExportFailure, selected?.candidate.directExportSupport, selectedSource) ?? t('teams.credentials.edit.ceilingNote')} accessibilityRole="radiogroup" accessibilityLabel={t('teams.credentials.edit.ceilingLabel')}>

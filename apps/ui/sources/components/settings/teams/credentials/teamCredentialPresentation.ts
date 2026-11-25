@@ -462,6 +462,14 @@ export function presentCredentialReadFailure(
     }
 }
 
+export function presentCredentialSourceReadFailure(
+    failure: HomeDomainFailure<string>,
+    recoveryAction: () => AttentionBannerAction | undefined,
+): Readonly<{ message: string; action?: AttentionBannerAction }> {
+    if (failure.code === 'not_found_or_not_visible') return { message: t('teams.errors.notFound') };
+    return presentCredentialReadFailure(failure, recoveryAction);
+}
+
 export function credentialFailureMessage(failure: HomeDomainFailure<string>): string | null {
     const reconnect = teamCredentialReconnectPresentation(failure.code);
     if (reconnect) return reconnect.message;

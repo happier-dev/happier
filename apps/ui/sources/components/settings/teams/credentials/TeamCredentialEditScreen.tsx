@@ -27,6 +27,7 @@ import {
     credentialFailureMessage,
     credentialDirectExportFailureMessage,
     presentCredentialReadFailure,
+    presentCredentialSourceReadFailure,
     sessionUsePolicyLabel,
     teamCredentialBrokerPlacementsEqual,
 } from './teamCredentialPresentation';
@@ -280,6 +281,12 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
     // saved source while Save submitted the new one. The own offer is only the
     // fallback for an untouched draft whose saved source is not itself listed.
     const draftSourceIdentity = JSON.stringify(source);
+    const sourceFailure = sourceCandidates.error;
+    const sourceRefusal = sourceFailure ? presentCredentialSourceReadFailure(sourceFailure, () => readFailureAction(sourceFailure, {
+        testIDPrefix: 'team-credential-edit-source',
+        onPress: () => void sourceCandidates.reload(),
+    })) : null;
+    const noSources = sourceCandidates.candidates.length === 0;
     const selectedSourceCandidate = sourceCandidates.candidates.find(
         (candidate) => JSON.stringify(candidate.candidate.source) === draftSourceIdentity,
     ) ?? (draftSourceIdentity === JSON.stringify(resourceDraft.baseline.source)
@@ -330,7 +337,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
             {props.section === undefined && sourceCustodian ? (
                 <ItemGroup
                     title={t('teams.credentials.detail.sourceLabel')}
-                    description={sourceCandidates.error ? credentialFailureMessage(sourceCandidates.error) : undefined}
+                    description={noSources ? undefined : sourceRefusal?.message}
                 >
                     <TeamCredentialSourcePicker
                         candidates={sourceCandidates.candidates}
@@ -341,9 +348,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                         reselectableResourceId={resourceId}
                         selected={selectedSourceCandidate}
                         disabled={busy || sourceCandidates.status === 'loading'}
-                        unavailableReason={sourceCandidates.status === 'error' && sourceCandidates.candidates.length === 0
-                            ? t('common.unavailable')
-                            : null}
+                        unavailableReason={noSources ? sourceRefusal?.message ?? null : null}
                         onSelect={(candidate) => {
                             const nextDraft = { ...resourceDraft.draft, source: candidate.candidate.source };
                             void (async () => {
@@ -356,11 +361,11 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                             })();
                         }}
                     />
-                    {sourceCandidates.error ? <Item
-                        testID="team-credential-edit-source-retry"
-                        title={t('common.retry')}
-                        disabled={busy || sourceCandidates.status === 'loading'}
-                        onPress={() => { void sourceCandidates.reload(); }}
+                    {sourceRefusal?.action ? <Item
+                        testID={sourceRefusal.action.testID}
+                        title={sourceRefusal.action.label}
+                        disabled={busy}
+                        onPress={sourceRefusal.action.onPress}
                         showChevron={false}
                     /> : null}
                 </ItemGroup>
