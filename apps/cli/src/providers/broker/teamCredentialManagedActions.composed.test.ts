@@ -16,7 +16,7 @@ import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/regi
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/composition/executableTypes';
 import { withTeamCredentialActionRuntime } from './teamCredentialActionRuntime';
 import { createManagedMachineControllerClient } from '@/machines/managed/acquire';
-import { createDaemonMachineIrohRuntime } from '@/daemon/peer/iroh/daemonMachineIrohRuntime';
+import { startNativeMachineIrohFixture } from '@/testkit/machines/nativeMachineIroh.testkit';
 import { createProviderBrokerMachineCarrierTunnelOpen } from '@/daemon/peer/iroh/providerBrokerMachineCarrierTunnelOpen';
 import { startPeerMediationLoopbackServer } from '@/daemon/peer/mediation/loopback/server';
 import { createConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
@@ -272,12 +272,8 @@ describe('two-Account Team provisioner managed entry point', () => {
       if (brokerRealm) {
         if (!shared.broker) throw new Error('Missing custodian Machine');
         const brokerMachine = shared.broker;
-        const source = await createDaemonMachineIrohRuntime({ happyHomeDir: join(happyHomeDir, 'requester-iroh'), identity: 'ephemeral', relayConfig: { relayPolicy: 'disabled', relayUrls: [] } });
-        const target = await createDaemonMachineIrohRuntime({ happyHomeDir: join(happyHomeDir, 'custodian-iroh'), identity: 'ephemeral', relayConfig: { relayPolicy: 'disabled', relayUrls: [] } });
-        onTestFinished(source.shutdown); onTestFinished(target.shutdown);
-        expect(source.available, 'Native requester endpoint required').toBe(true);
-        expect(target.available, 'Native custodian endpoint required').toBe(true);
-        if (!source.available || !target.available) throw new Error('Native endpoints unavailable');
+        const source = await startNativeMachineIrohFixture(join(happyHomeDir, 'requester-iroh'));
+        const target = await startNativeMachineIrohFixture(join(happyHomeDir, 'custodian-iroh'));
         const custodianCredentials = { token: await createAccountTokenForTests(shared.custodian.id, { kind: 'account', authority: 'present_user' }), encryption: null } as const;
         const custodianKeys = nacl.sign.keyPair();
         const custodianInstallationId = crypto.randomUUID();

@@ -42,7 +42,7 @@ import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/ad
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { createDaemonMachineIrohRuntime } from '@/daemon/peer/iroh/daemonMachineIrohRuntime';
+import { startNativeMachineIrohFixture } from '@/testkit/machines/nativeMachineIroh.testkit';
 import { createProviderBrokerMachineCarrierTunnelOpen } from '@/daemon/peer/iroh/providerBrokerMachineCarrierTunnelOpen';
 import { startPeerMediationLoopbackServer } from '@/daemon/peer/mediation/loopback/server';
 import { startDaemonProviderBrokerRuntime } from './daemonProviderBrokerRuntime';
@@ -310,12 +310,8 @@ describe('two-Account finite broker Action through the real generic registry and
     const custodianCredentials = { token: await createAccountTokenForTests(shared.custodian.id, { kind: 'account', authority: 'present_user' }), encryption: null } as const;
     const directory = await mkdtemp(join(tmpdir(), 'two-account-broker-runtime-'));
     onTestFinished(() => rm(directory, { recursive: true, force: true }));
-    const source = await createDaemonMachineIrohRuntime({ happyHomeDir: join(directory, 'requester'), identity: 'ephemeral', relayConfig: { relayPolicy: 'disabled', relayUrls: [] } });
-    const target = await createDaemonMachineIrohRuntime({ happyHomeDir: join(directory, 'custodian'), identity: 'ephemeral', relayConfig: { relayPolicy: 'disabled', relayUrls: [] } });
-    onTestFinished(source.shutdown); onTestFinished(target.shutdown);
-    expect(source.available, 'Native requester endpoint is required for this composed gate').toBe(true);
-    expect(target.available, 'Native custodian endpoint is required for this composed gate').toBe(true);
-    if (!source.available || !target.available) throw new Error('Real native Iroh runtime unavailable');
+    const source = await startNativeMachineIrohFixture(join(directory, 'requester'));
+    const target = await startNativeMachineIrohFixture(join(directory, 'custodian'));
     const keys = nacl.sign.keyPair();
     const installationId = crypto.randomUUID();
     const custodianKeys = nacl.sign.keyPair();
