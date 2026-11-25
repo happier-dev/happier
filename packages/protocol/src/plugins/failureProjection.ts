@@ -1,7 +1,6 @@
 import {
   redactBugReportSensitiveText,
 } from '../bugs/reports/redaction.js';
-import { projectPluginActionFailureMessage } from './actions/invocation.js';
 const NEUTRAL_PLUGIN_FAILURE_TEXT = 'Plugin operation failed';
 const REDACTED_PLUGIN_FAILURE_PATH = '[REDACTED_PATH]';
 
@@ -168,8 +167,7 @@ export function projectPluginFailureMessage(
     const redacted = redactPluginFailureAbsolutePaths(
       redactBugReportSensitiveText(message),
     ).trim();
-    if (!redacted) return NEUTRAL_PLUGIN_FAILURE_TEXT;
-    return projectPluginActionFailureMessage(redacted);
+    return redacted || NEUTRAL_PLUGIN_FAILURE_TEXT;
   } catch {
     return NEUTRAL_PLUGIN_FAILURE_TEXT;
   }
