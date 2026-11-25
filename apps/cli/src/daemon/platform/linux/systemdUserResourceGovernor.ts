@@ -1,6 +1,6 @@
 import { getPriority } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { join, posix } from 'node:path';
 import { parseProcessOwnerTag, type ParsedProcessOwnerTag } from '@/processes/ownerTag';
 
@@ -271,6 +271,30 @@ export function buildSystemdUserScopedLaunchSpec(params: Readonly<{
 
 /** Older systemd releases already leave scope arguments literal and lack this option. */
 export async function supportsSystemdRunEnvironmentExpansionOption(params: Readonly<{
+  systemdRunPath: string;
+  environment: NodeJS.ProcessEnv;
+  execFile?: SystemdUserResourceGovernorExecFile;
+}>): Promise<boolean | null> {
+  const { systemdRunPath, environment, execFile } = params;
+  // Only the host binary's option table is reusable. User-manager availability
+  // and scope creation are still checked for each launch.
+  if (environment !== process.env || execFile) return probeSystemdRunEnvironmentExpansionOption(params);
+
+  const metadata = await stat(systemdRunPath, { bigint: true }).catch(() => undefined);
+  if (!metadata) return probeSystemdRunEnvironmentExpansionOption(params);
+  const executable = JSON.stringify([systemdRunPath, `${metadata.dev}:${metadata.ino}:${metadata.size}:${metadata.mtimeNs}:${metadata.ctimeNs}`]);
+  if (hostSystemdRunOption?.executable === executable) return hostSystemdRunOption.result;
+
+  const observation = { executable, result: probeSystemdRunEnvironmentExpansionOption(params) };
+  hostSystemdRunOption = observation;
+  const result = await observation.result;
+  if (result === null && hostSystemdRunOption === observation) hostSystemdRunOption = undefined;
+  return result;
+}
+
+let hostSystemdRunOption: Readonly<{ executable: string; result: Promise<boolean | null> }> | undefined;
+
+async function probeSystemdRunEnvironmentExpansionOption(params: Readonly<{
   systemdRunPath: string;
   environment: NodeJS.ProcessEnv;
   execFile?: SystemdUserResourceGovernorExecFile;

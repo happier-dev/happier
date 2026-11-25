@@ -1,4 +1,6 @@
-import { getPriority } from 'node:os';
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { getPriority, tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Scheduling priority is an OS boundary; keep real launch policy underneath it.
@@ -15,6 +17,7 @@ import {
   readGuardCeilingCapability,
   setGuardSessionMemoryHigh,
   shouldUseSystemdUserSessionResourceGovernor,
+  supportsSystemdRunEnvironmentExpansionOption,
 } from './systemdUserResourceGovernor';
 
 describe('systemd user resource governor', () => {
@@ -30,6 +33,31 @@ describe('systemd user resource governor', () => {
     expect(spec.args).toContain('--collect');
     expect(spec.args.join(' ')).not.toMatch(/OOMPolicy|MemoryMax|MemoryHigh/);
   });
+  it.runIf(process.platform === 'linux')('probes the current host executable once and retries a failed observation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-systemd-run-help-'));
+    try {
+      const systemdRunPath = join(directory, 'systemd-run');
+      const counter = systemdRunPath + '.calls';
+      const fixture = '#!/bin/sh\nfirst=0\n[ -e "$0.calls" ] || first=1\nprintf x >> "$0.calls"\n';
+      await writeFile(systemdRunPath, fixture + '[ "$first" = 0 ] || exit 1\nprintf "%s\\n" --expand-environment=\n', { mode: 0o700 });
+      const probeHost = () => supportsSystemdRunEnvironmentExpansionOption({ systemdRunPath, environment: process.env });
+
+      await expect(probeHost()).resolves.toBeNull();
+      expect(await Promise.all([probeHost(), probeHost(), probeHost()])).toEqual([true, true, true]);
+      await expect(probeHost()).resolves.toBe(true);
+      expect(await readFile(counter, 'utf8')).toBe('xx');
+
+      const replacement = systemdRunPath + '.new';
+      await writeFile(replacement, fixture + 'printf "%s\\n" "older systemd help"\n', { mode: 0o700 });
+      await rename(replacement, systemdRunPath);
+      await expect(probeHost()).resolves.toBe(false);
+      await expect(probeHost()).resolves.toBe(false);
+      expect(await readFile(counter, 'utf8')).toBe('xxx');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('reports a ceiling only after the user manager and its actual memory controller are observed', async () => {
     const execFile = vi.fn(async () => ({ stdout: 'ControlGroup=/user.slice/user-1000.slice/user@1000.service\n', stderr: '' }));
     const readFile = vi.fn(async () => 'cpu io memory pids\n');
