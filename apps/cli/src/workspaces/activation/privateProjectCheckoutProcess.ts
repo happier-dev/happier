@@ -6,7 +6,7 @@ import { authorizeWorkspaceEffectLaunch, runWorkspaceEffectChild, runWorkspaceEf
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import type { readAgentIsolationMemberWorkspaceRoot } from '@/daemon/agentIsolation/agentIsolationNativeIdentity';
-import type { PrivateProjectCheckout } from './privateProjectCheckout';
+import { privateProjectCheckoutRefusal, type PrivateProjectCheckout } from './privateProjectCheckout';
 import type { MaterializedProjectCheckout } from './materializeProjectCheckout';
 import type { WorkspaceCheckoutEffect } from './workspaceEffect';
 import { createWorkspaceEffectConnectedAccounts } from './workspaceEffectServices';
@@ -30,8 +30,7 @@ async function prepareNativeWorkspaceEffectLaunch(input: PrivateProjectNativePro
   const selected = input.launch.requesterIdentity;
   if (selected?.kind !== 'isolated' || !isDeepStrictEqual(selected.requester, input.memberRoot.identity.requester)
     || input.prepared.destinationParentPath !== input.memberRoot.workspaceRoot
-    || input.effect.workspaceRefId !== input.prepared.workspaceRefId) throw new PluginError({ code: 'workspace_private_checkout_required',
-      message: 'The private checkout operation is unavailable' });
+    || input.effect.workspaceRefId !== input.prepared.workspaceRefId) throw privateProjectCheckoutRefusal();
   input.launch.signal.throwIfAborted();
   await input.verifyCurrent();
   return authorizeWorkspaceEffectLaunch({ ...input.launch, managedHappierBinaryPath: input.managedHappierBinaryPath,

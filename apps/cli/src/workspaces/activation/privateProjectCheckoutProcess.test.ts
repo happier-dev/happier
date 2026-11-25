@@ -400,7 +400,7 @@ it.skipIf(process.platform !== 'linux')('accepts member-verified private checkou
     };
     await expect(realpath(directory)).rejects.toMatchObject({ code: 'EACCES' });
     boundary.phases = [];
-    const result = await materializePrivateProjectCheckoutProcess({
+    const nativeInput = {
       prepared: { workspaceRefId: 'accepted-checkout', rootPath, destinationParentPath: workspaceRoot, destinationDirectoryName: 'accepted-checkout' },
       memberRoot: { identity: memberIdentity, workspaceRoot, daemonGid: 2400 },
       effect: { workspaceRefId: 'accepted-checkout', workspaceRoot, existingRootPath: rootPath, generation: 1, plugins: [], contributions: {},
@@ -409,7 +409,16 @@ it.skipIf(process.platform !== 'linux')('accepts member-verified private checkou
       launch: { requesterIdentity, agentIsolation: { read: () => snapshot }, signal: new AbortController().signal, assertCurrent() {} },
       managedHappierBinaryPath: '/opt/happier/cli/current/happier', verifyCurrent: async () => {},
       onEffectsIssued() { throw new Error('Existing checkout acceptance must not clone'); },
-    }).finally(() => { boundary.completed = true; });
+    } satisfies Parameters<typeof materializePrivateProjectCheckoutProcess>[0];
+    const result = await materializePrivateProjectCheckoutProcess(nativeInput)
+      .finally(() => { boundary.completed = true; });
+    await expect(materializePrivateProjectCheckoutProcess({
+      ...nativeInput, effect: { ...nativeInput.effect, workspaceRefId: 'other-checkout' },
+    })).rejects.toMatchObject({
+      code: 'workspace_private_checkout_required',
+      data: { retryable: false },
+      details: { reason: 'workspace_private_checkout_required', phase: 'native_execution_admission' },
+    });
     expect(boundary.childFailure).toBeUndefined();
     expect(result).toEqual({ rootPath, directory, created: false });
     await expect(realpath(directory)).rejects.toMatchObject({ code: 'EACCES' });
