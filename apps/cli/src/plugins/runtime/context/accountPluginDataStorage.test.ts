@@ -1499,7 +1499,7 @@ describe('Account plugin Data storage host', () => {
 
         it('measures a shared background claim wait and its HTTP result without publishing request content', async () => {
             vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
-            const sink = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);
+            const sink = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => undefined);
             let release!: () => void;
             let started!: () => void;
             const claimStarted = new Promise<void>(resolve => { started = resolve; });
