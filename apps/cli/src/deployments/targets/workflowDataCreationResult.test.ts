@@ -45,7 +45,8 @@ describe('Workflow data creation result projection', () => {
     it.each(['reviewed-save', 'branch-only', 'recovered'] as const)('captures the actual Neon %s creation operands for exact paired teardown', async mode => {
         const correlation = { repository: { kind: 'gitlab', deployment: 'https://gitlab.example', repository: 'group/repo' }, pullRequestId: '17' };
         const annotation = { 'happier.environment': 'environment-A', 'happier.scm.kind': 'gitlab',
-            'happier.scm.deployment': 'https://gitlab.example', 'happier.scm.repository': 'group/repo', 'happier.pullRequest': '17' };
+            'happier.scm.deployment': 'https://gitlab.example', 'happier.scm.repository': 'group/repo', 'happier.pullRequest': '17',
+            'happier.sourceBranch': 'branch-main' };
         // Neon v2 Branch and AnnotationData boundary vectors; the real Action
         // produces the result and the real paired Action validates teardown.
         const branch = { id: 'branch-preview', project_id: 'project-A', parent_id: 'branch-main', name: 'Preview 17',
