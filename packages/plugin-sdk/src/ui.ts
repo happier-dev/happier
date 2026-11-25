@@ -105,8 +105,8 @@ export type {
 } from './ui/hostedWeb.js';
 export {
     definePluginDeclarativeDocumentV1,
-    PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
 } from './ui/declarativeDocument.js';
+export { PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1 } from './ui/declarativeDocumentContentType.js';
 export type {
     PluginDeclarativeDocumentContentTypeV1,
     PluginDeclarativeDocumentV1,

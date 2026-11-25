@@ -163,7 +163,7 @@ const bundleCases = [
     },
     {
         name: 'Declarative document content-type projection',
-        entry: resolve(import.meta.dirname, './ui/declarativeDocument.ts'),
+        entry: resolve(import.meta.dirname, './ui/declarativeDocumentContentType.ts'),
         source: 'export { PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1 } from ENTRY;',
     },
 ] as const;
