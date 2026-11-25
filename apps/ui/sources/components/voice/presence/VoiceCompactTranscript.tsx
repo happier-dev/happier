@@ -14,7 +14,7 @@ import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
 import { resolveVoicePresentedProviderId } from '@/voice/settings/resolveVoiceProviderId';
 
 import { resolveVoiceCompactLine, resolveVoiceTranscriptTail } from './resolveVoicePresenceCaption';
-import { useVoiceTargetName } from './VoiceTargetIdentity';
+import { useVoiceTargetName, useVoiceTargetOnScreen } from './VoiceTargetIdentity';
 
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
 
@@ -42,7 +42,8 @@ export const VoiceCompactTranscript = React.memo(function VoiceCompactTranscript
         voiceSettings,
     });
     const targetName = useVoiceTargetName(props.voice.targetSessionAddress);
-    const line = resolveVoiceCompactLine(props.voice, latestText, targetName);
+    const targetOnScreen = useVoiceTargetOnScreen(props.voice.targetSessionAddress);
+    const line = resolveVoiceCompactLine(props.voice, latestText, targetName, { targetOnScreen });
     if (!line) return null;
     if (line.kind === 'caption') {
         return <Text testID={props.testID ?? 'voice-compact-transcript'} numberOfLines={1} style={styles.line}>{line.text}</Text>;

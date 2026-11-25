@@ -68,14 +68,20 @@ function nonNegative(value: number): number {
  * re-derive it.
  */
 export function resolveVoiceOrbRestingBottomInset(chrome: VoiceOrbBottomChrome): number {
-    // The stacked bands are a floor: they stay right while the keyboard lifts the composer past
-    // its last measured top. The measured top wins wherever the band sits higher than the stack.
+    return resolveVoicePresenceContentBottom(chrome) + VOICE_ORB_CHROME_GAP + nonNegative(chrome.petOffset);
+}
+
+/**
+ * Where the content above the bottom chrome ends (the transcript's bottom edge, the composer's top), as
+ * a distance up from the host's bottom edge. The stacked bands are a floor: they stay right while the
+ * keyboard lifts the composer past its last measured top. The measured top wins wherever the band sits
+ * higher than the stack.
+ */
+export function resolveVoicePresenceContentBottom(chrome: VoiceOrbBottomChrome): number {
     const stacked = nonNegative(chrome.safeAreaBottom)
         + Math.max(nonNegative(chrome.bottomChromeHeight), nonNegative(chrome.keyboardHeight))
         + nonNegative(chrome.composerChromeHeight);
-    return Math.max(stacked, nonNegative(chrome.composerTopFromBottom ?? 0))
-        + VOICE_ORB_CHROME_GAP
-        + nonNegative(chrome.petOffset);
+    return Math.max(stacked, nonNegative(chrome.composerTopFromBottom ?? 0));
 }
 
 /** Shared measured shell space for a presence; chrome custody stays in the shell. */
@@ -218,7 +224,11 @@ export function resolveVoicePresenceReleaseTarget(input: Readonly<{
     return { x: placement.rect.x, y: placement.rect.y };
 }
 
-/** Additional composer clearance from the measured Island rect above the shell's bottom band. */
+/**
+ * How far the docked float reaches above a bottom edge: above the shell's bar it is the composer
+ * clearance (phone Island under the composer); above the content's bottom edge it is the transcript
+ * clearance (a float resting above the composer).
+ */
 export function resolveVoicePresenceBottomReservation(input: Readonly<{
     hostHeight: number;
     point: CompanionPoint;

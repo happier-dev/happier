@@ -47,12 +47,13 @@ export function resolveVoicePresenceCaption(voice: CaptionFacts, targetName: str
  * reconnecting, blocked, failed) that caption — never the stale last line, which would read as if
  * the call were fine; otherwise the last line said, or — bound to a Session — who you are talking to
  * ("Talking to Release captain", lab `b-voice I`; just its name once the call has ended), or the caption until
- * there is one.
+ * there is one. On that Session's own page the page already names it, so the state's caption reads instead.
  */
 export function resolveVoiceCompactLine(
     voice: CaptionFacts,
     latestTranscriptText: string | null,
     targetName: string | null = null,
+    options?: Readonly<{ targetOnScreen?: boolean }>,
 ): Readonly<{ kind: 'caption' | 'transcript'; text: string }> | null {
     const notice = resolveVoiceListeningNotice(voice);
     if (notice) return { kind: 'caption', text: notice };
@@ -63,7 +64,7 @@ export function resolveVoiceCompactLine(
     const line = latestTranscriptText?.trim();
     if (line) return { kind: 'transcript', text: line };
     // Once the call has ended the target is only named: "Talking to …" would claim Voice is still on it.
-    if (targetName) return { kind: 'caption', text: voice.live ? t('sessionVoice.talkingTo', { name: targetName }) : targetName };
+    if (targetName && options?.targetOnScreen !== true) return { kind: 'caption', text: voice.live ? t('sessionVoice.talkingTo', { name: targetName }) : targetName };
     return caption ? { kind: 'caption', text: caption } : null;
 }
 

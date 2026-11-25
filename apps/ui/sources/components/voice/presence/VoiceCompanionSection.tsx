@@ -71,7 +71,9 @@ function VoiceCompanionSectionRuntime(props: Readonly<{ testID: string; onReveal
     const voice = model?.attemptControl ?? null;
     const canOpenConversation = voice?.canOpenConversation === true;
     const onOpenConversation = voice?.onOpenConversation;
-    const onDismissEnded = voice?.ended ? voice.onDismissEnded : undefined;
+    // A clean end and a failed start are both acknowledged from the section's menu, beside its remedies.
+    const onDismissEnded = voice?.ended ? voice.onDismissEnded
+        : voice?.canDismissFailedAttempt === true && voice.recoveryAvailable ? voice.onDismissFailedAttempt : undefined;
     const actions = React.useMemo<readonly ItemAction[]>(() => [
         ...(canOpenConversation && onOpenConversation
             ? [{ id: 'open-conversation', title: t('voicePresence.openConversation'), icon: 'arrow-square-out' as const, onPress: onOpenConversation }]

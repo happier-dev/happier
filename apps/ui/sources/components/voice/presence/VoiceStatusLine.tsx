@@ -69,7 +69,8 @@ export const VoiceStatusLine = React.memo(function VoiceStatusLine(props: Readon
         <View testID={props.testID ?? 'voice-status-line'} style={[styles.row, { gap: metrics.gap }]}>
             <Text
                 accessibilityLabel={props.voice.statusLabel}
-                numberOfLines={1}
+                // A section's hero word wraps whole ("Machine unreachable"); a capsule's stays one line.
+                numberOfLines={hero ? undefined : 1}
                 style={[
                     hero ? styles.wordHero : styles.word,
                     { fontSize: metrics.fontSize, lineHeight: metrics.lineHeight, color: wordColor },

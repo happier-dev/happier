@@ -5,7 +5,8 @@ import { StyleSheet } from 'react-native-unistyles';
 import { SessionAvatar } from '@/components/sessions/bots/face/SessionAvatar';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { areSessionAddressesEqual, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { useFocusedSessionAddress } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { useSession } from '@/sync/domains/state/storage';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { t } from '@/text';
@@ -28,6 +29,15 @@ export function useVoiceTargetName(
   if (!address || !session) return null;
   if (!isSessionVisible(address)) return t('message.provenanceSession');
   return getSessionName(session, address.serverId);
+}
+
+/**
+ * Whether the bound target is the Session on screen: there the page already says which Session it is,
+ * so presence drops "Talking to …" and shows the call's own state instead.
+ */
+export function useVoiceTargetOnScreen(address: SessionAddress | null | undefined): boolean {
+  const focused = useFocusedSessionAddress();
+  return Boolean(address) && areSessionAddressesEqual(address, focused);
 }
 
 /**

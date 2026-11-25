@@ -20,7 +20,9 @@ import {
     useSessionCockpitComposerBottomChromeHeight,
     useReportSessionCockpitComposerChromeHeight,
     useReportSessionCockpitActionRailRect,
+    useSessionCockpitTranscriptBottomClearance,
 } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
+import { reportVoiceCompanionSectionOnScreen } from './voiceCompanionSectionReveal';
 import { VoicePresenceAppShellMount } from './VoicePresenceAppShellMount';
 import { VOICE_ORB_BODY_SIZE } from './voicePresenceAnatomy';
 import { VoiceTopBarPresenceMount } from './VoiceTopBarPresence';
@@ -90,6 +92,13 @@ function FramedDesktopComposer() {
     const report = useReportSessionCockpitComposerChromeHeight(true);
     React.useEffect(() => { report(208, 900 - 651); }, [report]);
     return null;
+}
+
+/** What the transcript and the composer each reserve, as the shell publishes them. */
+function Reservations() {
+    const transcript = useSessionCockpitTranscriptBottomClearance();
+    const composer = useSessionCockpitComposerBottomChromeHeight();
+    return <View testID="reservations" accessibilityValue={{ now: transcript, min: composer }} />;
 }
 
 function ActionRailObstacle(props: Readonly<{ rect: FrameRect | null }>) {
@@ -184,6 +193,37 @@ describe('phone Island shell clearance', () => {
             // The composer band starts at y 651 (its meters at 665): the float rests above it.
             expect(y + float[0].height).toBeLessThanOrEqual(651);
         } finally { await screen.unmount(); }
+    });
+
+    it.each(['island', 'orb'] as const)('keeps the transcript clear of the docked desktop %s without lifting the composer', async (container) => {
+        viewport.width = 1440;
+        viewport.height = 900;
+        getStorage().setState((state) => ({ localSettings: { ...state.localSettings, voicePresenceContainer: container } }));
+        const screen = await renderScreen(<SessionCockpitChromeRegistryProvider><FramedDesktopComposer /><Reservations /><VoicePresenceAppShellMount /></SessionCockpitChromeRegistryProvider>);
+        try {
+            await act(async () => { screen.findByTestId('voice-presence-float-host')!.props.onLayout({ nativeEvent: { layout: { width: 1440, height: 900 } } }); });
+            const frame = screen.findByTestId('voice-presence-float-body')!.props.style[0];
+            await act(async () => { screen.findByTestId('voice-presence-float-body')!.props.onLayout({ nativeEvent: { layout: { width: frame.width, height: frame.height } } }); });
+            const float = screen.findByTestId('voice-presence-float-body')!.props.style;
+            const y = float[float.length - 1].transform.find((entry: { translateY?: number }) => entry.translateY !== undefined).translateY;
+            // The transcript ends at the composer band's top (651): it keeps exactly what the float covers above it.
+            const reservations = screen.findByTestId('reservations')!.props.accessibilityValue;
+            expect(reservations.now).toBe(651 - y);
+            expect(reservations.min).toBe(0);
+        } finally { await screen.unmount(); }
+    });
+    it.each(['island', 'orb'] as const)('steps the desktop %s back while the Companion shows the call', async (container) => {
+        viewport.width = 1440;
+        viewport.height = 900;
+        getStorage().setState((state) => ({ localSettings: { ...state.localSettings, voicePresenceContainer: container } }));
+        const screen = await renderScreen(<SessionCockpitChromeRegistryProvider><FramedDesktopComposer /><Reservations /><VoicePresenceAppShellMount /></SessionCockpitChromeRegistryProvider>);
+        let withdraw: (() => void) | null = null;
+        try {
+            expect(screen.findHostByTestId('voice-presence-app-shell-root')).not.toBeNull();
+            await act(async () => { withdraw = reportVoiceCompanionSectionOnScreen(); });
+            expect(screen.findHostByTestId('voice-presence-app-shell-root')).toBeNull();
+            expect(screen.findByTestId('reservations')!.props.accessibilityValue.now).toBe(0);
+        } finally { (withdraw as (() => void) | null)?.(); await screen.unmount(); }
     });
 
     afterEach(() => {

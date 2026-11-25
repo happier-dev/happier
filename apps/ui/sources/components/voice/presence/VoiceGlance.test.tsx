@@ -17,6 +17,7 @@ import type { NormalizedMessage } from '@happier-dev/session-core/raw';
 import { useVoiceSurfaceConversationState } from '@/components/voice/surface/useVoiceSurfaceConversationState';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import { setFocusedSessionId } from '@/sync/domains/session/sessionSurfaceVisibility';
 
 const R115_CONVERSATION = 'r115-conversation';
 // RUN115 restart136: committed pairs captured in final115-brief/transcript-ids.json.
@@ -246,6 +247,25 @@ describe('VoiceGlance', () => {
         });
     });
 
+    it('titles the call "Voice" on the target Session\'s own page and names the target elsewhere', async () => {
+        storage.getState().applySessions([createSessionFixture({
+            id: 'captain', serverId: 'home-a',
+            metadata: { path: '/w', host: 'h', summary: { text: 'Release captain', updatedAt: 1 } },
+        })]);
+        const voice = { ...attempt(), targetSessionAddress: { serverId: 'home-a', sessionId: 'captain' } };
+        screen = await renderScreen(<VoiceGlance model={surface(voice)} presentation="companion" />);
+        expect(screen.getTextContent()).toContain(t('sessionVoice.talkingTo', { name: 'Release captain' }));
+        await screen.unmount();
+        await act(async () => { setFocusedSessionId('captain', 'home-a'); });
+        try {
+            screen = await renderScreen(<VoiceGlance model={surface(voice)} presentation="companion" />);
+            expect(screen.getTextContent()).not.toContain(t('sessionVoice.talkingTo', { name: 'Release captain' }));
+            expect(screen.getTextContent()).toContain(t('voicePresence.title'));
+        } finally {
+            await act(async () => { setFocusedSessionId(null); });
+        }
+    });
+
     it.each(['companion', 'popover', 'sheet'] as const)('says Voice is reading aloud during a call and stops only the reading in the %s', async (presentation) => {
         const voice = attempt();
         const stop = vi.fn();
@@ -294,30 +314,25 @@ describe('VoiceGlance', () => {
         expect(voice.onToggleMute).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps Mute named and pressable, icon-only only where the measured row is too narrow for labelled pills', async () => {
+    it('names Mute (and Unmute, the muted call\'s one way back) at the Companion\'s width; the row wraps instead', async () => {
         const voice = attempt();
-        const mutedLabel = t('voicePresence.mute');
         const measure = (width: number) => act(async () => {
-            screen?.findByTestId('voice-glance-transport')?.props.onLayout({ nativeEvent: { layout: { width, height: 26 } } });
+            screen?.findByTestId('voice-glance-transport')?.props.onLayout?.({ nativeEvent: { layout: { width, height: 26 } } });
         });
         screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation="companion" />);
-        // The Companion assumes its narrow column before it has been measured.
-        expect(screen.getTextContent()).not.toContain(mutedLabel);
-        expect(screen.findByTestId('voice-glance-transport-mute')?.props.accessibilityLabel).toBeTruthy();
+        expect(screen.getTextContent()).toContain(t('voicePresence.mute'));
         expect(screen.getTextContent()).toContain(t('voicePresence.end'));
         screen.pressByTestId('voice-glance-transport-mute');
         expect(voice.onToggleMute).toHaveBeenCalledTimes(1);
-        // The same row at phone width has room for the labelled pill; narrowed again, it steps back down.
-        await measure(282);
-        expect(screen.getTextContent()).toContain(mutedLabel);
         await measure(232);
-        expect(screen.getTextContent()).not.toContain(mutedLabel);
+        expect(screen.getTextContent()).toContain(t('voicePresence.mute'));
         await screen.unmount();
 
-        screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation="popover" />);
-        expect(screen.getTextContent()).toContain(mutedLabel);
+        const muted = { ...voice, muted: true, canCommitInput: true, commitInputLabel: 'Send now', onCommitInput: vi.fn() };
+        screen = await renderScreen(<VoiceGlance model={surface(muted, { canBargeIn: false })} presentation="companion" />);
         await measure(232);
-        expect(screen.getTextContent()).not.toContain(mutedLabel);
+        expect(screen.getTextContent()).toContain(t('voicePresence.unmute'));
+        expect(screen.getTextContent()).not.toMatch(/voicePresence\./);
     });
 
     it('keeps the phone sheet to one readable row when the reading Stop joins Mute, Send and End', async () => {
@@ -354,6 +369,22 @@ describe('VoiceGlance', () => {
         expect(screen.findByTestId('voice-glance-transport-end')).toBeNull();
         screen.pressByTestId('voice-glance-transport-recover');
         expect(voice.onRecover).toHaveBeenCalledTimes(1);
+        screen.pressByTestId('voice-glance-transport-dismiss');
+        expect(voice.onDismissFailedAttempt).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps a failed start\'s remedies on one row: the Companion\'s menu carries Dismiss, a popover draws its named well', async () => {
+        const failed = resolveVoiceAttemptControl({ surfaceState: 'error', tone: 'error', status: 'error',
+            sessionId: 'voice-1', canStop: false, muted: false, capturing: false, startAdmitted: true, hasRecovery: true });
+        const voice = { ...attempt(), ...failed, recoveryLabel: 'Retry', alternateRecoveryLabel: 'Choose a machine', onAlternateRecovery: vi.fn(),
+            canDismissFailedAttempt: true, onDismissFailedAttempt: vi.fn() };
+        screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation="companion" />);
+        expect(screen.getTextContent()).toContain('Choose a machine');
+        expect(screen.findByTestId('voice-glance-transport-dismiss')).toBeNull();
+        await screen.unmount();
+        screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation="popover" />);
+        expect(screen.getTextContent()).not.toContain(t('voicePresence.dismiss'));
+        expect(screen.findByTestId('voice-glance-transport-dismiss')?.props.accessibilityLabel).toBe(t('voicePresence.dismiss'));
         screen.pressByTestId('voice-glance-transport-dismiss');
         expect(voice.onDismissFailedAttempt).toHaveBeenCalledTimes(1);
     });

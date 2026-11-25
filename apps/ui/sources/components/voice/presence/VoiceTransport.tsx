@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { VoiceTransportProps } from '@happier-dev/plugin-ui';
-import { View, type LayoutChangeEvent } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -42,10 +42,8 @@ const LABELLED_GEOMETRY = {
     glance: { button: 'small', icon: 14 },
     sheet: { button: 'normal', icon: 18 },
 } as const;
-/** Narrowest glance row (px) that holds Unmute · Send · End as labelled pills; between the Companion column (~232) and the phone row (~282). */
-const LABELLED_MIN_WIDTH = 260;
-/** The compact Mute well matches the small pills' height, so the row stays level. */
-const COMPACT_WELL_SIZE = 26;
+/** A glance icon well matches the small pills' height, so the row stays level. */
+const GLANCE_WELL_SIZE = 26;
 
 /**
  * The transport rule (§4.1, VE-03), decided once for every size: Mute never ends and End never mutes.
@@ -77,14 +75,14 @@ export const VoiceTransport = React.memo(function VoiceTransport(props: Readonly
     readAloud?: VoiceReadAloud;
     /** Labelled sizes: Interrupt and Cancel reply, from the surface model. */
     turn?: VoiceTransportTurn;
-    /** `glance`: assume the narrow row (Mute as its icon well) until the row has measured itself. */
-    narrowByDefault?: boolean;
+    /** The host's header menu carries Dismiss (the Companion section's ⋯), so the row keeps the remedies. */
+    dismissInHostMenu?: boolean;
     testID?: string;
 }>): React.ReactElement | null {
     const { voice, size } = props;
     const testID = props.testID ?? 'voice-transport';
     if (size === 'glance' || size === 'sheet') {
-        return <VoiceTransportLabelled voice={voice} size={size} readAloud={props.readAloud} turn={props.turn} narrowByDefault={props.narrowByDefault} testID={testID} />;
+        return <VoiceTransportLabelled voice={voice} size={size} readAloud={props.readAloud} turn={props.turn} dismissInHostMenu={props.dismissInHostMenu} testID={testID} />;
     }
     const controls = resolveVoiceTransportControls(voice);
     const readAloudStop = props.readAloud && props.readAloud.phase !== 'idle' && size !== 'touch'
@@ -185,16 +183,16 @@ export const VoiceTransport = React.memo(function VoiceTransport(props: Readonly
 
 /**
  * The labelled transport (glance and sheet): the same rule as labelled pills, plus Send for buffered
- * input and the turn's Interrupt or Cancel reply. The glance row wraps rather than clipping; below
- * `LABELLED_MIN_WIDTH` of its own measured width Mute steps down to its icon well so the row keeps one
- * line. On the sheet every control shares the row's full width.
+ * input and the turn's Interrupt or Cancel reply. In the glance every control keeps its word (a muted
+ * call's Unmute is its one way back) and the row wraps rather than clipping. On the sheet every control
+ * shares the row's full width.
  */
 const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props: Readonly<{
     voice: VoiceAttemptControlProjection;
     size: 'glance' | 'sheet';
     readAloud?: VoiceReadAloud;
     turn?: VoiceTransportTurn;
-    narrowByDefault?: boolean;
+    dismissInHostMenu?: boolean;
     testID: string;
 }>) {
     const { theme } = useUnistyles();
@@ -202,11 +200,6 @@ const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props:
     const sheet = props.size === 'sheet';
     const { button, icon } = LABELLED_GEOMETRY[props.size];
     const controls = resolveVoiceTransportControls(voice);
-    const [rowWidth, setRowWidth] = React.useState<number | null>(null);
-    const onRowLayout = React.useCallback((event: LayoutChangeEvent) => {
-        const next = Math.round(event.nativeEvent.layout.width);
-        setRowWidth((current) => (current === next ? current : next));
-    }, []);
     const reading = props.readAloud !== undefined && props.readAloud.phase !== 'idle';
     const hasSend = voice.canCommitInput === true && Boolean(voice.commitInputLabel) && Boolean(voice.onCommitInput);
     // The sheet shares its row three-up; a fourth control (the reading's Stop beside Mute, Send and End)
@@ -214,9 +207,7 @@ const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props:
     const alternateLabel = controls.recovery !== null && voice.onAlternateRecovery ? voice.alternateRecoveryLabel ?? null : null;
     const labelledCount = [reading, controls.recovery !== null, alternateLabel !== null, controls.mute, hasSend, turn?.canBargeIn === true,
         turn?.canCancelTurn === true && !turn.canBargeIn, controls.end, controls.dismiss !== undefined].filter(Boolean).length;
-    const compact = sheet
-        ? labelledCount > 3
-        : rowWidth === null ? props.narrowByDefault === true : rowWidth < LABELLED_MIN_WIDTH;
+    const compact = sheet && labelledCount > 3;
     const control = sheet ? styles.sheetControl : undefined;
     const glyph = (name: IconName, color: string = theme.colors.text.secondary) => <Icon name={name} size={icon} color={color} />;
     const secondary = (key: string, title: string, iconName: IconName, onPress: () => unknown, accessibilityLabel?: string) => (
@@ -254,7 +245,7 @@ const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props:
             iconName={voice.muted ? 'microphone-slash' : 'microphone'}
             accessibilityLabel={muteLabel}
             tooltip={muteLabel}
-            size={sheet ? HAPPIER_PAGE_METRICS.controlHeightPx : COMPACT_WELL_SIZE}
+            size={HAPPIER_PAGE_METRICS.controlHeightPx}
             iconSize={icon}
             selected={voice.muted}
             disabled={!voice.canMute}
@@ -310,9 +301,22 @@ const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props:
             leading={<Icon name="phone-hang-up" size={icon} color={theme.colors.state.danger.foreground} weight="fill" />}
         />
     ) : null;
-    const dismiss = controls.dismiss ? secondary('dismiss', t('voicePresence.dismiss'), 'x', controls.dismiss) : null;
+    // Beside a recovery (and its alternate) the glance's Dismiss is the quiet named well, so the remedies keep
+    // one row (lab ST: Retry · Choose a machine); alone it keeps its word. In the Companion the section's ⋯
+    // menu carries it, as it does after a clean end.
+    const dismiss = !controls.dismiss || (props.dismissInHostMenu && controls.recovery !== null) ? null : !sheet && controls.recovery !== null ? (
+        <IconButton
+            testID={`${testID}-dismiss`}
+            iconName="x"
+            accessibilityLabel={t('voicePresence.dismiss')}
+            tooltip={t('voicePresence.dismiss')}
+            size={GLANCE_WELL_SIZE}
+            iconSize={icon}
+            onPress={controls.dismiss}
+        />
+    ) : secondary('dismiss', t('voicePresence.dismiss'), 'x', controls.dismiss);
     return (
-        <View testID={testID} onLayout={onRowLayout} style={[styles.labelled, sheet ? styles.labelledSheet : null]}>
+        <View testID={testID} style={[styles.labelled, sheet ? styles.labelledSheet : null]}>
             {readAloudStop}
             {recovery}
             {alternate}

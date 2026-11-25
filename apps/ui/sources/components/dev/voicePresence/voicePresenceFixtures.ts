@@ -99,7 +99,7 @@ export function buildVoicePresenceFixture(state: VoicePresenceFixtureState): Voi
         statusWord: state === 'start_failed' ? t('voice.readiness.short.machineUnreachable') : state === 'working' ? 'Working' : state === 'needs_you' ? 'Needs you' : state === 'ended' ? t('voicePresence.ended') : state === 'muted' ? t('voicePresence.muted') : t(resolveVoiceSurfaceStatusPresentation(surfaceState).wordKey ?? resolveVoiceSurfaceStatusPresentation(surfaceState).labelKey),
         statusLabel: state === 'working' ? 'Working' : state === 'needs_you' ? 'Needs you' : state === 'ended' ? t('voicePresence.ended') : state === 'muted' ? t('voicePresence.muted') : t(resolveVoiceSurfaceStatusPresentation(surfaceState).labelKey),
         ended: state === 'ended' ? { sessionId: 'specimen-voice', adapterId: null, startedAt: SPECIMEN_STARTED_AT - 118_000, endedAt: SPECIMEN_STARTED_AT + 134_000, reason: { kind: 'stopped' as const }, conversationSessionAddress: null, targetSessionAddress: null, transcriptMode: null, accountScope: null, conversationScope: null } : null,
-        commitInputLabel: sendable ? t('common.send') : null,
+        commitInputLabel: sendable ? t('voicePresence.sendNow') : null,
         onCommitInput: sendable ? NOOP : undefined,
         onDismissEnded: NOOP,
         onDismissFailedAttempt: NOOP,

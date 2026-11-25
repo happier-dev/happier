@@ -4,6 +4,7 @@ import { Animated, View } from 'react-native';
 import { ComposerKeyboardScrollInset } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardScrollInset';
 import { TRANSCRIPT_TOP_GUTTER_PX } from '@/components/sessions/transcript/_constants';
 import { useTranscriptFindClearance } from '@/components/sessions/transcript/find/TranscriptFindContext';
+import { useSessionCockpitTranscriptBottomClearance } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { TranscriptSessionActivityLine } from './TranscriptSessionActivityLine';
@@ -47,6 +48,9 @@ export const ChatListFooterWithKeyboardInset = React.memo((props: {
     showToolCalls?: boolean;
     onComposerInsetHeightChange?: (height: number) => void;
 }) => {
+    // A floating companion resting above the composer (the desktop Voice Island or Orb) covers the
+    // last rows' end: the transcript keeps that much space after them, so the newest turn scrolls clear.
+    const floatingClearance = useSessionCockpitTranscriptBottomClearance();
     return (
         <View>
             {props.showToolCalls === false && props.serverId ? (
@@ -60,6 +64,7 @@ export const ChatListFooterWithKeyboardInset = React.memo((props: {
             <ProjectSetupSessionReturn sessionId={props.sessionId} serverId={props.serverId} />
             {/* An idle Session with changes no Review covered says so once, with Review them (lab `session-finished`). */}
             <SessionReviewSuggestion sessionId={props.sessionId} serverId={props.serverId} />
+            {floatingClearance > 0 ? <View testID="transcript-floating-clearance" style={{ height: floatingClearance }} /> : null}
             <ComposerKeyboardScrollInset
                 testID="transcript-composer-keyboard-inset"
                 onHeightChange={props.onComposerInsetHeightChange}

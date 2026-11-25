@@ -31,7 +31,7 @@ import { VoiceStatusCell } from './VoiceStatusCell';
 import { VoiceTransport } from './VoiceTransport';
 import { VoiceReadAloudStatus, VoiceReadAloudStopPill, type VoiceReadAloud } from './VoiceReadAloud';
 import { resolveVoicePresenceReadAloud, type VoicePresenceReading } from './resolveVoicePresenceReadAloud';
-import { useVoiceTargetName, VoiceTargetIdentity } from './VoiceTargetIdentity';
+import { useVoiceTargetName, useVoiceTargetOnScreen, VoiceTargetIdentity } from './VoiceTargetIdentity';
 import {
   formatVoiceElapsed,
   readVoiceElapsedStartedAt,
@@ -73,9 +73,11 @@ export const VoiceGlance = React.memo(function VoiceGlance(
   // Talking to a Session (lab `b-voice A`): the title names it beside its avatar, and the source is
   // the provider with the voice the attempt actually applied — never the saved preference.
   const boundTarget = voice.targetSessionAddress ?? null;
-  const boundName = useVoiceTargetName(boundTarget);
+  // On the target Session's own page the page names it: the section is just "Voice 2:14".
+  const onScreen = useVoiceTargetOnScreen(boundTarget);
+  const boundName = useVoiceTargetName(onScreen ? null : boundTarget);
   const target = model.targetLabel ?? t('voicePresence.globalVoice');
-  const source = boundName
+  const source = boundName || onScreen
     ? voice.inUseVoice && model.providerLabel
       ? t('sessionVoice.currentVoice', {
           provider: model.providerLabel,
@@ -241,7 +243,7 @@ const VoiceGlanceBody = React.memo(function VoiceGlanceBody(
         size={sheet ? 'sheet' : 'glance'}
         readAloud={reading?.readAloud}
         turn={model}
-        narrowByDefault={props.presentation === 'companion'}
+        dismissInHostMenu={props.presentation === 'companion'}
         testID={`${props.testID}-transport`}
       />
     </View>

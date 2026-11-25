@@ -20,6 +20,13 @@ describe('Voice presence captions for a bound Session target', () => {
     expect(resolveVoiceCompactLine(voice, 'Earlier reply', 'Release captain'))
       .toEqual({ kind: 'caption', text: t('voiceAssistant.ending') });
   });
+  it('captions the call state, not "Talking to", on the target Session\'s own page before anything is said', () => {
+    const voice = { ...base, surfaceState: 'speaking' } as const;
+    expect(resolveVoiceCompactLine(voice, null, 'Release captain', { targetOnScreen: true }))
+      .toEqual({ kind: 'caption', text: t('voicePresence.captions.speaking') });
+    expect(resolveVoiceCompactLine(voice, null, 'Release captain'))
+      .toEqual({ kind: 'caption', text: t('sessionVoice.talkingTo', { name: 'Release captain' }) });
+  });
   it('keeps a connected call phase-neutral and captions the actual microphone state', () => {
     const voice = { ...base, surfaceState: 'live', captionLabel: t('voiceSurface.a11y.microphoneInactive') } as const;
     expect(resolveVoicePresenceCaption(voice)).toBe(voice.captionLabel);

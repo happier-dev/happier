@@ -9,7 +9,7 @@ import {
     resolveCurrentVoiceRuntimePlatform,
     resolveVoiceStartAdmission,
 } from '@/components/voice/surface/resolveVoiceStartAdmission';
-import { resolveVoiceSurfaceRecovery, type VoiceRecoveryIcon } from '@/components/voice/surface/resolveVoiceSurfaceRecovery';
+import { resolveVoiceSnapshotRecoveryAction, resolveVoiceSurfaceRecovery, type VoiceRecoveryIcon } from '@/components/voice/surface/resolveVoiceSurfaceRecovery';
 import { resolveVoiceSurfaceState, type VoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
 import { resolveVoiceSurfaceStatusPresentation } from '@/components/voice/surface/resolveVoiceSurfaceStatusPresentation';
 import { useVoiceInputSourceActive } from '@/components/voice/light/VoiceEnergyAppProvider';
@@ -287,11 +287,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         errorPresentation: snap.errorPresentation,
         presentationState: snap.presentationState,
     });
-    const recoveryAction = snap.errorRecoveryAction ?? (
-        snap.presentationState === 'reconnecting' && snap.reconnectRetryAvailable === true
-            ? 'retry'
-            : null
-    );
+    const recoveryAction = resolveVoiceSnapshotRecoveryAction(snap);
     const recovery = React.useMemo(
         () => resolveVoiceSurfaceRecovery(recoveryAction),
         [recoveryAction],
@@ -755,7 +751,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         if (control.canCommitInput !== true || !snapSessionId || !voiceSessionManager.matchesAttempt(expectedAttempt)) return;
         return executeControl('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, 'VoiceAttemptControl.commitInput');
     }, [control.canCommitInput, executeControl, expectedAttempt, snapSessionId]);
-    const commitInputLabel = control.canCommitInput === true ? t('common.send') : null;
+    const commitInputLabel = control.canCommitInput === true ? t('voicePresence.sendNow') : null;
 
     const recoverBeforeAttempt = React.useMemo(() => createVoiceAttemptRecoveryDispatch({
         expectedAttempt,

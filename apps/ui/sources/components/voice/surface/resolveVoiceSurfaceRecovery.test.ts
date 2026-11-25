@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveVoiceSurfaceRecovery } from './resolveVoiceSurfaceRecovery';
+import { resolveVoiceSnapshotRecoveryAction, resolveVoiceSurfaceRecovery } from './resolveVoiceSurfaceRecovery';
 
 describe('resolveVoiceSurfaceRecovery', () => {
   it.each([
@@ -32,5 +32,13 @@ describe('resolveVoiceSurfaceRecovery', () => {
   it('does not render a recovery action for terminal none', () => {
     expect(resolveVoiceSurfaceRecovery('none')).toBeNull();
     expect(resolveVoiceSurfaceRecovery(null)).toBeNull();
+  });
+
+  it('offers Retry while a lost connection waits between tries, and the failure\'s own remedy first', () => {
+    expect(resolveVoiceSurfaceRecovery(resolveVoiceSnapshotRecoveryAction({ presentationState: 'reconnecting', reconnectRetryAvailable: true })))
+      .toEqual({ kind: 'retry', labelKey: 'common.retry', icon: 'arrow-clockwise' });
+    expect(resolveVoiceSnapshotRecoveryAction({ presentationState: 'reconnecting' })).toBeNull();
+    expect(resolveVoiceSnapshotRecoveryAction({ presentationState: 'reconnecting', reconnectRetryAvailable: true, errorRecoveryAction: 'review_credentials' }))
+      .toBe('review_credentials');
   });
 });

@@ -22,7 +22,7 @@ import { resolveVoiceExecutionMachinePresentationFromState } from '@/voice/crede
 import { resolveVoiceStartAdmission, resolveCurrentVoiceRuntimePlatform } from '@/components/voice/surface/resolveVoiceStartAdmission';
 import { resolveVoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
 import { resolveVoiceSurfaceStatusPresentation } from '@/components/voice/surface/resolveVoiceSurfaceStatusPresentation';
-import { resolveVoiceSurfaceRecovery } from '@/components/voice/surface/resolveVoiceSurfaceRecovery';
+import { resolveVoiceSnapshotRecoveryAction, resolveVoiceSurfaceRecovery } from '@/components/voice/surface/resolveVoiceSurfaceRecovery';
 import { resolveVoiceConnectRecoveryTarget } from '@/components/voice/surface/resolveVoiceConnectRecoveryTarget';
 import { resolveVoiceAttemptControl } from '@/components/voice/attempt/resolveVoiceAttemptControl';
 import { projectVoiceAttemptPresentation } from '@/components/voice/attempt/projectVoiceAttemptPresentation';
@@ -136,7 +136,7 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
                 connectedServicesBinding: entry.providerSettings?.connectedServicesBinding ?? null } : null,
             providerConfig: bindingScope === 'session' ? null : readVoiceProviderSettingsConfig(voiceSettings, providerId),
             sessionMetadata: metadata, connectedServiceEntries: getConnectedServiceRegistrySnapshot().entries }) };
-    const recoveryAction = snapshot.errorRecoveryAction ?? (snapshot.presentationState === 'reconnecting' && snapshot.reconnectRetryAvailable ? 'retry' : null);
+    const recoveryAction = resolveVoiceSnapshotRecoveryAction(snapshot);
     const recovery = resolveVoiceSurfaceRecovery(recoveryAction);
     const setupIncomplete = !admission.connectedServicesBindingReady || !admission.credentialReady;
     const surfaceState = resolveVoiceSurfaceState(snapshot);

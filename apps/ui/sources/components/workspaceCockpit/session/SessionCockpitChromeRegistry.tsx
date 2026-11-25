@@ -127,6 +127,13 @@ const SessionCockpitFloatingBottomChromeHeightContext = React.createContext(0);
 const SessionCockpitShellBarHeightContext = React.createContext(0);
 const SessionCockpitFloatingBottomChromeReporterContext = React.createContext<SessionCockpitFloatingBottomChromeReporter>(() => {});
 /**
+ * What a floating companion covers of the transcript's last rows while it rests above the composer (the
+ * desktop Voice Island or Orb). Only the transcript reserves it, as space after its last row; the composer
+ * and every other page keep their place, so it never joins the floating band above.
+ */
+const SessionCockpitTranscriptBottomClearanceContext = React.createContext(0);
+const SessionCockpitTranscriptBottomClearanceReporterContext = React.createContext<SessionCockpitFloatingBottomChromeReporter>(() => {});
+/**
  * The composer band that floats **above** the bottom chrome, published separately from it.
  *
  * The tab bar and the composer are two different obstacles: the bar reserves nothing and each
@@ -189,6 +196,34 @@ function useMountedMeasuredRectReporter(reporter: MeasuredRectReporter, enabled:
     }, [binding, reporter]);
 }
 
+/** A band several producers float over the same edge: each reports its own height and the band is the tallest. */
+function useProducerBand(): Readonly<{ height: number; report: SessionCockpitFloatingBottomChromeReporter }> {
+    const [byProducer, setByProducer] = React.useState<Readonly<Record<string, number>>>({});
+    const report = React.useCallback<SessionCockpitFloatingBottomChromeReporter>((producer, height) => {
+        setByProducer((current) => {
+            if ((current[producer] ?? 0) === height) return current;
+            const next = { ...current };
+            if (height > 0) next[producer] = height;
+            else delete next[producer];
+            return next;
+        });
+    }, []);
+    const height = React.useMemo(() => Math.max(0, ...Object.values(byProducer)), [byProducer]);
+    return { height, report };
+}
+
+/** One producer's report into a band, withdrawn on suppression or unmount. */
+function useProducerBandReporter(report: SessionCockpitFloatingBottomChromeReporter, enabled: boolean): (height: number) => void {
+    const producer = React.useId();
+    React.useEffect(() => {
+        if (!enabled) report(producer, 0);
+        return () => report(producer, 0);
+    }, [enabled, producer, report]);
+    return React.useCallback((height: number) => {
+        if (enabled) report(producer, Number.isFinite(height) ? Math.max(0, Math.round(height)) : 0);
+    }, [enabled, producer, report]);
+}
+
 function roundedNonNegative(value: number): number {
     return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
 }
@@ -197,17 +232,8 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
     const pet = useMountedMeasuredRect();
     const actionRail = useMountedMeasuredRect();
     const [bottomChromeHeight, setBottomChromeHeightState] = React.useState(0);
-    const [floatingBottomChromeById, setFloatingBottomChromeById] = React.useState<Readonly<Record<string, number>>>({});
-    const reportFloatingBottomChrome = React.useCallback<SessionCockpitFloatingBottomChromeReporter>((producer, height) => {
-        setFloatingBottomChromeById((current) => {
-            if ((current[producer] ?? 0) === height) return current;
-            const next = { ...current };
-            if (height > 0) next[producer] = height;
-            else delete next[producer];
-            return next;
-        });
-    }, []);
-    const floatingBottomChromeHeight = React.useMemo(() => Math.max(0, ...Object.values(floatingBottomChromeById)), [floatingBottomChromeById]);
+    const floatingBottomChrome = useProducerBand();
+    const transcriptBottomClearance = useProducerBand();
     const [composerChromeById, setComposerChromeById] = React.useState<Readonly<Record<string, SessionCockpitComposerChromeMeasurement>>>({});
     const [registrationStore] = React.useState(() => {
         let current: SessionCockpitChromeRegistration | null = null;
@@ -343,8 +369,10 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
         <SessionCockpitChromeRegisterContext.Provider value={register}>
             <SessionCockpitBottomChromeHeightSetterContext.Provider value={setBottomChromeHeight}>
                 <SessionCockpitBottomChromeHeightContext.Provider value={bottomChromeHeight}>
-                    <SessionCockpitFloatingBottomChromeReporterContext.Provider value={reportFloatingBottomChrome}>
-                        <SessionCockpitFloatingBottomChromeHeightContext.Provider value={floatingBottomChromeHeight}>
+                    <SessionCockpitFloatingBottomChromeReporterContext.Provider value={floatingBottomChrome.report}>
+                        <SessionCockpitFloatingBottomChromeHeightContext.Provider value={floatingBottomChrome.height}>
+                        <SessionCockpitTranscriptBottomClearanceReporterContext.Provider value={transcriptBottomClearance.report}>
+                        <SessionCockpitTranscriptBottomClearanceContext.Provider value={transcriptBottomClearance.height}>
                         <SessionCockpitShellBarHeightContext.Provider value={bottomChromeHeight}>
                             <SessionCockpitComposerChromeReporterContext.Provider value={reportComposerChromeHeight}>
                                 <SessionCockpitComposerChromeHeightContext.Provider value={composerChromeHeight}>
@@ -368,6 +396,8 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
                                 </SessionCockpitComposerChromeHeightContext.Provider>
                             </SessionCockpitComposerChromeReporterContext.Provider>
                         </SessionCockpitShellBarHeightContext.Provider>
+                        </SessionCockpitTranscriptBottomClearanceContext.Provider>
+                        </SessionCockpitTranscriptBottomClearanceReporterContext.Provider>
                         </SessionCockpitFloatingBottomChromeHeightContext.Provider>
                     </SessionCockpitFloatingBottomChromeReporterContext.Provider>
                 </SessionCockpitBottomChromeHeightContext.Provider>
@@ -457,15 +487,17 @@ export function useSessionCockpitPageBottomClearance(): number {
 
 /** The shell withdraws its measured floating band on suppression, container change or unmount. */
 export function useReportSessionCockpitFloatingBottomChromeHeight(enabled: boolean): (height: number) => void {
-    const report = React.useContext(SessionCockpitFloatingBottomChromeReporterContext);
-    const producer = React.useId();
-    React.useEffect(() => {
-        if (!enabled) report(producer, 0);
-        return () => report(producer, 0);
-    }, [enabled, producer, report]);
-    return React.useCallback((height: number) => {
-        if (enabled) report(producer, Number.isFinite(height) ? Math.max(0, Math.round(height)) : 0);
-    }, [enabled, producer, report]);
+    return useProducerBandReporter(React.useContext(SessionCockpitFloatingBottomChromeReporterContext), enabled);
+}
+
+/** Space the transcript keeps after its last row so a floating companion resting above the composer never covers it. */
+export function useSessionCockpitTranscriptBottomClearance(): number {
+    return React.useContext(SessionCockpitTranscriptBottomClearanceContext);
+}
+
+/** A floating companion reports what it covers above the composer; withdrawn on suppression or unmount. */
+export function useReportSessionCockpitTranscriptBottomClearance(enabled: boolean): (height: number) => void {
+    return useProducerBandReporter(React.useContext(SessionCockpitTranscriptBottomClearanceReporterContext), enabled);
 }
 
 /**

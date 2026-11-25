@@ -9,6 +9,7 @@ import {
     useSessionCockpitComposerChromeHeight,
     useSessionCockpitComposerChromeTop,
     useReportSessionCockpitFloatingBottomChromeHeight,
+    useReportSessionCockpitTranscriptBottomClearance,
     useSessionCockpitPetRect,
     useSessionCockpitActionRailRect,
 } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
@@ -43,6 +44,7 @@ import {
     VOICE_ORB_PET_GAP,
     VOICE_ORB_Z_INDEX,
     resolveVoiceOrbRestingBottomInset,
+    resolveVoicePresenceContentBottom,
 } from './voicePresenceGeometry';
 
 const WEB_FIXED = ('fixed' as unknown) as ViewStyle['position'];
@@ -101,10 +103,11 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
     }, [open]);
 
     const orb = props.container === 'orb';
-    // On a phone the Companion's Voice section, while on screen, is the call's one glance.
+    // While the Companion's Voice section is on screen it is the call's one glance: the floating
+    // presence steps back instead of resting over the Companion column (on a phone the Orb stays).
     const sectionOnScreen = React.useSyncExternalStore(
         subscribeVoiceCompanionSectionOnScreen, isVoiceCompanionSectionOnScreen, isVoiceCompanionSectionOnScreen);
-    const yieldsToSection = phone && !orb && sectionOnScreen;
+    const yieldsToSection = sectionOnScreen && !(phone && orb);
     // One visibility fact governs both the container and its measured composer clearance.
     // Keyboard-open moves the same presence above measured keyboard chrome; transport stays reachable.
     // A reading stays presented with its Stop whatever the call can do next.
@@ -114,6 +117,9 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
     // measured composer instead of reporting the keyboard height back as composer reservation.
     const reservesComposerSpace = visible && phone && !orb && keyboardHeight === 0;
     const reportBottomReservation = useReportSessionCockpitFloatingBottomChromeHeight(reservesComposerSpace);
+    // Resting above the composer instead, it covers the transcript's last rows: the transcript keeps
+    // that much space after its last row (the composer stays where it is).
+    const reportTranscriptClearance = useReportSessionCockpitTranscriptBottomClearance(visible && !reservesComposerSpace);
     React.useLayoutEffect(() => visible ? registerVoiceGlancePresentation((expanded) => {
         if (!expanded || !revealVoiceCompanionSection()) setOpen(expanded);
     }) : undefined, [visible]);
@@ -124,7 +130,7 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
     const petOffset = orb && isDesktopHost() && selectedPetPackage.enabled
         ? resolvePetCompanionOverlayMetrics(petsCompanionSizeScale).spriteHeight + VOICE_ORB_PET_GAP
         : 0;
-    const restingBottomInset = resolveVoiceOrbRestingBottomInset({
+    const restingChrome = {
         safeAreaBottom: insets.bottom,
         bottomChromeHeight,
         // A phone Island docked under the composer lifts it by its own reservation instead.
@@ -132,7 +138,8 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
         composerTopFromBottom: reservesComposerSpace ? 0 : composerChromeTop,
         keyboardHeight,
         petOffset,
-    });
+    };
+    const restingBottomInset = resolveVoiceOrbRestingBottomInset(restingChrome);
     const width = orb
         ? VOICE_ORB_BODY_SIZE
         : phone ? Math.max(0, viewport.width - ISLAND_EDGE * 2) : VOICE_ISLAND_DESKTOP.width;
@@ -153,8 +160,12 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
                 interactionPaddingHorizontal={orb ? resolveVoiceOrbInteractionPadding(Platform.OS, voice.live || Boolean(voice.ended) || readAloud.phase !== 'idle') : 0}
                 restCentred={!orb && phone}
                 anchors={orb ? 'orb' : 'island'}
-                bottomChromeInset={insets.bottom + bottomChromeHeight}
-                onBottomReservationChange={reservesComposerSpace ? reportBottomReservation : undefined}
+                // Docked under the composer, what the float adds above the bar lifts the composer; resting
+                // above it, what the float covers above the content's bottom edge clears the transcript.
+                bottomChromeInset={reservesComposerSpace
+                    ? insets.bottom + bottomChromeHeight
+                    : resolveVoicePresenceContentBottom(restingChrome)}
+                onBottomReservationChange={reservesComposerSpace ? reportBottomReservation : reportTranscriptClearance}
                 avoidRects={avoidRects}
             >
                 {(render) => orb ? (

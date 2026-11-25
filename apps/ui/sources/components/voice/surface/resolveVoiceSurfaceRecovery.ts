@@ -1,4 +1,5 @@
 import type { VoiceMachineRecoveryAction } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
+import type { VoiceSessionSnapshot } from '@/voice/session/types';
 
 export type VoiceRecoveryIcon = 'microphone' | 'gear' | 'arrow-clockwise';
 
@@ -30,6 +31,17 @@ export type VoiceSurfaceRecovery = Readonly<{
    */
   alternate?: Readonly<{ labelKey: 'voice.readiness.actions.select_execution_machine'; icon: VoiceRecoveryIcon }>;
 }>;
+
+/**
+ * The session's one recovery action: its failure's own remedy, otherwise Retry while a lost connection
+ * waits between tries (the runtime admits a retry only then). Every placement reads this one answer.
+ */
+export function resolveVoiceSnapshotRecoveryAction(
+  snapshot: Pick<VoiceSessionSnapshot, 'errorRecoveryAction' | 'presentationState' | 'reconnectRetryAvailable'>,
+): VoiceMachineRecoveryAction | null {
+  if (snapshot.errorRecoveryAction) return snapshot.errorRecoveryAction;
+  return snapshot.presentationState === 'reconnecting' && snapshot.reconnectRetryAvailable === true ? 'retry' : null;
+}
 
 export function resolveVoiceSurfaceRecovery(
   action: VoiceMachineRecoveryAction | null | undefined,
