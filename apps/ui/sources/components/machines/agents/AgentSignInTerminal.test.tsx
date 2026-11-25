@@ -55,7 +55,7 @@ describe('Agent sign-in terminal lifecycle on web', () => {
         boundary.rpc.mockReset();
         boundary.confirm.mockReset(); boundary.confirm.mockResolvedValue(true);
     });
-    afterEach(() => { standardCleanup(); vi.useRealTimers(); });
+    afterEach(() => { standardCleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
     async function renderTerminal(props: React.ComponentProps<typeof AgentSignInTerminal>) {
         const owner = await renderHook(() => useAgentSignIn(props));
@@ -200,6 +200,8 @@ describe('Agent sign-in terminal lifecycle on web', () => {
 
     it('launches and discovers the auth URL while the phone terminal stays undisclosed', async () => {
         const { ensure, stream, target } = fixture('phone-undisclosed');
+        const open = vi.fn();
+        vi.stubGlobal('open', open);
         ensure.resolve({ ok: true, terminalId: 'phone-terminal', reused: false });
         const screen = await renderTerminal({ ...target, layout: 'sheet', onClose: () => {} });
         expect(screen.findByTestId('agent-sign-in-terminal-xterm')).toBeNull();
@@ -211,7 +213,15 @@ describe('Agent sign-in terminal lifecycle on web', () => {
                 { t: 'url', seq: 0, kind: 'auth', url: 'https://fixture.invalid/auth' },
             ], nextCursor: 1, done: false });
         });
-        expect(screen.findByTestId('agent-sign-in.openUrl')).not.toBeNull();
+        await screen.pressByTestIdAsync('agent-sign-in.openUrl');
+        await waitForHomeGovernance(() => {
+            expect(open).toHaveBeenCalledExactlyOnceWith('https://fixture.invalid/auth', '_blank', 'noopener,noreferrer');
+        });
+        const retiredOpen = screen.find(node => Boolean(node.props.session)).props.handlers.onOpenUrl;
+        await act(async () => { await home.switchAccount(serverId, 'other-requester', { currentAccount: true }); });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('agent-sign-in.openUrl')).toBeNull());
+        await act(async () => { await retiredOpen('https://fixture.invalid/auth'); });
+        expect(open).toHaveBeenCalledTimes(1);
         await screen.unmount();
     });
 });

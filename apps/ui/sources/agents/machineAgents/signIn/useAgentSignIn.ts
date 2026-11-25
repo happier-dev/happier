@@ -11,6 +11,7 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { serverAccountScopedResourceKey, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { replaceTerminalSurfaceState, createEmptyTerminalSurfaceState } from '@/components/sessions/terminal/terminalSurfaceStateCache';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { refreshMachineAgents } from '../useMachineAgents';
 import type { MachineAgentSignInSession } from '../machineAgentTypes';
 import { startAgentSignInRpc, checkAgentSignInRpc, cancelAgentSignInRpc } from './api';
@@ -200,7 +201,7 @@ export async function executeAgentSignInLifecycle(
 export function useAgentSignIn(target: Readonly<{ serverId?: string | null; machineId: string | null; agentId: string }>) {
   const activeServer = useActiveServerSnapshot(!target.serverId);
   const serverId = target.serverId?.trim() || activeServer.serverId;
-  const { binding, execute } = useMountedActionExecution(serverId);
+  const { binding, execute, getSignal } = useMountedActionExecution(serverId);
   const boundTarget = React.useMemo<BoundTarget | null>(() => binding?.isCurrent() && target.machineId
     ? { serverId: binding.scope.serverId, machineId: target.machineId, agentId: target.agentId, lifetime: binding } : null,
   [binding, serverId, target.machineId, target.agentId]);
@@ -248,6 +249,13 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
     checkAgain: () => executeIntent('status'),
     cancel: () => executeIntent('cancel'),
     restart: () => executeIntent('restart'),
+    openTerminalUrl: () => {
+      const url = entry?.state.authUrl;
+      if (!boundTarget || !url) return;
+      return requestOpenExternalUrl(url, {
+        serverId: boundTarget.serverId, expectedAccountId: boundTarget.lifetime.scope.accountId, signal: getSignal(),
+      });
+    },
     copyTerminalDeviceCode: (terminalId: string, text: string) => {
       if (!entry || !boundTarget?.lifetime.isCurrent() || entry.terminalId !== terminalId
         || entry.state.phase !== 'waiting' || entry.terminalExited) return;
@@ -269,7 +277,7 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
     reportTerminalFailure: (failure: string) => {
       if (entry && boundTarget?.lifetime.isCurrent() && entry.state.terminalKey) { entry.probeAbort?.abort(); publish(entry, { phase: 'failed', failure }); }
     },
-  }), [boundTarget, entry, execute, executeIntent]);
+  }), [boundTarget, entry, execute, executeIntent, getSignal]);
   return { ...state, state, terminalId: state.terminalKey ? entry?.terminalId ?? null : null,
     available: Boolean(boundTarget?.lifetime.isCurrent()),
     accountLabel: entry?.accountLabel ?? null, signInScope, ...actions };

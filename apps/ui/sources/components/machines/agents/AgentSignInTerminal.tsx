@@ -12,7 +12,6 @@ import { useMachineField } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { describeMachineSignInScope } from '@/components/machines/setup/machineSignInScope';
 
 import { AgentSignInTerminalView } from './AgentSignInTerminalView';
@@ -109,7 +108,10 @@ export const AgentSignInTerminal = React.memo(function AgentSignInTerminal(props
             deviceCode={signIn.phase === 'waiting' && deviceCode?.terminalId === signIn.terminalId ? deviceCode.code : null}
             terminal={terminal}
             handlers={{
-                onOpenUrl: (url) => { fireAndForget(openExternalUrl(url), { tag: 'AgentSignInTerminal.openUrl' }); },
+                onOpenUrl: () => {
+                    const opening = signIn.openTerminalUrl();
+                    if (opening) fireAndForget(opening, { tag: 'AgentSignInTerminal.openUrl' });
+                },
                 onCheckAgain: () => { fireAndForget(signIn.checkAgain(), { tag: 'AgentSignInTerminal.checkAgain' }); },
                 onCopyDeviceCode: () => {
                     if (deviceCode) fireAndForget(signIn.copyTerminalDeviceCode(deviceCode.terminalId, deviceCode.code), { tag: 'AgentSignInTerminal.copyDeviceCode', logError: false });
