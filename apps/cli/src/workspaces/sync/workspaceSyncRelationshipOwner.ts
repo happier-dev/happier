@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpc/errors';
 
-import { parseProjectAccountSnapshotV1, assertProjectAccountSnapshotTransition, type ProjectAccountSnapshotV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
+import { parseProjectAccountSnapshotV1, assertProjectAccountSnapshotTransition, resolveProjectAccountWorkspaceRefRemovalV1, type ProjectAccountSnapshotV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
 import { areWorkspaceSyncRelationshipDefinitionsEqual, areWorkspaceSyncWorkerCopyProvenancesEqual, getWorkspaceSyncWorkerCopyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { WorkspaceContentPolicyV1, WorkspaceRefV1, WorkspaceSyncPersistentModeV1, WorkspaceSyncRelationshipV1, WorkspaceSyncStatusV1, HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol';
 import type { WorkspaceSyncCommittedCopyTargetV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
@@ -269,9 +269,10 @@ export function createWorkspaceSyncRelationshipOwner(
     }
   };
 
-  const materializeEndpoints = async (input: MaterializeWorkspaceSyncEndpointsInput): Promise<MaterializedWorkspaceSyncEndpoints> => {
+  const publishEndpoints = async (input: MaterializeWorkspaceSyncEndpointsInput) => {
     let sourceRef!: WorkspaceRefV1;
     let targetRef!: WorkspaceRefV1;
+    let targetCreated = false;
     const result = await mutateProjectSnapshot((settings) => {
       const refs = parseRefs(settings);
       const first = input.sourceAddress
@@ -305,6 +306,7 @@ export function createWorkspaceSyncRelationshipOwner(
       }
       sourceRef = first.workspaceRef;
       targetRef = second.workspaceRef;
+      targetCreated = second.created;
       return admitProjectSnapshotTransition(settings, { ...settings, workspaceRefs: second.workspaceRefs });
     }, input.signal);
     if (!isSettledMutation(result)) throw mutationFailure(result);
@@ -314,28 +316,41 @@ export function createWorkspaceSyncRelationshipOwner(
     const source = resolveWorkspaceRefById(currentRefs, sourceRef.id, input.serverId);
     const target = resolveWorkspaceRefById(currentRefs, targetRef.id, input.serverId);
     if (!source || !target) throw ownerError('workspace_ref_not_ready', 'Materialized workspace endpoints are unavailable');
-    return { source, target };
+    return { endpoints: { source, target }, targetCreated };
   };
 
-  const mutateDesiredRelationships = async (
+  const rollbackCreationRows = async (
     relationshipId: string,
     mutate: (relationships: readonly WorkspaceSyncRelationshipV1[]) => readonly WorkspaceSyncRelationshipV1[],
-    signal?: AbortSignal,
+    createdTarget?: WorkspaceRefV1,
   ): Promise<number> => {
     const desiredRelationships: { value: readonly WorkspaceSyncRelationshipV1[] | null } = { value: null };
+    let targetToWithdraw: WorkspaceRefV1 | undefined;
     const result = await mutateProjectSnapshot((settings) => {
       desiredRelationships.value = mutate(parseRelationships(settings));
-      return admitProjectSnapshotTransition(settings, {
-        ...settings,
-        relationships: desiredRelationships.value,
-      });
-    }, signal);
+      const next = { ...settings, relationships: desiredRelationships.value };
+      targetToWithdraw = undefined;
+      if (createdTarget) {
+        try {
+          next.workspaceRefs = resolveProjectAccountWorkspaceRefRemovalV1(next, {
+            serverId: createdTarget.serverId, workspaceRefId: createdTarget.id,
+          });
+          targetToWithdraw = createdTarget;
+        } catch (error) {
+          if (readFailureCode(error) !== 'workspace_ref_in_use') throw error;
+        }
+      }
+      return admitProjectSnapshotTransition(settings, next);
+    });
     if (!isSettledMutation(result)) {
       if (result.status === 'outcomeUnknown') {
-        const current = parseRelationships(await options.readProjectSnapshot());
-        const present = current.find((relationship) => relationship.relationshipId === relationshipId);
+        const current = parseProjectAccountSnapshotV1(await options.readProjectSnapshot());
+        const present = current.relationships.find((relationship) => relationship.relationshipId === relationshipId);
         const expectedPresent = desiredRelationships.value?.find((relationship) => relationship.relationshipId === relationshipId);
-        if ((present?.enabled ?? null) === (expectedPresent?.enabled ?? null)) return result.lastKnownVersion;
+        if ((present?.enabled ?? null) === (expectedPresent?.enabled ?? null)
+          && (!targetToWithdraw || !resolveWorkspaceRefById(current.workspaceRefs, targetToWithdraw.id, targetToWithdraw.serverId))) {
+          return result.lastKnownVersion;
+        }
       }
       throw mutationFailure(result);
     }
@@ -477,7 +492,7 @@ export function createWorkspaceSyncRelationshipOwner(
         throw ownerError('workspace_sync_controller_mismatch', 'Relationship creation must run on its source controller machine');
       }
 
-      const endpoints = await materializeEndpoints(input);
+      const { endpoints, targetCreated } = await publishEndpoints(input);
       const current = await options.readProjectSnapshot();
       const timestamp = nowMs();
       const candidate = validateWorkspaceSyncRelationship({
@@ -607,7 +622,7 @@ export function createWorkspaceSyncRelationshipOwner(
 
       const restoreStagedIntent = async (): Promise<void> => {
         if (!durableIntentStaged || !runtimeOwnedByTransaction || publishedRelationship.relationshipId !== relationship.relationshipId) return;
-        const rollbackVersion = await mutateDesiredRelationships(relationship.relationshipId, (relationships) => {
+        const rollbackVersion = await rollbackCreationRows(relationship.relationshipId, (relationships) => {
           const current = relationships.find((value) => value.relationshipId === relationship.relationshipId);
           if (!current) return relationships;
           if (existing) {
@@ -617,7 +632,7 @@ export function createWorkspaceSyncRelationshipOwner(
           // A failed Replace puts the person's original link back exactly as reviewed.
           return replacedRelationship && !remaining.some(value => value.relationshipId === replacedRelationship!.relationshipId)
             ? [...remaining, replacedRelationship] : remaining;
-        });
+        }, targetCreated && !published ? endpoints.target : undefined);
         await options.waitForProjectReconciliation(rollbackVersion);
       };
 
@@ -753,8 +768,14 @@ export function createWorkspaceSyncRelationshipOwner(
         },
         async abort(): Promise<void> {
           if (closed) return;
-          await restoreStagedIntent();
-          if (runtimeOwnedByTransaction) await options.terminateRelationshipRuntime(runtimeRelationship, ...heldRequesterTarget());
+          if (targetCreated && !published && runtimeOwnedByTransaction) {
+            // TARGET release still needs the ref to route the abort.
+            const cleanupErrors = await cleanupFailedCreation(runtimeRelationship);
+            if (cleanupErrors.length) throw withCleanupErrors(cleanupErrors[0], cleanupErrors.slice(1));
+          } else {
+            await restoreStagedIntent();
+            if (runtimeOwnedByTransaction) await options.terminateRelationshipRuntime(runtimeRelationship, ...heldRequesterTarget());
+          }
           closed = true;
         },
       });
@@ -762,7 +783,9 @@ export function createWorkspaceSyncRelationshipOwner(
   };
 
   return Object.freeze({
-    materializeEndpoints,
+    async materializeEndpoints(input) {
+      return (await publishEndpoints(input)).endpoints;
+    },
     async prepareCreate(input): Promise<PreparedWorkspaceSyncRelationship> {
       activeCreations.add(input.operationId);
       try {

@@ -760,6 +760,43 @@ describe('WorkspaceSyncRelationshipOwner', () => {
     expect(retry.relationship.relationshipId).toBe('relationship_1');
   });
 
+  it.each(['refused', 'aborted', 'committed', 'already listed'] as const)(
+    'settles the Fresh copy target listing when creation is %s',
+    async (outcome) => {
+      const harness = createHarness({}, {
+        workspaceRefs: workerCopySnapshot().workspaceRefs
+          .filter(ref => outcome === 'already listed' || ref.id === 'source_ref')
+          .map(ref => ({ ...ref, projectKey: 'source_ref' })),
+        relationships: [],
+      });
+      const input = { ...createInput, purpose: 'worker_clean_copy' as const,
+        targetBootstrap: 'materialize_from_source_workspace' as const, targetWorkspaceRefId: 'target_ref' };
+      if (outcome === 'refused' || outcome === 'already listed') {
+        harness.ensureRelationship.mockRejectedValueOnce(Object.assign(new Error('stream limit reached'), { code: 'stream_limit' }));
+        await expect(harness.owner.prepareCreate(input)).rejects.toMatchObject({ code: 'stream_limit' });
+      } else {
+        const prepared = await harness.owner.prepareCreate(input);
+        if (outcome === 'aborted') {
+          harness.terminateRelationshipRuntime.mockImplementationOnce(async () => {
+            expect(parseProjectAccountSnapshotV1(harness.read()).workspaceRefs.map(ref => ref.id))
+              .toContain('target_ref');
+          });
+          await prepared.abort();
+        } else {
+          await prepared.commit();
+        }
+      }
+
+      const snapshot = parseProjectAccountSnapshotV1(harness.read());
+      expect(snapshot.relationships).toEqual(outcome === 'committed'
+        ? [expect.objectContaining({ relationshipId: 'relationship_1', enabled: true, committedAtMs: 100 })]
+        : []);
+      expect(snapshot.workspaceRefs.map(ref => ref.id)).toEqual(outcome === 'committed' || outcome === 'already listed'
+        ? ['source_ref', 'target_ref']
+        : ['source_ref']);
+    },
+  );
+
   // L12 READY218 (op 646eedbb): Home refused the target bootstrap before it ran, then refused its release
   // the same way. Both carry Home's own effectAttempted:false; the creation settles as that typed refusal.
   it('settles a target refused before its first effect as a typed refusal, but keeps a later refusal pending', async () => {
