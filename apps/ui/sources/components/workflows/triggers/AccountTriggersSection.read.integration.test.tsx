@@ -11,12 +11,17 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import {
+    createWorkflowAutomationHttpBoundary,
+    createWorkflowAutomationTriggerDetailFixture,
+} from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 
 // HTTP, credentials, native rendering and Metro loading are external boundaries.
 // Account currentness, the Action front door, trigger reads and rendering stay real.
 installDisconnectedServerSocketBoundary();
 // Runtime consumers load after the boundary so they bind the disconnected socket.
-const { AccountTriggersSection } = await import('./AccountTriggersSection');
+const { AccountTriggersSection, NewAccountTriggerPopover } = await import('./AccountTriggersSection');
 const { ScheduledWorkflowSection } = await import('./ScheduledWorkflowSection');
 const { SubjectTriggersSection, SubjectTriggersSectionContent } = await import('./SubjectTriggersSection');
 const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
@@ -68,6 +73,72 @@ afterEach(async () => {
 });
 
 describe('Account trigger HTTP read failure and recovery', () => {
+    it('opens the saved Event editor with one Account currentness read and no intake reads while closed', async () => {
+        await loadSyncSingletonForTests();
+        const { ModalProvider } = await import('@/modal');
+        const { TriggerPopover } = await import('./TriggerPopover');
+        const automations = createWorkflowAutomationHttpBoundary();
+        const eventRef = { pluginId: 'com.acme.events', localId: 'deployment-failed' };
+        for (const [id, sourceInstanceId] of [['automation-a', 'production'], ['automation-b', 'staging']] as const) {
+            automations.rows.set(id, {
+                id, name: sourceInstanceId, description: null, enabled: true, workflowDefinitionId: null,
+                scopeSessionId: null, targetType: null, existingSessionId: null, templateVersion: 1,
+                lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [],
+                observationOnly: { kind: 'observationOnly', templateVersion: 1 },
+                triggers: [createWorkflowAutomationTriggerDetailFixture(id, {
+                    kind: 'new', triggerId: AutomationTriggerIdSchema.parse(`event-${id}`),
+                    trigger: { kind: 'pluginEvent', enabled: true, eventRef, sourceInstanceId, sourceContractVersion: 1,
+                        sourceConfig: {}, displayLabel: sourceInstanceId, filter: null, maximumObservationAgeMs: null,
+                        observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+                            pluginId: eventRef.pluginId, machineId: 'observer', materializationId: 'watcher',
+                        } },
+                    },
+                })],
+            });
+        }
+        const reads: string[] = [];
+        const fallback = homeRequest(async () => json({ automations: [], nextCursor: null }));
+        const account = await restoreServerAccountForTest({
+            serverUrl: `https://event-intake-count-${crypto.randomUUID()}.test`, accountId: 'event-intake-count',
+            request: async (url, init) => {
+                const parsed = new URL(String(url));
+                if (parsed.pathname === '/v1/account/encryption/currentness'
+                    || parsed.pathname === '/v3/automations/query'
+                    || /^\/v3\/automations\/automation-[ab]$/.test(parsed.pathname)) reads.push(parsed.pathname);
+                return await automations.handle(parsed, init) ?? await fallback(url, init);
+            },
+        });
+        disposals.push(() => account.dispose());
+        const restorePopover = withPopoverWebGlobals();
+        disposals.unshift(async () => restorePopover());
+        const anchorRef = React.createRef<View>();
+        const view = (open: boolean) => <ModalProvider>{open
+            ? <NewAccountTriggerPopover anchorRef={anchorRef} onRequestClose={() => {}} eventSeed={{
+                eventRef, sourceInstanceId: 'production', setupInput: {},
+            }} />
+            : null}</ModalProvider>;
+        await flushHookEffects();
+        const closedReads = reads.length;
+        const screen = await renderScreen(view(false));
+        disposals.push(() => screen.unmount());
+        await flushHookEffects();
+        expect(reads).toHaveLength(closedReads);
+
+        await act(async () => screen.update(view(true)));
+        await waitForHomeGovernance(() => expect(screen.findByType(TriggerPopover).props.eventEdit)
+            .toEqual({ automationId: 'automation-a', triggerId: 'event-automation-a' }));
+        const openReads = reads.slice(closedReads);
+        expect(openReads.filter(path => path.startsWith('/v3/automations/automation-')).sort())
+            .toEqual(['/v3/automations/automation-a', '/v3/automations/automation-b']);
+        // Account inventory may make its own observations before Event intake starts.
+        const intakeReads = openReads.slice(openReads.findIndex(path => path.startsWith('/v3/automations/automation-')));
+        expect(intakeReads.filter(path => path === '/v1/account/encryption/currentness')).toHaveLength(1);
+
+        await act(async () => screen.update(view(false)));
+        await flushHookEffects();
+        expect(reads.slice(closedReads)).toEqual(openReads);
+    });
+
     it('carries the compact scheduled Builder’s selected machine and its default folder into the editor', async () => {
         await loadSyncSingletonForTests();
         const account = await restoreServerAccountForTest({

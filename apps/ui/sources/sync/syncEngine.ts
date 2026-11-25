@@ -9413,33 +9413,57 @@ class Sync {
         }
     }
 
-    /** Opens exactly one saved Event for its active editor; Account key/currentness stays Sync-owned. */
     public async getAutomationPluginEventEditSeed(automationId: string, triggerId: string): Promise<PluginEventAutomationEditSeed | null> {
+        return (await this.getAutomationPluginEventEditSeeds([{ automationId, triggerId }]))?.[0] ?? null;
+    }
+
+    /** Opens the candidates for one active editor disclosure with one fresh Account witness. */
+    public async getAutomationPluginEventEditSeeds(
+        candidates: readonly Readonly<{ automationId: string; triggerId: string }>[],
+        signal?: AbortSignal,
+    ): Promise<readonly PluginEventAutomationEditSeed[] | null> {
+        if (candidates.length === 0) return [];
         const credentials = this.credentials;
         if (!credentials) throw new Error('Not authenticated');
-        const { requestContext, shouldContinue } = this.prepareAppliedAutomationExecution();
-        const current = storage.getState().automations[automationId];
-        const definition = current?.detail.kind === 'available' ? current
-            : await this.readAndUpsertAutomationDefinition(automationId, requestContext, shouldContinue);
-        if (!shouldContinue()) throw new Error('Automation server-account scope changed');
+        const { requestContext: appliedContext, shouldContinue } = this.prepareAppliedAutomationExecution();
+        const assertCanDisclose = () => {
+            throwIfAborted(signal);
+            if (!shouldContinue()) throw new Error('Automation server-account scope changed');
+        };
+        const requestContext: AutomationRequestContext = signal ? {
+            ...appliedContext,
+            request: (path, init, options) => appliedContext.request(path, { ...init, signal }, options),
+        } : appliedContext;
+        const reads: Array<{ definition: AutomationDefinition; triggerId: string }> = [];
+        for (const { automationId, triggerId } of candidates) {
+            assertCanDisclose();
+            const current = storage.getState().automations[automationId];
+            const definition = current?.detail.kind === 'available' ? current
+                : await this.readAndUpsertAutomationDefinition(automationId, requestContext, shouldContinue);
+            reads.push({ definition, triggerId });
+        }
+        assertCanDisclose();
         let accountCurrentness: Awaited<ReturnType<typeof fetchAccountEncryptionCurrentness>>;
         try {
             accountCurrentness = await fetchAccountEncryptionCurrentness(credentials, {
                 request: (path, init) => requestContext.request(path, init, { includeAuth: false }),
+                signal,
             });
         } catch {
-            if (!shouldContinue()) throw new Error('Automation server-account scope changed');
+            assertCanDisclose();
             return null;
         }
-        if (!shouldContinue()) throw new Error('Automation server-account scope changed');
+        assertCanDisclose();
         const material = resolveAutomationRunDetailAccountMaterial({ credentials, accountCurrentness });
         if (material.kind !== 'available') return null;
-        const seed = readPluginEventAutomationEditSeed(definition, triggerId, {
-            mode: accountCurrentness.mode,
-            ...(material.material ? { material: material.material } : {}),
-        });
-        if (!shouldContinue()) throw new Error('Automation server-account scope changed');
-        return seed;
+        const account = { mode: accountCurrentness.mode, ...(material.material ? { material: material.material } : {}) };
+        const seeds: PluginEventAutomationEditSeed[] = [];
+        for (const { definition, triggerId } of reads) {
+            const seed = readPluginEventAutomationEditSeed(definition, triggerId, account);
+            if (!seed) return null;
+            seeds.push(seed);
+        }
+        return seeds;
     }
 
     private async readAndUpsertAutomationDefinition(

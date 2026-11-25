@@ -510,26 +510,27 @@ function ExistingAccountEventSourceIntake(props: Omit<NewAccountTriggerPopoverPr
     React.useEffect(() => {
         if (resolution.kind !== 'loading' || inventory.status !== 'ready') return;
         const lifetime = props.accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : props.accountLifetime;
-        let alive = true;
+        if (!lifetime?.isCurrent()) return;
+        const controller = new AbortController();
+        const retirement = lifetime.onRetire(() => controller.abort());
         void (async () => {
-            const matches: Array<Readonly<{ set: WorkflowTriggerSetV1; seed: PluginEventAutomationEditSeed }>> = [];
-            for (const set of inventorySets.current) {
-                for (const trigger of set.triggers) {
-                    if (trigger.kind !== 'pluginEvent' || trigger.eventRef.pluginId !== pluginId || trigger.eventRef.localId !== localId) continue;
-                    const seed = await sync.getAutomationPluginEventEditSeed(set.automationId, trigger.id);
-                    if (!seed) throw new Error('Saved Event source is unavailable');
-                    if (seed.source.sourceInstanceId === props.sourceInstanceId) matches.push({ set, seed });
-                }
-            }
-            if (!alive || lifetime?.isCurrent() !== true) return;
+            const candidates = inventorySets.current.flatMap(set => set.triggers.flatMap(trigger =>
+                trigger.kind === 'pluginEvent' && trigger.eventRef.pluginId === pluginId && trigger.eventRef.localId === localId
+                    ? [{ set, automationId: set.automationId, triggerId: trigger.id }] : []));
+            const seeds = await sync.getAutomationPluginEventEditSeeds(candidates, controller.signal);
+            if (!seeds) throw new Error('Saved Event source is unavailable');
+            if (controller.signal.aborted || !lifetime.isCurrent()) return;
+            const matches = seeds.flatMap((seed, index) => seed.source.sourceInstanceId === props.sourceInstanceId
+                ? [{ set: candidates[index]!.set, seed }] : []);
+            const [match] = matches;
             if (matches.length === 0) setResolution({ kind: 'new' });
-            else if (matches.length === 1 && readWorkflowTriggerSetForm(matches[0]!.set, matches[0]!.seed.triggerId)) {
-                setResolution({ kind: 'existing', ...matches[0]! });
+            else if (matches.length === 1 && match && readWorkflowTriggerSetForm(match.set, match.seed.triggerId)) {
+                setResolution({ kind: 'existing', ...match });
             } else setResolution({ kind: 'unavailable' });
         })().catch(() => {
-            if (alive && lifetime?.isCurrent()) setResolution({ kind: 'unavailable' });
+            if (!controller.signal.aborted && lifetime.isCurrent()) setResolution({ kind: 'unavailable' });
         });
-        return () => { alive = false; };
+        return () => { retirement.dispose(); controller.abort(); };
     }, [inventory.status, localId, pluginId, props.accountLifetime, props.sourceInstanceId, resolution.kind]);
     if (resolution.kind === 'unavailable' || (resolution.kind === 'loading' && inventory.status === 'failed')) return <SurfaceStateCard
         testID="automation-event-source-intake-unavailable" size="line" kind="unavailable"
