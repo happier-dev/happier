@@ -4,7 +4,7 @@ import { createStoredReadSchema, defineStoredReadProjection } from '../../json/s
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { MachineSetupV1Schema, mergeMachineSetupsV1, isMachineSetupRecipeItemV1, readMachineSetupAppIdentityV1, readMachineSetupRecipeIdentityV1, type MachineSetupV1, type MachineSetupRecipeItemV1 } from '../managed/machineSetupV1.js';
-import { MachineRecipeReferenceV1Schema, type MachineRecipeReferenceV1 } from './machineRecipeV1.js';
+import { MachineRecipeReferenceV1Schema, MachineSetupEffectPlanV1Schema, type MachineRecipeReferenceV1 } from './machineRecipeV1.js';
 import { MachineSetupSourceFactsMapV1Schema, type MachineSetupSourceFactsMapV1,
   type MachineSetupAcceptedAppRunV1, type MachineSetupFirstPresenceV1 as FirstPresence } from './machineSetupSourceFactsV1.js';
 export { MachineSetupSourceFactsMapV1Schema, type MachineSetupSourceFactsMapV1,
@@ -278,6 +278,10 @@ export const MachineSetupSourceApplyV1Schema = lazyZodSchema(() => z.array(Machi
 ));
 export type MachineSetupSourceApplyV1 = z.infer<typeof MachineSetupSourceApplyV1Schema>;
 
+export const MachineSetupRecipePlanV1Schema = lazyZodSchema(() => z.strictObject({
+  sourceIndex: z.int().check(z.gte(0)), itemIndex: z.int().check(z.gte(0)), plan: MachineSetupEffectPlanV1Schema,
+}));
+
 const machineSetupSources = (entry: z.ZodMiniType<MachineSetupSourceEntryV1>) => z.array(entry).check(
   z.refine(sources => sources.filter(source => source.kind === 'direct').length === 1,
     { message: 'Setup has exactly one implicit direct source.' }),
@@ -304,6 +308,19 @@ export const MachineSetupExclusionsV1Schema = lazyZodSchema(() => z.array(Machin
     .some(previous => sameStrictJsonValue(previous.ref, entry.ref))),
   { message: 'Each excluded recipe reference is reviewed once.' }),
 ));
+export const MachineSetupPresetCandidateV1Schema = lazyZodSchema(() => z.strictObject({
+  presetId: id(), presetRevision: z.int().check(z.gte(0)),
+}));
+export const MachineSetupRemovalKeysV1Schema = lazyZodSchema(() => z.array(id()).check(
+  z.refine(keys => new Set(keys).size === keys.length),
+));
+/** Authored source proposal retained by both Setup Apply and its operation snapshot. */
+export const MachineSetupSourceProposalV1Schema = lazyZodSchema(() => z.strictObject({
+  sources: MachineSetupSourceApplyV1Schema,
+  candidatePreset: z.optional(MachineSetupPresetCandidateV1Schema),
+  exclusions: z.optional(MachineSetupExclusionsV1Schema),
+  removeItemKeys: z.optional(MachineSetupRemovalKeysV1Schema),
+}));
 export function isMachineSetupRecipeExcludedV1(ref: MachineRecipeReferenceV1, exclusions: readonly MachineSetupExclusionV1[]): boolean {
   return exclusions.some(entry => sameStrictJsonValue(entry.ref, ref));
 }

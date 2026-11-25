@@ -9,9 +9,9 @@ import { MachineSudoPasswordPromptV1Schema, MachineElevationFailureV1Schema } fr
 import { MachineVitalsHostFactsV1Schema } from '../../machines/vitals/machineVitalsSampleV1.js';
 import { MachineAvailabilityDiagnosticV1Schema } from '../../machines/machineAccessV1.js';
 import { MachineRebootResultV1Schema } from '../specs/machine/reboot.js';
-import * as machineSetupActions from '../../machines/managed/actionsV1.js';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
 import { MachineSetupOperationReferenceV1Schema, MachineSetupReviewedStepV1Schema } from '../../machines/setup/machineSetupOperationV1.js';
+import { MachineSetupSourceProposalV1Schema } from '../../machines/setup/machineSetupSourcesV1.js';
 import { MachineServiceAdoptResultV1Schema } from '../../local/services/adoptionV1.js';
 import { OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
 import { ProjectSourceIdentityV1Schema } from '../../projects/sources/projectSourceIdentityV1.js';
@@ -504,9 +504,7 @@ export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discrimina
     preset: z.optional(z.strictObject({ id: ActionOperationIdentifierV1Schema, revision: z.number().check(z.int(), z.nonnegative()), name: z.optional(ActionOperationIdentifierV1Schema) })),
     managedId: z.optional(ActionOperationIdentifierV1Schema),
     /** Authored proposal for Edit or a fresh Plan, with preset and secret references intact. */
-    source: z.optional(z.pick(machineSetupActions.MachineSetupApplyTargetV1Schema, {
-      sources: true, candidatePreset: true, exclusions: true, removeItemKeys: true,
-    })),
+    source: z.optional(MachineSetupSourceProposalV1Schema),
     /** Reviewed native steps in plan order; display facts, never effect operands. */
     steps: z.optional(z.array(z.strictObject({
       ...MachineSetupReviewedStepV1Schema.shape,

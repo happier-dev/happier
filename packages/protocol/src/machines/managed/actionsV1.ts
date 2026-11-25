@@ -32,8 +32,9 @@ import { SocketRpcMachineAdmissionContextV1Schema } from '../machineAccessV1.js'
 import { MachineProvisionerDestroyResultV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerRebuildResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
 import { MachineReferenceCensusV1Schema } from '../machineReferenceCensusV1.js';
 import { MachineSetupOpaquePresetSourceV1Schema, MachineSetupSourceApplyEntryV1Schema, MachineSetupSourceApplyV1Schema,
-  type MachineSetupSourceApplyEntryV1, MachineSetupNonAccountPresetSourceEntryV1Schema, machineSetupSourceOriginKeyV1, MachineSetupExclusionV1Schema,
-  MachineSetupExclusionsV1Schema, MachineSetupSourceFactsMapV1Schema, MachineSetupAppOriginV1Schema } from '../setup/machineSetupSourcesV1.js';
+  type MachineSetupSourceApplyEntryV1, MachineSetupNonAccountPresetSourceEntryV1Schema, machineSetupSourceOriginKeyV1, MachineSetupExclusionV1Schema, MachineSetupRecipePlanV1Schema,
+  MachineSetupExclusionsV1Schema, MachineSetupSourceFactsMapV1Schema, MachineSetupAppOriginV1Schema,
+  MachineSetupPresetCandidateV1Schema, MachineSetupRemovalKeysV1Schema, MachineSetupSourceProposalV1Schema } from '../setup/machineSetupSourcesV1.js';
 import { MachineSetupObservationStatusV1Schema, MachineSetupObservationReasonV1Schema, MachineSetupUpdatesObservationV1Schema } from '../setup/machineSetupObservationV1.js';
 import { MachineSetupEffectPlanV1Schema, MachineRecipeSelectionV1Schema } from '../setup/machineRecipeV1.js';
 import { MachineRecipeReferenceV1Schema } from '../setup/machineRecipeReferenceV1.js';
@@ -91,7 +92,6 @@ export const MachineSetupPresetApplyInputV1Schema = lazyZodSchema(() => z.strict
 }));
 export type MachineSetupPresetApplyInputV1 = z.infer<typeof MachineSetupPresetApplyInputV1Schema>;
 
-const MachineSetupPresetCandidateV1Schema = lazyZodSchema(() => z.strictObject({ presetId: id(), presetRevision: revision() }));
 export { MachineSetupOpaquePresetSourceV1Schema, MachineSetupSourceApplyEntryV1Schema, MachineSetupSourceApplyV1Schema,
   machineSetupSourceApplyOriginKeyV1, type MachineSetupOpaquePresetSourceV1, type MachineSetupSourceApplyEntryV1,
   type MachineSetupSourceApplyV1 } from '../setup/machineSetupSourcesV1.js';
@@ -119,13 +119,10 @@ export const MachineSetupResolvedSourceV1Schema = lazyZodSchema(() => z.array(Ma
 export type MachineSetupResolvedSourceV1 = z.infer<typeof MachineSetupResolvedSourceV1Schema>;
 
 export const MachineSetupSourcesApplyInputV1Schema = lazyZodSchema(() => z.strictObject({
-  homeId: id(), machineId: id(), sources: MachineSetupSourceApplyV1Schema,
+  homeId: id(), machineId: id(), sources: MachineSetupSourceProposalV1Schema.shape.sources,
 }));
 export type MachineSetupSourcesApplyInputV1 = z.infer<typeof MachineSetupSourcesApplyInputV1Schema>;
-export const MachineSetupRecipePlanV1Schema = lazyZodSchema(() => z.strictObject({
-  sourceIndex: revision(), itemIndex: revision(), plan: MachineSetupEffectPlanV1Schema,
-}));
-const removalKeys = () => z.array(id()).check(z.refine(keys => new Set(keys).size === keys.length));
+export { MachineSetupRecipePlanV1Schema } from '../setup/machineSetupSourcesV1.js';
 /** Transient review data, never a persisted eligibility decision. */
 export const MachineSetupRemovalOfferV1Schema = lazyZodSchema(() => {
   const item = { itemKey: id(), item: z.discriminatedUnion('kind', [
@@ -166,9 +163,9 @@ export const MachineSetupAppReviewV1Schema = lazyZodSchema(() => z.strictObject(
 export type MachineSetupAppReviewV1 = z.infer<typeof MachineSetupAppReviewV1Schema>;
 export const MachineSetupApplyTargetV1Schema = lazyZodSchema(() => z.extend(MachineSetupSourcesApplyInputV1Schema, {
   desiredRevision: revision(), recipePlans: z.array(MachineSetupRecipePlanV1Schema),
-  candidatePreset: z.optional(MachineSetupPresetCandidateV1Schema),
+  candidatePreset: MachineSetupSourceProposalV1Schema.shape.candidatePreset,
   preset: z.optional(z.strictObject({ id: id(), revision: revision(), name: z.optional(id()) })),
-  exclusions: z.optional(MachineSetupExclusionsV1Schema), removeItemKeys: z.optional(removalKeys()),
+  exclusions: MachineSetupSourceProposalV1Schema.shape.exclusions, removeItemKeys: MachineSetupSourceProposalV1Schema.shape.removeItemKeys,
   removalPlans: z.optional(z.array(MachineSetupRemovalPlanV1Schema)),
   appChildren: z.optional(z.array(MachineSetupAppChildV1Schema)),
 }));
@@ -181,7 +178,7 @@ export type MachineSetupApplyInputV1 = z.infer<typeof MachineSetupApplyInputV1Sc
 export const MachineSetupPlanInputV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: id(), machineId: id(), sources: z.optional(MachineSetupSourceApplyV1Schema),
   candidatePreset: z.optional(MachineSetupPresetCandidateV1Schema),
-  exclusions: z.optional(MachineSetupExclusionsV1Schema), removeItemKeys: z.optional(removalKeys()),
+  exclusions: z.optional(MachineSetupExclusionsV1Schema), removeItemKeys: z.optional(MachineSetupRemovalKeysV1Schema),
   mode: z.optional(z.enum(['check', 'effects'])),
   appChildren: z.optional(z.array(MachineSetupAppChildV1Schema)),
   updates: z.optional(z.strictObject({ scope: z.enum(['security', 'all']) })),
@@ -218,7 +215,7 @@ export type MachineSetupUpdatesApplyInputV1 = z.infer<typeof MachineSetupUpdates
 /** Removal carries full review context but no executable app/script/toolchain operands. */
 export const MachineSetupRemoveInputV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: id(), machineId: id(), sources: MachineSetupSourceApplyV1Schema,
-  desiredRevision: revision(), removeItemKeys: removalKeys(), removalPlans: z.array(MachineSetupRemovalPlanV1Schema),
+  desiredRevision: revision(), removeItemKeys: MachineSetupRemovalKeysV1Schema, removalPlans: z.array(MachineSetupRemovalPlanV1Schema),
   exclusions: z.optional(MachineSetupExclusionsV1Schema),
 }));
 export type MachineSetupRemoveInputV1 = z.infer<typeof MachineSetupRemoveInputV1Schema>;
@@ -273,7 +270,7 @@ export const MachineSetupPlanResultV1Schema = lazyZodSchema(() => z.strictObject
   resolvedSources: z.optional(z.array(z.nullable(MachineSetupResolvedSourceEntryV1Schema))),
   sourceFacts: z.optional(MachineSetupSourceFactsMapV1Schema),
   appOrigins: z.optional(z.array(MachineSetupAppOriginV1Schema)),
-  removeItemKeys: z.optional(removalKeys()), removalOffers: z.optional(z.array(MachineSetupRemovalOfferV1Schema)),
+  removeItemKeys: z.optional(MachineSetupRemovalKeysV1Schema), removalOffers: z.optional(z.array(MachineSetupRemovalOfferV1Schema)),
   removalPlans: z.optional(z.array(MachineSetupRemovalPlanV1Schema)),
   /** Presentation only: exact referenced declarations already read by this target Plan. */
   recipeTitles: z.optional(z.array(z.strictObject({ ref: MachineRecipeReferenceV1Schema, title: PluginLocalizedStringV2Schema }))),

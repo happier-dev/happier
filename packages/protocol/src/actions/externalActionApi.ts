@@ -88,7 +88,7 @@ import type { ProjectAccountRowCipherV1 } from '../projects/projectAccountRowCip
 import type { PromptArtifactRefV1 } from '../prompts/library/promptArtifactRefsV1.js';
 import { SessionActionRpcOriginV1Schema } from '../rpc/socket.js';
 import { SessionInputSourceSessionV1Schema } from '../sessions/messages/sessionInputAdmission.js';
-import { MachineInstallationProofV1Schema, MachineInstallationPublicKeySchema } from '../machines/identity/installationIdentity.js';
+import { MachineInstallationProofV1Schema, MachineInstallationPublicKeySchema } from '../machines/identity/installationKeySchemas.js';
 import { ManagedWakeTargetV1Schema } from '../machines/managed/managedIntentV1.js';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from './projectActionFamily.js';
 import { SessionRequesterInstallationSealedBootstrapV1Schema } from '../sessions/creation/sessionRequesterBootstrapSchemasV1.js';

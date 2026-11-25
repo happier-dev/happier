@@ -4,7 +4,7 @@ import { AccessProviderRefV1Schema, AccessProviderRouteV1Schema, AccessProviderS
 import { RelayAccessTaskSnapshotV1Schema } from '../../system/tasks/relayAccessConfigV1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
-import { MachineSetupRecipePlanV1Schema } from '../managed/actionsV1.js';
+import { MachineSetupRecipePlanV1Schema } from '../setup/machineSetupSourcesV1.js';
 import { MachineFirewallTransitionFactsV1Schema, MachineFirewallTransitionIntentV1Schema } from '../setup/machineFirewallV1.js';
 import { MachineReachabilityPostureV1Schema, MachineReachabilityObservationV1Schema } from './machineReachabilityPostureV1.js';
 import { ActionOperationIdentifierV1Schema } from '../../actions/operations/identifierV1.js';
