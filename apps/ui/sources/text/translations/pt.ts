@@ -2434,7 +2434,7 @@ export const pt: TranslationStructure = {
     confidentialSupplied: "Fornecido e mantido oculto",
     linkRemoved: "Esta ligação já não existe",
     unsafeDetailsTitle: "Estes detalhes não podem ser mostrados com segurança",
-    referenceNameUnavailable: "O nome não está disponível aqui. O ID está em Detalhes técnicos.",
+    referenceNameUnavailable: "Não é possível mostrar o nome. Talvez tenha sido removido ou não esteja compartilhado com você.",
     unsafeDetailsBody: "O Happier não conseguiu mostrar este pedido exatamente como foi enviado, por isso não pode ser aprovado. Recuse-o ou peça que seja enviado novamente.",
     approveUnavailableHint: "A aprovação fica indisponível enquanto estes detalhes não puderem ser mostrados com segurança.",
     cannotRun: "Este pedido já não pode ser executado tal como foi enviado, por isso não pode ser aprovado. Recuse-o ou peça-o novamente.",

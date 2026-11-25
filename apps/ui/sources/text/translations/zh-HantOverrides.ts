@@ -1722,7 +1722,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     confidentialSupplied: '已提供，內容保持隱藏',
     linkRemoved: '此連結已不存在',
     unsafeDetailsTitle: '這些詳細資料無法安全顯示',
-    referenceNameUnavailable: "此處無法顯示名稱。ID 在技術詳細資料中。",
+    referenceNameUnavailable: "無法顯示名稱。它可能已被移除，或未與你共用。",
     unsafeDetailsBody: 'Happier 無法完全依照傳送的內容顯示此請求，因此無法核准。請拒絕該請求，或請對方重新傳送。',
     approveUnavailableHint: '在這些詳細資料無法安全顯示期間，無法核准。',
     cannotRun: "此請求已無法按傳送時的內容執行，因此無法核准。請拒絕它，或重新提出請求。",

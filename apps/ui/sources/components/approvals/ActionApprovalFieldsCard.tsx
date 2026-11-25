@@ -28,6 +28,7 @@ import { getTranslationValue, t, tLoose } from '@/text';
 import type { ApprovalActionFieldsPresentation } from './approvalFieldValues';
 import { presentPluginInstallApprovalRows } from './pluginInstallApprovalFacts';
 import { useApprovalReferenceReading, type ApprovalReferenceReading } from './approvalReferenceReading';
+import { readActionApprovalSubject } from './actionApprovalPresentation';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { navigateToSession } from '@/hooks/session/useNavigateToSession';
@@ -149,6 +150,8 @@ export const ActionApprovalFieldsCard = React.memo(function ActionApprovalFields
     outputText?: string;
     /** Card only: the arguments start behind their "Details" line (a phone's inline prompt keeps its decision in view). */
     collapsed?: boolean;
+    /** Folded card only: the summary sentence the card already reads; a fact whose value it names is not said again. */
+    summary?: string | null;
     /**
      * A page opened on its own (a tool call's details) mounts no Session list, so a Session argument
      * settles by one exact read instead of waiting on a list that never loads.
@@ -232,6 +235,13 @@ const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: A
     // A phone reads each label over its value; anything wider sets the labels in one column beside the values.
     const { width, height } = useWindowDimensions();
     const columns = resolveViewportClass({ width, height }) !== 'compact';
+    // The thing the sentence is about reads by the same name it has there; only the folded card compares the two.
+    const summary = props.collapsed ? props.summary?.trim() || null : null;
+    const subject = summary && props.request ? readActionApprovalSubject(props.request) : undefined;
+    const subjectReading = useApprovalReferenceReading(subject, '', serverId, exactRead ? EXACT_READ : undefined);
+    const foldedRows = React.useMemo(() => summary ? cardRows.filter((row, index) => !isNamedBySummary(summary, row, rows[index]!,
+        subject && subjectReading.named && !subjectReading.resolving ? { reference: subject, name: subjectReading.text } : null)) : cardRows,
+    [cardRows, rows, subject, subjectReading.named, subjectReading.resolving, subjectReading.text, summary]);
     if (allRows.length === 0 && technical.length === 0) return null;
     const technicalDetails = technical.length > 0 ? <ApprovalTechnicalDetails lines={technical} /> : null;
 
@@ -270,7 +280,7 @@ const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: A
     if (props.collapsed) {
         // Inside the prompt card the first fact (the deciding value) always reads, at every width, so a person sees
         // what they approve before Approve is in reach; the remaining facts wait behind one quiet "Details" line.
-        const [firstRow, ...remainingRows] = cardRows;
+        const [firstRow, ...remainingRows] = foldedRows;
         return (
             <View style={styles.foldedFacts}>
                 {firstRow ? <HappierApprovalFields {...look} testID="approvals.first-fact" anatomy="stack" rows={[firstRow]} /> : null}
@@ -305,6 +315,23 @@ const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: A
         <HappierApprovalFields {...look} testID="approvals.fields-table" rows={cardRows} footer={technicalDetails} />
     );
 });
+
+/**
+ * Whether the folded card's sentence already says this fact's value: its literal value, or the name of the subject
+ * the sentence is about, standing as its own words in the sentence. Values the sentence does not name stay.
+ */
+function isNamedBySummary(summary: string, row: HappierApprovalFieldRow<ApprovalValueSource>, source: ApprovalFieldRow,
+    subject: Readonly<{ reference: ApprovalReference; name: string }> | null): boolean {
+    if (row.kind !== 'value' || source.kind !== 'value') return false;
+    const named = row.source
+        ? subject !== null && row.source.reference.kind === subject.reference.kind && 'id' in row.source.reference
+            && 'id' in subject.reference && row.source.reference.id === subject.reference.id ? subject.name : null
+        : row.value;
+    const value = named?.trim();
+    if (!value) return false;
+    const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, 'u').test(summary);
+}
 
 /** Core's inks, steps, faces and `Text` (font scaling) on the shared fields, and its reference reading. */
 export function useApprovalFieldsLook(): HappierApprovalFieldsLook<ApprovalValueSource> & Readonly<{ radius: number }> {
@@ -566,10 +593,12 @@ function collectApprovalTechnicalLines(rows: readonly ApprovalFieldRow[]): reado
     const lines: ApprovalTechnicalLine[] = [];
     for (const row of rows) {
         if (row.kind !== 'value') continue;
-        if (row.reference) lines.push({ key: row.path, label: row.title, value: row.value });
+        // A field title may be a translation key (`approvals.publicLinkFields.*`): it reads in words here too.
+        const title = readApprovalFieldLabel(row.title);
+        if (row.reference) lines.push({ key: row.path, label: title, value: row.value });
         // The input's own schema version (`v`, or `input.v` under a contributed Action) does not identify the effect.
         else if (row.technical && !row.entries && !/^(input\.)?v$/.test(row.path)
-            && !['', '{}', '[]', 'null'].includes(row.value)) lines.push({ key: row.path, label: row.title, value: row.value });
+            && !['', '{}', '[]', 'null'].includes(row.value)) lines.push({ key: row.path, label: title, value: row.value });
         if (!row.entries) continue;
         const trail: string[] = [];
         row.entries.forEach((entry, index) => {
@@ -579,7 +608,7 @@ function collectApprovalTechnicalLines(rows: readonly ApprovalFieldRow[]): reado
             // names do, so the disclosure retains only those references.
             if (entry.reference || entry.technical && entry.label !== 'V'
                 && !['', '{}', '[]', 'null'].includes(entry.value)) {
-                lines.push({ key: `${row.path}:${index}`, label: [row.title, ...trail, readApprovalFieldLabel(entry.label)].join(' › '), value: entry.value });
+                lines.push({ key: `${row.path}:${index}`, label: [title, ...trail, readApprovalFieldLabel(entry.label)].join(' › '), value: entry.value });
             }
         });
     }

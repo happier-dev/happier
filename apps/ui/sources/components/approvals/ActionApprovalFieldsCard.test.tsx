@@ -392,6 +392,18 @@ it('names a Machine this device cannot read as an em dash with its reason, never
     await screen.unmount();
 });
 
+it('titles a keyed field in Technical details in words, never its translation key', async () => {
+    const request = { actionId: 'artifact.public_link.create', actionArgs: { artifactId: 'artifact-own-doc' } };
+    const screen = await renderScreen(<ActionApprovalFieldsCard anatomy="page" serverId={null}
+        presentation={describeApprovalActionFields(request)} />);
+    await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
+    const text = screen.getTextContent();
+    expect(text).toContain('artifact-own-doc');
+    expect(text).toContain(t('approvals.publicLinkFields.document'));
+    expect(text).not.toContain('approvals.publicLinkFields.');
+    await screen.unmount();
+});
+
 it('reads a workspace-sync request by its machine and the two folders it links, keeping the ids in Technical details', async () => {
     const home = await upsertServerProfile({ name: 'Personal', serverUrl: 'https://workspace-sync-approval.test' });
     profiles.push(home.id);
@@ -808,6 +820,23 @@ it('shows a folded card\'s first fact, keeping only the remaining facts behind D
     const disclosure = screen.findAllByTestId('approvals.details-disclosure').find(node => typeof node.props.onExpandedChange === 'function');
     await act(async () => { disclosure?.props.onExpandedChange(true); });
     expect(screen.getTextContent()).toContain('http://127.0.0.1:4000');
+});
+
+it('leaves out of a folded card a fact whose value its sentence already names, keeping the rest', async () => {
+    // UI refinements ruling 2026-11-25 01:47Z: facts never restate a value the summary sentence already names.
+    const presentation = { rows: [
+        { kind: 'value', path: 'title', title: 'Title', value: 'W28 label group' },
+        { kind: 'value', path: 'visibility', title: 'Visibility', value: 'Team only' },
+        { kind: 'value', path: 'groupId', title: 'Group id', value: 'group-7f3a', technical: true },
+    ], unrepresentable: null } satisfies ApprovalActionFieldsPresentation;
+    const screen = await renderScreen(<ActionApprovalFieldsCard collapsed presentation={presentation}
+        summary="Rename the label group to “W28 label group”." />);
+    const text = screen.getTextContent();
+    expect(text).not.toContain('W28 label group');
+    expect(text).toContain('Visibility');
+    expect(text).toContain('Team only');
+    await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
+    expect(screen.getTextContent()).toContain('group-7f3a');
 });
 
 it('folds only codes behind Technical details itself when a folded card has no facts after its first', async () => {

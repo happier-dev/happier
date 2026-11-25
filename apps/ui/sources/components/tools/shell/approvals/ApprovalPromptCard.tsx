@@ -451,6 +451,8 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
     const failureSummary = failureOutcome && !settledFailure && !projectCommand && !petImport?.outcome ? props.approval.summary?.trim() || null : null;
     const sameWords = (left: string, right: string) => left.replace(/[.\s]+$/, '').toLowerCase() === right.replace(/[.\s]+$/, '').toLowerCase();
     const repeatsActionName = (text: string) => sameWords(text, requestTitle);
+    // The sentence the card reads (or its title already says): its folded facts do not say a value it names again.
+    const [cardSummary, setCardSummary] = React.useState<string | null>(null);
     const cardSubtitle = failureOutcome ? (failureSummary && !repeatsActionName(failureSummary) ? failureSummary : null)
         : projectCommand || computerAction ? null
             // The page's description line: what the stored request says beyond its title.
@@ -531,9 +533,10 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
             {consentWithDecision ? null : checksCard}
             {/* The page's one summary sentence (the same presenter, Home layout names included), on the card's own line. */}
             {!computerAction && !settledFailure ? (
-                <ApprovalPreviewSummaryRenderScope render={(summary) => summary === cardSubtitle?.trim() || sameWords(summary, cardTitle)
-                    || (failureOutcome && repeatsActionName(summary)) ? null
-                    : <Text style={styles.previewText}>{summary}</Text>}>
+                <ApprovalPreviewSummaryRenderScope render={(summary) => <ApprovalCardSummaryLine summary={summary}
+                    onSummary={setCardSummary} style={styles.previewText}
+                    shown={!(summary === cardSubtitle?.trim() || sameWords(summary, cardTitle)
+                        || (failureOutcome && repeatsActionName(summary)))} />}>
                     <ApprovalPreviewSummary preview={props.approval.preview} request={props.approval} serverId={approvalHome.serverId} />
                 </ApprovalPreviewSummaryRenderScope>
             ) : null}
@@ -600,6 +603,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
                 // A card is not a page section, wherever it sits: its disclosures stay the inline toggle.
                 <ItemGroupRowPositionBoundary>
                     <ActionApprovalFieldsCard presentation={actionFields} request={props.approval} serverId={approvalHome.serverId}
+                        summary={cardSummary}
                         failureTechnicalDetails={failureOutcome?.technicalDetails}
                         outputText={toolOutput}
                         // A prompt waiting on a decision shows its first fact and keeps the rest behind Details, at every width.
@@ -619,6 +623,17 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
         </ApprovalPromptChrome>
     );
 });
+
+/** The card's summary line; it tells the card which sentence it reads before paint, so no fact leaves after it. */
+function ApprovalCardSummaryLine(props: Readonly<{ summary: string; shown: boolean;
+    onSummary: (summary: string | null) => void; style: React.ComponentProps<typeof Text>['style'] }>) {
+    const { summary, onSummary } = props;
+    React.useLayoutEffect(() => {
+        onSummary(summary);
+        return () => onSummary(null);
+    }, [onSummary, summary]);
+    return props.shown ? <Text style={props.style}>{summary}</Text> : null;
+}
 
 export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(
     props: ApprovalPromptCardProps<ApprovalRequest | TargetActionApprovalRequestV1>,

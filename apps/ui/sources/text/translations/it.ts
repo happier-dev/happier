@@ -2212,7 +2212,7 @@ export const it: TranslationStructure = {
     confidentialSupplied: "Fornito e mantenuto nascosto",
     linkRemoved: "Questo collegamento non esiste più",
     unsafeDetailsTitle: "Questi dettagli non possono essere mostrati in sicurezza",
-    referenceNameUnavailable: "Il nome non è disponibile qui. L’ID è in Dettagli tecnici.",
+    referenceNameUnavailable: "Il nome non può essere mostrato. Potrebbe essere stato rimosso o non essere condiviso con te.",
     unsafeDetailsBody: "Happier non è riuscito a mostrare questa richiesta esattamente come è stata inviata, quindi non può essere approvata. Rifiutala oppure chiedi di inviarla di nuovo.",
     approveUnavailableHint: "L'approvazione non è disponibile finché questi dettagli non possono essere mostrati in sicurezza.",
     cannotRun: "Questa richiesta non può più essere eseguita così come è stata inviata, quindi non può essere approvata. Rifiutala o richiedila di nuovo.",

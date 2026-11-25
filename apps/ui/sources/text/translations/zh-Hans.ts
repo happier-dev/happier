@@ -2211,7 +2211,7 @@ export const zhHans: TranslationStructure = {
     confidentialSupplied: "已提供，内容保持隐藏",
     linkRemoved: "此链接已不存在",
     unsafeDetailsTitle: "这些详情无法安全显示",
-    referenceNameUnavailable: "此处无法显示名称。ID 在技术详情中。",
+    referenceNameUnavailable: "无法显示名称。它可能已被移除，或未与你共享。",
     unsafeDetailsBody: "Happier 无法完全按照发送的内容显示此请求，因此无法批准。请拒绝该请求，或请求方重新发送。",
     approveUnavailableHint: "在这些详情无法安全显示期间，无法批准。",
     cannotRun: "此请求已无法按发送时的内容运行，因此无法批准。请拒绝它，或重新发起请求。",

@@ -2007,7 +2007,7 @@ export const de: TranslationStructure = {
         confidentialSupplied: 'Angegeben und verborgen gehalten',
         linkRemoved: 'Diese Verbindung existiert nicht mehr',
         unsafeDetailsTitle: 'Diese Details können nicht sicher angezeigt werden',
-        referenceNameUnavailable: "Der Name ist hier nicht verfügbar. Die ID steht unter Technische Details.",
+        referenceNameUnavailable: "Der Name kann nicht angezeigt werden. Möglicherweise wurde es entfernt oder nicht mit dir geteilt.",
         unsafeDetailsBody: 'Happier konnte diese Anfrage nicht genau so anzeigen, wie sie gesendet wurde, daher kann sie nicht freigegeben werden. Lehne sie ab oder bitte darum, sie erneut zu senden.',
         approveUnavailableHint: 'Die Freigabe ist nicht verfügbar, solange diese Details nicht sicher angezeigt werden können.',
         cannotRun: "Diese Anfrage kann so, wie sie gesendet wurde, nicht mehr ausgeführt und daher nicht freigegeben werden. Lehne sie ab oder lass sie erneut senden.",
