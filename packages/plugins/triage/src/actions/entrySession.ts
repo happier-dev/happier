@@ -3,6 +3,7 @@ import { readTriageAccountDataSourceOptionsV1 } from './accountDataSources.js';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import { PluginError, type JsonValue, type PluginInvocationContext, } from '@happier-dev/plugin-sdk';
 import { isPluginActionApprovalRequestCreated, type ActionHandler } from '@happier-dev/plugin-sdk/actions';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import {
     type TriageVerifyReviewWorkspaceResultV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -209,6 +210,7 @@ function projectStartResult(
                 ...deliveryResult, ...sessionAddress,
                 sessionId: result.sessionId,
                 disposition: result.disposition,
+                ...(result.failure === undefined ? {} : { failure: result.failure }),
                 ...(result.delivery === undefined ? {} : { delivery: result.delivery }),
                 ...(preparedReviewWorkspace === undefined ? {} : { preparedReviewWorkspace }),
             };
@@ -562,8 +564,13 @@ export function createTriageStartEntrySessionActionHandler(): ActionHandler<
             linkSession: async (link) => {
                 const result = await relations.write({ ...link,
                     sourceInstanceId: link.sourceInstanceId ?? (sameTriageEntryReference(link.entryRef, input.entryRef) ? input.sourceInstanceId : undefined),
-                    linked: true });
-                return { status: result.status === 'linked' ? 'linked' : 'failed' };
+                    linked: true }).catch((error: unknown) => {
+                    if (!isPluginError(error)) throw error;
+                    return { status: 'failed', failure: error } as const;
+                });
+                if (result.status === 'linked') return { status: 'linked' };
+                const failure = result.status === 'failed' ? projectTriageNewSessionFailureV1(result.failure) : undefined;
+                return { status: 'failed', ...(failure === undefined ? {} : { failure }) };
             },
             execute: async (actionId, actionInput, options) => {
                 const result = await context.services.actions.execute(

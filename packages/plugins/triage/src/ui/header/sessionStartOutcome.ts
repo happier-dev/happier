@@ -123,6 +123,7 @@ const REJECTION_NOTICE_V1: Readonly<Record<
 
 function settledNotice(
   result: TriageStartEntrySessionResultV1,
+  reviewLinkPending: boolean,
 ): TriageEntrySessionNoticeV1 | null {
   switch (result.type) {
     case 'opened':
@@ -134,10 +135,17 @@ function settledNotice(
         'The session was created and linked, but it was not opened.',
       );
     case 'linkPending':
+      if (reviewLinkPending) return notice(
+        'warning',
+        'plugins.triage.surface.session.reviewLinkPending',
+        'The pull request link is not attached yet. Press the Review action again to attach it.',
+        result.failure,
+      );
       return notice(
         'warning',
         'plugins.triage.surface.session.linkPending',
-        'The session was created, but this entry is not linked to it yet.',
+        'The session was created, but this entry is not linked to it yet. Press the same action again to finish linking.',
+        result.failure,
       );
     case 'openPending':
       return notice(
@@ -336,7 +344,7 @@ export function describeTriageEntrySessionPhaseV1(
       // that failed is only reported once the start itself settled cleanly,
       // because telling a reader their prompt did not land is useless while
       // they are being told nothing was created.
-      const settled = settledNotice(phase.result);
+      const settled = settledNotice(phase.result, phase.reviewLinkPending === true);
       if (phase.result.type !== 'opened') return settled;
       // The native start result owns delivery for both imperative and host-controlled runs.
       switch (phase.result.delivery) {

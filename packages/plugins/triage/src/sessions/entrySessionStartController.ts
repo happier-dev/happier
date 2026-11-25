@@ -289,6 +289,7 @@ export type TriageEntrySessionStartPhaseV1 =
         result: TriageStartEntrySessionResultV1;
         /** Present for an `agent` action that settled into a Session. */
         delivery?: TriageEntrySessionDeliveryOutcomeV1;
+        reviewLinkPending?: true;
     }>
     /**
      * Nothing was started. It is deliberately distinct from every settled arm,
@@ -739,7 +740,9 @@ export function createTriageEntrySessionStartController(
                 }
                 : null;
             setReview(pendingReview === null ? null : Object.freeze(pendingReview));
-            setPhase(Object.freeze({ kind: 'settled', result, delivery }));
+            setPhase(Object.freeze({ kind: 'settled', result, delivery,
+                ...(result.type === 'linkPending' && reviewInstructions !== undefined ? { reviewLinkPending: true as const } : {}),
+            }));
         }
     };
 

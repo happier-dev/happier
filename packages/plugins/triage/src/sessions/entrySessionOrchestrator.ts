@@ -180,6 +180,7 @@ export type TriageEntrySessionStartResultV1 = (
     }>
     | Readonly<{
         type: 'linkPending';
+        failure?: TriageNewSessionFailureV1;
         sessionId: SessionId;
         disposition: TriageEntrySessionDispositionV1;
         workspace: TriageEntrySessionWorkspaceFactsV1;
@@ -221,7 +222,7 @@ export type TriageEntrySessionDepsV1 = Readonly<{
     linkSession: (input: Readonly<{
         entryRef: TriageEntryRefV1; display: TriageEntrySessionLinkDisplayV1;
         sessionId: string; sourceInstanceId?: string;
-    }>) => Promise<Readonly<{ status: 'linked' | 'failed' }>>;
+    }>) => Promise<Readonly<{ status: 'linked' } | { status: 'failed'; failure?: TriageNewSessionFailureV1 }>>;
     execute: TriageSessionActionInvokerV1;
     onDeliveryFailure?: (detail: TriageSessionDeliveryFailureDetailV1) => void;
     /**
@@ -333,13 +334,14 @@ async function linkDeliverThenOpen(
             sessionId: input.sessionId,
             ...(sourceInstanceId === undefined ? {} : { sourceInstanceId }),
         };
-        const link = deps.linkSession === undefined ? { status: 'failed' } : await deps.linkSession(linkInput);
-        if (link.status !== 'linked') {
+        const link = await deps.linkSession?.(linkInput);
+        if (link?.status !== 'linked') {
             // No structured input is admitted until every relationship its
             // attachments require is durable. Retrying starts this idempotent
             // set again; already committed links keep their original row.
             return {
                 type: 'linkPending',
+                ...(link?.failure === undefined ? {} : { failure: link.failure }),
                 sessionId: input.sessionId,
                 disposition: input.disposition,
                 workspace: input.workspace,

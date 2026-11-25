@@ -685,6 +685,7 @@ const startEntrySessionResult = defineProtocolUnion([
         v: defineProtocolLiteral(1),
         /** The Session exists; the link did not commit. Retry links, then opens. */
         type: defineProtocolLiteral('linkPending'),
+        failure: TriageNewSessionFailureV1Schema.optional(),
         sessionAddress: ActionSessionAddressV1Schema.optional(),
         deliveryResult: SessionMessageSendResultV1ProtocolSchema.optional(),
         sessionId: triageSessionId,

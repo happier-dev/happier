@@ -902,6 +902,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
             type: 'linkPending',
             sessionId: 'session-a',
             disposition: 'created',
+            failure: { codes: ['sessionLinksCorpusWriteNotApplied'] },
         });
         expect(invoker.callsFor('session.open')).toEqual([]);
     });
@@ -1654,7 +1655,7 @@ describe('the Session-start wire', () => {
         ).toBe(true);
     });
 
-    it.each(['created', 'carrier mismatch', 'agent signed out', 'team credential removed', 'update required'] as const)('starts from the exact provider Action through native Session admission (%s)', async (outcome) => {
+    it.each(['created', 'checkout link refused', 'carrier mismatch', 'agent signed out', 'team credential removed', 'update required'] as const)('starts from the exact provider Action through native Session admission (%s)', async (outcome) => {
         const mismatch = outcome === 'carrier mismatch';
         const failureCause = { phase: 'session.launch.authentication', errorClass: 'Error',
             errorCode: 'agent_signed_out', httpStatus: null } as const;
@@ -1665,7 +1666,8 @@ describe('the Session-start wire', () => {
                     kind: 'update_required', component: 'daemon', operation: 'session.spawn_new', reason: 'creation protocol unavailable',
                 } } as const
                 : { type: 'error', code: 'agent_signed_out', retryable: false, agentId: 'pi' } as const;
-        const refused = outcome !== 'created' && !mismatch;
+        const linkRefused = outcome === 'checkout link refused';
+        const refused = outcome !== 'created' && !linkRefused && !mismatch;
         const { collections } = createTestkitCorpusCollections();
         const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
         const base = createTriageSelectedPrStartApprovalInput();
@@ -1698,6 +1700,9 @@ describe('the Session-start wire', () => {
         const destination = projectTriageNewSessionDestinationV1({
             workspaceMode: 'pull_request', creationKey: base.destination.creationKey, settlement: recipe,
             reviewWorkspace: request,
+            ...(linkRefused ? { placementCandidates: [{
+                ...TESTKIT_SELECTED_WORKSPACE, projectKey: { id: 'workspace-a' }, reachable: true, worktrees: [],
+            }] } : {}),
         });
         if (destination.status !== 'settled') throw new Error('Expected the host draft to settle');
         const selectedRequest = destination.destination.materialization;
@@ -1710,7 +1715,10 @@ describe('the Session-start wire', () => {
             contributor: { ...selected.contributor, occurrenceId: 'source-1' },
             role: 'prepareReviewWorkspace',
         } };
-        let prepared = false;
+        const linkOperation = { role: 'linkSession' };
+        const linkFailure = { code: 'channels_pr_link_checkout_not_verified', details: { requestId: 'checkout-link-17' } };
+        let prepareCalls = 0;
+        let linkAttempts = 0;
         const context = await createContext(collections, invoker, async (actionId, actionInput) => {
             if (actionId === 'session.spawn_new') {
                 const spawn = PLUGIN_ACTION_INPUT_SCHEMAS[actionId].parse(actionInput);
@@ -1725,25 +1733,35 @@ describe('the Session-start wire', () => {
             throw new Error(`Unexpected host Action ${String(actionId)}`);
         });
         const handler = registeredHandler(TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1);
-        const result = await handler(TriageStartEntrySessionInputV1Schema.parse({ ...base,
+        const startInput = TriageStartEntrySessionInputV1Schema.parse({ ...base,
             destination: destination.destination,
+            ...(linkRefused ? { finalOpen: 'deferred' } : {}),
             prepareReviewWorkspaceSelection: { selection: selected, input: {
                 ...projectTriagePrepareReviewWorkspaceInputV1(selectedRequest.request),
                 ...(mismatch ? { entryRef: { ...request.entryRef, entryId: 'other' } } : {}),
             } },
-        }), { ...context, services: { ...context.services,
+        });
+        const invocationContext = { ...context, services: { ...context.services,
             targetedContributions: { observeForSelf: () => ({
                 readCurrent: async () => ({ occurrenceId: 'target-1', sourceCustody: selected.target.sourceCustody,
                     contributions: [{ contributor: { ...selected.contributor, occurrenceId: 'account-source-1',
                         sourceCustody: { kind: 'account_release', pluginId: selected.contributor.pluginId,
                             version: '1.0.0', archiveDigestSha256: `sha256:${'a'.repeat(64)}` } },
                         descriptor: testkitReadOnlySourceSnapshot().contributions[0]!.descriptor,
-                        protocol: selected.point.protocol, operations: { prepareReviewWorkspace: operation } }] }),
+                        protocol: selected.point.protocol, operations: { prepareReviewWorkspace: operation,
+                            ...(linkRefused ? { linkSession: linkOperation, readSessionLinks: { role: 'readSessionLinks' } } : {}),
+                        } }] }),
                 dispose: () => {},
             }) },
             actions: { ...context.services.actions,
                 executeAdmittedTargetedOperation: async (selectedOperation: unknown, value: unknown, options: unknown) => {
-                    prepared = true;
+                    if (selectedOperation === linkOperation) {
+                        expect(value).toMatchObject({ sessionId: 'session-a', linked: true });
+                        linkAttempts += 1;
+                        if (linkAttempts === 1) throw new PluginError(linkFailure);
+                        return { status: 'linked' };
+                    }
+                    prepareCalls += 1;
                     expect(selectedOperation).toBe(operation);
                     expect(value).toEqual(projectTriagePrepareReviewWorkspaceInputV1(selectedRequest.request));
                     expect(options).not.toHaveProperty('expectedSelectedConnectedAccountRef');
@@ -1751,11 +1769,33 @@ describe('the Session-start wire', () => {
                         pullRequest: { number: 17 }, currentness: { kind: 'currentAtObservedHead' } };
                 },
             },
-        } } as unknown as PluginInvocationContext); // Host admission, Action RPC and Collection boundaries.
-        expect(prepared).toBe(!mismatch);
+        } } as unknown as PluginInvocationContext; // Host admission, Action RPC and Collection boundaries.
+        const result = await handler(startInput, invocationContext);
+        expect(prepareCalls).toBe(mismatch ? 0 : 1);
         if (refused) {
             expect(result).toMatchObject({ type: 'creationFailed', failureCode: spawnFailure.code, spawnFailure,
                 ...(outcome === 'agent signed out' ? { failureCause } : {}) });
+            expect(invoker.callsFor('session.open')).toHaveLength(0);
+            return;
+        }
+        if (linkRefused) {
+            const pending = TriageStartEntrySessionResultV1Schema.parse(result);
+            expect(pending).toMatchObject({
+                type: 'linkPending', sessionId: 'session-a',
+                failure: { codes: [linkFailure.code], requestId: linkFailure.details.requestId },
+            });
+            if (pending.type !== 'linkPending') throw new Error('Expected the known Session to await its entry link');
+            const { prepareReviewWorkspaceSelection: _consumed, ...retained } = startInput;
+            const resumed = await handler(TriageStartEntrySessionInputV1Schema.parse({ ...retained, resume: {
+                phase: pending.type, sessionId: pending.sessionId, disposition: pending.disposition,
+                preparedReviewWorkspace: pending.preparedReviewWorkspace,
+            } }), invocationContext);
+            expect(TriageStartEntrySessionResultV1Schema.parse(resumed)).toMatchObject({
+                type: 'linked', sessionId: pending.sessionId, finalOpen: 'deferred',
+                review: { repositoryPath: '/workspaces/example-review', pullRequest: { number: 17 } },
+            });
+            expect(prepareCalls).toBe(1);
+            expect(invoker.callsFor('session.spawn_new')).toHaveLength(1);
             expect(invoker.callsFor('session.open')).toHaveLength(0);
             return;
         }

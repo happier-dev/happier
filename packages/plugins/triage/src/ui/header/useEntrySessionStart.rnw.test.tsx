@@ -212,6 +212,15 @@ let draftRequests: unknown[] = [];
 let comparisonOpens: unknown[] = [];
 
 describe('terminal structured-input presentation', () => {
+    it('shows the source refusal for a created Session awaiting an entry link', () => {
+        const failure = { codes: ['channels_pr_link_checkout_not_verified'], requestId: 'review-link-request' };
+        expect(describeTriageEntrySessionPhaseV1({
+            kind: 'settled',
+            result: { v: 1, type: 'linkPending', sessionId: 'review-session', disposition: 'created', failure },
+            delivery: { kind: 'none' },
+        })).toMatchObject({ labelKey: 'plugins.triage.surface.session.linkPending', failure });
+    });
+
     it.each(['failed', 'cancelled'] as const)(
         'does not present a %s action as a successful start',
         (status) => {
