@@ -412,7 +412,9 @@ describe('Source Actions through the CLI Account front door', () => {
       for (const key of ['HAPPIER_SERVER_URL', 'HAPPIER_LOCAL_SERVER_URL', 'HAPPIER_SERVER_ID', 'HAPPIER_WEBAPP_URL']) vi.stubEnv(key, '');
       try {
         const artifactId = '11111111-1111-4111-8111-111111111111';
-        const foreignToken = `header.${Buffer.from(JSON.stringify({ sub: 'source-account', aud: 'foreign-home' })).toString('base64url')}.signature`;
+        const foreignToken = `header.${Buffer.from(JSON.stringify({ sub: 'source-account', aud: 'foreign-home',
+          provenance: { v: 1, kind: 'terminal', authority: 'account_automation' },
+        })).toString('base64url')}.signature`;
         // Real profile resolution, credentials and Artifact codecs run above HTTP/FS peers.
         async function home(id: string, actorToken: string) {
           const requests: string[] = [];
