@@ -505,6 +505,22 @@ describe('canonical Run page occurrence target', () => {
         expect(JSON.stringify(screen.tree.toJSON())).not.toContain(sealed.executionInputEnvelope);
     });
 
+    it('shows the requester’s typed failure when the occurrence never started a step', async () => {
+        const row = run({ state: 'failed', errorCode: 'target_unavailable', updatedAt: 12 });
+        const screen = await respond(row, {
+            errorDetailEnvelope: JSON.stringify(sealAutomationRunFailureDetailStoredEnvelopeV1({
+                mode: 'plain',
+                correspondence: { automationId: 'a1', runId: row.id },
+                detail: 'The selected Agent cannot run in the background.',
+                failureCause: { phase: 'workflow.trigger_admission', errorClass: 'Error', errorCode: 'target_unavailable',
+                    httpStatus: null, diagnostic: { reason: 'detached_execution_unavailable' } },
+            })),
+        });
+        await waitForHomeGovernance(() => expect(screen.findByProps({
+            title: 'workflows.problem.preExecution.detachedExecutionUnavailable',
+        })).toBeTruthy());
+    });
+
     it('retires Account A private detail when the same route switches to Account B and B reads fail', async () => {
         harness.answer(serverId, DETAIL_PATH, { body: privateDetail(run({ state: 'running', updatedAt: 12, errorCode: 'account-a-direct-status' }), 'Account A') });
         const screen = await open();

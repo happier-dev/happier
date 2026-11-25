@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { WorkflowStepProgress } from './stepProgress';
 
+import { WorkflowTargetUnavailableDiagnosticV1Schema, type WorkflowTargetUnavailableDiagnosticV1 } from '@happier-dev/protocol/workflows/workflowTargetUnavailableReasonV1';
 import { applyWorkflowInvocationFactV1, classifyWorkflowHoldV1, isTerminalWorkflowInvocationLifecycleV1, WorkflowAuthoredInputV1Schema, WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowInvocationFactV1Schema, WorkflowInvocationFactResultV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, WorkflowOperationErrorCodeV1Schema, WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1, WORKFLOW_INVOCATION_LIFECYCLES_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -1391,6 +1392,7 @@ export type WorkflowTriggerAdmissionRefusal = Readonly<{
   reason: string;
   blockId?: string;
   targetUnavailableReason?: WorkflowTargetUnavailableReasonV1;
+  targetUnavailablePlatformReason?: WorkflowTargetUnavailableDiagnosticV1['platformReason'];
   /** No accepted snapshot or coordinator effects were committed by this claim. */
   admission: 'refused';
 }>;
@@ -1510,17 +1512,32 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
     // Admission happens once. A reclaim/Continue uses the same immutable
     // snapshot and recipient key custody as a direct Run, not the live source.
     if (claim.definitionEnvelope !== undefined && resolvedAcceptedEnvelope === undefined) {
-      const refuse = (stage: string, reason: string, blockId?: string) => {
+      const refuse = (stage: string, reason: string, blockId?: string, ownerDetails?: unknown): WorkflowTriggerAdmissionRefusal => {
+        const details = ownerDetails && typeof ownerDetails === 'object' && !Array.isArray(ownerDetails) ? asRecord(ownerDetails) : {};
+        const nested = details.diagnostic && typeof details.diagnostic === 'object' && !Array.isArray(details.diagnostic)
+          ? asRecord(details.diagnostic) : {};
+        const platformReason = nested.platformReason ?? details.platformReason;
+        const diagnostic = reason === 'target_unavailable'
+          ? WorkflowTargetUnavailableDiagnosticV1Schema.safeParse({
+            reason: nested.reason ?? details.reason,
+            ...(platformReason === 'os' || platformReason === 'arch' ? { platformReason } : {}),
+          }).data : undefined;
         logger.debug('[WORKFLOW] Trigger admission refused before initialization', {
-          runId: claim.runId, attempt: claim.attempt, stage, reason,
+          runId: claim.runId, automationId: claim.automationId, machineId: params.machineId,
+          attempt: claim.attempt, stage, reason, ...(diagnostic === undefined ? {} : { diagnostic }),
         });
-        return refuseWorkflowTriggerAdmission(reason, blockId);
+        return {
+          ...refuseWorkflowTriggerAdmission(reason, blockId),
+          ...(diagnostic === undefined ? {} : { targetUnavailableReason: diagnostic.reason }),
+          ...(diagnostic?.platformReason === undefined ? {} : { targetUnavailablePlatformReason: diagnostic.platformReason }),
+        };
       };
       const refuseSourceRead = (stage: string, error: unknown) => {
         claim.signal?.throwIfAborted();
-        const code = error !== null && typeof error === 'object' && 'code' in error ? error.code : undefined;
+        const thrown = error && typeof error === 'object' && !Array.isArray(error) ? asRecord(error) : {};
+        const code = thrown.code;
         return refuse(stage, code === 'source_unavailable' || code === 'content_unavailable' || code === 'target_unavailable'
-          ? code : 'source_unavailable');
+          ? code : 'source_unavailable', undefined, thrown.details);
       };
       if (!claim.automationId || !claim.automationCause) return refuse('claim', 'content_unavailable');
       let storedInput: unknown;
@@ -1654,7 +1671,8 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const workspace = fingerprintWorkspace ?? await prepareClaimWorkspace();
       if (!workspace.ok) return refuse('workspace', workspace.code);
       workspaceSource = workspace.workspaceSource;
-      if (!params.resolveMaterializationHost) return refuse('materialization_host', 'target_unavailable');
+      if (!params.resolveMaterializationHost) return refuse('materialization_host', 'target_unavailable', undefined,
+        { reason: 'materialization_owner_unavailable' });
       let reportPolicy: Awaited<ReturnType<typeof readRunReportPolicy>> | undefined;
       if (storedDefinition.data.onComplete?.kind === 'originating_session' && originSessionId) {
         try {
@@ -1730,11 +1748,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         // Nested definitions are still required source reads before acceptance.
         return refuseSourceRead('materialization', error);
       }
-      if (!created.ok) return {
-        ...refuse('materialization', created.error.code, created.error.blockId),
-        ...(created.error.code === 'target_unavailable' && 'reason' in created.error
-          ? { targetUnavailableReason: created.error.reason } : {}),
-      };
+      if (!created.ok) return refuse('materialization', created.error.code, created.error.blockId, created.error);
       if (deploymentOccurrence.kind === 'available') {
         try {
           const controller = await params.resolveControllerContext({ runId: claim.runId, accepted: created.snapshot,

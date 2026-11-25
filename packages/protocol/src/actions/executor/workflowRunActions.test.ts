@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { sealAutomationRunFailureDetailStoredEnvelopeV1 } from '../../automations/automationRunFailureDetailStoredContent.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { normalizeWorkflowActionTextBindingV1 } from '../../workflows/workflowActionTextV1.js';
 import { createSessionMembershipReadFixture } from '../../sessions/read/sessionReadBatchV1.testkit.js';
@@ -144,6 +145,30 @@ it('classifies a readable stored snapshot rejected by the current schema as unre
   await expect(owner.execute({ actionId: 'workflow.run.get', input: { runId }, context: { surface: 'cli' } }))
     .rejects.toMatchObject({ code: 'history_not_readable' });
 });
+it.each([true, false])('reads a pre-execution invocation refusal only for the matching Run (%s)', async (matchingRun) => {
+  const automationId = 'automation-1';
+  const invocationId = '22222222-2222-4222-8222-222222222222';
+  const failureCause = { phase: 'workflow.trigger_admission', errorClass: 'Error',
+    errorCode: 'target_unavailable', httpStatus: null, diagnostic: { reason: 'detached_execution_unavailable' } } as const;
+  const raw = sealAutomationRunFailureDetailStoredEnvelopeV1({ mode: 'plain',
+    correspondence: { automationId, runId: matchingRun ? runId : invocationId }, detail: 'Private detail', failureCause });
+  const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async () => {
+    throw Object.assign(new Error('HTTP 422'), { response: { status: 422, data: { error: 'target_unavailable',
+      preExecutionFailure: { automationId, envelope: JSON.stringify(raw) } } } });
+  } }));
+  const action = createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: owner });
+  const context = { surface: 'cli' as const };
+  for (const call of [
+    action({ actionId: 'workflow.run.invocations.get', input: { runId, invocationId }, context }),
+    action({ actionId: 'workflow.run.invocations.list', input: { runId, includeContent: true }, context }),
+  ]) {
+    const outcome = await call;
+    expect(outcome).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+    if (matchingRun) expect(outcome).toMatchObject({ failureCause, details: { reason: 'detached_execution_unavailable' } });
+    else expect(outcome).not.toMatchObject({ failureCause: { diagnostic: expect.anything() } });
+  }
+});
+
 const definition = validateWorkflowDefinition({
   version: 1,
   defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } },

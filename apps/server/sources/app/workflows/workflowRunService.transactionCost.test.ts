@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { sealAutomationRunFailureDetailStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { WorkflowStoredContentEnvelopeV1Schema } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows';
@@ -22,7 +23,7 @@ vi.mock('@/storage/db', async original => ({
 vi.mock('@/storage/prisma', async original => ({
     ...await original<typeof import('@/storage/prisma')>(), withSqliteReadSnapshot: transactions.readSnapshot,
 }));
-import { commitWorkflowInvocationFact, getCurrentWorkflowRunInvocation, getWorkflowRunControl, getWorkflowRunInvocation } from './workflowRunService';
+import { commitWorkflowInvocationFact, getCurrentWorkflowRunInvocation, getWorkflowRun, getWorkflowRunControl, getWorkflowRunInvocation, listWorkflowRunInvocations } from './workflowRunService';
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -98,7 +99,8 @@ function retainedInvocationFixture() {
     const account = { id: accountId, seq: 1, publicKey: 'ab'.repeat(32), encryptionMode: 'plain',
         contentPublicKey: null, contentPublicKeySig: null, settings: null, settingsVersion: 0 };
     const run = { id: runId, accountId, account, sourceArtifactId: null, visibleTeamId: null,
-        workflowCustodyState: 'pending', workflowAcceptedSnapshotEnvelope: 'accepted' as string | null, state: 'running', revision: 7 };
+        workflowCustodyState: 'pending', workflowAcceptedSnapshotEnvelope: 'accepted' as string | null, state: 'running', revision: 7,
+        automationId: 'automation-1', errorCode: null as string | null, errorMessage: null as string | null };
     const invocation = { id: invocationId, runId, sequence: 1n, parentRecordId, memberOrdinal: 0n,
         attempt: 0n, contentRevision: 1n, lifecycle: 'running', contentEnvelope, createdAt: now, updatedAt: now };
     const parentRead = vi.fn(async ({ select, where }: {
@@ -137,6 +139,28 @@ it('reads the admitted Workflow parent once per exact control or invocation inte
         .rejects.toMatchObject({ code: 'run_not_found' });
     await expect(getWorkflowRunInvocation({ accountId: 'other', runId, invocationId }))
         .rejects.toMatchObject({ code: 'run_not_found' });
+});
+
+it('returns a failed Run’s private pre-execution refusal only on its requester’s exact content reads', async () => {
+    const { run, accountId, runId, invocationId } = retainedInvocationFixture();
+    const envelope = JSON.stringify(sealAutomationRunFailureDetailStoredEnvelopeV1({ mode: 'plain',
+        correspondence: { automationId: run.automationId, runId }, detail: 'Private detail',
+        failureCause: { phase: 'workflow.trigger_admission', errorClass: 'Error', errorCode: 'target_unavailable',
+            httpStatus: null, diagnostic: { reason: 'session_unavailable' } },
+    }));
+    Object.assign(run, { workflowAcceptedSnapshotEnvelope: null, state: 'failed', errorCode: 'target_unavailable', errorMessage: envelope });
+    const reads = (actor: string) => [
+        () => getWorkflowRun({ accountId: actor, runId }),
+        () => getWorkflowRunInvocation({ accountId: actor, runId, invocationId }),
+        () => listWorkflowRunInvocations({ accountId: actor, runId, progressEnvelopes: true, pageByteLimit: 4096 }),
+    ];
+    for (const read of reads(accountId)) {
+        await expect(read()).rejects.toMatchObject({ code: 'target_unavailable',
+            preExecutionFailure: { automationId: run.automationId, envelope } });
+    }
+    for (const read of reads('machine-owner-other-account')) {
+        await expect(read()).rejects.toMatchObject({ code: 'run_not_found' });
+    }
 });
 
 it('validates the stored outer envelope schema once per disclosed invocation', async () => {

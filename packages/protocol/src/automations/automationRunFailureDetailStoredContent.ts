@@ -17,6 +17,8 @@ import {
   AutomationIdV1Schema,
 } from './automationIdV1.js';
 
+import { ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
+
 const utf8Encoder = new TextEncoder();
 
 export const AUTOMATION_RUN_FAILURE_DETAIL_ACCOUNT_SCOPED_BLOB_KIND_V1 =
@@ -37,6 +39,7 @@ export const AutomationRunFailureDetailStoredPayloadV1Schema = lazyZodSchema(() 
   v: z.literal(1),
   correspondence: AutomationRunFailureDetailCorrespondenceV1Schema,
   detail: z.string().check(z.minLength(1), maxCodeUnits(MAX_AUTOMATION_RUN_FAILURE_DETAIL_CODE_UNITS_V1)),
+  failureCause: z.catch(z.optional(ActionFailureCauseV1Schema), undefined),
 }));
 export type AutomationRunFailureDetailStoredPayloadV1 = z.infer<
   typeof AutomationRunFailureDetailStoredPayloadV1Schema
@@ -117,6 +120,7 @@ export type AutomationRunFailureDetailStoredContentOpenResultV1 =
       kind: 'available';
       correspondence: AutomationRunFailureDetailCorrespondenceV1;
       detail: string;
+      failureCause?: ActionFailureCauseV1;
     }>
   | AutomationRunFailureDetailStoredContentOpenFailureV1;
 
@@ -163,11 +167,13 @@ export function validateAutomationRunFailureDetailStoredEnvelopeOuterForModeV1(
 export function sealAutomationRunFailureDetailStoredEnvelopeV1(params: Readonly<{
   correspondence: AutomationRunFailureDetailCorrespondenceV1;
   detail: string;
+  failureCause?: ActionFailureCauseV1;
 }> & AutomationRunFailureDetailStoredEnvelopeSealModeV1): AutomationRunFailureDetailStoredEnvelopeV1 {
   const payload = AutomationRunFailureDetailStoredPayloadV1Schema.parse({
     v: 1,
     correspondence: params.correspondence,
     detail: params.detail,
+    ...(params.failureCause === undefined ? {} : { failureCause: params.failureCause }),
   });
   if (params.mode === 'plain') {
     return AutomationRunFailureDetailStoredEnvelopeV1Schema.parse({ t: 'plain', v: payload });
@@ -212,9 +218,17 @@ export function openAutomationRunFailureDetailStoredEnvelopeV1(params: Readonly<
         kind: 'available',
         correspondence: payload.data.correspondence,
         detail: payload.data.detail,
+        ...(payload.data.failureCause === undefined ? {} : { failureCause: payload.data.failureCause }),
       }
     : { kind: 'contentInvalid' };
 }
+
+/** Exact storage refusal sidecar, disclosed only to the Run owner. */
+export const AutomationRunPreExecutionFailureV1Schema = lazyZodSchema(() => z.strictObject({
+  automationId: asProtocolZod(AutomationIdV1Schema),
+  envelope: z.nullable(z.string()),
+}));
+export type AutomationRunPreExecutionFailureV1 = z.infer<typeof AutomationRunPreExecutionFailureV1Schema>;
 
 /** Parses one stored string before mode/purpose validation at a reader boundary. */
 export function parseAutomationRunFailureDetailStoredEnvelopeV1(

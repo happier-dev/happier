@@ -1,7 +1,8 @@
 import { isWorkflowRunExecutorStorageOperationV1 } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
+import { AutomationRunPreExecutionFailureV1Schema } from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { ServerFetch } from '@/sync/http/client';
-import { getAutomationAuthHeaders, readAutomationJsonOrThrow } from './apiAutomationHttp';
+import { AutomationApiError, getAutomationAuthHeaders, readAutomationJsonOrThrow } from './apiAutomationHttp';
 import type { CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
@@ -14,6 +15,18 @@ const storageReads = createScopedResolutionSingleFlight<unknown>();
 // acquire observations; acknowledgements, controls and review writes never share.
 const READ_OPERATIONS = new Set(['get', 'list', 'summaries', 'invocations.list', 'invocations.get', 'invocations.current', 'run-key.census']);
 const UNSHARED_OBSERVATIONS = new Set(['wait', 'delivery.pull']);
+
+async function readWorkflowStorageJsonOrThrow(response: Response): Promise<unknown> {
+    if (response.status === 422) {
+        const data: unknown = await response.clone().json().catch(() => null);
+        if (data && typeof data === 'object' && 'error' in data && data.error === 'target_unavailable'
+            && 'preExecutionFailure' in data && AutomationRunPreExecutionFailureV1Schema.safeParse(data.preExecutionFailure).success) {
+            throw Object.assign(new AutomationApiError({ code: data.error, status: response.status }),
+                { response: { status: response.status, data } });
+        }
+    }
+    return readAutomationJsonOrThrow(response);
+}
 
 /** Account storage carries opaque content and durable intent, never worker publication. */
 export function createWorkflowRunAccountStorage(params: Readonly<{
@@ -47,7 +60,7 @@ export function createWorkflowRunAccountStorage(params: Readonly<{
                     const result = await storageReads.run(JSON.stringify([bindingKey, createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(operation))]),
                         signal => transport.read(path, { method: 'POST',
                             headers: getAutomationAuthHeaders(params.credentials, { includeJsonContentType: true }),
-                            body: JSON.stringify(operation), signal }, { includeAuth: false }, readAutomationJsonOrThrow),
+                            body: JSON.stringify(operation), signal }, { includeAuth: false }, readWorkflowStorageJsonOrThrow),
                         { scope, signal: cancellation.signal,
                             fresh: operationName === 'invocations.current' || operationName === 'run-key.census' });
                     params.assertCurrent();
@@ -67,7 +80,7 @@ export function createWorkflowRunAccountStorage(params: Readonly<{
                     recoveryRead: read || UNSHARED_OBSERVATIONS.has(operationName) ? 'unbounded' : false,
                     ...(operation.operation === 'delete' && options?.onTransportIssued ? { onIssued: options.onTransportIssued } : {}),
                 });
-                const result = await readAutomationJsonOrThrow(response);
+                const result = await readWorkflowStorageJsonOrThrow(response);
                 params.assertCurrent();
                 return result;
             } finally { invalidate(); }

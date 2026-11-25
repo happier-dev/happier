@@ -14,4 +14,10 @@ export const WorkflowTargetUnavailableReasonV1Schema = lazyZodSchema(() => z.enu
   'publisher_machine_unavailable', 'requester_runtime_unavailable', 'credentialed_factory_failed',
   'profile_unavailable', 'engine_unavailable',
 ]));
+export const WorkflowTargetUnavailableDiagnosticV1Schema = lazyZodSchema(() => z.strictObject({
+  reason: WorkflowTargetUnavailableReasonV1Schema,
+  platformReason: z.optional(z.enum(['os', 'arch'])),
+}));
+export type WorkflowTargetUnavailableDiagnosticV1 = z.infer<typeof WorkflowTargetUnavailableDiagnosticV1Schema>;
+
 export type WorkflowTargetUnavailableReasonV1 = z.infer<typeof WorkflowTargetUnavailableReasonV1Schema>;

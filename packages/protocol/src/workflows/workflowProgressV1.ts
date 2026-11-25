@@ -2,7 +2,8 @@ import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { WorkflowTargetUnavailableReasonV1Schema } from './workflowTargetUnavailableReasonV1.js';
 import { WorkflowDocumentParseFailureV1Schema } from './workflowDocumentSchemasV1.js';
-export { WorkflowTargetUnavailableReasonV1Schema, type WorkflowTargetUnavailableReasonV1 } from './workflowTargetUnavailableReasonV1.js';
+export { WorkflowTargetUnavailableReasonV1Schema, type WorkflowTargetUnavailableReasonV1,
+  WorkflowTargetUnavailableDiagnosticV1Schema, type WorkflowTargetUnavailableDiagnosticV1 } from './workflowTargetUnavailableReasonV1.js';
 import { WorkflowDiscussionOriginV1Schema } from './workflowDestinationsV1.js';
 import { SessionMessageReplyOutcomeV1Schema } from '../sessions/messages/sessionMessageReplyV1.js';
 import { z } from '../zodRuntimePolicy.js';

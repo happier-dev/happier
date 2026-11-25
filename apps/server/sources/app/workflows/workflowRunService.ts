@@ -4,6 +4,8 @@ import { decodeKeysetCursorV1, encodeKeysetCursorV1, readKeysetCursorIdV1, readK
 import { measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '@happier-dev/protocol/actions/externalActionLimits';
 import { isTerminalWorkflowInvocationLifecycleV1, projectWorkflowBigIntV1, WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1, type WorkflowInvocationLifecycleV1, type WorkflowRunOriginV1, type WorkflowRunSummaryV1, type WorkflowRunLastStartedSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { parseAutomationRunFailureDetailStoredEnvelopeV1, validateAutomationRunFailureDetailStoredEnvelopeOuterForModeV1,
+    type AutomationRunPreExecutionFailureV1 } from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
 import { toAutomationRunExecutionInputV1Origin } from '@happier-dev/protocol/automations/automationApiV3';
 import { projectAutomationAccountCurrentnessWitnessV1, sameAutomationAccountContentIdentityV1, type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import { WorkflowRunListRequestV1Schema, WorkflowRunAutomationSummariesRequestV1Schema, workflowRunListRequiresAcceptedProgramV1,
@@ -76,7 +78,8 @@ function automationPreviousStateForWorkflowTerminalEffects(state: WorkflowRunSta
 }
 
 export class WorkflowRunServiceError extends Error {
-    constructor(readonly code: "invalid_input" | "target_unavailable" | "run_not_found" | "run_access_denied" | "visible_team_not_granted" | "data_key_not_required" | "currentness_conflict" | "ineligible_state" | "custody_pending" | "content_unavailable" | "requester_custody_unavailable") {
+    constructor(readonly code: "invalid_input" | "target_unavailable" | "run_not_found" | "run_access_denied" | "visible_team_not_granted" | "data_key_not_required" | "currentness_conflict" | "ineligible_state" | "custody_pending" | "content_unavailable" | "requester_custody_unavailable",
+        readonly preExecutionFailure?: AutomationRunPreExecutionFailureV1) {
         super(code);
         this.name = "WorkflowRunServiceError";
     }
@@ -944,12 +947,33 @@ export async function getWorkflowRunControl(params: Readonly<{ accountId: string
     }, { isolationLevel: 'ReadCommitted', transactionClass: 'workflow-get-run-control' });
 }
 
+const preExecutionFailureSelect = {
+    state: true, automationId: true, errorCode: true, errorMessage: true, workflowAcceptedSnapshotEnvelope: true,
+} satisfies Prisma.AutomationRunSelect;
+
+function refuseExactPreExecutionFailure(
+    row: Prisma.AutomationRunGetPayload<{ select: typeof preExecutionFailureSelect }>,
+    keyCensus: Pick<WorkflowRunRecipientCensusResponseV1, 'ownerAccountId' | 'encryptionMode'>,
+    accountId: string,
+) {
+    if (accountId !== keyCensus.ownerAccountId || row.state !== 'failed'
+        || row.workflowAcceptedSnapshotEnvelope !== null || row.automationId === null || row.errorCode !== 'target_unavailable') return;
+    const envelope = parseAutomationRunFailureDetailStoredEnvelopeV1(row.errorMessage);
+    const validEnvelope = envelope !== null && validateAutomationRunFailureDetailStoredEnvelopeOuterForModeV1({
+        mode: keyCensus.encryptionMode, envelope,
+    }).kind === 'available';
+    throw new WorkflowRunServiceError(row.errorCode, {
+        automationId: row.automationId, envelope: validEnvelope ? row.errorMessage : null,
+    });
+}
+
 export async function getWorkflowRun(params: Readonly<{ accountId: string; runId: string }>) {
     return await inTx(async (tx) => {
         const { run: row, keyCensus } = await withWorkflowRunAccess(() => readWorkflowRunWithKeyProjectionInTx(tx,
-            { actorAccountId: params.accountId, runId: params.runId }, workflowRunSelect));
+            { actorAccountId: params.accountId, runId: params.runId }, { ...workflowRunSelect, errorMessage: true }));
         const mode = keyCensus.encryptionMode;
         if (row.workflowAcceptedSnapshotEnvelope === null) {
+            refuseExactPreExecutionFailure(row, keyCensus, params.accountId);
             if (row.errorCode === "requester_custody_unavailable") throw new WorkflowRunServiceError(row.errorCode);
             throw new WorkflowRunServiceError(row.workflowCustodyState === "pending" ? "custody_pending" : "content_unavailable");
         }
@@ -1858,7 +1882,8 @@ export async function listWorkflowRunInvocations(params: PageOptions & Readonly<
     if (params.cursor && (!afterSequence || !afterId || !/^(0|[1-9][0-9]*)$/.test(afterSequence) || BigInt(afterSequence) > MAX_DATABASE_BIGINT)) throw new WorkflowRunServiceError("invalid_input");
     return await inTx(async (tx) => {
         const { run, keyCensus } = await withWorkflowRunAccess(() => readWorkflowRunWithKeyProjectionInTx(tx,
-            { actorAccountId: params.accountId, runId: params.runId }, { revision: true }));
+            { actorAccountId: params.accountId, runId: params.runId }, { revision: true, ...preExecutionFailureSelect }));
+        if (params.progressEnvelopes || params.invocationId !== undefined) refuseExactPreExecutionFailure(run, keyCensus, params.accountId);
         const mode = keyCensus.encryptionMode;
         // Both history and newest-member windows disclose the same admitted
         // progress sidecar and spend the same exact response-byte budget.
@@ -2059,7 +2084,8 @@ async function readCurrentWorkflowRunInvocationRowInTx(tx: Tx, params: Readonly<
 export async function getWorkflowRunInvocation(params: Readonly<{ accountId: string; runId: string; invocationId: string }>) {
     return await inTx(async (tx) => {
         const { run, keyCensus } = await withWorkflowRunAccess(() => readWorkflowRunWithKeyProjectionInTx(tx,
-            { actorAccountId: params.accountId, runId: params.runId }, { revision: true }));
+            { actorAccountId: params.accountId, runId: params.runId }, { revision: true, ...preExecutionFailureSelect }));
+        refuseExactPreExecutionFailure(run, keyCensus, params.accountId);
         const mode = keyCensus.encryptionMode;
         const row = await tx.workflowRunInvocation.findFirst({ where: { id: params.invocationId, runId: params.runId }, select: invocationSelect }) as InvocationRow | null;
         if (!row) throw new WorkflowRunServiceError("run_not_found");

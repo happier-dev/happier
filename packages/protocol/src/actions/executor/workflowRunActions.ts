@@ -22,6 +22,8 @@ import { deriveWorkflowDestinationsV1, WorkflowDiscussionOriginV1Schema, type Wo
 import { listWorkflowAcceptedLeafSelectionsV1 } from '../../workflows/workflowStepSelectionV1.js';
 import { workflowBlockOrdinalV1 } from '../../workflows/workflowStepLabel.js';
 import { walkWorkflowBlocks } from '../../workflows/workflowDefinitionEditV1.js';
+import { AutomationRunPreExecutionFailureV1Schema, openAutomationRunFailureDetailStoredEnvelopeV1,
+  parseAutomationRunFailureDetailStoredEnvelopeV1 } from '../../automations/automationRunFailureDetailStoredContent.js';
 import { WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, type WorkflowAuthoredInputV1, type WorkflowProgressEnvelopeV1, type WorkflowUsageV1, type WorkflowInvocationRecoveryAvailabilityV1, type WorkflowRunInvocationIndexV1, type WorkflowRunSummaryV1, classifyWorkflowHoldV1, isWorkflowDraftPublicationLifecycleV1, applyWorkflowInvocationFactV1 } from '../../workflows/workflowProgressV1.js';
 import { WorkflowActionOutputSchemasV1, WorkflowRunWaitSnapshotV1Schema, WorkflowRunListRequestV1Schema, WorkflowRunListResultV1Schema, WorkflowRunAcceptedContextV1Schema, type WorkflowRunPrivateMetadataV1, type WorkflowRunAcceptedContextV1 } from '../../workflows/actionsV1.js';
 import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLeavesV1, readWorkflowRunLeafStartRequestV1,
@@ -859,6 +861,31 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     } } : {}),
   };
   const encryption = async (signal?: AbortSignal) => await deps.resolveEncryption(signal);
+  const rethrowPreExecutionFailure = async (error: unknown, runId: string, signal?: AbortSignal) => {
+    if (!error || typeof error !== 'object' || !('response' in error)) return;
+    const response = error.response;
+    if (!response || typeof response !== 'object' || !('status' in response) || response.status !== 422
+      || !('data' in response) || !response.data || typeof response.data !== 'object' || Array.isArray(response.data)) return;
+    const data = record(response.data);
+    if (data.error !== 'target_unavailable') return;
+    const failure = AutomationRunPreExecutionFailureV1Schema.safeParse(data.preExecutionFailure);
+    if (!failure.success || failure.data.envelope === null) return;
+    const envelope = parseAutomationRunFailureDetailStoredEnvelopeV1(failure.data.envelope);
+    if (envelope === null) return;
+    const enc = await (deps.resolveReadEncryption ?? encryption)(signal).catch(() => {
+      signal?.throwIfAborted();
+      return null;
+    });
+    if (enc === null) return;
+    const opened = openAutomationRunFailureDetailStoredEnvelopeV1({ mode: enc.witness.mode, envelope,
+      ...('material' in enc ? { material: enc.material.material } : {}) });
+    if (opened.kind !== 'available' || opened.correspondence.runId !== runId
+      || opened.correspondence.automationId !== failure.data.automationId
+      || opened.failureCause?.errorCode !== data.error
+      || !('diagnostic' in opened.failureCause) || opened.failureCause.diagnostic === undefined) return;
+    throw createActionExecuteFailureError({ ok: false, errorCode: data.error, error: data.error,
+      details: { code: data.error, ...opened.failureCause.diagnostic }, failureCause: opened.failureCause });
+  };
   const getSnapshot = async (runId: string, signal?: AbortSignal, publisherMachineId?: string) => {
     try {
       return parseSnapshot(await deps.storage.execute(
@@ -867,6 +894,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       ));
     } catch (error) {
       if (isNotFound(error)) throw workflowError('run_not_found');
+      await rethrowPreExecutionFailure(error, runId, signal);
       translateStorageError(error);
     }
   };
@@ -3297,6 +3325,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           }),
         });
       } catch (error) {
+        await rethrowPreExecutionFailure(error, args.input.runId, args.context.signal);
         translateStorageError(error);
       }
     }

@@ -257,7 +257,8 @@ export function registerWorkflowRunStorageRoutes(
             }
             if (!(error instanceof WorkflowRunServiceError)) throw error;
             const status = error.code === "run_not_found" ? 404 : error.code === "run_access_denied" ? 403 : error.code === "currentness_conflict" ? 409 : 422;
-            return reply.code(status).send({ error: error.code });
+            return reply.code(status).send({ error: error.code,
+                ...(error.preExecutionFailure === undefined ? {} : { preExecutionFailure: error.preExecutionFailure }) });
         }
     });
 }

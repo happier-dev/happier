@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import { logger } from '@/ui/logger';
 import { tmpdir } from 'node:os';
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, type WorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -53,9 +54,11 @@ describe('scoped Automation daemon admission', () => {
     { agentId: 'external.review/assistant', target: { kind: 'agent' as const, identity: { pluginId: 'external.review', localId: 'assistant' } } },
     { agentId: 'claude', target: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, r41d: true },
     { agentId: 'claude', target: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, r41d: true, differentMachine: true },
-  ])('materializes scoped built-in roles from the authenticated $agentId origin Session engine ($r41d, differentMachine=$differentMachine)', async ({ agentId, target, ...scenario }) => {
+    { agentId: 'claude', target: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, stoppedGuest: true },
+  ])('materializes scoped built-in roles from the authenticated $agentId origin Session engine ($r41d, differentMachine=$differentMachine, stoppedGuest=$stoppedGuest)', async ({ agentId, target, ...scenario }) => {
     const r41d = 'r41d' in scenario;
     const differentMachine = 'differentMachine' in scenario;
+    const stoppedGuest = 'stoppedGuest' in scenario;
     const profile = ProfileRecordV1Schema.parse({ v: 1, id: 'origin-launch', enabled: true,
       definition: { kind: 'inline', profile: { v: 2, id: 'origin-launch', name: 'Origin launch', createdAt: 1, updatedAt: 1 } },
       promptStack: [], secretBindings: {},
@@ -71,17 +74,21 @@ describe('scoped Automation daemon admission', () => {
       definitionId: 'qa-c-exact-args' };
     const secondOpinionKey = buildBackendTargetKeyV2(secondOpinionTarget);
     const targetKey = buildBackendTargetKeyV2(target);
-    const accountId = 'account-1';
+    const machineOwnerAccountId = 'machine-owner';
+    const accountId = stoppedGuest ? 'guest-requester' : machineOwnerAccountId;
     const machineId = 'machine-1';
     const sessionId = 'c123456789012345678901234';
     const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
-    const credentials = { token: 'token', encryption: null } as const;
+    const credentials = { token: stoppedGuest
+      ? `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`
+      : 'token', encryption: null } as const;
     const home = configuration.apiServerUrl;
     const captured = new Error('accepted_scoped_builtin_captured');
+    const debug = vi.spyOn(logger, 'debug');
     const snapshots: WorkflowAcceptedSnapshotV1[] = [];
     mocks.fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1,
       signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
-    mocks.fetchSessionById.mockResolvedValue({ id: sessionId, seq: 0, active: true, activeAt: 1,
+    mocks.fetchSessionById.mockResolvedValue({ id: sessionId, seq: 0, active: !stoppedGuest, activeAt: 1,
       createdAt: 1, updatedAt: 1, metadataVersion: 0, agentStateVersion: 0, agentState: null,
       dataEncryptionKey: null, encryptionMode: 'plain', metadataLayoutVersion: 0,
       metadata: JSON.stringify({ machineId: differentMachine ? 'other-machine' : machineId, path: tmpdir(),
@@ -99,7 +106,11 @@ describe('scoped Automation daemon admission', () => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/account/profile') return { status: 200, data: { id: accountId } };
       if (path === `/v1/machines/${machineId}`) return { status: 200, data: {
-        machine: { ...createAvailableSessionSpawnMachineSnapshot(machineId), storageMode: 'plain' },
+        machine: { ...createAvailableSessionSpawnMachineSnapshot(machineId), storageMode: 'plain',
+          accountId: machineOwnerAccountId, ...(stoppedGuest ? { access: {
+            role: 'use', custodian: { accountId: machineOwnerAccountId, displayName: 'Machine owner' },
+            resourceMode: 'plain', accessState: 'ready',
+          } } : {}) },
       } };
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
@@ -208,7 +219,13 @@ describe('scoped Automation daemon admission', () => {
       expect(await resolveWorkflowSessionConversation({ credentials, sessionId, machineId })).toBeNull();
       return;
     }
-    await expect(admission).rejects.toBe(captured);
+    await expect(admission.catch(error => { if (error !== captured) throw error; return 'captured'; }).then(result => {
+      if (result !== 'captured' && stoppedGuest) {
+        throw new Error(JSON.stringify(debug.mock.calls.filter(([message]) =>
+          message === '[WORKFLOW] Trigger admission refused before initialization').at(-1)?.[1] ?? result));
+      }
+      return result;
+    })).resolves.toBe('captured');
     expect(await resolveWorkflowSessionConversation({ credentials, sessionId, machineId }))
       .toMatchObject({ agentTarget: target, runtimeSelection: { agentTarget: target } });
     expect(snapshots[0]).toMatchObject({ source: { kind: 'catalog', ref: 'builtin:keep-going' },

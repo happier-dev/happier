@@ -167,6 +167,16 @@ it('rejects worker publication and unknown operations before any Account request
     expect(runtimeFetch).not.toHaveBeenCalled();
 });
 
+it('preserves the requester’s pre-execution refusal on an exact Workflow storage read', async () => {
+    const failure = { error: 'target_unavailable', preExecutionFailure: { automationId: 'automation-1', envelope: 'private-envelope' } };
+    const storage = createWorkflowRunAccountStorage({
+        credentials: { token: 'captured-token' }, serverId: 'captured-home', assertCurrent: () => {},
+        request: async () => Response.json(failure, { status: 422 }),
+    });
+    await expect(storage.execute({ operation: 'invocations.get', runId: 'run-1', invocationId: 'invocation-1' }))
+        .rejects.toMatchObject({ code: 'target_unavailable', response: { status: 422, data: failure } });
+});
+
 it('uses captured ordinary credentials and propagates canonical transport errors', async () => {
     const home = await upsertAndActivateServer({ serverUrl: 'https://workflow-storage-api.test', scope: 'tab' });
     runtimeFetch.mockRejectedValue(new Error('unexpected_capability_probe'));

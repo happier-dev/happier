@@ -15,7 +15,7 @@ import type {
 import type { TranslationKeyNoParams } from '@/text/i18n';
 import { t } from '@/text';
 import { formatAutomationRunCauseLabel } from '@/components/automations/list/automationListFormatting';
-import { describeWorkflowOperationProblem, formatWorkflowConversationProblem } from '@/components/workflows/presentation/workflowProblemPresentation';
+import { describeWorkflowOperationProblem, describeWorkflowTargetUnavailableProblem, formatWorkflowConversationProblem } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { WORKFLOW_STEP_PREPARATION_FAILED } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import type { WorkflowInvocationStructureEntry } from './workflowInvocationStructure';
@@ -437,6 +437,11 @@ const RECORDED_TRANSPORT_FAILURE_KEYS = {
     // The stored Session reply was altered by secret masking; the decode reason stays in Technical details.
     [WORKFLOW_SESSION_REPLY_SECRET_MASKED_CODE]: 'workflows.recovery.replySecretMasked',
 } as const satisfies Readonly<Record<string, TranslationKeyNoParams>>;
+
+export function formatWorkflowPreExecutionFailure(cause: import('@happier-dev/protocol/actions/actionExecutionResult').ActionFailureCauseV1 | undefined): string | null {
+    if (cause?.errorCode !== 'target_unavailable') return null;
+    return describeWorkflowTargetUnavailableProblem('diagnostic' in cause ? cause.diagnostic : undefined).message;
+}
 
 function describeRecordedTransportFailure(code: string): string | null {
     const key = Object.hasOwn(RECORDED_TRANSPORT_FAILURE_KEYS, code)

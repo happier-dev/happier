@@ -158,7 +158,7 @@ describe('workflowProblemPresentation', () => {
             failure: { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
                 details: { code: 'target_unavailable', reason: 'agent_probe_failed', agentId: 'claude', errorCode: 'cli-detection-failed' } } });
         expect(resolveWorkflowProblemPresentation(error)).toMatchObject({
-            code: 'target_unavailable', message: 'machineAgents.unknown', repair: 'retry', accessibilitySemantics: 'alert',
+            code: 'target_unavailable', message: 'workflows.problem.preExecution.agentProbeFailed', repair: 'retry', accessibilitySemantics: 'alert',
         });
     });
     it('distinguishes unsupported architecture from a failed probe without sending install repairs to Account settings', () => {

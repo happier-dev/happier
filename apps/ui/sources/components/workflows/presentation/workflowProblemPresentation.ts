@@ -156,25 +156,25 @@ const WORKFLOW_TARGET_REASON_SHAPES = {
     role_source_incomplete: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
     role_overrides_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
     spawn_policy_invalid: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    materialization_owner_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
+    materialization_owner_unavailable: { messageKey: 'workflows.problem.preExecution.materializationUnavailable', repair: 'retry' },
     run_admission_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
     target_binding_mismatch: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
     publisher_machine_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
     requester_runtime_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
     credentialed_factory_failed: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    profile_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    engine_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    machine_check_failed: { messageKey: 'machineAgents.unknown', repair: 'retry' },
-    agent_probe_failed: { messageKey: 'machineAgents.unknown', repair: 'retry' },
+    profile_unavailable: { messageKey: 'workflows.problem.preExecution.profileUnavailable', repair: 'none' },
+    engine_unavailable: { messageKey: 'workflows.problem.preExecution.engineUnavailable', repair: 'none' },
+    machine_check_failed: { messageKey: 'workflows.problem.preExecution.machineCheckFailed', repair: 'retry' },
+    agent_probe_failed: { messageKey: 'workflows.problem.preExecution.agentProbeFailed', repair: 'retry' },
     agent_not_installed: { messageKey: 'machineAgents.notInstalled', repair: 'none' },
     platform_unsupported: { messageKey: 'machineAgents.unsupportedOs', repair: 'none' },
     dependency_not_installed: { messageKey: 'machineAgents.blockSetUpToStart', repair: 'none' },
-    session_unavailable: { messageKey: 'workflows.problem.conversationUnavailable', repair: 'none' },
-    action_unavailable: { messageKey: 'workflows.problem.unavailableHere', repair: 'none' },
-    selection_unavailable: { messageKey: 'workflows.problem.targetUnavailable', repair: 'none' },
-    session_creation_unavailable: { messageKey: 'workflows.problem.unavailableHere', repair: 'none' },
-    detached_execution_unavailable: { messageKey: 'workflows.problem.unavailableHere', repair: 'none' },
-    workspace_unavailable: { messageKey: 'projects.open.unsupported', repair: 'none' },
+    session_unavailable: { messageKey: 'workflows.problem.conversationChecks.session_unavailable', repair: 'none' },
+    action_unavailable: { messageKey: 'workflows.problem.preExecution.actionUnavailable', repair: 'none' },
+    selection_unavailable: { messageKey: 'workflows.problem.preExecution.selectionUnavailable', repair: 'none' },
+    session_creation_unavailable: { messageKey: 'workflows.problem.preExecution.sessionCreationUnavailable', repair: 'none' },
+    detached_execution_unavailable: { messageKey: 'workflows.problem.preExecution.detachedExecutionUnavailable', repair: 'none' },
+    workspace_unavailable: { messageKey: 'workflows.problem.workspaceUnavailable', repair: 'none' },
 } as const satisfies Readonly<Record<WorkflowTargetUnavailableReasonV1, Pick<WorkflowProblemShape, 'messageKey' | 'repair'>>>;
 
 export function formatWorkflowDefinitionContentUnavailableReason(reason: WorkflowDefinitionContentUnavailableReasonV1): string {
@@ -314,10 +314,7 @@ function resolveWorkflowProblemCopy(
                 messageKey: 'workflows.problem.committedRevisionUnavailable', repair: 'none',
             });
         }
-        return present(code, { ...WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-            ...WORKFLOW_TARGET_REASON_SHAPES[failure.details.reason],
-            ...(failure.details.reason === 'platform_unsupported' && failure.details.platformReason === 'arch'
-                ? { messageKey: 'machineAgents.unsupportedArch' } : {}) });
+        return describeWorkflowTargetUnavailableProblem(failure.details);
     }
     if (failure?.errorCode === 'content_unavailable' && failure.details !== undefined) {
         if (failure.details.reason === 'not_found') {
@@ -338,6 +335,17 @@ function resolveWorkflowProblemCopy(
 /** A known private-read reason from the metadata owner uses the same presentation as an Action failure. */
 export function describeWorkflowOperationProblem(code: WorkflowOperationErrorCodeV1): WorkflowProblemPresentation {
     return present(code, WORKFLOW_PROBLEM_SHAPES[code]);
+}
+
+export function describeWorkflowTargetUnavailableProblem(diagnostic?: Readonly<{
+    reason: WorkflowTargetUnavailableReasonV1;
+    platformReason?: 'os' | 'arch';
+}>): WorkflowProblemPresentation {
+    const reason = diagnostic?.reason;
+    return present('target_unavailable', { ...WORKFLOW_PROBLEM_SHAPES.target_unavailable,
+        ...(reason === undefined ? {} : WORKFLOW_TARGET_REASON_SHAPES[reason]),
+        ...(reason === 'platform_unsupported' && diagnostic?.platformReason === 'arch'
+            ? { messageKey: 'machineAgents.unsupportedArch' } : {}) });
 }
 
 /** A Run can fail before it has an invocation that could carry its cause. */

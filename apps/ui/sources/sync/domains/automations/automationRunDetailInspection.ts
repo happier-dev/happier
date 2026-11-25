@@ -1,3 +1,4 @@
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { AutomationRunTriggerEvidenceEnvelopeV1ReadSchema, AutomationRunTriggerEvidenceV1Schema, inspectAutomationRunExecutionRecipeOuterV1, materializeAutomationRunExecutionRecipeV1, parseAutomationRunExecutionRecipeV1, type AutomationRunExecutionRecipeMaterializationResultV1, type AutomationRunTriggerEvidenceV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { openAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -77,6 +78,7 @@ export type AutomationRunDetailFailureDetailInspection =
         kind: 'available';
         correspondence: AutomationRunFailureDetailCorrespondenceV1;
         detail: string;
+        failureCause?: ActionFailureCauseV1;
     }>
     | Readonly<{ kind: 'absent' }>
     | Readonly<{ kind: 'unavailable'; reason: 'materialUnavailable' | 'currentnessUnavailable' }>
@@ -272,6 +274,7 @@ function inspectFailureDetail(params: Readonly<{
         kind: 'available',
         correspondence: opened.correspondence,
         detail: opened.detail,
+        ...(opened.failureCause === undefined ? {} : { failureCause: opened.failureCause }),
     };
 }
 

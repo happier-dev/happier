@@ -110,6 +110,9 @@ describe('Automation Run failure detail sealing', () => {
         ...(material ? { material: material.material } : {}) });
       expect(opened).toMatchObject({ kind: 'available', detail: expect.stringContaining('agent_not_installed') });
       expect(opened).toMatchObject({ detail: expect.stringContaining('not installed on this Machine') });
+      expect(opened).toMatchObject({
+        failureCause: { errorCode: 'target_unavailable', diagnostic: { reason: 'agent_not_installed' } },
+      });
       if (mode === 'e2ee') expect(String(failure?.errorDetailEnvelope)).not.toContain('agent_not_installed');
       return;
     }

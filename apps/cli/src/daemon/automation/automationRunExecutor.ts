@@ -2,7 +2,7 @@ import { sameAutomationAccountContentIdentityV1 } from '@happier-dev/protocol/au
 import { sealAutomationRunFailureDetailStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
 import type { ActionExecuteResult, ActionExecutorContext, ActionId, AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol';
 import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { materializeAutomationRunExecutionRecipeV1, parseAutomationRunExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import {
   isAvailableE2eeAutomationAccountEncryptionV1,
@@ -87,6 +87,7 @@ function createV3RunFailureSettlement(params: Readonly<{
   accountEncryption: AvailableAutomationAccountEncryptionV1;
   errorCode: string;
   errorMessage: string;
+  failureCause?: ActionFailureCauseV1;
   producedSessionId?: string | null;
 }>): AutomationV3RunFailureSettlement {
   let errorDetailEnvelope: string | null = null;
@@ -99,6 +100,7 @@ function createV3RunFailureSettlement(params: Readonly<{
           runId: params.claimed.run.id,
         },
         detail: params.errorMessage,
+        ...(params.failureCause === undefined ? {} : { failureCause: params.failureCause }),
       })
       : isAvailableE2eeAutomationAccountEncryptionV1(params.accountEncryption)
         ? sealAutomationRunFailureDetailStoredEnvelopeV1({
@@ -108,6 +110,7 @@ function createV3RunFailureSettlement(params: Readonly<{
             runId: params.claimed.run.id,
           },
           detail: params.errorMessage,
+          ...(params.failureCause === undefined ? {} : { failureCause: params.failureCause }),
           material: params.accountEncryption.material.material,
           randomBytes: getRandomBytes,
         })
@@ -139,6 +142,7 @@ async function failV3ClaimedRunBeforeStart(params: Readonly<{
   errorCode: string;
   terminalState?: 'skipped';
   errorMessage: string;
+  failureCause?: ActionFailureCauseV1;
 }>): Promise<void> {
   if (!params.isCurrent()) return;
   const currentness = await resolveMatchingAutomationCurrentness({
@@ -154,6 +158,7 @@ async function failV3ClaimedRunBeforeStart(params: Readonly<{
       accountEncryption: currentness,
       errorCode: params.errorCode,
       errorMessage: params.errorMessage,
+      ...(params.failureCause === undefined ? {} : { failureCause: params.failureCause }),
     }),
     ...(params.terminalState !== undefined ? { terminalState: params.terminalState } : {}),
   });
@@ -349,6 +354,15 @@ export async function executeClaimedRun(params: {
             machineId, claimed, claimClient, signal: executionController.signal, isCurrent,
             resolveAutomationAccountEncryption: params.resolveAutomationAccountEncryption,
             errorCode: result.reason,
+            ...(result.targetUnavailableReason === undefined ? {} : {
+              failureCause: {
+                phase: 'workflow.trigger_admission', errorClass: 'Error',
+                errorCode: 'target_unavailable', httpStatus: null,
+                diagnostic: { reason: result.targetUnavailableReason,
+                  ...(result.targetUnavailablePlatformReason === undefined ? {}
+                    : { platformReason: result.targetUnavailablePlatformReason }) },
+              },
+            }),
             ...(result.state === 'skipped' ? { terminalState: 'skipped' as const } : {}),
             errorMessage: `${refusalMessage}${result.blockId === undefined ? '' : ` (block ${result.blockId})`}`,
           });

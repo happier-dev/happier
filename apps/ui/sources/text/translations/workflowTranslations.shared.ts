@@ -33,7 +33,22 @@ import { workflowActionTranslationsEnglish as workflowActionTranslations } from 
 
 
 
-export type WorkflowTranslatedLocale = Omit<typeof en, 'input'> & Readonly<{
+const preExecutionProblemCopy = {
+    machineCheckFailed: 'Happier couldn’t check the machine this workflow uses.',
+    agentProbeFailed: 'Happier couldn’t check whether the selected agent can start.',
+    selectionUnavailable: 'The workflow’s selected target is unavailable.',
+    actionUnavailable: 'This action is unavailable for the workflow’s target.',
+    sessionCreationUnavailable: 'The selected agent cannot start a session for this workflow.',
+    detachedExecutionUnavailable: 'The selected agent cannot run this workflow step in the background.',
+    materializationUnavailable: 'Happier couldn’t prepare this workflow to start.',
+    profileUnavailable: 'The launch profile selected by this workflow is unavailable.',
+    engineUnavailable: 'The agent selected for this role is unavailable.',
+};
+
+export type WorkflowTranslatedLocale = Omit<typeof en, 'input' | 'problem'> & Readonly<{
+    problem: Omit<typeof en.problem, 'preExecution'> & {
+        preExecution?: Readonly<Partial<Record<keyof typeof preExecutionProblemCopy, string>>>;
+    };
     input: Omit<typeof en.input, keyof typeof workflowReferenceScopeTranslations | keyof typeof workflowValueReferenceTranslations.en>
         & Partial<typeof workflowReferenceScopeTranslations>;
 }>;
@@ -47,6 +62,7 @@ export function translated(
     return {
         ...value,
         input: { ...workflowReferenceScopeTranslations, ...valueReferences, ...value.input },
+        problem: { ...value.problem, preExecution: { ...preExecutionProblemCopy, ...value.problem.preExecution } },
     };
 }
 
@@ -974,6 +990,7 @@ export const en = {
      * person.
      */
     problem: {
+        preExecution: preExecutionProblemCopy,
         commandFailed: 'The command failed.',
         title: 'That did not work',
         waitingTitle: 'Not possible yet',

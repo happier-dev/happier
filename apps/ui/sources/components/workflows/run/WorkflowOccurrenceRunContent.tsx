@@ -1,6 +1,7 @@
 import { AUTOMATION_REPLY_HANDOFF_BLOCKED_EVENT_TYPE } from '@happier-dev/protocol/automations/event';
 import { describeWorkflowReplyHandoffProblem } from '../presentation/workflowProblemPresentation';
 import * as React from 'react';
+import { formatWorkflowPreExecutionFailure } from './workflowRunDetailPresentation';
 import { View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -474,6 +475,8 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
     const { automationId, runId } = props.target;
     const detail = useWorkflowOccurrenceRunDetail(props);
     const { accountLifetime, scopeUnavailable, run, runProblem, privateContent, currentDetail, loading, loadFailed, cancelling, refresh, handleCancel } = detail;
+    const preExecutionFailure = privateContent?.failureDetail.kind === 'available'
+        ? formatWorkflowPreExecutionFailure(privateContent.failureDetail.failureCause) : null;
     const unknownDate = t('automations.detail.unknownDate');
     const title = runId ? t('runs.runLabel', { runId }) : t('runs.title');
     const canCancel = run?.state === 'queued' || run?.state === 'claimed' || run?.state === 'running';
@@ -567,7 +570,7 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
                             <Item title={formatAutomationRunStateLabel(run)} showChevron={false} mode="info" />
                             {runProblem !== null || run.errorCode ? (
                                 <Item
-                                    title={runProblem?.message ?? t('automations.detail.runMeta.error', { message: run.errorCode ?? '' })}
+                                    title={preExecutionFailure ?? runProblem?.message ?? t('automations.detail.runMeta.error', { message: run.errorCode ?? '' })}
                                     subtitleLines={0}
                                     showChevron={false}
                                     mode="info"
