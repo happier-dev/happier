@@ -11754,7 +11754,7 @@ describe("external Action execution authorization", () => {
         const io = { in: (room: string) => ({ fetchSockets: async () => publisherVisible
             && room === getAccountSessionSocketRoom(fixture.account.id, session.id) ? [publisher] : [] }) } as unknown as Server;
         const resolvePublisher = (input: Readonly<{ accountId: string; sessionId: string }>) => resolveCurrentSessionMachineFromServer({ io, presence, ...input });
-        const { app } = await createApp(fixture.team.id, false, resolvePublisher);
+        const { app } = await createApp(fixture.team.id, false, resolvePublisher, undefined, false, undefined, true);
         const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
         const homeId = await getOrCreateServerIdentityId();
         const origin = SessionActionRpcOriginV1Schema.parse({ v: 1, caller: { kind: 'session', sessionId: session.id, starterDepth: 1, turnDepth: 2 },
@@ -11892,6 +11892,49 @@ describe("external Action execution authorization", () => {
                 params: rpcParams, resolveCurrentSessionMachine: resolvePublisher })).toMatchObject({
                 principal: { accountId: fixture.account.id, authority: 'account_automation', sessionActionOrigin: origin },
                 binding: { machineId: destination.id, handoffContinuation: { handoffId } } });
+            // Before delivery the SOURCE reads its bound receiver's content codec with this same continuation.
+            const continuationHttp = (method: string, path: string, body?: unknown, privateKey = fixture.keyPair.secretKey,
+                authorization = child, effectActionId = actionId) => verifyExternalActionDomainExecutionRequest({
+                authorizationToken: authorization.token, effectActionId,
+                encodedTarget: encodeExternalActionResolvedTargetV1(authorization.binding.target), method, path, body,
+                machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token, effectActionId,
+                    target: authorization.binding.target, installationId: authorization.binding.installationId,
+                    requestId: authorization.binding.requestId, method, path, ...(body === undefined ? {} : { body }), privateKey }),
+                resolveCurrentSessionMachine: resolvePublisher });
+            expect(await continuationHttp('GET', `/v1/machines/${destination.id}`)).not.toBeNull();
+            expect(await continuationHttp('GET', `/v1/machines/${fixture.machine.id}`)).toBeNull();
+            expect(await continuationHttp('GET', `/v1/machines/${destination.id}`, undefined, tweetnacl.sign.keyPair().secretKey)).toBeNull();
+            expect(await continuationHttp('POST', `/v1/machines/${destination.id}`, {})).toBeNull();
+            expect(await continuationHttp('GET', `/v1/machines/${destination.id}/content-key/transition`)).toBeNull();
+            expect(await continuationHttp('GET', `/v1/machines/${destination.id}`, undefined, fixture.keyPair.secretKey,
+                root, 'session.handoff')).toBeNull();
+            const sourceBound = await auth.deriveExternalActionHandoffAuthorization(root, { kind: 'continuation',
+                machineId: fixture.machine.id, actionId, handoffId, requestEnvelopeDigest: child.binding.requestEnvelopeDigest });
+            expect(await continuationHttp('GET', `/v1/machines/${destination.id}`, undefined, fixture.keyPair.secretKey,
+                sourceBound)).toBeNull();
+            // prepare_target, the phase this read precedes, is minted with the same continuation shape.
+            const prepareTarget = await auth.deriveExternalActionHandoffAuthorization(root, { kind: 'continuation',
+                machineId: destination.id, actionId: 'session.handoff.prepare_target', handoffId,
+                requestEnvelopeDigest: child.binding.requestEnvelopeDigest });
+            expect(await continuationHttp('GET', `/v1/machines/${destination.id}`, undefined, fixture.keyPair.secretKey,
+                prepareTarget, 'session.handoff.prepare_target')).not.toBeNull();
+            expect(await continuationHttp('GET', `/v1/machines/${destination.id}`, undefined, fixture.keyPair.secretKey,
+                prepareTarget, actionId)).toBeNull();
+            // Home's route answers it with the requester's own ordinary projection of that Machine, nothing more.
+            const continuationRead = await app.inject({ method: 'GET', url: `/v1/machines/${destination.id}`,
+                headers: { ...currentAccountStoredContentCompatibilityHeaders,
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: child.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(child.binding.target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: child.token,
+                        effectActionId: actionId, target: child.binding.target, installationId: child.binding.installationId,
+                        requestId: child.binding.requestId, method: 'GET', path: `/v1/machines/${destination.id}`,
+                        privateKey: fixture.keyPair.secretKey }) } });
+            const ownerRead = await app.inject({ method: 'GET', url: `/v1/machines/${destination.id}`,
+                headers: { authorization: `Bearer ${token}`, ...currentAccountStoredContentCompatibilityHeaders } });
+            expect(continuationRead.statusCode, continuationRead.body).toBe(200);
+            expect(ownerRead.statusCode, ownerRead.body).toBe(200);
+            expect(continuationRead.json()).toEqual(ownerRead.json());
             expect(await verifyExternalActionMachineRpcExecution({ ...execution,
                 machineSignature: rpcSignature(destinationKeys.secretKey) }, { method: rpcMethod, requestId: rpcRequestId,
                 params: rpcParams, resolveCurrentSessionMachine: resolvePublisher })).toBeNull();

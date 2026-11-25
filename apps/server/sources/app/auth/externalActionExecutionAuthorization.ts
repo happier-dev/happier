@@ -4541,7 +4541,12 @@ export async function verifyExternalActionDomainExecutionRequest(
             || isContributedActionRoot(verified.binding.actionId)
             || verified.signedChildPurpose.sibling.archiveStop
             || verified.signedChildPurpose.sibling.reviewScmPreparation
-            || verified.signedChildPurpose.sibling.projectPrepareReview);
+            || verified.signedChildPurpose.sibling.projectPrepareReview)
+        // A Session-placed handoff phase is delivered to the one Machine its continuation binds.
+        || Boolean(verified.binding.handoffContinuation) && isOriginalAccountHandoffAction(verified.binding.actionId)
+        && verified.effectActionId === verified.binding.actionId && verified.binding.target.kind === 'machine'
+        && verified.binding.target.machineId === verified.binding.machineId
+        && isExactExecutionMachineLookup(verified.binding.machineId, proof);
     const managedRoot = ManagedMachineActionIdV1Schema.safeParse(verified.binding.actionId);
     const admittedReadRootRequesterGet = isAdmittedReadRootRequesterGet(verified, proof);
     const reviewedMachineSetupChild = verified.signedChildPurpose.reviewedMachineSetupChild
