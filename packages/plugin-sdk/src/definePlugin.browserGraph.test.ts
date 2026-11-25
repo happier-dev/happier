@@ -1,5 +1,4 @@
 import { Buffer } from 'node:buffer';
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -28,36 +27,6 @@ import { describe, expect, it } from 'vitest';
 // budget.
 const BROWSER_GRAPH_MAX_BYTES = 256 * 1024;
 
-/**
- * What this entry reaches is a source fact. Resolving `@happier-dev/protocol`
- * subpaths through the bundled workspace copy under `node_modules` would measure
- * whichever dist happened to be built last — and would keep measuring the old graph
- * after a source change — so every subpath Protocol's `exports` map publishes is
- * aliased to the file that produces it. Longest specifier first, because Vite matches
- * a string alias by prefix.
- */
-function readProtocolSourceAliases(): readonly Readonly<{ find: string; replacement: string }>[] {
-  const protocolDir = resolve(import.meta.dirname, '../../protocol');
-  const manifest = JSON.parse(readFileSync(resolve(protocolDir, 'package.json'), 'utf8')) as Readonly<{
-    exports: Readonly<Record<string, string | Readonly<Record<string, string>>>>;
-  }>;
-  return Object.entries(manifest.exports)
-    .flatMap(([subpath, target]) => {
-      const distPath = typeof target === 'string' ? target : target.default;
-      if (typeof distPath !== 'string') return [];
-      return [{
-        find: `@happier-dev/protocol${subpath.slice(1)}`,
-        replacement: resolve(
-          protocolDir,
-          distPath.replace(/^\.\/dist\//u, './src/').replace(/\.js$/u, '.ts'),
-        ),
-      }];
-    })
-    .sort((left, right) => right.find.length - left.find.length);
-}
-
-const protocolSourceAliases = readProtocolSourceAliases();
-
 describe('definePlugin browser graph', () => {
   it('loads attachment runtime registration fields from the browser-safe Protocol entry', async () => {
     const workspaceRequire = createRequire(resolve(import.meta.dirname, '../../package.json'));
@@ -80,9 +49,8 @@ describe('definePlugin browser graph', () => {
     let emittedBytes = 0;
 
     await build({
-      configFile: false,
+      configFile: resolve(import.meta.dirname, '../vitest.source.config.ts'),
       logLevel: 'silent',
-      resolve: { alias: protocolSourceAliases },
       plugins: [{
         name: 'define-plugin-browser-graph',
         generateBundle(_outputOptions, bundle) {

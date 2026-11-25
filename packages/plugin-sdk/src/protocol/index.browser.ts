@@ -22,7 +22,7 @@ export { ConversationPullRequestStateV1Schema } from './conversationDelivery.js'
 export { ConversationPullRequestV1Fields } from './conversationDelivery.js';
 export { ConversationPullRequestV1Schema } from './conversationDelivery.js';
 export { ConversationResolvedEndpointV1ProtocolSchema } from './conversationDelivery.js';
-export { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from './protocolFacade.js';
+export { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from './machineRoles.js';
 export { DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE } from './deployment.js';
 export { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from './deployment.js';
 export { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from './deployment.js';
@@ -161,10 +161,10 @@ export { ProtocolWorkspaceWorkerPreferenceReadResultV1Schema } from './projectEx
 export { ProtocolWorkspaceWorkerPreferenceSetInputV1Schema } from './projectExecution.js';
 export type { PublicTelemetryCollectorDomainInputV1 } from './deployment.js';
 export type { PublicTelemetryCollectorDomainResultV1 } from './deployment.js';
-export type { ReviewAttentionV1 } from './protocolFacade.js';
-export { ReviewAttentionV1ProtocolSchema } from './protocolFacade.js';
-export type { ReviewRoundBindingV1 } from './protocolFacade.js';
-export { ReviewRoundBindingV1ProtocolSchema } from './protocolFacade.js';
+export type { ReviewAttentionV1 } from './reviews.js';
+export { ReviewAttentionV1ProtocolSchema } from './reviews.js';
+export type { ReviewRoundBindingV1 } from './reviews.js';
+export { ReviewRoundBindingV1ProtocolSchema } from './reviews.js';
 export { ScmHostingProjectReadinessSourceFactV1ProtocolSchema } from './hostingRepositoryIdentity.js';
 export { ScmHostingPullRequestLifecycleActionV1ProtocolSchema } from './pullRequestLifecycle.js';
 export { ScmHostingPullRequestLifecycleV1ProtocolSchema } from './pullRequestLifecycle.js';

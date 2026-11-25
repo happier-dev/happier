@@ -1,6 +1,6 @@
 import type { PluginServices } from './index.js';
 import type { DatabaseEnginesServiceV1 } from '../databaseEngines.js';
-import type { ReviewAttentionV1 } from '../protocol/protocolFacade.js';
+import type { ReviewAttentionV1 } from '../protocol/reviews.js';
 /** @moduleRealm daemon */
 import type { InputTypeOptionsQueryV1 } from '../actions/dtos/pluginActionDtoSupport.generated.js';
 import type {
