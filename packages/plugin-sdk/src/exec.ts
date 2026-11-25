@@ -19,7 +19,11 @@ import type {
 declare const agentNativeLaunchQualifier: unique symbol;
 
 /** Host-issued cold launch intent for this exact Exec service; grants no Project permission. */
-export type AgentNativeLaunchQualifier = Readonly<{ [agentNativeLaunchQualifier]: true }>;
+export type AgentNativeLaunchQualifier = Readonly<{
+    [agentNativeLaunchQualifier]: true;
+    /** This held launch receives its native environment under another OS user. */
+    separateNativeIdentity?: true;
+}>;
 
 export type {
     DeploymentExecEnvAttachmentV1,

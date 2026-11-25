@@ -471,7 +471,8 @@ export async function createCodexNativeAppServerClient(params: CodexNativeAppSer
             })) }),
         params.initializeRequestOptions?.signal ?? params.signal,
         params.logger,
-        { processEnv: env, readVersion, versionOutput, configOverrides: params.configOverrides, cwd: params.cwd, deferUntilSpawn: true },
+        { processEnv: env, readVersion, versionOutput, configOverrides: params.configOverrides, cwd: params.cwd,
+            separateNativeIdentity: params.nativeLaunch?.separateNativeIdentity, deferUntilSpawn: true },
         params.onStartupWaiting,
     );
     return await verifyCodexNativeAppServerClient({ ...params, configOverrides: ready.configOverrides }, ready.client, resolvedSystemTool.executable);

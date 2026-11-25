@@ -1,15 +1,91 @@
 import { createHash } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentSessionControlContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentNativeLaunchQualifier, ExecService } from '@happier-dev/plugin-sdk/exec';
+import type { PluginProtocolClientKind, PluginProtocolClientSpecByKind } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import { projectProviderSessionFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { AgentRuntimeDiagnosticDataV1Schema } from '@happier-dev/protocol/runtime/agentRuntimeDiagnosticV1';
+import { createStablePluginExecService, issueAgentNativeLaunchQualifierForHost } from '../../../../../../apps/cli/src/plugins/runtime/invocation/services/exec';
 
+import { createCodexNativeAppServerClient } from './appServer/client.js';
 import { withCodexNativeAttachFixture } from './appServer/runtime.nativeAttach.test-support.js';
 import { CODEX_SUPPORTED_RUNTIME_VERSION } from '../cli/supportedRuntime.js';
 import { createCodexNativeSessionControls } from './controls.js';
 
 describe('Codex continuation native failure evidence', () => {
+  it.skipIf(process.platform !== 'linux')('reads the retained member thread after Stop and Start with daemon launch roots', async () => {
+    await withCodexNativeAttachFixture(async fixture => {
+      const memberHome = join(fixture.directory, 'member', 'native-home');
+      const daemonHome = join(fixture.directory, 'daemon', 'codex');
+      await Promise.all([memberHome, daemonHome].map(path => mkdir(path, { recursive: true, mode: 0o700 })));
+      const memberEnv = { CODEX_HOME: memberHome, CODEX_SQLITE_HOME: memberHome };
+      const daemonEnv = { CODEX_HOME: daemonHome, CODEX_SQLITE_HOME: daemonHome };
+      // The process boundary substitutes a SQLite-backed native executable and the
+      // member shim's environment projection. Actual Exec and JSON-RPC run below it.
+      const child = createStablePluginExecService({
+        environment: {}, signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        resolveExecutable: async () => ({ command: process.execPath, args: ['--no-warnings', '-e', `
+          const { DatabaseSync } = require('node:sqlite');
+          const { createInterface } = require('node:readline');
+          const { join } = require('node:path');
+          const pin = process.argv.find(arg => arg.startsWith('sqlite_home='));
+          const root = pin ? JSON.parse(pin.slice('sqlite_home='.length)) : process.env.CODEX_SQLITE_HOME;
+          if (root !== process.env.CODEX_HOME) {
+            process.stderr.write('SQLite unable to open database file', () => process.exit(1));
+          } else {
+            const db = new DatabaseSync(join(root, 'state_5.sqlite'));
+            db.exec('CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY)');
+            const input = createInterface({ input: process.stdin });
+            input.on('close', () => db.close());
+            input.on('line', line => {
+              const { id, method, params } = JSON.parse(line);
+              if (id === undefined) return;
+              if (method === 'thread/start') db.prepare('INSERT INTO threads VALUES (?)').run(params.threadId);
+              const thread = method === 'thread/read' ? db.prepare('SELECT id FROM threads WHERE id = ?').get(params.threadId) : null;
+              const reply = method === 'thread/read' && !thread
+                ? { error: { code: -32000, message: 'Thread unavailable' } }
+                : { result: thread ?? {} };
+              process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, ...reply }) + '\\n');
+            });
+          }
+        `, '--'] }),
+        resolvePath: async () => fixture.directory,
+      });
+      const spawn: ExecService['clients']['spawn'] = <K extends PluginProtocolClientKind>(
+        spec: PluginProtocolClientSpecByKind<K>,
+        options?: { signal?: AbortSignal; nativeLaunch?: AgentNativeLaunchQualifier },
+      ) => child.clients.spawn<K>(
+        options?.nativeLaunch ? { ...spec, launch: { ...spec.launch, env: memberEnv } } : spec,
+        options?.signal ? { signal: options.signal } : undefined,
+      );
+      const exec = { ...fixture.exec, clients: { ...fixture.exec.clients, spawn } };
+      const threadId = '01a204bd-6690-7160-864e-3d8262d08290';
+      const first = await createCodexNativeAppServerClient({ exec, processEnv: memberEnv, cwd: fixture.directory });
+      try {
+        await first.request('thread/start', { threadId });
+        expect(await first.request('thread/read', { threadId })).toEqual({ id: threadId });
+      } finally {
+        await first.dispose();
+      }
+      const memberUid = process.getuid!() + 1;
+      const nativeLaunch = issueAgentNativeLaunchQualifierForHost(exec, undefined, () => ({
+        runtimeHome: join(fixture.directory, 'member'), environment: {}, selectedMaterials: [],
+        nativeIdentity: { agentUid: memberUid, agentGid: memberUid, home: memberHome },
+      }));
+      const result = await createCodexNativeSessionControls().continuation.verify({
+        kind: 'resume', sessionId: 'session-1', cwd: fixture.directory, providerSessionId: threadId,
+      }, {
+        signal: new AbortController().signal,
+        services: { exec, logger: { warn: vi.fn(), debug: vi.fn() } },
+        session: { id: 'session-1', cwd: fixture.directory, activity: 'inactive', connectedAccounts: [], nativeLaunch,
+          launchEnvironment: { ...fixture.launchEnvironment, values: daemonEnv } },
+      } as unknown as AgentSessionControlContext);
+      expect(result).toEqual({ status: 'reachable' });
+    });
+  });
+
   it('logs the retained thread and app-server launch facts on a rejected lookup', async () => {
     await withCodexNativeAttachFixture(async fixture => {
       fixture.failRead();

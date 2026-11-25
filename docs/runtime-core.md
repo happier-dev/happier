@@ -3435,10 +3435,11 @@ daemon-private ancestors stay private. The existing first-party native-launch
 shim creates the native-owned alias child and grants the daemon UID traversal
 only. Readiness observes alias publication without following the private socket.
 Codex 0.162.1 keeps its physical socket under its own UID-only daemon directory.
-For a separated executing UID, SQLite defaults to the shim-selected native
-`CODEX_HOME`; startup argument construction omits the custodian's
-`CODEX_SQLITE_HOME` override. The existing OS-user startup lock covers this
-unresolved native root without opening the member's home from the custodian.
+For a separated executing UID, shared-socket startup and stdio continuation
+both use the SQLite environment selected by the native launch shim. Neither
+synthesizes a `sqlite_home` argument from the custodian's `CODEX_SQLITE_HOME`.
+The existing OS-user startup lock covers this unresolved native root without
+opening the member's home from the custodian.
 Happier connects through Codex's existing
 `app-server proxy --sock <Session alias>` under that same executing UID,
 so it preserves Codex's native directory/socket permissions and targets the exact

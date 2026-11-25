@@ -254,7 +254,10 @@ export function issueAgentNativeLaunchQualifierForHost(service: ExecService,
         qualifiers = new WeakSet();
         INTERNAL_NATIVE_LAUNCH_QUALIFIERS.set(service, qualifiers);
     }
-    const qualifier = Object.freeze({});
+    const material = readMcpLaunchMaterial?.();
+    const hostUid = process.getuid?.();
+    const separateNativeIdentity = material && hostUid !== undefined && material.nativeIdentity.agentUid !== hostUid;
+    const qualifier = Object.freeze(separateNativeIdentity ? { separateNativeIdentity: true as const } : {});
     qualifiers.add(qualifier);
     INTERNAL_NATIVE_HOLDER_LAUNCHES.set(qualifier, { role: holderRole,
         ...(providerEnvironmentKeys?.length ? { providerEnvironmentKeys } : {}) });
@@ -265,7 +268,7 @@ export function issueAgentNativeLaunchQualifierForHost(service: ExecService,
     if (readSessionMcpContext) INTERNAL_NATIVE_SESSION_CONTEXTS.set(qualifier, readSessionMcpContext);
     // Classify ordinary versus held native material once when the qualifier is issued.
     // A held provider stays live so withdrawal cannot become a daemon-UID fallback.
-    if (readMcpLaunchMaterial?.()) INTERNAL_NATIVE_MCP_MATERIAL.set(qualifier, readMcpLaunchMaterial);
+    if (material && readMcpLaunchMaterial) INTERNAL_NATIVE_MCP_MATERIAL.set(qualifier, readMcpLaunchMaterial);
     return qualifier as AgentNativeLaunchQualifier;
 }
 
@@ -2591,7 +2594,7 @@ export function createStablePluginExecService(params: Readonly<{
                 .catch(error => fail('agent_isolation_unavailable', 'Native Unix transport is unavailable', error));
             try {
                 guard();
-                const nativeProxy = uid !== process.getuid?.();
+                const nativeProxy = nativeLaunch?.separateNativeIdentity === true;
                 if (!nativeProxy) return Object.freeze({ ...directory, nativeProxy, ...(nativeLaunch ? { nativeLaunch } : {}) });
                 if (!nativeLaunch || !material) return fail('agent_isolation_unavailable', 'Held native transport identity is unavailable');
                 const bound = issueAgentNativeLaunchQualifierForHost(service,

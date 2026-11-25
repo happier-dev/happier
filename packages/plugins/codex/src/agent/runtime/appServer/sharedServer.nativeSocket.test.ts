@@ -3,8 +3,8 @@ import { dirname, join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { createCodexSharedAppServer } from './sharedServer';
-import { admitTestExecSpawn, createCodexControlSocketFixture } from './client.test-support';
-import { connectManagedJsonRpcTestClient } from '../../../../../../../apps/cli/src/testkit/process/managedJsonRpc';
+import { admitTestExecSpawn, CODEX_RAW_PROXY_FIXTURE_SCRIPT, createCodexControlSocketFixture } from './client.test-support';
+import { createManagedJsonRpcTestClient } from '../../../../../../../apps/cli/src/testkit/process/managedJsonRpc';
 
 type NativeLaunch = NonNullable<NonNullable<Parameters<ExecService['spawn']>[1]>['nativeLaunch']>;
 const osBoundary = vi.hoisted(() => ({ home: '' }));
@@ -51,7 +51,12 @@ it.skipIf(process.platform !== 'linux').each([994, 996])('uses the admitted UID 
       // Mirrors native's alias into /tmp/codex-daemon-UID (0700) and socket0600.
       // A missing target deterministically proves the host never follows it.
       await symlink(`/tmp/codex-daemon-${uid}/not-host-readable.sock`, socketPath);
-      return { wait: () => new Promise<PluginProcessResult>(() => {}), dispose: async () => { serverDisposed = true; } };
+      const exited = Promise.withResolvers<PluginProcessResult>();
+      return {
+        wait: () => exited.promise,
+        waitForExit: async () => (await exited.promise).termination,
+        dispose: async () => { serverDisposed = true; exited.resolve(result()); },
+      };
     },
     clients: {
       connectJsonRpc: async () => { throw Object.assign(new Error('Host cannot reach the native socket'), { code: 'EACCES' }); },
@@ -59,8 +64,8 @@ it.skipIf(process.platform !== 'linux').each([994, 996])('uses the admitted UID 
         expect(options.nativeLaunch).toBe(original);
         expect(spec.launch.args).toEqual(['app-server', 'proxy', '--sock', socketPath]);
         proxyConnections++;
-        const connection = await connectManagedJsonRpcTestClient({ cwd: root, socketPath: join(root, 'peer.sock') });
-        return { client: connection.client, wait: () => new Promise<PluginProcessResult>(() => {}), dispose: () => connection.dispose() };
+        return await createManagedJsonRpcTestClient({ cwd: root, command: process.execPath,
+          args: ['-e', CODEX_RAW_PROXY_FIXTURE_SCRIPT, join(root, 'peer.sock')] });
       },
     },
   } as unknown as ExecService; // Native daemon transport/process adapter fixture.

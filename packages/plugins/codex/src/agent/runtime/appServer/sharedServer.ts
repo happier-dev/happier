@@ -390,15 +390,6 @@ export async function resolveCodexSharedAppServerLaunch(input: Readonly<{
   return { executable: tool.executable, realtimeConversationAdvertised };
 }
 
-/**
- * The environment the native startup lock derives its startup overrides from. The separated UID's
- * shim publishes its selected CODEX_HOME, so native SQLite must default to that home: a host-side
- * sqlite_home argument would override the shim with the custodian's private credential path.
- */
-export function readCodexSharedAppServerStartupLockEnv(processEnv: CodexAppServerEnv, nativeProxy: boolean): CodexAppServerEnv {
-  return nativeProxy ? { ...processEnv, CODEX_SQLITE_HOME: undefined } : processEnv;
-}
-
 export async function createCodexSharedAppServer(params: Readonly<{
   exec: ExecService;
   logger?: Pick<LoggerService, 'debug'>;
@@ -526,7 +517,8 @@ export async function createCodexSharedAppServer(params: Readonly<{
         }
       }, params.signal, params.logger, {
         // Unresolved native roots retain the existing OS-user startup lock.
-        processEnv: readCodexSharedAppServerStartupLockEnv(request.processEnv, nativeDirectory?.nativeProxy === true),
+        processEnv: request.processEnv,
+        separateNativeIdentity: nativeDirectory?.nativeProxy,
         configOverrides: request.configOverrides, cwd: request.cwd, versionOutput, deferUntilSpawn: true,
       }, params.onStartupWaiting);
       return launch.executable;

@@ -12,6 +12,7 @@ type StartupConfiguration = Readonly<{
   readVersion?: () => Promise<string>;
   configOverrides?: readonly string[];
   cwd?: string;
+  separateNativeIdentity?: boolean;
   /** Exec calls admission after preparation, immediately before native spawn. */
   deferUntilSpawn?: boolean;
 }>;
@@ -89,7 +90,9 @@ export async function withCodexNativeStartupLock<TResult>(
   onWaiting?: (waiting: boolean) => void,
 ): Promise<TResult> {
   signal?.throwIfAborted();
-  const projectedRoot = configuration?.processEnv.CODEX_SQLITE_HOME;
+  // The native launch shim supplies the separated user's selected state
+  // root. An argv override derived here would pin the custodian's path.
+  const projectedRoot = configuration?.separateNativeIdentity ? undefined : configuration?.processEnv.CODEX_SQLITE_HOME;
   const requestedRoot = projectedRoot && isAbsolute(projectedRoot)
     && !configuration?.configOverrides?.some(value => /^\s*sqlite_home\s*=/u.test(value))
     ? projectedRoot : null;

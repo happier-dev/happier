@@ -1226,8 +1226,11 @@ first connection/initialize handshake even when a descendant keeps its socket
 open; Exec also settles pending notification writes on transport exit/disposal.
 Caller or host cancellation also ends the wait for pre-spawn Exec preparation;
 late preparation releases its resources and cannot spawn a native process.
-For an explicit, resolvable SQLite root it pins launch `sqlite_home` to that
-canonical root. A fresh database or a different Codex version takes the existing
+For an explicit, resolvable SQLite root in a direct launch it pins
+`sqlite_home` to that canonical root. For a held launch under another OS user,
+the native launch shim supplies that user's selected SQLite environment.
+Both stdio probes and shared-socket servers defer to the shim in that case.
+A fresh database or a different Codex version takes the existing
 OS-user startup lock through native readiness; a successful start records the
 version at the SQLite root. Warm resolved starts with the same version bypass the lock. Failed
 starts never publish a successful version. The pinned native contract has no
