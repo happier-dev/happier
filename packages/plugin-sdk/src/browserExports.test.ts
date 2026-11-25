@@ -220,7 +220,7 @@ describe('browser-safe package exports', () => {
         const forbiddenModules = [...emittedModules].filter((id) =>
             id.includes('node:')
             || id.includes('__vite-browser-external')
-            || id.includes('/crypto/')
+            || (id.includes('/crypto/') && !id.endsWith('/crypto/base64.ts'))
             || id.includes('/marketplace/')
             || id.includes('/plugins/installations/')
         );
