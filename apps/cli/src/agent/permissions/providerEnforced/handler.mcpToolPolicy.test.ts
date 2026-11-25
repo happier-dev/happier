@@ -34,7 +34,7 @@ describe('live MCP policy at the session permission owner', () => {
     await first;
     f.change({ default: 'allow_all', overrides: { read_page: 'off' } });
     f.handler.setPermissionMode('yolo');
-    await expect(f.handler.handleToolCall('second', 'mcp__docs__read_page', {})).resolves.toMatchObject({ decision: 'denied' });
+    await expect(f.handler.handleToolCall('second', 'mcp__docs__read_page', {})).resolves.toEqual({ decision: 'denied', rationale: 'permission_denied' });
   });
   it('Allow approves without a card and a subsequent Ask edit publishes resolved catalog identity', async () => {
     const f = fixture({ default: 'ask', overrides: { read_page: 'allow' } });
@@ -55,7 +55,7 @@ describe('live MCP policy at the session permission owner', () => {
   it('read-only denies an annotated tool unless the server has opted into read classification', () => {
     const f = fixture({ default: 'ask', overrides: { read_page: 'allow' } });
     f.handler.setPermissionMode('read-only');
-    expect(f.handler.getImmediateDecision('restricted', 'mcp__docs__read_page', {})).toEqual({ decision: 'denied' });
+    expect(f.handler.getImmediateDecision('restricted', 'mcp__docs__read_page', {})).toEqual({ decision: 'denied', rationale: 'permission_exceeds_ceiling' });
     f.change({ default: 'allow_read_only', overrides: {} });
     expect(f.handler.getImmediateDecision('read', 'mcp__docs__read_page', {})).toEqual({ decision: 'approved' });
   });
@@ -73,9 +73,9 @@ describe('live MCP policy at the session permission owner', () => {
     f.handler.setPermissionMode('read-only');
     const broader = createRunScopedExecutionPermissionHandler({ runId: 'broader', controllerOccurrenceId: 'broader-occurrence', handler: f.handler,
       mcpToolPolicy: { permissionMode: 'yolo', readContext: f.getMcpToolContext } });
-    expect(broader.handler.getImmediateDecision?.('restricted', 'mcp__docs__read_page', {})).toEqual({ decision: 'denied' });
+    expect(broader.handler.getImmediateDecision?.('restricted', 'mcp__docs__read_page', {})).toEqual({ decision: 'denied', rationale: 'permission_exceeds_ceiling' });
     f.handler.setPermissionMode('yolo');
-    expect(broader.handler.getImmediateDecision?.('lost-authority', 'mcp__docs__read_page', {}, { causalPermissionAuthority: null })).toEqual({ decision: 'denied' });
+    expect(broader.handler.getImmediateDecision?.('lost-authority', 'mcp__docs__read_page', {}, { causalPermissionAuthority: null })).toEqual({ decision: 'denied', rationale: 'causal_permission_authority_invalid' });
     await run.dispose('test completed'); await broader.dispose('test completed');
   });
 });
