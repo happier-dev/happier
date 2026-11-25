@@ -23,6 +23,7 @@ import { projectDeploymentCancellationConsequenceV1 } from '@happier-dev/deploym
 import { readDeploymentEnvironmentArtifactHeaderV1, readDeploymentEnvironmentArtifactV1, readDeploymentReceiptArtifactHeaderV1, readDeploymentDomainArtifactV1 } from '@happier-dev/deployments';
 import type {
     DeploymentReadTransportV1, DeploymentReadScopeV1, DeploymentReadOptionsV1, DeploymentReadResultV1, DeploymentWorkbenchTargetReadV1,
+    DeploymentSelectedDatabaseV1,
 } from '@happier-dev/deployments';
 import type { DeploymentEnvironmentCollectionV1, DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -73,6 +74,35 @@ export type DeploymentTargetLinkChoiceV1 = Readonly<{
     title: string;
     content: NonNullable<DeploymentEnvironmentDetailV1['targetLinks'][number]['content']>;
 }>;
+
+async function openTargetLinks(account: LazyActionAccountContext,
+    targetLinks: readonly DeploymentTargetLinkChoiceV1['targetLink'][], signal: AbortSignal):
+    Promise<DeploymentReadResultV1<DeploymentTargetLinkChoiceV1[]>> {
+    const artifacts = await readArtifactsByRow(targetLinks.map(link => link.contentArtifactId),
+        ids => account.readArtifactContents(ids, { signal }));
+    const rows: DeploymentTargetLinkChoiceV1[] = [];
+    for (const [index, targetLink] of targetLinks.entries()) {
+        const artifact = artifacts[index];
+        const opened = readDeploymentTargetLinkArtifactV1(targetLink, artifact?.status === 'fulfilled' ? artifact.value : null);
+        if (!opened.ok) return failure(opened.error);
+        rows.push({ targetLink, title: opened.title, content: opened.content });
+    }
+    return { ok: true, value: rows };
+}
+
+async function readSelectedDatabase(account: LazyActionAccountContext, signal: AbortSignal, key: string,
+    data: Extract<DeploymentSelectedDatabaseV1, { kind: 'selfHosted' }>['data'] | undefined,
+    links: readonly DeploymentTargetLinkChoiceV1['targetLink'][]): Promise<DeploymentReadResultV1<DeploymentSelectedDatabaseV1 | null>> {
+    if (data) return { ok: true, value: { kind: 'selfHosted', data } };
+    const target = links.find(link => link.id === key && link.role === 'data' && link.source.kind === 'plugin'
+        && link.deletedAtMs === undefined);
+    if (!target) return { ok: true, value: null };
+    const opened = await openTargetLinks(account, [target], signal);
+    if (!opened.ok) return opened;
+    const link = opened.value[0];
+    if (!link) return failure('deployment_content_unavailable');
+    return { ok: true, value: { kind: target.state === 'detached' || target.detachedAtMs !== undefined ? 'detached' : 'managed', link } };
+}
 type EnvironmentPage = Extract<ReturnType<typeof DeploymentEnvironmentListResultV1Schema.parse>, { ok: true }>;
 export type DeploymentEnvironmentNamePage = Readonly<Pick<EnvironmentPage, 'nextCursor' | 'coverage'> & {
     items: readonly (EnvironmentPage['items'][number] & Readonly<{ name: string }>)[];
@@ -263,6 +293,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             let page: Pick<DeploymentDataPageSuccessV1, 'items' | 'nextCursor' | 'coverage' | 'projectSources'>;
             let byId: Map<string, Awaited<ReturnType<LazyActionAccountContext['readArtifactContents']>>[number] | undefined>;
             let selectedMetadata: Extract<Awaited<ReturnType<typeof readEnvironmentMetadata>>, { ok: true }>['value'] | undefined;
+            let selectedContent: Extract<ReturnType<typeof readDeploymentEnvironmentArtifactV1>, { ok: true }> | undefined;
             const { operationalFacts, ...pageQuery } = query;
             if (query.environmentId !== undefined) {
                 const metadata = await readEnvironmentMetadata(scope, query.environmentId, options);
@@ -270,6 +301,11 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 selectedMetadata = metadata.value;
                 const environment = selectedMetadata.environment;
                 const [artifact] = await account.readArtifactContents([environment.contentArtifactId], { signal: options.signal });
+                if (query.database !== undefined) {
+                    const opened = readDeploymentEnvironmentArtifactV1(environment, artifact?.status === 'fulfilled' ? artifact.value : null);
+                    if (!opened.ok) return failure(opened.error);
+                    selectedContent = opened;
+                }
                 page = { items: [{ environment }], nextCursor: null };
                 byId = new Map([[environment.contentArtifactId, artifact]]);
             } else {
@@ -289,7 +325,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             const previousById = new Map(options.previousItems?.map(item => [item.environment.id, item]));
             const rows = page.items.flatMap(({ environment }) => {
                 const artifact = byId.get(environment.contentArtifactId);
-                const row = readDeploymentEnvironmentArtifactV1(environment,
+                const row = selectedContent ?? readDeploymentEnvironmentArtifactV1(environment,
                     artifact?.status === 'fulfilled' ? artifact.value : null);
                 if (!row.ok) { coverage = 'partial'; return []; }
                 return [{ environment, title: row.title, content: row.content,
@@ -316,6 +352,25 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     environment: runtimeEnvironment,
                     targetLinks: (selectedMetadata?.targetLinks ?? (runtimeLink ? [runtimeLink] : [])).map(targetLink => ({ targetLink })),
                 }) : null;
+                let selected: { detail: DeploymentEnvironmentDetailV1; address: DeploymentSelectedDatabaseV1 | null } | undefined;
+                if (selectedMetadata && query.database !== undefined) {
+                    const result = await readSelectedDatabase(account, options.signal, query.database, data[0], selectedMetadata.targetLinks);
+                    if (!result.ok) return result;
+                    const address = result.value;
+                    const selectedLink = address && address.kind !== 'selfHosted' ? address.link : null;
+                    const detail: DeploymentEnvironmentDetailV1 = { environment, content,
+                        targetLinks: selectedMetadata.targetLinks.map(targetLink =>
+                            selectedLink?.targetLink === targetLink ? selectedLink : { targetLink }),
+                        ...(selectedMetadata.savedSecretRevisions === undefined ? {} : { savedSecretRevisions: selectedMetadata.savedSecretRevisions }),
+                        ...(selectedMetadata.secretScope === undefined ? {} : { secretScope: selectedMetadata.secretScope }),
+                        ...(selectedMetadata.controller ? { controller: selectedMetadata.controller } : {}),
+                    };
+                    selected = { detail, address };
+                    if (!address || address.kind === 'detached') {
+                        items.push({ ...item, selected });
+                        continue;
+                    }
+                }
                 const databaseSubjects = new Map<string, AutomationDatabaseSubjectReadV1>();
                 const projectDeclaredDatabaseSubjects = (bindings: DeploymentEnvironmentDetailV1['content']['bindings'],
                     deployedServices?: readonly string[]) => {
@@ -333,12 +388,12 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 };
                 // Before the first deploy the authored declaration owns native identity.
                 if (selectedMetadata && !runtimeTargetLink?.activeDeploymentId) projectDeclaredDatabaseSubjects(content.bindings);
-                const hasManagedData = selectedMetadata?.targetLinks.some(link => hasDeploymentManagedDataLink([link])
-                    && (query.database === undefined || data.length === 0 && link.id === query.database));
-                const selection = query.database === undefined ? undefined : data.length > 0
-                    ? { kind: 'native_service' as const, service: query.database }
-                    : { kind: 'managed_link' as const, targetLinkId: query.database };
-                if (selectedMetadata && (hasManagedData || runtimeTargetLink?.activeDeploymentId && (selection === undefined || data.length > 0))) {
+                const address = selected?.address;
+                const hasManagedData = address ? address.kind === 'managed'
+                    : selectedMetadata !== undefined && hasDeploymentManagedDataLink(selectedMetadata.targetLinks);
+                const selection = address?.kind === 'selfHosted' ? { kind: 'native_service' as const, service: address.data.service }
+                    : address?.kind === 'managed' ? { kind: 'managed_link' as const, targetLinkId: address.link.targetLink.id } : undefined;
+                if (selectedMetadata && (hasManagedData || runtimeTargetLink?.activeDeploymentId && (selection === undefined || selection.kind === 'native_service'))) {
                     if (environment.controllerMachineId) {
                         try {
                             databaseTargets = await readDeploymentDatabaseTargets(lifetime, environment.controllerMachineId, {
@@ -409,6 +464,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     if (target.kind === 'managed_deployment' && !automationSubject.ok) databaseSubjects.set(target.targetLinkId, automationSubject);
                 }
                 items.push({ ...item, databaseSizes, databaseSubjects: Object.fromEntries(databaseSubjects),
+                    ...(selected ? { selected } : {}),
                     ...(workbenchTarget ? { workbenchTarget } : {}),
                     ...(databaseSubjectFailure ? { databaseSubjectFailure } : {}) });
             }
@@ -704,19 +760,8 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             }
             return { ok: true, value: { items, nextCursor: page.nextCursor, coverage } };
         }),
-        readTargetLinks: (scope, targetLinks, options) => scoped(scope, options, async account => {
-            if (targetLinks.length === 0) return { ok: true, value: [] };
-            const artifacts = await readArtifactsByRow(targetLinks.map(link => link.contentArtifactId),
-                ids => account.readArtifactContents(ids, { signal: options.signal }));
-            const rows: DeploymentTargetLinkChoiceV1[] = [];
-            for (const [index, targetLink] of targetLinks.entries()) {
-                const artifact = artifacts[index];
-                const opened = readDeploymentTargetLinkArtifactV1(targetLink, artifact?.status === 'fulfilled' ? artifact.value : null);
-                if (!opened.ok) return failure(opened.error);
-                rows.push({ targetLink, title: opened.title, content: opened.content });
-            }
-            return { ok: true, value: rows };
-        }),
+        readTargetLinks: (scope, targetLinks, options) => scoped(scope, options, account =>
+            openTargetLinks(account, targetLinks, options.signal)),
         async listEnvironments(scope, query, options) {
         const { allPages, ...pageQuery } = query;
         if (!allPages) return transport.listEnvironments(scope, pageQuery, options);

@@ -403,6 +403,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         return createDeploymentReadPageLease<T>({ initialCursor: query.cursor, demand,
             nextCursor: cursor => entries.get(key(cursor))?.nextCursor ?? null,
             acquire: (cursor, pageDemand) => acquire<T>({ key: key(cursor), kind, previousPage: cursor !== undefined,
+                ...(query.environmentId !== undefined ? { environmentId: query.environmentId } : {}),
                 read: async signal => {
                     const unavailable = { ok: false as const,
                         failure: withActionFailureDiagnostic({ code: 'deployment_unavailable', retryable: false },
@@ -411,7 +412,12 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                     const read = transport.listDataServicePage;
                     if (!read) return unavailable;
                     const prior = entries.get(key(cursor))?.projection.getSnapshot().value as DeploymentDataServiceReadPageV1 | undefined;
-                    if (query.environmentId !== undefined) return read(scope, query, { signal, ...(prior ? { previousItems: prior.items } : {}) });
+                    if (query.environmentId !== undefined) {
+                        const result = await read(scope, query, { signal, ...(prior ? { previousItems: prior.items } : {}) });
+                        if (!result.ok) return result;
+                        return { ...result, value: { ...result.value, items: result.value.items.map(({ selected, ...item }) =>
+                            selected ? { ...item, selected: { ...selected, detail: withMemberVersions(selected.detail) } } : item) } };
+                    }
                     // The Databases page lists the Environments that hold databases. Their contents are end-to-end
                     // encrypted, so the Home pages every Environment: a page of none is read past here, and a page is
                     // empty only when no Environment after it holds one (owner D3, 11-16).
@@ -562,7 +568,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                 // Only pages containing that Environment need the header refresh.
                 const affected = hints.some(hint => resource.kind === 'activity' ? hint.activityChanged === true
                     : hint.activityChanged === true ? false : resource.kind === 'domainPage' || resource.kind === 'dataServicePage'
-                        ? hint.deploymentId === undefined
+                        ? hint.deploymentId === undefined && (resource.environmentId === undefined || resource.environmentId === hint.environmentId)
                         : resource.kind === 'collection'
                     ? resource.environmentIds !== undefined
                         ? hint.deploymentId === undefined && resource.environmentIds.has(hint.environmentId)

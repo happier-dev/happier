@@ -100,9 +100,18 @@ export type DeploymentAccountDomainReadItemV1 = DeploymentDomainReadItemV1 & Rea
 export type DeploymentWorkbenchTargetReadV1 =
     | Readonly<{ ok: true; value: DatabaseDescriptorV1 }>
     | Readonly<{ ok: false; failure: DeploymentReadFailureV1 & Pick<ActionExecuteFailure, 'details' | 'failureCause' | 'effectAttempted'> }>;
-export type DeploymentDataServiceReadItemV1 = Readonly<{
+type DeploymentSelectedDataLinkV1 = Readonly<{
+    targetLink: DeploymentTargetLinkHeaderV1;
+    content: NonNullable<DeploymentEnvironmentDetailV1['targetLinks'][number]['content']>;
+}>;
+export type DeploymentSelectedDatabaseV1 =
+    | Readonly<{ kind: 'selfHosted'; data: NonNullable<NonNullable<DeploymentEnvironmentContentV1['template']>['data']>[number] }>
+    | Readonly<{ kind: 'managed' | 'detached'; link: DeploymentSelectedDataLinkV1 }>;
+export type DeploymentDataServiceReadItemV1<TDetail extends DeploymentEnvironmentDetailV1 = DeploymentEnvironmentDetailV1> = Readonly<{
     environment: DeploymentEnvironmentHeaderV1; title: string; content: DeploymentEnvironmentContentV1;
     projectSourceName?: string | null;
+    /** One exact Database route. A null address means the Environment no longer holds that database. */
+    selected?: Readonly<{ detail: TDetail; address: DeploymentSelectedDatabaseV1 | null }>;
     databaseSizes?: readonly DeploymentDatabaseSizeV1[];
     /** Keys are the incumbent database page's service or data-link address. */
     databaseSubjects?: Readonly<Record<string, AutomationDatabaseSubjectReadV1>>;
@@ -114,7 +123,7 @@ export type DeploymentDataServiceReadItemV1 = Readonly<{
 export type DeploymentAccountReadPageV1<T> = Readonly<{ items: readonly T[]; nextCursor: string | null }>
     & Pick<DeploymentEnvironmentCollectionV1, 'coverage'>;
 export type DeploymentAccountDomainReadPageV1 = Omit<DeploymentAccountReadPageV1<DeploymentAccountDomainReadItemV1>, 'nextCursor'> & DeploymentReadPageFactsV1;
-export type DeploymentDataServiceReadPageV1 = Omit<DeploymentAccountReadPageV1<DeploymentDataServiceReadItemV1>, 'nextCursor'> & DeploymentReadPageFactsV1;
+export type DeploymentDataServiceReadPageV1 = Omit<DeploymentAccountReadPageV1<DeploymentDataServiceReadItemV1<DeploymentEnvironmentReadDetailV1>>, 'nextCursor'> & DeploymentReadPageFactsV1;
 export type DeploymentDomainPageV1 = Readonly<{ items: readonly DeploymentDomainReadItemV1[]; nextCursor: string | null }>
     & Pick<DeploymentEnvironmentCollectionV1, 'coverage'>;
 export type DeploymentDomainReadPageV1 = Omit<DeploymentDomainPageV1, 'nextCursor'> & DeploymentReadPageFactsV1;

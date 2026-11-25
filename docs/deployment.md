@@ -1164,9 +1164,12 @@ the Action's canonical read/write access class.
 Workbench target discovery on a Machine uses the signed contributed Action to
 read the serving Own Server receipt on its current runtime installation. The
 Environment and Artifact routes apply the requester's existing access. A
-Database detail page scopes this discovery to its native service or managed
-Link, and requests size only for the selected native service. Environment-wide
-discovery remains available to the Workbench chooser.
+Database detail page acquires the Environment once through its selected
+Database read. That read resolves the native service or the exact managed
+data Link, opening only the selected Link's Artifact. It requests size only
+for the selected native service. A retained detached Link shows its cleanup
+controls, with no Workbench discovery or ordinary Database operations.
+Environment-wide discovery remains available to the Workbench chooser.
 
 The controller projects Production protection from the admitted Environment
 into the native and managed database descriptors. Staged Changes uses that

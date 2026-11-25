@@ -88,11 +88,9 @@ import {
 } from './DeploymentRestoreSheet';
 import {
   useDeploymentDataServicePage,
-  useDeploymentEnvironmentRecord,
   useEnvironmentBackupSummary,
 } from './useDeploymentReads';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
-import { useDeploymentTargetLinkChoices } from './useDeploymentTargetLinkChoices';
 import { DATABASE_PLUGIN_ID_V1 } from '@happier-dev/database-protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -103,21 +101,6 @@ type Detail = DeploymentEnvironmentReadDetailV1;
 type TemplateData = NonNullable<
   NonNullable<Detail['content']['template']>['data']
 >[number];
-type DataLink = Detail['targetLinks'][number];
-
-/** The database a page address names: the template's data service, or one linked data target. */
-type Database =
-  | Readonly<{ kind: 'selfHosted'; key: string; data: TemplateData }>
-  | Readonly<{ kind: 'managed'; key: string; link: DataLink }>;
-
-function resolveDatabase(detail: Detail, key: string): Database | null {
-  const data = detail.content.template?.data?.find(entry => entry.service === key);
-  if (data) return { kind: 'selfHosted', key, data };
-  const link = detail.targetLinks.find(
-    (entry) => entry.targetLink.role === 'data' && entry.targetLink.id === key,
-  );
-  return link ? { kind: 'managed', key, link } : null;
-}
 
 const noop = () => {};
 
@@ -143,28 +126,19 @@ export function DeploymentDatabasePage(
     onNavigate: (destination: DeploymentEnvironmentDestinationV1) => void;
   }>,
 ) {
-  const record = useDeploymentEnvironmentRecord(
-    props.controller,
-    props.environmentId,
-    props.demand,
-  );
-  const detail = record.snapshot.value;
-  const activeId = detail?.runtimeTargetLink?.activeDeploymentId ?? null;
   const databaseRead = useDeploymentDataServicePage(props.controller, props.demand, { environmentId: props.environmentId, database: props.database });
-  const selection = React.useMemo(() => detail ? resolveDatabase(detail, props.database) : null, [detail, props.database]);
+  const dataRead = databaseRead.snapshot;
+  const dataItem = dataRead.value?.items[0];
+  const detail = dataItem?.selected?.detail ?? null;
+  const database = dataItem?.selected?.address ?? null;
+  const activeId = database?.kind === 'selfHosted' ? detail?.runtimeTargetLink?.activeDeploymentId ?? null : null;
   const retained = useEnvironmentBackupSummary(
     props.controller,
     props.environmentId,
-    selection?.kind === 'selfHosted' ? activeId : null,
+    activeId,
     props.demand,
   );
   const presented = props.demand.mounted && props.demand.visible && props.demand.focused;
-  const targets = React.useMemo(() => selection?.kind === 'managed' ? [selection.link] : [], [selection]);
-  const { choices, retry: retryTargetLink } = useDeploymentTargetLinkChoices({ lifetime: props.lifetime,
-    environmentId: props.environmentId, targets, presented });
-  const openedLink = choices.rows.find(row => row.targetLink.id === props.database);
-  const database = selection?.kind === 'managed'
-    ? openedLink ? { ...selection, link: openedLink } : null : selection;
   const backupConfiguration =
     detail?.content.backup && 'configRevision' in detail.content.backup
       ? detail.content.backup
@@ -206,7 +180,7 @@ export function DeploymentDatabasePage(
   const backupOperations = useDeploymentBackupOperations({ detail: database?.kind === 'selfHosted' ? detail ?? null : null,
     configuration: database?.kind === 'selfHosted' ? backupConfiguration ?? null : null, actions,
     review: props.review, onSettled: backup.reload });
-  const restoreDrill = useDeploymentRestoreDrill(lifetime && detail ? detail.environment.serverId : null);
+  const restoreDrill = useDeploymentRestoreDrill(lifetime && database?.kind === 'selfHosted' ? detail?.environment.serverId ?? null : null);
   // Use the section's existing outcome banner for target and navigation refusals.
   const consoleOpen = useDeploymentChangePress(props.review, noop);
   const machineIds = React.useMemo(
@@ -216,16 +190,14 @@ export function DeploymentDatabasePage(
   const machineNames = useMachineDisplayNamesById(machineIds);
   const machineName = (machineId: string) =>
     machineNames[machineId] ?? t('projects.deployments.aMachine');
-  const platformTitle = useDeploymentPlatformTargetTitles(
-    lifetime,
-    database?.kind === 'managed',
-  );
-  const targetDeclarations = useDeploymentTargetDeclarations(database?.kind === 'managed' ? lifetime : null);
+  const dataLink = database && database.kind !== 'selfHosted' ? database.link : null;
+  const platformTitle = useDeploymentPlatformTargetTitles(lifetime, dataLink !== null);
+  const targetDeclarations = useDeploymentTargetDeclarations(dataLink ? lifetime : null);
   // Unlink or delete a managed project through the same removal review and action owner as a runtime target.
   const disposition = useDeploymentEnvironmentDeletion({ environmentId: props.environmentId, lifetime,
-    snapshot: record.snapshot, actions, controller: props.controller, demand: props.demand });
+    snapshot: { ...dataRead, value: detail }, actions, controller: props.controller, demand: props.demand });
   const catalog = useSavedSecretCatalogEntries({
-    scope: lifetime?.scope ?? null,
+    scope: database?.kind === 'selfHosted' ? lifetime?.scope ?? null : null,
   });
   const backControl = usePageBackControl(
     'project-deployments.database.back',
@@ -238,15 +210,15 @@ export function DeploymentDatabasePage(
   if (!detail) {
     return (
       <ItemList testID={`${id}.state`}>
-        {record.snapshot.status === 'unavailable' ? (
+        {dataRead.status === 'unavailable' ? (
           <SurfaceStateCard
             kind="error"
             title={t('projects.deployments.environmentErrorTitle')}
-            diagnosticCode={record.snapshot.failure?.code ?? null}
+            diagnosticCode={dataRead.failure?.code ?? null}
             action={{
               label: t('common.retry'),
               onPress: () => {
-                void record.refresh();
+                databaseRead.refresh();
               },
             }}
           />
@@ -259,7 +231,7 @@ export function DeploymentDatabasePage(
       </ItemList>
     );
   }
-  if (!selection) {
+  if (!database) {
     return (
       <NavigationBackChromeProvider control={backControl}>
         <ItemList testID={`${id}.gone`}>
@@ -274,20 +246,6 @@ export function DeploymentDatabasePage(
         </ItemList>
       </NavigationBackChromeProvider>
     );
-  }
-
-  if (!database) {
-    return <NavigationBackChromeProvider control={backControl}>
-      <ItemList testID={`${id}.state`}>
-        <PageHeader title={selection.kind === 'managed'
-          ? selection.link.content?.data ? databaseEngineTitle(selection.link.content.data) : t('projects.deployments.services.columnDatabase')
-          : databaseEngineTitle(selection.data)} />
-        {choices.kind === 'failed' ? <SurfaceStateCard testID={`${id}.failed`} kind="error"
-          title={t('projects.deployments.environmentErrorTitle')} diagnosticCode={choices.code}
-          action={{ label: t('common.retry'), onPress: retryTargetLink }} />
-          : <SurfaceStateCard testID={`${id}.loading`} kind="loading" title={t('projects.deployments.loading')} />}
-      </ItemList>
-    </NavigationBackChromeProvider>;
   }
 
   const facts = backup.facts;
@@ -307,22 +265,52 @@ export function DeploymentDatabasePage(
       : null;
 
   const providerConsole = database.kind === 'managed' ? database.link.content.data?.providerConsole : undefined;
-  const managedTarget = database.kind === 'managed' && database.link.targetLink.source.kind === 'plugin'
+  const managedTarget = dataLink?.targetLink.source.kind === 'plugin'
     && targetDeclarations.state.status === 'ready' ? (() => {
-      const source = database.link.targetLink.source.contribution;
+      const source = dataLink.targetLink.source.contribution;
       return managedDataTargets(targetDeclarations.state.declarations)
         .find(target => target.pluginId === source.pluginId && target.targetId === source.localId) ?? null;
     })() : null;
   // A managed database names its platform by the target's title (a runtime platform's, else its data target's);
   // its target kind is an identifier, never a name.
-  const managedPlatform = database.kind === 'managed' && database.link.targetLink.source.kind === 'plugin'
-    ? platformTitle(database.link.targetLink.source) ?? managedTarget?.title ?? null : null;
-  const managedResource = database.kind === 'managed' ? readPlatformResourceName(database.link.content) : null;
+  const managedPlatform = dataLink?.targetLink.source.kind === 'plugin'
+    ? platformTitle(dataLink.targetLink.source) ?? managedTarget?.title ?? null : null;
+  const managedResource = dataLink ? readPlatformResourceName(dataLink.content) : null;
   const title =
     database.kind === 'selfHosted'
       ? databaseEngineTitle(database.data)
       : database.link.content.data ? databaseEngineTitle(database.link.content.data)
       : managedPlatform ?? t('projects.deployments.services.columnDatabase');
+  // The removal owner decides which choices exist and where the review starts (created: Delete; linked: Unlink).
+  const openRemoval = dataLink && managedTarget && disposition.canDelete ? () => {
+    const link = dataLink;
+    const removal = selectDeploymentTargetRemovalChoicesV1(link.targetLink.source, [managedTarget],
+      link.content.providerResourceOrigin);
+    showDeploymentDispositionSheet({
+      subject: { kind: 'target', targetLinkId: link.targetLink.id },
+      name: detail.content.name, machine: null, provider: managedTarget.title, running: false,
+      hasRetainedAssociations: true, canRemove: removal.choices.includes('delete'),
+      providerResource: { name: readPlatformResourceName(link.content, managedPlatform) ?? title,
+        consequence: managedTarget.teardownConsequence ?? null, defaultChoice: removal.defaultChoice, role: 'data' },
+      // A project's removal is one teardown of its data link; the Environment stays.
+      run: choice => disposition.stopAndRemove(link.targetLink.id, undefined, undefined,
+        { providerRemoval: choice === 'remove' ? 'delete' : 'unlink', removeEnvironment: false }),
+      onApproval: props.review.request,
+      onDone: () => {},
+    });
+  } : null;
+  const removalRow = openRemoval ? <Item testID={`${id}.remove`} title={t('projects.deployments.platformLink.removalTitle',
+    { resource: managedResource ?? title })} onPress={openRemoval} /> : null;
+  if (database.kind === 'detached') {
+    return <NavigationBackChromeProvider control={backControl}>
+      <View style={styles.page}>
+        <ItemList testID={`${id}.cleanup`}>
+          <PageHeader testID={`${id}.header`} title={title} alwaysShowTitle leading={<PageHeaderMarkIcon name="stack" />} />
+          {removalRow ? <ItemGroup title={t('projects.deployments.databaseProviderTitle')}>{removalRow}</ItemGroup> : null}
+        </ItemList>
+      </View>
+    </NavigationBackChromeProvider>;
+  }
   const meta: PageHeaderMetaFact[] =
     database.kind === 'selfHosted'
       ? [
@@ -386,8 +374,6 @@ export function DeploymentDatabasePage(
 
   const lastGood = ready?.history?.lastSuccessfulBackup ?? null;
   // The data-service owner resolves identity; a failed or pending read keeps the shared section in place.
-  const dataRead = databaseRead.snapshot;
-  const dataItem = dataRead.value?.items.find((item) => item.environment.id === detail.environment.id);
   const workbenchTarget = dataRead.status === 'ready' ? dataItem?.workbenchTarget : undefined;
   const openWorkbench = () => consoleOpen.press(async () => {
     if (!lifetime || !workbenchNavigation) return { ok: false, error: 'plugin_surface_open_unavailable' };
@@ -477,25 +463,6 @@ export function DeploymentDatabasePage(
   const openManaged = database.kind === 'managed' && lifetime && actions && detail.environment.capabilities.manage
     ? () => showManagedDataSheet({ detail, lifetime, actions, linked: database.link,
       onApproval: props.review.request }) : null;
-  // The removal owner decides which choices exist and where the review starts (created: Delete; linked: Unlink).
-  const openRemoval = database.kind === 'managed' && managedTarget && disposition.canDelete ? () => {
-    const link = database.link;
-    const removal = selectDeploymentTargetRemovalChoicesV1(link.targetLink.source, [managedTarget],
-      link.content.providerResourceOrigin);
-    showDeploymentDispositionSheet({
-      subject: { kind: 'target', targetLinkId: link.targetLink.id },
-      name: detail.content.name, machine: null, provider: managedTarget.title, running: false,
-      hasRetainedAssociations: true, canRemove: removal.choices.includes('delete'),
-      providerResource: { name: readPlatformResourceName(link.content, managedPlatform) ?? title,
-        consequence: managedTarget.teardownConsequence ?? null, defaultChoice: removal.defaultChoice, role: 'data' },
-      // A project's removal is one teardown of its data link; the Environment stays.
-      run: choice => disposition.stopAndRemove(link.targetLink.id, undefined, undefined,
-        { providerRemoval: choice === 'remove' ? 'delete' : 'unlink', removeEnvironment: false }),
-      onApproval: props.review.request,
-      onDone: () => {},
-    });
-  } : null;
-
   // The rare backup operations sit in the section's ⋯: where they go and how many are kept is configured in Settings.
   const backupMore = [
     ...(backupOperations.prune ? [{ id: 'prune', title: t('projects.deployments.settingsSections.pruneTitle'),
@@ -675,9 +642,7 @@ export function DeploymentDatabasePage(
               {openManaged ? <Item testID={`${id}.manage`} title={t('projects.deployments.managedData.manage')}
                 onPress={openManaged} /> : null}
               {/* Removal comes last in the provider section: Unlink is the safe choice, deletion is typed. */}
-              {openRemoval ? <Item testID={`${id}.remove`} title={t('projects.deployments.platformLink.removalTitle',
-                { resource: managedResource ?? title })}
-                onPress={openRemoval} /> : null}
+              {removalRow}
             </ItemGroup>
           ) : null}
         </ItemList>

@@ -156,11 +156,12 @@ async function renderDatabase(
     workbenchDiscoveryRefused?: boolean | (() => boolean);
     /** Read the Database subject and Workbench target through the real selected-Environment transport. */
     readDatabaseAutomations?: boolean;
+    countEnvironmentAcquisitions?: boolean;
+    detached?: boolean;
     /** Open from the Project Source route with a saved Workflow to link. */
     linkWorkflow?: string;
     databaseSizeActionRefused?: boolean;
     database?: string;
-    sizeReadUnavailable?: boolean;
     retainedBackup?: boolean;
     noBackup?: boolean;
     /** The Environment's Compose file is stored in Happier (shareable from Settings), not in its repository. */
@@ -261,6 +262,7 @@ async function renderDatabase(
   if (input.managed) {
     authored.targetLinks.push({ targetLink: createDeploymentTargetLinkHeaderV1({
       id: 'managed-database', environmentId, role: 'data', targetKind: 'neon', machines: [], members: [],
+      ...(input.detached ? { state: 'detached', detachedAtMs: 1 } as const : {}),
       source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.neon', localId: 'database' } },
     }), content: { data: { engine: 'postgres' },
       providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'main' },
@@ -273,6 +275,8 @@ async function renderDatabase(
     serverId: input.moveDestination || input.movePickerScope || input.readDatabaseAutomations ? serverIdentityId : serverId,
     controllerMachineId: machineId },
     targetLinks: authored.targetLinks.map((row) => ({ ...row, targetLink: { ...row.targetLink,
+    // Measure the route's own acquisition before deployed size or backup Actions need their own admission.
+    ...(input.countEnvironmentAcquisitions && !input.managed ? { activeDeploymentId: undefined } : {}),
     ...(row.targetLink.source.kind === 'host' && Array.isArray(row.targetLink.machines)
       ? { machines: [machineId, ...(input.sourceMultiMachine ? [`${machineId}-second`] : [])] } : {}),
     ...(row.targetLink.source.kind === 'host' && Array.isArray(row.targetLink.members)
@@ -627,6 +631,16 @@ async function renderDatabase(
   if (input.readDatabaseAutomations) {
     await account.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
       header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Shop database' }, body: JSON.stringify(detail.content) });
+    if (input.managed) {
+      for (const row of detail.targetLinks) {
+        if (row.targetLink.id !== 'managed-database' || !row.content) continue;
+        await account.createArtifactDocument({
+          artifactId: row.targetLink.contentArtifactId,
+          header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'Retained database' },
+          body: JSON.stringify(row.content),
+        });
+      }
+    }
   }
   const publicReadTransport = input.moveDestination || input.movePickerScope || input.readDatabaseAutomations
     ? (await import('./deploymentReadTransport')).createDeploymentReadTransport(account.accountLifetime) : null;
@@ -647,16 +661,20 @@ async function renderDatabase(
         ], nextCursor: null },
       }),
       // Move destinations read through the real transport; no test-supplied candidate fact.
-      readEnvironment: async (scope, id, options) => id !== environmentId && input.moveDestination && publicReadTransport
+      readEnvironment: async (scope, id, options) => publicReadTransport && (
+        (id !== environmentId && input.moveDestination) || (id === environmentId && input.countEnvironmentAcquisitions))
         ? publicReadTransport.readEnvironment(scope, id, options) : { ok: true, value: detail },
       listHistory: async () => ({
         ok: true,
         value: { ok: true, items: [receipt.deployment], nextCursor: null },
       }),
       readReceipt: readRetainedReceipt,
-      ...(input.sizeReadUnavailable ? { listDataServicePage: async () => ({
-        ok: false as const, failure: { code: 'deployment_read_failed', retryable: true },
-      }) } : {}),
+      listDataServicePage: async (_scope, query) => {
+        const data = detail.content.template?.data?.find(service => service.service === query.database);
+        return { ok: true, value: { items: [{ environment: detail.environment, content: detail.content, title: detail.content.name,
+          selected: { detail, address: data ? { kind: 'selfHosted', data } : null },
+        }], nextCursor: null, coverage: 'partial' as const } };
+      },
       ...(publicReadTransport ? { listEnvironments: publicReadTransport.listEnvironments } : {}),
       ...(input.readDatabaseAutomations && publicReadTransport ? { listDataServicePage: publicReadTransport.listDataServicePage } : {}),
     },
@@ -883,6 +901,25 @@ describe('Environment → Database → Workbench', () => {
     } finally { await view.dispose(); }
   });
 
+  it.each([{ managed: false, detached: false }, { managed: true, detached: true }])(
+    'acquires the Environment once when opening a Database route ($detached)',
+    async ({ managed, detached }) => {
+      const view = await renderDatabase({ managed, detached, noBackup: true,
+        readDatabaseAutomations: true, countEnvironmentAcquisitions: true });
+      try {
+        expect(await view.settle(`${page}.header`)).not.toBeNull();
+        expect(homes.requests.filter(request => request.path.split('?')[0] === `/v1/deployments/environments/${view.environmentId}`)
+          .map(request => request.path))
+          .toHaveLength(1);
+        expect(view.effects.filter(effect => effect.actionId === 'action.invoke' || effect.actionId === 'deployments.data.size')).toHaveLength(0);
+        if (detached) {
+          expect(view.screen.findByTestId(`${page}.cleanup`)).not.toBeNull();
+          expect(view.screen.findByTestId(`${page}.query`)).toBeNull();
+        }
+      } finally { await view.dispose(); }
+    },
+  );
+
   it('opens the exact deployment database without rediscovering its target', async () => {
     const view = await renderDatabase({ readDatabaseAutomations: true });
     try {
@@ -960,9 +997,10 @@ describe('Environment → Database → Workbench', () => {
   });
 
   it.each([
-    { origin: 'created' as const, starts: 'remove' },
-    { origin: undefined, starts: 'detach' },
-  ])('unlinks or deletes a managed database project through the one removal review (origin $origin)', async ({ origin, starts }) => {
+    { origin: 'created' as const, starts: 'remove', detached: false },
+    { origin: undefined, starts: 'detach', detached: false },
+    { origin: 'created' as const, starts: 'remove', detached: true },
+  ])('reviews removal for a managed database project (origin $origin, detached $detached)', async ({ origin, starts, detached }) => {
     const { definePlugin, deploymentTargetRoleWithNativeSelectorV1, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } = await import('@happier-dev/plugin-sdk');
     const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
     const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
@@ -984,6 +1022,7 @@ describe('Environment → Database → Workbench', () => {
     const installed = await installPortableAccountPluginReleaseForTest({ manifest: plugin.manifest,
       activate: api => plugin.activateAccount(api, execution.account), accountLifetime: account.accountLifetime, publishProjection: true });
     const targetLink = createDeploymentTargetLinkHeaderV1({ id: 'managed-removal', role: 'data', targetKind: 'database', machines: [], members: [],
+      ...(detached ? { state: 'detached', detachedAtMs: 1 } as const : {}),
       source: { kind: 'plugin', contribution: { pluginId, localId: 'database' } } });
     const principal = { kind: 'account' as const, accountId: 'owner',
       purpose: { consumer: { pluginId, localId: 'link' }, purpose: 'deploy-manage' },
@@ -996,6 +1035,10 @@ describe('Environment → Database → Workbench', () => {
         providerEnvironment: { kind: 'native', selection: { branchId: 'main' } } } }] });
     homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
       environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) } });
+    await account.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
+      header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: detail.content.name }, body: JSON.stringify(detail.content) });
+    await account.createArtifactDocument({ artifactId: targetLink.contentArtifactId,
+      header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: resourceName }, body: JSON.stringify(detail.targetLinks[0]!.content) });
     const removals: unknown[] = [];
     await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
       actionId: 'deployments.teardown', tokenEpoch: 0, requesterInvocation: 'required', execute: raw => {
@@ -1003,17 +1046,20 @@ describe('Environment → Database → Workbench', () => {
         return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1,
           deploymentId: 'data-teardown', deploymentRevision: 1, state: 'queued' };
       } });
+    const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
     const controller = createDeploymentReadControllerV1({ scope: { serverId, accountId: 'owner', projectSourceId: detail.environment.projectSourceId },
-      transport: { listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
-        readEnvironment: async () => ({ ok: true, value: detail }),
-        listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
-        readReceipt: async () => ({ ok: true, value: createDeploymentReceiptDetailV1() }) } });
+      transport: createDeploymentReadTransport(account.accountLifetime) });
     const screen = await renderScreen(<ModalProvider><DeploymentDatabasePage controller={controller}
       environmentId={detail.environment.id} database={targetLink.id} demand={shown} phone={false}
       lifetime={account.accountLifetime} review={noReview} restore={null} setBindings={null} onBack={() => {}} onNavigate={() => {}} /></ModalProvider>);
     try {
       await waitForHomeGovernance(async () => { await act(async () => {});
         expect(screen.findByTestId(`${page}.remove`)?.props.onPress).toBeTypeOf('function'); });
+      if (detached) {
+        expect(screen.findByTestId(`${page}.cleanup`)).not.toBeNull();
+        expect(screen.findByTestId(`${page}.manage`)).toBeNull();
+        expect(screen.findByTestId(`${page}.variables`)).toBeNull();
+      }
       await screen.pressByTestIdAsync(`${page}.remove`);
       // The removal owner picks the start: a project Happier created starts on Delete, a linked one on Unlink.
       await waitForHomeGovernance(async () => { await act(async () => {});
@@ -1716,7 +1762,7 @@ describe('Environment → Data → Add (P10)', () => {
 describe('Environment → Data → Database page (P9)', () => {
   it('shows the size read refusal instead of a dash on the declared database', async () => {
     const { t } = await import('@/text');
-    const view = await renderDatabase({ sizeReadUnavailable: true });
+    const view = await renderDatabase();
     try {
       await view.settle(`${page}.facts.strip`);
       const strip = view.screen.findAllByProps({ testID: `${page}.facts.strip` })[0];
