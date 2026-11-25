@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
-import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import type { AgentSessionRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 
@@ -14,6 +14,14 @@ import { createStablePluginConnectedAccountsHost } from '@/plugins/runtime/invoc
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { openAiCodexConnectedAccountRuntime } from '../../../../../../packages/plugins/codex/src/connectedAccounts/openAiCodexRuntime';
+
+import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
+import { createVercelOAuthInventoryTargetResolver } from '@/providers/probe/vercelOAuthInventory.testkit';
+import { PLUGIN as vercel } from '../../../../../../packages/plugins/machine-vercel/src/manifest';
+import { ACCOUNT_PURPOSE } from '../../../../../../packages/plugins/machine-vercel/src/machine/credentials';
+import { callbackUrl, completion, createVercelOAuthFixture, pkce, projectId, projects,
+  service as vercelService, teamId } from '../../../../../../packages/plugins/machine-vercel/src/oauth.testkit';
 
 const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
 const scenarios = [
@@ -141,3 +149,94 @@ for (const scenario of scenarios) {
     });
   });
 }
+
+it('allocates the first Vercel Sandbox using the published purpose of the account that just signed in', async () => {
+  const h = await createVercelOAuthFixture();
+  const consumer = { pluginId: vercel.manifest.id, localId: 'acquire' };
+  const purpose = { consumer, purpose: ACCOUNT_PURPOSE };
+  const account = h.read.account;
+  const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+  const empty = { v: 1, bindings: [] } satisfies QualifiedConnectedAccountPurposeBindingsV1;
+  let stored: QualifiedConnectedAccountPurposeBindingsV1 = empty;
+  let published: QualifiedConnectedAccountPurposeBindingsV1 = empty;
+  const unexpected = async (): Promise<never> => { throw new Error('Unexpected fallback selection'); };
+  const owner = createConnectedAccountPurposeBindingOwner({
+    store: {
+      read: async (_signal, options) => options?.published ? published : stored,
+      update: async mutate => (stored = mutate(stored)),
+      subscribe: () => ({ dispose() {} }),
+    },
+    selectTarget: unexpected, projectTargetAccounts: unexpected, assertTargetAccountMaterializable: unexpected,
+    resolveTarget: createVercelOAuthInventoryTargetResolver({
+      account, displayName: 'Example site', kind: 'oauth', readCredentialRevision: () => revision,
+    }),
+    resolveCredentialRevision: async () => revision,
+    materializeAccount: ({ request, signal, credentialRevisionBasis }) => {
+      credentialRevisionBasis?.captureCredentialRevision(revision);
+      return h.runtime.materialize(request, { ...h.read, credentials: h.staged.store, signal });
+    },
+  });
+  const host = createStablePluginConnectedAccountsHost(owner);
+  const controller = new AbortController();
+  const { signal } = controller;
+  const connectedAccounts = host.bind({
+    plugin: { id: consumer.pluginId, version: vercel.manifest.version },
+    contribution: { id: consumer.localId, qualifiedId: `${consumer.pluginId}/actions/${consumer.localId}` },
+    occurrenceId: 'sandbox-fixture', correlationId: 'sandbox-fixture', surface: 'plugin',
+    signal, retirementSignal: signal, isOccurrenceCurrent: () => true,
+  }, [{ purpose: ACCOUNT_PURPOSE, serviceRefs: [vercelService], operations: ['use'],
+    materializationKinds: ['httpHeaders', 'environment'] }]);
+  const kit = await createPluginTestkit({ manifest: vercel.manifest, module: vercel,
+    services: { connectedAccounts, http: createPluginHttpFixture({ request: h.request }) } });
+  try {
+    h.routes.set('/v10/projects', projects);
+    h.routes.set(`/v2/teams/${teamId}`, { status: 200, body: { id: teamId, name: 'Example team', billing: { plan: 'pro' } } });
+    h.routes.set(`/v9/projects/${projectId}`, { status: 200, body: { id: projectId, name: 'Example site', accountId: teamId } });
+    await h.mode.begin({ callbackUrl, state: completion.state, pkce }, h.authentication);
+    expect(await h.mode.complete(completion, h.authentication)).toMatchObject({ status: 'configurationRequired' });
+    h.values.projectId = projectId;
+    expect(await h.mode.reconcile!(h.authentication)).toMatchObject({ status: 'connected' });
+    const selection = await owner.resolveBindingIntent({
+      purpose, target: { kind: 'account', account }, serviceRefs: [vercelService], signal,
+    });
+    stored = { v: 1, bindings: [selection] };
+
+    const managedId = 'machine-one';
+    const name = `happier-${managedId}`;
+    h.routes.set('/v4/sandboxes', { status: 200, body: {
+      sandbox: { name, tags: { 'happier-managed-id': managedId }, createdAt: 1000, currentSessionId: 'sbx_one',
+        status: 'running', persistent: true },
+      session: { id: 'sbx_one', sourceSandboxName: name, projectId, createdAt: 1000 }, routes: [],
+    } });
+    const acquire = () => kit.invokeAction('acquire', { managedId,
+      launch: { image: 'vercel/sandbox/universal:latest', region: 'iad1', vcpus: 1, timeoutMs: 300000, snapshotExpirationMs: 0 },
+    }, { surface: 'plugin' });
+    const allocations = () => h.requests.filter(request => new URL(request.url).pathname === '/v4/sandboxes');
+
+    const notSelected = 'plugin_host_access_resource_not_selected';
+    await expect(connectedAccounts.materialize(ACCOUNT_PURPOSE, { kind: 'environment', keys: ['VERCEL_TEAM_ID', 'VERCEL_PROJECT_ID'] }))
+      .rejects.toMatchObject({ code: notSelected });
+    // The signed-in Account still cannot allocate while its purpose is unpublished.
+    // The separate refusal-mapper change turns a rejected result into a typed throw.
+    const refused = await acquire().then(
+      result => result !== null && typeof result === 'object' && 'kind' in result && result.kind === 'rejected',
+      (error: unknown) => error instanceof Error && 'code' in error && error.code === notSelected,
+    );
+    expect(refused).toBe(true);
+    expect(allocations().length).toBe(0);
+
+    published = stored;
+    const acquired = await acquire();
+    expect(acquired, acquired && typeof acquired === 'object' && 'code' in acquired ? String(acquired.code) : undefined)
+      .toMatchObject({ kind: 'bound' });
+    const [allocated] = allocations();
+    expect(allocated).toBeDefined();
+    expect(new URL(allocated!.url).searchParams.get('teamId')).toBe(teamId);
+    expect(JSON.parse(new TextDecoder().decode(allocated!.body as Uint8Array))).toMatchObject({ projectId });
+    expect(allocated!.headers?.authorization === `Bearer ${await h.staged.store.get('token')}`).toBe(true);
+  } finally {
+    controller.abort();
+    host.retire();
+    await Promise.all([kit.dispose(), h.kit.dispose()]);
+  }
+});
