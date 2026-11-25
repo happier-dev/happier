@@ -128,7 +128,10 @@ it('names a finding it cannot show by its place and says why, with its own words
   const screen = await renderReview({
     reviewId: 'detailless-review',
     state: 'completed',
-    comments: [detailless],
+    comments: [detailless, buildReviewCommentFixture({
+      id: 'redacted-root', reviewId: 'detailless-review', accountId: 'alice', roundOrdinal: 1,
+      findingIdentity: 'f'.repeat(64), flags: { redacted: true }, body: 'Withheld sensitive finding body',
+    })],
   });
   const { t } = await import('@/text');
   try {
@@ -146,6 +149,10 @@ it('names a finding it cannot show by its place and says why, with its own words
     expect(text).not.toContain(
       t('files.reviewComments.durable.contentUnavailable'),
     );
+    expect(screen.findHostByTestId('review-detail:unavailable-finding:redacted-root')).not.toBeNull();
+    expect(text).toContain(t('reviewWalkthrough.detail.findingRedacted'));
+    expect(text).not.toContain('Withheld sensitive finding body');
+    expect(screen.findByTestId('review-detail:unavailable-finding:redacted-root:action')).toBeNull();
     await screen.pressByTestIdAsync(`${testID}:action`);
     await vi.waitFor(() =>
       expect(
