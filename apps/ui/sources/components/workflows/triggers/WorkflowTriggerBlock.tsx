@@ -8,6 +8,7 @@ import { AutomationActionOutcomeV1Schema } from '@happier-dev/protocol/automatio
 import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
+  joinHappierFacts,
   HappierFieldBoxTrigger,
   HappierPressable,
   parseHappierLocalDateTime,
@@ -77,6 +78,7 @@ import {
   formatScheduleTimeInput,
   resolveOnceSchedule,
   SIMPLE_SCHEDULE_REPEATS,
+  type SpentOnceSchedulePresentation,
 } from './triggerSchedule';
 import { useProposedScheduleOccurrence } from './useProposedScheduleOccurrence';
 import { useTriggerScheduleCommands } from './useTriggerScheduleCommands';
@@ -178,6 +180,11 @@ export function WorkflowTriggerBlock(
     savedNextRunAt?: number | null;
     /** Why that saved occurrence waits for an earlier run, from the same trigger set read. */
     savedScheduleHold?: ScheduleHold;
+    /**
+     * A saved, unedited one-time schedule that already ran (`presentSpentOnceSchedule`): it reads as finished, offers no
+     * on/off switch (the server keeps it enabled, so a switch would read as armed), and picking a new time runs it again.
+     */
+    spentOnce?: SpentOnceSchedulePresentation | null;
     /** A saved before-trigger the Home scoped to its author's own Actions on a subject they can only view (R22). */
     viewOnlySubject?: boolean;
     machineId: string | null;
@@ -289,13 +296,13 @@ export function WorkflowTriggerBlock(
           {title}
         </Text>
         <View style={styles.actions}>
-          <Switch
+          {props.spentOnce ? null : <Switch
             testID={`${props.testID}-toggle`}
             value={props.enabled && !props.incomplete}
             disabled={props.onToggleEnabled === undefined}
             onValueChange={() => props.onToggleEnabled?.()}
             accessibilityLabel={title}
-          />
+          />}
           <WorkflowBlockActionsMenu
             blockLabel={title}
             actions={actions}
@@ -338,6 +345,8 @@ export function WorkflowTriggerBlock(
           savedNextRunAt={props.savedNextRunAt}
           savedScheduleHold={props.savedScheduleHold}
           accountLifetime={props.accountLifetime}
+          spentOnce={props.spentOnce ?? null}
+          historyShown={props.history != null}
         />
       ) : null}
       {when?.kind === 'pluginEvent' && props.nativeSourceName !== undefined ? (
@@ -713,6 +722,9 @@ function ScheduleTrackRows(
     savedNextRunAt?: number | null;
     savedScheduleHold?: ScheduleHold;
     accountLifetime?: ServerAccountScopeLifetime | null;
+    spentOnce: SpentOnceSchedulePresentation | null;
+    /** History is open beneath and heads with how it ended, so the note keeps only the way to run it again. */
+    historyShown: boolean;
   }>,
 ) {
   const { when } = props;
@@ -876,6 +888,12 @@ function ScheduleTrackRows(
               }
             />
           </TrackRow>
+          {props.spentOnce ? (
+            <Text testID={`${props.testID}-spent`} style={styles.note}>
+              {props.historyShown ? t('workflows.triggers.once.runAgain')
+                : joinHappierFacts(props.spentOnce.line, t('workflows.triggers.once.runAgain'))}
+            </Text>
+          ) : null}
         </>
       ) : schedule === null ? (
         when.everyMs === undefined ? (

@@ -20,7 +20,7 @@ import { joinList } from '@/utils/text/joinList';
 import { resolveActionTitle } from '@/text/actionTitles';
 
 import type { ScheduleHoldPresentation } from './scheduleHoldPresentation';
-import { formatCalendarDate, formatClockTime, formatMonthName, parseCalendarSchedule, readOnceScheduleState, formatOnceScheduleStateLabel } from './triggerSchedule';
+import { formatCalendarDate, formatClockTime, formatMonthName, formatOnceScheduleInstant, parseCalendarSchedule, readOnceScheduleState, formatOnceScheduleStateLabel } from './triggerSchedule';
 
 function scheduledRunTimeUnits(nextRunAt: number, nowMs: number) {
     const next = new Date(nextRunAt);
@@ -319,10 +319,7 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
             // The instant in the viewer's clock, as event times and Every day read: the year only when it isn't this
             // year, and no zone (every time on screen is the viewer's own).
             if (trigger.schedule.kind === 'once') return t('workflows.triggers.once.at', {
-                time: formatWithCachedDateTimeFormatter(trigger.schedule.scheduledAt, getPreferredLanguage(), {
-                    ...(new Date(trigger.schedule.scheduledAt).getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' as const }),
-                    month: 'short', day: 'numeric', ...HAPPIER_CLOCK_TIME_FORMAT,
-                }),
+                time: formatOnceScheduleInstant(trigger.schedule.scheduledAt),
             });
             return trigger.schedule.kind === 'cron' && trigger.schedule.scheduleExpr !== null
                 ? formatCron(trigger.schedule.scheduleExpr)

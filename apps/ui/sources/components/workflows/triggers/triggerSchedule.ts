@@ -5,11 +5,45 @@ import { HAPPIER_CLOCK_TIME_FORMAT, resolveHappierFutureLocalDateTime, type Happ
 /** The editor retains a saved instant exactly; editing its fields releases that retained value. */
 export type OnceScheduleDraft = HappierLocalDateTimeDraft & Readonly<{ relative: string; scheduledAt?: number }>;
 
-export type OnceScheduleSource = Readonly<{ kind: string; schedule?: Readonly<{ kind: string }>; remainingOccurrences?: number | null }>;
+export type OnceScheduleSource = Readonly<{ kind: string; schedule?: Readonly<{ kind: string; scheduledAt?: number }>;
+    remainingOccurrences?: number | null; nextRunAt?: number | null }>;
 
-/** Consumption is scheduler-owned; a paused pending occurrence is still not done. */
+/**
+ * Consumption is scheduler-owned: no occurrence remains and none is next. A paused pending occurrence is still not
+ * done. The server leaves a spent trigger enabled, so every surface reads "finished" from this, never from `enabled`.
+ */
 export function isSpentOnceSchedule(trigger: OnceScheduleSource): boolean {
-    return trigger.kind === 'schedule' && trigger.schedule?.kind === 'once' && trigger.remainingOccurrences === 0;
+    return trigger.kind === 'schedule' && trigger.schedule?.kind === 'once' && trigger.remainingOccurrences === 0
+        && (trigger.nextRunAt ?? null) === null;
+}
+
+/** A one-time instant in the viewer's clock: the year only when it isn't this year, and no zone. */
+export function formatOnceScheduleInstant(scheduledAt: number): string {
+    return formatWithCachedDateTimeFormatter(scheduledAt, getPreferredLanguage(), {
+        ...(new Date(scheduledAt).getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' as const }),
+        month: 'short', day: 'numeric', ...HAPPIER_CLOCK_TIME_FORMAT,
+    });
+}
+
+export type SpentOnceSchedulePresentation = Readonly<{
+    /** How it ended, from its Run when that Run is loaded here; `unknown` otherwise (never a guess). */
+    state: 'done' | 'missed' | 'unknown';
+    /** The past-tense line: "Ran once on …", "Missed on …", or "Already ran". */
+    line: string;
+}>;
+
+/**
+ * A spent one-time schedule said in the past tense (R12 M12), for the editor block, the trigger popover and History.
+ * The outcome reads through `readOnceScheduleState`, the one Completed/Missed mapping; with no Run loaded it says only
+ * that it already ran. `null` for every trigger that is not spent, so an armed one keeps its next run.
+ */
+export function presentSpentOnceSchedule(trigger: OnceScheduleSource, lastRunState?: string | null): SpentOnceSchedulePresentation | null {
+    if (!isSpentOnceSchedule(trigger)) return null;
+    const scheduledAt = trigger.schedule?.scheduledAt;
+    const state = lastRunState == null || scheduledAt === undefined ? 'unknown' : readOnceScheduleState(trigger, lastRunState);
+    if (state === 'done') return { state, line: t('workflows.triggers.once.ranOn', { time: formatOnceScheduleInstant(scheduledAt!) }) };
+    if (state === 'missed') return { state, line: t('workflows.triggers.once.missedOn', { time: formatOnceScheduleInstant(scheduledAt!) }) };
+    return { state: 'unknown', line: t('workflows.triggers.once.alreadyRan') };
 }
 
 /**

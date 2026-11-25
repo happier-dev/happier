@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_COLLECTION_LIST_METRICS, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import type { TriggerTargetV1} from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
 import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
@@ -53,6 +53,7 @@ import { useOpenTriggerAsWorkflow } from './useOpenTriggerAsWorkflow';
 import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
 import { WorkflowTriggerRunHistory } from './WorkflowTriggerRunHistory';
 import { formatTriggerSummary } from './formatTriggerSummary';
+import { presentSpentOnceSchedule } from './triggerSchedule';
 import { readTriggerScheduleHold } from './scheduleHoldPresentation';
 
 /**
@@ -202,6 +203,8 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
     });
     const openTrigger = open?.triggerId == null ? undefined : open.set.triggers.find((trigger) => trigger.id === open.triggerId);
     const openEnabled = open !== null && open.set.enabled && openTrigger?.enabled !== false;
+    // A one-time schedule that already ran stays enabled on the server; Turn off/on would read as armed (R12 M12).
+    const openSpent = openTrigger ? presentSpentOnceSchedule(openTrigger) : null;
     // History reads the current list's occurrence, not the revision kept open for editing.
     const liveSet = open?.history ? sets.find(set => set.automationId === open.set.automationId) ?? open.set : undefined;
     const liveTrigger = liveSet?.triggers.find(trigger => trigger.id === open?.triggerId);
@@ -223,7 +226,8 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
                     nextRunAt={liveSet?.enabled && liveTrigger?.enabled && liveTrigger.kind === 'schedule' ? liveTrigger.nextRunAt : null}
                     hold={liveSet?.enabled && liveTrigger?.enabled ? readTriggerScheduleHold(liveSet, liveTrigger.id) : undefined} /> } } : {})}
             onWritten={refresh}
-            {...(open.refusal !== undefined || open.set.legacy?.lockedReason === 'review_required' ? {} : { onToggleEnabled: { enabled: openEnabled, onPress: () => {
+            {...(openSpent ? { subtitle: joinHappierFacts(openSpent.line, t('workflows.triggers.once.runAgain')) } : {})}
+            {...(openSpent || open.refusal !== undefined || open.set.legacy?.lockedReason === 'review_required' ? {} : { onToggleEnabled: { enabled: openEnabled, onPress: () => {
                 setOpen(null);
                 void toggle({ automationId: open.set.automationId, triggerId: open.triggerId }, !openEnabled);
             } } })}
@@ -347,6 +351,8 @@ function AccountTriggerPopover(props: Readonly<{
     onRequestClose: () => void;
     onWritten: () => void;
     onToggleEnabled?: React.ComponentProps<typeof TriggerPopover>['onToggleEnabled'];
+    /** A saved one-time schedule that already ran says so under the title until its time is changed. */
+    subtitle?: string;
     onHistory?: () => void;
     pushedPage?: React.ComponentProps<typeof TriggerPopover>['pushedPage'];
     onSaveAsWorkflow?: (target: TriggerTargetV1) => void;
@@ -416,6 +422,7 @@ function AccountTriggerPopover(props: Readonly<{
                 source={when.kind === 'pluginEvent' ? when.value : undefined} /> : undefined}
             onRunNow={!needsReview && triggerId === null ? async () => { await runNow.runNow(set.automationId, 'newSession'); } : undefined}
             onToggleEnabled={props.onToggleEnabled}
+            subtitle={props.subtitle}
             onSaveAsWorkflow={needsReview ? undefined : props.onSaveAsWorkflow}
             onSubmit={async (value, write) => {
                 if (write.observationOnly && write.trigger !== null && triggerId !== null) {

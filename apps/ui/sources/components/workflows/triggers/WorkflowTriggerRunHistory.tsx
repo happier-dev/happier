@@ -11,7 +11,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { formatNextScheduledRun, formatNextScheduledRunAccessibilityLabel, formatNextScheduledRunTime, readNextScheduledRunRefreshAtMs } from './formatTriggerSummary';
-import { readOnceScheduleState, formatOnceScheduleStateLabel, type OnceScheduleSource } from './triggerSchedule';
+import { presentSpentOnceSchedule, type OnceScheduleSource } from './triggerSchedule';
 
 import { useReportTriggerHistoryRuns } from './SessionTriggerHistoryScope';
 import { AutomationHistoryGapRecoveryAction } from '@/components/automations/screens/AutomationHistoryGapRecoveryAction';
@@ -32,7 +32,7 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
     triggerName?: string;
     /** Exact saved scheduler occurrence for this trigger, absent on older summaries. */
     nextRunAt?: number | null;
-    /** The saved trigger: a spent one-time schedule heads its History with Completed, or Missed from its Run. */
+    /** The saved trigger: a spent one-time schedule heads its History with how it ended, from its latest Run once read. */
     trigger?: OnceScheduleSource;
     /** The server's reason this recurring schedule waits, from the same trigger set read. */
     hold?: ScheduleHold;
@@ -48,7 +48,7 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
     const nextRunAt = props.nextRunAt ?? null;
     const readNextRefresh = React.useCallback((nowMs: number) => readNextScheduledRunRefreshAtMs(nextRunAt, nowMs), [nextRunAt]);
     const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, nextRunAt !== null);
-    const once = props.trigger ? readOnceScheduleState(props.trigger, read.rows[0]?.summary?.state) : null;
+    const spent = props.trigger ? presentSpentOnceSchedule(props.trigger, read.rows[0]?.summary?.state) : null;
     const empty = read.rows.length === 0 && read.status !== 'failed';
     // An empty History with a future occurrence says both in one sentence (07 S4), so the next run isn't said twice.
     const emptyWithNext = empty && read.status !== 'loading' && nextRunAt !== null && nextRunAt > nowMs;
@@ -75,8 +75,8 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
                 label={t('workflows.events.openRun')} onPress={openHoldingRun} />} />
             : nextRunAt !== null && !emptyWithNext ? <Item title={formatNextScheduledRun(nextRunAt, true, nowMs)} mode="info"
                 accessibilityLabel={formatNextScheduledRunAccessibilityLabel(nextRunAt, true, nowMs)} /> : null}
-        {once === 'done' || once === 'missed' ? <Item testID={`session-work-trigger-history:${props.automationId}-once`} mode="info"
-            title={formatOnceScheduleStateLabel(once)!} /> : null}
+        {spent ? <Item testID={`session-work-trigger-history:${props.automationId}-once`} mode="info"
+            title={spent.line} titleLines={0} /> : null}
         {read.status === 'failed' ? <SurfaceFreshnessLine
             tone="warning" reason={t('workflows.destination.history.loadFailedTitle')}
             action={{ label: t('workflows.retry'), onPress: read.retry }} /> : null}

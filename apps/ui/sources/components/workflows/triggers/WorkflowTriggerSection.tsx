@@ -42,6 +42,7 @@ import {
 } from './formatTriggerSummary';
 import { readTriggerScheduleHold } from './scheduleHoldPresentation';
 import { readScheduleWhen, readTriggerWhen, type TriggerWhenValue } from './sessionTriggerForm';
+import { presentSpentOnceSchedule } from './triggerSchedule';
 import { FieldSelect } from './TriggerPopover';
 import type { TriggerPluginEventRows } from './TriggerPluginEventRows';
 import { WorkflowRequesterDisclosure } from '../presentation/WorkflowRequesterDisclosure';
@@ -361,7 +362,8 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     sessionId={lifetimeSessionId}
                     sessionContext={sessionContext}
                     {...(savedSchedule ? { savedNextRunAt: props.set?.enabled ? readNextRunAt(row) : null,
-                        savedScheduleHold: readTriggerScheduleHold(props.set, row.kind === 'saved' ? row.triggerId : null) } : {})}
+                        savedScheduleHold: readTriggerScheduleHold(props.set, row.kind === 'saved' ? row.triggerId : null),
+                        spentOnce: presentSpentOnceSchedule(row.trigger) } : {})}
                     {...(isViewOnlySubjectTrigger(row.trigger, when, edited !== undefined) ? { viewOnlySubject: true } : {})}
                     {...(row.kind === 'saved' && props.set && row.trigger.kind === 'pluginEvent'
                         ? { eventEdit: { automationId: props.set.automationId, triggerId: row.triggerId } } : {})}

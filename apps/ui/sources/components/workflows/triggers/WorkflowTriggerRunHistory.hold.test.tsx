@@ -197,3 +197,38 @@ it('shows a pending occurrence when no Run holds the schedule', async () => {
     plain.findByTestId('session-work-trigger-history:hourly-held'),
   ).toBeNull();
 });
+
+// R12 M12: a spent one-time schedule heads its History in the past tense, from the Run History already read.
+const onceAt = Date.UTC(2026, 10, 24, 15, 0);
+const spentOnce = { kind: 'schedule', schedule: { kind: 'once', scheduledAt: onceAt }, remainingOccurrences: 0, nextRunAt: null } as const;
+it.each([
+  ['succeeded', 'workflows.triggers.once.ranOn'],
+  ['missed', 'workflows.triggers.once.missedOn'],
+] as const)('says a spent one-time schedule whose Run %s ended in the past tense', async (state, key) => {
+  home.answer(serverId, route, {
+    body: { runs: [createWorkflowRunSummaryFixture({
+      id: 'run-once', ownerAccountId: 'account-a', state,
+      revision: 2, origin: { kind: 'automation', automationId: 'once' },
+    })], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {} },
+  });
+  const { formatOnceScheduleInstant } = await import('./triggerSchedule');
+  const screen = await renderScreen(
+    <WorkflowTriggerRunHistory automationId="once" triggerId={triggerId} nextRunAt={null} trigger={spentOnce} />,
+  );
+  await waitForHomeGovernance(() =>
+    expect(screen.findByTestId('session-work-trigger-history-row:run-once')).not.toBeNull(),
+  );
+  expect(screen.getTextContent()).toContain(t(key, { time: formatOnceScheduleInstant(onceAt) }));
+  expect(screen.getTextContent()).not.toContain(t('workflows.triggers.once.alreadyRan'));
+});
+
+it('says only that a spent one-time schedule already ran while its Run is not read', async () => {
+  const screen = await renderScreen(
+    <WorkflowTriggerRunHistory automationId="once" triggerId={triggerId} nextRunAt={null} trigger={spentOnce} />,
+  );
+  await waitForHomeGovernance(() =>
+    expect(screen.getTextContent()).toContain(t('workflows.empty.runsTitle')),
+  );
+  expect(screen.getTextContent()).toContain(t('workflows.triggers.once.alreadyRan'));
+  expect(screen.getTextContent()).not.toContain(t('workflows.runState.succeeded'));
+});
