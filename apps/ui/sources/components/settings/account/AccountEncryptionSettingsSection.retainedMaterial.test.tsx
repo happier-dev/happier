@@ -33,12 +33,16 @@ import { AccountEncryptionMigrateRequestSchema, AccountEncryptionMigrateSuccessR
 import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { ManagedMachinePresetAccountEncryptionMigrationInventoryV1Schema, type ManagedMachinePresetAccountEncryptionMigrationInventoryV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { transitionManagedMachinePresetContentEncryptionModeV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
-import { ArtifactAccountEncryptionMigrationInventoryV1Schema, type ArtifactAccountEncryptionMigrationInventoryV1} from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
+import { ArtifactAccountEncryptionMigrationInventoryV1Schema, type ArtifactAccountEncryptionMigrationInventoryV1, type ArtifactReviewGraphAccountEncryptionMigrationV1 } from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
 import {
     decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createPackageAssetArchiveV1, encodePackageAssetArchiveBodyV1 } from '@happier-dev/protocol/plugins/availability';
 import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
+import { buildReviewCommentFixture, storePlainReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
+import { buildArtifactReviewGraphAccountEncryptionMigration } from '@/sync/ops/account/buildArtifactReviewGraphAccountEncryptionMigration';
+import { buildReviewCommentEventRequestBindingV1, buildReviewCommentEventSensitivePayloadV1, bindReviewCommentEventSensitiveEnvelopeV1 } from '@happier-dev/protocol/reviews/comments/content';
+import type { ReviewCommentEventV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { updateEffectiveHomeViewState } from '@/sync/domains/server/selection/homeViewSelectionState';
 import { getActiveServerAccountScope, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -375,7 +379,8 @@ async function mount(params: Readonly<{
 }
 
 /** Answer the carried review through its real public approval control. */
-async function completeActionReview(screen: Awaited<ReturnType<typeof mount>>['screen'], invoke: () => unknown): Promise<void> {
+async function completeActionReview(screen: Awaited<ReturnType<typeof mount>>['screen'], invoke: () => unknown,
+    review?: () => Promise<'approve' | 'reject'>): Promise<void> {
     let completion!: Promise<unknown>;
     let settled = false;
     await act(async () => {
@@ -383,14 +388,16 @@ async function completeActionReview(screen: Awaited<ReturnType<typeof mount>>['s
         void completion.then(() => { settled = true; }, () => { settled = true; });
     });
     await vi.waitFor(() => expect(settled || screen.findByTestId('actions.confirmation-review.decision-approve') !== null).toBe(true));
-    if (!settled) await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+    if (review) expect(settled).toBe(false);
+    if (!settled) await screen.pressByTestIdAsync(`actions.confirmation-review.decision-${await review?.() ?? 'approve'}`);
     await act(async () => { await completion; });
 }
 
-async function convertWithReview(screen: Awaited<ReturnType<typeof mount>>['screen'], enabled: boolean): Promise<void> {
+async function convertWithReview(screen: Awaited<ReturnType<typeof mount>>['screen'], enabled: boolean,
+    review?: () => Promise<'approve' | 'reject'>): Promise<void> {
     const toggle = screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
         && typeof node.props.onValueChange === 'function')[0]!;
-    await completeActionReview(screen, () => toggle.props.onValueChange(enabled));
+    await completeActionReview(screen, () => toggle.props.onValueChange(enabled), review);
 }
 
 async function forgetWithReview(screen: Awaited<ReturnType<typeof mount>>['screen']): Promise<void> {
@@ -664,6 +671,62 @@ describe('Account encryption historical material custody', () => {
             await convertWithReview(h.screen, false);
             expect(h.migrations).toHaveLength(0);
             await h.expectCredentialsUnchanged();
+        } finally { await h.screen.unmount(); await h.restored.dispose(); }
+    });
+
+    it('discloses collaborator Review content before approving the complete owned Artifact conversion and rejects without migration', async () => {
+        const reviewId = '00000000-0000-4000-8000-000000000001';
+        const comment = buildReviewCommentFixture({ accountId: 'account-a', reviewId,
+            author: { kind: 'user', userId: 'recipient' }, body: 'Recipient finding', transitions: [] });
+        const event: ReviewCommentEventV1 = { eventId: 'recipient-event', commentId: comment.id, accountId: 'account-a', reviewId,
+            projectId: comment.projectId, eventKind: 'created', actor: { kind: 'user', userId: 'recipient' }, createdAt: 1,
+            serverRevision: 1, event: { clientMutationId: 'recipient-mutation' } };
+        const requestBinding = buildReviewCommentEventRequestBindingV1({ accountId: 'recipient', reviewId,
+            projectId: comment.projectId, actor: event.actor, actionId: 'reviews.comments.create',
+            input: { reviewId, projectId: comment.projectId, clientMutationId: 'recipient-mutation' } });
+        const verdict = { reviewId, roundOrdinal: 1, accountId: 'recipient', revision: 1 };
+        const graph: ArtifactReviewGraphAccountEncryptionMigrationV1 = {
+            comments: [{ stored: storePlainReviewCommentFixture(comment), events: [{ event,
+                sensitiveEnvelope: bindReviewCommentEventSensitiveEnvelopeV1({ event, requestBinding, sensitive: { t: 'plain',
+                    v: buildReviewCommentEventSensitivePayloadV1({ event, requestBinding, details: { ...event.event, reason: 'Recipient evidence' } }) } }) }] }],
+            verdicts: [{ ...verdict, content: { t: 'plain', v: { ...verdict, body: 'Recipient verdict' } } }],
+        };
+        const encryption = await Encryption.create(new Uint8Array(32).fill(7));
+        const dataKey = ArtifactEncryption.generateDataEncryptionKey();
+        const artifactEncryption = new ArtifactEncryption(dataKey);
+        const encryptedGraph = await buildArtifactReviewGraphAccountEncryptionMigration({ reviewId, graph,
+            fromMode: 'plain', toMode: 'e2ee', sourceEncryption: null, targetEncryption: artifactEncryption });
+        const h = await mount({ initialMode: 'e2ee', artifactRows: [{ id: reviewId, ownership: { kind: 'ordinary' },
+            publicAudience: 'none', headerVersion: 1, bodyVersion: 1,
+            header: await artifactEncryption.encryptHeader({ kind: 'review.v1', title: 'Shared Review' }),
+            body: await artifactEncryption.encryptBody({ body: 'Review' }), revisions: [], reviewGraph: encryptedGraph,
+            dataEncryptionKey: encodeBase64(await encryption.encryptEncryptionKey(dataKey), 'base64') }] });
+        const expectDisclosureBeforeMutation = async () => {
+            expect(h.screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull();
+            // The canonical Modal boundary receives the actual mounted review's header.
+            const chrome = vi.mocked(Modal.show).mock.calls.at(-1)?.[0].chrome;
+            const disclosure = chrome && 'subtitle' in chrome ? chrome.subtitle : null;
+            expect(disclosure).toMatch(/Home.*read/i);
+            expect(disclosure).toMatch(/Artifacts.*own/i);
+            expect(disclosure).toMatch(/Review comments.*event details.*verdict.*collaborators/i);
+            expect(disclosure).toMatch(/after.*access.*removed/i);
+            expect(h.migrations).toEqual([]);
+        };
+        try {
+            await convertWithReview(h.screen, false, async () => {
+                await expectDisclosureBeforeMutation();
+                return 'reject';
+            });
+            expect(h.migrations).toEqual([]);
+            await h.expectCredentialsUnchanged();
+            await convertWithReview(h.screen, false, async () => {
+                await expectDisclosureBeforeMutation();
+                return 'approve';
+            });
+            expect(h.migrations).toHaveLength(1);
+            // Both census and migration cross JSON HTTP boundaries; absent optional fields have no undefined members.
+            expect(h.migrations[0]!.artifacts).toMatchObject({ action: 'migrate', items: [{ artifactId: reviewId,
+                reviewGraph: JSON.parse(JSON.stringify({ expected: encryptedGraph, target: graph })) }] });
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
