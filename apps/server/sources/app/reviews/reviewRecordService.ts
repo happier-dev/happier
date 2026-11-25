@@ -60,6 +60,8 @@ export async function writeReviewRoundState(tx: Tx, input: Readonly<{ reviewId: 
             subjectKind: metadata.subjectKind, sourceKind: metadata.sourceKind, ...data } });
         return true;
     }
+    // The sealed body retains every admitted round; this row projects only the latest.
+    if (current && metadata.currentRoundOrdinal < current.currentRoundOrdinal) return false;
     if (current?.currentRoundOrdinal !== metadata.currentRoundOrdinal) notAdmitted();
     if (current.state !== 'running') {
         if (current.state === metadata.state && current.finishedAt?.getTime() === metadata.finishedAt) return false;

@@ -5,6 +5,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lig
 import { inTx } from '@/storage/inTx';
 import { assertReviewRoundBinding, writeReviewRoundState } from './reviewRecordService';
 import { createArtifact, updateArtifact } from '@/app/artifacts/artifactWriteService';
+import { readArtifactForCallerInTx } from '@/app/artifacts/artifactAccessService';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import * as privacyKit from 'privacy-kit';
 import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
@@ -40,6 +41,10 @@ describe('durable Review lifecycle metadata', () => {
             expect(await inTx(tx => writeReviewRoundState(tx, { reviewId, actorAccountId: accountId, metadata: { currentRoundOrdinal: 1, state: 'completed', finishedAt: 20 } }))).toBe(false);
             expect(writes.length - settledWrites).toBe(0);
         } finally { restore(); }
+        await expect(inTx(tx => writeReviewRoundState(tx, { reviewId, actorAccountId: accountId,
+            metadata: { currentRoundOrdinal: 1, state: 'failed', finishedAt: 21 } }))).rejects.toMatchObject({ code: 'invalid-params' });
+        expect(await db.reviewMetadata.findUnique({ where: { artifactId: reviewId } }))
+            .toMatchObject({ currentRoundOrdinal: 1, state: 'completed', finishedAt: new Date(20) });
         await inTx(tx => writeReviewRoundState(tx, { reviewId, actorAccountId: accountId, metadata: { ...metadata,
             projectSourceId: null, workflowId: null, subjectKind: 'comparison', sourceKind: 'direct',
             currentRoundOrdinal: 2, startedAt: 30 } }));
@@ -52,6 +57,10 @@ describe('durable Review lifecycle metadata', () => {
         await inTx(tx => writeReviewRoundState(tx, { reviewId, actorAccountId: accountId, metadata: { ...metadata, currentRoundOrdinal: 3, startedAt: 50 } }));
         await inTx(tx => writeReviewRoundState(tx, { reviewId, actorAccountId: accountId, metadata: { currentRoundOrdinal: 3, state: 'cancelled', finishedAt: 60 } }));
         expect(await db.reviewMetadata.findUnique({ where: { artifactId: reviewId } })).toMatchObject({ state: 'cancelled', currentRoundOrdinal: 3 });
+        await expect(inTx(tx => writeReviewRoundState(tx, { reviewId, actorAccountId: accountId,
+            metadata: { currentRoundOrdinal: 4, state: 'failed', finishedAt: 70 } }))).rejects.toMatchObject({ code: 'invalid-params' });
+        await expect(inTx(tx => writeReviewRoundState(tx, { reviewId: randomUUID(), actorAccountId: accountId,
+            metadata: { currentRoundOrdinal: 1, state: 'failed', finishedAt: 70 } }))).rejects.toMatchObject({ code: 'invalid-params' });
     });
     it('commits sealed content and queryable round state through the existing Artifact writer', async () => {
         const artifactId = randomUUID();
@@ -72,6 +81,42 @@ describe('durable Review lifecycle metadata', () => {
                 subjectKind: 'repository', sourceKind: 'workflow', currentRoundOrdinal: 2, startedAt: 30 } })).toMatchObject({ ok: true });
         expect(await db.reviewMetadata.findUnique({ where: { artifactId } })).toMatchObject({
             ...metadata, currentRoundOrdinal: 2, startedAt: new Date(30),
+        });
+    });
+    it.each([
+        { outcome: 'failed', latest: 'running' },
+        { outcome: 'cancelled', latest: 'running' },
+        { outcome: 'completed', latest: 'running' },
+        { outcome: 'failed', latest: 'completed' },
+    ] as const)('persists an older $outcome round without changing the latest $latest round', async ({ outcome, latest }) => {
+        const artifactId = randomUUID();
+        const header = privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'review.v1', v: 1, reviewId: artifactId, title: 'Overlapping rounds' }));
+        const first = { ordinal: 1, state: 'running', startedAt: 10, finishedAt: null, reviewerIds: [], runs: [] };
+        const second = { ...first, ordinal: 2, startedAt: 30 };
+        const body = (rounds: readonly unknown[]) => privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, rounds }) }));
+        const metadata = { projectSourceId: null, workflowId: null, subjectKind: 'comparison' as const,
+            sourceKind: 'direct' as const, currentRoundOrdinal: 1, state: 'running' as const, startedAt: 10, finishedAt: null };
+        expect(await createArtifact({ actorUserId: accountId, artifactId, header, body: body([first]),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), reviewMetadata: metadata })).toMatchObject({ ok: true });
+        expect(await updateArtifact({ actorUserId: accountId, artifactId,
+            header: { bytes: header, expectedVersion: 1 }, body: { bytes: body([first, second]), expectedVersion: 1 },
+            reviewMetadata: { ...metadata, currentRoundOrdinal: 2, startedAt: 30 } })).toMatchObject({ ok: true });
+        let version = 2;
+        const latestRound = latest === 'running' ? second : { ...second, state: latest, finishedAt: 40 };
+        if (latest !== 'running') {
+            expect(await updateArtifact({ actorUserId: accountId, artifactId,
+                header: { bytes: header, expectedVersion: version }, body: { bytes: body([first, latestRound]), expectedVersion: version },
+                reviewMetadata: { currentRoundOrdinal: 2, state: latest, finishedAt: 40 } })).toMatchObject({ ok: true });
+            version++;
+        }
+        const settledBody = body([{ ...first, state: outcome, finishedAt: 50 }, latestRound]);
+        expect(await updateArtifact({ actorUserId: accountId, artifactId,
+            header: { bytes: header, expectedVersion: version }, body: { bytes: settledBody, expectedVersion: version },
+            reviewMetadata: { currentRoundOrdinal: 1, state: outcome, finishedAt: 50 } })).toMatchObject({ ok: true });
+        expect(await inTx(tx => readArtifactForCallerInTx(tx, { actorAccountId: accountId, artifactId })))
+            .toMatchObject({ ok: true, artifact: { body: settledBody } });
+        expect(await db.reviewMetadata.findUnique({ where: { artifactId } })).toMatchObject({
+            currentRoundOrdinal: 2, state: latest, startedAt: new Date(30), finishedAt: latest === 'running' ? null : new Date(40),
         });
     });
     it('records the producing Workflow run and the Session position each round covered', async () => {
