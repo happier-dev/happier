@@ -525,8 +525,10 @@ describe('finite Project setup execution', () => {
     it('launches native resolver tuples directly and retries only the unconfirmed suffix', async () => {
         const f = await fixture([]);
         const makefile = join(f.root, 'Makefile');
+        const sharedInput = join(f.root, 'setup-input.txt');
+        await writeFile(sharedInput, 'retained setup configuration');
         await writeFile(makefile, 'prepare:\n\tprintf prepare\nsetup:\n\tprintf setup\n');
-        await writeFile(join(f.root, '.happier/project.json'), JSON.stringify({ version: 1, workspace: { setup: [
+        await writeFile(join(f.root, '.happier/project.json'), JSON.stringify({ version: 1, workspace: { setupInputs: ['setup-input.txt'], setup: [
             { kind: 'native', tool: 'make', file: 'Makefile', target: 'prepare' },
             { kind: 'native', tool: 'make', file: 'Makefile', target: 'setup' },
         ] } }));
@@ -534,17 +536,29 @@ describe('finite Project setup execution', () => {
         const reviewed = await reviewProjectSetupEffect({ ...f.preparation, nativeIo });
         if (reviewed.kind !== 'reviewed') throw new Error(reviewed.code);
         f.trust(reviewed.plan.reviewedEffectDigest);
-        const run = f.start({ nativeIo });
+        const source = currentWorkspaceSource();
+        const reads: string[] = [];
+        const start = () => runWithWorkspaceSource({ ...source, readFile: path => {
+            reads.push(path);
+            return source.readFile(path);
+        } }, () => f.start({ nativeIo }));
+        const run = start();
         await expect.poll(() => f.spawned.length).toBe(1);
+        const readsAtFirstLaunch = reads.length;
         expect(f.spawned[0]?.launch).toMatchObject({ file: '/managed/make', args: ['-f', makefile, 'prepare'] });
         f.spawned[0]!.pty.exit(0);
         await expect.poll(() => f.spawned.length).toBe(2);
+        const stepReads = reads.slice(readsAtFirstLaunch);
+        expect({
+            shared: stepReads.filter(path => path === sharedInput).length,
+            executable: stepReads.filter(path => path === makefile).length,
+        }).toEqual({ shared: 1, executable: 1 });
         expect(f.spawned[1]?.launch).toMatchObject({ file: '/managed/make', args: ['-f', makefile, 'setup'] });
         f.spawned[1]!.pty.exit(7);
         expect(await run.completion).toMatchObject({ ok: false, errorCode: 'project_setup_step_failed' });
         expect(await f.store.read(f.target)).toMatchObject({ confirmedCommandCount: 1 });
 
-        const retry = f.start({ nativeIo });
+        const retry = start();
         await expect.poll(() => f.spawned.length).toBe(3);
         expect(f.spawned[2]?.launch).toMatchObject({ file: '/managed/make', args: ['-f', makefile, 'setup'] });
         f.spawned[2]!.pty.exit(0);
