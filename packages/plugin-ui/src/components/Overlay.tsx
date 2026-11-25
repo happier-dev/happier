@@ -289,7 +289,7 @@ function PopoverPresentation({
         <OverlayFieldTriggerContext.Provider value={null}>
           <HAPPIER_PAGE_CHROME_CONTEXT_INTERNAL.Provider value={null}>
             <HappierFloatingSurfaceContext.Provider value>
-              <View style={sheetRowsInsetStyle}>{renderedChildren}</View>
+              <View style={isMenuPresentation ? sheetRowsInsetStyle : sheetContentInsetStyle}>{renderedChildren}</View>
             </HappierFloatingSurfaceContext.Provider>
           </HAPPIER_PAGE_CHROME_CONTEXT_INTERNAL.Provider>
         </OverlayFieldTriggerContext.Provider>
@@ -940,6 +940,8 @@ function MenuPresentation({
 const FLOATING_SURFACE_INSET = SURFACE_PADDING_BY_SIZE.small;
 /** In the host's phone sheet, menu rows take the menu's own inset highlight like every menu. */
 const sheetRowsInsetStyle = {} as const;
+/** Other content keeps the anchored popover's content edge in the phone sheet, so its words line up with the title. */
+const sheetContentInsetStyle = { paddingHorizontal: FLOATING_SURFACE_INSET.horizontal } as const;
 /** An anchored sheet's footer sits on the menu rows' own edge, a row's rhythm below them. */
 const anchoredSheetFooterStyle = {
   flexDirection: 'row',

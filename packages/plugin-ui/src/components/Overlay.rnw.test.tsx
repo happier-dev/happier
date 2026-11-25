@@ -176,6 +176,10 @@ describe('controlled overlay presentation', () => {
       expect(onOpenChange).not.toHaveBeenCalled();
       expect(mount.container.textContent).toContain('Phone pull request facts');
       expect(mount.container.querySelector('[role="dialog"]')).toBeNull();
+      // Words in the phone sheet stand on the same content edge as in the anchored popover, not on the sheet's edge.
+      const facts = [...mount.container.querySelectorAll<HTMLElement>('div')].find(node => node.textContent === 'Phone pull request facts'
+        && node.style.paddingLeft !== '');
+      expect(facts?.style.paddingLeft).toBe('12px');
     } finally { mount.unmount(); }
   });
   it('keeps hosted anchored choices in the canonical menu focus, chrome and dismissal owner', async () => {

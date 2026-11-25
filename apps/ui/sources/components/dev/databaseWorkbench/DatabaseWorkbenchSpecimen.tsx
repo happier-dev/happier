@@ -10,6 +10,7 @@ import type { PluginUiActionControlPresentationV1 } from '@happier-dev/protocol/
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 import {
+  DATABASE_ACCESS_READ_ACTION_ID_V1,
   DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1,
   type DatabaseDescriptorV1,
   type DatabaseFilterV1,
@@ -126,6 +127,7 @@ function railwayPath(engine: 'postgresql' | 'mysql'): string {
   return 'target/' + encodeBase64(new TextEncoder().encode(JSON.stringify(railwayTarget(engine))), 'base64url');
 }
 const CREATE_READ_ACCESS = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
+const READ_ACCESS = databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1);
 const READ_ROLE = 'happier_ro_2b80ccb7367af66e';
 // The statements the read-role planner (`packages/databases/src/readRoleSetup.ts`) writes for each engine.
 const READ_SETUP_STATEMENTS = {
@@ -171,6 +173,9 @@ async function answer(state: DatabaseWorkbenchSpecimenState, descriptor: Databas
     typeof input.operation === 'string' ? input.operation : actionId;
   if (actionId.endsWith('targets.list') || actionId.endsWith('targets/list'))
     return { targets: [descriptor], completeness: { complete: true } };
+  // The access sheet's loaded state: agent access is kept on the Machine the database runs on.
+  if (actionId === READ_ACCESS)
+    return { setBy: 'machine', agentAccess: 'read', access: descriptor.access ?? { canRead: true, canWrite: false } };
   switch (operation) {
     case 'describe':
       return { ok: true, operation, descriptor };
