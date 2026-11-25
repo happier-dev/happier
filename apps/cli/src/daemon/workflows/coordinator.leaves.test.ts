@@ -402,7 +402,7 @@ describe('workflow Action leaves', () => {
     let downstreamEffects = 0;
     const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'panel', actionId: 'review.start', input: {
       target: { kind: 'literal', value: { kind: 'detached' } }, instructions: { kind: 'literal', value: 'Review' },
-      engineIds: { kind: 'literal', value: ['codex', 'claude'] },
+      reviewers: { kind: 'literal', value: [{ kind: 'engine', engineId: 'codex' }, { kind: 'engine', engineId: 'claude' }] },
     } };
     const materialized = frozen(leaf);
     const completion = materialized.actionContract?.completion;
@@ -448,7 +448,7 @@ describe('workflow Action leaves', () => {
     let downstreamEffects = 0;
     const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'panel', actionId: 'review.start', input: {
       target: { kind: 'literal', value: { kind: 'detached' } }, instructions: { kind: 'literal', value: 'Review' },
-      engineIds: { kind: 'literal', value: ['codex'] },
+      reviewers: { kind: 'literal', value: [{ kind: 'engine', engineId: 'codex' }] },
     } };
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Agent'); },
@@ -517,7 +517,7 @@ describe('workflow Action leaves', () => {
     });
     const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'review-role', actionId: 'review.start', input: {
       target: { kind: 'literal', value: { kind: 'detached' } }, instructions: { kind: 'literal', value: 'Review' },
-      engineIds: { kind: 'literal', value: [targetKey] }, roleId: { kind: 'literal', value: 'pinned-reviewer' },
+      reviewers: { kind: 'literal', value: [{ kind: 'engine', engineId: targetKey }] }, roleId: { kind: 'literal', value: 'pinned-reviewer' },
     } };
     const role = ResolvedRoleV1Schema.parse({ roleId: 'pinned-reviewer', name: 'Reviewer', instructions: 'Review',
       engine: { agentTargetKey: targetKey },
@@ -553,7 +553,7 @@ describe('workflow Action leaves', () => {
     });
     const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'review', actionId: 'review.start', input: {
       target: { kind: 'literal', value: { kind: 'detached' } }, instructions: { kind: 'literal', value: 'Review' },
-      engineIds: { kind: 'literal', value: ['codex'] },
+      reviewers: { kind: 'literal', value: [{ kind: 'engine', engineId: 'codex' }] },
     } };
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Agent'); },
@@ -632,7 +632,7 @@ describe('workflow Action leaves', () => {
     });
     const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'review', actionId: 'review.start', input: {
       target: { kind: 'literal', value: { kind: 'detached' } }, instructions: { kind: 'literal', value: 'Review' },
-      engineIds: { kind: 'literal', value: ['codex'] },
+      reviewers: { kind: 'literal', value: [{ kind: 'engine', engineId: 'codex' }] },
       modelId: { kind: 'literal', value: 'selected-model' },
     } };
     const store = createInMemoryWorkflowCoordinatorStore();
@@ -712,12 +712,14 @@ describe('workflow Action leaves', () => {
         ? { sessionId: { kind: 'literal' as const, value: 'c222222222222222222222222' } }
         : { target: { kind: 'literal' as const, value: { kind: 'detached' } } }),
       instructions: { kind: 'literal', value: 'Review the changes' },
-      [actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys']: { kind: 'list', items: [{ kind: 'item', field: 'value' }] },
+      [actionId === 'review.start' ? 'reviewers' : 'backendTargetKeys']: { kind: 'list', items: [{ kind: 'item', field: 'value' }] },
     } };
-    const engineValues = actionId === 'review.start' ? ['muse', 'codex'] : [buildBackendTargetKeyV2(muse), buildBackendTargetKeyV2(codex)];
+    const engineValues = actionId === 'review.start'
+      ? [{ kind: 'engine', engineId: 'muse' }, { kind: 'engine', engineId: 'codex' }]
+      : [buildBackendTargetKeyV2(muse), buildBackendTargetKeyV2(codex)];
     const blocks: WorkflowDefinitionV1['blocks'] = binding === 'literal' ? engineValues.map((engine, index) => ({ ...leaf,
       id: `review-${index}`, input: { ...leaf.input,
-        [actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys']: { kind: 'literal', value: [engine] } },
+        [actionId === 'review.start' ? 'reviewers' : 'backendTargetKeys']: { kind: 'literal', value: [engine] } },
     })) : [{ kind: 'loop', id: 'panel', repetition: {
       kind: 'items', items: { kind: 'input', name: 'engines', path: [] }, execution: 'sequential', failurePolicy: 'fail_stop',
     }, body: [leaf] }];
