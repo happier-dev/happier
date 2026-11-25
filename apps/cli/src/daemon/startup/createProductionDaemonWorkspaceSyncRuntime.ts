@@ -83,7 +83,8 @@ import { TransferEndpointCandidateSchema } from '@happier-dev/protocol/machines/
 import type { TransferEndpointCandidate } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { captureServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { RpcError, readRpcErrorCode, isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import { RpcError, readRpcErrorCode, isRpcMethodNotAvailableError, isRpcMethodNotFoundError, MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { WorkspaceSyncCommittedCopyTargetResultV1Schema, WorkspaceSyncCommittedCopyTargetV1Schema, type WorkspaceSyncCommittedCopyTargetV1, type WorkspaceSyncCommittedCopyPreviewV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 
 import type { MachineWorkspaceSyncRpcService } from '@/api/machine/rpcHandlers.workspaceSync';
@@ -1914,8 +1915,11 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
             return z.array(ProjectWorkerDependencyV1Schema).parse(result);
           } catch (error) {
             const code = readRpcErrorCode(error) ?? (error instanceof Error && 'code' in error ? error.code : undefined);
-            if (!removal && (code === 'peer_unavailable' || code === 'RPC_TRANSPORT_UNAVAILABLE'
-              || code === 'RPC_CLIENT_NOT_AVAILABLE' || code === 'MACHINE_RPC_TIMEOUT')) {
+            // Unchecked: Home's own availability verdict for that Machine (its reachability owner
+            // decides; a grant refusal such as custodian_only stays a refusal), or no answer at all.
+            if (!removal && (isMachineRequestReachabilityFailureV1(error) || code === 'peer_unavailable'
+              || code === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE || code === RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE
+              || code === MACHINE_RPC_TIMEOUT_ERROR_CODE)) {
               uncheckedMachineIds.add(machineId);
               return [];
             }

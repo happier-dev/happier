@@ -623,8 +623,6 @@ async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts |
         diagnostic: { reason: 'machine_replaced', requiredFact: 'current_machine', remedy: 'select_current_machine' } };
     if (!row.installationId) return { kind: 'denied', code: 'machine_unavailable',
         diagnostic: { reason: 'machine_installation_missing', requiredFact: 'machine_installation', remedy: 'register_machine' } };
-    const onlineDiagnostic = readMachineOnlineAvailabilityDiagnostic(row, input.requireOnline);
-    if (onlineDiagnostic) return { kind: 'denied', code: 'machine_unavailable', diagnostic: onlineDiagnostic };
     // A template creates the same requester-owned Session as ordinary New Session.
     // Keep its signed root while consuming the existing spawn role/isolation policy.
     const operationActionId = input.actionId === 'template.instantiate' ? 'session.spawn_new' : input.actionId;
@@ -687,6 +685,10 @@ async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts |
     if (requiredRole === 'manage' && access.role !== 'manage') return { kind: 'denied', code: 'access_denied', requiredRole,
         ...(spawnSetup ? { diagnostic: { reason: 'machine_setup_requires_manage',
             requiredFact: 'machine_manage_role', remedy: 'request_machine_manage_access' } } : {}) };
+    // Grants decide admission; liveness only follows it. A caller refused while the Machine
+    // runs keeps that refusal while it is stopped, so "unavailable" never stands in for "refused".
+    const onlineDiagnostic = readMachineOnlineAvailabilityDiagnostic(row, input.requireOnline);
+    if (onlineDiagnostic) return { kind: 'denied', code: 'machine_unavailable', diagnostic: onlineDiagnostic };
     if (!isMachineOperationSupportedForRequester({ actorAccountId: input.actorAccountId, machine: row,
         rpcMethod: input.operationRpcMethod ?? method, actionId: operationActionId,
         callerAuthority: input.callerAuthority, sessionActionOrigin: input.sessionActionOrigin,

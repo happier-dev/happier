@@ -37,6 +37,7 @@ import { createTestGitRpcManager } from '../../../../../../cli/src/scm/rpc/__tes
 import { ScmBranchListResponseSchema } from '@happier-dev/protocol/scm';
 import { callSocketRpc } from '../../../../../../../packages/sync-client/src/rpc/callSocketRpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { createCliSessionHandoffActionDeps } from '../../../../../../cli/src/session/handoff/cliActionDeps';
@@ -215,6 +216,51 @@ describe("Session RPC final access admission on SQLite", () => {
                 failureCause: expect.objectContaining({ phase: 'rpc.admission.machine', errorCode: 'custodian_only' }),
             }));
         }
+    });
+
+    // RU2 FRESH-COPY-REMOVE-OFFLINE (cut 45): removing a Fresh copy reads its other Machine's
+    // dependencies. With that Machine's daemon stopped, a caller Home would admit gets an
+    // availability verdict; a caller Home refuses gets the same refusal whether it runs or not.
+    it.each(['stopped', 'running-flag-without-socket'] as const)('answers a dependency read on a Machine with no live daemon by grant first (%s)', async state => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const manager = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, active: state !== 'stopped',
+            installationId: randomUUID(), metadata: encodePlainMachineStoredContent({ host: 'fresh-copy-target', platform: 'linux',
+                happyCliVersion: 'test', homeDir: '/worker', happyHomeDir: '/worker/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
+        // Shared with Manage, as READY221's B2: Manage is not custody of a custodian_only method.
+        await db.machineGrant.create({ data: { principalKind: 'account' as const, machineId: machine.id, accountId: manager.id,
+            accessLevel: 'admin', createdByAccountId: owner.id } });
+        const call = async (accountId: string) => {
+            const token = await createAccountTokenForTests(accountId, { kind: 'account', authority: 'present_user' });
+            const caller = Object.assign(createAuthenticatedFakeSocket({ id: `dependency-reader-${accountId}`, data: {
+                clientType: 'user-scoped', accountStoredContentCompatibility,
+            } }), { handshake: { auth: { token } } });
+            // No daemon socket exists for this Machine anywhere in the room census.
+            registerSocketRpcHandlers({ userId: accountId, socket: caller as unknown as Socket,
+                io: createSocketRoomDiscoveryHarness(async () => []) });
+            const callback = vi.fn();
+            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, {
+                method: `${machine.id}:${RPC_METHODS.DAEMON_PROJECT_WORKER_DEPENDENCIES}`,
+                params: { serverId: 'home', machineId: machine.id, workspaceRefId: 'fresh-copy', relationshipId: 'fresh-copy-link' },
+            }, callback);
+            const answer = callback.mock.calls[0]?.[0];
+            // The requester daemon decodes Home's answer with the real sync-client codec.
+            const error = await socketRpcCodec.decodeResult({ mode: 'plain' }, answer, 'dependency-read').then(() => null, failure => failure);
+            return { answer, error, unreachable: isMachineRequestReachabilityFailureV1(error) };
+        };
+
+        const custodian = await call(owner.id);
+        expect(custodian.answer, JSON.stringify(custodian.answer)).toMatchObject(state === 'stopped'
+            ? { ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false,
+                failureCause: { phase: 'rpc.admission.machine', errorCode: 'machine_unavailable', httpStatus: 403 } }
+            : { ok: false, errorCode: 'target_unavailable' });
+        expect(custodian.unreachable).toBe(true);
+
+        const shared = await call(manager.id);
+        expect(shared.answer, JSON.stringify(shared.answer)).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN,
+            effectAttempted: false, failureCause: { phase: 'rpc.admission.machine', errorCode: 'custodian_only', httpStatus: 403 } });
+        expect(shared.unreachable).toBe(false);
     });
 
     it.each(['plain', 'e2ee'] as const)('admits an admin worker-copy destination through the native Action preflight and preserves next-request refusals (%s)', async mode => {

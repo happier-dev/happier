@@ -907,6 +907,15 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     expect(await readFile(join(fixture.targetPath, 'payload.txt'), 'utf8')).toBe('latest transient source bytes');
   });
 
+  // Home's own answers to a dependency read on a Machine with no live daemon, proven against real
+  // Home mediation on SQLite ("answers a dependency read on a Machine with no live daemon by grant
+  // first" in registerSocketRpcHandlers.authorizationRace.sqlite.composed.integration.spec.ts).
+  // A stopped daemon is refused at Machine admission as unavailable; a Machine still flagged online
+  // without a socket is target_unavailable. Home never answers `peer_unavailable`.
+  const homeStoppedMachineAnswer = { ok: false, error: 'Forbidden', errorCode: 'RPC_FORBIDDEN', effectAttempted: false,
+    failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: 403 } };
+  const homeNoSocketAnswer = { ok: false, error: 'RPC target unavailable', errorCode: 'target_unavailable' };
+
   it.each(['staged', 'legacy', 'committed', 'allow', 'ask', 'conflict-allow', 'conflict-capture-once', 'conflict-target-drift', 'conflict-capture-mismatch', 'retargeted-root', 'changed-definition', 'changed-provenance', 'active-dependency', 'foreign-actor'] as const)('retires a worker through the public Action (%s)', async lifetime => {
     const conflict = lifetime.startsWith('conflict-');
     const removeFiles = !['staged', 'legacy', 'committed'].includes(lifetime);
@@ -934,7 +943,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
         // dependency census and all registered Sync owners remain real.
         if (offline && raw && typeof raw === 'object' && 'method' in raw && typeof raw.method === 'string'
           && raw.method.startsWith('target-parent:')) {
-          return { ok: false, error: 'Target Machine is offline', errorCode: 'peer_unavailable' };
+          return homeStoppedMachineAnswer;
         }
         return undefined;
       },
@@ -1200,10 +1209,10 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     } else await expect(stat(fixture.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it.each(['idle', 'unavailable', 'running', 'another-persons-copy', 'target-refuses'] as const)('retires a fresh remote copy on both sides (%s)', async scenario => {
+  it.each(['idle', 'unavailable', 'unavailable-no-socket', 'running', 'another-persons-copy', 'target-refuses'] as const)('retires a fresh remote copy on both sides (%s)', async scenario => {
     const rows: ProjectAccountRowV1[] = [];
     const http = createProjectAccountRowsHttpBoundary(rows);
-    let offline = false;
+    let offline: false | 'stopped' | 'no-socket' = false;
     let refuseTarget = false;
     const otherPersonCalls: string[] = [];
     // Home's machine-access answer to a caller who is not the Machine's custodian
@@ -1222,7 +1231,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
           return custodianOnly(raw.method) ? homeCustodianOnlyRefusal : undefined;
         }
         if (offline && raw.method.startsWith('target-parent:')) {
-          return { ok: false, error: 'Target Machine is offline', errorCode: 'peer_unavailable' };
+          return offline === 'stopped' ? homeStoppedMachineAnswer : homeNoSocketAnswer;
         }
         if (refuseTarget && raw.method === `target-parent:${RPC_METHODS.DAEMON_PROJECT_WORKER_DEPENDENCIES}`) return homeCustodianOnlyRefusal;
         return undefined;
@@ -1267,7 +1276,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       onTestFinished(async () => { finish(); await pending; });
       await expect.poll(() => worker.dependencies().some(item => item.state === 'running')).toBe(true);
     }
-    offline = scenario === 'unavailable';
+    offline = scenario === 'unavailable' ? 'stopped' : scenario === 'unavailable-no-socket' ? 'no-socket' : false;
     refuseTarget = scenario === 'target-refuses';
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), projectWorkerAction: createProjectWorkerAction({
       machineId: fixture.sourceRef.machineId, serverId: fixture.serverId, serverHttpBaseUrl: 'https://bind-child-home.invalid',
@@ -1294,7 +1303,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       expect(result).toMatchObject({ ok: true, result: { status: 'retired' } });
       if (!result.ok) throw new Error(result.errorCode);
       expect(ProjectWorkerActionOutputSchemasV1['projects.worker.copy.retire'].parse(result.result)).toEqual({
-        status: 'retired', ...(scenario === 'unavailable' ? { uncheckedMachineIds: [fixture.targetRef.machineId] } : {}),
+        status: 'retired', ...(offline ? { uncheckedMachineIds: [fixture.targetRef.machineId] } : {}),
       });
       expect(getActiveProjectAccountRowsSnapshot()?.relationships).toEqual(others);
       expect((await fixture.parentManagedWorkspaceSync.list()).map(value => value.relationshipId)).not.toContain(created.relationshipId);
