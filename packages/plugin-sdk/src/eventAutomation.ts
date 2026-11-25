@@ -1,6 +1,6 @@
 import { AutomationEventAdmitResultV1Schema, AutomationEventSourcesListResultV1Schema, isAutomationEventSourcesListPageProgressingV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
-import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import type { PluginActionInputById, PluginActionResultById } from './actions/index.js';
 import type { AutomationSubjectContextV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
@@ -403,7 +403,9 @@ export async function admitPluginEventObservationUnderScopeV1(
         context.signal.throwIfAborted();
         const parsed = AutomationEventAdmitResultV1Schema.safeParse(result);
         if (parsed.success) admitted = projectProtocolValue<PluginActionResultById['automation.event.admit']>(parsed.data);
-        else failure = readPluginEventFailureV1(parsed.error);
+        else if (!ActionApprovalRequestCreatedResultSchema.safeParse(result).success) {
+            failure = readPluginEventFailureV1(parsed.error);
+        }
     } catch (error) {
         if (context.signal.aborted) throw error;
         failure = readPluginEventFailureV1(error);
