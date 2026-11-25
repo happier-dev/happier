@@ -148,6 +148,9 @@ export type VoiceHistoryContextWindowReader = (input: Readonly<{
 }>) => Promise<number | undefined>;
 
 export type VoiceAgentTurnStreamState = {
+  trace?: import('@/daemon/voiceDiagnostics/voiceLatencyTrace').VoiceLatencyTrace;
+  traceFirstText?: import('@/daemon/voiceDiagnostics/voiceLatencyTrace').VoiceLatencyTrace;
+  tracedTools?: Map<string, string>;
   id: string;
   userText: string;
   events: VoiceAgentTurnStreamEvent[];

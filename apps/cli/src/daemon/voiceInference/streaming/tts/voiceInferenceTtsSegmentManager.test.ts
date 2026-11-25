@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DaemonVoiceInferenceTtsStreamNextResponseSchema, ModelPackManifestSchema } from '@happier-dev/protocol';
 import { reloadConfiguration } from '@/configuration';
+import { logger } from '@/ui/logger';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { resolveVoiceInferencePaths } from '../../voiceInferencePaths';
 import { startVoiceInferenceWorker, type VoiceInferenceWorkerHandle } from '../../voiceInferenceWorker';
@@ -64,6 +65,7 @@ describe('createVoiceInferenceTtsSegmentManager', () => {
     await Promise.all(managers.splice(0).map((manager) => manager.dispose()));
     await worker.stop();
     vi.useRealTimers();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
     envScope.restore();
     envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
@@ -78,6 +80,8 @@ describe('createVoiceInferenceTtsSegmentManager', () => {
   }
 
   it('emits the first ready segment before later text is synthesized and keeps prefetch bounded', async () => {
+    vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
+    const log = vi.spyOn(logger, 'debugLocalFile');
     const root = await createTempDir();
     const synths: Array<Deferred<Uint8Array> & Readonly<{ text: string; requestId: string }>> = [];
     let active = 0;
@@ -136,6 +140,14 @@ describe('createVoiceInferenceTtsSegmentManager', () => {
     DaemonVoiceInferenceTtsStreamNextResponseSchema.parse(await firstNext);
     await vi.waitFor(() => expect(synthesizeTts).toHaveBeenCalledTimes(3));
     expect(maxActive).toBeLessThanOrEqual(2);
+    const marks = log.mock.calls.flatMap(([message, row]) =>
+      message === '[Voice] Latency phase' && row && typeof row === 'object'
+        ? [row as { phase: string; monotonicMs: number; streamId: string; requestId: string }] : []);
+    expect(marks.map(row => row.phase)).toEqual(['synthesis_started', 'synthesis_first_audio_ready']);
+    expect(marks.map(row => [row.streamId, row.requestId])).toEqual([
+      [started.streamId, 'tts-stream-1'], [started.streamId, 'tts-stream-1'],
+    ]);
+    expect(marks[1]!.monotonicMs).toBeGreaterThanOrEqual(marks[0]!.monotonicMs);
 
     await expect(manager.ack({
       streamId: started.streamId,

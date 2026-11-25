@@ -1,5 +1,6 @@
 import type { DaemonVoiceInferenceAudioOutput } from '@happier-dev/protocol/daemon/voiceInference';
 
+import { daemonSpeechStreamDiagnostics } from './daemonSpeechStreamDiagnostics';
 import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
 import {
     createTtsPlaybackController,
@@ -234,6 +235,18 @@ export class DaemonTtsController {
             return !producerTerminated && !params.abortController.signal.aborted;
         };
 
+        let onPlaybackStarted = params.onSpeaking;
+        if (daemonSpeechStreamDiagnostics.isLatencyObserved()) {
+            onPlaybackStarted = () => {
+                onPlaybackStarted = params.onSpeaking;
+                if (stream) {
+                    daemonSpeechStreamDiagnostics.recordLatency({
+                        phase: 'first_playback_started', sessionId: params.sessionId, streamId: stream.streamId,
+                    });
+                }
+                params.onSpeaking();
+            };
+        }
         const playbackController = createTtsPlaybackController<DaemonTtsSegmentPayload>({
             playChunk: async (chunk) => {
                 try {
@@ -241,7 +254,7 @@ export class DaemonTtsController {
                         bytes: chunk.bytes,
                         format: chunk.format,
                         registerPlaybackStopper: params.registerPlaybackOnly,
-                        onPlaybackStarted: params.onSpeaking,
+                        onPlaybackStarted,
                     });
                 } finally {
                     // Local playback completion releases residency immediately;

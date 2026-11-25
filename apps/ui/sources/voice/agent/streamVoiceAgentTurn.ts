@@ -1,4 +1,5 @@
 import { storage } from '@/sync/domains/state/storage';
+import { daemonSpeechStreamDiagnostics } from '@/voice/runtime/daemonInference/daemonSpeechStreamDiagnostics';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, type RpcErrorCarrier } from '@/sync/runtime/rpcErrors';
 
 import { createAbortRacer } from './voiceAgentAbort';
@@ -48,6 +49,9 @@ export async function streamVoiceAgentTurn(params: Readonly<{
             ...(params.resume === true ? { resume: true } : {}),
             ...(params.options?.userTranscript ? { userTranscript: params.options.userTranscript } : {}),
         });
+        if (daemonSpeechStreamDiagnostics.isLatencyObserved()) {
+            daemonSpeechStreamDiagnostics.recordLatency({ phase: 'agent_stream_join', sessionId: params.sessionId, streamId: started.streamId });
+        }
         await abort.race(Promise.resolve(params.options?.onUserTranscriptAccepted?.()));
         await abort.race(Promise.resolve(params.onStreamStarted?.(started.streamId)));
         abort.throwIfAborted();

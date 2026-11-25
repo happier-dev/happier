@@ -5,6 +5,8 @@ import { EventEmitter } from 'node:events';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { logger } from '@/ui/logger';
+
 import type { VoiceInferenceRuntimeSynthesizeInput, VoiceInferenceRuntimeTranscribeInput } from '../voiceInferenceRuntimeTypes';
 
 const spawnMock = vi.hoisted(() => vi.fn());
@@ -191,6 +193,8 @@ describe('packagedVoiceInferenceRuntime', () => {
         vi.resetModules();
         spawnMock.mockReset();
         ffmpegBoundary.candidate = null;
+        vi.unstubAllEnvs();
+        vi.restoreAllMocks();
         await Promise.all(tempDirs.splice(0).map(async (dir) => await rm(dir, { recursive: true, force: true }).catch(() => undefined)));
     });
 
@@ -622,6 +626,8 @@ describe('packagedVoiceInferenceRuntime', () => {
     });
 
     it('creates true streaming STT sessions with partial, endpoint, and final events', async () => {
+        vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
+        const log = vi.spyOn(logger, 'debugLocalFile');
         const rootDir = await createTempDir();
         const sttManifest = {
             packId: 'vp-public-zipformer',
@@ -748,6 +754,12 @@ describe('packagedVoiceInferenceRuntime', () => {
         expect(acceptedSamples).toEqual([2, 10560]);
         expect(decoded).toEqual(['decode:1', 'inputFinished', 'decode:3']);
         expect(resetCalls).toEqual(['reset']);
+        expect(log.mock.calls.filter(([message]) => message === '[Voice] Latency phase')).toEqual([
+            ['[Voice] Latency phase', expect.objectContaining({
+                phase: 'endpoint_decided', requestId: 'stt-stream-runtime', sequence: 0,
+                endpointRule: 'unreported_by_recognizer', monotonicMs: expect.any(Number),
+            })],
+        ]);
     });
 
     it('flushes the complete Zipformer file-decoding tail before committing the transcript', async () => {

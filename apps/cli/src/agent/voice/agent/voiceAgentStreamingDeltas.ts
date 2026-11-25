@@ -26,6 +26,7 @@ type VoiceStreamingOutputState = Readonly<{
   outputSeq: number;
   outputSegmentIndex: number;
   onEventsChanged?: () => void;
+  trace?: import('@/daemon/voiceDiagnostics/voiceLatencyTrace').VoiceLatencyTrace;
 }>;
 
 type VoiceStreamingOutputPatch = (next: Readonly<{
@@ -68,6 +69,7 @@ export function flushVoiceAgentStreamingSpeech(
     // The stream is read from other devices; registered secrets are masked as it is written.
     const output = { ...candidate, text: redactTranscriptSecrets(text) };
     stream.events.push({ t: 'voice_output', output } satisfies VoiceOutputDeltaEvent);
+    if (stream.outputSegmentIndex === 0) stream.trace?.({ phase: 'first_speakable_segment' });
     patch({
       outputSpeechBuffer: incomplete ? '' : stream.outputSpeechBuffer.slice(segmentLength),
       outputSpeechText: `${stream.outputSpeechText}${text}`,

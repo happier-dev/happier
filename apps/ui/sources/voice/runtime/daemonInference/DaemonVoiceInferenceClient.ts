@@ -382,6 +382,9 @@ export class DaemonVoiceInferenceClient {
             direction: 'tts_output',
             durationMs: null,
         });
+        if (daemonSpeechStreamDiagnostics.isLatencyObserved()) {
+            daemonSpeechStreamDiagnostics.recordLatency({ phase: 'tts_request_sent', requestId, sessionId: params.sessionId ?? null });
+        }
         const started = parseSchema(
             DaemonVoiceInferenceTtsStreamStartResponseSchema,
             await this.deps.machineRpcWithServerScope({
@@ -688,6 +691,7 @@ export class DaemonVoiceInferenceClient {
             : undefined;
         return createDaemonSpeechStreamSender({
             requestId,
+            sessionId: params.sessionId,
             packId: params.packId,
             language: params.language,
             ...(diagnostics ? { diagnostics } : {}),

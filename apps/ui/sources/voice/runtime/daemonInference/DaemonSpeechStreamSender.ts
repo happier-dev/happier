@@ -15,7 +15,7 @@ import {
   DEFAULT_MAX_PENDING_APPLICATION_DISPATCH_BYTES as DEFAULT_MAX_IN_FLIGHT_BYTES,
 } from '@happier-dev/peer-transport/duplexFrames';
 
-import type { DaemonSpeechStreamTransportKind } from './daemonSpeechStreamDiagnostics';
+import { daemonSpeechStreamDiagnostics, type DaemonSpeechStreamTransportKind } from './daemonSpeechStreamDiagnostics';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 
 import {
@@ -52,6 +52,7 @@ export type DaemonSpeechStreamTransportChunkRequest = Readonly<{
 
 export type DaemonSpeechStreamSenderOptions = Readonly<{
   requestId: string;
+  sessionId?: string | null;
   packId?: string | null;
   language?: string | null;
   diagnostics?: VoiceSpeechDiagnosticsCaptureContextV1;
@@ -90,6 +91,7 @@ function throwIfErrorResponse(response: Readonly<{ ok: boolean; errorCode?: stri
 export class DaemonSpeechStreamSender {
   readonly transportKind: Extract<DaemonSpeechStreamTransportKind, 'binary_tunnel' | 'json_rpc_compat'>;
   private readonly requestId: string;
+  private readonly sessionId: string | null;
   private readonly packId: string | null;
   private readonly language: string | null;
   private readonly diagnostics: VoiceSpeechDiagnosticsCaptureContextV1 | undefined;
@@ -114,6 +116,7 @@ export class DaemonSpeechStreamSender {
   constructor(options: DaemonSpeechStreamSenderOptions) {
     this.transportKind = options.transportKind ?? 'json_rpc_compat';
     this.requestId = options.requestId;
+    this.sessionId = options.sessionId ?? null;
     this.packId = options.packId ?? null;
     this.language = options.language ?? null;
     this.diagnostics = options.diagnostics;
@@ -231,6 +234,11 @@ export class DaemonSpeechStreamSender {
       }
       throwIfErrorResponse(response);
       if (response.ok) {
+        if (daemonSpeechStreamDiagnostics.isLatencyObserved()) {
+          daemonSpeechStreamDiagnostics.recordLatency({
+            phase: 'final_stt_received', sessionId: this.sessionId, requestId: this.requestId, streamId: active.streamId,
+          });
+        }
         this.applyAck(response.ackSeq);
       }
       this.closePending(createSenderError('daemon_speech_stream_closed'));

@@ -21,6 +21,7 @@ import {
 } from './voiceInferenceWorker.shared';
 import type { VoiceInferenceWorkerLifecycleContext } from './voiceInferenceWorker.lifecycle';
 import { resolveVoiceInferencePaths } from './voiceInferencePaths';
+import type { VoiceLatencyTrace } from '@/daemon/voiceDiagnostics/voiceLatencyTrace';
 import type { VoiceInferenceStreamingTranscriptionSession } from './voiceInferenceRuntimeTypes';
 
 export type VoiceInferenceWorkerStreamingTranscriptionSession = VoiceInferenceStreamingTranscriptionSession & Readonly<{
@@ -36,6 +37,7 @@ export type VoiceInferenceWorkerExecutionHandle = Readonly<{
     speed: number | null;
     output: DaemonVoiceInferenceAudioOutput;
     signal?: AbortSignal | null;
+    trace?: VoiceLatencyTrace;
   }>) => Promise<Readonly<{
     requestId: string;
     output: DaemonVoiceInferenceAudioOutput;
@@ -241,7 +243,7 @@ export function createVoiceInferenceWorkerExecution(params: VoiceInferenceExecut
 
   return {
     abortAllRequests,
-    synthesizeTts: async ({ requestId, text, packId, voiceId, speed, output, signal }) => {
+    synthesizeTts: async ({ requestId, text, packId, voiceId, speed, output, signal, trace }) => {
       if (params.lifecycle.isStopped()) {
         throw createVoiceInferenceError('internal_error', 'voice_inference_worker_stopped');
       }
@@ -267,6 +269,7 @@ export function createVoiceInferenceWorkerExecution(params: VoiceInferenceExecut
             if (abortController.signal.aborted) {
               throw createVoiceInferenceError('cancelled');
             }
+            trace?.({ phase: 'synthesis_started' });
             const synthesized = await runtime.synthesizeTts({
               requestId,
               text,
@@ -280,6 +283,7 @@ export function createVoiceInferenceWorkerExecution(params: VoiceInferenceExecut
               output,
               signal: abortController.signal,
             });
+            trace?.({ phase: 'synthesis_first_audio_ready' });
             if (abortController.signal.aborted) {
               throw createVoiceInferenceError('cancelled');
             }

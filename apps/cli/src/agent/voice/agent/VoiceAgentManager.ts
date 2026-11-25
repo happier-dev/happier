@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { waitForChange } from '@/utils/async/waitForChange';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import { logger } from '@/ui/logger';
+import { createVoiceLatencyTrace } from '@/daemon/voiceDiagnostics/voiceLatencyTrace';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import {
@@ -308,8 +309,9 @@ export class VoiceAgentManager {
     readInstance: () => VoiceAgentInstance | null,
     generation: number,
   ): NonNullable<Parameters<BackendFactory>[0]['functionTools']> {
+    const tool = getVoiceActionFunctionTool();
     return [{
-      ...getVoiceActionFunctionTool(),
+      ...tool,
       call: async (input, context) => {
         const instance = readInstance();
         if (!instance || this.voiceAgents.get(instance.id) !== instance
@@ -317,23 +319,29 @@ export class VoiceAgentManager {
           || instance.activeTurnStream?.cancelled) {
           throw new Error('This Voice turn is no longer accepting Actions.');
         }
-        const decoded = decodeVoiceAssistantActions([input]);
-        if (decoded.failure) {
-          instance.chatActionFailure = decoded.failure;
-          return projectNativeJsonValueForTransport(decoded.failure);
+        const trace = instance.activeTurnStream?.trace;
+        trace?.({ phase: 'native_tool_start', toolName: tool.name });
+        try {
+          const decoded = decodeVoiceAssistantActions([input]);
+          if (decoded.failure) {
+            instance.chatActionFailure = decoded.failure;
+            return projectNativeJsonValueForTransport(decoded.failure);
+          }
+          if (!context?.callId.trim()) {
+            return { ok: false, errorCode: 'tool_call_identity_required', error: 'tool_call_identity_required' };
+          }
+          instance.chatBuffer = '';
+          instance.chatActionFailure = undefined;
+          const action = decoded.actions[0]!;
+          const spec = listVoiceActionBlockSpecs().find(candidate => candidate.bindings?.voiceClientToolName === action.t)!;
+          const runtime = instance.chatBackend;
+          if (!runtime.executeAction) {
+            return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Native Action execution is unavailable.' };
+          }
+          return projectNativeJsonValueForTransport(await runtime.executeAction(spec.id, action.args, context.callId));
+        } finally {
+          trace?.({ phase: 'native_tool_end', toolName: tool.name });
         }
-        if (!context?.callId.trim()) {
-          return { ok: false, errorCode: 'tool_call_identity_required', error: 'tool_call_identity_required' };
-        }
-        instance.chatBuffer = '';
-        instance.chatActionFailure = undefined;
-        const action = decoded.actions[0]!;
-        const spec = listVoiceActionBlockSpecs().find(candidate => candidate.bindings?.voiceClientToolName === action.t)!;
-        const runtime = instance.chatBackend;
-        if (!runtime.executeAction) {
-          return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Native Action execution is unavailable.' };
-        }
-        return projectNativeJsonValueForTransport(await runtime.executeAction(spec.id, action.args, context.callId));
       },
     }];
   }
@@ -557,12 +565,29 @@ export class VoiceAgentManager {
       const activeStream = voiceAgent.activeTurnStream;
       if (activeStream?.cancelled) return;
       if (msg.type === 'tool-call') {
+        const tools = activeStream?.tracedTools;
+        // Hosted Voice Actions are timed at the actual function call above.
+        if (tools && msg.toolName !== getVoiceActionFunctionTool().name && !tools.has(msg.callId)) {
+          tools.set(msg.callId, msg.toolName);
+          activeStream?.trace?.({ phase: 'native_tool_start', toolName: msg.toolName });
+        }
         // Text before a native tool describes work still to be done. The SDK
         // publishes that message's snapshot before its tool-call boundary.
         voiceAgent.chatBuffer = '';
         return;
       }
+      if (msg.type === 'tool-result' && activeStream?.tracedTools) {
+        const toolName = activeStream.tracedTools.get(msg.callId);
+        if (toolName !== undefined) {
+          activeStream.tracedTools.delete(msg.callId);
+          activeStream.trace?.({ phase: 'native_tool_end', toolName });
+        }
+      }
       if (msg.type !== 'model-output') return;
+      if (activeStream?.traceFirstText && (msg.textDelta || msg.fullText)) {
+        activeStream.traceFirstText({ phase: 'agent_first_text', source: msg.textDelta ? 'delta' : 'snapshot' });
+        delete activeStream.traceFirstText;
+      }
       if (typeof msg.textDelta === 'string') {
         voiceAgent.chatBuffer += msg.textDelta;
       }
@@ -1231,9 +1256,11 @@ export class VoiceAgentManager {
 
     voiceAgent.clearChatBuffer();
     const streamId = randomUUID();
+    const trace = createVoiceLatencyTrace({ streamId });
     const eventWaiters = new Set<() => void>();
     const stream: VoiceAgentTurnStreamState = {
       id: streamId,
+      ...(trace ? { trace, traceFirstText: trace, tracedTools: new Map() } : {}),
       userText: params.userText,
       events: [],
       done: false,
@@ -1297,25 +1324,34 @@ export class VoiceAgentManager {
           stream.outputSeq += 1;
           stream.onEventsChanged();
         }
-        await runVoiceAgentTurn(voiceAgent.chatBackend, async () => {
-          await this.deliverPrompt(
-            voiceAgent,
-            voiceAgent.chatBackend,
-            voiceAgent.chatSessionId,
-            prompt,
-            params.causalPermissionAuthority
-              ? { causalPermissionAuthority: params.causalPermissionAuthority }
-              : undefined,
-            followContext,
-            params.durableUserTranscriptLocalId,
-          );
-          if (settleCancelled()) return;
-          ensureCurrent();
-          if (preparedInstructionsFor) {
-            stream.preparedInstructionsFor = preparedInstructionsFor;
-            stream.onEventsChanged();
+        try {
+          await runVoiceAgentTurn(voiceAgent.chatBackend, async () => {
+            trace?.({ phase: 'agent_dispatch' });
+            await this.deliverPrompt(
+              voiceAgent,
+              voiceAgent.chatBackend,
+              voiceAgent.chatSessionId,
+              prompt,
+              params.causalPermissionAuthority
+                ? { causalPermissionAuthority: params.causalPermissionAuthority }
+                : undefined,
+              followContext,
+              params.durableUserTranscriptLocalId,
+            );
+            if (settleCancelled()) return;
+            ensureCurrent();
+            if (preparedInstructionsFor) {
+              stream.preparedInstructionsFor = preparedInstructionsFor;
+              stream.onEventsChanged();
+            }
+          }, this.resolveResponseTimeoutMs());
+        } finally {
+          trace?.({ phase: 'agent_settled' });
+          if (trace) {
+            delete stream.traceFirstText;
+            delete stream.tracedTools;
           }
-        }, this.resolveResponseTimeoutMs());
+        }
         if (settleCancelled()) return;
         voiceAgent.chatSessionSeeded = true;
         voiceAgent.chatInstructionsDirty = false;

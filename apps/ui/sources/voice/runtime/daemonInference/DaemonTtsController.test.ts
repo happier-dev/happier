@@ -138,6 +138,34 @@ afterEach(async () => {
 });
 
 describe('DaemonTtsController', () => {
+    it('traces one daemon request and one playback start for a multi-segment reply', async () => {
+        const { daemonSpeechStreamDiagnostics } = await import('./daemonSpeechStreamDiagnostics');
+        const events: Array<{ phase: string; monotonicMs: number; streamId?: string }> = [];
+        const unsubscribe = daemonSpeechStreamDiagnostics.subscribeLatency(event => events.push(event));
+        let index = 0;
+        const controller = new DaemonTtsController({
+            client: createDaemonClientAtRpcBoundary({ startSegmentedTts: async () => ({
+                streamId: 'tts-phase-stream', generation: 0, segmentCount: 2,
+                next: async () => {
+                    const segmentIndex = index++;
+                    return { type: 'segment', streamId: 'tts-phase-stream', generation: 0,
+                        segmentId: `tts-phase-stream:${segmentIndex}`, segmentIndex, segmentCount: 2,
+                        bytes: new Uint8Array([1]), output: { codec: 'wav', mimeType: 'audio/wav' }, isLastSegment: segmentIndex === 1 };
+                },
+                ackSegment: async () => {}, cancel: async () => {},
+            }) }),
+            playAudioBytesWithStopper: async ({ onPlaybackStarted }) => { onPlaybackStarted?.(); },
+        });
+        try {
+            await controller.speak({ text: 'Hello. Again.', packId: 'pack', voiceId: null, speed: 1,
+                registerPlaybackStopper: () => () => {}, onSpeaking: () => {} });
+            expect(index).toBe(2);
+            expect(events.map(event => event.phase)).toEqual(['tts_request_sent', 'first_playback_started']);
+            expect(events[1]).toMatchObject({ streamId: 'tts-phase-stream' });
+            expect(events[0]!.monotonicMs).toBeLessThanOrEqual(events[1]!.monotonicMs);
+        } finally { unsubscribe(); }
+    });
+
     it.each([
         { status: 429, code: 'runtime_unavailable' },
         { status: 503, code: 'unsupported_runtime_family' },

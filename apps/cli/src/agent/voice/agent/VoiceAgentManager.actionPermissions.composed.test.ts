@@ -44,6 +44,42 @@ const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import
 afterEach(async () => { resetVoiceSessionStoreForTests(); await home.reset(); });
 
 describe('native Voice Actions through the canonical client owner', () => {
+  it('records one ordered latency stamp per native streamed turn phase with a tool round', async () => {
+    const { logger } = await import('@/ui/logger');
+    const debug = vi.spyOn(logger, 'debugLocalFile');
+    const voice = await createNativeVoiceActionHarness(async () => ({ ok: true, result: {} }));
+    vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
+    try {
+      const started = await voice.manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        chatModelId: 'fixture', commitModelId: 'fixture', permissionIntent: 'read-only', idleTtlSeconds: 60, initialContext: '' });
+      const { streamId } = await voice.manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'List my Homes' });
+      await voice.native.waitForInputs(1);
+      const tool = voice.native.opens[0]?.functionTools?.find(candidate => candidate.name === 'happier_voice_action');
+      if (!tool) throw new Error('Missing native Voice Action function');
+      await tool.call({ t: 'listServers', args: {} }, { callId: 'trace-test-tool' });
+      voice.native.complete('Your Home is connected. This is a second sentence.');
+      let cursor = 0;
+      while (true) {
+        const read = await voice.manager.readTurnStream({ voiceAgentId: started.voiceAgentId, streamId, cursor, waitForEvents: true });
+        cursor = read.nextCursor;
+        if (read.done) break;
+      }
+      const phases = debug.mock.calls.flatMap(([message, row]) =>
+        message === '[Voice] Latency phase' && row && typeof row === 'object'
+          && 'streamId' in row && row.streamId === streamId
+          ? [row as { phase: string; monotonicMs: number; toolName?: string }] : []);
+      expect(phases.map(row => row.phase)).toEqual([
+        'agent_dispatch', 'native_tool_start', 'native_tool_end', 'agent_first_text', 'agent_settled', 'first_speakable_segment',
+      ]);
+      expect(phases.map(row => row.monotonicMs)).toEqual(phases.map(row => row.monotonicMs).sort((a, b) => a - b));
+      expect(phases.slice(1, 3)).toEqual(phases.slice(1, 3).map(row => ({ ...row, toolName: 'happier_voice_action' })));
+    } finally {
+      vi.unstubAllEnvs();
+      debug.mockRestore();
+      await voice.dispose();
+    }
+  });
+
   it('returns real Home reads during the native turn and allows repair after invalid input', async () => {
     const serverId = await home.addHome({ name: 'Native read Home', serverUrl: 'https://native-read.test',
       accountId: 'alice', currentAccount: true });

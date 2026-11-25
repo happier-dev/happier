@@ -19,6 +19,7 @@ import type {
 import { configuration } from '@/configuration';
 import { toVoiceInferenceError } from '@/api/machine/voiceInferenceRpcResponses';
 import { resolveVoiceInferencePaths } from '@/daemon/voiceInference/voiceInferencePaths';
+import { createVoiceLatencyTrace } from '@/daemon/voiceDiagnostics/voiceLatencyTrace';
 
 import { segmentTextForDaemonTts, type VoiceInferenceTtsTextSegment } from './voiceInferenceTtsSegmenter';
 
@@ -39,6 +40,7 @@ export type VoiceInferenceTtsSegmentWorker = Readonly<{
     speed: number | null;
     output: DaemonVoiceInferenceAudioOutput;
     signal?: AbortSignal | null;
+    trace?: ReturnType<typeof createVoiceLatencyTrace>;
   }>) => Promise<WorkerSynthesizeTtsResult>;
   cancelTts: (requestId: string) => Promise<void>;
 }>;
@@ -254,7 +256,11 @@ export function createVoiceInferenceTtsSegmentManager(
       segment.status = 'synthesizing';
       const controller = new AbortController();
       segment.controller = controller;
+      const trace = segment.textSegment.index === 0
+        ? createVoiceLatencyTrace({ streamId: session.streamId, requestId: session.requestId })
+        : undefined;
       const synthesizePromise = options.voiceInferenceWorker.synthesizeTts({
+        ...(trace ? { trace } : {}),
         requestId: segment.requestId,
         text: segment.textSegment.text,
         packId: session.packId,
