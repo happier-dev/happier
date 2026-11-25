@@ -108,7 +108,10 @@ export async function readProjectSourceTeamMoveInventoryV1(account: ProjectSourc
     const environmentArtifactIds = [...new Set(environments.map(detail => detail.environment.contentArtifactId))];
     const documents = await ports.readArtifactContents(environmentArtifactIds, context);
     const opened = new Map(documents.map((document, index) => {
-        if (document.status !== 'fulfilled') return refuse('deployment_content_unavailable');
+        if (document.status === 'rejected') {
+            const failure = parseActionExecuteFailure(document.reason);
+            throw new ProjectSourceTeamMoveReadFailure(failure ?? moveFailure('deployment_content_unavailable'));
+        }
         return [environmentArtifactIds[index]!, document.value] as const;
     }));
     const machines = new Map<string, Set<MachineRole>>();

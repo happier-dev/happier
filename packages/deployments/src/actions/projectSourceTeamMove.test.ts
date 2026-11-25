@@ -5,17 +5,18 @@ import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from '@happier-dev/protocol/
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { createProjectSourceTeamMovePreparationV1 } from './projectSourceTeamMove.js';
 
+const homeRefusal = {
+    ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied', effectAttempted: false,
+    failureCause: { phase: 'requester.home_read', errorClass: 'HttpStatusError',
+        errorCode: 'credential_scope_denied', httpStatus: 403 },
+} as const;
+
 it('preserves the typed Home refusal when preparing reviewed Source move children', async () => {
-    const refusal = {
-        ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied', effectAttempted: false,
-        failureCause: { phase: 'requester.home_read', errorClass: 'HttpStatusError',
-            errorCode: 'credential_scope_denied', httpStatus: 403 },
-    } as const;
     const unexpectedRead = async (): Promise<never> => { throw new Error('Read after Source refusal'); };
     const preparation = createProjectSourceTeamMovePreparationV1({
         accountId: 'account', credentialAuthorityKind: 'account', assertCurrent: () => {},
     }, {
-        projectSourcesRead: async () => { throw createActionExecuteFailureError(refusal); },
+        projectSourcesRead: async () => { throw createActionExecuteFailureError(homeRefusal); },
         deploymentAction: unexpectedRead, workflowAction: unexpectedRead, machineAccessAction: unexpectedRead,
         readDefaults: unexpectedRead, readArtifactContents: unexpectedRead, readApiTokens: unexpectedRead,
         isSameHome: (left, right) => left === right,
@@ -24,10 +25,26 @@ it('preserves the typed Home refusal when preparing reviewed Source move childre
         actionId: PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1,
         input: { serverId: 'home', sourceId: 'source', teamId: 'team', expectedRevision: 2, requestKey: 'source-move', clientId: 'answering-app' },
         context: {},
-    })).toEqual(refusal);
+    })).toEqual(homeRefusal);
 });
 
-it('keeps the typed Artifact cause when a reviewed Source move cannot open an Environment', async () => {
+it.each([
+    {
+        name: 'missing',
+        opened: { status: 'fulfilled', value: null },
+        expected: {
+            ok: false, errorCode: 'deployment_content_unavailable', error: 'deployment_content_unavailable',
+            failureCause: {
+                phase: 'deployment.artifact.missing', errorCode: 'deployment_content_unavailable', errorClass: 'TypeError', httpStatus: null,
+            },
+        },
+    },
+    {
+        name: 'refused by the Home',
+        opened: { status: 'rejected', reason: createActionExecuteFailureError(homeRefusal) },
+        expected: homeRefusal,
+    },
+] as const)('keeps the typed cause when the Environment Artifact for a Source move is $name', async ({ opened, expected }) => {
     const accountId = 'account';
     const input = { serverId: 'home', sourceId: 'source', teamId: 'team', expectedRevision: 2, requestKey: 'source-move' };
     const environment = createDeploymentEnvironmentHeaderV1({ serverId: input.serverId, projectSourceId: input.sourceId });
@@ -53,15 +70,10 @@ it('keeps the typed Artifact cause when a reviewed Source move cannot open an En
         readDefaults: async () => ({
             ok: true, projectSourceId: input.sourceId, sourceRevision: input.expectedRevision, revision: 0, content: null,
         }),
-        readArtifactContents: async (ids) => ids.map(() => ({ status: 'fulfilled', value: null })),
+        readArtifactContents: async (ids) => ids.map(() => opened),
         isSameHome: (left, right) => left === right,
     });
     expect(await preparation.prepareHostReviewedChildren({
         actionId: PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1, input, context: {},
-    })).toEqual({
-        ok: false, errorCode: 'deployment_content_unavailable', error: 'deployment_content_unavailable',
-        failureCause: {
-            phase: 'deployment.artifact.missing', errorCode: 'deployment_content_unavailable', errorClass: 'TypeError', httpStatus: null,
-        },
-    });
+    })).toEqual(expected);
 });
