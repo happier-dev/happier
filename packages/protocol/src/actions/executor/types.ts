@@ -1342,6 +1342,8 @@ type ExecutionRunActionOptions = Readonly<{
   actionRequestId?: string;
   externalActionCredential?: ActionExecutorContext['externalActionCredential'];
   externalActionExecutionAuthorization?: ActionExecutorContext['externalActionExecutionAuthorization'];
+  /** Exact issuer context retained only across an in-process execution-run handoff. */
+  reviewedChildActionContext?: ActionExecutorContext;
   signExternalActionApprovalInput?: ActionExecutorContext['signExternalActionApprovalInput'];
   externalActionTarget?: ActionExecutorContext['externalActionTarget'];
   defaultSessionMachineId?: string;

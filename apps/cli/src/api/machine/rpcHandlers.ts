@@ -693,8 +693,11 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
         ? createExecutionRunNativeOperationOwner({ machine: { prepareNativeOperation: nativeRuntime.prepareNativeOperation,
           readMemberFolderOwner: nativeRuntime.readMemberFolderOwner }, agentIsolation, ingress,
           resolveRequesterIdentity: async () => {
-            const home = await params.deps?.resolveHostHomeServerIdentityId?.(context.signal);
-            return selectHostRequesterExecutionIdentity({ rpcContext: ingress, hostHomeServerIdentityId: home });
+            // Workflow and replay retain Action custody, not a fresh raw-RPC receipt.
+            const requester = await filesystemEffectAdmission.resolveActionRequester?.(context);
+            if (!requester) return { kind: 'unknown', reason: 'requester_authority_unavailable' };
+            try { return requester.identity; }
+            finally { await requester.dispose(); }
           } }) : undefined;
       return { ingress, ...(nativeOwner ?? {}), ...(operation ? { operation } : {}),
         ...(context.requesterSessionBootstrap ? { requester: { bootstrap: context.requesterSessionBootstrap,

@@ -143,6 +143,7 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
       || opts?.effectiveCallerPermissionMode !== undefined;
 
   const admittedExecutionRunContext = (opts?: ExecutionRunActionTransportOptions): LocalSessionRpcActionContext => ({
+    ...(opts?.reviewedChildActionContext ? { reviewedChildActionContext: opts.reviewedChildActionContext } : {}),
     ...(opts?.surface ? { surface: opts.surface } : {}),
     ...(opts?.authority ? { authority: opts.authority } : {}),
     ...(opts?.actionCaller ? { actionCaller: opts.actionCaller } : {}),

@@ -9,11 +9,12 @@ import { delimiter, join } from 'node:path';
 import { beforeEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { invokeHostReviewedChildV1, readHostReviewedChildRootV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { ExecutionRunListResponseSchema, ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
-import type { RpcHandler } from '@/api/rpc/types';
+import type { RpcHandler, RpcHandlerConfig } from '@/api/rpc/types';
 import { createInstalledProjectAgentLaunchFixture } from '@/daemon/testkit/installedProjectAgentLaunchFixture';
 import { prepareProjectAgentLaunch } from '@/workspaces/projectSetup/projectAgentLaunch';
 import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
@@ -43,12 +44,14 @@ import { buildRoleArtifactHeaderV1, type RoleArtifactV1 } from '@happier-dev/pro
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { captureScmComparison } from '@/scm/comparisons/captureScmComparison';
 import { runWithScmAccountScope } from '@/scm/accountScope';
+import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { readMachineAgentIsolationPolicyV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { observeAgentIsolationNativeReadiness, type AgentIsolationReadinessSystem } from '@/daemon/agentIsolation/agentIsolationReadiness';
 import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
-import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { retainVerifiedExternalActionRequester, type HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 const ptyBoundary = vi.hoisted(() => ({ spawns: [] as Array<{ launch: PtySpawnParams; finish(): void }> }));
 const nativeBoundary = vi.hoisted(() => ({ home: '', adapter: '' }));
@@ -238,6 +241,8 @@ describe('detached execution-run Machine composition', () => {
   it.runIf(process.platform === 'linux').each([
     { requesterKind: 'session', rootActionId: 'execution.run.start' },
     { requesterKind: 'account', rootActionId: 'execution.run.start' },
+    { requesterKind: 'account', rootActionId: 'execution.run.start', transport: 'retained_root' },
+    { requesterKind: 'account', rootActionId: 'execution.run.start', transport: 'reviewed_child' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', roleId: 'scout' },
     { requesterKind: 'account', rootActionId: 'review.start', roleId: 'custom-review' },
     { requesterKind: 'account', rootActionId: 'review.start', roleId: 'builder' },
@@ -245,10 +250,13 @@ describe('detached execution-run Machine composition', () => {
     { requesterKind: 'account', rootActionId: 'execution.run.start', selectedMcp: 'owner' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', selectedMcp: 'member' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', selectedMcp: 'foreign-requester' },
-  ] as const)('carries the captured $requesterKind requester under $rootActionId through real Action dispatch and Machine registration ($selectedMcp, Role $roleId)', async row => {
+  ] as const)('carries the captured $requesterKind requester under $rootActionId through real Action dispatch and Machine registration ($selectedMcp, Role $roleId, $transport)', async row => {
     const { requesterKind, rootActionId } = row;
     const selectedMcp = 'selectedMcp' in row ? row.selectedMcp : undefined;
     const roleId = 'roleId' in row ? row.roleId : undefined;
+    const retainedRoot = 'transport' in row && row.transport === 'retained_root';
+    const reviewedChild = 'transport' in row && row.transport === 'reviewed_child';
+    const retainedRequester = retainedRoot || reviewedChild;
     const reviewRole = { name: 'Writable review', instructions: 'Inspect the selected comparison.',
       runsAs: { kind: 'background_run', intent: 'review' }, workspaceWrites: 'allow', secondOpinion: 'off', enabled: true } satisfies RoleArtifactV1;
     const custodianAccountId = selectedMcp === 'member' ? 'other-custodian' : 'requester';
@@ -393,7 +401,9 @@ describe('detached execution-run Machine composition', () => {
         incoming.set(method, handler);
       }
     }
-    const rpc = new HomeRpc({ scopePrefix: 'machine', encryptionMode: 'plain' });
+    const authorizeRequest = Reflect.get(h.rpc, 'authorizeRequest') as RpcHandlerConfig['authorizeRequest'];
+    if (!authorizeRequest) throw new Error('Missing installed Machine admission owner');
+    const rpc = new HomeRpc({ scopePrefix: 'machine', encryptionMode: 'plain', authorizeRequest });
     const readSnapshot = () => {
       const snapshot = f.bootstrap.savedSecretOperationContext.readSnapshot();
       if (!snapshot) throw new Error('Requester Account lifetime retired');
@@ -408,12 +418,22 @@ describe('detached execution-run Machine composition', () => {
       custodyBinding: { serverId: 'session-home', installationId: f.installation.installationId } });
     const actionsSettingsProvider = createActionSettingsProvider({ getAccountSettings: () => readSnapshot().settings,
       scopeKey: readSnapshot().scopeKey, allowEnvironmentOverride: false });
+    const filesystemEffectAdmission = createFilesystemEffectAdmission({
+      readAgentIsolation: agentIsolation.read, resolveHomeServerIdentityId: async () => 'srv_session_home',
+      resolveHostIdentity: async () => ({ machineId: 'machine', installationId: f.installation.installationId, custodianAccountId }),
+    });
+    const nativePreparations: Array<Parameters<typeof h.machine.prepareNativeOperation>[0]['requesterIdentity']> = [];
     const registration = registerMachineRpcHandlers({ rpcHandlerManager: rpc,
       handlers: { spawnSession: async () => { throw new Error('No replacement Session expected'); },
         stopSession: async () => true, requestShutdown() {} },
       deps: { currentMachineId: 'machine', currentServerId: 'session-home', workingDirectory: cwd,
         executionRunRuntimeAccountId: 'requester', createProjectFiniteRuntime: finite, actionOperations, actionsSettingsProvider, agentIsolation,
-        nativeOperationRuntime: { prepareNativeOperation: input => h.machine.prepareNativeOperation(input),
+        filesystemEffectAdmission,
+        nativeOperationRuntime: { prepareNativeOperation: async input => {
+          const prepared = await h.machine.prepareNativeOperation(input);
+          nativePreparations.push(input.requesterIdentity);
+          return prepared;
+        },
           readMemberFolderOwner: path => h.machine.readMemberFolderOwner(path) },
         resolveHostHomeServerIdentityId: async () => 'srv_session_home',
         executionRunAccountSettings: { serverUrl: serverHttpBaseUrl, resolveAccountSettings: () => readSnapshot().settings,
@@ -441,7 +461,7 @@ describe('detached execution-run Machine composition', () => {
       authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'native-run-root', binding: {
         accountId: actorAccountId, custodianAccountId, authentication: { kind: 'account', tokenEpoch: 1 },
         accountEncryptionMode: 'plain', serverIdentityId: 'srv_session_home', machineId: 'machine', installationId: f.installation.installationId,
-        actionId: rootActionId, requestId: randomUUID(), requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+        actionId: reviewedChild ? 'workflow.run.start' : rootActionId, requestId: randomUUID(), requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
       } }), credentials: callerCredentials,
       serverId: 'session-home', serverIdentityId: 'srv_session_home',
       serverHttpBaseUrl, isCurrent: async () => f.isHomeCurrent(), isCustodyCurrent: async () => f.isHomeCurrent(),
@@ -450,26 +470,35 @@ describe('detached execution-run Machine composition', () => {
     }) : null;
     if (requesterKind === 'account' && !accountRequester) throw new Error('Account requester admission failed');
     if (accountRequester) onTestFinished(() => accountRequester.dispose());
-    const accountAuthorization = accountRequester ? await projectExternalActionRequesterHttpAuthorization({
+    const projectedAccountAuthorization = accountRequester ? await projectExternalActionRequesterHttpAuthorization({
       authorization: accountRequester.authorization, serverId: 'session-home', serverIdentityId: 'srv_session_home',
       serverHttpBaseUrl, target: { kind: 'machine', machineId: 'machine' },
       installationId: f.installation.installationId, privateKey: decodeBase64(f.installation.privateKey, 'base64url'),
       isCurrent: accountRequester.isCustodyCurrent,
     }) : null;
-    if (accountRequester && !accountAuthorization) throw new Error('Account requester HTTP projection failed');
+    if (accountRequester && !projectedAccountAuthorization) throw new Error('Account requester HTTP projection failed');
+    // Original ingress retains verified proof after Account/HTTP projection,
+    // before Workflow/replay delegates without a raw Machine receipt.
+    const accountAuthorization = accountRequester && projectedAccountAuthorization && retainedRequester
+      ? retainVerifiedExternalActionRequester({ authorization: projectedAccountAuthorization, isCurrent: accountRequester.isCurrent })
+      : projectedAccountAuthorization;
+    const accountRootAuthorization = retainedRequester ? accountAuthorization : accountRequester?.authorization;
     const machineAdmission = SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: actorAccountId, custodianAccountId,
       machineId: 'machine', installationId: f.installation.installationId, role: 'manage', encryptionMode: 'plain' });
     const deps = createCliActionDeps({ sessionId: 'cli-global', token: callerCredentials.token, mode: 'plain', ctx: null,
       credentials: callerCredentials, serverId: 'session-home', serverHttpBaseUrl,
       externalActionMachineInstallationId: f.installation.installationId,
       externalActionMachineRequestPrivateKey: decodeBase64(f.installation.privateKey, 'base64url'),
-      ...(requesterKind === 'session' ? { requesterSessionBootstrap: f.bootstrap } : {}),
+      ...(requesterKind === 'session' || reviewedChild ? { requesterSessionBootstrap: f.bootstrap } : {}),
       machineActionDirectTargetTransport: { machineId: 'machine', async invoke(method, request, options) {
         return await rpc.invokeLocal(method, request, { ...options, signal: options?.signal ?? currentIngress.signal,
           // The receiving Home transport stamps every call, including reads,
           // with its admitted caller; installed runtime identity is insufficient.
-          rpcContext: { ...options?.rpcContext, machineAdmission, verifyMachineAdmissionCurrent: f.bootstrap.isCurrent,
-            ...(accountAuthorization && method === SESSION_RPC_METHODS.EXECUTION_RUN_START
+          rpcContext: { ...options?.rpcContext,
+            // Workflow/replay transports retain the verified root rather than a new raw-RPC receipt.
+            ...(!retainedRequester || method !== SESSION_RPC_METHODS.EXECUTION_RUN_START ? { machineAdmission } : {}),
+            verifyMachineAdmissionCurrent: f.bootstrap.isCurrent,
+            ...(!reviewedChild && accountAuthorization && method === SESSION_RPC_METHODS.EXECUTION_RUN_START
               ? { callerInputAuthorization: accountAuthorization, verifyMachineAdmissionCurrent: accountRequester!.isCurrent }
               : {}) } });
       } } });
@@ -477,25 +506,42 @@ describe('detached execution-run Machine composition', () => {
     phase = 'initial native Run admission';
     const actionContext = { surface: 'cli' as const, authority: 'present_user' as const,
       executionRunTargetMachineId: 'machine', serverId: 'session-home', runtimeAccountId: actorAccountId, actionRequestId: randomUUID(),
-      ...(accountRequester ? { externalActionExecutionAuthorization: accountRequester.authorization,
+      ...(accountRootAuthorization ? { externalActionExecutionAuthorization: accountRootAuthorization,
         externalActionTarget: { kind: 'machine' as const, machineId: 'machine' } } : {}) };
     if (rootActionId === 'review.start') execFileSync('git', ['init', cwd], { stdio: 'ignore' });
     const comparison = rootActionId === 'review.start' ? await runWithScmAccountScope(actorAccountId,
       () => captureScmComparison({ cwd, source: { kind: 'workingTree' } })) : undefined;
-    const action = rootActionId === 'review.start'
+    const executionRunInput = { sessionId: null,
+      intent: 'agent', ...(roleId ? { roleId } : {}), backendTarget,
+      instructions: 'Run the native Project Agent.', permissionMode: 'read_only', retentionPolicy: requesterKind === 'account' && !selectedMcp && !roleId ? 'resumable' : 'ephemeral',
+      cwd, runClass: requesterKind === 'account' && !selectedMcp && !roleId ? 'long_lived' : 'bounded', ioMode: 'request_response',
+      ...(selectedMcp ? { capabilitySelection: { mcp: { managedServersEnabled: true } } } : {}),
+      ...(requesterKind === 'account' ? { connectedServices: { v: 2, bindingsByServiceId: {} } } : {}),
+    };
+    const executor = createActionExecutor(deps);
+    const action = reviewedChild
+      ? await invokeHostReviewedChildV1({
+        parent: { actionId: 'workflow.run.start', input: { runId: randomUUID(), source: { kind: 'inline', definition: {
+          version: 1, defaults: {}, inputs: [], blocks: [{ kind: 'action', id: 'start-native-run',
+            actionId: 'execution.run.start', input: Object.fromEntries(Object.entries(executionRunInput)
+              .map(([key, value]) => [key, { kind: 'literal', value }])) }],
+        } }, inputs: {} } },
+        context: actionContext,
+        child: { action: 'execution.run.start', role: 'start-native-run', input: executionRunInput },
+        admittedReview: { action: 'execution.run.start', role: 'start-native-run', surface: 'cli' },
+        execute: async (input, childContext, actionId) => {
+          expect(readHostReviewedChildRootV1(childContext, actionId, input)?.actionId).toBe('workflow.run.start');
+          return executor.execute(actionId, input, childContext);
+        },
+      })
+      : rootActionId === 'review.start'
       ? await deps.executionRunStart(null, { intent: 'review', cwd, backendTarget, roleId,
           intentInput: { comparisonId: comparison!.comparison.id }, childSelection: 'agentDefault',
           instructions: 'Review the captured change.', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
           runClass: 'bounded', ioMode: 'streaming', notifyParentOnCompletion: false,
         }, { ...options, externalActionExecutionAuthorization: accountRequester!.authorization,
           externalActionTarget: { kind: 'machine', machineId: 'machine' } })
-      : await createActionExecutor(deps).execute('execution.run.start', { sessionId: null,
-      intent: 'agent', ...(roleId ? { roleId } : {}), backendTarget,
-      instructions: 'Run the native Project Agent.', permissionMode: 'read_only', retentionPolicy: requesterKind === 'account' && !selectedMcp && !roleId ? 'resumable' : 'ephemeral',
-      cwd, runClass: requesterKind === 'account' && !selectedMcp && !roleId ? 'long_lived' : 'bounded', ioMode: 'request_response',
-      ...(selectedMcp ? { capabilitySelection: { mcp: { managedServersEnabled: true } } } : {}),
-      ...(requesterKind === 'account' ? { connectedServices: { v: 2, bindingsByServiceId: {} } } : {}),
-    }, actionContext);
+      : await executor.execute('execution.run.start', executionRunInput, actionContext);
     if (rootActionId === 'review.start') {
       if (roleId === 'builder') {
         expect(action, JSON.stringify(action)).toMatchObject({ ok: false,
@@ -546,6 +592,23 @@ describe('detached execution-run Machine composition', () => {
       await deps.executionRunStop(null, { runId: runId }, options);
       await deps.executionRunWait(null, { runId: runId }, options);
     });
+    if (retainedRequester) {
+      phase = 'retained Action requester native admission';
+      expect(nativePreparations.at(-1)).toMatchObject({ kind: 'isolated', requester: reviewedChild ? f.bootstrap.attribution : {
+        serverId: 'srv_session_home', accountId: actorAccountId, machineId: 'machine', installationId: f.installation.installationId,
+      } });
+      await vi.waitFor(async () => {
+        const record = await readRetainedExecutionRunRecord(runId);
+        expect(record).toMatchObject({
+          requesterWorkAttributionV1: { serverId: 'session-home', accountId: actorAccountId,
+            machineId: 'machine', installationId: f.installation.installationId },
+          state: { runId, sessionId: null, launch: { cwd } },
+        });
+        expect(record && buildBackendTargetKeyV2(readBackendTargetRefV2(record.state.backendTarget)))
+          .toEqual(buildBackendTargetKeyV2(readBackendTargetRefV2(backendTarget)));
+      });
+      return;
+    }
     if (roleId) {
       phase = 'admitted Role Run projection';
       expect(await deps.executionRunGet(null, { runId }, options)).toMatchObject({ run: {

@@ -1,4 +1,5 @@
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
+import { readHostAdmittedReviewedChildV1 } from './deploymentRoleChild.js';
 import { ExecutionRunLaunchOriginSchema, type ExecutionRunLaunchOrigin } from '../../execution/runs/startRequest.js';
 import { DiscussionSelectionSourceV1Schema } from '../../discussions/content.js';
 import { SessionInputSourceSessionV1Schema } from '../../sessions/messages/sessionInputAdmission.js';
@@ -145,9 +146,10 @@ export function buildExecutionRunCallOptions(
   const actionRequestId = normalizeId(actionContext?.actionRequestId);
   const actionCaller = actionContext?.actionCaller;
   const requesterWorkAttributionV1 = actionContext?.requesterWorkAttributionV1;
+  const reviewedChildActionContext = readHostAdmittedReviewedChildV1(actionContext) ? actionContext : undefined;
   if (!targetServerId && !signal && !origin && !target
     && permissionRequestStore === undefined && workflowObservationSink === undefined
-    && !actionRequestId && !actionCaller && !authority && !requesterWorkAttributionV1 && !actionContext?.onTransportIssued
+    && !actionRequestId && !actionCaller && !authority && !requesterWorkAttributionV1 && !reviewedChildActionContext && !actionContext?.onTransportIssued
     && actionContext?.approvalProfileId === undefined && actionContext?.approvalProfileTeamOrGroupDerived === undefined) return undefined;
   return {
     ...(targetServerId ? { serverId: targetServerId } : {}),
@@ -160,6 +162,7 @@ export function buildExecutionRunCallOptions(
     ...(actionRequestId ? { actionRequestId } : {}),
     ...(actionCaller ? { actionCaller } : {}),
     ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
+    ...(reviewedChildActionContext ? { reviewedChildActionContext } : {}),
     ...(authority ? { authority } : {}),
     ...(actionContext?.surface ? { surface: actionContext.surface } : {}),
     ...(actionContext?.runtimeAccountId ? { runtimeAccountId: actionContext.runtimeAccountId } : {}),

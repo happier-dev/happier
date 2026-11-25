@@ -41,6 +41,8 @@ export type RpcLocalActionContext = Readonly<Partial<Pick<
 >> & {
     /** Admitted headless Resume invocation, retained only through the in-process native launcher. */
     resumeActionContext?: ActionExecutorContext;
+    /** Exact common-issuer child retained by an in-process execution-run handoff. */
+    reviewedChildActionContext?: ActionExecutorContext;
     /** Exact Workflow invocation store, admitted only by an in-process host. */
     executionRunPermissionRequestStore?: unknown;
     executionRunWorkflowObservationSink?: unknown;

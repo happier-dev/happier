@@ -167,7 +167,7 @@ export function buildActionExecutorContextForRpc(
         && params.actionId === 'session.spawn_new';
 
     return {
-        ...params.reviewedChildActionContext,
+        ...(params.reviewedChildActionContext ?? localActionContext?.reviewedChildActionContext),
         ...(params.authorization ? { authorization: params.authorization } : {}),
         ...(params.requesterApprovalDecision ? { requesterApprovalDecision: params.requesterApprovalDecision } : {}),
         ...(params.deadlineAtMs === undefined ? {} : { deadlineAtMs: params.deadlineAtMs }),
