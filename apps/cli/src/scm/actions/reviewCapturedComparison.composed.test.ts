@@ -14,10 +14,78 @@ import { executeScmActionOperation } from './executeScmActionOperation';
 import { projectCapturedComparison } from '../comparisons/projectCapturedComparison';
 import { deleteCapturedScmComparison } from '../comparisons/captureScmComparison';
 import { resolveReviewScmScope } from '@/agent/reviews/scope/resolve';
+import { gitCheckpointAdapter, resolveGitCheckpointBackendContext } from '@/scm/checkpoints/gitCheckpointAdapter';
+import { buildRepositoryCheckpointRefs } from '@/scm/checkpoints/refs';
+import { retainRepositoryCheckpointTurnEvidence } from '@/scm/checkpoints/sessionEvidence';
 
 const reviewer = { kind: 'engine' as const, engineId: 'codex' };
 
 describe('Review captured comparison transport', () => {
+  it('admits the selected real turn checkpoints without later worktree changes', async () => runWithScmAccountScope('review-capture-turn-test', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-selected-turn-' });
+    const sessionId = globalThis.crypto.randomUUID();
+    const turnId = 'selected-turn';
+    const scopeId = `${sessionId}:${fixture.rootPath}`;
+    const refs = buildRepositoryCheckpointRefs({ scopeId, turnId });
+    const context = await resolveGitCheckpointBackendContext({ cwd: fixture.rootPath });
+    const captures = new Set<string>();
+    try {
+      if (!context || !refs.turnStart || !refs.turnFinal) throw new Error('Real checkpoint fixture unavailable');
+      await writeFile(join(fixture.rootPath, 'selected.txt'), 'before selected turn\n');
+      const before = await gitCheckpointAdapter.capture({ context, checkpointRef: refs.turnStart });
+      await writeFile(join(fixture.rootPath, 'selected.txt'), 'after selected turn\n');
+      const after = await gitCheckpointAdapter.capture({ context, checkpointRef: refs.turnFinal });
+      if (!before.success || !after.success) throw new Error('Real checkpoint capture failed');
+      await retainRepositoryCheckpointTurnEvidence({ cwd: fixture.rootPath, scopeId, turnChangeSet: {
+        sessionId, turnId, seqRange: { startSeqInclusive: 1, endSeqInclusive: 2 }, status: 'completed',
+        provider: 'agent', derivedAt: 1, files: [], repositoryCheckpoint: {
+          version: 1, scopeId, startRef: refs.turnStart.ref, finalRef: refs.turnFinal.ref,
+          baseRefSource: 'turn_start', contentConfidence: 'exact', attributionScope: 'shared_worktree',
+          receipts: [...before.receipts, ...after.receipts],
+        },
+      } });
+      await writeFile(join(fixture.rootPath, 'unrelated.txt'), 'later worktree change\n');
+      const records = createInMemoryReviewRecordPortV1();
+      const bindings: { reviewId: string; roundOrdinal: number }[] = [];
+      const executor = createActionExecutor({ reviewRecords: () => records,
+        resolveApiTokenGrantSessionMachineId: async () => 'capture-machine',
+        // Machine transport and native Run are boundaries; checkpoint capture,
+        // persisted Review, round preparation and scope enforcement stay real.
+        scmActionExecute: async request => {
+          const result = ScmComparisonCaptureOutputSchema.parse(await executeScmActionOperation({
+            actionId: request.actionId, workingDirectory: fixture.rootPath, input: request.input,
+            authorizeSession: async id => id === sessionId,
+          }));
+          if (result.success) captures.add(result.comparison.id);
+          return result;
+        },
+        reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+        executionRunStart: async (_sessionId, input) => {
+          bindings.push(ReviewPreparedRoundV1Schema.shape.reviewRound.parse(input.intentInput?.reviewRound));
+          return { runId: 'selected-turn-run', callId: 'call', sidechainId: 'sidechain' };
+        },
+      });
+      const source = { kind: 'turnCheckpoint' as const, sessionId, turnId, evidenceMode: 'reconciled' as const };
+      const reviewInput = { sessionId, cwd: fixture.rootPath, source, instructions: 'Review only the selected turn.', reviewers: [reviewer] };
+      expect(await executor.execute('review.start', reviewInput, { surface: 'ui' })).toMatchObject({ ok: true });
+      const binding = bindings[0]!;
+      const capture = (await records.read(binding.reviewId))?.rounds[0]?.comparisonCapture?.input;
+      const prepared = await executor.execute('review.prepare_round', { reviewRound: binding,
+        reviewInput: { ...reviewInput, comparisonId: capture?.comparisonId }, comparisonCapture: capture,
+        previousRoundContext: null }, { surface: 'ui' });
+      expect(prepared, JSON.stringify(prepared)).toMatchObject({ ok: true });
+      if (!prepared.ok) throw new Error(prepared.error);
+      const comparison = ReviewPreparedRoundV1Schema.parse(prepared.result).comparison;
+      expect(comparison).toMatchObject({ source: { kind: 'turnCheckpoint', sessionId, turnId },
+        endpoints: { before: before.commitSha, after: after.commitSha }, inventory: { state: 'complete', files: [{ path: 'selected.txt' }] } });
+      expect(await resolveReviewScmScope({ cwd: fixture.rootPath, intentInput: { comparisonId: comparison!.id, comparison,
+        selectedPaths: ['unrelated.txt'] } })).toMatchObject({ status: 'unsupported', diagnostics: [{ code: 'invalid_path' }] });
+    } finally {
+      for (const comparisonId of captures) await deleteCapturedScmComparison({ cwd: fixture.rootPath, sessionId, comparisonId });
+      await rm(fixture.rootPath, { recursive: true, force: true });
+    }
+  }));
+
   it('retains admitted endpoints after ambient HEAD changes and admits the neighboring detached worktree', async () => runWithScmAccountScope('review-capture-worktree-test', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-capture-worktree-' });
     const worktreeParent = await mkdtemp(join(tmpdir(), 'review-capture-neighbor-'));
