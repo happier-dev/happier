@@ -81,7 +81,7 @@ async function runFixture(options: { engineId?: string; failedMember?: boolean; 
   await vi.waitFor(() => expect(['run-complete', 'run-failed', 'run-cancelled']).toContain(events.at(-1)?.kind));
   // The finite runtime must not settle before native cleanup finishes.
   if (run.mock.calls.length) expect(run.mock.calls.at(-1)?.[0].args).toEqual(['daemon', 'stop']);
-  const output = events.filter(event => event.kind === 'output-delta').map(event => event.text).join('');
+  const output = events.filter(event => event.kind === 'output-delta' && event.channel === 'assistant').map(event => event.text).join('');
   await runtime.dispose();
   await activation.dispose();
   return { events, output: output ? ReviewFindingsV2Schema.parse(JSON.parse(output)) : null, run, writeFile };
@@ -260,6 +260,18 @@ describe('activated roborev reviewer', () => {
   });
   it('keeps failed native cleanup visible when Stop was requested', async () => {
     const result = await runFixture({ cancel: true, cleanupFailure: true });
-    expect(result.events.at(-1)).toMatchObject({ kind: 'run-cancelled', diagnostic: { code: 'roborev_cleanup_failed' } });
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-cancelled' });
+    expect(result.events).toContainEqual(expect.objectContaining({ kind: 'output-delta', channel: 'reasoning', text: expect.stringContaining('cleanup') }));
+  });
+  it('preserves completed findings and reports daemon cleanup failure beside the result', async () => {
+    const result = await runFixture({ cleanupFailure: true });
+    expect(result.events.at(-1)?.kind).toBe('run-complete');
+    expect(result.output).toMatchObject({ reviewOutcome: 'complete', findings: [expect.objectContaining({ title: expect.any(String) })] });
+    expect(result.events).toContainEqual(expect.objectContaining({ kind: 'output-delta', channel: 'reasoning', text: expect.stringContaining('cleanup') }));
+  });
+  it('preserves the typed primary refusal when daemon cleanup also fails', async () => {
+    const result = await runFixture({ missingDocument: true, cleanupFailure: true });
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'roborev_document_unsupported' } });
+    expect(result.events).toContainEqual(expect.objectContaining({ kind: 'output-delta', channel: 'reasoning', text: expect.stringContaining('cleanup') }));
   });
 });

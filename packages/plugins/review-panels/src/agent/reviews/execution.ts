@@ -1,6 +1,6 @@
 import { createFiniteExecutionRunHostRuntime, type AgentExecutionRunRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ReviewFindingsV2, ReviewStartInput } from '@happier-dev/plugin-sdk/reviews';
-import { RoborevReviewError, type RoborevReviewResult } from './document.js';
+import { RoborevReviewError } from './document.js';
 import { runRoborevReview } from './run.js';
 import type { RoborevReviewOptions } from './profile.js';
 import { roborevRunnerAccess } from './access.js';
@@ -62,8 +62,7 @@ export function createRoborevExecutionRunFactory(): AgentExecutionRunRuntimeFact
           } };
           const access = roborevRunnerAccess(request, agent ?? 'codex', options?.panel ?? 'none');
           if (access.status === 'unsupported') return { status: 'failed', diagnostic: { code: access.code, severity: 'error', message: access.message } };
-          let result: RoborevReviewResult;
-          try { result = await runRoborevReview(context.services, {
+          const result = await runRoborevReview(context.services, {
             runId: request.runId, cwd: request.cwd, executable: { kind: 'managedDependency', id: 'review-executable' }, signal,
             instructions: input.instructions,
             env: access.env, configuration: access.config,
@@ -71,12 +70,9 @@ export function createRoborevExecutionRunFactory(): AgentExecutionRunRuntimeFact
               ...(agent ? ['--agent', agent] : []), ...(options?.reasoning ? ['--reasoning', options.reasoning] : []),
               ...(access.model ? ['--model', access.model] : [])],
             onProgress: () => emit({ kind: 'run-progress' }),
-          }); } catch (error) {
-            if (signal.aborted && error instanceof AggregateError) return { status: 'cancelled', diagnostic: {
-              code: 'roborev_cleanup_failed', severity: 'error', message: 'Stop was requested, but the native reviewer could not finish cleanup.',
-            } };
-            throw error;
-          }
+            onCleanupFailure: phase => emit({ kind: 'output-delta', channel: 'reasoning',
+              text: `Native reviewer cleanup failed while ${phase === 'cancel' ? 'cancelling the job' : 'stopping the daemon'}.\n` }),
+          });
           const output: ReviewFindingsV2 = {
             runRef: { runId: request.runId, callId: `roborev:${request.runId}`, backendId: 'roborev' },
             ...(comparison ? { comparisonId: comparison.id } : {}), reviewOutcome: result.outcome,

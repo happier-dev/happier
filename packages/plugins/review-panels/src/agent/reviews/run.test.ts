@@ -163,15 +163,15 @@ describe('finite native panel run', () => {
       if (request.args?.[1] === 'stop') return completed('', 1);
       return original(request, options);
     });
-    await expect(runRoborevReview(services, input)).rejects.toMatchObject({
-      name: 'AggregateError', errors: [expect.objectContaining({ name: 'AbortError' }), expect.objectContaining({ phase: 'stop' })],
-    });
+    await expect(runRoborevReview(services, input)).rejects.toMatchObject({ name: 'AbortError' });
   });
 
-  it('reports failed daemon cleanup instead of claiming finite completion', async () => {
+  it('reports failed daemon cleanup beside the completed review', async () => {
     const { input, run, services } = fixture();
     const original = run.getMockImplementation()!;
     run.mockImplementation(async (request, options) => request.args?.[1] === 'stop' ? completed('', 1) : original(request, options));
-    await expect(runRoborevReview(services, input)).rejects.toMatchObject({ code: 'roborev_native_process_failed', phase: 'stop' });
+    const onCleanupFailure = vi.fn();
+    await expect(runRoborevReview(services, { ...input, onCleanupFailure })).resolves.toMatchObject({ outcome: 'complete', verdict: 'pass' });
+    expect(onCleanupFailure).toHaveBeenCalledWith('stop');
   });
 });

@@ -16,6 +16,8 @@ export type RoborevReviewRunInput = Readonly<{
   /** Native non-secret settings translated from the host's selected runner. */
   configuration?: string;
   onProgress?: () => void;
+  /** Report cleanup separately so it cannot replace the review result. */
+  onCleanupFailure?: (phase: 'cancel' | 'stop') => void;
 }>;
 
 export async function runRoborevReview(
@@ -49,7 +51,6 @@ export async function runRoborevReview(
   };
   let jobId: number | null = null;
   let waitSettled = false;
-  let primary: { error: unknown } | null = null;
   try {
     // Native start/enqueue/list acquire daemon/job custody. Complete these short
     // native operations before honoring Stop, so cleanup always knows what it
@@ -84,23 +85,14 @@ export async function runRoborevReview(
       throw new RoborevReviewError('roborev_document_invalid', 'document');
     }
     return normalizeRoborevReview(record, jobId);
-  } catch (error) {
-    primary = { error };
-    throw error;
   } finally {
-    const cleanupErrors: unknown[] = [];
     // Native synthesis cancellation cascades to its panel members. Stop alone
     // drains active work, so cancel first when the native wait was interrupted.
     if (jobId !== null && !waitSettled) {
       try { await command('cancel', ['job', 'cancel', String(jobId)]); }
-      catch (error) { cleanupErrors.push(error); }
+      catch { input.onCleanupFailure?.('cancel'); }
     }
     try { await command('stop', ['daemon', 'stop']); }
-    catch (error) { cleanupErrors.push(error); }
-    if (cleanupErrors.length > 0) {
-      if (primary !== null) throw new AggregateError([primary.error, ...cleanupErrors], 'roborev and native cleanup failed');
-      if (cleanupErrors.length === 1) throw cleanupErrors[0];
-      throw new AggregateError(cleanupErrors, 'roborev native cleanup failed');
-    }
+    catch { input.onCleanupFailure?.('stop'); }
   }
 }

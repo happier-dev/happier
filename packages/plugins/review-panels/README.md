@@ -41,8 +41,9 @@ Stop takes effect after short native start/enqueue/job-id acquisition returns;
 the CLI owns those operations' deadlines. An interrupted wait cancels the
 selected native job (which cascades to panel members) before daemon shutdown.
 Cleanup runs without the canceled signal. A cleanup error remains visible
-alongside the primary run/cancellation error. The native process can fail to
-stop when its own cancellation or shutdown fails; that is reported as failure.
+alongside the original findings, failure or cancellation. The native process
+can remain running when its own cancellation or shutdown fails; the cleanup
+warning reports that separately.
 
 Findings retain their suggested fix and native source attribution. Native
 verdicts remain evidence, separate from a person's verdict. An absent or unknown
