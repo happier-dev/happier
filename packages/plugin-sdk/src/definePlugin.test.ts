@@ -1418,7 +1418,7 @@ describe('definePlugin', () => {
     });
 
     it('projects every r1.0 Composer family from the grouped author namespace', async () => {
-        /* @sdk-negative-type-case:src-definePlugin-test-ts-composer-icon:Q29tcG9zZXIgYXV0aG9yIGljb25zIG11c3QgbWF0Y2ggdGhlIHJ1bnRpbWUgbWFuaWZlc3QgdG9rZW4gc2V0Lg:ZGVmaW5lQ29tcG9zZXJDb250cm9sKHsgbGFiZWw6ICdJbnZhbGlkIGljb24gY29udHJhY3QnLCBpY29uOiAnZWRpdCcsIGludGVyYWN0aW9uOiB7IGtpbmQ6ICdhY3Rpb24nLCBhY3Rpb246ICdleGFtcGxlLmFjdGlvbicgfSB9KTs */
+        /* @sdk-negative-type-case:src-definePlugin-test-ts-composer-icon:Q29tcG9zZXIgYXV0aG9yIGljb25zIG11c3QgbWF0Y2ggdGhlIHJ1bnRpbWUgbWFuaWZlc3QgdG9rZW4gc2V0Lg:ZGVmaW5lQ29tcG9zZXJDb250cm9sKHsgbGFiZWw6ICdJbnZhbGlkIGljb24gY29udHJhY3QnLCBpY29uOiAnbm90LWEtcGx1Z2luLWljb24nLCBpbnRlcmFjdGlvbjogeyBraW5kOiAnYWN0aW9uJywgYWN0aW9uOiAnZXhhbXBsZS5hY3Rpb24nIH0gfSk7 */
         void undefined; /* @sdk-negative-type-case-end */
         const search = vi.fn(async () => [{
             id: 'issue:42',
