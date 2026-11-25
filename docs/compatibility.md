@@ -643,6 +643,15 @@ nullable snapshot only when its Home, preset id and admitted preset revision
 match the current preset row. Older or missing snapshots remain unknown and
 cannot be reused; their rows and opaque content are preserved.
 
+### Team-scoped Preset reads
+
+The explicit Team list and count can report the existing
+`team_authentication_required` or `team_authentication_unavailable` refusal
+when the current member cannot use the Team's sign-in policy. Outsiders and
+suspended members retain the opaque empty result. Lists across scopes retain
+their existing behavior. Matching 0.3 Action readers and servers deploy
+together. The released 0.2 tree has no managed Preset endpoint.
+
 ## Workflow trigger Event references (unreleased 0.3)
 
 The closed Workflow value-reference union adds `trigger_event`, and the private

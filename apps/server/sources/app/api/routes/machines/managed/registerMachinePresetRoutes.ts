@@ -2,6 +2,7 @@ import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, 
 import { MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1, ManagedMachinePresetAcquireRoutingInputV1Schema, ManagedMachinePresetAcquireRoutingResultV1Schema, ManagedMachinePresetRecipientCensusInputV1Schema, ManagedMachinePresetRecipientCensusResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { MACHINE_PRESET_OWED_RECIPIENT_CENSUS_PATH_V1, MACHINE_PRESET_RECIPIENT_CENSUS_PATH_V1,
     ManagedMachinePresetOwedRecipientCensusesV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { teamErrorHttpStatusV1 } from '@happier-dev/protocol/teams/errors';
 import type { z } from "zod/mini";
 
 import type { Fastify } from "../../../types";
@@ -28,7 +29,7 @@ function register<Id extends MachinePresetHttpActionIdV1>(
         attachValidation: true,
         schema: {
             body: MachinePresetActionInputSchemasV1[id],
-            response: { 200: output, 400: output, 403: output, 404: output, 409: output },
+            response: { 200: output, 400: output, 403: output, 404: output, 409: output, 503: output },
         },
     }, async (request, reply) => {
         if (request.validationError) return await reply.code(400).send({ kind: "refused", code: "invalid_request" });
@@ -39,7 +40,9 @@ function register<Id extends MachinePresetHttpActionIdV1>(
         const status = result.kind === "conflict" ? 409
             : result.kind !== "refused" ? 200
             : result.code === "preset_not_found" ? 404
-            : result.code === "permission_denied" ? 403 : 400;
+            : result.code === "team_authentication_required" || result.code === "team_authentication_unavailable"
+                ? teamErrorHttpStatusV1(result.code)
+                : result.code === "permission_denied" ? 403 : 400;
         return await reply.code(status).send(result);
     });
 }

@@ -47,7 +47,11 @@ let stopDemanding: (() => void) | undefined;
 let demandedHomes = '';
 
 export function isMachinePresetAccessLost(code: string): boolean {
-    return code === 'permission_denied' || code === 'preset_not_found' || code === 'action_account_scope_changed';
+    return code === 'permission_denied'
+        || code === 'preset_not_found'
+        || code === 'action_account_scope_changed'
+        || code === 'team_authentication_required'
+        || code === 'team_authentication_unavailable';
 }
 
 export function homeAccountChangeAffectsMachinePresetList(event: HomeAccountChangeEvent): boolean {

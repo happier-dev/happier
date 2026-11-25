@@ -153,10 +153,13 @@ afterEach(async () => {
 
 describe('Team shared kind list', () => {
   it.each([
-    { code: 'permission_denied', status: 403, message: 'teams.errors.forbidden' },
-    { code: 'invalid_request', status: 400, message: 'homeGovernance.invalidRead' },
-  ] as const)('explains a settled preset list refusal $code without Retry', async ({ code, status, message }) => {
-    const serverId = await addHome([], { serverIdentityId: 'srv_shared_machine_presets' });
+    { code: 'permission_denied', status: 403, message: 'teams.errors.forbidden', signIn: false },
+    { code: 'invalid_request', status: 400, message: 'homeGovernance.invalidRead', signIn: false },
+    { code: 'team_authentication_required', status: 403, message: 'session.access.authenticationRequired', signIn: true },
+    { code: 'team_authentication_unavailable', status: 503, message: 'teams.credentials.externalApi.authenticationUnavailable', signIn: false },
+  ] as const)('explains a settled preset list refusal $code without Retry', async ({ code, status, message, signIn }) => {
+    const homeId = 'srv_shared_machine_presets';
+    const serverId = await addHome([], { serverIdentityId: homeId });
     harness.answer(serverId, '/v1/machines/presets/list', { status, body: { kind: 'refused', code } });
 
     const screen = await renderScreen(<TeamSharedKindScreen serverId={serverId} teamId="team-1" kind="machinePresets" />);
@@ -164,12 +167,20 @@ describe('Team shared kind list', () => {
     expect(ids(screen)).toContain('team-shared-kind-failed');
     expect(ids(screen)).not.toContain('team-shared-kind-failed-retry');
     expect(ids(screen)).not.toContain('team-shared-kind-more');
+    expect(ids(screen).includes('team-shared-kind-failed-sign-in')).toBe(signIn);
+    if (signIn) {
+      await screen.pressByTestIdAsync('team-shared-kind-failed-sign-in');
+      const recovery = new URL(routerPush.mock.lastCall?.[0] ?? '', 'https://app.example');
+      expect(recovery.pathname).toBe('/teams/team-1/sign-in');
+      expect(recovery.searchParams.get('serverId')).toBe(homeId);
+    }
   });
 
   it.each([
-    { title: 'loads only the visible preset page and repairs recipients only for the selected preset', failContinuation: false },
-    { title: 'keeps visible presets and allows a manual retry after a failed scroll continuation', failContinuation: true },
-  ])('$title', async ({ failContinuation }) => {
+    { title: 'loads only the visible preset page and repairs recipients only for the selected preset', continuationFailure: null },
+    { title: 'keeps visible presets and allows a manual retry after a failed scroll continuation', continuationFailure: 'transport' },
+    { title: 'withdraws visible presets when Team sign-in becomes unavailable during scrolling', continuationFailure: 'qualification' },
+  ] as const)('$title', async ({ continuationFailure }) => {
     const homeId = 'srv_shared_machine_presets';
     const teamId = 'team-1';
     const credentials = {
@@ -198,13 +209,16 @@ describe('Team shared kind list', () => {
     });
     let listBodies = 0;
     let detailBodies = 0;
-    let failNextContinuation = failContinuation;
+    let nextContinuationFailure = continuationFailure;
     harness.answer(serverId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
     harness.answer(serverId, '/v1/machines/presets/list', { select: input => {
       const { cursor } = input as { cursor?: string };
-      if (cursor !== undefined && failNextContinuation) {
-        failNextContinuation = false;
-        return { status: 503, body: { error: 'unavailable' } };
+      if (cursor !== undefined && nextContinuationFailure) {
+        const failure = nextContinuationFailure;
+        nextContinuationFailure = null;
+        return failure === 'qualification'
+          ? { status: 503, body: { kind: 'refused', code: 'team_authentication_unavailable' } }
+          : { status: 503, body: { error: 'unavailable' } };
       }
       const page = cursor === undefined ? presets.slice(0, 2) : presets.slice(2);
       listBodies += page.length;
@@ -243,6 +257,14 @@ describe('Team shared kind list', () => {
     await scrollTo(200);
     expect(readCounts()).toEqual({ pageRequests: 1, listBodies: 2, detailBodies: 0, census: 0 });
     await scrollTo(500);
+    if (continuationFailure === 'qualification') {
+      await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('teams.credentials.externalApi.authenticationUnavailable')));
+      expect(ids(screen)).not.toContain('team-shared-kind-row:preset-1');
+      expect(ids(screen)).not.toContain('team-shared-kind-row:preset-2');
+      expect(ids(screen)).not.toContain('team-shared-kind-failed-retry');
+      return;
+    }
+    const failContinuation = continuationFailure === 'transport';
     if (failContinuation) {
       await waitForHomeGovernance(() => expect(readCounts()).toEqual({ pageRequests: 2, listBodies: 2, detailBodies: 0, census: 0 }));
       expect(ids(screen)).toContain('team-shared-kind-row:preset-2');

@@ -332,7 +332,9 @@ export const ManagedMachinePresetListResultV1Schema = lazyZodSchema(() => z.disc
     opened: z.optional(z.array(ManagedMachinePresetOpenedContentV1Schema)) }),
   z.strictObject({ kind: z.literal('revisions'), presets: z.array(ManagedMachinePresetRevisionV1Schema), cursor: z.optional(id()) }),
   z.strictObject({ kind: z.literal('count'), count: z.number().check(z.int(), z.nonnegative()) }),
-  ManagedMachinePresetRefusedV1Schema,
+  z.strictObject({ kind: z.literal('refused'), code: z.union([
+    ManagedRefusalCodeV1Schema, z.literal('team_authentication_required'), z.literal('team_authentication_unavailable'),
+  ]) }),
 ]));
 export type ManagedMachinePresetCreateInputV1 = z.infer<typeof ManagedMachinePresetCreateInputV1Schema>;
 export type ManagedMachinePresetUpdateInputV1 = z.infer<typeof ManagedMachinePresetUpdateInputV1Schema>;

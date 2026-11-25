@@ -105,6 +105,49 @@ describe("Machine preset relational owner", () => {
 
     afterAll(async () => { if (harness) await harness.close(); });
 
+    it.each([
+        {
+            label: 'required sign-in',
+            policy: { v: 1, mode: 'restricted', accepted: [{ kind: 'home_method', methodId: 'key_challenge' }] },
+            status: 403,
+            code: 'team_authentication_required',
+        },
+        {
+            label: 'unreadable sign-in policy',
+            policy: { v: 99, mode: 'restricted', accepted: [] },
+            status: 503,
+            code: 'team_authentication_unavailable',
+        },
+    ])('reports $label on an exact Team list only to a current member', async ({ policy, status, code }) => {
+        const homeId = await getOrCreateServerIdentityId();
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const team = await db.team.create({ data: { name: 'Private Team Presets', authenticationPolicy: policy } });
+        const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
+        const body = { homeId, sharedWithTeamId: team.id };
+
+        const scopes = [
+            { input: { ...body, limit: 50 }, opaque: { kind: 'listed', presets: [] } },
+            { input: { ...body, projection: 'count' }, opaque: { kind: 'count', count: 0 } },
+        ];
+        for (const { input, opaque } of scopes) {
+            const refusal = await requestPreset(member.id, 'list', input);
+            expect(refusal.statusCode, refusal.body).toBe(status);
+            expect(refusal.json()).toEqual({ kind: 'refused', code });
+
+            const noMembership = await requestPreset(stranger.id, 'list', input);
+            expect(noMembership.statusCode, noMembership.body).toBe(200);
+            expect(noMembership.json()).toEqual(opaque);
+        }
+
+        await db.teamMembership.update({ where: { id: membership.id }, data: { status: 'suspended' } });
+        for (const { input, opaque } of scopes) {
+            const inactiveMembership = await requestPreset(member.id, 'list', input);
+            expect(inactiveMembership.statusCode, inactiveMembership.body).toBe(200);
+            expect(inactiveMembership.json()).toEqual(opaque);
+        }
+    });
+
     it('round-trips tagged preset content without projecting private fields into structural columns', async () => {
         const accountId = 'preset-opaque-content-owner';
         const homeId = await getOrCreateServerIdentityId();

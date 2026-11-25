@@ -132,17 +132,30 @@ function permitsTeamPresetOperation(actor: TeamActorContext, operation: PresetAc
     return actor.teamCapabilities.manageSettings;
 }
 
+type PresetAccess = Readonly<{ teamArchivedAt: Date | null }>;
+type TeamPresetAuthenticationRefusal = Extract<Awaited<ReturnType<typeof qualifyTeamOperationAuthenticationInTx>>, { ok: false }>['error'];
+
+async function resolveTeamPresetAccessInTx(tx: Tx, context: PresetContext, teamId: string,
+    operation: PresetAccessOperation, admittedTeamActor?: TeamActorContext): Promise<(PresetAccess & Readonly<{ error?: TeamPresetAuthenticationRefusal }>) | null> {
+    const actor = admittedTeamActor ?? await resolveTeamActorContextInTx(tx, { teamId, actorAccountId: context.accountId });
+    if (!actor || !permitsTeamPresetOperation(actor, operation)) return null;
+    const qualification = await qualifyTeamOperationAuthenticationInTx(tx, { ...context.authentication, context: actor });
+    if (qualification.ok) return { teamArchivedAt: actor.team.archivedAt };
+    // Disclose a sign-in requirement only to a current member. Other callers retain the opaque result.
+    return actor.membership?.status === TeamMembershipStatus.active
+        ? { teamArchivedAt: actor.team.archivedAt, error: qualification.error }
+        : null;
+}
+
 async function resolvePresetAccessInTx(tx: Tx, context: PresetContext, owner: ManagedMachinePresetV1["owner"],
-    operation: PresetAccessOperation, admittedTeamActor?: TeamActorContext): Promise<Readonly<{ teamArchivedAt: Date | null }> | null> {
+    operation: PresetAccessOperation): Promise<PresetAccess | null> {
     if (owner.kind === "account") {
         if (owner.accountId !== context.accountId) return null;
         return (await tx.account.findUnique({ where: { id: context.accountId }, select: { status: true } }))?.status === AccountStatus.active
             ? { teamArchivedAt: null } : null;
     }
-    const actor = admittedTeamActor ?? await resolveTeamActorContextInTx(tx, { teamId: owner.teamId, actorAccountId: context.accountId });
-    if (!actor || !permitsTeamPresetOperation(actor, operation)
-        || !(await qualifyTeamOperationAuthenticationInTx(tx, { ...context.authentication, context: actor })).ok) return null;
-    return { teamArchivedAt: actor.team.archivedAt };
+    const access = await resolveTeamPresetAccessInTx(tx, context, owner.teamId, operation);
+    return access?.error ? null : access;
 }
 
 /** Shared in-transaction Team/account manage admission for a mutation that owns its own transaction. */
@@ -1039,13 +1052,16 @@ export async function getMachinePresetInTx(tx: Tx, params: PresetPreparationCont
 async function scopedPresetListWhereInTx(tx: Tx, context: PresetContext, input: Readonly<{
     homeId: string; sharedWithTeamId: string; includeArchived?: boolean;
     admittedTeamActor?: TeamActorContext;
-}>): Promise<Readonly<{ where: Prisma.ManagedMachinePresetWhereInput; teamArchivedAt: Date | null }>> {
-    const access = await resolvePresetAccessInTx(tx, context, { kind: 'team', teamId: input.sharedWithTeamId }, 'read', input.admittedTeamActor);
-    return { where: !access || !input.includeArchived && access.teamArchivedAt !== null
-        ? { id: { in: [] } }
-        : { homeId: input.homeId, teamId: input.sharedWithTeamId,
-            ...(!input.includeArchived ? { archivedAt: null } : {}) },
-        teamArchivedAt: access?.teamArchivedAt ?? null };
+}>): Promise<Readonly<{ where: Prisma.ManagedMachinePresetWhereInput; teamArchivedAt: Date | null }> | Readonly<{ error: TeamPresetAuthenticationRefusal }>> {
+    const access = await resolveTeamPresetAccessInTx(tx, context, input.sharedWithTeamId, 'read', input.admittedTeamActor);
+    if (!access || !input.includeArchived && access.teamArchivedAt !== null) {
+        return { where: { id: { in: [] } }, teamArchivedAt: null };
+    }
+    if (access.error) return { error: access.error };
+    return {
+        where: { homeId: input.homeId, teamId: input.sharedWithTeamId, ...(!input.includeArchived ? { archivedAt: null } : {}) },
+        teamArchivedAt: access.teamArchivedAt,
+    };
 }
 
 /** Aggregate only; opaque setup and launch declarations stay unopened. */
@@ -1053,11 +1069,12 @@ export async function countScopedTeamMachinePresetsInTx(tx: Tx, params: Readonly
     actorAccountId: string; sharedWithTeamId: string; includeArchived?: boolean;
     authentication?: PresetContext['authentication'];
     admittedTeamActor?: TeamActorContext;
-}>): Promise<Readonly<{ ok: true; count: number }> | Readonly<{ ok: false; error: 'permission_denied' }>> {
+}>): Promise<Readonly<{ ok: true; count: number }> | Readonly<{ ok: false; error: 'permission_denied' | TeamPresetAuthenticationRefusal }>> {
     const homeId = await readCurrentServerIdentityId(process.env, tx);
     if (!homeId) return { ok: false, error: 'permission_denied' };
     const scope = await scopedPresetListWhereInTx(tx, { accountId: params.actorAccountId,
         authentication: params.authentication }, { ...params, homeId });
+    if ('error' in scope) return { ok: false, error: scope.error };
     return { ok: true, count: await tx.managedMachinePreset.count({ where: scope.where }) };
 }
 
@@ -1096,6 +1113,7 @@ export async function listMachinePresets(params: PresetContext & Readonly<{ inpu
         }
         if (input.sharedWithTeamId) {
             const scope = await scopedPresetListWhereInTx(tx, params, { ...input, sharedWithTeamId: input.sharedWithTeamId });
+            if ('error' in scope) return { kind: 'refused', code: scope.error };
             if (input.projection === 'count') return { kind: 'count', count: await countScope(scope.where) };
             const rows = await readRows(scope.where);
             return projectRows(rows.map(row => inheritPresetOwnerArchive(row, scope.teamArchivedAt)), 'team');
