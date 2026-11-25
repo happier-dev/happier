@@ -152,9 +152,9 @@ export function createVoiceMachineError(params: Readonly<{
         // rather than the native microphone settings used by open_settings.
         ...(params.reason === 'voice_provider_agent_unavailable'
             ? { recoveryAction: 'review_credentials' as const } : {}),
-        // Waiting for quota is not a setup failure. The native Run owns any automatic recovery.
+        // Voice setup lets the person switch services while the native Run owns any automatic recovery.
         ...(params.kind === 'provider_error' && params.reason === 'usage_limit'
-            ? { recoveryAction: 'none' as const, presentation: 'error' as const, retryPolicy: 'never' as const } : {}),
+            ? { recoveryAction: 'review_credentials' as const, presentation: 'error' as const, retryPolicy: 'never' as const } : {}),
         ...(params.reason === 'empty_transcript'
             || (params.kind === 'transport_disconnect' && params.reason === 'voice_capture_recovered')
             ? { recoveryAction: 'none' as const, retryPolicy: 'never' as const } : {}),

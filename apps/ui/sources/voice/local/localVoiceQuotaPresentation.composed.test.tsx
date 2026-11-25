@@ -40,7 +40,7 @@ describe('quota presentation from the local Agent controller', () => {
         { name: 'scheduled retry', metadata: { usageLimitRecovery: recovery }, expectedKey: 'session.usageLimitRecovery.banner.retryAt' },
         { name: 'known reset without automatic recovery', metadata: { usageLimitResetAtMs: retryAtMs }, expectedKey: 'message.agentQuotaWait' },
         { name: 'absent metadata', metadata: {}, expectedKey: null },
-    ])('keeps $name visible without sending a waiting person to setup', async ({ metadata, expectedKey }) => {
+    ])('shows $name and offers Voice setup without retrying the turn', async ({ metadata, expectedKey }) => {
         const storage = await getStorage();
         const voice = storage.getState().settings.voice;
         const local = readLocalConversationVoiceSettings(voice);
@@ -82,16 +82,22 @@ describe('quota presentation from the local Agent controller', () => {
                 expectedAttempt: getVoiceSessionPresentedAttemptId(), control: 'commit_input',
             }, { navigate() {} })).rejects.toMatchObject({ rpcErrorCode: 'usage_limit' });
             expect(lifecycle.getSnapshot()).toMatchObject({ status: 'error', errorCode: 'provider_error',
-                errorMessage: 'usage_limit', errorRecoveryAction: 'none' });
+                errorMessage: 'usage_limit', errorRecoveryAction: 'review_credentials' });
             expect(lifecycle.getSnapshot().canCommitInput).not.toBe(true);
             const read = await executeVoiceConversationAction('ui.voice_global.get', {}, { navigate() {} });
             const time = formatMoment(retryAtMs, Date.now());
             const notice = expectedKey === 'session.usageLimitRecovery.banner.retryAt'
                 ? t('session.usageLimitRecovery.banner.retryAt', { time })
                 : expectedKey ? t('message.agentQuotaWait', { time }) : null;
-            expect(read).toMatchObject({ voice: { presentation: { recovery: null,
+            expect(read).toMatchObject({ voice: { presentation: { recovery: { action: 'review_credentials' },
                 failureMessage: notice ? `${t('session.usageLimitRecovery.banner.title')} ${notice}`
                     : t('session.usageLimitRecovery.banner.title') } } });
+            const destinations: unknown[] = [];
+            const { VOICE_SETTINGS_PROVIDER_FOCUS_TARGET } = await import('@/voice/settings/voiceSettingsRouteFocus');
+            expect(await executeVoiceConversationAction('ui.voice_global.recover', {
+                expectedAttempt: getVoiceSessionPresentedAttemptId(),
+            }, { navigate: href => { destinations.push(href); } })).toMatchObject({ status: 'completed' });
+            expect(destinations).toEqual([VOICE_SETTINGS_PROVIDER_FOCUS_TARGET]);
             const screen = await renderScreen(<CompactVoiceStatus />);
             expect(screen.findByTestId('voice-status-line')?.findAll(node =>
                 node.props.children === t('session.usageLimitRecovery.banner.title')).length).toBeGreaterThan(0);

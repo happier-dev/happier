@@ -473,7 +473,7 @@ describe('native Voice permission input', () => {
             `${t('session.usageLimitRecovery.banner.title')} ${t('session.usageLimitRecovery.banner.retryAt', { time })}`,
           ]);
           expect(lifecycle.getSnapshot()).toMatchObject({ status: 'error', errorCode: 'provider_error',
-            errorMessage: 'usage_limit', errorRecoveryAction: 'none' });
+            errorMessage: 'usage_limit', errorRecoveryAction: 'review_credentials' });
           expect(lifecycle.getSnapshot().canCommitInput).not.toBe(true);
         }
         return;

@@ -852,7 +852,7 @@ describe('local voice engine agent behavior', () => {
     });
 
     it.each([
-        { code: 'usage_limit', recovery: 'none' },
+        { code: 'usage_limit', recovery: 'review_credentials' },
         { code: 'agent_signed_out', recovery: 'connect_agent' },
         { code: 'execution_run_failed', recovery: 'retry' },
     ])('surfaces a $code refusal from the immediate greeting', async ({ code, recovery }) => {
@@ -1465,7 +1465,7 @@ describe('local voice engine agent behavior', () => {
         { code: 'acp_turn_failed', message: 'Cannot connect to API: Unable to connect. https://user:PRIVATE_PASSWORD@example.test/v1?api_key=PRIVATE_API_KEY token=PRIVATE_TOKEN /home/alice/private/model',
             reason: 'Cannot connect to API', recovery: 'retry' },
         { code: 'usage_limit', message: 'Codex usage limit reached. Try another connected account or try again after your limit resets.',
-            reason: 'usage limit', recovery: 'none' },
+            reason: 'usage limit', recovery: 'review_credentials' },
     ])('shows the $code reason and recovery from the live turn stream without leaking provider credentials', async ({ code, message, reason, recovery }) => {
         const storage = await getStorage();
         const voice = storage.getState().settings.voice;
