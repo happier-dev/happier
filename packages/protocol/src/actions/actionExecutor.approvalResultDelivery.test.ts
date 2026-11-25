@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   ApprovalRequestV2Schema,
@@ -9,6 +9,7 @@ import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { materializeActionRequestAttributionV1 } from './actionRequestAttributionV1.js';
 import { createActionExecuteFailureError } from './actionExecutionResult.js';
 import type { ActionExecutorDeps } from './executor/types.js';
+import type { ActionOperationSnapshotV1 } from './operations/v1.js';
 
 type Delivery = NonNullable<ActionExecutorDeps['sessionSendMessage']>;
 type DeliveryArgs = Parameters<Delivery>[0];
@@ -139,6 +140,83 @@ async function askAndDecide(
 }
 
 describe('approval result delivery is a receipt beside the run record', () => {
+  it('continues the admitted Agent acquire to the asking Session when it needs confirmation and starts the child', async () => {
+    const seed = await askAndDecide({ deliver: async input => ({ status: 'accepted', localId: input.localId }) });
+    await seed.decide();
+    const prior = ApprovalRequestV2Schema.parse(seed.read());
+    const controller = { machineId: 'preset-controller', installationId: 'controller-installation' };
+    const provider = { pluginId: 'custom.compute', localId: 'native' };
+    const resource = { contributionRef: provider, schemaVersion: 1, value: { id: 'native-guest' } };
+    const machine = { id: 'our-guest', homeId: 'home', custodianAccountId: 'team-owner',
+      enrollmentAccountId: 'account', controller, resource, allocation: 'bound', creationState: 'active',
+      desired: 'start', desiredWhen: 'now', intentRevision: 0,
+      launch: { provider, schemaVersion: 1, name: 'Guest', choices: {} },
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+    const actionId = 'machines.managed.acquire';
+    const accepted = { managedId: machine.id, operation: { operationId: 'our-acquire-operation' } };
+    const { delivery: _delivery, ...originated } = prior;
+    let request = ApprovalRequestV2Schema.parse({ ...originated, actionId,
+      actionArgs: { selection: { kind: 'preset', homeId: 'home', id: 'team-preset', revision: 1 },
+        agentStart: { directory: { kind: 'managed' }, agentTarget: { kind: 'agent',
+          identity: { pluginId: 'custom.compute', localId: 'agent' } } } },
+      executionOriginV1: { ...prior.executionOriginV1, actionId },
+      execution: { ...prior.execution, ok: true, result: accepted },
+    });
+    const waiting = Promise.withResolvers<ActionOperationSnapshotV1>();
+    const terminal = Promise.withResolvers<ActionOperationSnapshotV1>();
+    const operation: ActionOperationSnapshotV1 = { version: 1, operationId: accepted.operation.operationId,
+      revision: 2, actionId, state: 'running', scope: { accountId: 'account', machineId: controller.machineId },
+      title: 'Acquire', createdAt: 1, startedAt: 1, cancellation: 'supported',
+      domainRef: { kind: 'managedMachine', id: machine.id, controller, resource, bootstrapTask: {
+        id: 'our-sign-in-task', taskKind: 'remote.ssh.bootstrapMachine.v1',
+        prompt: { kind: 'auth.approveRemoteProvisioning', message: 'Sign in this Machine' },
+      } },
+    };
+    const deliveries: Array<{ sessionId: string; message: unknown }> = [];
+    const reads: unknown[] = [];
+    const executor = createActionExecutor({
+      approvalsGet: async () => request,
+      approvalsUpdate: async ({ request: next }) => { request = ApprovalRequestV2Schema.parse(next); return { ok: true }; },
+      managedMachineAction: async ({ actionId: id, input }) => {
+        expect(id).toBe('machines.managed.get');
+        expect(input).toEqual({ homeId: 'home', managedId: machine.id });
+        return machine;
+      },
+      actionOperationAction: async ({ input }) => {
+        reads.push(input);
+        return { kind: 'found', operation: await (reads.length === 1 ? waiting.promise : terminal.promise) };
+      },
+      sessionSendMessage: async input => {
+        deliveries.push({ sessionId: input.sessionId, message: JSON.parse(input.message) });
+        return { status: 'accepted', localId: input.localId };
+      },
+    });
+    const replay = () => executor.replayApprovedApprovalRequest({ artifactId: 'acquire-ask', callerAuthority: 'present_user',
+      currentAccount: { accountId: 'account', serverId: 'home', serverIdentityId: 'home' } });
+    expect(await replay()).toMatchObject({ ok: true, result: { execution: { ok: true, result: accepted } } });
+    expect(deliveries).toHaveLength(1);
+    waiting.resolve(operation);
+    await vi.waitFor(() => expect(deliveries[1]).toMatchObject({ sessionId: 'origin-session', message: {
+      actionId, artifactId: 'acquire-ask', managedId: machine.id, operationId: operation.operationId,
+      kind: 'waiting_for_machine_sign_in',
+    } }));
+    terminal.resolve({ ...operation, state: 'succeeded', revision: 3, settledAt: 3, result: accepted,
+      domainRef: { kind: 'managedMachine', id: machine.id, controller, resource, childSessionId: 'child-session' },
+    });
+    await vi.waitFor(() => expect(deliveries[2]).toMatchObject({ sessionId: 'origin-session', message: {
+      actionId, artifactId: 'acquire-ask', managedId: machine.id, operationId: operation.operationId,
+      kind: 'machine_agent_session_started', sessionId: 'child-session',
+    } }));
+    expect(await replay()).toMatchObject({ ok: true, result: { delivery: { status: 'accepted' } } });
+    expect(deliveries).toHaveLength(3);
+    expect(JSON.stringify(deliveries)).not.toContain('our-sign-in-task');
+    expect(reads).toEqual([
+      { serverId: 'home', machineId: controller.machineId, operationId: operation.operationId,
+        waitForTerminal: true, includeManagedPrompt: true },
+      { serverId: 'home', machineId: controller.machineId, operationId: operation.operationId, waitForTerminal: true },
+    ]);
+  });
+
   it('answers a run whose result the Session could not take with the run record and the refused receipt', async () => {
     const refusal = {
       phase: 'session.message.input_schema',

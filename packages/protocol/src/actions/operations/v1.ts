@@ -458,6 +458,7 @@ export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discrimina
   }),
   z.strictObject({ kind: z.literal('spawnAttempt'), id: ActionOperationIdentifierV1Schema }),
   z.strictObject({ kind: z.literal('managedMachine'), id: ActionOperationIdentifierV1Schema,
+    childSessionId: z.optional(ActionOperationIdentifierV1Schema),
     /** The guest Session launched with its runnable CLI while an optional update remains visible. */
     agentUpdate: z.optional(SessionAgentUpdateNoticeV1Schema),
     /** Enrollment and native boot recovery share this exact retained resource. */

@@ -289,8 +289,9 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                         context.operationOwnerUpdate.update({ observation: { kind: 'outcome_uncertain', code: 'outcome_uncertain' } });
                     } else if (spawn.success && spawn.data.type === 'success') {
                         context.operationOwnerUpdate?.update({ observation: null,
-                            ...(spawn.data.agentUpdate ? { domainRef: { kind: 'managedMachine', id: machine.id,
-                                agentUpdate: spawn.data.agentUpdate } } : {}),
+                            domainRef: { kind: 'managedMachine', id: machine.id, controller: machine.controller,
+                                resource: machine.resource, childSessionId: spawn.data.sessionId,
+                                ...(spawn.data.agentUpdate ? { agentUpdate: spawn.data.agentUpdate } : {}) },
                         });
                     }
                 } } : {}),

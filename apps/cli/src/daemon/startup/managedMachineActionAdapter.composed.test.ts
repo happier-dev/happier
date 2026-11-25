@@ -2417,7 +2417,8 @@ describe('daemon managed Machine Action factory', () => {
         const terminal = await parent.handlers.getV2({ operationId: 'actual-parent-operation', waitForTerminal: true });
         expect(terminal).toMatchObject({ kind: 'found', operation: {
             state: settlement.startsWith('success') ? 'succeeded' : settlement === 'cancel' ? 'cancelled' : 'failed',
-            ...(updateNotice ? { domainRef: { kind: 'managedMachine', id: 'managed', agentUpdate: updateNotice } } : {}),
+            ...(settlement.startsWith('success') ? { domainRef: { kind: 'managedMachine', id: 'managed',
+                childSessionId: 'actual-session', ...(updateNotice ? { agentUpdate: updateNotice } : {}) } } : {}),
             ...(settlement === 'error' || settlement === 'not-ready' ? { error: { errorCode: settlement === 'error' ? 'agent_cli_missing' : 'agent_cli_not_ready',
                 details: { kind: 'managedAgentStart', machineId: 'actual-guest', agentId: 'coding' } } } : {}),
         } });

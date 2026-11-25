@@ -110,6 +110,7 @@ import { readActionApprovalScopeAdmissionV1 } from './executor/approvalScope.js'
 import { isDeploymentActionIdV1, isDeploymentBackupActionIdV1, DeploymentActionInputSchemasV1 } from '../deployments/deploymentActionsV1.js';
 import { isProjectReadinessActionIdV1 } from './projectReadinessActionIdsV1.js';
 import { isMachineSetupPlanOrApplyActionIdV1, MANAGED_ACQUIRE_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
+import { continueManagedAgentAcquireApproval } from './executor/managedAgentAcquireApprovalContinuation.js';
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
 import { hasPendingDeploymentBindingSelectionV1 } from '../deployments/deploymentBindingSelectionNarrowing.js';
 import { withoutClientActionInput } from './clientActionInput.js';
@@ -1629,15 +1630,16 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         if (!deps.sessionSendMessage) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.message.send' };
         const observed = buildApprovalDecisionResult(request);
         if (!observed.ok) return observed;
-        const message = JSON.stringify({ artifactId, actionId: request.actionId, ...readRecord(observed.result) });
         const requestedAction = { v: 1, kind: 'enqueue' } as const;
-        let response: unknown;
-        try {
-          response = await deps.sessionSendMessage({
+        const { sessionSendMessage } = deps;
+        const sessionId = origin.caller.sessionId;
+        const send = (result: Readonly<Record<string, unknown>>, inputId: string, signal?: AbortSignal) => {
+          const message = JSON.stringify({ artifactId, actionId: request.actionId, ...result });
+          return sessionSendMessage({
             context: {
               surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' },
               runtimeAccountId: context.runtimeAccountId, serverId: context.serverId,
-              serverIdentityId: context.serverIdentityId, signal: context.signal,
+              serverIdentityId: context.serverIdentityId, signal,
               // Resume the admitted requester's work, not the deciding person's cause.
               ...(origin.actionRequestAttributionV1 ? { actionRequestAttributionV1: origin.actionRequestAttributionV1 } : {}),
               // Keep restricted transports restricted without borrowing the
@@ -1646,26 +1648,44 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
               externalActionCredential: context.externalActionCredential,
               rpcSessionAuthorization: context.rpcSessionAuthorization,
             },
-            sessionId: origin.caller.sessionId,
+            sessionId,
             message,
-            authoredInput: { sessionId: origin.caller.sessionId, message, localId,
+            authoredInput: { sessionId, message, localId: inputId,
               requestedAction, reply: 'none' },
             inputAdmission: buildTrustedHostSessionInputAdmissionV1('mcp', origin.actionRequestAttributionV1),
             // Ordinary host input carries no question/reply correlation or human
             // permission intent. The existing Pending identity joins retries even
             // after this result has materialized into the parent transcript.
-            localId, requestedAction,
+            localId: inputId, requestedAction,
             actionCaller: { kind: 'host' }, callerSurface: 'mcp', reply: 'none',
             serverId: context.serverId ?? origin.serverId,
-            ...(context.signal ? { signal: context.signal } : {}),
+            ...(signal ? { signal } : {}),
           });
+        };
+        let response: unknown;
+        try {
+          response = await send(readRecord(observed.result), localId, context.signal);
         } catch (error) {
           // A typed refusal stays refused; a lost acknowledgement leaves only the delivery uncertain.
           return await recordDelivery(projectThrownApprovalResultDeliveryV1(error, localId));
         }
         // Accepted, held on the Machine path, refused with its cause, or unknown:
         // each is the Session sender's receipt, beside the unchanged run record.
-        return await recordDelivery(projectApprovalResultDeliveryV1(response, localId));
+        const delivery = projectApprovalResultDeliveryV1(response, localId);
+        const receipt = await recordDelivery(delivery);
+        if (request.actionId === MANAGED_ACQUIRE_ACTION_ID_V1 && request.status === 'executed' && request.execution?.ok
+          && (delivery.status === 'accepted' || delivery.status === 'alreadyAccepted' || delivery.status === 'held')) {
+          // The receipt request can finish while the admitted Machine operation is still running.
+          void continueManagedAgentAcquireApproval({
+            input: request.actionArgs, result: request.execution.result, deps,
+            context: { surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' },
+              runtimeAccountId: origin.accountId, serverId: context.serverId ?? origin.serverId ?? undefined,
+              serverIdentityId: context.serverIdentityId ?? origin.serverIdentityId ?? undefined,
+              actionRequestId: origin.requestId ?? artifactId },
+            deliver: update => send(update, `${localId}:${update.kind}`),
+          }).catch(() => { /* The operation remains readable if its source Session is unreachable. */ });
+        }
+        return receipt;
       }
     }
     if (request.v !== 2 || request.actionId !== 'discussion.reply' || request.status !== 'failed'
