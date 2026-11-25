@@ -5,6 +5,7 @@ import type { PluginUiClientExecutableRegistration } from '@/components/plugins/
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { randomUUID } from '@/platform/randomUUID';
+import { logPluginSurfaceDiagnostic } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
 import { dispatchPluginSurfaceAction, type DispatchPluginSurfaceActionInput } from './pluginSurfaceActionDispatch';
 import { observePluginSurfaceActionRead } from './pluginSurfaceActionReadObservation';
 
@@ -46,12 +47,13 @@ export function createPluginSurfaceResourceActionServices(input: Readonly<{
         action: Parameters<PluginDynamicResourceInvocationOptionsV1['readAction']>[0],
         value: Parameters<PluginDynamicResourceInvocationOptionsV1['readAction']>[1],
         signal: AbortSignal,
+        callerSignal: AbortSignal | undefined,
         readObservation?: DispatchPluginSurfaceActionInput['readObservation'],
     ) => {
         assertCurrent();
-        const requestId = randomUUID();
+        const actionRequestId = randomUUID();
         const result = await dispatchPluginSurfaceAction({
-            actionRequestId: requestId,
+            actionRequestId,
             callerPluginId: registration.contribution.pluginId,
             resourceCaller: { pluginId: registration.contribution.pluginId, serverId: accountLifetime.scope.serverId,
                 contributionLocalId: registration.contribution.localId, occurrenceId: registration.occurrenceId,
@@ -66,18 +68,38 @@ export function createPluginSurfaceResourceActionServices(input: Readonly<{
             resolveContributedAction: input.resolveContributedAction,
             invocationSurface: 'plugin', originSurface: 'ui', signal, isCurrent,
         });
+        const requestId = result.ok ? actionRequestId : result.requestId ?? actionRequestId;
+        const aborted = !result.ok && (result.reason === 'plugin_action_aborted' || result.reason === 'plugin_ui_invocation_aborted');
+        let abortSource: string | undefined;
+        if (aborted) {
+            // Merged signals carry the reason of the signal that fired first.
+            // Report only the matching owner; the reason value can contain plugin data.
+            const causedAbort = (source: AbortSignal | undefined) =>
+                signal.aborted && source?.aborted === true && source.reason === signal.reason;
+            abortSource = causedAbort(registration.lifecycle.signal) ? 'resource_registration'
+                : causedAbort(controller.signal) ? 'account_lifetime'
+                : causedAbort(input.signal) ? accountLifetime.isCurrent() ? 'resource_demand' : 'account_lifetime'
+                : causedAbort(callerSignal) ? 'resource_action_caller'
+                : signal.aborted ? 'action_observation'
+                : 'action_execution';
+            logPluginSurfaceDiagnostic({ pluginId: registration.contribution.pluginId,
+                contributionId: registration.contribution.localId, surfaceId: null },
+            { kind: 'resource_action_aborted', code: result.reason, requestId, abortSource });
+        }
+        const details = { requestId, ...(abortSource === undefined ? {} : { abortSource }) };
+        // Once the Resource retires, the abort is diagnostic only.
         assertCurrent();
-        return { result, requestId };
+        return { result, details };
     };
     const services: Pick<PluginDynamicResourceInvocationOptionsV1, 'readAction' | 'observeAction'> = {
         async readAction(action, value, options) {
             const cancellation = mergeAbortSignals([lifetime.signal, options?.signal]);
             try {
-                const { result, requestId } = await dispatch(action, value, cancellation.signal);
+                const { result, details } = await dispatch(action, value, cancellation.signal, options?.signal);
                 return result.ok ? { ok: true, result: result.result }
                     : { ok: false, errorCode: result.reason, error: result.message ?? result.reason,
                         details: {
-                            requestId,
+                            ...details,
                             ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
                             ...(result.remediation === undefined ? {} : { remediation: result.remediation }),
                         } };
@@ -89,8 +111,8 @@ export function createPluginSurfaceResourceActionServices(input: Readonly<{
                 const subscription = await observePluginSurfaceActionRead({
                     signal: cancellation.signal, isCurrent, invalidate, retire: input.retireObservation,
                     async invoke(observation, signal) {
-                        const { result, requestId } = await dispatch(action, value, signal, observation);
-                        if (!result.ok) throw new PluginError({ code: result.reason, message: result.message, details: { requestId } });
+                        const { result, details } = await dispatch(action, value, signal, options?.signal, observation);
+                        if (!result.ok) throw new PluginError({ code: result.reason, message: result.message, details });
                         return result.result;
                     },
                 });

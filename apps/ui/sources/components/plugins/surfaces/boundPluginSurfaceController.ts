@@ -685,11 +685,13 @@ function readMachineAuthorityKey(facts: BoundPluginSurfaceFacts): string {
     return stableJsonStringify([facts.machineId ?? null, facts.daemonOccurrenceId ?? null, facts.executionOrigin ?? null]);
 }
 
-function readMachineBindingsKey(facts: BoundPluginSurfaceFacts): string {
-    return stableJsonStringify([readMachineAuthorityKey(facts),
-        !facts.machineId ? resolveDaemonBinding(facts) : null,
-        facts.resourceCapability?.readable === true, facts.resourceCapability?.dynamic === true,
-        serializeBoundPluginSurfaceResourceContext(facts.resourceContext)]);
+function readMachineResourceBindingIdentity(facts: BoundPluginSurfaceFacts) {
+    return [readMachineAuthorityKey(facts), !facts.machineId ? resolveDaemonBinding(facts) : null,
+        serializeBoundPluginSurfaceResourceContext(facts.resourceContext)];
+}
+
+function readMachineBindingsKey(facts: BoundPluginSurfaceFacts, identity = readMachineResourceBindingIdentity(facts)): string {
+    return stableJsonStringify([...identity, facts.resourceCapability?.readable === true, facts.resourceCapability?.dynamic === true]);
 }
 
 function createBoundPluginSurfaceActionDispatcher(input: Readonly<{
@@ -1057,7 +1059,9 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         identity => readActionInputFacts().resolveContributedAction?.(identity) ?? null;
     let machineBindingFacts = readActionInputFacts();
     let machineAuthorityKey = readMachineAuthorityKey(machineBindingFacts);
-    let machineBindingsKey = readMachineBindingsKey(machineBindingFacts);
+    const initialMachineResourceIdentity = readMachineResourceBindingIdentity(machineBindingFacts);
+    let machineResourceIdentityKey = stableJsonStringify(initialMachineResourceIdentity);
+    let machineBindingsKey = readMachineBindingsKey(machineBindingFacts, initialMachineResourceIdentity);
     let daemon = resolveDaemonBinding(machineBindingFacts);
     // The generic executable index resolves client targets by exact occurrence,
     // executable target and execution origin without aggregate admission.
@@ -1793,6 +1797,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     if (retired) parentRetirement?.dispose();
 
     let publishedResourceNamespaceKey: string | undefined;
+    let publishedResourceBindingsKey: string | undefined;
     let publishedDeclaredResourceStore: typeof declaredResourceStore;
     let publishedResourceStore: PluginUiResourceStore | undefined;
     return Object.freeze({
@@ -1805,8 +1810,10 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             if (!currentStore || !declaredResourceStore) return currentStore ?? undefined;
             const namespaceKey = declaredResourceStore.readNamespaceKey();
             if (!publishedResourceStore || publishedResourceNamespaceKey !== namespaceKey
-                || publishedDeclaredResourceStore !== declaredResourceStore) {
+                || publishedDeclaredResourceStore !== declaredResourceStore
+                || publishedResourceBindingsKey !== machineBindingsKey) {
                 publishedResourceNamespaceKey = namespaceKey;
+                publishedResourceBindingsKey = machineBindingsKey;
                 publishedDeclaredResourceStore = declaredResourceStore;
                 // Native hooks reacquire declaration-bound entries when their
                 // namespace changes. Bytes, admission and disposal remain with
@@ -1846,20 +1853,31 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             if (!isCurrent()) return false;
             let changed = false;
             const currentFacts = readActionInputFacts();
-            const nextMachineBindingsKey = readMachineBindingsKey(currentFacts);
+            const nextMachineResourceIdentity = readMachineResourceBindingIdentity(currentFacts);
+            const nextMachineBindingsKey = readMachineBindingsKey(currentFacts, nextMachineResourceIdentity);
+            let machineBindingsChanged = false;
             if (!isOpenableContentViewer && machineBindingsKey !== nextMachineBindingsKey) {
                 const nextAuthorityKey = readMachineAuthorityKey(currentFacts);
+                const nextResourceIdentityKey = stableJsonStringify(nextMachineResourceIdentity);
                 const authorityChanged = machineAuthorityKey !== nextAuthorityKey;
-                declaredResourceStore?.dispose();
                 ordinaryResourceStore?.dispose();
                 ordinaryResourceStore = null;
                 machineBindingFacts = currentFacts;
                 machineAuthorityKey = nextAuthorityKey;
                 machineBindingsKey = nextMachineBindingsKey;
                 daemon = resolveDaemonBinding(currentFacts);
-                canReadResource = currentFacts.resourceCapability?.readable === true || hasAccountResources();
-                canWatchResource = (canReadResource && currentFacts.resourceCapability?.dynamic === true) || hasAccountResources();
-                declaredResourceStore = createDeclaredResourceStore();
+                const accountResources = hasAccountResources();
+                canReadResource = currentFacts.resourceCapability?.readable === true || accountResources;
+                canWatchResource = (canReadResource && currentFacts.resourceCapability?.dynamic === true) || accountResources;
+                // Capability delivery changes the Machine transport. Account
+                // demand keeps its lease while the address and context stay exact.
+                machineBindingsChanged = declaredResourceStore !== null && accountResources
+                    && machineResourceIdentityKey === nextResourceIdentityKey;
+                machineResourceIdentityKey = nextResourceIdentityKey;
+                if (!machineBindingsChanged) {
+                    declaredResourceStore?.dispose();
+                    declaredResourceStore = createDeclaredResourceStore();
+                }
                 resourceStore = hostReadResourceStore ?? declaredResourceStore;
                 if (authorityChanged) {
                     actionControls?.invalidatePreparations();
@@ -1884,7 +1902,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                     ? createPluginOpenConnectedAccountsHostApiHandler(mountedOpenConnectedAccounts, isCurrent) : undefined;
                 changed = true;
             }
-            declaredResourceStore?.reconcile();
+            declaredResourceStore?.reconcile({ machineBindingsChanged });
             if (isOpenableContentViewer || mountedHandlerFactory === next.createMountedHostApiHandlers) return changed;
             disposeMountedBundle();
             mountedHandlerFactory = next.createMountedHostApiHandlers;

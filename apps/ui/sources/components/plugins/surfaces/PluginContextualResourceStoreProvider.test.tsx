@@ -1343,6 +1343,87 @@ it.each(['request', 'registration', 'Account'] as const)('disposes a late async 
     } finally { attached.resolve({ dispose }); release(); store.dispose(); await harness.dispose(); }
 });
 
+it('admits the first Account Resource baseline through a Machine capability change', async () => {
+    const observing = createDeferred<AbortSignal>();
+    const reading = createDeferred<AbortSignal>();
+    const ready = createDeferred<void>();
+    const harness = await createPortableAccountResourceHarness({
+        async read(options) { reading.resolve(options.signal); await ready.promise; return '{"linked":true}'; },
+        async observe(_notify, options) {
+            observing.resolve(options.signal);
+            await ready.promise;
+            return { dispose() {} };
+        },
+    });
+    const machineId = 'session-machine';
+    let resourceCapability = { readable: true, dynamic: true };
+    const controller = createBoundPluginSurfaceController({ facts: {
+        pluginId: harness.pluginId, contributionId: 'links', surfaceId: 'session-links', placement: 'sessionPane',
+        platform: 'web', channel: 'internal', machineId, serverId: harness.input.serverId,
+        occurrenceId: harness.input.expectedCallerOccurrenceId, accountLifetime: harness.account.lifetime,
+        sessionId: harness.input.sessionId, interactionEnabled: true, daemonInteractionEnabled: true,
+        readActionInputFacts: () => ({ resourceCapability, resourceDeclarations: harness.input.resourcesById }),
+    } });
+    const entry = controller.resourceStore!.getEntry('status');
+    const release = entry.subscribe(() => {}, true);
+    try {
+        const [observeSignal, readSignal] = await Promise.all([observing.promise, reading.promise]);
+        resourceCapability = { readable: false, dynamic: false };
+        controller.updateMountedBindings?.({});
+        expect(observeSignal.aborted).toBe(false);
+        expect(readSignal.aborted).toBe(false);
+        ready.resolve();
+        await vi.waitFor(() => expect(entry.getSnapshot()).toMatchObject({ subscription: 'live', freshness: 'fresh' }));
+        expect(new TextDecoder().decode(entry.getSnapshot().value?.bytes)).toBe('{"linked":true}');
+    } finally { ready.resolve(); release(); controller.dispose(); await harness.dispose(); }
+});
+
+it('preserves the cancellation source and request ID when a Resource cancels its own Action dependency', async () => {
+    installNativeRuntimeFetchBoundaryForTest();
+    const account = await createAccountLifetime({ accountId: 'resource-action-cancellation' });
+    const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+    const pluginId = 'example.resource-action-cancellation';
+    const execution = { target: 'account', account: { artifactId: 'read-cancellation', exportName: 'activate' } };
+    const parsed = parsePluginManifest({ schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Resource cancellation',
+        engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, contributes: {
+            actions: [{ id: 'source', title: 'Source', scopes: ['global'], surfaces: ['plugin'],
+                execution, dangerLevel: 'safe', readOnly: true }],
+            resources: [{ id: 'status', source: 'dynamic', scope: 'session', kind: 'config',
+                contentType: 'application/json', execution }],
+        } });
+    if (!parsed.ok) throw new Error('Expected a valid Account plugin fixture');
+    const dependency = new AbortController();
+    const requested = createDeferred<string | undefined>();
+    const finish = createDeferred<{ value: string }>();
+    const fixture = await installPortableAccountPluginReleaseForTest({ manifest: parsed.manifest, accountLifetime: account.lifetime,
+        publishProjection: true, activate(api) {
+            api.actions.register('source', async (_input, context) => {
+                requested.resolve(context.requestId);
+                return await finish.promise;
+            });
+            api.resources.registerDynamicResource('status', {
+                async read(options) {
+                    const result = await options.readAction({ pluginId, localId: 'source' }, {}, { signal: dependency.signal });
+                    if (result.ok) return JSON.stringify(result.result);
+                    return JSON.stringify({ code: result.errorCode, details: result.details });
+                },
+                observe: () => ({ dispose() {} }),
+            });
+        } });
+    const store = createPluginDeclaredResourceStore({ accountLifetime: account.lifetime, pluginId, machineId: null,
+        serverId: account.lifetime.scope.serverId, expectedCallerOccurrenceId: fixture.projection.resourcesById[`${pluginId}/status`]!.occurrenceId!,
+        resourcesById: fixture.projection.resourcesById, resourceDeclarationsComplete: true, sessionId: 'resource-action-cancellation-session' })!;
+    try {
+        const snapshot = store.getEntry('status').refresh();
+        const requestId = await requested.promise;
+        expect(requestId).toEqual(expect.any(String));
+        dependency.abort();
+        expect(JSON.parse(new TextDecoder().decode((await snapshot).value?.bytes))).toMatchObject({
+            code: 'plugin_action_aborted', details: { requestId, abortSource: 'resource_action_caller' },
+        });
+    } finally { finish.resolve({ value: 'late result' }); store.dispose(); await fixture.dispose(); }
+});
+
 it('admits a completed async Resource observer and rejects an invalid observer', async () => {
     const attached = createDeferred<Disposable>();
     const dispose = vi.fn();

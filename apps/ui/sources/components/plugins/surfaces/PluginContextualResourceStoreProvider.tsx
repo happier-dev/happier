@@ -467,7 +467,7 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
     surfaceContext?: Extract<PluginResourceContextV1, { kind: 'surface' }>;
     createFallbackStore?: () => PluginUiResourceStore;
 }>): (PluginDeclaredResourceStore & Readonly<{
-    reconcile(): void;
+    reconcile(options?: Readonly<{ machineBindingsChanged?: boolean }>): void;
     hasDeclaredNamespace(): boolean;
     readNamespaceKey(): string;
     onDeclaredNamespaceAdmission(listener: () => void): () => void;
@@ -493,6 +493,7 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
     const entries = new Map<string, Readonly<{
         localId: string;
         contract: string | null;
+        accountPlaced: boolean;
         entry: PluginUiResourceEntry;
         retire(code: string): void;
     }>>();
@@ -530,19 +531,19 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
         return stableJsonStringify({ id, pluginId, occurrenceId, executionOrigin, execution, hostAccountOrigin, resourceKind, path,
             scope, connectedAccountPurposes, digest, contentType, sessionInbox });
     };
-    const reconcile = () => {
+    const reconcile = ({ machineBindingsChanged = false } = {}) => {
         const declarations = readDeclarations();
         const admittedNamespace = !hasDeclaredNamespace && namespaceIsComplete();
         hasDeclaredNamespace ||= namespaceIsComplete();
         for (const [key, mounted] of entries) {
             const declaration = declarations.find(row => row.id === mounted.localId);
-            if (!disposed && input.accountLifetime.isCurrent()
-                && (mounted.contract === null ? !hasDeclaredNamespace
-                    : declaration && mounted.contract === contractKey(declaration))) continue;
+            const retired = disposed || !input.accountLifetime.isCurrent() || (machineBindingsChanged && !mounted.accountPlaced);
+            if (!retired && (mounted.contract === null ? !hasDeclaredNamespace
+                : declaration && mounted.contract === contractKey(declaration))) continue;
             entries.delete(key);
-            mounted.retire(disposed || !input.accountLifetime.isCurrent() ? 'plugin_surface_retired' : 'plugin_resource_not_found');
+            mounted.retire(retired ? 'plugin_surface_retired' : 'plugin_resource_not_found');
         }
-        if (disposed || hasDeclaredNamespace) {
+        if (disposed || hasDeclaredNamespace || machineBindingsChanged) {
             fallbackStore?.dispose();
             fallbackStore = null;
         }
@@ -580,6 +581,7 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
                 authoredInput === undefined ? [] : [authoredInput]]);
             const mounted = entries.get(key);
             if (mounted) return mounted.entry;
+            const accountPlaced = declaration?.execution?.target === 'account';
             let lease: PluginContextualResourceStoreLease | null = null;
             let shared: PluginUiResourceEntry;
             if (declaration) {
@@ -590,7 +592,6 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
                         ? { kind: 'session', sessionId: input.sessionId, ...(input.target ? { target: input.target } : {}) }
                     : declaration.scope === 'surface' ? input.surfaceContext : undefined, authoredInput);
                 if (!context) return fail('plugin_resource_context_unavailable');
-                const accountPlaced = declaration.execution?.target === 'account';
                 if (accountPlaced && !declaration.occurrenceId) return fail('plugin_resource_not_found');
                 if (!accountPlaced && input.machineId === null) return fail('plugin_resource_transport_unavailable');
                 lease = acquirePluginContextualResourceStore({ ...input, context,
@@ -662,7 +663,7 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
                     });
                 },
             });
-            entries.set(key, { localId: reference.localId, contract, entry,
+            entries.set(key, { localId: reference.localId, contract, accountPlaced, entry,
                 retire(code) {
                     if (retired) return;
                     retired = code === 'plugin_surface_retired' ? surfaceRetired : declarationWithdrawn;
