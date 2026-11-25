@@ -2808,6 +2808,24 @@ Exact owner reads retain revoked rows. Managed Machine listing explicitly
 includes revoked owned controllers so retained resources, cleanup, and archived
 history remain visible.
 
+#### Managed Machine sign-in occurrences (0.3 development)
+
+`GET /v1/machines/managed/sign-in-occurrences` returns pending confirmations
+for the authenticated requester Account. Each occurrence identifies the Home,
+requester Account, managed Machine, operation, and task, with prompt kind
+`auth.approveRemoteProvisioning`. The controller records each task transition
+through the existing managed controller report. Home wakes the requester's
+clients through the Account change feed. A task that is answered, cancelled,
+or expired leaves the pending read. The requester's exact operation remains
+the source of the prompt and its result. The member's approval Action carries
+the pairing context through the existing enrollment flow.
+
+An approved Agent acquire can deliver `waiting_for_machine_sign_in` through its
+source Session approval continuation and then `machine_agent_session_started`
+with the child Session id. Expiry delivers `machine_sign_in_failed` with
+`auth_request_expired` and phase `ssh.auth.wait`. Bootstrap retry starts a new
+operation and task against the retained managed Machine.
+
 #### Machine Pools (0.3 development)
 
 Machine Pools are Account-custodied, Home-local saved groups of the custodian's own

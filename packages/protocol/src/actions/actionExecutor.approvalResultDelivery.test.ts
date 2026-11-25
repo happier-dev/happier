@@ -140,7 +140,7 @@ async function askAndDecide(
 }
 
 describe('approval result delivery is a receipt beside the run record', () => {
-  it('continues the admitted Agent acquire to the asking Session when it needs confirmation and starts the child', async () => {
+  it.each(['started', 'expired'] as const)('continues the admitted Agent acquire to the asking Session when sign-in is %s', async outcome => {
     const seed = await askAndDecide({ deliver: async input => ({ status: 'accepted', localId: input.localId }) });
     await seed.decide();
     const prior = ApprovalRequestV2Schema.parse(seed.read());
@@ -200,16 +200,23 @@ describe('approval result delivery is a receipt beside the run record', () => {
       actionId, artifactId: 'acquire-ask', managedId: machine.id, operationId: operation.operationId,
       kind: 'waiting_for_machine_sign_in',
     } }));
-    terminal.resolve({ ...operation, state: 'succeeded', revision: 3, settledAt: 3, result: accepted,
-      domainRef: { kind: 'managedMachine', id: machine.id, controller, resource, childSessionId: 'child-session' },
+    terminal.resolve({ ...operation, revision: 3, settledAt: 3, ...(outcome === 'started'
+      ? { state: 'succeeded', result: accepted, domainRef: { kind: 'managedMachine', id: machine.id,
+        controller, resource, childSessionId: 'child-session' } }
+      : { state: 'failed', domainRef: { kind: 'managedMachine', id: machine.id, controller, resource },
+        error: { errorCode: 'auth_request_expired', error: 'private diagnostic',
+          failureCause: { phase: 'ssh.auth.wait', errorClass: 'SystemTaskExecutionError',
+            errorCode: 'auth_request_expired', httpStatus: null } } }),
     });
     await vi.waitFor(() => expect(deliveries[2]).toMatchObject({ sessionId: 'origin-session', message: {
       actionId, artifactId: 'acquire-ask', managedId: machine.id, operationId: operation.operationId,
-      kind: 'machine_agent_session_started', sessionId: 'child-session',
+      ...(outcome === 'started' ? { kind: 'machine_agent_session_started', sessionId: 'child-session' }
+        : { kind: 'machine_sign_in_failed', errorCode: 'auth_request_expired', phase: 'ssh.auth.wait' }),
     } }));
     expect(await replay()).toMatchObject({ ok: true, result: { delivery: { status: 'accepted' } } });
     expect(deliveries).toHaveLength(3);
     expect(JSON.stringify(deliveries)).not.toContain('our-sign-in-task');
+    expect(JSON.stringify(deliveries)).not.toContain('private diagnostic');
     expect(reads).toEqual([
       { serverId: 'home', machineId: controller.machineId, operationId: operation.operationId,
         waitForTerminal: true, includeManagedPrompt: true },

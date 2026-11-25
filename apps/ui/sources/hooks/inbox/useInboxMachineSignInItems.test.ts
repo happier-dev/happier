@@ -8,7 +8,7 @@ import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSet
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { MANAGED_MACHINE_SIGN_IN_OCCURRENCE_ENTITY_PREFIX_V1, type ManagedMachineSignInOccurrenceV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { respondToManagedInstallation } from '@happier-dev/protocol/machines/managed/installationResponse';
-import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedOpaquePresetMachineV1Schema, type ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { observeInboxMachineSignInItems, openInboxMachineSignInTarget } from './useInboxMachineSignInItems';
 
 const scope = { serverId: 'sign-in-server', accountId: 'requester' };
@@ -56,7 +56,9 @@ describe('Inbox managed sign-in data', () => {
         } finally { dispose(); }
     });
 
-    it.each([false, true])('passes only the addressed current task to the member-client approve flow (replaced=%s)', async replaced => {
+    it.each([
+        { replaced: false, opaque: false }, { replaced: true, opaque: false }, { replaced: false, opaque: true },
+    ])('passes only the addressed current task to the member-client approve flow ($replaced, $opaque)', async ({ replaced, opaque }) => {
         const launch = { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: {} };
         const controller = { machineId: 'controller', installationId: 'installed-controller' };
         const machine: ManagedMachineFullV1 = { id: occurrence.managedId, homeId: occurrence.homeId,
@@ -64,6 +66,14 @@ describe('Inbox managed sign-in data', () => {
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: { nativeId: 'guest' } },
             creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        const { resource: _, launch: _launch, ...structural } = machine;
+        const originalMachine = opaque ? ManagedOpaquePresetMachineV1Schema.parse({
+            ...structural, preset: { id: 'team-preset', revision: 1, contentEncryptionMode: 'plain' },
+        }) : machine;
+        const getResult = opaque ? {
+            machine: originalMachine,
+            presetContent: { content: { t: 'plain', v: { v: 1, name: 'Guest', launch } }, recipientEnvelope: null },
+        } : machine;
         const snapshot: ActionOperationSnapshotV1 = { version: 1, operationId: occurrence.operationId, revision: 1,
             actionId: 'machines.managed.acquire', state: 'running', scope: { accountId: scope.accountId, machineId: controller.machineId },
             title: 'Acquire', createdAt: 1, startedAt: 1, cancellation: 'supported', domainRef: {
@@ -80,7 +90,7 @@ describe('Inbox managed sign-in data', () => {
         } });
         const actions = createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
             readActionsSettings: () => settings,
-            managedMachineAction: async () => machine,
+            managedMachineAction: async () => getResult,
             actionOperationAction: async request => {
                 expect(request.input).toMatchObject({ managed: { homeId: occurrence.homeId, managedId: occurrence.managedId },
                     operationId: occurrence.operationId });
@@ -88,7 +98,7 @@ describe('Inbox managed sign-in data', () => {
             },
             machineManagedInstallationRespond: (input, context) => respondToManagedInstallation(input, context, {
                 accountId: scope.accountId, homeId: occurrence.homeId, accountAuthority: true, assertCurrent: () => {},
-                readMachine: async () => ({ originalMachine: machine, machine }), readOperation: async () => view,
+                readMachine: async () => ({ originalMachine, machine }), readOperation: async () => view,
                 invokeTask: async () => { throw new Error('Requester must use the managed approval path'); },
                 invokeInstallation: async request => {
                     calls.push(request);

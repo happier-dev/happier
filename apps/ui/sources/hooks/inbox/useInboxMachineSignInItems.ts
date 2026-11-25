@@ -4,7 +4,7 @@ import {
 } from '@/components/inbox/inboxItems';
 import { approveManagedMachineEnrollment } from '@/components/settings/machines/managed/managedMachineCreation';
 import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
-import { managedMachineOperationMatchesResource, readManagedInstallationPromptSnapshot } from '@/sync/domains/actionOperations/managedMachineOperation';
+import { readManagedInstallationPromptSnapshot } from '@/sync/domains/actionOperations/managedMachineOperation';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorActionExecute, type FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -134,8 +134,11 @@ export async function openInboxMachineSignInTarget(params: Readonly<{
     if (!parsed.success) return fail('managed_response_invalid');
     if (parsed.data.kind !== 'found') return fail('no_prompt');
     const snapshot = parsed.data.operation;
+    // Preset rows can be opaque. The existing answering client opens the
+    // private resource and enforces the current installation binding.
     if (snapshot.operationId !== operationId || snapshot.scope.accountId !== requesterAccountId
-        || !managedMachineOperationMatchesResource(machine, snapshot)) return fail('no_prompt');
+        || snapshot.scope.machineId !== machine.controller.machineId
+        || snapshot.domainRef?.kind !== 'managedMachine' || snapshot.domainRef.id !== managedId) return fail('no_prompt');
     const question = readManagedInstallationPromptSnapshot(snapshot);
     if (question?.kind !== 'auth.approveRemoteProvisioning' || question.taskId !== taskId) return fail('no_prompt');
     if (!binding.isCurrent()) return fail('action_account_scope_changed');

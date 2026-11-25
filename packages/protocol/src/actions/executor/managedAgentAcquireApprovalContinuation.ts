@@ -10,6 +10,7 @@ import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 type ManagedAgentAcquireUpdate = Readonly<{ managedId: string; operationId: string }> & (
   { kind: 'waiting_for_machine_sign_in' }
   | { kind: 'machine_agent_session_started'; sessionId: string }
+  | { kind: 'machine_sign_in_failed'; errorCode: 'auth_request_expired'; phase: string }
 );
 
 /** Continue the existing approval delivery using the requester's retained operation. */
@@ -52,9 +53,12 @@ export async function continueManagedAgentAcquireApproval(args: Readonly<{
       || snapshot.scope.accountId !== context.runtimeAccountId || snapshot.scope.machineId !== operation.machineId) return;
 
     if (readActionOperationTerminalResultV1(snapshot)) {
-      if (snapshot.state === 'succeeded' && snapshot.domainRef?.kind === 'managedMachine'
-        && snapshot.domainRef.id === managedId && snapshot.domainRef.childSessionId) {
+      if (snapshot.domainRef?.kind !== 'managedMachine' || snapshot.domainRef.id !== managedId) return;
+      if (snapshot.state === 'succeeded' && snapshot.domainRef.childSessionId) {
         await args.deliver({ ...reference, kind: 'machine_agent_session_started', sessionId: snapshot.domainRef.childSessionId });
+      } else if (snapshot.error?.errorCode === 'auth_request_expired' && snapshot.error.failureCause) {
+        await args.deliver({ ...reference, kind: 'machine_sign_in_failed', errorCode: snapshot.error.errorCode,
+          phase: snapshot.error.failureCause.phase });
       }
       return;
     }

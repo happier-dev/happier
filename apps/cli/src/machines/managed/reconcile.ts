@@ -50,7 +50,7 @@ import type { ManagedPresetHydrator } from './presetHydration';
 import { readManagedMachinePresetPreparationV1, resolveManagedMachinePresetPreparationV1,
     type ManagedMachinePresetPreparationDecisionV1 } from '@happier-dev/cli-common/machines/managed';
 import type { ManagedMachinePresetPreparationBindingV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationV1';
-import { resolveManagedGuestCliBuildIdentity } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
+import { resolveManagedGuestCliBuildIdentity, SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { readManagedGuestCliLocalBuildPayloadMetadata } from '@happier-dev/cli-common/systemTasks/kinds/remoteFirstPartyPayloadInstaller';
 import { MachineProvisionerPreparationInspectResultV1Schema, readMachineProvisionerActionRolesV1,
     readMachineProvisionerPreparedLaunchV1, type MachineProvisionerRoleV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -890,6 +890,10 @@ async function runManagedEnrollment(params: ManagedMachineReconciliationInput, e
         if (machine.enrolledMachineId !== enrollment.machineId) throw new ManagedMachineControllerError('enrollment_retired');
         return machine;
     } catch (error) {
+        if (error instanceof SystemTaskExecutionError && error.code === 'auth_request_expired') {
+            throw new ManagedMachineControllerError(error.code, undefined, error.details,
+                projectActionFailureCauseV1(error, 'ssh.auth.wait', { allowUnknownErrorCode: true }), error);
+        }
         // A guest may have committed enrollment while Home cannot be read.
         // Unavailable confirmation never proves that the guest effect failed.
         if (enrollmentLifetime && enrollmentAttempted && !params.options.signal?.aborted && isRetryableHomeOperationError(error)) {

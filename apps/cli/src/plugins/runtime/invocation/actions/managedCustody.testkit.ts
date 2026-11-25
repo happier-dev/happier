@@ -85,7 +85,9 @@ export function roleResult(localId: string): JsonValue {
 }
 
 /** Native process boundary for an installed provisioner whose guest awaits pairing. */
-export function pendingEnrollmentGuestRoleSource(input: Readonly<{ pluginId: string; localId: string; homeId: string }>): string {
+export function pendingEnrollmentGuestRoleSource(input: Readonly<{
+    pluginId: string; localId: string; homeId: string; pairingLifetimeMs?: number;
+}>): string {
     const resource = { contributionRef: { pluginId: input.pluginId, localId: input.localId }, schemaVersion: 1 };
     return `const boundResource = ${JSON.stringify(resource)};
       const output = (stdout = '') => ({ termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
@@ -107,9 +109,10 @@ export function pendingEnrollmentGuestRoleSource(input: Readonly<{ pluginId: str
           }
           if (command.includes("'auth' 'request'")) {
             const createdAtMs = Date.now();
+            const secret = globalThis.crypto.getRandomValues(new Uint8Array(32));
             return output(JSON.stringify({ kind: 'remote_home_enrollment_pairing_request', protocolVersion: 1,
               publicKey: Buffer.alloc(32, 1).toString('base64'), homeServerIdentityId: ${JSON.stringify(input.homeId)},
-              pairing: { secretB64Url: Buffer.alloc(32, 23).toString('base64url'), createdAtMs, expiresAtMs: createdAtMs + 120000 },
+              pairing: { secretB64Url: Buffer.from(secret).toString('base64url'), createdAtMs, expiresAtMs: createdAtMs + ${input.pairingLifetimeMs ?? 120000} },
               supportsTokenOnly: true, pairingRequirement: 'v3', remoteProfileId: 'fixture-home' }));
           }
           return output();

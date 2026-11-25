@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { ActionOperationAcceptedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
   ExternalActionExecutionAuthorizationRequestV1Schema,
   ExternalActionExecutionAuthorizationV1Schema,
@@ -30,6 +31,9 @@ import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemon
 import type { startDaemonControlServer } from '@/daemon/controlServer';
 import { createInstalledProjectAgentDaemonFixture } from '@/daemon/testkit/installedProjectAgentDaemonFixture';
 import { createReceivingControllerDaemon } from '@/daemon/testkit/receivingControllerDaemon.testkit';
+import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
+import { createDaemonManagedMachineActionAdapter } from '@/daemon/startup/managedMachineActionAdapter';
+import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bundledPluginAvailabilityHttpFixture';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
@@ -41,6 +45,7 @@ import { createManagedProviderOperationAuthority } from '@/daemon/connectedServi
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { fixture as nativeFixture, pendingEnrollmentGuestRoleSource, roleResult } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
 import { ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
@@ -150,6 +155,7 @@ type AcquireCase = Readonly<{
   /** Home's acquire routing refuses this member (for example, the delegation was withdrawn). */
   routingRefused?: true;
   guestEnrollment?: true;
+  guestPairingLifetimeMs?: number;
   /** The member's Session runs on a Machine another person holds custody of, as a Use guest. */
   sessionHost?: 'custodian machine';
 }>;
@@ -189,7 +195,7 @@ async function runMemberAcquire(acquire: AcquireCase) {
     () => boundary.control,
     undefined,
     true,
-    acquire.delegated ? delegatedComputePlugin(acquire.guestEnrollment).plugin : undefined,
+    acquire.delegated ? delegatedComputePlugin(acquire.guestEnrollment, acquire.guestPairingLifetimeMs).plugin : undefined,
     undefined,
     {
       // A Use guest's Session on another person's Machine runs on that custodian's
@@ -271,7 +277,9 @@ async function runMemberAcquire(acquire: AcquireCase) {
   const controllerReports: unknown[] = [];
   const requesterOccurrences: unknown[] = [];
   let managed: ReturnType<typeof ManagedMachineV1Schema.parse> | undefined;
+  let retainedPresetContent: ReturnType<typeof sealManagedMachinePresetContentV1>['content'] | undefined;
   let receiverManager: Awaited<ReturnType<typeof createReceivingControllerDaemon>>['manager'] | undefined;
+  let controllerMachine: Awaited<ReturnType<typeof createReceivingControllerDaemon>>['machine'] | undefined;
   /** Each Home request with the Account it authenticated as. */
   const homeRequests: string[] = [];
   const mints: ReturnType<
@@ -395,7 +403,8 @@ async function runMemberAcquire(acquire: AcquireCase) {
       if (step === 'admit') return { status: 200, data: { machine: managed, presetContent, replayed: false } };
       if (step === 'current') return { status: 200, data: { machine: managed } };
       if (step === 'enrollment-context') return { status: 200, data: { machine: managed } };
-      if (step === 'context') return { status: 200, data: { machine: managed, requestId: mints.at(-1)?.envelope.requestId, presetContent } };
+      if (step === 'context') return { status: 200, data: { machine: managed, requestId: mints.at(-1)?.envelope.requestId,
+        presetContent: retainedPresetContent ? { ...presetContent, content: retainedPresetContent } : presetContent } };
       if (step === 'submit') {
         ManagedControllerSubmitInputV1Schema.parse(args[1]);
         managed = ManagedMachineV1Schema.parse({ ...managed, allocation: 'may-exist' });
@@ -407,8 +416,10 @@ async function runMemberAcquire(acquire: AcquireCase) {
             homeId: managed.homeId, managedId: managed.id, requesterAccountId: managed.enrollmentAccountId });
           return { status: 200, data: { observed: true } };
         }
-        controllerReports.push(ManagedControllerReportV1Schema.parse(args[1]));
+        const report = ManagedControllerReportV1Schema.parse(args[1]);
+        controllerReports.push(report);
         if (acquire.guestEnrollment) {
+          if ('presetContent' in report) retainedPresetContent = report.presetContent;
           managed = ManagedMachineV1Schema.parse({ ...managed, allocation: 'bound' });
         }
         return { status: 200, data: { machine: managed } };
@@ -497,6 +508,7 @@ async function runMemberAcquire(acquire: AcquireCase) {
       // The owner's installed daemon holds its provider authority, as daemon startup supplies it.
       ...(acquire.delegated ? { managedProviderOperationAuthority: createControllerProviderAuthority() } : {}) });
     receiverManager = receiver.manager;
+    controllerMachine = receiver.machine;
     boundary.relay = async packet => {
       const call = packet as SocketRpcRequestPayload;
       relayed.push(call);
@@ -563,8 +575,50 @@ async function runMemberAcquire(acquire: AcquireCase) {
       currentMachineId: 'machine', currentAccountId: 'requester', currentInstallationId: h.f.installation.installationId,
       verifyExecutionAuthorization: async () => true, signal: h.signal });
   };
+  const retry = async () => {
+    // The test Home admits the exact requester's Retry. Keep the controller's
+    // real operation runner and native bootstrap below that admission boundary.
+    if (!controllerMachine) throw new Error('Missing managed controller');
+    const installation = readInstallationIdentityIfExistsSync();
+    if (!installation || installation.installationId !== controller.installationId) throw new Error('Missing controller installation');
+    const actionId = MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1;
+    const target = { kind: 'machine' as const, machineId: OWNER_MACHINE_ID };
+    const input = { homeId, managedId: 'delegated-guest', expectedIntentRevision: 0 };
+    const envelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: 'retry-sign-in', target, input });
+    const authentication = { kind: 'account' as const, tokenEpoch: 0 };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'member-acquire-root', binding: {
+      accountId: 'requester', custodianAccountId: 'owner', serverIdentityId: homeId, authentication, accountEncryptionMode: 'plain',
+      machineId: OWNER_MACHINE_ID, installationId: controller.installationId, admittedMachineRole: 'manage', actionId,
+      requestId: envelope.requestId, target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+      managedAdmission: { actionId, input: { ...input, guestCli: { source: 'home-payload', line: '0.3', channel: 'stable' } } },
+    } });
+    const isCurrent = async () => !h.signal.aborted;
+    const projected = await projectExternalActionRequesterHttpAuthorization({
+      authorization, target, serverId: 'session-home', serverIdentityId: homeId,
+      serverHttpBaseUrl: 'https://session-home.test', installationId: installation.installationId,
+      privateKey: installation.privateKey, rootAdmitted: true, isCurrent,
+    });
+    if (!projected) throw new Error('The fixture did not admit the retry');
+    const adapter = createDaemonManagedMachineActionAdapter({
+      credentials: ownerCredentials, machineId: OWNER_MACHINE_ID,
+      serverId: 'session-home', serverBaseUrl: 'https://session-home.test', installationIdentity: installation,
+      resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: OWNER_MACHINE_ID, serverIdentityId: homeId }),
+      acquireRuntimeRegistryLease: () => h.plugin.controller.acquireRuntimeRegistry(),
+      managedProviderOperationAuthority: createControllerProviderAuthority(),
+    });
+    return await controllerMachine.observeActionExecution({ actionId, input, actionRequestId: envelope.requestId,
+      response: 'admission', rpcContext: { signal: h.signal, verifyMachineAdmissionCurrent: isCurrent,
+        machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'owner', machineId: OWNER_MACHINE_ID,
+          installationId: controller.installationId, role: 'manage', encryptionMode: 'plain' } },
+      execute: async operation => ({ ok: true, result: await adapter({ actionId, input, signal: operation.signal, context: {
+        ...operation, surface: 'ui', authority: 'present_user', runtimeAccountId: 'requester',
+        actionCaller: { kind: 'host' }, actionsSettings: policyFor(acquire.memberPolicy),
+        externalActionExecutionAuthorization: projected, externalActionTarget: target, originalActionEnvelope: envelope,
+      } }) }),
+    });
+  };
   return { h, credentials, controller, outcome, paths, homeRequests, mints, relayed, delivered, atDelivery, homeRelayed, homeRelayResults, controllerSteps, controllerReports, approve, receiverManager,
-    approvals, readApproval, controllerRequests, requesterOccurrences };
+    approvals, readApproval, controllerRequests, requesterOccurrences, retry };
 }
 
 // Ruling O-MACH 2026-11-24 13:42Z (S-IDENTITY step 5a) moves the requester's
@@ -624,7 +678,7 @@ it.each([true, false])("today: a Session agent's acquire whose preset controller
  */
 let delegatedCompute: Readonly<{ plugin: NonNullable<Parameters<typeof createInstalledProjectAgentDaemonFixture>[3]>;
   provisionerId: string }> | undefined;
-function delegatedComputePlugin(guestEnrollment?: true) {
+function delegatedComputePlugin(guestEnrollment?: true, pairingLifetimeMs?: number) {
   if (!guestEnrollment && delegatedCompute) return delegatedCompute;
   const native = nativeFixture({ credentialPurposes: [] });
   const nativeManifest = native.manifest;
@@ -639,7 +693,7 @@ function delegatedComputePlugin(guestEnrollment?: true) {
     } }), files: {
       'agent.mjs': `export function factory() { return { sessions: { open() { throw new Error('No Agent open at authorization'); } } }; }`,
       'daemon.mjs': `import { factory } from './agent.mjs';
-        ${guestEnrollment ? pendingEnrollmentGuestRoleSource({ pluginId: 'acme.project-launch', localId: provisioner.id, homeId }) : ''}
+        ${guestEnrollment ? pendingEnrollmentGuestRoleSource({ pluginId: 'acme.project-launch', localId: provisioner.id, homeId, pairingLifetimeMs }) : ''}
         export function activate(api) {
           api.agents.register('agent', factory, { sessionRunnerFactory: { module: './agent.mjs', export: 'factory', runtimeApiVersion: 1 } });
           ${nativeManifest.contributes.actions.map(({ id }) => `api.actions.register(${JSON.stringify(id)}, async input => ${guestEnrollment
@@ -804,9 +858,9 @@ it("a member's Agent acquire through the owner's delegated Team preset asks the 
   expect(run.relayed).toEqual([]);
 }, 180_000);
 
-it('delivers the pending sign-in occurrence from an approved delegated Agent acquire to its requester', async () => {
+it.each(['pending', 'expired'] as const)('delivers the %s sign-in occurrence from an approved delegated Agent acquire to its requester', async lifecycle => {
   const run = await runMemberAcquire({ controller: 'owner machine', namesController: false, memberPolicy: 'ask',
-    delegated: true, guestEnrollment: true });
+    delegated: true, guestEnrollment: true, ...(lifecycle === 'expired' ? { guestPairingLifetimeMs: 3_000 } : {}) });
   const [ask] = run.approvals('requester');
   expect(ask).toBeDefined();
   const decided = await run.approve(ask!.id);
@@ -829,10 +883,37 @@ it('delivers the pending sign-in occurrence from an approved delegated Agent acq
   } } } });
   const domain = observed.kind === 'found' ? observed.operation.domainRef : undefined;
   if (domain?.kind !== 'managedMachine' || !domain.bootstrapTask) throw new Error('Missing managed enrollment task');
-  await vi.waitFor(() => expect(run.requesterOccurrences).toEqual([{
+  const pending = {
     homeId, requesterAccountId: 'requester', managedId: 'delegated-guest', operationId,
     taskId: domain.bootstrapTask!.id, promptKind: 'auth.approveRemoteProvisioning', state: 'pending',
-  }]));
+  };
+  await vi.waitFor(() => expect(run.requesterOccurrences).toEqual([pending]));
+  if (lifecycle === 'expired') {
+    const readTerminal = () => owner.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.get,
+      { operationId, waitForTerminal: true }, context);
+    const terminal = await readTerminal();
+    expect(run.requesterOccurrences).toEqual([pending, { ...pending, state: 'expired' }]);
+    expect(terminal).toMatchObject({ kind: 'found', operation: { state: 'failed', error: {
+      errorCode: 'auth_request_expired', failureCause: { errorCode: 'auth_request_expired', phase: 'ssh.auth.wait' },
+    } } });
+    const retried = await run.retry();
+    if (!retried.ok) throw new Error(`Retry was not accepted: ${retried.errorCode}`);
+    const { operationId: retryOperationId } = ActionOperationAcceptedResultSchema.parse(retried.result);
+    expect(retryOperationId).not.toBe(operationId);
+    const retryPrompt = ActionOperationGetV1ResponseSchema.parse(await owner.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.get,
+      { operationId: retryOperationId, waitForTerminal: true, includeManagedPrompt: true }, context));
+    const retryDomain = retryPrompt.kind === 'found' ? retryPrompt.operation.domainRef : undefined;
+    expect(retryDomain, retryPrompt.kind === 'found' ? JSON.stringify(retryPrompt.operation.error) : undefined)
+      .toMatchObject({ kind: 'managedMachine', id: pending.managedId, bootstrapTask: { id: expect.any(String),
+      prompt: { kind: pending.promptKind } } });
+    if (retryDomain?.kind !== 'managedMachine' || !retryDomain.bootstrapTask) throw new Error('Missing retry enrollment task');
+    expect(retryDomain.bootstrapTask.id).not.toBe(pending.taskId);
+    await vi.waitFor(() => expect(run.requesterOccurrences.slice(0, 3))
+      .toEqual([pending, { ...pending, state: 'expired' }, {
+        ...pending, operationId: retryOperationId, taskId: retryDomain.bootstrapTask!.id,
+      }]));
+    expect(await readTerminal()).toEqual(terminal);
+  }
   expect(run.approvals('owner')).toEqual([]);
 }, 180_000);
 

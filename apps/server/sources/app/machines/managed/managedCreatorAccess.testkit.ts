@@ -11,6 +11,7 @@ import tweetnacl from 'tweetnacl';
 import { decodeBase64 } from 'privacy-kit';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { isManagedOpaquePresetReadV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { expect } from 'vitest';
 import { db, getActivePrismaRuntime } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
@@ -277,25 +278,38 @@ export async function exerciseManagedCreatorPublication() {
 }
 
 export async function exerciseManagedSignInOccurrence() {
-    const { homeId, creator, custodian, stranger, controller, row } = await createCreatorFixture();
+    const { homeId, creator, custodian, stranger, controller, row, presetLaunch } = await createCreatorFixture();
+    const team = await db.team.create({ data: { name: 'Delegated Machine sign-in' } });
+    await db.teamMembership.createMany({ data: [
+        { teamId: team.id, accountId: custodian.id, role: 'owner' },
+        { teamId: team.id, accountId: creator.id, role: 'member' },
+        { teamId: team.id, accountId: stranger.id, role: 'member' },
+    ] });
+    await db.managedMachinePreset.create({ data: {
+        id: row.presetId!, homeId, teamId: team.id, name: '', revision: row.presetRevision!, launch: presetLaunch,
+        controllerMachineId: controller.id, controllerInstallationId: controller.installationId!, teamAcquireDelegated: true,
+    } });
     await db.managedMachine.update({ where: { id: row.id }, data: { allocation: 'bound' } });
     const app = createAuthenticatedTestApp();
+    const retryRequestId = randomUUID();
     app.addHook('preHandler', async (request: FastifyRequest) => {
         if (request.method !== 'POST') return;
+        const retry = request.headers['x-test-bootstrap-retry'] === 'true';
         request.externalActionExecutionAuthorized = true;
         request.externalActionExecutionMachineId = controller.id;
         request.externalActionExecutionCustodianAccountId = custodian.id;
-        request.externalActionExecutionRequestId = row.admittedActionRequestId;
-        request.externalActionEffectActionId = 'machines.managed.acquire';
+        request.externalActionExecutionRequestId = retry ? retryRequestId : row.admittedActionRequestId;
+        request.externalActionEffectActionId = retry ? MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 : MANAGED_ACQUIRE_ACTION_ID_V1;
     });
     registerManagedMachineRoutes(app);
     await app.ready();
     const occurrence = { operationId: randomUUID(), taskId: randomUUID(), promptKind: 'auth.approveRemoteProvisioning' };
-    const publish = (state: string, accountId = creator.id, extra = {}) => app.inject({ method: 'POST',
-        url: '/v1/machines/managed/controller/report', headers: { 'x-test-user-id': accountId },
+    const retriedOccurrence = { ...occurrence, operationId: randomUUID(), taskId: randomUUID() };
+    const publish = (state: string, accountId = creator.id, extra = {}, retry = false) => app.inject({ method: 'POST',
+        url: '/v1/machines/managed/controller/report', headers: { 'x-test-user-id': accountId, 'x-test-bootstrap-retry': String(retry) },
         payload: { homeId, managedId: row.id, expectedIntentRevision: 0, requestId: row.admittedActionRequestId,
             controller: { machineId: controller.id, installationId: controller.installationId },
-            signInOccurrence: { ...occurrence, state, ...extra } } });
+            signInOccurrence: { ...(retry ? retriedOccurrence : occurrence), state, ...extra } } });
     const read = (accountId: string) => app.inject({ method: 'GET', url: '/v1/machines/managed/sign-in-occurrences',
         headers: { 'x-test-user-id': accountId } });
     const cursors = () => db.account.findMany({ where: { id: { in: [creator.id, custodian.id, stranger.id] } },
@@ -334,8 +348,34 @@ export async function exerciseManagedSignInOccurrence() {
         expect(await cursors()).toEqual(before.map(account => ({ ...account,
             seq: account.id === creator.id ? account.seq + 2 : account.seq })));
         const change = await db.accountChange.findFirstOrThrow({ where: { accountId: creator.id, kind: 'account' } });
+        expect((await publish('pending', creator.id, {}, true)).statusCode).toBe(200);
+        expect((await publish('pending', creator.id, {}, true)).statusCode).toBe(200);
+        expect((await read(creator.id)).json()).toEqual({ occurrences: [{
+            ...retriedOccurrence, homeId, managedId: row.id, requesterAccountId: creator.id, state: 'pending',
+        }] });
+        for (const account of [custodian, stranger]) {
+            expect((await read(account.id)).json()).toEqual({ occurrences: [] });
+        }
+        expect(await cursors()).toEqual(before.map(account => ({ ...account,
+            seq: account.id === creator.id ? account.seq + 3 : account.seq })));
+        const retriedChange = await db.accountChange.findFirstOrThrow({
+            where: { accountId: creator.id, kind: 'account', entityId: { not: change.entityId } },
+        });
+        expect((await publish('answered', creator.id, {}, true)).statusCode).toBe(200);
+        expect((await publish('cancelled', creator.id, {}, true)).statusCode).toBe(200);
+        const cancelledAddress = { operationId: randomUUID(), taskId: randomUUID() };
+        expect((await publish('pending', creator.id, cancelledAddress, true)).statusCode).toBe(200);
+        expect((await publish('cancelled', creator.id, cancelledAddress, true)).statusCode).toBe(200);
+        expect((await read(creator.id)).json()).toEqual({ occurrences: [] });
+        expect(await cursors()).toEqual(before.map(account => ({ ...account,
+            seq: account.id === creator.id ? account.seq + 6 : account.seq })));
+        const cancelledChange = await db.accountChange.findFirstOrThrow({
+            where: { accountId: creator.id, kind: 'account', entityId: { notIn: [change.entityId, retriedChange.entityId] } },
+        });
+        const requesterWakes = [change.entityId, change.entityId, retriedChange.entityId, retriedChange.entityId,
+            cancelledChange.entityId, cancelledChange.entityId];
         expect(peers.map(peer => peer.readWakes()))
-            .toEqual([[change.entityId, change.entityId], [change.entityId, change.entityId], [], []]);
+            .toEqual([requesterWakes, requesterWakes, [], []]);
     } finally {
         for (const { connection } of peers) eventRouter.removeConnection(connection.userId, connection);
         await app.close();
