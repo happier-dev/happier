@@ -5,6 +5,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { resolveWorkflowContextInputsV1 } from '@happier-dev/protocol/workflows/workflowStartPreparationV1';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 
 import { validateWorkflowEditorDraft } from '@/sync/domains/workflows/workflowAuthoring';
 import { buildReviewStartWorkflowDraftSeed } from './reviewStartWorkflowDraft';
@@ -12,9 +13,21 @@ import { buildReviewStartWorkflowDraftSeed } from './reviewStartWorkflowDraft';
 describe('prestart Review workflow authoring', () => {
     it('admits a saved launcher Review against its detached workspace and binds each triggering Session independently', async () => {
         const sourceSession = { serverId: 'home', sessionId: 'launcher-session' };
+        const reviewers = ReviewStartInputSchema.parse({ instructions: 'Inspect', sourceSession, reviewers: [
+            { kind: 'engine', engineId: 'roborev', includeSessionTranscript: true,
+                runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6.1-luna' },
+                connectedServices: { v: 2, bindingsByServiceId: {
+                    'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+                } } },
+            { kind: 'engine', engineId: 'roborev',
+                runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+                modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'sonnet' },
+                connectedServices: null },
+        ] }).reviewers;
         const seed = buildReviewStartWorkflowDraftSeed({
             input: { sessionId: sourceSession.sessionId, scope: 'repository',
-                reviewers: [{ kind: 'engine', engineId: 'codex', includeSessionTranscript: true }] },
+                reviewers },
             instructions: 'Inspect the project and source transcript', sourceSession, name: 'Review habit',
             project: { machineId: 'machine-1', directory: '/repo' }, executionTarget: 'session',
         });
@@ -45,6 +58,8 @@ describe('prestart Review workflow authoring', () => {
             if (!accepted.ok) throw new Error(accepted.error.code);
             const leaf = accepted.snapshot.materializedLeaves[0];
             expect(leaf?.actionInput).toMatchObject({ target: { kind: 'detached' }, sourceSession: session });
+            // Saving and materializing a Hunt retains each panel member's own runner, model and Account route.
+            expect(ReviewStartInputSchema.parse(leaf?.actionInput).reviewers).toEqual(reviewers);
             expect(leaf?.actionInput).not.toHaveProperty('sessionId');
             expect(leaf?.sessionAuthorityBindings).toEqual([
                 { inputName: 'sourceSession', targets: [{ address: session, machineId: 'machine-1' }] },

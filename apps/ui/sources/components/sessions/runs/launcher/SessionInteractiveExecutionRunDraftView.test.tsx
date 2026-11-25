@@ -66,6 +66,9 @@ import { t } from '@/text';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { restoreConnectionToActiveServer, disconnectActiveServerConnection } from '@/sync/runtime/orchestration/connectionManager';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { createMountedCurrentUiContextWrapper } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { applyProfileCatalogSnapshot, getProfileCatalogSnapshot, resetProfileCatalogSnapshotsForTests } from '@/sync/store/settings/profileCatalogSnapshot';
 import { resetProfileCatalogEngineForTests } from '@/sync/engine/settings/profileCatalogEngine';
 import { resolveReviewEngineTarget } from '@/sync/domains/reviews/reviewEngineCatalog';
@@ -684,23 +687,41 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
     });
     afterEach(async () => { await disconnectActiveServerConnection(); await standardCleanup(); await home?.dispose(); restorePopoverGlobals?.(); });
 
-    it('opens the current Review recipe as an editable unsaved workflow without starting it', async () => {
+    it('saves the mounted Review as an editable Hunt through the agent Action executor without starting it', async () => {
         const reviewers = [
-            { kind: 'engine', engineId: 'claude', modelId: 'first-model', options: { feature: 'auth' }, includeSessionTranscript: true },
-            { kind: 'engine', engineId: 'claude', modelId: 'second-model', options: { feature: 'storage' } },
+            { kind: 'engine', engineId: 'claude', modelId: 'first-model', options: { feature: 'auth' }, includeSessionTranscript: true,
+                runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'first-model' },
+                connectedServices: { v: 2, bindingsByServiceId: {
+                    'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+                } } },
+            { kind: 'engine', engineId: 'claude', modelId: 'second-model', options: { feature: 'storage' },
+                runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+                modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'second-model' },
+                connectedServices: null },
             { kind: 'person', principal: { kind: 'account', accountId: 'alice' }, required: true },
         ];
         const steps = [
             { kind: 'review', reviewers, instructions: 'Check security' },
             { kind: 'verify', reviewers: [{ kind: 'session', session: { serverId, sessionId: 'session_1' } }], instructions: '' },
         ];
+        const CurrentUi = await createMountedCurrentUiContextWrapper();
         await mount({ intent: 'review', workspace: { machineId: 'machine_1', cwd: '/repo' },
             initialActionInput: { reviewers, steps, then: 'fix', outputs: ['walkthrough'],
-                secretReferenceOverlay: { v: 1, bindings: { API_KEY: { ref: secretRef, revision: 1 } } } } });
+                secretReferenceOverlay: { v: 1, bindings: { API_KEY: { ref: secretRef, revision: 1 } } } } }, content => <CurrentUi>{content}</CurrentUi>);
         await type('Inspect the current changes');
-        await screen.pressByTestIdAsync('review-start-advanced:header');
         const requestsBeforeSave = home.requests.length;
-        await screen.pressByTestIdAsync('review-start-save-as-workflow');
+        const executor = createDefaultActionExecutor();
+        const currentUi = await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[0], {}, { surface: 'agent' });
+        if (!currentUi.ok) throw new Error('Expected the mounted Review context');
+        const command = CurrentUiContextSnapshotV1Schema.parse(currentUi.result).commands
+            .find(command => command.description?.startsWith('review.start.save_as_workflow'));
+        expect(command, 'The mounted Review must advertise its Save as Hunt command').toBeDefined();
+        await act(async () => {
+            expect(await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1], {
+                commandId: command!.id,
+            }, { surface: 'agent' })).toMatchObject({ ok: true });
+        });
         const entry = reviewRouterPush.mock.calls.at(-1)?.[0];
         expect(entry, screen.getTextContent()).toMatchObject({ pathname: '/workflows/new', params: { serverId } });
         const seed = readWorkflowDefinitionDraftSeed(entry.params.definitionDraftSeedId, { serverId, accountId: 'account_1' });
@@ -731,6 +752,29 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(emittedWorkflowStarts).toEqual([]);
         expect(home.requests.slice(requestsBeforeSave).filter(request => request.method !== 'GET')).toEqual([]);
         expect(input().props.value).toBe('Inspect the current changes');
+    });
+    it('reports a failed mounted Hunt save to the agent and keeps the visible draft error', async () => {
+        const CurrentUi = await createMountedCurrentUiContextWrapper();
+        await mount({ intent: 'review', workspace: { machineId: 'machine_1', cwd: '/repo' },
+            initialActionInput: { reviewers: [], steps: [{ kind: 'review', reviewers: [], instructions: '' }] } },
+        content => <CurrentUi>{content}</CurrentUi>);
+        await type('Inspect the current changes');
+        const executor = createDefaultActionExecutor();
+        const currentUi = await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[0], {}, { surface: 'agent' });
+        if (!currentUi.ok) throw new Error('Expected the mounted Review context');
+        const command = CurrentUiContextSnapshotV1Schema.parse(currentUi.result).commands
+            .find(command => command.description?.startsWith('review.start.save_as_workflow'));
+        expect(command).toBeDefined();
+        await act(async () => {
+            expect(await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1], {
+                commandId: command!.id,
+            }, { surface: 'agent' })).toMatchObject({ ok: false, error: 'internal_error' });
+        });
+        expect(screen.findByTestId('execution-run-conversation-error')).not.toBeNull();
+        expect(reviewRouterPush).not.toHaveBeenCalled();
+        expect(input().props.value).toBe('Inspect the current changes');
+        expect(emittedStarts).toEqual([]);
+        expect(emittedWorkflowStarts).toEqual([]);
     });
     it('saves an ordinary detached Review with its selected project and no invented Session', async () => {
         await mount({ intent: 'review', sessionId: null, workspace: { machineId: 'machine_1', cwd: '/repo' },

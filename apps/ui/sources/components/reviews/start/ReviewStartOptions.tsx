@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { HappierBodyEdgeContext } from '@happier-dev/plugin-ui/presentation';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
+import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -70,7 +71,18 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
       if (!isJsonObject(input) || typeof input.value !== 'boolean') return false;
       props.onWalkthroughChange(input.value);
     },
-  }], { unbound: 'local' });
+  }, ...(props.walkthrough && props.narrator?.plan.narrator ? [{
+    key: 'review.start.narrator',
+    title: t('reviewWalkthrough.dialog.narrator'),
+    description: 'review.start.narrator — Choose a walkthrough narrator with {engineId: string} from review.engines.list.',
+    invoke: (input: PluginUiJsonValueV1 | undefined) => {
+      if (!isJsonObject(input) || typeof input.engineId !== 'string') return false;
+      const narrator = props.narrator;
+      const engine = narrator?.plan.narrator?.candidates.find(engine => engine.engineId === input.engineId);
+      if (!engine || !narrator) return false;
+      narrator.onSelect(engine.engineId);
+    },
+  }] : [])], { unbound: 'local' });
   return (
     <HappierBodyEdgeContext.Provider value>
     <View testID="review-start-options">
@@ -141,7 +153,7 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
       >
         {props.walkthrough && props.narrator?.plan.narrator ? (
           <ReviewStartNarratorRow narrator={props.narrator.plan.narrator} selected={props.narrator.plan.selected}
-            onSelect={props.narrator.onSelect} disabled={props.disabled} />
+            onSelect={engineId => { void commands.invoke('review.start.narrator', { engineId }); }} disabled={props.disabled} />
         ) : null}
         {props.credentials ? (
           <Item

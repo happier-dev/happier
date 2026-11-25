@@ -99,6 +99,8 @@ import { useSheetDismiss } from '@/modal/components/card/sheetDragDismiss';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import type { CurrentUiContextVoiceInvocationOutcome } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 import { ReviewChangeTypeSchema, type ReviewChangeType } from '@happier-dev/protocol/reviews/reviewStart';
 import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import { useExecutionRunLaunchContext } from './useExecutionRunLaunchContext';
@@ -1143,10 +1145,10 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         const directory = workspace?.cwd ?? (session ? readSessionOwnerMetadataView(session)?.path : null);
         return machineId && directory ? { machineId, directory } : null;
     }, [machineId, session, workspace?.cwd]);
-    const saveReviewAsWorkflow = React.useCallback(() => {
-        if (!accountLifetime?.isCurrent() || !mountedComposerRef || !serverId) return;
+    const saveReviewAsWorkflow = React.useCallback((): CurrentUiContextVoiceInvocationOutcome => {
+        if (!accountLifetime?.isCurrent() || !mountedComposerRef || !serverId) return { ok: false, code: 'stale_surface' };
         const snapshot = readMountedComposerPresentationSnapshot({ ref: mountedComposerRef, scope: accountLifetime.scope });
-        if (!snapshot) return;
+        if (!snapshot) return { ok: false, code: 'stale_surface' };
         try {
             const instructions = snapshot.text.trim();
             const seed = buildReviewStartWorkflowDraftSeed({
@@ -1161,11 +1163,20 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             const definitionDraftSeedId = storeWorkflowDefinitionDraftSeed(seed, accountLifetime);
             setError(null);
             router.push({ pathname: '/workflows/new', params: { definitionDraftSeedId, serverId } });
+            return { ok: true };
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : t('common.requestFailed'));
+            return { ok: false, code: 'internal_error' };
         }
     }, [accountLifetime, mountedComposerRef, serverId, launcher.prepareStartInput, comparisonReview.launchInput,
         secretOverlayState.overlay, props.sessionId, whereTarget, router]);
+    const reviewDraftCommands = useCurrentUiContextLocalCommands(intent === 'review' && !selectingReviewInput && editable ? [{
+        key: 'review.start.save_as_workflow',
+        title: t('workflows.run.saveAsWorkflow'),
+        description: 'review.start.save_as_workflow — Open the mounted Review draft as an editable Hunt without starting it.',
+        invoke: () => saveReviewAsWorkflow(),
+    }] : [], { unbound: 'local' });
+    const saveMountedReviewAsWorkflow = useEventCallback(() => { void reviewDraftCommands.invoke('review.start.save_as_workflow'); });
     const contextualSource = React.useMemo<ContextualStartSource>(() => ({
         enabled: accountLifetime !== null,
         busy: !editable,
@@ -1334,7 +1345,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             cancel={phoneSheet ? undefined : { onPress: sheetCancel, testID: 'review-execution-run-launch-cancel' }}>
             {/* The link holds its own start alignment; its wrapper takes the footer's centre line. */}
             {selectingReviewInput ? null : <View><TextLinkButton testID="review-start-footer-save-as-workflow" size="meta"
-                label={t('workflows.run.saveAsWorkflow')} disabled={!editable} onPress={saveReviewAsWorkflow} /></View>}
+                label={t('workflows.run.saveAsWorkflow')} disabled={!editable} onPress={saveMountedReviewAsWorkflow} /></View>}
             {/* A host selection settles through the same composer submission; it returns the input and starts nothing. */}
             <RoundButton testID={selectingReviewInput ? 'review-start-footer-use-selection' : 'review-start-footer-start'}
                 title={selectingReviewInput ? t('newSession.recipeComposerSubmit') : t('runPage.launcher.start.review', { count: 1 })}
@@ -1429,7 +1440,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 consumerSessionId={props.sessionId} stepControls={reviewStepControls}
                 transcriptAvailable={props.sessionId !== null} walkthrough={comparisonReview.fields.walkthrough}
                 disabled={!editable} details={agentDetails}
-                credentials={reviewOptions.controls} onSaveAsWorkflow={sheetHosted ? undefined : saveReviewAsWorkflow}
+                credentials={reviewOptions.controls} onSaveAsWorkflow={sheetHosted ? undefined : saveMountedReviewAsWorkflow}
                 subject={reviewSubject} more={sheetMore}
                 narrator={reviewNarrator}>
                 {startQuestion}

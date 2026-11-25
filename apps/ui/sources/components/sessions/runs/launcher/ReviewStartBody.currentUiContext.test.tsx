@@ -17,6 +17,8 @@ import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/act
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { ReviewStartBody } from './ReviewStartBody';
 import { useExecutionRunLauncherDraft } from './useExecutionRunLauncherDraft';
+import { ReviewEngineListItemSchema } from '@happier-dev/protocol/reviews/reviewEngines';
+import { resolveReviewWalkthroughPlan } from '@/sync/domains/reviews/reviewWalkthroughPlan';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
@@ -35,14 +37,29 @@ it('edits the mounted Review controls through semantic commands and the existing
     const server = home.homes.a!;
     publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
     let draftInput: Record<string, unknown> = {};
+    const engines = [
+        { engineId: 'claude', label: 'Claude', enabled: true, structuredNarration: true },
+        { engineId: 'codex', label: 'Codex', enabled: true, structuredNarration: true },
+    ];
     function Draft({ disabled = false }: Readonly<{ disabled?: boolean }>) {
         const lifetime = useActiveServerAccountScopeLifetime();
         const draft = useExecutionRunLauncherDraft({ lifetime, sessionId: null, draftKey: 'review', actionId: 'review.start',
             createDefaultInput: () => ({ reviewers: [{ kind: 'engine', engineId: 'claude' }], then: 'report', outputs: [] }) });
         draftInput = draft.actionInput;
+        const walkthrough = Array.isArray(draft.actionInput.outputs) && draft.actionInput.outputs.includes('walkthrough');
+        const plan = resolveReviewWalkthroughPlan({ engines, reviewers: [{ kind: 'engine', engineId: 'claude' }],
+            walkthrough, narratorEngineId: typeof draft.actionInput.narrator === 'object' && draft.actionInput.narrator !== null
+                && 'engineId' in draft.actionInput.narrator && typeof draft.actionInput.narrator.engineId === 'string'
+                ? draft.actionInput.narrator.engineId : null });
         return <ReviewStartBody input={draft.actionInput} onChange={draft.setUserActionInput}
-            source={{ enabled: true, where: null, sections: [], selectedIds: new Set() }} choices={[]}
-            transcriptAvailable walkthrough={Array.isArray(draft.actionInput.outputs) && draft.actionInput.outputs.includes('walkthrough')}
+            source={{ enabled: true, where: null, sections: [], selectedIds: new Set() }} choices={[{
+                backendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+                targetKey: 'agent:happier.agent.claude/claude', backendId: 'claude', agentId: 'claude', title: 'Claude', disabled: false,
+                reviewInventoryItem: ReviewEngineListItemSchema.parse({ engineId: 'claude', label: 'Claude', enabled: true,
+                    capabilities: { structuredNarration: true }, costConsent: { optionKey: 'confirmedCostWarning', title: 'Accept this run cost' } }),
+            }]}
+            transcriptAvailable walkthrough={walkthrough}
+            narrator={{ plan, onSelect: engineId => draft.setUserActionInput(previous => ({ ...previous, narrator: { engineId } })) }}
             disabled={disabled} />;
     }
     const screen = await renderMountedCurrentUiContext(<Draft />);
@@ -73,6 +90,14 @@ it('edits the mounted Review controls through semantic commands and the existing
     expect(await invoke('review.start.walkthrough', { value: true })).toMatchObject({ ok: true });
     expect(screen.tree.findAllByType(Item).find(row => row.props.testID === 'review-start-walkthrough')!
         .findByType(Switch).props.value).toBe(true);
+    expect(await invoke('review.start.narrator', { engineId: 'codex' })).toMatchObject({ ok: true });
+    expect(draftInput.narrator).toEqual({ engineId: 'codex' });
+    expect(await invoke('review.start.narrator', { engineId: 'missing' })).toMatchObject({ ok: false });
+    expect(await invoke('review.start.cost.0:0', { value: true })).toMatchObject({ ok: true });
+    const costConsent = () => screen.tree.findAllByType(Item).find(row => row.props.testID === 'review-start-cost-consent')!;
+    expect(costConsent().props.accessibilityChecked).toBe(true);
+    await screen.pressByTestIdAsync('review-start-cost-consent');
+    expect(costConsent().props.accessibilityChecked).toBe(false);
     await screen.pressByTestIdAsync('review-start-walkthrough');
     expect(draftInput.outputs).toEqual([]);
     expect(draftInput).toMatchObject({ then: 'fix', steps: [
