@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { ChangedFilesReviewNavigation as Navigation } from './ChangedFilesReviewNavigation';
 import { useHunkReviewController } from './hunkReview/useHunkReviewController';
@@ -8,10 +8,6 @@ import { buildDiffHunkTable } from '@/components/ui/code/diff/hunks/buildDiffHun
 import { createChangedFilesReviewDiffStateSource } from './ChangedFilesReviewDiffStore';
 import { installFilesContentCommonModuleMocks } from './filesContentTestHelpers';
 
-vi.mock('@/sync/store/hooks', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({ useLocalSetting: () => 1 });
-});
 installFilesContentCommonModuleMocks();
 
 function ChangedFilesReviewNavigation(props: Readonly<{

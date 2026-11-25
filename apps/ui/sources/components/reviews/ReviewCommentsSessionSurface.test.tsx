@@ -369,7 +369,7 @@ describe('ReviewCommentsSessionSurface', () => {
         await flushHookEffects();
         expect(screen.findByTestId(`review-finding-triage:${original.id}:accept`)?.props.accessibilityState?.checked).toBe(true);
         await act(async () => { write.resolve({ comment: { ...original, reviewTriageStatus: 'accept', serverRevision: 2 } }); await saved; });
-        await act(async () => { recordReviewCommentWrites([{ ...original, body: 'Edited in Review', serverRevision: 3 }], RUN.scope); });
+        await act(async () => { recordReviewCommentWrites([{ ...original, body: 'Edited in Review', bodyVersion: 2, serverRevision: 3 }], RUN.scope); });
         expect(screen.getTextContent()).toContain('Edited in Review');
     });
 

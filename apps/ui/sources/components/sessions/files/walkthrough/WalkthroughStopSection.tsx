@@ -326,7 +326,7 @@ export const WalkthroughStopSection = React.memo(function WalkthroughStopSection
                                 testID={`walkthrough-mark-${stop.id}`}
                                 accessibilityRole="button"
                                 accessibilityLabel={stop.reviewed ? t('walkthrough.unmarkReviewedA11y') : t('walkthrough.markReviewedA11y')}
-                                checked={stop.reviewed}
+                                selected={stop.reviewed}
                                 disabled={Boolean(props.marksDisabledReason)}
                                 onPress={() => props.onToggleReviewed?.(stop)}
                                 style={(state) => [

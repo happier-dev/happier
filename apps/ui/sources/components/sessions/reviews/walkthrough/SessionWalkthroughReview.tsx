@@ -12,6 +12,7 @@ import { ReviewFindingDecisionControl, type ReviewFindingDecision } from '@/comp
 import { findCommentForFinding, readReviewFindingDecision } from '@/components/sessions/reviews/findings/reviewFindingComment';
 import { useReviewSeverityColorResolver } from '@/components/sessions/reviews/findings/useReviewSeverityColors';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -118,9 +119,13 @@ export function useSessionWalkthroughReviewPresentation(params: Readonly<{
                 } : null}
             />
         ) : null;
+        const continuedComments = review.comments.find(comments => comments.cursor);
         const notice = <>
             {scope && sessionId ? <WalkthroughReviewPendingInputs scope={scope} sessionId={sessionId} runIds={review.reviewRunIds} /> : null}
             {readNotice}
+            {continuedComments ? <TextLinkButton testID="walkthrough-review-load-more-comments" disabled={continuedComments.loadingMore}
+                label={t(continuedComments.loadMoreFailed ? 'common.retry' : 'files.reviewComments.durable.showMore')}
+                onPress={() => fireAndForget(continuedComments.loadMore(), { tag: 'SessionWalkthroughReview.loadMoreComments' })} /> : null}
         </>;
         const findingsOnlyHandover = review.progress.narration?.kind === 'narrator_writing' ? review.progress.narration.narrator : null;
         const slots = buildWalkthroughReviewSlots({

@@ -31,10 +31,10 @@ describe('walkthrough personal progress availability', () => {
         const control = layout === 'phone' ? 'walkthrough-phone-mark' : `walkthrough-mark-${reading.stops[0]!.id}`;
         try {
             await screen.pressByTestIdAsync(control);
-            expect(screen.findByTestId(control)?.props['aria-checked']).toBe(true);
+            expect(screen.findByTestId(control)?.props['aria-pressed']).toBe(true);
             expect(source.getReviewedCount()).toBe(1);
             await screen.pressByTestIdAsync(control);
-            expect(screen.findByTestId(control)?.props['aria-checked']).toBe(false);
+            expect(screen.findByTestId(control)?.props['aria-pressed']).toBe(false);
             expect(source.getReviewedCount()).toBe(0);
         } finally { await screen.unmount(); }
     });
@@ -72,13 +72,13 @@ describe('walkthrough personal progress availability', () => {
             rowReads.clear();
             await screen.update(<Reading input={{ ...input, reviewed: marked }} />);
             expect(rowReads.size).toBeLessThanOrEqual(1);
-            expect(screen.findByTestId('walkthrough-mark-stop-0')?.props['aria-checked']).toBe(true);
-            expect(screen.findByTestId('walkthrough-mark-stop-1')?.props['aria-checked']).toBe(false);
+            expect(screen.findByTestId('walkthrough-mark-stop-0')?.props['aria-pressed']).toBe(true);
+            expect(screen.findByTestId('walkthrough-mark-stop-1')?.props['aria-pressed']).toBe(false);
             expect(screen.findByTestId('walkthrough-reviewed-fact')?.findByType(ScmComparisonFactSentence).props.counts).toEqual([1, fileCount]);
             rowReads.clear();
             await screen.update(<Reading input={input} />);
             expect(rowReads.size).toBeLessThanOrEqual(1);
-            expect(screen.findByTestId('walkthrough-mark-stop-0')?.props['aria-checked']).toBe(false);
+            expect(screen.findByTestId('walkthrough-mark-stop-0')?.props['aria-pressed']).toBe(false);
             expect(screen.findByTestId('walkthrough-reviewed-fact')?.findByType(ScmComparisonFactSentence).props.counts).toEqual([0, fileCount]);
         } finally { await screen.unmount(); }
     });

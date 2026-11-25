@@ -83,6 +83,48 @@ async function refresh() {
 }
 
 describe('a walkthrough reads findings before declaring a review complete', () => {
+    it('continues its comment window without rereading the Run and unlocks the later finding decision', async () => {
+        const first = buildReviewCommentFixture({ id: 'first-comment', accountId: scope.accountId,
+            sessionId: params.host.sessionId, runId: 'review-run', findingId: 'first-finding' });
+        const second = buildReviewCommentFixture({ id: 'second-comment', accountId: scope.accountId,
+            sessionId: params.host.sessionId, runId: 'review-run', findingId: 'second-finding' });
+        const cursors: (string | null)[] = [];
+        harness.answer(scope.serverId, 'GET /v1/reviews/comments', { select: (_input, request) => {
+            const cursor = new URL(request.url).searchParams.get('cursor');
+            cursors.push(cursor);
+            return { body: cursor ? { items: [storePlainReviewCommentFixture(second)], cursor: null }
+                : { items: [storePlainReviewCommentFixture(first)], cursor: 'page-2' } };
+        } });
+        const got = response(true);
+        const initial = ReviewFindingsV2Schema.parse(got.structuredMeta?.payload);
+        boundary.read = async () => ({ ...got, structuredMeta: { kind: 'review_findings.v2', payload: {
+            ...initial, findings: [
+                { ...initial.findings[0]!, id: 'first-finding' },
+                { ...initial.findings[0]!, id: 'second-finding', title: 'A later finding' },
+            ],
+        } } });
+        function Review() {
+            const review = useWalkthroughReview(params);
+            const presentation = useSessionWalkthroughReviewPresentation({ review, phase: 'complete', phone: true,
+                scope, sessionId: params.host.sessionId });
+            return <>{presentation?.slots.notice}{presentation?.slots.afterStops}</>;
+        }
+        const screen = await renderScreen(<AppPaneProvider><Review /></AppPaneProvider>);
+        await waitForHomeGovernance(() => expect(cursors).toEqual([null]));
+        await flushHookEffects();
+        expect(screen.findByTestId('walkthrough-finding-triage:first-finding:accept')?.props.disabled).toBe(false);
+        expect(screen.findByTestId('walkthrough-finding-triage:second-finding:accept')?.props.disabled).toBe(true);
+        // The mounted presentation also reads the Run's pending-input activity. Paging comments adds no Run read.
+        const runReadsBeforeContinuation = sessionRequests.length;
+        expect(runReadsBeforeContinuation).toBeGreaterThan(0);
+        await screen.pressByTestIdAsync('walkthrough-review-load-more-comments');
+        await waitForHomeGovernance(() => expect(cursors).toEqual([null, 'page-2']));
+        await flushHookEffects();
+        expect(screen.findByTestId('walkthrough-finding-triage:second-finding:accept')?.props.disabled).toBe(false);
+        expect(sessionRequests).toHaveLength(runReadsBeforeContinuation);
+        expect(screen.findByTestId('walkthrough-review-load-more-comments')).toBeNull();
+    });
+
     it('waits for the run payload to supply comment scope before reading comments', async () => {
         const pending = createDeferred<unknown>();
         boundary.read = () => pending.promise;
