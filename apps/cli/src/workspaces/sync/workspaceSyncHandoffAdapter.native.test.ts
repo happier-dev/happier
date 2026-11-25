@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { parseProjectAccountSnapshotV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
 import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { createWorkspaceSyncHandoffAdapter, materializeWorkspaceSyncForOpen, type PrepareWorkspaceSyncHandoffInput } from './workspaceSyncHandoffAdapter';
-import { createWorkspaceSyncRelationshipOwner } from './workspaceSyncRelationshipOwner';
+import { createWorkspaceSyncRelationshipOwner, WorkspaceSyncPreparationRefusal } from './workspaceSyncRelationshipOwner';
 import { WorkspaceSyncController } from './workspaceSyncController';
 import { createWorkspaceSyncMutagenAdapter } from './workspaceSyncMutagenAdapter';
 import { createWorkspaceRootOwnershipManager } from './workspaceSyncRootOwnership';
@@ -14,6 +14,55 @@ import { deriveWorkspaceSyncEndpointId, type MutagenControlCommandV1, type Mutag
 import type { ActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 
 describe('native Workspace Sync handoff', () => {
+  it('preserves the link refusal when releasing the retained private execution also fails', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'workspace-sync-refused-release-'));
+    const sourceRootPath = join(directory, 'source');
+    const destination = join(directory, 'destination');
+    const workspaceRefs = [
+      { id: 'source-ref', serverId: 'home', machineId: 'source', rootPath: sourceRootPath, createdAtMs: 1 },
+      { id: 'target-ref', serverId: 'home', machineId: 'target', rootPath: destination, createdAtMs: 1 },
+    ];
+    let snapshot = parseProjectAccountSnapshotV1({ workspaceRefs });
+    const refusal = Object.assign(new Error('Target refused writer admission'), { code: 'forbidden', effectAttempted: false });
+    const nativeEffect = async (): Promise<never> => { throw new Error('Refusal must precede native effects'); };
+    const resolveWorkspaceRef = (id: string) => snapshot.workspaceRefs.find(ref => ref.id === id) ?? null;
+    const controller = new WorkspaceSyncController({
+      adapter: createWorkspaceSyncMutagenAdapter({ resolveWorkspaceRef, send: nativeEffect }),
+      lifecycle: { start: nativeEffect, stop: async () => undefined }, localMachineId: 'source', localServerId: 'home',
+      resolveWorkspaceRef, rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(directory, 'locks') }),
+    });
+    const owner = createWorkspaceSyncRelationshipOwner({ localMachineId: 'source', readProjectSnapshot: async () => snapshot,
+      mutateProjectSnapshot: async mutate => {
+        snapshot = parseProjectAccountSnapshotV1(await mutate(snapshot));
+        return { status: 'applied', snapshot, version: 1 };
+      },
+      waitForProjectReconciliation: async () => undefined,
+      ensureRelationship: async () => { throw refusal; }, flushRelationship: nativeEffect,
+      terminateRelationshipRuntime: async () => undefined, commitRelationshipTarget: nativeEffect,
+    });
+    const adapter = createWorkspaceSyncHandoffAdapter({ sync: controller, relationshipOwner: owner, localMachineId: 'source' });
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const input: PrepareWorkspaceSyncHandoffInput = { operationId: 'refused-release', accountServerId: 'home', sourceMachineId: 'source',
+      sourceRootPath, targetMachineId: 'target', targetRootPath: destination, action: { kind: 'create_relationship',
+        mode: 'keep_synced', contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, flushBeforeCommit: true } };
+    let refuseRelease = true;
+    adapter.retainPrivateExecution!({ input, execution: { credentials: { token: 'owner', encryption: null },
+      accountRowsCustody: { serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', accountId: 'owner', isCurrent: async () => true },
+      assertTransferCurrent: async () => undefined,
+      release: async () => { if (refuseRelease) throw Object.assign(new Error('Native release refused'), { code: 'EBUSY' }); },
+    } });
+    try {
+      const result = adapter.prepare(input);
+      await expect(result).rejects.toBeInstanceOf(WorkspaceSyncPreparationRefusal);
+      await expect(result).rejects.toMatchObject({ code: 'forbidden', cause: refusal });
+      expect(snapshot.relationships).toEqual([]);
+    } finally {
+      refuseRelease = false;
+      await adapter.releaseAllPrivateExecutions!();
+      await controller.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it.each(['managedId', 'machineId', 'installationId'] as const)('preserves ambiguity when a retained managed %s changes', async field => {
     const directory = await mkdtemp(join(tmpdir(), 'workspace-sync-native-identity-'));
     const controller = new WorkspaceSyncController({
@@ -95,7 +144,7 @@ describe('native Workspace Sync handoff', () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
-  it('materializes the original Machine source into a native target without traversing guest roots', async () => {
+  it.each(['accepted', 'refused'] as const)('settles a native Copy without traversing the guest root (%s)', async outcome => {
     const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-native-open-'));
     const hostRootPath = join(fixture, 'original');
     await mkdir(hostRootPath);
@@ -145,6 +194,9 @@ describe('native Workspace Sync handoff', () => {
         expect(input.targetManaged).toEqual(managed);
         const targetWorkspace = resolveWorkspaceRef(input.targetWorkspaceRefId!);
         if (!targetWorkspace || !isManagedWorkspaceRefV2(targetWorkspace)) throw new Error('receiver locator was lost');
+        if (outcome === 'refused') {
+          throw Object.assign(new Error('Target refused the copy'), { code: 'workspace_root_in_use', effectAttempted: false });
+        }
         return { targetWorkspace, release: async reason => { released.push(reason); } };
       },
     });
@@ -155,6 +207,12 @@ describe('native Workspace Sync handoff', () => {
       targetMachineId: 'controller', targetRootPath: '/guest-only/repo', targetManaged: managed,
     };
     try {
+      if (outcome === 'refused') {
+        await expect(materializeWorkspaceSyncForOpen(source, input)).rejects.toMatchObject({ code: 'workspace_root_in_use' });
+        expect(snapshot.workspaceRefs.map(ref => ref.id)).toEqual(['original']);
+        expect(commands).toEqual([]);
+        return;
+      }
       await source.prepare(input);
       await expect(source.prepare({ ...input, targetManaged: { ...managed, managedId: 'another-guest' } }))
         .rejects.toMatchObject({ code: 'workspace_sync_operation_conflict' });

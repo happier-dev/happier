@@ -59,6 +59,7 @@ export type PreparedWorkspaceSyncRelationship = Readonly<{
 export type MaterializedWorkspaceSyncEndpoints = Readonly<{
   source: WorkspaceRefV1;
   target: WorkspaceRefV1;
+  withdrawTarget(cause: unknown): Promise<never>;
 }>;
 
 export type WorkspaceSyncRelationshipOwner = Readonly<{
@@ -113,6 +114,9 @@ export class WorkspaceSyncPreparationRefusal extends Error {
     super(cause instanceof Error ? cause.message : code, { cause });
     this.name = 'WorkspaceSyncPreparationRefusal';
     this.code = code;
+    if (cause && typeof cause === 'object' && 'failureCause' in cause) {
+      Object.assign(this, { failureCause: cause.failureCause });
+    }
   }
 }
 
@@ -246,6 +250,13 @@ function isIndeterminate(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'indeterminate';
 }
 
+function preparationRefusal(error: unknown, signal?: AbortSignal): unknown {
+  const code = readFailureCode(error);
+  return signal?.aborted || !code || code === 'cancelled' || isIndeterminate(error)
+    || error instanceof WorkspaceSyncPreparationRefusal || error instanceof AggregateError
+    ? error : new WorkspaceSyncPreparationRefusal(code, error);
+}
+
 /**
  * Test-only determinism seam. Production must keep the canonical rule, because
  * the target daemon re-derives it to authorize destructive replacement; a test
@@ -310,17 +321,21 @@ export function createWorkspaceSyncRelationshipOwner(
       return admitProjectSnapshotTransition(settings, { ...settings, workspaceRefs: second.workspaceRefs });
     }, input.signal);
     if (!isSettledMutation(result)) throw mutationFailure(result);
-    const current = await options.readProjectSnapshot();
-    await options.waitForProjectReconciliation(result.version, input.signal);
-    const currentRefs = parseRefs(current);
-    const source = resolveWorkspaceRefById(currentRefs, sourceRef.id, input.serverId);
-    const target = resolveWorkspaceRefById(currentRefs, targetRef.id, input.serverId);
-    if (!source || !target) throw ownerError('workspace_ref_not_ready', 'Materialized workspace endpoints are unavailable');
-    return { endpoints: { source, target }, targetCreated };
+    try {
+      const current = await options.readProjectSnapshot();
+      await options.waitForProjectReconciliation(result.version, input.signal);
+      const currentRefs = parseRefs(current);
+      const source = resolveWorkspaceRefById(currentRefs, sourceRef.id, input.serverId);
+      const target = resolveWorkspaceRefById(currentRefs, targetRef.id, input.serverId);
+      if (!source || !target) throw ownerError('workspace_ref_not_ready', 'Materialized workspace endpoints are unavailable');
+      return { endpoints: { source, target }, targetCreated };
+    } catch (error) {
+      return withdrawUnstagedTarget(targetCreated ? targetRef : undefined, error);
+    }
   };
 
   const rollbackCreationRows = async (
-    relationshipId: string,
+    relationshipId: string | null,
     mutate: (relationships: readonly WorkspaceSyncRelationshipV1[]) => readonly WorkspaceSyncRelationshipV1[],
     createdTarget?: WorkspaceRefV1,
   ): Promise<number> => {
@@ -355,6 +370,18 @@ export function createWorkspaceSyncRelationshipOwner(
       throw mutationFailure(result);
     }
     return result.version;
+  };
+
+  const withdrawUnstagedTarget = async (target: WorkspaceRefV1 | undefined, cause: unknown): Promise<never> => {
+    if (target && !isIndeterminate(cause)) {
+      try {
+        const version = await rollbackCreationRows(null, relationships => relationships, target);
+        await options.waitForProjectReconciliation(version);
+      } catch (error) {
+        throw withCleanupErrors(cause, [error]);
+      }
+    }
+    throw cause;
   };
 
   const transitionDesiredRelationship = async (
@@ -492,49 +519,56 @@ export function createWorkspaceSyncRelationshipOwner(
         throw ownerError('workspace_sync_controller_mismatch', 'Relationship creation must run on its source controller machine');
       }
 
-      const { endpoints, targetCreated } = await publishEndpoints(input);
-      const current = await options.readProjectSnapshot();
-      const timestamp = nowMs();
-      const candidate = validateWorkspaceSyncRelationship({
-        v: 1,
-        relationshipId: deriveRelationshipId(input.operationId),
-        controllerMachineId: options.localMachineId,
-        alphaWorkspaceRefId: endpoints.source.id,
-        betaWorkspaceRefId: endpoints.target.id,
-        ...(input.purpose === 'worker_clean_copy' ? { committedAtMs: null, provenance: {
-          kind: 'worker_clean_copy', sourceWorkspaceRefId: endpoints.source.id, targetWorkspaceRefId: endpoints.target.id,
-        } } : {}),
-        mode: input.mode,
-        contentPolicy: input.contentPolicy,
-        enabled: true,
-        createdAtMs: timestamp,
-        updatedAtMs: timestamp,
-      });
-      let relationships = parseRelationships(current);
-      let replacedRelationship: WorkspaceSyncRelationshipV1 | undefined;
-      if (input.replaceRelationshipId) {
-        const previous = relationships.find(value => value.relationshipId === input.replaceRelationshipId);
-        const replay = relationships.find(value => value.relationshipId === candidate.relationshipId);
-        if (!previous && !replay) {
-          throw ownerError('relationship_not_ready', 'The link selected for replacement is unavailable');
-        }
-        if (previous) {
-          if (previous.relationshipId === candidate.relationshipId
-            || previous.controllerMachineId !== options.localMachineId
-            || previous.alphaWorkspaceRefId !== candidate.alphaWorkspaceRefId
-            || previous.betaWorkspaceRefId !== candidate.betaWorkspaceRefId
-            || !areWorkspaceSyncWorkerCopyProvenancesEqual(previous, candidate)) {
-            throw ownerError('relationship_definition_conflict', 'Replacement needs a new identity with the selected link endpoints and purpose');
+      const { endpoints, targetCreated } = await publishEndpoints(input)
+        .catch((error: unknown) => { throw preparationRefusal(error, input.signal); });
+      const refuseBeforeStaging = async (error: unknown): Promise<never> =>
+        withdrawUnstagedTarget(targetCreated ? endpoints.target : undefined, error)
+          .catch((failure: unknown) => { throw preparationRefusal(failure, input.signal); });
+      const { candidate, existing, replacedRelationship } = await (async () => {
+        const current = await options.readProjectSnapshot();
+        const timestamp = nowMs();
+        const candidate = validateWorkspaceSyncRelationship({
+          v: 1,
+          relationshipId: deriveRelationshipId(input.operationId),
+          controllerMachineId: options.localMachineId,
+          alphaWorkspaceRefId: endpoints.source.id,
+          betaWorkspaceRefId: endpoints.target.id,
+          ...(input.purpose === 'worker_clean_copy' ? { committedAtMs: null, provenance: {
+            kind: 'worker_clean_copy', sourceWorkspaceRefId: endpoints.source.id, targetWorkspaceRefId: endpoints.target.id,
+          } } : {}),
+          mode: input.mode,
+          contentPolicy: input.contentPolicy,
+          enabled: true,
+          createdAtMs: timestamp,
+          updatedAtMs: timestamp,
+        });
+        let relationships = parseRelationships(current);
+        let replacedRelationship: WorkspaceSyncRelationshipV1 | undefined;
+        if (input.replaceRelationshipId) {
+          const previous = relationships.find(value => value.relationshipId === input.replaceRelationshipId);
+          const replay = relationships.find(value => value.relationshipId === candidate.relationshipId);
+          if (!previous && !replay) {
+            throw ownerError('relationship_not_ready', 'The link selected for replacement is unavailable');
           }
-          replacedRelationship = previous;
-          relationships = relationships.filter(value => value.relationshipId !== previous.relationshipId);
+          if (previous) {
+            if (previous.relationshipId === candidate.relationshipId
+              || previous.controllerMachineId !== options.localMachineId
+              || previous.alphaWorkspaceRefId !== candidate.alphaWorkspaceRefId
+              || previous.betaWorkspaceRefId !== candidate.betaWorkspaceRefId
+              || !areWorkspaceSyncWorkerCopyProvenancesEqual(previous, candidate)) {
+              throw ownerError('relationship_definition_conflict', 'Replacement needs a new identity with the selected link endpoints and purpose');
+            }
+            replacedRelationship = previous;
+            relationships = relationships.filter(value => value.relationshipId !== previous.relationshipId);
+          }
         }
-      }
-      const existing = resolveEndpointPair(relationships, candidate);
-      if (input.purpose === 'worker_clean_copy'
-        && (endpoints.target.projectKey ?? endpoints.target.id) !== (endpoints.source.projectKey ?? endpoints.source.id)) {
-        throw ownerError('project_workspace_changed', 'The chosen worker folder belongs to a different Project');
-      }
+        const existing = resolveEndpointPair(relationships, candidate);
+        if (input.purpose === 'worker_clean_copy'
+          && (endpoints.target.projectKey ?? endpoints.target.id) !== (endpoints.source.projectKey ?? endpoints.source.id)) {
+          throw ownerError('project_workspace_changed', 'The chosen worker folder belongs to a different Project');
+        }
+        return { candidate, existing, replacedRelationship };
+      })().catch(refuseBeforeStaging);
       const relationship = existing ?? candidate;
       const runtimeRelationship = relationship.enabled
         ? relationship
@@ -560,9 +594,7 @@ export function createWorkspaceSyncRelationshipOwner(
           requesterTarget = await options.prepareRequesterTarget(runtimeRelationship, { context: input.requesterContext,
             targetBootstrap: input.targetBootstrap, ...(input.signal ? { signal: input.signal } : {}) });
         } catch (error) {
-          const code = readFailureCode(error);
-          if (!input.signal?.aborted && code && code !== 'cancelled') throw new WorkspaceSyncPreparationRefusal(code, error);
-          throw error;
+          return refuseBeforeStaging(error);
         }
       }
 
@@ -595,7 +627,9 @@ export function createWorkspaceSyncRelationshipOwner(
             });
           }, input.signal);
           if (!isSettledMutation(result)) {
-            const observed = resolveEndpointPair(parseRelationships(await options.readProjectSnapshot()), relationship);
+            const observed = await options.readProjectSnapshot()
+              .then(current => resolveEndpointPair(parseRelationships(current), relationship))
+              .catch(() => { throw mutationFailure(result); });
             if (!observed || observed.enabled) throw mutationFailure(result);
             durableIntentStaged = true;
             publishedRelationship = observed;
@@ -658,7 +692,10 @@ export function createWorkspaceSyncRelationshipOwner(
       try {
         await stageDurableIntent();
       } catch (error) {
-        if (!durableIntentStaged || isIndeterminate(error)) throw error;
+        if (!durableIntentStaged) {
+          return refuseBeforeStaging(error);
+        }
+        if (isIndeterminate(error)) throw error;
         if (replacedRelationship) {
           const cleanupErrors = await cleanupFailedCreation(relationship);
           if (cleanupErrors.length) throw withCleanupErrors(error, cleanupErrors);
@@ -670,8 +707,7 @@ export function createWorkspaceSyncRelationshipOwner(
           } catch (cleanupError) {
             throw withCleanupErrors(error, [cleanupError]);
           }
-          const code = readFailureCode(error);
-          if (!input.signal?.aborted && code && code !== 'cancelled') throw new WorkspaceSyncPreparationRefusal(code, error);
+          throw preparationRefusal(error, input.signal);
         }
         throw error;
       }
@@ -703,13 +739,10 @@ export function createWorkspaceSyncRelationshipOwner(
       } catch (error) {
         if (runtimeOwnedByTransaction && !isIndeterminate(error)) {
           const cleanupErrors = await cleanupFailedCreation(relationship, ensureRefusedBeforeEffect);
-          const code = readFailureCode(error);
           if (cleanupErrors.length) {
             throw withCleanupErrors(error, cleanupErrors);
           }
-          if (!input.signal?.aborted && code && code !== 'cancelled') {
-            throw new WorkspaceSyncPreparationRefusal(code, error);
-          }
+          throw preparationRefusal(error, input.signal);
         }
         throw error;
       }
@@ -794,7 +827,8 @@ export function createWorkspaceSyncRelationshipOwner(
 
   return Object.freeze({
     async materializeEndpoints(input) {
-      return (await publishEndpoints(input)).endpoints;
+      const { endpoints, targetCreated } = await publishEndpoints(input);
+      return { ...endpoints, withdrawTarget: cause => withdrawUnstagedTarget(targetCreated ? endpoints.target : undefined, cause) };
     },
     async prepareCreate(input): Promise<PreparedWorkspaceSyncRelationship> {
       activeCreations.add(input.operationId);

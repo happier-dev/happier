@@ -1,7 +1,7 @@
 import { access, chmod, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createProcessCustodyFixture } from '@/testkit/processCustodyFixture';
 import { createManagedSessionDirectories } from './managedSessionDirectories';
@@ -201,6 +201,51 @@ describe('managed session directory ownership', () => {
     await expect(owner.resolveForSession({ sessionId: 'session', path: allocation.directory,
       approvedNewDirectoryCreation: true })).rejects.toThrow('ACL refused');
     await expect(access(allocation.directory)).resolves.toBeUndefined();
+  });
+
+  it.each(['creation', 'handoff'] as const)('rolls back a new %s allocation when payload protection refuses it', async origin => {
+    const { activeServerDir } = await fixture();
+    const refusal = Object.assign(new Error('ACL refused'), { code: 'EACCES' });
+    let refusedPath: string | undefined;
+    let refuse = true;
+    const owner = createManagedSessionDirectories({ activeServerDir, protection: {
+      platform: 'win32', windowsAclBoundary: {
+        async applyAndVerify({ path }) {
+          if (refuse && /^[a-f0-9]{64}$/u.test(basename(path))) {
+            refusedPath = path;
+            throw refusal;
+          }
+        },
+        async verify() {},
+      },
+    } });
+    const creation = { sessionCreationTag: 'protection-refused' };
+    const handoff = { operationId: 'protection-refused', sessionId: 'session' };
+    const allocate = () => origin === 'creation' ? owner.materializeForFreshSpawn(creation) : owner.allocateForHandoff(handoff);
+    await expect(allocate()).rejects.toBe(refusal);
+    expect(await owner.listRecords()).toEqual([]);
+    expect(refusedPath).toBeDefined();
+    await expect(access(refusedPath!)).rejects.toMatchObject({ code: 'ENOENT' });
+    refuse = false;
+    await expect(allocate()).resolves.toMatchObject({ directory: refusedPath, created: true });
+  });
+
+  it('preserves bytes in a pre-existing directory when a new allocation record is refused', async () => {
+    const { activeServerDir } = await fixture();
+    const request = { sessionCreationTag: 'pre-existing-payload' };
+    const refusal = Object.assign(new Error('ACL refused'), { code: 'EACCES' });
+    const owner = createManagedSessionDirectories({ activeServerDir, protection: {
+      platform: 'win32', windowsAclBoundary: {
+        async applyAndVerify({ path }) { if (path === directory) throw refusal; },
+        async verify() {},
+      },
+    } });
+    const { directory } = owner.prepareForCreation(request);
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, 'keep'), 'existing payload');
+    await expect(owner.materializeForFreshSpawn(request)).rejects.toBe(refusal);
+    await expect(readFile(join(directory, 'keep'), 'utf8')).resolves.toBe('existing payload');
+    expect(await owner.listRecords()).toEqual([]);
   });
 
   it('repairs protection while reusing unbound creation and handoff allocations', async () => {

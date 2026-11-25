@@ -94,18 +94,15 @@ export async function createWorkspaceSyncRelationshipForProject(
     ...(signal ? { signal } : {}),
   });
 
-  let committed: Awaited<ReturnType<typeof prepared.commit>>;
   try {
     signal?.throwIfAborted();
-    committed = await prepared.commit();
   } catch (error) {
-    // `commit` already settles its own runtime for a determinate failure and
-    // closes the transaction, so this is the cancellation/abort path. It never
-    // deletes an attached existing folder: only materialization custody rolls
-    // back, and `use_existing` creates none.
     await prepared.abort().catch(() => undefined);
     throw error;
   }
+  // The relationship owner settles a refused commit and keeps its graph when
+  // Home's result is uncertain. Only cancellation before commit is an abort.
+  const committed = await prepared.commit();
 
   const targetWorkspaceRefId = committed.alphaWorkspaceRefId === input.sourceWorkspaceRefId
     ? committed.betaWorkspaceRefId

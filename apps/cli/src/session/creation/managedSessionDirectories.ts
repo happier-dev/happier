@@ -187,9 +187,11 @@ export function createManagedSessionDirectories(input: Readonly<{
     const payloadRoot = placement?.root ?? root;
     const rootInfo = await lstat(payloadRoot);
     if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error('Managed allocation root must be a directory, never a symlink');
+    let payloadExists = false;
     try {
       const stats = await lstat(target.directory);
       if (stats.isSymbolicLink() || !stats.isDirectory()) throw new Error('Managed allocation must be a directory, never a symlink');
+      payloadExists = true;
     } catch (error) { if (!absent(error)) throw error; }
     const [physicalRoot, physicalDirectory] = await Promise.all([
       realpathWithAbsentSuffix(payloadRoot), realpathWithAbsentSuffix(target.directory),
@@ -198,6 +200,7 @@ export function createManagedSessionDirectories(input: Readonly<{
       || !isCanonicalAbsolutePathInsideRoot(physicalRoot, physicalDirectory, { platform })) {
       throw new Error('Managed allocation is outside its protected root');
     }
+    return payloadExists;
   };
   const protectPayload = async (target: ManagedSessionDirectoryAllocation, placement?: ManagedSessionDirectoryPayloadPlacement, createIfMissing = true) => {
     if (placement && platform === 'linux') {
@@ -224,21 +227,37 @@ export function createManagedSessionDirectories(input: Readonly<{
       await protectPayload(target, record.payloadPlacement, false);
     } };
   };
+  const protectNewAllocation = async (target: ManagedSessionDirectoryAllocation, record: ManagedSessionDirectoryRecord, created: boolean) => {
+    let mayHaveCreatedPayload = false;
+    try {
+      mayHaveCreatedPayload = !await assertContained(target, record.payloadPlacement);
+      await protectPayload(target, record.payloadPlacement);
+    } catch (error) {
+      if (created) {
+        try {
+          if (mayHaveCreatedPayload) await removeAllocation(target.allocationId);
+          else await removeProtectedLocalStateFile(recordPath(target.allocationId), protection);
+        } catch (cleanupError) {
+          logger.warn('[MANAGED SESSION DIRECTORY] Failed allocation cleanup', { allocationId: target.allocationId, error: cleanupError });
+        }
+      }
+      throw error;
+    }
+    return { ...target, created };
+  };
   const materializeForFreshSpawn = async (request: Readonly<{ sessionCreationTag: string }>) => {
     const prepared = prepareForCreation(request);
-    const created = await publishRecord(prepared, {
+    const proposed: ManagedSessionDirectoryRecord = {
       v: 1, origin: 'creation', sessionCreationTag: request.sessionCreationTag, operationId: null, sessionId: null,
       ...(input.payloadPlacement ? { payloadPlacement: input.payloadPlacement } : {}),
-    });
-    const record = await readRecord(prepared.allocationId);
+    };
+    const created = await publishRecord(prepared, proposed);
+    const record = created ? proposed : await readRecord(prepared.allocationId);
     if (!record || record.origin !== 'creation' || record.sessionCreationTag !== request.sessionCreationTag || record.sessionId !== null || record.pendingRemoval || record.inTrash) throw conflict();
     if (input.payloadPlacement && (!record.payloadPlacement
       || !canonicalAbsolutePathsEqual(record.payloadPlacement.root, input.payloadPlacement.root)
       || record.payloadPlacement.agentUid !== input.payloadPlacement.agentUid)) throw conflict();
-    const target = recordedAllocation(prepared.allocationId, record);
-    await assertContained(target, record.payloadPlacement);
-    await protectPayload(target, record.payloadPlacement);
-    return { ...target, created };
+    return protectNewAllocation(recordedAllocation(prepared.allocationId, record), record, created);
   };
   const bind = async ({ allocationId, sessionId }: Readonly<{ allocationId: string; sessionId: string }>) => {
     if (!sessionId.trim()) throw conflict();
@@ -461,19 +480,17 @@ export function createManagedSessionDirectories(input: Readonly<{
   };
   const allocateForHandoff = async (request: Readonly<{ operationId: string; sessionId: string }>) => {
     const target = prepareForHandoff(request);
-    const created = await publishRecord(target, {
+    const proposed: ManagedSessionDirectoryRecord = {
       v: 1, origin: 'handoff', sessionCreationTag: null, operationId: request.operationId, sessionId: request.sessionId,
       ...(input.payloadPlacement ? { payloadPlacement: input.payloadPlacement } : {}),
-    });
-    const record = await readRecord(target.allocationId);
+    };
+    const created = await publishRecord(target, proposed);
+    const record = created ? proposed : await readRecord(target.allocationId);
     if (!record || record.origin !== 'handoff' || record.sessionId !== request.sessionId || record.pendingRemoval || record.inTrash) throw conflict();
     if (input.payloadPlacement && (!record.payloadPlacement
       || !canonicalAbsolutePathsEqual(record.payloadPlacement.root, input.payloadPlacement.root)
       || record.payloadPlacement.agentUid !== input.payloadPlacement.agentUid)) throw conflict();
-    const retainedTarget = recordedAllocation(target.allocationId, record);
-    await assertContained(retainedTarget, record.payloadPlacement);
-    await protectPayload(retainedTarget, record.payloadPlacement);
-    return { ...retainedTarget, created };
+    return protectNewAllocation(recordedAllocation(target.allocationId, record), record, created);
   };
   const commitHandoff = async (request: Readonly<{ operationId: string; sessionId: string }>) => {
     const target = prepareForHandoff(request);

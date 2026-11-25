@@ -33,6 +33,7 @@ import { projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev
 import { isDeepStrictEqual } from 'node:util';
 import type { WorkspaceSyncSourceContextV1 } from '@happier-dev/protocol/socketRpc';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import { logger } from '@/ui/logger';
 import type { MachineInstallationPublicIdentityV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import type { StoredCredentials } from '@/persistence';
 import type { ActiveProjectAccountRowsSnapshot, ProjectAccountSessionCustody } from '@/workspaces/projectAccountRows';
@@ -221,17 +222,23 @@ export interface WorkspaceSyncHandoffAdapter {
   abort(input: AbortWorkspaceSyncHandoffInput): Promise<void>;
 }
 
+function copyPreparationRefusal(request: PrepareWorkspaceSyncHandoffInput, error: unknown): WorkspaceSyncPreparationRefusal | undefined {
+  if (error instanceof WorkspaceSyncPreparationRefusal) return error;
+  if (request.action.kind !== 'copy_once') return undefined;
+  const code = readActionErrorCodeV1(error);
+  if (!code) return undefined;
+  const refusedBeforeEffect = error && typeof error === 'object' && 'effectAttempted' in error && error.effectAttempted === false;
+  // Content-only root admission refuses the seed before transferring files.
+  if (!refusedBeforeEffect && !(request.action.contentPolicy.contentOnly && code === 'workspace_root_in_use')) return undefined;
+  return new WorkspaceSyncPreparationRefusal(code, { ok: false, errorCode: code, error: code,
+    failureCause: projectActionFailureCauseV1(error, 'projects.open', { allowUnknownErrorCode: true }) });
+}
+
 /** One containing agent-free Open; the same adapter owns clean bytes, READY and commit custody. */
 export async function materializeWorkspaceSyncForOpen(adapter: WorkspaceSyncHandoffAdapter, request: PrepareWorkspaceSyncHandoffInput,
   context?: RpcHandlerContext, authority?: WorkspaceSyncHandoffSourcePhaseAuthority): Promise<Pick<WorkspaceSyncHandoffPrepared, 'copyOnceBaseline' | 'copyOnceExcludedPaths'>> {
   const prepared = await adapter.prepare(request, authority, context).catch((error: unknown) => {
-    const code = readActionErrorCodeV1(error);
-    if (request.action.kind === 'copy_once' && request.action.contentPolicy.contentOnly && code === 'workspace_root_in_use') {
-      // Root admission refused the seed before transferring files. Open may have recorded the endpoints already.
-      throw new WorkspaceSyncPreparationRefusal(code, { ok: false, errorCode: code, error: code,
-        failureCause: projectActionFailureCauseV1(error, 'projects.open', { allowUnknownErrorCode: true }) });
-    }
-    throw error;
+    throw copyPreparationRefusal(request, error) ?? error;
   });
   // A retained prepare can be reused; finalization still starts forward effects.
   request.onEffectsIssued?.();
@@ -567,7 +574,13 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
           ...(context ? { requesterContext: context } : {}),
         }).catch(async (error: unknown) => {
           if (error instanceof WorkspaceSyncPreparationRefusal) {
-            await adapter.releasePrivateExecution!(input.operationId);
+            try {
+              await adapter.releasePrivateExecution!(input.operationId);
+            } catch (cleanupError) {
+              logger.warnLocalFile('[Workspace Sync] Refused private execution cleanup failed', {
+                failureCause: projectActionFailureCauseV1(cleanupError),
+              });
+            }
           }
           throw error;
         });
@@ -597,6 +610,10 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
         return prepared;
       }
       let effectiveInput = input;
+      if (input.action.kind !== 'none' && typeof deps.bootstrap !== 'function') {
+        throw Object.assign(new Error('Workspace sync bootstrap authority is unavailable'), { code: 'workspace_sync_unavailable' });
+      }
+      let withdrawTarget: ((cause: unknown) => Promise<never>) | undefined;
       if (input.action.kind === 'copy_once' && (!input.sourceWorkspaceRefId || !input.targetWorkspaceRefId)) {
         const accountServerId = input.accountServerId?.trim();
         if (!relationshipOwner || !accountServerId) {
@@ -615,21 +632,25 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
           ...(input.targetWorkspaceRefId ? { targetWorkspaceRefId: input.targetWorkspaceRefId } : {}),
           ...(input.signal ? { signal: input.signal } : {}),
         });
+        withdrawTarget = endpoints.withdrawTarget;
         effectiveInput = {
           ...input,
           sourceWorkspaceRefId: endpoints.source.id,
           targetWorkspaceRefId: endpoints.target.id,
         };
       }
-      if (input.action.kind !== 'none' && typeof deps.bootstrap !== 'function') {
-        throw Object.assign(new Error('Workspace sync bootstrap authority is unavailable'), { code: 'workspace_sync_unavailable' });
-      }
       const sameWorkspace = (input.action.kind === 'linked_workspace' || input.action.kind === 'copy_once')
         && sameExecutionWorkspace(input);
       let fence: PreparedOperation['fence'];
       if (input.action.kind !== 'none' && !sameWorkspace) {
         input.onEffectsIssued?.();
-        fence = await deps.bootstrap(effectiveInput, admittedInput, authority, context, execution?.targetPreflight);
+        try {
+          fence = await deps.bootstrap(effectiveInput, admittedInput, authority, context, execution?.targetPreflight);
+        } catch (error) {
+          const refusal = copyPreparationRefusal(input, error);
+          if (withdrawTarget && refusal) await withdrawTarget(refusal);
+          throw refusal ?? error;
+        }
       }
       try {
         if (input.action.kind === 'copy_once' && fence?.targetWorkspace) {

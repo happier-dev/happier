@@ -377,6 +377,31 @@ describe('WorkspaceSyncRelationshipOwner', () => {
     });
   });
 
+  it.each(['endpoint reconciliation', 'replacement selection', 'requester preflight', 'intent publication'] as const)(
+    'withdraws an invocation-created target after refusal during %s', async phase => {
+      const code = phase === 'replacement selection' ? 'relationship_not_ready' : 'workspace_root_in_use';
+      const refusal = Object.assign(new Error('Target could not be prepared'), { code,
+        failureCause: { phase: 'workspace_sync.target.preflight.qualification', errorClass: 'Error', errorCode: code, httpStatus: null } });
+      const harness = createHarness(phase === 'requester preflight' ? {
+        prepareRequesterTarget: async () => { throw refusal; },
+      } : {});
+      if (phase === 'endpoint reconciliation') harness.waitForProjectReconciliation.mockRejectedValueOnce(refusal);
+      if (phase === 'intent publication') harness.waitForProjectReconciliation.mockImplementationOnce(async () => {
+        vi.mocked(harness.mutateProjectSnapshot).mockRejectedValueOnce(refusal);
+      });
+      const input = { ...createInput,
+        ...(phase === 'replacement selection' ? { replaceRelationshipId: 'unavailable' } : {}),
+        ...(phase === 'requester preflight' ? { requesterContext: { signal: new AbortController().signal } } : {}) };
+      const failure = await harness.owner.prepareCreate(input).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(WorkspaceSyncPreparationRefusal);
+      expect(failure).toMatchObject({ code });
+      expect(parseProjectAccountSnapshotV1(harness.read())).toMatchObject({
+        relationships: [], workspaceRefs: [expect.objectContaining({ id: 'source_ref' })],
+      });
+      if (phase === 'requester preflight') expect(failure).toMatchObject({ failureCause: refusal.failureCause });
+    },
+  );
+
   it('persists and reconciles disabled intent before target preparation, then enables only after READY commit', async () => {
     const harness = createHarness();
     let relationshipAtEnsure: unknown;

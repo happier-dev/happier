@@ -1369,15 +1369,15 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
         expect(getActiveProjectAccountRowsSnapshot()?.relationships).toEqual([expect.objectContaining({
           relationshipId: original.relationshipId, enabled: false,
         })]);
-        // A direct creation attempt still refuses independently at admission;
-        // its already-committed retirement is not silently rolled back.
+        // Direct replacement still refuses at admission and preserves the paused link.
         await expect(create(replacement)).rejects.toMatchObject({ rpcErrorCode: 'workspace_root_in_use' });
         // A refusal must not steal or release another operation's physical claim.
         expect(await fixture.probeTarget()).toMatchObject({ kind: 'overlap', existing: { ownerId: holder.owner.ownerId } });
         expect(getActiveProjectAccountRowsSnapshot()?.relationships.some(value =>
           value.relationshipId === deriveWorkspaceSyncRelationshipId(replacement.operationId) && value.enabled)).toBe(false);
-        expect(getActiveProjectAccountRowsSnapshot()?.relationships.some(value =>
-          value.relationshipId === original.relationshipId)).toBe(false);
+        expect(getActiveProjectAccountRowsSnapshot()?.relationships).toContainEqual(expect.objectContaining({
+          relationshipId: original.relationshipId, enabled: false,
+        }));
       } finally { await holder.release(); }
     } else {
       await expect(preflight({ ...preflightInput, replaceRelationshipId: 'another-link' }))
@@ -1565,17 +1565,18 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       if (intent === 'remote-refusal') {
         await runWithServerHttpBaseUrl('https://bind-child-home.invalid', async () =>
           await readProjectAccountRows({ credentials: fixture.credentials, serverId: fixture.serverId, publication: 'installed' }));
-        const target = getActiveProjectAccountRowsSnapshot()?.workspaceRefs.find(ref =>
+        const targetWasRetained = () => getActiveProjectAccountRowsSnapshot()!.workspaceRefs.some(ref =>
           ref.machineId === fixture.targetRef.machineId && ref.rootPath === fixture.targetRef.rootPath);
-        if (!target) throw new Error('Create did not materialize its target reference');
+        expect(targetWasRetained()).toBe(false);
         // The handoff caller releases retained execution only for a settled preparation refusal.
         await expect(fixture.parent.handoffAdapter.prepare({
           operationId: `${request.operationId}-preparation`, accountServerId: fixture.serverId,
           sourceMachineId: fixture.sourceRef.machineId, sourceRootPath: fixture.sourceRef.rootPath,
           targetMachineId: fixture.targetRef.machineId, targetRootPath: fixture.targetRef.rootPath,
-          sourceWorkspaceRefId: fixture.sourceRef.id, targetWorkspaceRefId: target.id,
+          sourceWorkspaceRefId: fixture.sourceRef.id,
           action: { kind: 'create_relationship', mode: 'keep_both_in_sync', contentPolicy, flushBeforeCommit: true },
         })).rejects.toMatchObject({ name: 'WorkspaceSyncPreparationRefusal', code: 'peer_unavailable' });
+        expect(targetWasRetained()).toBe(false);
       }
       if (carrierTrace) {
         expect(carrierTrace.mock.calls.filter(([message]) => message === '[workspace-sync-carrier-stage]'))

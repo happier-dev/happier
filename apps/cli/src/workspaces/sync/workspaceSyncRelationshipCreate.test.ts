@@ -59,6 +59,8 @@ function createHarness(options: Readonly<{
   targetCopy?: 'present' | 'absent' | 'unavailable';
   managedSource?: boolean;
 }> = {}) {
+  let failReadAfterNextWrite = false;
+  let failRead = false;
   let snapshot = parseProjectAccountSnapshotV1({
     workspaceRefs: [
       options.managedSource
@@ -71,6 +73,11 @@ function createHarness(options: Readonly<{
   });
   const mutateProjectSnapshot: ProjectAccountSnapshotMutation = vi.fn(async mutate => {
     snapshot = await mutate(snapshot);
+    if (failReadAfterNextWrite) {
+      failReadAfterNextWrite = false;
+      failRead = true;
+      return { status: 'outcomeUnknown', lastKnownVersion: 1 };
+    }
     return { status: 'applied', version: 1, snapshot } satisfies ProjectAccountSnapshotMutationResult;
   });
   const ensurePreparations: (EnsurePreparation | undefined)[] = [];
@@ -90,7 +97,13 @@ function createHarness(options: Readonly<{
   const owner = createWorkspaceSyncRelationshipOwner({
     localMachineId: 'machine_source',
     mutateProjectSnapshot,
-    readProjectSnapshot: async () => snapshot,
+    readProjectSnapshot: async () => {
+      if (failRead) {
+        failRead = false;
+        throw new Error('Home read unavailable');
+      }
+      return snapshot;
+    },
     ensureRelationship,
     flushRelationship,
     terminateRelationshipRuntime,
@@ -116,6 +129,7 @@ function createHarness(options: Readonly<{
       },
       relationshipOwner: owner,
     },
+    loseNextWriteAcknowledgement: () => { failReadAfterNextWrite = true; },
     ensurePreparations,
     ensureRelationship,
     terminateRelationshipRuntime,
@@ -200,6 +214,16 @@ describe('createWorkspaceSyncRelationshipForProject', () => {
     expect(h.readRelationships()).toEqual([previous]);
     expect(h.terminateRelationshipRuntime).not.toHaveBeenCalled();
   });
+  it('keeps a committed copy when Home loses the write acknowledgement and readback is unavailable', async () => {
+    const h = createHarness({ freshTarget: true, targetCopy: 'present' });
+    h.commitRelationshipTarget.mockImplementationOnce(async () => { h.loseNextWriteAcknowledgement(); });
+    const raw = request({ mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace' });
+    const worker = { ...raw, actionInput: { ...raw.actionInput, purpose: 'worker_clean_copy' as const } };
+    await expect(createWorkspaceSyncRelationshipForProject(h.dependencies, worker)).rejects.toMatchObject({ code: 'indeterminate' });
+    expect(h.readRelationships()).toEqual([expect.objectContaining({ enabled: true, committedAtMs: expect.any(Number) })]);
+    await expect(h.owner.observeCreation({ ...worker, serverId: 'server_a' })).resolves.toMatchObject({ outcome: 'succeeded' });
+  });
+
   it('observes an interrupted admission without preparing another copy and distinguishes committed, absent and offline targets', async () => {
     const raw = request({ mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace' });
     const worker = { ...raw, actionInput: { ...raw.actionInput, purpose: 'worker_clean_copy' as const } };
