@@ -746,16 +746,7 @@ export function createDaemonMachineBootstrapRuntime(
         machineId: runtimeMachineId,
         requesterHomeServerIdentityId: await params.resolveCurrentServerIdentityId?.() ?? undefined,
         ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
-        ...(coordinateWorkflowRun
-          ? {
-              coordinateWorkflowRun: async (...args: Parameters<typeof coordinateWorkflowRun>) => {
-                if (params.isWorkflowFeatureEnabled?.() !== true) {
-                  throw new Error('Workflow Run coordinator is unavailable');
-                }
-                return await coordinateWorkflowRun(...args);
-              },
-            }
-          : {}),
+        ...(coordinateWorkflowRun ? { coordinateWorkflowRun } : {}),
         recoverWorkflowRuns: async (runId, requester, signal) => {
           if (!requester) { await workflowRecovery?.('control', signal, runId); return; }
           if (!automationApiMachine || !params.createWorkflowRecoveryForMachine || !runId) return;

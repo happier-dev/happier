@@ -617,7 +617,6 @@ async function resolveClaimReceiptTx(params: Readonly<{
     claimRequestNonceDigest: string;
     now: Date;
     expectedTriggerKind?: AutomationTriggerKind;
-    recipeFeaturePolicy: AutomationRecipeFeaturePolicy;
 }>): Promise<AutomationClaimResult | undefined> {
     const receipt = await params.tx.automationWorkerClaimReceipt.findUnique({
         where: { id: params.claimRequestNonceDigest },
@@ -648,7 +647,6 @@ async function resolveClaimReceiptTx(params: Readonly<{
     const automation = committedResult.result.automation;
     if (
         !run
-        || (!params.recipeFeaturePolicy.workflowsEnabled && run.recipeKind === "workflow-v2")
         || (run.automationId !== null && !automation)
         || (run.automationId === null && automation !== null)
         || (params.expectedTriggerKind !== undefined && (
@@ -859,7 +857,6 @@ export async function claimAutomationRun(params: {
                 claimRequestNonceDigest,
                 now,
                 expectedTriggerKind: params.expectedTriggerKind,
-                recipeFeaturePolicy,
             });
             if (replayed !== undefined) return replayed;
         }
@@ -1136,7 +1133,6 @@ export async function claimAutomationRun(params: {
                 claimRequestNonceDigest,
                 now: new Date(),
                 expectedTriggerKind: params.expectedTriggerKind,
-                recipeFeaturePolicy,
             });
             // A conflicting request never retries the non-idempotent effect.
             // The winner should be visible after the unique-key conflict; if a

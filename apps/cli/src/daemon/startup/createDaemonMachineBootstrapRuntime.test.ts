@@ -1684,7 +1684,19 @@ describe('createDaemonMachineBootstrapRuntime', () => {
     expect(homeAdmission.cleanupOnFailure).toHaveBeenCalledOnce();
   });
 
-  it('uses the live server feature decision for the existing Workflow coordinator without restarting Automation', async () => {
+  it('coordinates an admitted Workflow after the server disables new Workflow claims', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'workflow-admitted-feature-'));
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+    envScope.patch({ HAPPIER_HOME_DIR: home });
+    reloadConfiguration();
+    onTestFinished(async () => {
+      homeAdmission.admitted = null;
+      envScope.restore();
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
+    });
+    await readOrCreateInstallationIdentity();
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account_1' })).toString('base64url')}.fixture`;
     const enabledFeatures = {
       status: 'ready' as const,
       provenance: 'authenticated' as const,
@@ -1706,15 +1718,14 @@ describe('createDaemonMachineBootstrapRuntime', () => {
         },
       },
     };
-    const fetchSnapshot = vi.fn()
-      .mockRejectedValueOnce(new Error('Home unavailable'))
-      .mockResolvedValueOnce(enabledFeatures)
-      .mockResolvedValueOnce(disabledFeatures);
+    const fetchSnapshot = vi.fn().mockResolvedValueOnce(enabledFeatures).mockResolvedValueOnce(disabledFeatures);
     const featureStore = createServerFeaturesSnapshotStore({ fetchSnapshot });
+    await featureStore.refresh();
     const coordinatedOutcome: WorkflowCoordinatorResult = { state: 'succeeded' };
     const coordinateWorkflowRun = vi.fn(async () => coordinatedOutcome);
     const recoverWorkflowRuns = vi.fn(async () => {});
     const runtime = createDaemonMachineBootstrapRuntime(createBaseRuntimeParams({
+      credentials: { token, encryption: null },
       api: {
         machineSyncClient: vi.fn(() => ({
           enqueueSessionPendingByMachine: vi.fn(),
@@ -1736,25 +1747,15 @@ describe('createDaemonMachineBootstrapRuntime', () => {
       | undefined;
     const coordinate = workerParams?.coordinateWorkflowRun;
     expect(coordinate).toBeDefined();
-    const { requester } = admitWorkflowRequester();
-    const claim = () => coordinate?.({ runId: 'run_1' } as never, requester as never);
-    try {
-      await expect(claim()).rejects.toThrow('Workflow Run coordinator is unavailable');
-      await runtime.recoverWorkflowRuns?.('startup');
-      expect(recoverWorkflowRuns).not.toHaveBeenCalled();
-      await featureStore.refresh();
-      await expect(claim()).rejects.toThrow('Workflow Run coordinator is unavailable');
-      await featureStore.refresh();
-      await expect(claim()).resolves.toEqual(coordinatedOutcome);
-      await runtime.recoverWorkflowRuns?.('reconnect');
-      expect(coordinateWorkflowRun).toHaveBeenCalledOnce();
-      expect(recoverWorkflowRuns).toHaveBeenCalledOnce();
-      await featureStore.refresh();
-      await expect(claim()).rejects.toThrow('Workflow Run coordinator is unavailable');
-      await runtime.recoverWorkflowRuns?.('reconnect');
-      expect(coordinateWorkflowRun).toHaveBeenCalledOnce();
-      expect(recoverWorkflowRuns).toHaveBeenCalledOnce();
-    } finally { homeAdmission.admitted = null; }
+    admitWorkflowRequester();
+    await runtime.recoverWorkflowRuns?.('reconnect');
+    expect(recoverWorkflowRuns).toHaveBeenCalledOnce();
+    await featureStore.refresh();
+    expect(isWorkflowRuntimeEnabled({}, featureStore.getSnapshot())).toBe(false);
+    await expect(coordinate?.({ runId: 'run_1' } as never)).resolves.toEqual(coordinatedOutcome);
+    await runtime.recoverWorkflowRuns?.('reconnect');
+    expect(coordinateWorkflowRun).toHaveBeenCalledOnce();
+    expect(recoverWorkflowRuns).toHaveBeenCalledOnce();
   });
 
   it('wires the production peer-mediation live-stream capture adapter into machine bootstrap config', () => {

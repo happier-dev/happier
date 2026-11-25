@@ -549,8 +549,8 @@ describe("automationClaimService (integration)", () => {
             workflowCustodyState: "pending", assignments: frozenRunAssignments([machineId]),
         } });
         const claimRequest = { machineInstallationId, nonce: "workflow-reclaim-nonce", expiresAt: new Date(Date.now() + 300_000) };
-        const claim = () => claimAutomationRun({ accountId, machineId, leaseDurationMs: 30_000,
-            recipeFeaturePolicy: { workflowsEnabled: true }, claimRequest });
+        const claim = (workflowsEnabled = true) => claimAutomationRun({ accountId, machineId, leaseDurationMs: 30_000,
+            recipeFeaturePolicy: { workflowsEnabled }, claimRequest });
         expect(toAutomationV3WorkerClaimResponse(await claim())).toMatchObject({ run: {
             id: run.id, workflowAcceptedSnapshotEnvelope: acceptedEnvelope,
         } });
@@ -559,12 +559,16 @@ describe("automationClaimService (integration)", () => {
         // Receipt replay reads the canonical sidecar, not a private receipt copy.
         const currentEnvelope = JSON.stringify({ t: "encrypted", c: "current-admitted-snapshot" });
         await db.automationRun.update({ where: { id: run.id }, data: { workflowAcceptedSnapshotEnvelope: currentEnvelope } });
-        expect(toAutomationV3WorkerClaimResponse(await claim())).toMatchObject({ run: {
+        expect(toAutomationV3WorkerClaimResponse(await claim(false))).toMatchObject({ run: {
             id: run.id, attempt: 1, workflowAcceptedSnapshotEnvelope: currentEnvelope,
         } });
         await db.automationRun.update({ where: { id: run.id }, data: {
             state: "queued", claimedAt: null, claimedByMachineId: null, leaseExpiresAt: null,
         } });
+        expect(toAutomationV3WorkerClaimResponse(await claimAutomationRun({ accountId, machineId,
+            leaseDurationMs: 30_000, recipeFeaturePolicy: { workflowsEnabled: false },
+            claimRequest: { ...claimRequest, nonce: "workflow-disabled-new-claim" },
+        }))).toMatchObject({ run: null, accountCurrentness: null });
         expect(toAutomationV3WorkerClaimResponse(await claimAutomationRun({ accountId, machineId,
             leaseDurationMs: 30_000, recipeFeaturePolicy: { workflowsEnabled: true },
             claimRequest: { ...claimRequest, nonce: "workflow-reclaim-nonce-2" },
