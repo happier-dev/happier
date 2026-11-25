@@ -29,6 +29,8 @@ export type RunClawpatchReviewInput = Readonly<{
   /** Secret-free scalar projection of the native Codex owner's admitted config. */
   codexConfig?: Readonly<Record<string, string | number | boolean | null>>;
   signal: AbortSignal;
+  /** Report cleanup separately so it cannot replace the review result. */
+  onCleanupFailure?: () => void;
 }>;
 
 function checkCancellation(signal: AbortSignal): void {
@@ -91,7 +93,8 @@ export async function runClawpatchReview(input: RunClawpatchReviewInput): Promis
         consume(decoder.decode() + '\n');
       } finally {
         subscription.dispose();
-        await child.dispose();
+        try { await child.dispose(); }
+        catch { input.onCleanupFailure?.(); }
       }
     } else result = await input.exec.run(request, options);
     checkCancellation(input.signal);
@@ -136,7 +139,10 @@ export async function runClawpatchReview(input: RunClawpatchReviewInput): Promis
       await readFile(join(directory, 'findings', `${safeRecordId(id)}.json`), 'utf8')), id, runId, index)));
     return { status: !succeeded(result) || run.status !== 'completed' ? 'failed' : run.errors.length ? 'partial' : 'completed',
       nativeRunId: runId, findings: mapped.map(item => item.finding), findingEvidence: mapped.map(item => item.evidence), errors: run.errors };
-  } finally { selection.cleanup(); }
+  } finally {
+    try { selection.cleanup(); }
+    catch { input.onCleanupFailure?.(); }
+  }
 }
 
 function safeRecordId(id: string): string {

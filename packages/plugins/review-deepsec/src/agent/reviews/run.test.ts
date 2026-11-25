@@ -41,6 +41,28 @@ function createTempFiles(overrides?: Partial<DeepSecTempFiles>): DeepSecTempFile
 }
 
 describe('runDeepSecReview', () => {
+  it('preserves findings and reports temporary-file cleanup failure beside the result', async () => {
+    const onCleanupFailure = vi.fn();
+    const result = await runDeepSecReview({
+      cwd: '/repo', mode: 'staged', confirmedCostWarning: true,
+      exec: { systemTools: { resolve: async () => resolvedTool }, run: async () => processResult(1) },
+      tempFiles: createTempFiles({ readText: async () => '### src/auth.ts\n\nCheck auth.', cleanup: async () => { throw new Error('OS cleanup failed'); } }),
+      onCleanupFailure,
+    });
+    expect(result).toMatchObject({ status: 'completed', commentOutMarkdown: '### src/auth.ts\n\nCheck auth.' });
+    expect(onCleanupFailure).toHaveBeenCalledOnce();
+  });
+  it('preserves the original process failure when temporary-file cleanup also fails', async () => {
+    const failure = new Error('OS process failure');
+    const onCleanupFailure = vi.fn();
+    await expect(runDeepSecReview({
+      cwd: '/repo', mode: 'staged', confirmedCostWarning: true,
+      exec: { systemTools: { resolve: async () => resolvedTool }, run: async () => { throw failure; } },
+      tempFiles: createTempFiles({ cleanup: async () => { throw new Error('OS cleanup failed'); } }),
+      onCleanupFailure,
+    })).rejects.toBe(failure);
+    expect(onCleanupFailure).toHaveBeenCalledOnce();
+  });
   it.each(['current_diff', 'staged', 'working_tree', 'selected_files'] as const)(
     'preserves direct-mode findings on exit 1 (%s)', async mode => {
       const result = await runDeepSecReview({

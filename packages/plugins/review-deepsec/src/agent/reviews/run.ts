@@ -103,6 +103,8 @@ export type RunDeepSecReviewParams = Readonly<{
     agentCli?: 'claude' | 'codex' | 'both' | null;
   }>;
   signal?: AbortSignal;
+  /** Report cleanup separately so it cannot replace the review result. */
+  onCleanupFailure?: () => void;
 }>;
 
 /** Containment and path identity are already admitted by the host filesystem.
@@ -309,6 +311,7 @@ export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<
       commentOutMarkdown,
     };
   } finally {
-    await params.tempFiles.cleanup();
+    try { await params.tempFiles.cleanup(); }
+    catch { params.onCleanupFailure?.(); }
   }
 }

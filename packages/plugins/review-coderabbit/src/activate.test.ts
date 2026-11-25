@@ -40,7 +40,7 @@ function request(options: Record<string, unknown> = {}, scope: Record<string, un
   };
 }
 
-async function runFixture(params: { launchEnvironment?: AgentExecutionRunOpenRequest['launchEnvironment']; records: readonly unknown[]; engineId?: string; exitCode?: number; options?: Record<string, unknown>; scope?: Record<string, unknown>; cancel?: boolean; cancelPreflight?: 'reject' | 'result'; raw?: string; changeType?: 'committed' | 'uncommitted'; checkout?: PluginActionResultById['scm.status.snapshot'] }) {
+async function runFixture(params: { cleanupFailure?: boolean; launchEnvironment?: AgentExecutionRunOpenRequest['launchEnvironment']; records: readonly unknown[]; engineId?: string; exitCode?: number; options?: Record<string, unknown>; scope?: Record<string, unknown>; cancel?: boolean; cancelPreflight?: 'reject' | 'result'; raw?: string; changeType?: 'committed' | 'uncommitted'; checkout?: PluginActionResultById['scm.status.snapshot'] }) {
   const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
   const factory = activation.registration('agents', 'coderabbit')?.factory;
   if (!factory) throw new Error('Expected CodeRabbit factory');
@@ -53,7 +53,7 @@ async function runFixture(params: { launchEnvironment?: AgentExecutionRunOpenReq
   const preflightEntered = new Promise<void>(resolve => { enterPreflight = resolve; });
   const spawn: PluginServices['exec']['spawn'] = vi.fn(async (_request, options) => {
     processSignal = options?.signal;
-    return { write: async () => {}, closeStdin: async () => {}, dispose: async () => {},
+    return { write: async () => {}, closeStdin: async () => {}, dispose: async () => { if (params.cleanupFailure) throw new Error('OS cleanup failed'); },
       waitForExit: async () => ({ observed: { kind: 'exit', exitCode: params.exitCode ?? 0 }, requestedBy: { kind: 'none' } }),
       onOutput(callback) { listener = callback; return { dispose() { listener = undefined; } }; },
       async wait() {
@@ -99,13 +99,19 @@ async function runFixture(params: { launchEnvironment?: AgentExecutionRunOpenReq
   if (params.cancelPreflight) { await preflightEntered; await opened.stop(); }
   if (params.cancel) await opened.stop();
   await vi.waitFor(() => expect(['run-complete', 'run-failed', 'run-cancelled']).toContain(events.at(-1)?.kind));
-  const output = events.filter(event => event.kind === 'output-delta').map(event => event.text).join('');
+  const output = events.filter(event => event.kind === 'output-delta' && event.channel === 'assistant').map(event => event.text).join('');
   await opened.dispose();
   await activation.dispose();
   return { events, output: output ? JSON.parse(output) : null, spawn, processSignal };
 }
 
 describe('CodeRabbit native review contract (CLI 0.9.5 documented agent events)', () => {
+  it('preserves native findings when process cleanup fails', async () => {
+    const result = await runFixture({ cleanupFailure: true, records: [finding, { ...complete, findings: 1 }] });
+    expect(result.events.at(-1)?.kind).toBe('run-complete');
+    expect(result.output).toMatchObject({ findings: [expect.objectContaining({ title: 'Validate redirect' })] });
+    expect(result.events).toContainEqual(expect.objectContaining({ kind: 'output-delta', channel: 'reasoning', text: expect.stringContaining('cleanup') }));
+  });
   it('launches review in the selected host-materialized account home without credentials on argv', async () => {
     const selectedHome = '/fixture/selected-account-home';
     const result = await runFixture({ records: [complete], launchEnvironment: {

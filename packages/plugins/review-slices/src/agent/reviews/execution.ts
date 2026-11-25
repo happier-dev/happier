@@ -60,6 +60,8 @@ export function createClawpatchExecutionRunFactory(): AgentExecutionRunRuntimeFa
             ...options, provider, model: request.modelSelection?.modelId ?? options.model,
             codexConfig,
             instructions: review.instructions, signal,
+            onCleanupFailure: () => emit({ kind: 'output-delta', channel: 'reasoning',
+              text: 'clawpatch cleanup failed. The original review result is preserved.\n' }),
             environment: { ...request.launchEnvironment?.values,
               ...Object.fromEntries((request.launchEnvironment?.unset ?? []).map(key => [key, ''])),
               // Native clawpatch enforces Claude >=2.1.169 for --safe-mode.

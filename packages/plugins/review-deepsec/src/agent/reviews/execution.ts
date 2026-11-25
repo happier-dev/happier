@@ -422,6 +422,8 @@ function createRuntime(
           agentCli,
         },
         signal,
+        onCleanupFailure: () => emit({ kind: 'output-delta', channel: 'reasoning',
+          text: 'DeepSec temporary-file cleanup failed. The original review result is preserved.\n' }),
       });
       if (signal.aborted) {
         return { status: 'cancelled' };

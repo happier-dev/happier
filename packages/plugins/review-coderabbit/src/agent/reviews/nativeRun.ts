@@ -83,7 +83,9 @@ function createRuntime(
         };
       } finally {
         subscription.dispose();
-        await child.dispose();
+        try { await child.dispose(); }
+        catch { emit({ kind: 'output-delta', channel: 'reasoning',
+          text: 'CodeRabbit process cleanup failed. The original review result is preserved.\n' }); }
       }
     },
   });

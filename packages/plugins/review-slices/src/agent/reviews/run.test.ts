@@ -28,7 +28,7 @@ function finding(id: string, featureId: string) {
     createdAt: '2026-11-17T00:00:00Z', updatedAt: '2026-11-17T00:00:00Z' };
 }
 
-async function fixture(mode: 'success' | 'counts-only' | 'failed' | 'cancelled' = 'success', reviewCompletion?: Promise<void>) {
+async function fixture(mode: 'success' | 'counts-only' | 'failed' | 'cancelled' = 'success', reviewCompletion?: Promise<void>, cleanupFailure = false) {
   const directory = await mkdtemp(join(tmpdir(), 'happier-clawpatch-')); directories.push(directory);
   const controller = new AbortController();
   const state = join(directory, 'repository-a');
@@ -74,7 +74,7 @@ async function fixture(mode: 'success' | 'counts-only' | 'failed' | 'cancelled' 
       : completed({ run: 'native-run', reviewed: 2, findings: 2 });
   }, async spawn(request, options) {
     let listener: ((chunk: PluginProcessOutput) => void) | undefined;
-    return { write: async () => {}, closeStdin: async () => {}, dispose: async () => {},
+    return { write: async () => {}, closeStdin: async () => {}, dispose: async () => { if (cleanupFailure) throw new Error('OS cleanup failed'); },
       waitForExit: async () => completed({}).termination,
       onOutput(callback) { listener = callback; return { dispose() { listener = undefined; } }; },
       async wait() {
@@ -97,6 +97,14 @@ async function fixture(mode: 'success' | 'counts-only' | 'failed' | 'cancelled' 
 }
 
 describe('native clawpatch review', () => {
+  it('preserves native findings and reports process cleanup failure', async () => {
+    const f = await fixture('success', undefined, true);
+    const onCleanupFailure = vi.fn();
+    const result = await runClawpatchReview({ exec: f.exec, fs: { getPluginDataDirectory: async () => f.state },
+      cwd: f.directory, stateRelativePath: 'repository-a', signal: f.controller.signal, onCleanupFailure });
+    expect(result).toMatchObject({ status: 'completed', findings: [expect.objectContaining({ id: expect.any(String) }), expect.objectContaining({ id: expect.any(String) })] });
+    expect(onCleanupFailure).toHaveBeenCalledOnce();
+  });
   it('refuses missing selected-account materialization despite an ambient Machine home', async () => {
     const f = await fixture();
     const runtime = await createClawpatchExecutionRunFactory().open({ kind: 'create', runId: 'missing-material', cwd: f.directory,
