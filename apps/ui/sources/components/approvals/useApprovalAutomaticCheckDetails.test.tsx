@@ -113,3 +113,28 @@ describe('approval check detail demand', () => {
     expect(home.requests.length).toBe(readsAfterOpen);
   });
 });
+
+// R11 M3: a check Run still queued is held, not progressing; only a running Run shows motion.
+describe('checking block status truth', () => {
+  it('shows a held glyph instead of a spinner while the check Run is queued', async () => {
+    const { renderScreen } = await import('@/dev/testkit');
+    const { ApprovalAutomaticChecksV1Schema } = await import('@happier-dev/protocol/approvals/approvalAutomaticChecks');
+    const { AutomationTriggerIdSchema } = await import('@happier-dev/protocol/automations/automationTriggerIdentity');
+    const { ApprovalAutomaticChecks } = await import('./ApprovalAutomaticChecks');
+    const scope = { serverId, accountId };
+    const queued = createWorkflowRunSummaryFixture({ id: runId, ownerAccountId: accountId, state: 'queued' });
+    storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(queued)], scope);
+    const ref = { automationId: 'automation-check', triggerId: AutomationTriggerIdSchema.parse('trigger-check') };
+    const checks = ApprovalAutomaticChecksV1Schema.parse({ phase: 'checking', humanApprovalRequired: false, subjects: [],
+      selectionStatus: 'ready', notices: [], consents: [], results: [], runs: [{ ...ref, runId }],
+      selected: [{ ...ref, phase: 'before', actionIds: ['machines.command.run'], mode: 'wait', onFailure: 'ask',
+        triggerRevision: 1, workflowId, workflowRevision: 1, ownerAccountId: accountId }] });
+    const screen = await renderScreen(<ApprovalAutomaticChecks checks={checks} actionTitle="Deploy" serverId={serverId}
+      testID="checks" />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('checks:queued-glyph')).not.toBeNull());
+    const running = { ...queued, state: 'running' as const, revision: queued.revision + 1 };
+    await act(async () => storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(running)], scope));
+    expect(screen.findByTestId('checks:queued-glyph')).toBeNull();
+    await screen.unmount();
+  });
+});

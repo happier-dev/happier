@@ -153,7 +153,8 @@ export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = lazy
     approvalPresentation: {
       referenceForField: workflowApprovalReferenceForField(actionId),
       // A start preallocates its new Run's id: nothing exists to name yet, so it waits in Technical details.
-      ...(actionId === 'workflow.run.start' ? { technicalInputPaths: ['runId'] } : {}),
+      // Its saved revision only pins what was reviewed; the Workflow's name is the reading.
+      ...(actionId === 'workflow.run.start' ? { technicalInputPaths: ['runId', 'source.revision'] } : {}),
       ...(actionId === 'workflow.definition.delete' || actionId === 'workflow.trigger.remove' ? {
         summary: (input: unknown) => actionId === 'workflow.trigger.remove'
           && !removesWholeTriggerSet(input) ? null : WORKFLOW_AUTOMATION_REMOVAL_WARNING,

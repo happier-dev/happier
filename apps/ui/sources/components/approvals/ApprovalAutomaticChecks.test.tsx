@@ -354,6 +354,36 @@ describe('Action before checks on the approval card', () => {
     await screen.unmount();
   });
 
+  // R11 M1: a check that failed without a deliverable records only its code; the card never prints the code.
+  it.each(['workflow_failed', 'some_future_code'])('leads a refusal whose reason is the bare code %s with the human lead and its glyph', async (code) => {
+    const refused = checks({
+      phase: 'refused',
+      selected: [{ ...selected, workflowId: 'builtin:open-a-pull-request' }],
+      runs: [{ ...ref, runId: 'run-214' }],
+      results: [{ ...ref, runId: 'run-214', outcome: 'failed', reason: code }],
+    });
+    const screen = await renderScreen(
+      <ApprovalAutomaticChecks checks={refused} actionTitle="Deploy" serverId={null} onOpenRoute={() => undefined}
+        failureReason={code} testID="checks" />,
+    );
+    const text = screen.getTextContent();
+    expect(text).not.toContain(code);
+    expect(text).toContain('workflows.triggers.checks.refused');
+    expect(screen.findByTestId('checks:refused-glyph')).not.toBeNull();
+    await screen.unmount();
+  });
+
+  it('keeps the danger glyph beside a refusal led by the check\'s own reason', async () => {
+    const screen = await renderScreen(
+      <ApprovalAutomaticChecks checks={checks({ phase: 'refused', runs: [{ ...ref, runId: 'run-214' }],
+        results: [{ ...ref, runId: 'run-214', outcome: 'failed', reason: '3 release tests fail in billing.' }] })}
+        actionTitle="Deploy" serverId={null} onOpenRoute={() => undefined} testID="checks" />,
+    );
+    expect(screen.findByTestId('checks:reason')?.props.children).toBe('3 release tests fail in billing.');
+    expect(screen.findByTestId('checks:refused-glyph')).not.toBeNull();
+    await screen.unmount();
+  });
+
   it.each(['own', 'shared'] as const)('presents an unstarted %s check as a refusal with a way forward', async (ownership) => {
     const refused = readApprovalAutomaticChecksForRequest({
       status: 'failed',
@@ -385,6 +415,30 @@ describe('Action before checks on the approval card', () => {
       expect(link).toBeNull();
       expect(screen.getTextContent()).toContain('workflows.triggers.checks.startRefusedAskOwner');
     }
+    await screen.unmount();
+  });
+
+  // R11 M4: a check whose Automation was removed says so, without a dead link or an owner to ask.
+  it.each(['automationNotFound', 'triggerNotFound'])('says a removed check (%s) was removed and offers no workflow link', async (reason) => {
+    const refused = readApprovalAutomaticChecksForRequest({
+      status: 'failed',
+      automaticChecks: checks({ phase: 'refused' }),
+      execution: { ok: false, errorCode: 'target_unavailable', details: {
+        kind: 'automatic_check_start_refusal', ...ref, reason,
+      } },
+    });
+    const screen = await renderScreen(
+      <ApprovalAutomaticChecks checks={refused!} actionTitle="Open machine terminal" serverId="approval-home"
+        onOpenRoute={() => undefined} accountLifetime={{
+          scope: { serverId: 'approval-home', accountId: selected.ownerAccountId },
+          isCurrent: () => true, onRetire: () => ({ dispose: () => undefined }),
+        }} testID="checks" />,
+    );
+    const text = screen.getTextContent();
+    expect(text).toContain('workflows.triggers.checks.startRefusedRemoved');
+    expect(text).not.toContain('Open machine terminal');
+    expect(screen.findByTestId('checks:open-workflow')).toBeNull();
+    expect(text).not.toContain('workflows.triggers.checks.startRefusedAskOwner');
     await screen.unmount();
   });
 

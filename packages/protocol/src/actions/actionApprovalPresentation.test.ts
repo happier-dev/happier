@@ -356,6 +356,29 @@ describe('approval field presentation', () => {
     ]);
   });
 
+  // R11 M2: an object never reads as a raw JSON value row; its exact literal stays disclosed under Technical details.
+  it('keeps structured plugin operands under Technical details and scalar operands in the main facts', () => {
+    const input = { kind: 'attach', target: { automationId: 'automation-1', triggerKind: 'prComment' },
+      pullRequest: { repository: 'acme/app', number: 4 } };
+    const presentation = describeApprovalRequestFields({ kind: 'plugin_target_action', input, secretInputPaths: [] });
+    expect(presentation.unrepresentable).toBeNull();
+    const main = presentation.rows.filter(row => row.kind === 'value' && !row.technical).map(row => row.path);
+    expect(main).toEqual(['input.kind']);
+    for (const key of ['target', 'pullRequest'] as const) {
+      expect(presentation.rows).toContainEqual(expect.objectContaining({
+        path: `input.${key}`, value: JSON.stringify(input[key]), technical: true }));
+    }
+  });
+
+  it('reads a saved workflow start by its source label and keeps its revision under Technical details', () => {
+    const presentation = describeApprovalActionFields({ actionId: 'workflow.run.start', actionArgs: {
+      runId: '344a1e73-9fd5-46a9-8287-daee97bad1d2',
+      source: { kind: 'saved', definitionId: '48e42cbe-77a6-4a55-9c50-148fa3a0ed22', revision: { headerVersion: 1, bodyVersion: 1 } },
+    } });
+    expect(presentation.rows).toContainEqual(expect.objectContaining({ path: 'source.kind', value: 'Saved workflow' }));
+    expect(presentation.rows).toContainEqual(expect.objectContaining({ path: 'source.revision', technical: true }));
+  });
+
   it('discloses Saved Secret identity and every effect operand regardless of diagnostic key spelling', () => {
     const input = { savedSecret: SharedSavedSecretRefV1Schema.parse({ kind: 'shared_resource', resourceId: 'saved-key-1' }),
       credentials: { repository: '/work/effect' }, token: 'source-routing-token' };

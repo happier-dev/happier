@@ -796,7 +796,7 @@ const en = {
         sessions_external_operation_retry: "Retry external session operation",
         sessions_external_operation_discard: "Discard external session operation",
         workflow_validate: "Validate workflow",
-        workflow_run_start: "Start workflow Run",
+        workflow_run_start: "Start workflow run",
         workflow_run_list: "List workflow Runs",
         workflow_run_summaries: "Summarize workflow Runs",
         workflow_run_get: "Get workflow Run",

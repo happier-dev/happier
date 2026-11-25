@@ -59,6 +59,22 @@ export function readApprovalAutomaticChecksForRequest(
   return checks;
 }
 
+/**
+ * A check's recorded reason is either the Workflow's own deliverable text or the typed code its wait settled with
+ * (`workflow_failed` when it ended with neither). Codes read through the one failure-copy owner; a code it has no sentence
+ * for says nothing here, so the block's human lead speaks instead of the code.
+ */
+function presentAutomaticCheckReason(reason: string | null | undefined): string | null {
+  const text = reason?.trim();
+  if (!text) return null;
+  if (!/^[a-z][a-z0-9_]*(?::[a-z0-9_]+)*$/.test(text)) return text;
+  const presented = presentActionFailureOutcome({ error: text, errorCode: text }, 'workflowCheck').reason;
+  return presented && presented !== text ? presented : null;
+}
+
+/** Run admission's ineligible reasons for a check whose Automation or trigger no longer exists. */
+const CHECK_REMOVED_START_REASONS: ReadonlySet<string> = new Set(['automationNotFound', 'triggerNotFound']);
+
 function readFailedApprovalAutomaticCheck(checks: ApprovalAutomaticChecksV1) {
   return checks.results.find(result => result.outcome === 'failed' || result.outcome === 'unavailable');
 }
@@ -242,9 +258,7 @@ export const ApprovalAutomaticChecks = React.memo(
       useApprovalAccountLabel(props.serverId, checkOwner, 'sentence') ??
       resolveUnknownAccountActorName('sentence');
     const failed = readFailedApprovalAutomaticCheck(checks);
-    const failureReason = failed?.reason
-      ? presentActionFailureOutcome({ error: failed.reason, errorCode: failed.reason }, 'workflowCheck').reason ?? props.failureReason
-      : props.failureReason;
+    const failureReason = presentAutomaticCheckReason(failed?.reason) ?? presentAutomaticCheckReason(props.failureReason);
     const skippedConsents = checks.consents.filter(
       (consent) => consent.decision === 'skip',
     );
@@ -341,7 +355,11 @@ export const ApprovalAutomaticChecks = React.memo(
           testID={props.testID ? `${props.testID}:checking` : undefined}
         >
           <View style={styles.lead}>
-            <ActivitySpinner size="small" color={theme.colors.text.secondary} />
+            {/* A check Run that has not started yet is held, not progressing: only a running Run shows motion. */}
+            {checkingRunSummary?.state === 'queued' ? (
+              <Icon name="clock" size={ICON_SIZE.sm} color={theme.colors.text.secondary}
+                testID={props.testID ? `${props.testID}:queued-glyph` : undefined} />
+            ) : <ActivitySpinner size="small" color={theme.colors.text.secondary} />}
             <Text variant="body" emphasis="semiBold" style={[styles.primary, styles.leadText]}>
               {t('workflows.triggers.checks.checkingBefore', {
                 action: props.actionTitle,
@@ -384,17 +402,25 @@ export const ApprovalAutomaticChecks = React.memo(
       // (lab `wait-v-arefused`). Without a reason the block says which check refused or couldn't run.
       const workflowName = failed ? knownNameOf(failed) : null;
       const refusedWorkflowId = refusedSelection?.workflowId;
+      // The admission owner's typed cause says the check itself is gone: nothing to open and no one to ask.
+      const checkRemoved = startRefusal ? CHECK_REMOVED_START_REASONS.has(startRefusal.reason) : false;
       const viewerOwnsCheck = props.accountLifetime?.isCurrent() === true
         && props.accountLifetime.scope.accountId === refusedSelection?.ownerAccountId;
       body = (
         <View style={[styles.block, styles.dangerBlock]} testID={props.testID ? `${props.testID}:refused` : undefined}>
           {!startRefusal && failureReason ? (
-            <Text variant="body" style={styles.primary} testID={props.testID ? `${props.testID}:reason` : undefined}>{failureReason}</Text>
+            <View style={styles.lead}>
+              <Icon name="warning" size={ICON_SIZE.sm} color={theme.colors.state.danger.foreground}
+                testID={props.testID ? `${props.testID}:refused-glyph` : undefined} />
+              <Text variant="body" style={[styles.primary, styles.leadText]} testID={props.testID ? `${props.testID}:reason` : undefined}>{failureReason}</Text>
+            </View>
           ) : (
             <View style={styles.lead}>
-              <Icon name="warning" size={ICON_SIZE.sm} color={theme.colors.state.danger.foreground} />
+              <Icon name="warning" size={ICON_SIZE.sm} color={theme.colors.state.danger.foreground}
+                testID={props.testID ? `${props.testID}:refused-glyph` : undefined} />
               <Text variant="body" emphasis="semiBold" style={[styles.primary, styles.leadText]}>
-                {startRefusal ? t('workflows.triggers.checks.startRefused', { workflow: nameOf(startRefusal), action: props.actionTitle })
+                {startRefusal ? checkRemoved ? t('workflows.triggers.checks.startRefusedRemoved')
+                  : t('workflows.triggers.checks.startRefused', { workflow: nameOf(startRefusal) })
                   : failed?.outcome === 'unavailable'
                     ? t('workflows.triggers.checks.couldNotRun', { workflow: nameOf(failed) })
                     : failed && t('workflows.triggers.checks.refused', { workflow: nameOf(failed, 'inline') })}
@@ -402,7 +428,7 @@ export const ApprovalAutomaticChecks = React.memo(
             </View>
           )}
           <View style={styles.line}>
-            {startRefusal ? (
+            {startRefusal ? checkRemoved ? null : (
               viewerOwnsCheck && refusedWorkflowId ? props.onOpenRoute && <TextLinkButton
                 label={t('workflows.triggers.row.openWorkflow')} size="meta"
                 testID={props.testID ? `${props.testID}:open-workflow` : undefined}

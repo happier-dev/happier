@@ -137,6 +137,10 @@ export function getWorkflowInputHints(actionId: WorkflowActionIdV1, title: strin
         ? [
           { path: 'runId', title: 'New Run id', widget: 'text', required: true,
             description: 'Allocate a UUID for this new start; reuse it to reconcile a lost response.' },
+          { path: 'source.kind', title: 'Source', widget: 'select', options: [
+            { value: 'saved', label: 'Saved workflow' }, { value: 'catalog', label: 'Built-in workflow' },
+            { value: 'inline', label: 'Written here' }, { value: 'repo_file', label: 'Workflow file' },
+          ] },
           { path: 'source.workflow', title: 'Workflow', widget: 'select', optionsSourceId: 'workflows.references.available' },
           { path: 'source.replay.runId', title: 'Accepted Run to repeat', widget: 'text',
             description: 'With an inline source, reopens this authorized Run and preserves its accepted graph and concrete participants.' },

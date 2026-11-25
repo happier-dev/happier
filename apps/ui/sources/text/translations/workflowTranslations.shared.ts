@@ -878,7 +878,7 @@ export const en = {
         causeNotRecorded: 'The failure cause was not recorded',
         usageLimitWait: 'Wait for the provider’s usage limit to reset, then try again.',
         agentTimedOut: 'Couldn’t reach the Agent in time',
-        replySecretMasked: 'The reply contained text matching one of your secrets, so its result couldn’t be read. Rename the option or change the secret.',
+        replySecretMasked: 'The agent’s answer matched one of your saved secrets, so Happier hid it and couldn’t read the result. Change this step’s answer choices, or use a different value for that secret.',
         agentUnreachable: 'Couldn’t reach the Agent',
         agentConnectionLost: 'Lost the connection to the Agent',
         publicationDeclined: 'You declined posting its answer to the discussion, so nothing was posted.',

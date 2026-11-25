@@ -1107,8 +1107,11 @@ function describeContributedActionInvocation(actionArgs: unknown, preview: unkno
     const value = field.path.split('.').reduce<unknown>((at, key) => isRecord(at) ? at[key] : undefined, declared);
     if (value === undefined || value === null) return [];
     const reference = describeApprovalOperandReference(field.path, value);
+    // A structured value has no one-line reading; its exact literal stays under Technical details.
+    const structured = !reference && typeof value === 'object';
     return [{ kind: 'value' as const, path: `input.${field.path}`,
-      title: field.title, value: typeof value === 'string' ? value : JSON.stringify(value), ...(reference ? { reference } : {}) }];
+      title: field.title, value: typeof value === 'string' ? value : JSON.stringify(value), ...(reference ? { reference } : {}),
+      ...(structured ? { technical: true as const } : {}) }];
   }) : describeUndeclaredContributedInput(declared);
   rows.push(
     { kind: 'value', path: 'action.pluginId', title: 'Plugin id', value: invocation.data.action.pluginId, technical: true },
@@ -1667,10 +1670,12 @@ function describeTargetActionApprovalFields(request: TargetActionApprovalFieldsR
       if (literal === undefined) return unavailable();
       // An operand that names something reads by that name, as on a host Action; its id stays in Technical details.
       const reference = key ? describeApprovalOperandReference(key, value) : undefined;
+      // A structured operand has no one-line reading: its exact literal stays disclosed under Technical details.
+      const structured = !reference && typeof value === 'object' && value !== null;
       rows.push({ kind: 'value', path: key ? `input.${key}` : 'input',
         title: key ? humanizeApprovalKey(key) : 'Arguments', value: reference && typeof value === 'string' ? value : literal,
         ...(reference ? { reference } : {}),
-        ...(hasDeclaredFacts ? { technical: true as const } : {}) });
+        ...(hasDeclaredFacts || structured ? { technical: true as const } : {}) });
     }
     // Only the original admitted invocation can supply the hidden operands.
     return { rows, unrepresentable: confidentialPaths.length && request.approvalInputCustody !== 'live_only'
