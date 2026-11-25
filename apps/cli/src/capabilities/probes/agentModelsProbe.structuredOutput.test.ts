@@ -125,7 +125,7 @@ describe('model probe structured output evidence', () => {
     }) };
     const native = { backendTarget: { kind: 'builtInAgent' as const, agentId: 'codex' }, modelId: 'native-only',
       cwd: '/explicit-native-runtime', catalogEntry, machineId: 'machine',
-      runtimeDescriptorV1: { v: 1 as const, agentId: 'codex', agent: {} },
+      runtimeDescriptorV1: { v: 1 as const, agentId: 'codex', agent: { backendMode: 'appServer' } },
       connectedServices: { v: 2 as const, bindingsByServiceId: {} },
       readProviderModels: async (): Promise<never> => { throw new Error('Explicit runtime must not read a different source catalog'); },
     };
