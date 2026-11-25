@@ -108,27 +108,36 @@ export function createCaptureStore(db: DaemonDatabase, publish: (keys: readonly 
   const requested = Math.min(input.limit, limits.maximumResultRows);
   const includeLogs = (input.kind === undefined || input.kind === 'log') && input.spanKind === undefined;
   const fields = input.appLlmCalls ? [...summaryFields, 'serviceVersion', 'genAi'] : summaryFields;
-  const selected = `SELECT ${fields.join(',')} FROM captureSummaries WHERE ${predicates.join(' AND ')} ORDER BY at DESC,id DESC LIMIT ?`;
+  // Look ahead one summary within this read, without projecting its body.
+  const pageLimit = `?${params.length + 1}`;
+  const candidates = `WITH candidates AS MATERIALIZED (
+ SELECT ${fields.join(',')} FROM captureSummaries WHERE ${predicates.join(' AND ')}
+ ORDER BY at DESC,id DESC LIMIT (${pageLimit} + 1)
+), selected AS (
+ SELECT *, EXISTS (SELECT 1 FROM candidates LIMIT 1 OFFSET ${pageLimit}) AS hasOlder
+ FROM candidates ORDER BY at DESC,id DESC LIMIT ${pageLimit}
+)`;
   // Only already-redacted retained bodies are projected, scoped by BOTH keys.
   // substr works in Unicode code points, so the prefix cannot split UTF-8.
-  const statement = includeLogs ? `WITH selected AS (${selected}),
+  const statement = includeLogs ? `${candidates},
 logBodies AS MATERIALIZED (SELECT selected.*, CASE WHEN selected.kind = 'log' THEN
  (SELECT CAST(json_extract(body,'$.log.body') AS TEXT) FROM captureDetails WHERE worktree = selected.worktree AND id = selected.id)
  END AS logBody FROM selected),
 logPrefixes AS (SELECT *, substr(
  CASE WHEN instr(logBody,char(10)) > 0 THEN substr(logBody,1,instr(logBody,char(10))-1) ELSE logBody END,
  1, ?) AS bodyPrefix FROM logBodies)
-SELECT ${summaryFields.join(',')},bodyPrefix,
- CASE WHEN length(logBody) > length(bodyPrefix) THEN 1 ELSE 0 END AS bodyPrefixTruncated FROM logPrefixes ORDER BY at DESC,id DESC` : selected;
+SELECT ${summaryFields.join(',')},hasOlder,bodyPrefix,
+ CASE WHEN length(logBody) > length(bodyPrefix) THEN 1 ELSE 0 END AS bodyPrefixTruncated FROM logPrefixes ORDER BY at DESC,id DESC`
+   : `${candidates} SELECT * FROM selected ORDER BY at DESC,id DESC`;
   // A JSON-escaped code point can occupy six bytes. The host measures the actual page, including metadata.
   const prefixLength = includeLogs ? Math.floor(limits.maximumResultBytes / 6) : undefined;
-  const { rows: page, pageSize } = await queryPage(statement, params, requested, prefixLength);
+  const { rows: page } = await queryPage(statement, params, requested, prefixLength);
   // The table is produced only by this store; SQLite scalar decoding is the genuine boundary.
-  const summaries = page as unknown as readonly CaptureSummary[];
+  const summaries = page.map(({ hasOlder: _hasOlder, ...summary }) => summary) as unknown as readonly CaptureSummary[];
   const last = summaries.at(-1);
-  const nextCursor = last && page.length === pageSize ? { at: last.at, id: last.id } : undefined;
+  const nextCursor = last && page[0]?.hasOlder === 1 ? { at: last.at, id: last.id } : undefined;
   if (input.appLlmCalls) {
-   const calls = page as unknown as readonly (Omit<CaptureSummary, 'genAi'> & { genAi: string })[];
+   const calls = summaries as unknown as readonly (Omit<CaptureSummary, 'genAi'> & { genAi: string })[];
    return { items: calls.map(call => ({ ...call, genAi: JSON.parse(call.genAi) as DatabaseCaptureCostMetadataV1 })), nextCursor };
   }
   const items = includeLogs ? summaries.map(summary => {

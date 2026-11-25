@@ -85,6 +85,14 @@ describe('capture store through SQLite', () => {
    expect(last.nextCursor).toBeUndefined();
    expect(acceptedBytes).toHaveLength(3);
    expect(Math.max(...acceptedBytes)).toBeLessThanOrEqual(limits.maximumResultBytes);
+
+   const onlyOversizedLog = await store.listPage({ ...input, serviceName: 'x'.repeat(5000) });
+   expect(onlyOversizedLog.items).toMatchObject([{ id: 'c', bodyPrefixTruncated: true }]);
+   expect(onlyOversizedLog.nextCursor).toBeUndefined();
+
+   const exactLastPage = await store.listPage({ ...input, before: second.nextCursor, limit: 1 });
+   expect(exactLastPage.items.map(({ id }) => id)).toEqual(['a']);
+   expect(exactLastPage.nextCursor).toBeUndefined();
   } finally { f.close(); }
  });
  it('adds browser provenance without relabeling or discarding retained pre-provenance exceptions', async () => {
