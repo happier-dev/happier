@@ -2,6 +2,12 @@ import { readWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workfl
 import { validateWorkflowEditorDraft } from '@/sync/domains/workflows/workflowAuthoring';
 import { setWorkflowBlockName } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import * as React from 'react';
+import { writeFile } from 'node:fs/promises';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import type { PluginServices } from '@happier-dev/plugin-sdk';
+import type { AgentExecutionRunEvent, AgentExecutionRunOpenRequest, AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { activate as activateDeepSec, PLUGIN_MANIFEST as DEEPSEC_MANIFEST } from '../../../../../../../packages/plugins/review-deepsec/src/index';
 import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema, SessionConsumptionReplaceAckV1Schema } from '@happier-dev/protocol/sessions/sessionConsumptionV1';
 import { Dimensions } from 'react-native';
 import { act } from 'react-test-renderer';
@@ -225,6 +231,7 @@ let startRelayFailure: Readonly<{ error: string; errorCode: string }> | null = n
 let listedRuns: Run[];
 let listResult: Promise<unknown> | null;
 let emittedStarts: Array<Record<string, unknown>>;
+let externalStartBoundary: ((input: unknown) => Promise<unknown>) | undefined;
 let emittedWorkflowStarts: Array<ReturnType<typeof WorkflowRunStartRequestV1Schema.parse>>;
 let emittedHumanReviewerRequests: Array<ReturnType<typeof ReviewReviewersSetInputV1Schema.parse>>;
 let refuseWorkflowStart = false;
@@ -445,6 +452,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         listedRuns = [];
         listResult = null;
         emittedStarts = [];
+        externalStartBoundary = undefined;
         emittedWorkflowStarts = [];
         emittedHumanReviewerRequests = [];
         refuseWorkflowStart = false;
@@ -555,6 +563,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                 expect(context.invocation).toMatchObject({ caller: { kind: 'host' }, surface: 'ui', authority: 'present_user' });
                 expect(context.invocation.defaultSessionId).toBeUndefined();
                 emittedStarts.push(record(input));
+                if (externalStartBoundary) return await externalStartBoundary(input);
                 return await (startResults.shift() ?? started());
             },
         });
@@ -1023,6 +1032,84 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         });
     });
 
+    it('carries the mounted DeepSec estimate consent through the Review Action to its registered native adapter for this start only', async () => {
+        backends.deepsec = { available: true, intents: ['review'] };
+        reviewCostEngineId = 'deepsec';
+        reviewCostConsent = { optionKey: 'confirmedCostWarning', title: 'Accept DeepSec estimate', description: 'Paid model access for this start' };
+        const reviewers = [{ kind: 'engine', engineId: 'deepsec', options: { mode: 'repository_security_audit' } }];
+        const nativeRequests: Parameters<PluginServices['exec']['run']>[0][] = [];
+        const events: AgentExecutionRunEvent[] = [];
+        const unexpected = (): never => { throw new Error('Unexpected host service in paid Review'); };
+        const run: PluginServices['exec']['run'] = async request => {
+            nativeRequests.push(request);
+            if (request.args?.[0] === 'export') {
+                const destination = request.args[request.args.indexOf('--out') + 1];
+                if (!destination) throw new Error('Missing native DeepSec export destination');
+                await writeFile(destination, '[]', 'utf8');
+            }
+            return { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+                stdout: new Uint8Array(), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
+        };
+        // This host boundary supplies only process/readiness services; every other service fails visibly.
+        const services = new Proxy({ availability: () => ({ status: 'available' as const }), actions: { execute: unexpected }, exec: {
+            run, agentCli: { checkReadiness: async () => ({ launchable: [{ agentId: 'codex' }] }) },
+            systemTools: { resolve: async () => ({ executable: { kind: 'systemTool' as const, id: 'deepsec-cli' }, executablePath: '/native/deepsec' }) },
+        } }, { get: (target, key) => {
+            if (key in target) return Reflect.get(target, key);
+            throw new Error(`Unexpected host service in paid Review: ${String(key)}`);
+        } }) as PluginServices;
+        const signal = new AbortController().signal;
+        const context: AgentRuntimeContext = { plugin: { id: DEEPSEC_MANIFEST.id, version: DEEPSEC_MANIFEST.version },
+            contribution: { id: 'deepsec', qualifiedId: `${DEEPSEC_MANIFEST.id}/agents/deepsec` },
+            surface: 'agent', signal, services, agent: { id: 'deepsec' }, protocols: { acp: { open: unexpected } },
+            ui: { askQuestions: unexpected, confirm: unexpected, notify: unexpected, status: { set: unexpected },
+                widget: { set: unexpected }, title: { set: unexpected }, composer: { replace: unexpected } } };
+        const plugin = await createPluginTestkit({ manifest: DEEPSEC_MANIFEST, module: { activate: activateDeepSec } });
+        try {
+            const factory = plugin.registration('agents', 'deepsec')?.factory;
+            if (!factory) throw new Error('Registered DeepSec Agent missing');
+            const agent = await factory({ plugin: context.plugin, agent: context.agent, signal });
+            externalStartBoundary = async raw => {
+                const start = ExecutionRunStartRequestSchema.parse(raw);
+                expect(start.intentInput).toMatchObject({ reviewers: [{ options: { confirmedCostWarning: true } }] });
+                // The host envelope carries the actual Protocol dispatch operand unchanged.
+                const request = { kind: 'create', runId: 'paid-review', cwd: '/repo',
+                    profile: { pluginId: DEEPSEC_MANIFEST.id, localId: 'review' },
+                    input: { text: start.instructions ?? '', structuredInput: StrictJsonValueSchema.parse(start.intentInput) },
+                } satisfies AgentExecutionRunOpenRequest;
+                const runtime = await agent.executionRuns?.open(request, context);
+                if (!runtime) throw new Error('Registered DeepSec execution runtime missing');
+                try {
+                    await new Promise<void>(resolve => runtime.watch(event => {
+                        events.push(event);
+                        if (event.kind === 'run-complete' || event.kind === 'run-failed') resolve();
+                    }));
+                } finally { await runtime.dispose(); }
+                expect(events.at(-1), JSON.stringify(events)).toMatchObject({ kind: 'run-complete' });
+                return started('paid-review');
+            };
+            const launch = { intent: 'review' as const, sessionId: null, workspace: { machineId: 'machine_1', cwd: '/repo' },
+                initialActionInput: { scope: 'repository', reviewers } };
+            await mount(launch);
+            await waitFor(() => expect(screen.findHostByTestId('review-start-cost-consent')).not.toBeNull());
+            const settings = getStorage().getState().settings;
+            expect(nativeRequests).toEqual([]);
+            await screen.pressByTestIdAsync('review-start-cost-consent');
+            await send('Review the repository');
+            expect(emittedStarts).toHaveLength(1);
+            expect(nativeRequests.map(request => request.args?.[0]), JSON.stringify({ starts: emittedStarts, events,
+                visible: screen.getTextContent() })).toEqual(['scan', 'process', 'export']);
+            expect(getStorage().getState().settings).toBe(settings);
+            await screen.unmount();
+            await mount(launch);
+            await waitFor(() => {
+                const checkbox = screen.findHostByTestId('review-start-cost-consent');
+                expect(checkbox?.props.accessibilityState?.checked ?? checkbox?.props['aria-checked']).toBe(false);
+            });
+            expect(emittedStarts).toHaveLength(1);
+            expect(getStorage().getState().settings).toBe(settings);
+        } finally { await plugin.dispose(); }
+    });
     it.each([false, true])('summarizes the reviewed working changes from the scoped SCM source (detached=%s)', async detached => {
         const snapshot: ScmWorkingSnapshot = {
             projectKey: `${serverId}:machine_1:/repo`, fetchedAt: 1,
