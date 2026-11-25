@@ -1210,7 +1210,7 @@ describe('Plugin Event Automation setup orchestration', () => {
         expect(postSelectionSubmission).toEqual({ kind: 'stale', reason: 'action_retired' });
     });
 
-    it('fails the canonical dispatch preflight when the watcher origin changes after revalidation', async () => {
+    it('preserves the dispatch refusal when the watcher origin changes after revalidation', async () => {
         const event = eligibleEvent();
         let selectedOrigin = executionOrigin();
         const dispatch = vi.fn(async (input: Parameters<NonNullable<Parameters<typeof configurePluginEventAutomationSetup>[0]['dispatch']>>[0]) => {
@@ -1260,17 +1260,18 @@ describe('Plugin Event Automation setup orchestration', () => {
             dispatch,
         });
 
+        expect(dispatch).toHaveBeenCalledTimes(1);
         expect(result).toEqual({
             kind: 'unavailable',
-            code: 'watcher_origin_retired',
+            code: 'stale_surface',
             reason: 'watcher_origin_retired',
+            requestId: dispatch.mock.calls[0]![0].actionRequestId,
             retryable: false,
             remediation: {
                 kind: 'openSettings',
                 path: '/settings/plugins/happier.channels/connections',
             },
         });
-        expect(dispatch).toHaveBeenCalledTimes(1);
     });
 
     it('ensures the Account webhook endpoint and writes the durable-push arm the user can complete', async () => {
