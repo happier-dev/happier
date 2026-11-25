@@ -8062,6 +8062,7 @@ const de: typeof en = {
         irohStarting: 'Wird gestartet …',
         irohOff: 'Aus · Geräte verbinden sich über die öffentliche Adresse',
         irohFailed: 'Läuft auf diesem Rechner nicht. Geräte verbinden sich über die öffentliche Adresse.',
+        irohChangeUnavailable: 'Bei diesem Home lassen sich direkte Verbindungen hier nicht ändern.',
         irohNotAvailable: 'Auf dieser Bereitstellung nicht verfügbar. Geräte verbinden sich über die öffentliche Adresse.',
         irohNeedsAddressHint: 'Lege zuerst eine öffentliche Adresse fest',
         irohOffTitle: 'Direktverbindungen ausschalten?',

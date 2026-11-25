@@ -8007,6 +8007,7 @@ const ja: typeof en = {
         irohStarting: '起動中…',
         irohOff: 'オフ · デバイスは公開アドレス経由で接続',
         irohFailed: 'このマシンでは動作していません。デバイスは公開アドレス経由で接続します。',
+        irohChangeUnavailable: 'この Home の直接接続は、ここからは変更できません。',
         irohNotAvailable: 'このデプロイでは利用できません。デバイスは公開アドレス経由で接続します。',
         irohNeedsAddressHint: 'オフにする前に公開アドレスを設定してください',
         irohOffTitle: '直接接続をオフにしますか？',

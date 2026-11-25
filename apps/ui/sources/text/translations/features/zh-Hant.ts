@@ -7947,6 +7947,7 @@ const zhHant: typeof en = {
         irohStarting: '正在啟動…',
         irohOff: '已關閉 · 裝置透過公開位址連線',
         irohFailed: '未在這台機器上執行。裝置透過公開位址連線。',
+        irohChangeUnavailable: '這裡無法變更此 Home 的直連設定。',
         irohNotAvailable: '此部署無法使用。裝置透過公開位址連線。',
         irohNeedsAddressHint: '關閉前請先設定公開位址',
         irohOffTitle: '關閉直連？',

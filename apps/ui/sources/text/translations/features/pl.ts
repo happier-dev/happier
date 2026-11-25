@@ -8078,6 +8078,7 @@ const pl: typeof en = {
         irohStarting: 'Uruchamianie…',
         irohOff: 'Wyłączone · urządzenia łączą się przez adres publiczny',
         irohFailed: 'Nie działa na tej maszynie. Urządzenia łączą się przez adres publiczny.',
+        irohChangeUnavailable: 'Tutaj nie można zmienić ustawienia połączeń bezpośrednich tego Home.',
         irohNotAvailable: 'Niedostępne w tym wdrożeniu. Urządzenia łączą się przez adres publiczny.',
         irohNeedsAddressHint: 'Ustaw adres publiczny, zanim je wyłączysz',
         irohOffTitle: 'Wyłączyć połączenia bezpośrednie?',

@@ -421,9 +421,7 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
                 return;
             }
             if (isActionApprovalDeclinedErrorCode(outcome.failure.code)) return;
-            const notice = outcome.failure.code === 'home_iroh_needs_public_address'
-                ? { title: t('homeGovernance.reach.irohNeedsAddressTitle'), body: t('homeGovernance.reach.irohNeedsAddressBody') }
-                : homeGovernanceFailureNotice(outcome.failure);
+            const notice = homeGovernanceFailureNotice(outcome.failure);
             await Modal.alertAsync(notice.title, notice.body);
             reads.reload();
         } finally {

@@ -8045,6 +8045,7 @@ const pt: typeof en = {
         irohStarting: 'Iniciando…',
         irohOff: 'Desativadas · os dispositivos se conectam pelo endereço público',
         irohFailed: 'Não está em execução nesta máquina. Os dispositivos se conectam pelo endereço público.',
+        irohChangeUnavailable: 'Não é possível alterar as conexões diretas deste Home aqui.',
         irohNotAvailable: 'Indisponível nesta implantação. Os dispositivos se conectam pelo endereço público.',
         irohNeedsAddressHint: 'Defina um endereço público antes de desativá-las',
         irohOffTitle: 'Desativar as conexões diretas?',

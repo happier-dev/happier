@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { homeGovernanceErrorHttpStatusV1 } from '@happier-dev/protocol/home/governance/errors';
 
 /** Imported from their own testkit modules, as `HomeAdministrationEmailScreen.test.tsx` explains. */
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -233,6 +234,31 @@ describe('HomeAdministrationReachScreen', () => {
         harness.answer(home, REACH_GET, { body: homeReachabilityFixture() });
         await screen.pressByTestIdAsync('home-reach-retry');
         await waitForHomeGovernance(() => expect(screen.findByTestId('home-reach-iroh')).not.toBeNull());
+    });
+
+    it.each([
+        { code: 'invalid_home_input', title: 'homeGovernance.changeFailedTitle', body: 'homeGovernance.invalidRead' },
+        { code: 'home_governance_forbidden', title: 'homeGovernance.changeFailedTitle', body: 'homeGovernance.errorForbidden' },
+        { code: 'home_iroh_not_available', title: 'homeGovernance.changeFailedTitle', body: 'homeGovernance.reach.irohChangeUnavailable' },
+        { code: 'home_iroh_needs_public_address', title: 'homeGovernance.reach.irohNeedsAddressTitle', body: 'homeGovernance.reach.irohNeedsAddressBody' },
+        { code: 'home_settings_revision_conflict', title: 'homeGovernance.changeFailedTitle', body: 'homeGovernance.reach.conflict' },
+    ] as const)('presents the direct connection refusal $code without repeating the change', async ({ code, title, body }) => {
+        const home = await addHome();
+        harness.answer(home, SETTINGS_GET, { body: reachSettings() });
+        harness.answer(home, REACH_GET, { body: homeReachabilityFixture() });
+        harness.answer(home, IROH_SET, { status: homeGovernanceErrorHttpStatusV1(code), body: { error: code } });
+        const screen = await renderReach(home);
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
+        vi.mocked(Modal.alertAsync).mockClear();
+
+        await act(async () => {
+            await screen.findByTestId('home-reach-iroh-switch')?.props.onValueChange(false);
+        });
+        await waitForHomeGovernance(() => expect(Modal.alertAsync).toHaveBeenCalledWith(title, body));
+        expect(Modal.alertAsync).toHaveBeenCalledTimes(1);
+        expect(harness.requestsFor(IROH_SET)).toHaveLength(1);
+        expect(screen.findByTestId('home-reach-iroh-switch')?.props.value).toBe(true);
     });
 
     it('confirms an explicit Ask policy locally before retiring direct connections', async () => {

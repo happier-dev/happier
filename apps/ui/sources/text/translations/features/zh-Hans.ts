@@ -7947,6 +7947,7 @@ const zhHans: typeof en = {
         irohStarting: '正在启动…',
         irohOff: '已关闭 · 设备通过公开地址连接',
         irohFailed: '未在这台机器上运行。设备通过公开地址连接。',
+        irohChangeUnavailable: '这里无法更改此 Home 的直连设置。',
         irohNotAvailable: '此部署不可用。设备通过公开地址连接。',
         irohNeedsAddressHint: '关闭前请先设置公开地址',
         irohOffTitle: '关闭直连？',

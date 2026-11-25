@@ -165,6 +165,12 @@ export function homeGovernanceFailureNotice(
     context?: Readonly<{ effect: 'read' | 'write'; accountAction?: 'signOutEverywhere' | 'disable' | 'enable' }>,
 ): Readonly<{ title: string; body: string }> {
     const effect = context?.effect ?? 'write';
+    if (failure.code === 'home_iroh_needs_public_address') {
+        return Object.freeze({
+            title: t('homeGovernance.reach.irohNeedsAddressTitle'),
+            body: t('homeGovernance.reach.irohNeedsAddressBody'),
+        });
+    }
     if (failure.code === 'username-changed') {
         return Object.freeze({
             title: t('homeGovernance.person.publicProfileReclaimChangedTitle'),
@@ -279,8 +285,13 @@ function homeGovernanceFailureBody(
     effect: 'read' | 'write',
     accountAction?: 'signOutEverywhere' | 'disable' | 'enable',
 ): string {
-    if (effect === 'read' && failure.code === 'invalid_home_input') return t('homeGovernance.invalidRead');
     switch (failure.code) {
+        case 'invalid_home_input':
+            return t('homeGovernance.invalidRead');
+        case 'home_iroh_not_available':
+            return t('homeGovernance.reach.irohChangeUnavailable');
+        case 'home_settings_revision_conflict':
+            return t('homeGovernance.reach.conflict');
         case 'home_governance_forbidden':
             return effect === 'read' ? t('homeGovernance.forbiddenBody') : t('homeGovernance.errorForbidden');
         case 'home_owner_transfer_required':

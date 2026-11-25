@@ -8051,6 +8051,7 @@ const ca: typeof en = {
         irohStarting: 'S’està iniciant…',
         irohOff: 'Desactivades · els dispositius es connecten per l’adreça pública',
         irohFailed: 'No s’executa en aquesta màquina. Els dispositius es connecten per l’adreça pública.',
+        irohChangeUnavailable: 'Aquest Home no pot canviar les connexions directes des d’aquí.',
         irohNotAvailable: 'No disponible en aquest desplegament. Els dispositius es connecten per l’adreça pública.',
         irohNeedsAddressHint: 'Defineix una adreça pública abans de desactivar-les',
         irohOffTitle: 'Vols desactivar les connexions directes?',

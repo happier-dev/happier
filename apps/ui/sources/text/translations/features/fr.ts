@@ -8067,6 +8067,7 @@ const fr: typeof en = {
         irohStarting: 'Démarrage…',
         irohOff: 'Désactivées · les appareils passent par l’adresse publique',
         irohFailed: 'Ne fonctionne pas sur cette machine. Les appareils passent par l’adresse publique.',
+        irohChangeUnavailable: 'Les connexions directes de ce Home ne peuvent pas être modifiées ici.',
         irohNotAvailable: 'Indisponible sur ce déploiement. Les appareils passent par l’adresse publique.',
         irohNeedsAddressHint: 'Définis une adresse publique avant de les désactiver',
         irohOffTitle: 'Désactiver les connexions directes ?',

@@ -544,6 +544,7 @@ export const en = {
         irohStarting: 'Starting…',
         irohOff: 'Off · devices connect through the public address',
         irohFailed: 'Not running on this machine. Devices connect through the public address.',
+        irohChangeUnavailable: 'This Home can’t change direct connections here.',
         irohNotAvailable: 'Not available on this deployment. Devices connect through the public address.',
         irohNeedsAddressHint: 'Set a public address before turning this off',
         irohOffTitle: 'Turn off direct connections?',
