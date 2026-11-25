@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as coachEvaluation from './coach/evaluateUsageCoach.js';
 import { normalizeUsageQuery, resolveUsageQueryPeriod, usageQueryToAnalyticsRequest, type UsageQuery } from '../inputs/usageQuery.js';
 import { UsageAnalyticsQueryResponseSchema, UsageAnalyticsSourceCoverageSchema, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
-import { readUsageAgentAccountingCalendar, resolveUsagePageAggregation, resolveUsagePageAccountingRequests, projectUsageAccountingSnapshotPrices, projectUsageAccountingSnapshotCalendar, retainUsageQueryResultReferences, UsageQueryBatchResultSchema } from './resolveUsagePageAggregation.js';
+import { readUsageAgentAccountingCalendar, resolveUsagePageAggregation, resolveUsagePageAccountingRequests, projectUsageAccountingSnapshotPrices, projectUsageAccountingSnapshotCalendar, retainUsageQueryResultReferences, UsageQueryBatchResultSchema, type UsageWorkSourceSnapshot } from './resolveUsagePageAggregation.js';
 import type { UsageWorkEvidence } from './usageOutcomeAllocation.js';
 import { buildProviderAccountUsageRecordId } from '../connect/providerAccountUsagePrimitives.js';
 import { ConnectedServiceQuotaGetResultV1Schema } from '../connect/providerAccountUsageHistorySchemasV1.js';
@@ -1579,6 +1579,23 @@ describe('resolveUsagePageAggregation', () => {
     expect(unavailable.findings).toEqual([]);
     expect(unavailable.evaluations.every(row => row.status === 'insufficient_evidence')).toBe(true);
   });
+  it.each([
+    { status: 'unsupported' },
+    { status: 'error', errorCode: 'work_evidence_failed' },
+    { status: 'error', errorCode: 'forbidden', evidence: [], branchEvidence: [] },
+    { status: 'partial', evidence: [], branchEvidence: [] },
+  ] satisfies readonly Omit<UsageWorkSourceSnapshot, 'query'>[])('does not date pending Work from an unreadable $status answer ($errorCode)', work => {
+    const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 250 }, includeWorkEvidence: true });
+    const read = [{ query, value: accounting, status: 'available' as const }];
+    const previous = resolveUsagePageAggregation({ queries: [query], accounting: read,
+      work: [{ query, ...work, asOfMs: 225 }] }, bundledUsageModelPriceCatalog);
+    expect(previous.results[0]?.sources.find(source => source.source === 'work')?.asOfMs).toBe(225);
+    const pending = resolveUsagePageAggregation({ queries: [query], accounting: read,
+      work: [{ query, status: 'pending' }], previous }, bundledUsageModelPriceCatalog);
+    const slice = UsageQueryBatchResultSchema.parse(pending).results[0]!;
+    expect(slice.sources).toContainEqual({ source: 'work', status: 'pending' });
+  });
+
   it('composes Work only from the exact admitted accounting query and witnessed turns', () => {
     const query = normalizeUsageQuery({ session: 'session', period: { startMs: 100, endMs: 200 } });
     const other = normalizeUsageQuery({ ...query, agents: ['other'] });

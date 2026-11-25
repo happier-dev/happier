@@ -904,13 +904,20 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
           || priorWorkSource?.status === 'partial' || priorWorkSource?.status === 'stale'));
     const pendingWork = workSnapshot?.status === 'pending';
     const retainWork = pendingWork || failedWork;
-    const workAsOfMs = failedWork ? priorWorkSource?.asOfMs
-      : (pendingWork ? priorWorkSource?.asOfMs : undefined) ?? workSnapshot?.asOfMs;
+    // Only a readable answer can lend its date to a replacement. Pending and
+    // stale dates already came from a readable answer through this projection.
+    const priorWorkReadable = retainWork && (priorWorkSource?.status === 'available'
+      || priorWorkSource?.status === 'pending' || priorWorkSource?.status === 'stale'
+      || priorWorkSource?.status === 'partial' && (prior?.workSummary?.pullRequestsRead === true
+        || (prior?.work?.outcomes.length ?? 0) > 0 || (prior?.work?.branches.length ?? 0) > 0
+        || prior?.work?.allocations.some(row => row.evidence.length > 0)
+        || prior?.work?.branchAllocations.some(row => row.evidence.length > 0)));
+    const workAsOfMs = retainWork ? (priorWorkReadable ? priorWorkSource?.asOfMs : undefined) : workSnapshot?.asOfMs;
     const unreadWorkSessions = pendingWork ? priorWorkSource?.unreadSessions : workSnapshot?.unreadSessions;
     // A reread has not replaced observed Work facts. Keep their currentness
     // until its answer changes them, including a completed retained failure.
     const workSource: UsageQuerySourceState = priorWorkSource?.errorCode === 'work_evidence_failed'
-      && (pendingWork || failedWork && priorWorkSource.status === 'stale'
+      && (pendingWork && priorWorkReadable || failedWork && priorWorkSource.status === 'stale'
         && workSnapshot.errorCode === priorWorkSource.errorCode
         && workSnapshot.updateRequired === priorWorkSource.updateRequired
         && sameStrictJsonValue(unreadWorkSessions ?? null, priorWorkSource.unreadSessions ?? null)) ? priorWorkSource

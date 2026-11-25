@@ -10057,9 +10057,10 @@ describe('usage query Work composition', () => {
     }
   });
 
-  it.each(['growth', 'replacement', 'growth with an event on the retained turn', 'explicit Refresh'] as const)(
+  it.each(['growth', 'replacement', 'growth with an event on the retained turn', 'explicit Refresh', 'Refresh after unsupported'] as const)(
   'keeps the mounted page and Usage Action Work answer dated and valid during %s', async change => {
-    const refresh = change === 'explicit Refresh';
+    const wasUnsupported = change === 'Refresh after unsupported';
+    const refresh = change === 'explicit Refresh' || wasUnsupported;
     const keepsFirstSession = change !== 'replacement';
     const testsReuse = change === 'growth';
     const firstReadAt = Date.UTC(2026, 9, 12, 12);
@@ -10097,6 +10098,7 @@ describe('usage query Work composition', () => {
     let unavailable = false;
     scmTransport.mockImplementation(async (request: { payload: ScmWorkEvidenceReadRequest }) => {
       if (hold) await held.promise;
+      if (wasUnsupported && !hold) return workBatch(request, { status: 'unsupported' });
       if (unavailable) throw new RetryableServerResponseError(503, 'Unavailable');
       return ScmWorkEvidenceReadResponseSchema.parse({ sessions: request.payload.sessions.map(({ sessionId }) => ({
         sessionId, status: 'partial', pullRequestsRead: true,
@@ -10142,7 +10144,10 @@ describe('usage query Work composition', () => {
     try {
       await waitForPage();
       expect(scmTransport, 'a cold mount acquires Work once').toHaveBeenCalledTimes(1);
-      for (const slice of [readPage(), await readAction()]) expectSettledWork(slice, firstReadAt, merged ? 1 : 0);
+      for (const slice of [readPage(), await readAction()]) {
+        if (wasUnsupported) expect(workSource(slice)).toEqual({ source: 'work', status: 'unsupported', asOfMs: firstReadAt });
+        else expectSettledWork(slice, firstReadAt, merged ? 1 : 0);
+      }
 
       if (testsReuse) {
         merged = true;
@@ -10174,11 +10179,12 @@ describe('usage query Work composition', () => {
       expect(scmTransport.mock.lastCall?.[0].payload.sessions.map((row: { sessionId: string }) => row.sessionId).sort())
         .toEqual(refresh ? [first.sessionId] : keepsFirstSession ? [first.sessionId, added.sessionId].sort() : [added.sessionId]);
       const expectPending = (slice: ReturnType<typeof readPage>) => {
-        expect.soft(workSource(slice)).toMatchObject({ status: 'pending', asOfMs: firstReadAt });
+        if (wasUnsupported) expect.soft(workSource(slice)).toEqual({ source: 'work', status: 'pending' });
+        else expect.soft(workSource(slice)).toMatchObject({ status: 'pending', asOfMs: firstReadAt });
         expect.soft(slice?.workSummary?.pullRequestsRead).toBeUndefined();
         expect.soft(slice?.workSummary?.mergedPrCount).toBeUndefined();
         expect.soft(slice?.workSummary?.mergedSessionCount).toBeUndefined();
-        expect.soft(slice?.work?.outcomes.map(row => row.pullRequest.number)).toEqual(keepsFirstSession ? [1] : []);
+        expect.soft(slice?.work?.outcomes.map(row => row.pullRequest.number)).toEqual(keepsFirstSession && !wasUnsupported ? [1] : []);
         if (change === 'growth with an event on the retained turn') {
           expect.soft(slice?.work?.allocations.filter(row => row.outcome?.pullRequest.number === 1)).toHaveLength(2);
           expect.soft(slice?.mergedOutcomes?.linkedMergedCount).toBe(1);

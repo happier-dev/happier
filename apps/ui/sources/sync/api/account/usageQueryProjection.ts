@@ -331,15 +331,15 @@ function projectChangedUsageQueryBatch(input: UsageQueryProjectionInput, account
         const priorSources = priorSlices.get(slice.key)?.sources;
         if (!priorSources) return slice;
         return { ...slice, sources: slice.sources.map(source => {
-            if (source.status !== 'pending' || source.source === 'accounting'
+            // Protocol owns the entire Work source while it retains an answer.
+            if (source.status !== 'pending' || source.source === 'accounting' || source.source === 'work'
                 || source.source === 'how_you_work' || source.source.startsWith('how_you_work:')) return source;
             const prior = priorSources.find(candidate => candidate.source === source.source);
             // Keep the admitted observation's date and failure metadata while
             // reporting this source's admitted replacement as pending. Consumers
             // can retain its facts without mistaking them for the current read.
             if (prior?.status === 'error' || prior?.errorCode) return { ...prior, status: 'pending' as const };
-            // The Work projection retains its read time with its evidence.
-            return source.source !== 'work' && source.asOfMs === undefined && prior?.asOfMs !== undefined
+            return source.asOfMs === undefined && prior?.asOfMs !== undefined
                 ? { ...source, asOfMs: prior.asOfMs } : source;
         }) };
     }) };
