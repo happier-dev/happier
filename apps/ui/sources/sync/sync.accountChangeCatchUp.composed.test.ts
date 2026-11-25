@@ -4081,9 +4081,10 @@ describe('sync AccountChange catch-up projection', () => {
             } });
             const wake = { ...accountChangeWake('covered-wake'), body: { t: 'account-change',
                 changeKinds: ['session'], entityIds: [sessionId], sessionSystemRecords: [] } };
-            await runtime.handleUpdate(wake);
             const { getSessionName } = await import('@/utils/sessions/sessionUtils');
+            // Socket receipt queues the update. Only the applied frame covers this wake.
             await waitForHomeGovernance(() => expect(getSessionName(storage.getState().sessionListRowsByServerId[scope.serverScope]![sessionId]!)).toBe('Covered rename'));
+            await runtime.handleUpdate(wake);
             expect(changesResponse).not.toHaveBeenCalled();
             expect(runtime.changesCursor).toBe('0');
             expect(loadChangesCursor(runtime.getChangesCursorScope())).toBe(persistedCursorBefore);
