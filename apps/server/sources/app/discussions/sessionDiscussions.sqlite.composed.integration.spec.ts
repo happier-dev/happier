@@ -667,8 +667,11 @@ describe('First-class Discussions service (SQLite)', () => {
         expect(await enqueuePendingMessageByAuthenticatedMachine(admission)).toMatchObject({ status: 'alreadyAccepted', localId });
         expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id, localId } })).toBe(1);
     });
-    it.each(['participant', 'unregistered', 'native-runtime', 'removed-observing', 'removed-inline', 'workflow-failed'] as const)('publishes a completed Workflow-selected answer once through %s and retains the committed Discussion reference', async mode => {
-        const runner = mode === 'native-runtime' ? await createMaterializedEphemeralRunnerFixture() : undefined;
+    it.each(['participant', 'unregistered', 'native-runtime', 'native-replacement', 'native-replacement-pass', 'native-replacement-failed', 'removed-observing', 'removed-inline', 'workflow-failed'] as const)('publishes a completed Workflow-selected answer once through %s and retains the committed Discussion reference', async mode => {
+        const replaceNativePublisher = mode.startsWith('native-replacement');
+        const outcomeKind = mode === 'native-replacement-pass' ? 'pass'
+            : mode === 'workflow-failed' || mode === 'native-replacement-failed' ? 'failed' : 'answer';
+        const runner = mode === 'native-runtime' || replaceNativePublisher ? await createMaterializedEphemeralRunnerFixture() : undefined;
         const selected = runner ? await (async () => {
             const owner = await db.account.findUniqueOrThrow({ where: { id: runner.accountId } });
             const result = await createDiscussion({ actorAccountId: owner.id, authentication, request: createRequest() });
@@ -685,7 +688,7 @@ describe('First-class Discussions service (SQLite)', () => {
         const question = created.firstMessage;
         const run = await db.automationRun.create({ data: { accountId: owner.id, originKind: 'direct', causeKind: null, scheduledAt: new Date(), dueAt: new Date(),
             workflowAcceptedSnapshotEnvelope: 'accepted-by-workflow-owner', workflowCustodyState: 'pending' } });
-        if (mode === 'unregistered' || mode === 'native-runtime') await db.session.update({ where: { id: session.id },
+        if (mode === 'unregistered' || runner) await db.session.update({ where: { id: session.id },
             data: { originKind: 'run_step', originRunId: run.id } });
         const invocation = await db.workflowRunInvocation.create({ data: { runId: run.id, sequence: 1n, memberOrdinal: 0n,
             lifecycle: 'running', contentEnvelope: 'sealed-progress-owned-by-workflow' } });
@@ -699,20 +702,45 @@ describe('First-class Discussions service (SQLite)', () => {
         const requestLocalId = deriveWorkflowSessionInputLocalIdV2(workflow), acceptedTurnId = 'workflow-answer-turn';
         await db.sessionMessage.create({ data: { sessionId: session.id, localId: requestLocalId, seq: 1, messageRole: 'user',
             content: { t: 'plain', v: {} }, replyDisposition: 'observing', replyProgress: { ...progress!, acceptedTurnId,
-                outcome: { kind: 'answer', result: { sessionId: session.id, messageId: 'final-answer' } } } } });
+                ...(mode === 'native-replacement-pass' || mode === 'native-replacement-failed' ? {}
+                    : { outcome: { kind: 'answer', result: { sessionId: session.id, messageId: 'final-answer' } } }) } } });
         const localId = deriveSessionMessageReplyReturnLocalIdV1({ sessionId: session.id, localId: requestLocalId, acceptedTurnId });
         const marker = { serverId: 'home', requestLocalId, acceptedTurnId,
             workflow: { runId: run.id, invocationRecordId: invocation.id, invocationAttempt: '0' } };
         const principal = runner ? await import('@/app/auth/auth').then(async ({ auth }) => (await auth.verifyToken(runner.token))?.ephemeralSessionRunnerPrincipal) : undefined;
         if (runner && !principal) throw new Error('Expected the real materialized Runner credential');
-        const { socket } = await publisherSocket(owner.id, session.id, runner && principal ? { machineId: runner.machineId, principal } : undefined);
-        const publish = async (replyReturn = marker, draftReview?: { artifactId: string; decidingAccountId: string }) => {
+        const runtime = runner && principal ? { machineId: runner.machineId, principal } : undefined;
+        let { socket } = await publisherSocket(owner.id, session.id, runtime);
+        if (replaceNativePublisher) {
+            const observedAt = Date.now();
+            expect(await applySessionTurnMutation({ actorUserId: owner.id, authentication, mutation: {
+                v: 1, sessionId: session.id, mutationId: 'workflow-reply-turn-begin', action: 'begin', turnId: acceptedTurnId,
+                observedAt, startingInputId: requestLocalId, transcriptAnchors: { userMessageSeqs: [1] },
+            } })).toMatchObject({ ok: true });
+            if (outcomeKind === 'pass') {
+                let settlement: unknown;
+                await getSocketHandler(socket, SESSION_MESSAGE_REPLY_MUTATE_EVENT_V1)({ v: 1, sessionId: session.id,
+                    requestSessionId: session.id, requestLocalId, operation: { kind: 'fulfill', turnId: acceptedTurnId, outcome: { kind: 'pass' } },
+                }, (value: unknown) => { settlement = value; });
+                expect(settlement).toMatchObject({ ok: true, progress: { outcome: { kind: 'pass' } } });
+            }
+            expect(await applySessionTurnMutation({ actorUserId: owner.id, authentication, mutation: {
+                v: 1, sessionId: session.id, mutationId: 'workflow-reply-turn-finish', turnId: acceptedTurnId,
+                observedAt: observedAt + 1,
+                ...(outcomeKind === 'failed' ? { action: 'fail' as const, issue: { v: 1 as const, scope: 'primary_session' as const,
+                    status: 'failed' as const, code: 'native_task_failed' as const, source: 'agent_session_error' as const, occurredAt: observedAt + 1 } }
+                    : { action: 'complete' as const }),
+            } })).toMatchObject({ ok: true });
+        }
+        const publish = async (replyReturn = marker, draftReview?: { artifactId: string; decidingAccountId: string },
+            dropAcknowledgement = false) => {
             let result: unknown;
             await getSocketHandler(socket, DISCUSSION_AGENT_POST_EVENT_V1)({ v: 1, sessionId: session.id, discussionId, replyReturn,
-                ...(mode === 'workflow-failed' ? { terminalReturn: true } : {}),
+                ...(outcomeKind !== 'answer' ? { terminalReturn: true } : {}),
                 ...(draftReview ? { draftReview } : {}),
                 request: { ...postRequest('Accepted answer'), localId, replyTarget: { kind: 'message', messageId: question.id } } },
-                (value: unknown) => { result = value; });
+                (value: unknown) => { if (!dropAcknowledgement) result = value; });
+            if (dropAcknowledgement) throw new Error('Committed native Discussion reply acknowledgement lost');
             return DiscussionAgentPostResponseV1Schema.parse(result);
         };
         if (mode.startsWith('removed-')) {
@@ -730,7 +758,7 @@ describe('First-class Discussions service (SQLite)', () => {
             return;
         }
         expect(await publish()).toMatchObject({ ok: false, error: 'discussion_post_denied' });
-        await db.workflowRunInvocation.update({ where: { id: invocation.id }, data: { lifecycle: mode === 'workflow-failed' ? 'failed' : 'completed' } });
+        await db.workflowRunInvocation.update({ where: { id: invocation.id }, data: { lifecycle: outcomeKind === 'failed' ? 'failed' : 'completed' } });
         expect(await publish({ ...marker, workflow: { ...marker.workflow, invocationAttempt: '1' } })).toMatchObject({ ok: false });
         expect(await publish({ ...marker, workflow: { ...marker.workflow, runId: 'forged-run' } })).toMatchObject({ ok: false });
         if (mode === 'unregistered' && selected.invitee) {
@@ -746,15 +774,28 @@ describe('First-class Discussions service (SQLite)', () => {
             expect(await publish(marker, review)).toMatchObject({ ok: false, error: 'discussion_post_denied' });
             expect(await db.discussionMessage.count({ where: { discussionId, localId } })).toBe(1);
         }
+        let persistedPublicationId: string | undefined;
+        if (replaceNativePublisher) {
+            await expect(publish(marker, undefined, true)).rejects.toThrow('Committed native Discussion reply acknowledgement lost');
+            const committed = await db.discussionMessage.findMany({ where: { discussionId, localId }, select: { id: true } });
+            expect(committed).toEqual([{ id: expect.any(String) }]);
+            persistedPublicationId = committed[0]!.id;
+            ({ socket } = await publisherSocket(owner.id, session.id, runtime));
+        }
         const posted = await publish();
+        if (replaceNativePublisher) {
+            expect(posted).toMatchObject({ ok: true, value: { message: { id: persistedPublicationId } } });
+            expect(await db.sessionTurn.findMany({ where: { sessionId: session.id }, select: { turnId: true } }))
+                .toEqual([{ turnId: acceptedTurnId }]);
+        }
         expect(posted).toMatchObject({ ok: true, value: { message: { addressingV1: { participantSessionIds: [] } } } });
         if (!posted.ok) throw new Error(posted.error);
         expect(posted.value.message.producerV1).toMatchObject({ runId: run.id, replyReturn: { workflow: marker.workflow,
-            outcome: mode === 'workflow-failed' ? 'failed' : 'answer' } });
+            outcome: outcomeKind } });
         expect(await publish()).toMatchObject({ ok: true, value: { message: { id: posted.value.message.id } } });
         expect(await db.discussionMessage.count({ where: { discussionId, localId } })).toBe(1);
         expect((await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId: requestLocalId } } })).replyProgress)
-            .toMatchObject({ disposition: 'returned', outcome: mode === 'workflow-failed' ? { kind: 'failed' }
+            .toMatchObject({ disposition: 'returned', outcome: outcomeKind !== 'answer' ? { kind: outcomeKind }
                 : { kind: 'answer', publicationRef: { kind: 'discussion', messageId: posted.value.message.id } } });
         const returned = (await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId: requestLocalId } } })).replyProgress;
         const lateMutation = { authentication, accountId: owner.id, sessionId: session.id, localId: requestLocalId,
