@@ -3,6 +3,7 @@ import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { SESSION_PERMISSION_MODE_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -32,6 +33,11 @@ describe('AE.P02.F10-plugin-reverse-ui', () => {
     const machine = await fixture.enrollDaemon(actor, { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
       HAPPIER_CLAUDE_PATH: agent.executablePath } });
     const session = await fixture.assertKnownGoodSessionControl(actor, machine);
+    const permission = await actor.executeAsPerson(SESSION_PERMISSION_MODE_SET_ACTION_ID_V1, {
+      sessionId: session.sessionId, permissionMode: 'default', applyTiming: 'immediate',
+    });
+    expect(permission, JSON.stringify(permission)).toMatchObject({ ok: true, result: { ok: true } });
+    expect(await actor.readSessionMetadata(session.sessionId)).toMatchObject({ permissionMode: 'default' });
     const pluginId = 'acme.automation-ui-reverse';
     const actionId = formatQualifiedPluginActionId({ pluginId, localId: 'apply' });
     const pluginRoot = join(testDir, 'client-plugin');
