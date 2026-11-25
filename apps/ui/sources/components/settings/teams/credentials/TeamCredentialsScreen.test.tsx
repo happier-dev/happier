@@ -84,6 +84,31 @@ afterEach(() => {
 });
 
 describe('TeamCredentialsScreen', () => {
+    it.each([
+        { status: 400, error: 'invalid_resource_input', message: 'teams.credentials.errors.invalidResourceRead', signIn: false },
+        { status: 404, error: 'not_found_or_not_visible', message: 'teams.credentials.detail.notFound', signIn: false },
+        { status: 503, error: 'feature_disabled', message: 'teams.credentials.errors.featureDisabled', signIn: false },
+        { status: 503, error: 'team_authentication_policy_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable', signIn: false },
+        { status: 403, error: 'team_authentication_required', message: 'teams.credentials.errors.teamAuthenticationRequired', signIn: true },
+    ])('names the credential list refusal $error and offers a working action', async ({ status, error, message, signIn }) => {
+        const serverId = await addHome();
+        harness.answer(serverId, CREDENTIALS_LIST_PATH, { status, body: { error } });
+
+        const screen = await renderCredentials(serverId);
+
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.findByTestId('team-credentials-error')).not.toBeNull();
+        expect(screen.findByTestId('team-credentials-error-retry')).toBeNull();
+        expect(screen.findByTestId('team-credentials-retry')).toBeNull();
+        expect(screen.findByTestId('team-credentials-sign-in') !== null).toBe(signIn);
+        if (signIn) {
+            await screen.pressByTestIdAsync('team-credentials-sign-in');
+            const signInUrl = new URL(routerPush.mock.lastCall?.[0] ?? '', 'https://app.example');
+            expect(signInUrl.pathname).toBe('/teams/team-1/sign-in');
+            expect(signInUrl.searchParams.get('serverId')).toBe(serverId);
+        }
+    });
+
     it('opens aggregate usage for a credential administrator even with no shared credentials', async () => {
         const serverId = await addHome();
         harness.answer(serverId, CREDENTIALS_LIST_PATH, { body: {

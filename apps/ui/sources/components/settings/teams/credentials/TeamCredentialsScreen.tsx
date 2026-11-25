@@ -16,11 +16,13 @@ import { getPreferredLanguage, t } from '@/text';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { ConnectedServiceMark } from '@/components/settings/connectedServices/ConnectedServiceMark';
+import { teamSignInReturnPath } from '@/components/teams/entry/teamSignInHome';
 
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
-import { teamCredentialAggregateUsagePath, teamCredentialCreatePath, teamCredentialDetailPath } from '../teamsRoutes';
+import { teamCredentialAggregateUsagePath, teamCredentialCreatePath, teamCredentialDetailPath, teamCredentialsPath } from '../teamsRoutes';
 import {
+    presentCredentialListReadFailure,
     resourceAdministrationSummaryLines,
     resourceAccessibilityLabel,
     resourceConnectedServiceMarkId,
@@ -151,14 +153,27 @@ const CredentialsList = React.memo(function CredentialsList(props: Readonly<{
     }
 
     const hasActiveFilter = filter !== 'all' || search.trim().length > 0;
-    const retryLine = error ? (
-        // Rows already read stay on screen through a failure; the failure is one line beside them.
+    const refusal = error ? presentCredentialListReadFailure(error, {
+        retry: { onPress: () => void retry(), testIDPrefix: 'team-credentials' },
+        openActionSettings: () => router.push('/settings/actions'),
+        signIn: {
+            label: t('teams.entry.signInToTeam'),
+            onPress: () => router.push(teamSignInReturnPath({
+                teamId: context.address.teamId,
+                serverId: context.address.serverId,
+                returnTo: teamCredentialsPath(context.address),
+            })),
+            testID: 'team-credentials-sign-in',
+        },
+    }) : null;
+    const refusalLine = refusal ? (
+        // The failure is one line beside any rows already read.
         <SurfaceStateCard
             testID="team-credentials-error"
             kind="error"
             size="line"
-            title={t('teams.unavailable.offline')}
-            action={{ label: t('common.retry'), onPress: () => void retry(), testID: 'team-credentials-retry' }}
+            title={refusal.message}
+            action={refusal.action}
             accessibilitySemantics="alert"
         />
     ) : null;
@@ -181,7 +196,7 @@ const CredentialsList = React.memo(function CredentialsList(props: Readonly<{
                         ? { label: t('teams.credentials.create.action'), onPress: share, testID: 'team-credentials-empty-share' }
                         : undefined}
                 />
-                {retryLine ? <ItemGroup>{retryLine}</ItemGroup> : null}
+                {refusalLine ? <ItemGroup>{refusalLine}</ItemGroup> : null}
             </>
         );
     }
@@ -251,7 +266,7 @@ const CredentialsList = React.memo(function CredentialsList(props: Readonly<{
                         showChevron={false}
                     />
                 ) : null}
-                {retryLine}
+                {refusalLine}
             </ItemGroup>
         </>
     );
