@@ -135,6 +135,17 @@ import { resolveSessionRunnerRestartEligibility } from '../sessionRunnerRuntime/
 import { reportSessionRunnerFailure } from '@/cli/resolveSessionRunnerFailureExitCode';
 import { endSessionCommand } from '@/agent/runtime/lifecycle/runnerTerminationHandlers';
 import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { formatProcessOwnerTag, resolveProcessOwnerScopeKey } from '@/processes/ownerTag';
+import { createHappierLinuxScopeName } from '../platform/linux/systemdUserResourceGovernor';
+import { createProcessOwnershipRuntime } from '../processes/ownership/processOwnershipRuntime';
+import { listHappierProcessRoots } from '../processes/roots/listHappierProcessRoots';
+import { createReadGuardFacts } from '../guard/readGuardFacts';
+import { planGuard, planIdleSessions } from '../guard/guardPlanner';
+import { evaluateSessionEligibility } from '../guard/sessionEligibility';
+import { normalizeLocalServiceScan } from '../local/services/inventory/scanner';
+import { MachineGuardPolicyV1Schema } from '@happier-dev/protocol/machines/guard/guardPolicyV1';
 
 function resolvePeerHelper(): string {
   const staged = resolveProcessCustodySupportExecutable(process.platform);
@@ -457,6 +468,63 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
     harness.releaseAll();
     await b.record.hostedSession!.observed;
     expect(harness.exits.map(({ exit }) => exit.trackingKey)).toEqual([a.record.trackingKey, b.record.trackingKey]);
+  });
+
+  it('admits an idle hosted Session when its Linux scope belongs to Happier', { timeout: 120_000 }, async () => {
+    const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      runtimeOptions: { pluginIds: ['happier.agent.claude'] } });
+    const harness = await createHarness();
+    let hosted: TrackedSession | undefined;
+    try {
+      const sessionId = 'guard-idle-hosted';
+      const { record, result } = await harness.spawnSession(sessionId);
+      hosted = record;
+      expect(result).toMatchObject({ type: 'success', sessionId });
+      const marker = await readSessionMarker(record.trackingKey);
+      expect(marker).toMatchObject({ pid: record.pid, happySessionId: sessionId, processCommand: HOST_COMMAND });
+      if (record.processStartTimeMs === undefined) throw new Error('Expected witnessed host birth');
+      const daemonPid = SUPERVISOR_PID + 1;
+      const platform = 'linux';
+      const daemonScopeKey = resolveProcessOwnerScopeKey(testHome, platform);
+      const ownerTag = formatProcessOwnerTag({ happierHomeDir: testHome, owner: { kind: 'happier' }, platform });
+      const scope = createHappierLinuxScopeName(ownerTag);
+      const principal = { kind: 'uid', value: '1000' } as const;
+      const now = 104_558;
+      // Only native observation is simulated. Spawn, marker publication, process custody and Guard read the real Session.
+      const runtimeOwnership = createProcessOwnershipRuntime({ platform, selfPid: daemonPid, daemonScopeKey,
+        listRoots: snapshot => listHappierProcessRoots({ snapshot, platform, selfPid: daemonPid, daemonScopeKey,
+          bootTimeMs: 0, trackedSessions: harness.tracked.values() }) });
+      const ownership = await runtimeOwnership.resolveSnapshot({ status: 'ok', capturedAtMs: now, logicalCpus: 1, rows: [
+        { pid: daemonPid, ppid: 1, start: { startTimeMs: 1 }, principal, name: 'happier', ownerTag, memory: null, cpuTimeUs: null },
+        { pid: record.pid, ppid: daemonPid, start: { startTimeMs: record.processStartTimeMs }, principal,
+          name: 'happier', ownerTag, cgroup: `/user.slice/${scope}`, memory: null, cpuTimeUs: null },
+      ] });
+      const inventory = { coverage: 'complete' as const, items: (['session', 'input', 'agents', 'attention'] as const)
+        .map(category => ({ category, ownerRef: record, state: 'settled' as const, settledAt: 1,
+          attribution: { kind: 'unknown' as const } })) };
+      const readFacts = createReadGuardFacts({ trackedSessions: () => harness.tracked.values(), readBrowsers: () => [],
+        readInventory: async () => inventory,
+        readServices: async () => normalizeLocalServiceScan({ machineId: 'm', now, previous: null,
+          workspaces: [], ownership: [], listeners: [], processes: new Map() }),
+        readSessionEligibility: tracked => evaluateSessionEligibility({ tracked, inventory, draft: { status: 'absent' }, resume: {
+          sessionId, rawSession: { machineId: 'm', path: testHome },
+          metadata: { runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: { backendMode: 'agentSdk' } },
+            machineId: 'm', path: testHome, flavor: 'claude', claudeSessionId: 'native-resume' },
+        } }),
+      });
+      const facts = await readFacts({ ownership, inventory });
+      const target = facts.targets.find(target => target.kind === 'session');
+      expect(target).toMatchObject({ eligibility: { eligible: true }, root: { live: true, pid: record.pid } });
+      const idlePlan = planIdleSessions({ ...facts, policy: { enabled: true, afterMs: 60_000, warnBeforeMs: 0 },
+        now, keepRunningAnchors: new Map() });
+      const pressurePlan = planGuard({ ...facts, policy: MachineGuardPolicyV1Schema.parse({}).memoryGuard, now });
+      expect({ idleStopAt: idlePlan.items.map(item => item.stopAt), exclusion: pressurePlan.ladder.excluded[0]?.reason })
+        .toEqual({ idleStopAt: [60_001], exclusion: 'footprint_unknown' });
+    } finally {
+      harness.releaseAll();
+      await hosted?.hostedSession?.observed;
+      await runtime.dispose();
+    }
   });
 
   it.each(['launched', 'reattached'] as const)('refreshes only the selected Session in a shared host (%s)', { timeout: 120_000 }, async placement => {

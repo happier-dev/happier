@@ -7,6 +7,7 @@ import { compareProcessPrincipals } from '@/processes/ownership/principal';
 import { parseHappierLinuxScopeName } from '@/daemon/platform/linux/systemdUserResourceGovernor';
 import type { TerminalProcessRegistry } from '@/daemon/local/services/inventory/terminalRegistry';
 import type { DaemonSessionMarker } from '@/daemon/sessionRegistry';
+import type { TrackedSession } from '@/daemon/types';
 import { equalProcessStart, processOwnerKey, type HappierProcessRoot } from '../ownership/types';
 
 export type HappierProcessRootSource = Readonly<{
@@ -35,7 +36,8 @@ export type HappierProcessRootsInput = Readonly<{
         runnerProcessIdentity?: Readonly<{ pid: number; processStartTimeMs: number }>;
         stopRequestedAtMs?: number;
         requesterWorkAttributionV1?: HappierProcessRoot['requesterWorkAttributionV1'];
-        happySessionMetadataFromLocalWebhook?: Readonly<{ path?: string }>; spawnOptions?: Readonly<{ directory?: string }> }>>;
+        happySessionMetadataFromLocalWebhook?: Readonly<{ path?: string }>; spawnOptions?: Readonly<{ directory?: string }> }
+        & Pick<TrackedSession, 'hostedSession'>>>;
     terminalRegistry?: TerminalProcessRegistry;
     terminalRequesterAttribution?: (terminalId: string) => HappierProcessRoot['requesterWorkAttributionV1'];
     managedServices?: readonly HappierProcessRootSource[];
@@ -90,6 +92,15 @@ export function listHappierProcessRoots(input: HappierProcessRootsInput): readon
             ...(typeof session.stopRequestedAtMs === 'number' && Number.isFinite(session.stopRequestedAtMs) ? { state: 'stopping' as const } : {}),
             ...(session.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: session.requesterWorkAttributionV1 } : {}),
             workspacePath: session.happySessionMetadataFromLocalWebhook?.path ?? session.spawnOptions?.directory });
+        if (session.hostedSession) {
+            // The admitted host is a Happier process even while it serves just one Session.
+            // Its exact native birth is separate from the logical Session roots at that PID.
+            const host = index.byPid.get(session.pid);
+            if (host && self && host.start.startTimeMs === session.processStartTimeMs
+                && compareProcessPrincipals(host.principal, self.principal) === 'self') {
+                sources.push({ owner: { kind: 'happier' }, pid: host.pid, start: host.start });
+            }
+        }
     }
     for (const terminal of input.terminalRegistry?.listProcesses() ?? []) {
         const native = index.byPid.get(terminal.pid);
