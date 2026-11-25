@@ -1,6 +1,8 @@
 import { getAgentModelConfig } from '@happier-dev/agents';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings } from '@happier-dev/protocol/account/settings/connected-services';
+import { useFirstConnection } from '@/components/projects/deployments/useFirstConnection';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser';
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
@@ -49,22 +51,45 @@ function ExecutionRunAccountPurposePicker(props: AgentModelPickerProps) {
     const parsed = ConnectedServiceBindingsV2Schema.safeParse(props.actionInput.connectedServices);
     if (!catalog?.identity) return null;
     const consumer = catalog.identity;
-    return <>{catalog.connectedAccounts.map(declaration => {
-        const serviceKey = buildQualifiedPluginContributionKey(declaration.service);
-        const binding = parsed.success ? parsed.data?.bindingsByServiceId[serviceKey] : undefined;
-        const value = binding?.source === 'connected'
-            ? binding.selection === 'group' ? { kind: 'group' as const, service: declaration.service, groupId: binding.groupId }
-                : { kind: 'account' as const, account: { service: declaration.service, accountId: binding.profileId } }
-            : null;
-        return <ConnectedAccountPurposeTargetChooser key={declaration.purpose} declaration={declaration}
-            localizedTextPluginId={consumer.pluginId} accountsOnly value={value}
-            onChange={(target, teamResource) => props.setActionInput(previous => ({
-                ...clearExecutionRunChildSelection(previous),
-                connectedServices: projectAgentConnectedAccountPurposeDefaultsToSessionBindings([{
-                    purpose: { consumer, purpose: declaration.purpose }, service: declaration.service, target, teamResource,
-                }]),
-            }))} />;
-    })}</>;
+    return <>{catalog.connectedAccounts.map(declaration => <ExecutionRunAccountPurposeField key={declaration.purpose}
+        declaration={declaration} consumer={consumer} agentTitle={props.choice.title}
+        bindings={parsed.success ? parsed.data : undefined} setActionInput={props.setActionInput} />)}</>;
+}
+
+function ExecutionRunAccountPurposeField(props: Readonly<{
+    declaration: React.ComponentProps<typeof ConnectedAccountPurposeTargetChooser>['declaration'];
+    consumer: NonNullable<NonNullable<ExecutionRunLauncherBackendChoice['agentCatalogEntry']>['identity']>;
+    agentTitle: string;
+    bindings: SessionModelPickerProps['connectedServices'];
+    setActionInput: AgentModelPickerProps['setActionInput'];
+}>) {
+    const { declaration, consumer } = props;
+    const binding = props.bindings?.bindingsByServiceId[buildQualifiedPluginContributionKey(declaration.service)];
+    const value = binding?.source === 'connected'
+        ? binding.selection === 'group' ? { kind: 'group' as const, service: declaration.service, groupId: binding.groupId }
+            : { kind: 'account' as const, account: { service: declaration.service, accountId: binding.profileId } }
+        : null;
+    const select: React.ComponentProps<typeof ConnectedAccountPurposeTargetChooser>['onChange'] = (target, teamResource) =>
+        props.setActionInput(previous => ({
+            ...clearExecutionRunChildSelection(previous),
+            connectedServices: projectAgentConnectedAccountPurposeDefaultsToSessionBindings([{
+                purpose: { consumer, purpose: declaration.purpose }, service: declaration.service, target, teamResource,
+            }]),
+        }));
+    const connection = useFirstConnection(null, declaration.service, account => select({ kind: 'account', account }, null));
+    const testID = `execution-run-account:${declaration.purpose}`;
+    const ownSignIn = t('connectedServices.purposeTargets.ownSignIn', { agent: props.agentTitle });
+    if (connection.pending) return <SurfaceStateCard testID={`${testID}:pending`} size="line" kind="loading" title={t('common.loading')} />;
+    if (connection.unavailable) return <SurfaceStateCard testID={`${testID}:unavailable`} size="line" kind="unavailable"
+        title={t('settings.connectedAccounts')} reason={t('errors.connectedAccountsUnavailable')}
+        action={{ label: t('common.retry'), onPress: connection.retry }} />;
+    if (value === null && connection.missing) return <SurfaceStateCard testID={`${testID}:missing`} size="line" kind="unavailable"
+        title={ownSignIn} reason={t('connectedServices.authModal.nativeAuthSubtitle')}
+        action={{ label: t('settings.connectAccount'), onPress: connection.connect, testID: `${testID}:connect` }} />;
+    return <ConnectedAccountPurposeTargetChooser testID={testID} declaration={declaration}
+        localizedTextPluginId={consumer.pluginId} accountsOnly value={value}
+        noneLabel={ownSignIn} onChange={select}
+        addAccount={{ label: t('settings.connectAccount'), onPress: connection.connect }} />;
 }
 
 function ExecutionRunAgentModelPickerContent(props: AgentModelPickerProps) {

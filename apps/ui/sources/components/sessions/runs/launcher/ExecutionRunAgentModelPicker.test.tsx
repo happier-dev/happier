@@ -84,7 +84,14 @@ it('authors a native runner account through the same controlled account picker a
 
 
 it('offers an account-only engine its declared purpose without a model picker', async () => {
-    const { serverId } = await account.restore({ waivedActions: ['providers.models.refresh'] });
+    const service = { pluginId: 'happier.review.coderabbit', localId: 'coderabbit-account' };
+    const profile = AccountProfileSchema.parse({ id: 'account-a', connectedAccountsV4: [{
+        revisionSemantics: 'legacy_unfenced', ref: { service, accountId: 'work' },
+        status: 'connected', authenticationModeId: null, configurationReady: true, configurationRevision: null,
+        credentialRevision: null, kind: 'oauth', expiresAt: null, lastUsedAt: null, providerIdentity: {},
+    }] });
+    const { serverId } = await account.restore({ waivedActions: ['providers.models.refresh'],
+        httpAnswers: { '/v1/account/profile': { body: profile } } });
     const choice = resolveExecutionRunLauncherBackendChoices({ intent: 'review', enabledAgentIds: ['coderabbit'], executionRunsBackends: {},
         reviewEngines: [{ engineId: 'coderabbit', value: 'agent:happier.review.coderabbit/coderabbit', label: 'CodeRabbit', enabled: true,
             available: true, capabilities: { structuredNarration: false } }] })[0];
@@ -107,9 +114,31 @@ it('offers an account-only engine its declared purpose without a model picker', 
     expect(screen.findAllByType(ExactModelChoicePicker)).toHaveLength(0);
     const declaration = choice.agentCatalogEntry!.connectedAccounts[0]!;
     expect(chooser!.props.declaration).toMatchObject(declaration);
+    expect(screen.getTextContent()).toContain('CodeRabbit’s own sign-in');
     await act(async () => chooser!.props.onChange({ kind: 'account', account: { service: declaration.service, accountId: 'work' } }, null));
     expect(current.connectedServices).toMatchObject({ v: 2, bindingsByServiceId: {
         [declaration.service.pluginId + '/' + declaration.service.localId]: { source: 'connected', selection: 'profile', profileId: 'work' },
     } });
     expect(current.modelSelection).toBeUndefined();
+});
+
+
+it('offers the shared connect sheet instead of an empty account picker when an engine has no accounts', async () => {
+    const { serverId } = await account.restore({ waivedActions: ['providers.models.refresh'] });
+    const choice = resolveExecutionRunLauncherBackendChoices({ intent: 'review', enabledAgentIds: ['coderabbit'], executionRunsBackends: {},
+        reviewEngines: [{ engineId: 'coderabbit', value: 'agent:happier.review.coderabbit/coderabbit', label: 'CodeRabbit', enabled: true,
+            available: true, capabilities: { structuredNarration: false } }] })[0]!;
+    const token = account.home.findByServerUrl('https://provider-settings-account.test')?.token;
+    if (!token) throw new Error('Expected synthetic Account credentials');
+    const screen = await renderScreen(<InjectedAuthProvider credentials={{ token }}><ModalProvider>
+        <ExecutionRunAgentModelPicker choice={choice} sessionId={null} serverId={serverId} machineId={null}
+            actionInput={{}} selected={null} inheritedTeamCredentialModel={null}
+            selectBackend={() => undefined} setActionInput={() => undefined} />
+    </ModalProvider></InjectedAuthProvider>);
+    expect(screen.findByTestId('execution-run-account:coderabbit:connect')).not.toBeNull();
+    await screen.pressByTestIdAsync('execution-run-account:coderabbit:connect');
+    const { ConnectSheetContent } = await import('@/components/settings/connectedServices/setup/ConnectSheetContent');
+    expect(screen.findAllByType(ConnectSheetContent)[0]?.props.request).toMatchObject({
+        intent: 'add', service: choice.agentCatalogEntry!.connectedAccounts[0]!.service,
+    });
 });
