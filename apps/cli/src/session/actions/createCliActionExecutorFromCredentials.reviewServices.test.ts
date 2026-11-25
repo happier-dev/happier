@@ -5,8 +5,81 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 import { createCliActionExecutor } from './createCliActionExecutor';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { PLUGIN_MANIFEST as TRIAGE_MANIFEST, TRIAGE_PLUGIN } from '@happier-dev/plugins-triage/manifest';
+import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../../../../packages/plugins/triage/src/internalTasks/configuration';
+import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
+import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtime/invocation/services/actionCaller.testkit';
+import { createManagedPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
+import { ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { resolveSessionRoleRpcOrigin } from './sessionRoleRpcOrigin';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it.each([
+    { name: 'original own Account', accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, allowed: true },
+    { name: 'foreign Account on the shared Machine', accountId: 'guest', authentication: { kind: 'account', tokenEpoch: 1 }, allowed: false },
+    { name: 'restricted API token', accountId: 'owner', authentication: null, allowed: false },
+    { name: 'Session-origin Account', accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, sessionOrigin: true, allowed: false },
+    { name: 'own Account with Session-scoped transport', accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, sessionTransport: true, allowed: false },
+] as const)('keeps the actual Triage selected-finding read bound to $name', async scenario => {
+    const { accountId, authentication, allowed } = scenario;
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const executor = createCliActionExecutor({ token, credentials: { token, encryption: null }, sessionId: '', mode: 'plain',
+        ctx: null, serverId: 'home', serverIdentityId: 'srv_home', pluginActionExecutionOwner: 'current_process',
+        actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+    const target = { kind: 'machine' as const, machineId: 'machine' };
+    const sessionActionOrigin = 'sessionOrigin' in scenario ? resolveSessionRoleRpcOrigin({
+        actionCaller: { kind: 'session', sessionId: 'owner-session', starterDepth: 0, turnDepth: 0 },
+        sessionInputSource: { sourceSessionId: 'owner-session', sourceTurnId: 'turn', sourceInputId: 'input' },
+        actionRequestId: 'task-press', callerPermissionMode: 'default', workspaceWrites: 'deny',
+    }) : undefined;
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-verified-root', binding: {
+        accountId, custodianAccountId: 'owner',
+        ...(authentication ? { authentication } : { principalId: accountId, credentialId: '00000000-0000-4000-8000-000000000001',
+            grant: ApiTokenGrantV1Schema.parse({ v: 1, actions: { families: [], ids: ['reviews.comments.list'] }, targets: { sessions: [], machines: ['machine'] },
+                approve: false, origins: [], models: null, permissionModes: null, create: null }) }),
+        ...(sessionActionOrigin ? { sessionActionOrigin, sessionActionSource: { machineId: 'machine', installationId: 'installation' } } : {}),
+        serverIdentityId: 'srv_home', machineId: 'machine',
+        installationId: 'installation', actionId: 'action.invoke', requestId: 'task-press', target,
+        accountEncryptionMode: 'plain', admittedMachineRole: 'manage', requestEnvelopeDigest: 'a'.repeat(43),
+    } });
+    const controller = new AbortController();
+    const caller = createPluginActionCallerMaterializationFixture(TRIAGE_MANIFEST.id, { machineId: 'machine' });
+    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        runtimeAccountId: 'owner', serverId: 'home', serverIdentityId: 'srv_home', externalActionTarget: target,
+        externalActionExecutionAuthorization: authorization, ...(sessionActionOrigin ? { sessionActionOrigin } : {}),
+        ...('sessionTransport' in scenario ? { rpcSessionAuthorization: { kind: 'session.write' as const, sessionId: 'owner-session' } } : {}) };
+    const actions = createPluginInvocationActionsService({ seed: {
+        plugin: { id: TRIAGE_MANIFEST.id, version: TRIAGE_MANIFEST.version }, occurrenceId: 'triage-task-press',
+        contribution: { id: 'tasks/create-v1' }, sourceCustody: createManagedPluginSourceCustody('triage-task-generation'),
+        surface: 'ui', signal: controller.signal, isOccurrenceCurrent: () => !controller.signal.aborted,
+        resolveCurrentPluginMaterializationRef: caller.resolveCurrentPluginMaterializationRef,
+        approvalContext: context,
+    }, actionExecutor: executor, invokeContributedAction: async () => { throw new Error('No task effect should precede the Review read'); } });
+    const plugin = await createPluginTestkit({ manifest: TRIAGE_MANIFEST, module: { ...TRIAGE_PLUGIN, activateAccount(api) {
+        // The SDK's self-contribution fixture is replaced by the real host Action service, as in the Task owner tests.
+        TRIAGE_PLUGIN.activateAccount({ ...api, actions: { register(id, handler, options) {
+            api.actions.register(id, (input, context) => handler(input,
+                { ...context, services: { ...context.services, actions } }), options);
+        } } });
+    } } });
+    // Home HTTP is the boundary. A missing Review gives an observable control after credential admission, before task writes.
+    const get = vi.spyOn(axios, 'get').mockResolvedValue({ status: 404, data: { error: 'not_found' } });
+    const configured = INTERNAL_TASK_SOURCE_RECORD_V1.value.configured;
+    try {
+        await expect(plugin.invokeAction('tasks/create-v1', { v: 1, source: configured.instance.source,
+            sourceInstanceId: configured.instance.sourceInstanceId, kindId: 'task', fields: { title: 'Selected finding' },
+            originReview: { reviewId: 'missing-review', findingIds: ['finding'] } }, { surface: 'ui' }))
+            .rejects.toMatchObject({ code: allowed ? 'review_comment_encryption_material_unavailable' : 'review_comment_permission_denied' });
+        if (allowed) expect(get).toHaveBeenCalled();
+        else expect(get).not.toHaveBeenCalled();
+        const services = await executor.resolveReviewServices!(context);
+        if (allowed) expect(services.comments).toBeTypeOf('function');
+        else expect(services).toEqual({});
+    } finally { controller.abort(); await plugin.dispose(); }
+});
 
 it.each([
     { name: 'owner', accountId: 'owner', actorAccountId: 'owner', allowed: true },
