@@ -9,11 +9,10 @@ import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/i
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_STATS_ENABLE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { readDeploymentDatabaseSizesV1 } from '@happier-dev/deployments';
-import { DatabaseStatsEnableInputV1Schema } from '@happier-dev/plugin-sdk/database';
+import { DatabaseStatsEnableInputV1Schema, type DatabaseWriteStatementInputV1 } from '@happier-dev/plugin-sdk/database';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import * as workbenchPlugin from '@happier-dev/plugins-database-workbench';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
     verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -31,7 +30,6 @@ import { createScmBackendRegistry } from '@/scm/registry';
 import { sealMachineSecretGrant } from '../../secrets/machineSecretGrant';
 import { createDeploymentDatabasesServiceForHost } from '../createDeploymentDatabasesServiceForHost';
 import { createDeploymentDataSizeActionForHost } from '../../actions/dataSize';
-import { openOwnServerDatabaseConnectionForHost } from './databaseConnection';
 import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentSourceMaterializationPort } from './exactCommitRelease';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
@@ -233,6 +231,21 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                     resolveInvocationHostPolicy: owners.resolveInvocationHostPolicy, readHost: async () => ({ serverId: 'home', machineId: 'machine-a',
                         installationId: installation.installationId, credentialOwnerAccountId: accountId, credentials, serverHttpBaseUrl: 'https://home.test',
                         async assertCurrent() {}, async readEnvironment() { return detail; }, async readReceipt() { return receipt; } }) });
+                const createWriter = async (requestId: string, signal: AbortSignal, write: DatabaseWriteStatementInputV1) => {
+                    const writeEnvelope = { ...envelope, requestId, input: { action, input: write } };
+                    const writeRoot = ExternalActionExecutionAuthorizationV1Schema.parse({ ...root, token: 'native-write-root',
+                        binding: { ...root.binding, requestId,
+                            deploymentDatabaseAccess: { ...databaseAccess, summary: { canRead: true, canWrite: true } },
+                            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(writeEnvelope),
+                            deploymentReadAdmission: projectDeploymentReadAdmissionV1(ACTION_INVOKE_ACTION_ID_V1, writeEnvelope.input) } });
+                    const writeAuthorization = await projectExternalActionRequesterHttpAuthorization({ authorization: writeRoot,
+                        serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.test', target: machineTarget,
+                        installationId: installation.installationId, privateKey: Buffer.from(installation.privateKey, 'base64url'), rootAdmitted: true });
+                    if (!writeAuthorization) throw new Error('Expected signed native database writer custody');
+                    return { writeRoot, service: createService(signal, false, requestId, {
+                        action, id: DATABASE_STATEMENT_RUN_ACTION_ID_V1, authorization: writeAuthorization, envelope: writeEnvelope,
+                    }) };
+                };
                 if (statsSetup && pg) {
                     const setupAction = parseQualifiedPluginActionId(DATABASE_STATS_ENABLE_ACTION_ID_V1)!;
                     const setup = { operation: 'stats.enable' as const, target };
@@ -400,27 +413,10 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                             + ' ALTER TABLE native_items OWNER TO "App Writer"; GRANT "App Writer" TO happier_rw');
                         const write = { operation: 'statement.run' as const, target, mode: 'write' as const, executionMode: 'transaction' as const,
                             statements: [{ sql: "UPDATE native_items SET note = 'held-reader' WHERE id = 1 RETURNING current_user", parameters: [] }] };
-                        const writeEnvelope = { ...envelope, requestId: 'native-statistics-writer', input: { action, input: write } };
-                        const writeRoot = ExternalActionExecutionAuthorizationV1Schema.parse({ ...root, token: 'native-write-root',
-                            binding: { ...root.binding, requestId: writeEnvelope.requestId,
-                                deploymentDatabaseAccess: { ...databaseAccess, summary: { canRead: true, canWrite: true } },
-                                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(writeEnvelope),
-                                deploymentReadAdmission: projectDeploymentReadAdmissionV1(ACTION_INVOKE_ACTION_ID_V1, writeEnvelope.input) } });
-                        const writeAuthorization = await projectExternalActionRequesterHttpAuthorization({ authorization: writeRoot,
-                            serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.test', target: machineTarget,
-                            installationId: installation.installationId, privateKey: Buffer.from(installation.privateKey, 'base64url'), rootAdmitted: true });
-                        if (!writeAuthorization) throw new Error('Expected signed native database writer custody');
+                        const writer = await createWriter('native-statistics-writer', signal, write);
                         try {
-                            activeRoot = writeRoot;
-                            const openWriter = (operationId: string) => openOwnServerDatabaseConnectionForHost({
-                                host: { serverId: 'home', machineId: 'machine-a', credentials, serverHttpBaseUrl: 'https://home.test',
-                                    async assertCurrent() {}, async readEnvironment() { return detail; }, async readReceipt() { return receipt; } },
-                                target, environment: detail, installationId: installation.installationId, signal,
-                                context: { authority: 'present_user', signal, externalActionExecutionAuthorization: writeAuthorization,
-                                    externalActionTarget: machineTarget, originalActionEnvelope: writeEnvelope },
-                                operationId, access: 'write',
-                            });
-                            const writable = await openWriter(writeEnvelope.requestId);
+                            activeRoot = writer.writeRoot;
+                            const { connection: writable } = await writer.service.resolve(write, 'write');
                             try {
                                 expect(await writable.execute(write)).toMatchObject({ ok: true,
                                     results: [{ rows: [{ cells: [{ type: 'text', value: 'App Writer' }] }] }] });
@@ -435,8 +431,9 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                                         expect((await pg.execute("SELECT count(*) FROM pg_stat_activity WHERE usename='happier_rw' AND state='active' AND query LIKE '%pg_sleep(60)%'")).stdout)
                                             .toMatch(/^\s*1\s*$/mu);
                                     }, { timeout: 60_000 });
-                                    await expect(openWriter('native-competing-writer')).rejects.toMatchObject({
-                                        code: 'effect_in_progress', actionOperationId: writeEnvelope.requestId,
+                                    const competitor = await createWriter('native-competing-writer', signal, write);
+                                    await expect(competitor.service.resolve(write, 'write')).rejects.toMatchObject({
+                                        code: 'effect_in_progress', actionOperationId: writer.writeRoot.binding.requestId,
                                     });
                                 } finally {
                                     stopWrite.abort();
@@ -447,11 +444,13 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                                 .toMatchObject([unavailable, unavailable]);
                             expect((await pg.execute('SELECT note FROM native_items WHERE id = 1')).stdout).toContain('held-reader');
                             detail.content.bindings = bindings;
-                            const refused = await openWriter('native-writer-role-removed').then(
-                                async connection => { await connection.close(); return null; },
-                                (error: unknown) => readPluginActionError(error),
-                            );
-                            expect(refused).toMatchObject({ code: 'write_role_setup_required' });
+                            const readsBeforeMissingRole = secretReads;
+                            await expect(service.resolve(write, 'write')).rejects.toMatchObject({ code: 'target_mismatch' });
+                            const withoutRole = await createWriter('native-writer-role-removed', signal, write);
+                            activeRoot = withoutRole.writeRoot;
+                            await expect(withoutRole.service.resolve(write, 'write'))
+                                .rejects.toMatchObject({ code: 'write_role_setup_required' });
+                            expect(secretReads).toBe(readsBeforeMissingRole);
                         } finally {
                             activeRoot = root;
                             detail.content.bindings = bindings;
