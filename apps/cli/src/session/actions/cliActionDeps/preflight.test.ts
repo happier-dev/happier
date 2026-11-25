@@ -75,6 +75,30 @@ async function fixture(actionId: 'scm.diffSummary.generate' | 'session.delete' =
 describe('signed exact Execution Run preflight', () => {
   afterEach(() => { callSessionRpc.mockReset(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+  it('keeps signed Session deletion on the admitted Machine when the Session view omits placement', async () => {
+    const { params, options } = await fixture('session.delete');
+    const sessionId = 'c123456789012345678901234';
+    const homeRead = vi.mocked(axios.get).getMockImplementation();
+    if (!homeRead) throw new Error('Fixture Home adapter is unavailable');
+    vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+      if (new URL(String(url)).pathname === `/v2/sessions/${sessionId}`) {
+        return { status: 200, data: { session: createSessionRecordFixture({ id: sessionId, active: false,
+          encryptionMode: 'plain', dataEncryptionKey: null, metadata: '{}' }) } };
+      }
+      return homeRead(url, config);
+    });
+    const deps = createCliActionDeps({ ...params, serverIdentityId: 'session-home', machineActionDirectTargetTransport: { machineId: 'machine',
+      sessionDelete: async ({ deleteFromHome }) => deleteFromHome(async () =>
+        ({ ok: false, errorCode: 'session_directory_unavailable', error: 'session_directory_unavailable' })),
+    } });
+    const result = await deps.sessionDelete!({ input: { sessionId }, context: {
+      surface: 'rpc', authority: 'present_user', serverId: 'session-home',
+      externalActionExecutionAuthorization: options.externalActionExecutionAuthorization,
+      externalActionTarget: options.externalActionTarget,
+    }, deleteFromHome: async beforeDelete => await beforeDelete?.() ?? { ok: true, result: { success: true } } });
+    expect(result).toMatchObject({ ok: false, errorCode: 'session_directory_unavailable' });
+  });
+
   it('deletes detached history through the original session delete Action on its exact Machine', async () => {
     const { deps, invoke, options } = await fixture('session.delete');
     invoke.mockResolvedValueOnce({ success: true });

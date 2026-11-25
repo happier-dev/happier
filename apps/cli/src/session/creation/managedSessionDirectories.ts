@@ -5,6 +5,7 @@ import { lstat, rename, rm } from 'node:fs/promises';
 import { posix, win32 } from 'node:path';
 import { z } from 'zod/mini';
 import type { StopSessionResult } from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
@@ -408,9 +409,13 @@ export function createManagedSessionDirectories(input: Readonly<{
   /** Captures teardown and native effects while the original Session authority exists. */
   const prepareForSessionDeletion = async (request: Readonly<{
     sessionId: string; removalContext: StorageWorktreeRemovalContext;
+    sessionMetadata?: Readonly<Record<string, unknown>> | null;
     prepareMemberDirectory(directory: string, prepareRemoval: (reads: MemberWorkspaceReadServices) => Promise<void>): Promise<PreparedMemberSessionDirectoryRemoval>;
   }>) => {
     const records = (await listRecords({ includeTrashed: true })).filter(record => record.sessionId === request.sessionId);
+    if (records.length === 0 && readSessionDirectoryKind(request.sessionMetadata) === 'managed') {
+      throw Object.assign(new Error('Managed Session directory ownership is unavailable'), { code: 'session_directory_unavailable' });
+    }
     const removals: ProjectCheckoutRemoval[] = [];
     const effects: PreparedMemberSessionDirectoryRemoval[] = [];
     try { for (const record of records) {

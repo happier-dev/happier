@@ -8,6 +8,9 @@ import { requireProjectCheckoutRemovalOperation } from '@/workspaces/projectSetu
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 
 type SessionDelete = NonNullable<ActionExecutorDeps['sessionDelete']>;
+export type NativeSessionDeleteRequest = Parameters<SessionDelete>[0] & Readonly<{
+    sessionMetadata?: Readonly<Record<string, unknown>> | null;
+}>;
 const failure = (errorCode: string): ActionExecuteResult => ({ ok: false, errorCode, error: errorCode });
 
 /** Consumes the original admitted deletion; Account authority is never reconstructed after DELETE. */
@@ -17,7 +20,7 @@ export function createNativeSessionDeleteAction(input: Readonly<{
     isSessionActive(sessionId: string): Promise<boolean>;
     retireRequesterCustody(sessionId: string): Promise<boolean>;
     nativeOperationRuntime: Pick<ApiMachineClient, 'prepareNativeOperation' | 'readMemberFolderOwner'>;
-}>): SessionDelete {
+}>): (request: NativeSessionDeleteRequest) => Promise<ActionExecuteResult> {
     return async request => {
         const operation = requireProjectCheckoutRemovalOperation(request.context);
         let runtime: Promise<ProjectFiniteActionRuntime | null> | undefined;
@@ -35,6 +38,7 @@ export function createNativeSessionDeleteAction(input: Readonly<{
                 if (await input.isSessionActive(request.input.sessionId)) return failure('session_active');
                 if (prepared) return;
                 prepared = await directories.prepareForSessionDeletion({ sessionId: request.input.sessionId,
+                    sessionMetadata: request.sessionMetadata,
                     removalContext: { ingress: input.ingress, context: request.context, operation, skipCleanup: request.input.skipCleanup },
                     async prepareMemberDirectory(directory, prepareRemoval) {
                         return prepareManagedSessionDirectoryRemovalAsMember({ nativeOperationRuntime: input.nativeOperationRuntime,

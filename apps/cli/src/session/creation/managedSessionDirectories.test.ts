@@ -35,6 +35,39 @@ async function fixture() {
 }
 
 describe('managed session directory ownership', () => {
+  it.each([true, false])('distinguishes a missing managed allocation from a Session without one (managed=%s)', async managed => {
+    const { activeServerDir, owner } = await fixture();
+    const allocation = await owner.materializeForFreshSpawn({ sessionCreationTag: 'retained' });
+    await owner.bind({ allocationId: allocation.allocationId, sessionId: 'retained' });
+    await writeFile(join(allocation.directory, 'keep'), 'retained bytes');
+    const otherRoot = activeServerDir + '-sibling';
+    roots.push(otherRoot);
+    const otherOwner = createManagedSessionDirectories({ activeServerDir: otherRoot });
+    const unrelated = await otherOwner.materializeForFreshSpawn({ sessionCreationTag: 'unrelated' });
+    await otherOwner.bind({ allocationId: unrelated.allocationId, sessionId: 'unrelated' });
+    await writeFile(join(unrelated.directory, 'keep'), 'unrelated bytes');
+    const signal = new AbortController().signal;
+    const request = {
+      sessionId: 'retained',
+      sessionMetadata: managed ? { path: allocation.directory, sessionDirectoryV1: { v: 1, kind: 'managed' } } : null,
+      removalContext: {
+        ingress: { signal }, context: {},
+        operation: { signal, operationProgress: { update() {} }, operationOwnerUpdate: { update() {} },
+          operationAcceptance: { operationId: 'delete', actionId: 'session.delete' as const, accept() {} } },
+      },
+      prepareMemberDirectory: async () => { throw new Error('No member removal expected'); },
+    };
+    if (managed) {
+      await expect(otherOwner.prepareForSessionDeletion(request)).rejects.toMatchObject({ code: 'session_directory_unavailable' });
+    } else {
+      const prepared = await otherOwner.prepareForSessionDeletion({ ...request, sessionId: 'ordinary' });
+      expect(await prepared.remove()).toEqual([]);
+      await prepared.dispose();
+    }
+    expect(await readFile(join(allocation.directory, 'keep'), 'utf8')).toBe('retained bytes');
+    expect(await readFile(join(unrelated.directory, 'keep'), 'utf8')).toBe('unrelated bytes');
+  });
+
   it.skipIf(process.platform === 'win32')('preserves a legacy private allocation when isolated resume needs explicit replacement consent', async () => {
     const { activeServerDir, owner } = await fixture();
     const original = await owner.materializeForFreshSpawn({ sessionCreationTag: 'legacy-private' });

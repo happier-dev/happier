@@ -6,6 +6,7 @@ import { readAgentStartCallerWorkDepthV1 } from '@happier-dev/protocol/account/s
 import { isPermissionModeGrantedV1, resolveEffectiveApiTokenPermissionModeV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { resolveEffectivePermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
+import { SESSION_CHECKOUT_REMOVAL_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import type { parsePermissionIntentAlias } from '@happier-dev/agents';
 import type { buildCausalSessionInputAdmissionV1, buildPluginSessionInputAdmissionV1 } from '@/session/services/sessionInputAdmissionIdentity';
 import type { setSessionArchivedState } from '@/session/services/setSessionArchivedState';
@@ -67,13 +68,20 @@ export function createCliSessionLifecycleActionDeps(
       // Home remains the authority for absent Sessions; no native authority is fabricated.
       if (!transport.ok) return transport.code === 'session_not_found'
         ? deleteFromHome() : { ok: false, errorCode: transport.code, error: transport.code };
-      const machineId = normalizeStringValue(transport.rawSession.machineId)
-        ?? normalizeStringValue(readTransportSessionOwnerMetadata(transport)?.machineId);
-      if (!machineId) return deleteFromHome();
       const direct = params.machineActionDirectTargetTransport;
+      const metadata = readTransportSessionOwnerMetadata(transport);
+      // The receiving Machine already has the signed root for this exact Session.
+      // A content view without placement must not bypass its native owner.
+      const admittedMachineId = direct && authorization && authorization.binding.machineId === direct.machineId
+        && authorization.binding.actionId === SESSION_CHECKOUT_REMOVAL_ACTION_IDS_V1[0]
+        && expectedSessionAddress?.sessionId === transport.sessionId
+        ? direct.machineId : null;
+      const machineId = normalizeStringValue(transport.rawSession.machineId)
+        ?? normalizeStringValue(metadata?.machineId) ?? admittedMachineId;
+      if (!machineId) return deleteFromHome();
       if (direct?.machineId === machineId) {
         if (!direct.sessionDelete) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-        return direct.sessionDelete({ input: { ...input, sessionId: transport.sessionId }, context, deleteFromHome });
+        return direct.sessionDelete({ input: { ...input, sessionId: transport.sessionId }, context, deleteFromHome, sessionMetadata: metadata });
       }
       return readMachineActionRpcResult(await callMachineAction({
         machineId, method: SESSION_RPC_METHODS.SESSION_DELETE, request: { ...input, sessionId: transport.sessionId },

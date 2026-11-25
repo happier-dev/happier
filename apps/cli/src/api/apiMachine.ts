@@ -3423,7 +3423,7 @@ export class ApiMachineClient {
     }
 
     /** Native leaf of the original admitted Session deletion, before its Home row disappears. */
-    async executeSessionDeleteAction(request: Parameters<NonNullable<import('@happier-dev/protocol/actions').ActionExecutorDeps['sessionDelete']>>[0],
+    async executeSessionDeleteAction(request: import('@/daemon/sessions/sessionDeleteAction').NativeSessionDeleteRequest,
         ingress: RpcHandlerContext): Promise<unknown> {
         const registration = this.rpcLifecycleRegistrations.at(-1);
         if (this.projectionSchedulingClosed || !registration?.isSessionActive) {

@@ -10358,6 +10358,13 @@ relationship for those private folders. Source copies are retained; a return
 handoff creates a new allocation. Abort removes only that operation's uncommitted
 target allocation.
 
+In 0.3 development, an admitted Session Delete on its receiving Machine prepares
+the managed allocation from the daemon's protected owner record before deleting
+the Session in Home. The signed receiving Machine remains the native target when
+the exact Session view omits placement. If the Session's managed-directory marker
+is present and allocation selection is empty, the native owner returns
+`session_directory_unavailable` before Home deletion.
+
 Managed folders survive daemon restart and archive/unarchive. A raw Home
 deletion observer stops the tracked process tree but retains bound allocations
 and their requester custody for explicit removal through Storage. Home deletion
