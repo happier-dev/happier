@@ -9,6 +9,10 @@ import axios from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import type { ActionExecutorContext, ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutor';
+import { DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1 } from '@happier-dev/plugin-sdk/database';
+import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import * as installationStore from '@/daemon/identity/store';
@@ -175,16 +179,31 @@ describe('managed database attachment at the deployment owner', () => {
         stored.state.environment.content.bindings = [{ purpose: 'dataRole', targetLinkId: target.targetLinkId, role: 'write',
             source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } }];
         let writeUrl = `mysql://writer:fixture@selected/${target.database}`;
-        vi.spyOn(axios, 'request').mockImplementation(async () => ({ status: 200, data: { ok: true, grants: [
-            sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: environment.environmentId,
-                machineId: stored.host.machineId, installationId: stored.host.installationId, resourceId, resourceRevision: 1 },
-            installationPublicKey: keys.publicKey, content: { kind: 'secret', value: writeUrl } }),
-        ] } }));
+        let savedReaderId: string | undefined;
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            expect(url).toBe('https://home.test/v1/account/encryption/currentness');
+            return { status: 200, data: { mode: 'plain', version: 1, updatedAt: 1,
+                signingKeyFingerprint: null, contentKeyFingerprint: null } };
+        });
+        vi.spyOn(axios, 'request').mockImplementation(async request => {
+            if (request.url === 'https://home.test/v1/account/saved-secrets/resources') {
+                expect(request.method).toBe('POST');
+                expect(request.data.resourceId).toEqual(expect.any(String));
+                savedReaderId = request.data.resourceId;
+                return { status: 200, data: { resourceId: savedReaderId, revision: 1 } };
+            }
+            return { status: 200, data: { ok: true, grants: [
+                sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: environment.environmentId,
+                    machineId: stored.host.machineId, installationId: stored.host.installationId, resourceId, resourceRevision: 1 },
+                    installationPublicKey: keys.publicKey, content: { kind: 'secret', value: writeUrl } }),
+            ] } };
+        });
         const host = { ...stored.host, credentials: { encryption: null, token: `header.${encodeBase64(
             new TextEncoder().encode(JSON.stringify({ sub: stored.host.credentialOwnerAccountId })), 'base64url')}.signature` },
             readConnectedAccountPurposes: () => ({ owner: purposeOwner }) };
 
         let committed = 'managed-row';
+        let createdReader: string | undefined;
         createConnection.mockImplementation(({ uri }: { uri: string }) => {
             const address = new URL(uri);
             let pending = committed;
@@ -206,6 +225,16 @@ describe('managed database attachment at the deployment owner', () => {
                     if (sql === 'COMMIT') committed = pending;
                     if (sql === 'SELECT @@GLOBAL.partial_revokes, @@GLOBAL.mandatory_roles') {
                         return frame(['0', ''], ['partial_revokes', 'mandatory_roles']);
+                    }
+                    const created = /^CREATE USER '(happier_ro_[a-f0-9]+)'@'%'/u.exec(sql);
+                    if (created) {
+                        createdReader = created[1];
+                        return frame([createdReader!, '%', 'generated-fixture-password'], ['user', 'host', 'generated password']);
+                    }
+                    if (createdReader && sql === `SHOW GRANTS FOR '${createdReader}'@'%'`) {
+                        const grantee = '`' + createdReader + '`@`%`';
+                        return [[['GRANT USAGE ON *.* TO ' + grantee],
+                            ['GRANT SELECT, SHOW VIEW ON `' + target.database + '`.* TO ' + grantee]], [{ name: 'Grants', columnType: 253, characterSet: 45 }]];
                     }
                     return [[], []];
                 },
@@ -242,11 +271,11 @@ describe('managed database attachment at the deployment owner', () => {
                 return { descriptor: descriptor(input.target), connection };
             },
         };
-        const service = createDeploymentDatabasesServiceForHost({ seed: {
+        const createService = (approvalContext: ActionExecutorContext = { ...stored.request.context, authority: 'present_user' }) =>
+            createDeploymentDatabasesServiceForHost({ seed: {
             plugin: { id: 'happier.database.workbench', version: '0.0.0' }, contribution: { id: 'targets-list', qualifiedId: 'happier.database.workbench/actions/targets-list' },
             occurrenceId: 'workbench', correlationId: 'host-selection', surface: 'cli', signal: new AbortController().signal,
-            databaseEngines,
-            approvalContext: { ...stored.request.context, authority: 'present_user' }, isOccurrenceCurrent: () => true,
+            databaseEngines, approvalContext, isOccurrenceCurrent: () => true,
         }, contributes: { deploymentTargets: [{ pluginId, identity: { pluginId, localId: definition.id }, definition,
             provenance: 'first_party', source: { kind: 'bundled' }, manifestPath: '/fixture/neon/plugin.json', pluginVersion: pluginManifest.version }],
             activationTargets: [{ pluginId, manifest: pluginManifest, provenance: 'first_party', source: { kind: 'bundled' },
@@ -257,6 +286,7 @@ describe('managed database attachment at the deployment owner', () => {
             readCurrentOccurrenceId: () => 'provider',
             createServices: owners.createServices, resolveInvocationHostPolicy: owners.resolveInvocationHostPolicy,
         });
+        const service = createService();
         try {
             const beforeSelection = requests.length;
             expect(await service.listTargets({ scope: { kind: 'environment', environment,
@@ -324,6 +354,26 @@ describe('managed database attachment at the deployment owner', () => {
                 statements: [expect.stringContaining('IDENTIFIED BY RANDOM PASSWORD'), expect.stringContaining('GRANT SELECT, SHOW VIEW'),
                     expect.stringContaining('ACCOUNT UNLOCK')] });
             expect(JSON.stringify(preview)).not.toContain('writer:fixture');
+            if (preview.status !== 'review') throw new Error('Expected reviewed read-only login SQL');
+            const apply = { target, mode: 'apply', role: preview.role, statements: preview.statements } as const;
+            const action = { pluginId: 'happier.database', localId: databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1) };
+            const context: ActionExecutorContext = { ...stored.request.context, authority: 'present_user', surface: 'cli' };
+            const refusedChild = { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
+                failureCause: { phase: 'deployment.reviewed_child', errorClass: 'Error', errorCode: 'child_mismatch', httpStatus: null } } satisfies ActionExecuteFailure;
+            const executeChild = vi.fn<NonNullable<ActionExecutorContext['executeHostReviewedChildAction']>>(async () => refusedChild);
+            const reviewed = createService({ ...context, executeHostReviewedChildAction: executeChild,
+                hostReviewedChild: createHostReviewedChildPortV1({ actionId: 'action.invoke', input: { action, input: apply },
+                    context, reviewAdmitted: true }),
+            });
+            const failure = await reviewed.createReadAccess!(apply).catch((error: unknown) => error);
+            expect(createdReader).toBe(preview.role);
+            expect(savedReaderId).toEqual(expect.any(String));
+            expect(executeChild).toHaveBeenCalledTimes(1);
+            expect(failure).toMatchObject({ code: 'database_read_role_binding_failed', data: {
+                details: { role: preview.role, savedSecretRef: formatSharedSavedSecretRefV1(savedReaderId!), resourceRevision: 1 },
+                failureCause: refusedChild.failureCause,
+            } });
+            expect(JSON.stringify(failure)).not.toContain('generated-fixture-password');
 
             const verified = await service.resolve(write, 'write');
             try {

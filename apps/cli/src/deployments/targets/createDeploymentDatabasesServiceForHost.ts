@@ -300,7 +300,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                                 source: { kind: 'secret', ...secret } }], remove: [] }) },
                     execute: (value, childContext, actionId) => executeChild(actionId, value, childContext),
                 });
-                if (!result.ok) return refuse(result.errorCode);
+                if (!result.ok) throw new PluginError({ code: result.errorCode, failureCause: result.failureCause });
                 const saved = DeploymentBindingsSetResultV1Schema.parse(result.result);
                 if (!saved.ok) return refuse(saved.error);
             },
