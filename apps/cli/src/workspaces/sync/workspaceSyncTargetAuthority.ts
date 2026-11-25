@@ -1536,6 +1536,32 @@ export function createWorkspaceSyncTargetAuthority(
     entry: RetainedBootstrap | RetainedNativeBootstrap,
   ): boolean => relationshipOwnsEndpoint(snapshot, entry, true);
 
+  const resolveInstalledWorkerCopyCustody = (
+    binding: WorkspaceSyncRequesterCopyCustody,
+    relationship: WorkspaceSyncRelationshipV1,
+    source: WorkspaceRefV1,
+    target: WorkspaceRefV1,
+  ): WorkspaceSyncRequesterCopyCustody | undefined => {
+    if (binding.accountServerId !== localServerId || binding.actorAccountId !== dependencies.localAccountId
+      || binding.relationship.relationshipId !== relationship.relationshipId
+      || !areWorkspaceSyncRelationshipDefinitionsEqual(binding.relationship, relationship)
+      || !areWorkspaceSyncWorkerCopyProvenancesEqual(binding.relationship, relationship)
+      || binding.sourceWorkspace.id !== source.id || binding.sourceWorkspace.rootPath !== source.rootPath
+      || binding.sourceWorkspace.machineId !== resolveWorkspaceSyncExecutionMachineIdV1(source)
+      || binding.target.machineId !== localMachineId) return undefined;
+    const installed = readSnapshot();
+    const committed = installed?.relationships.find(candidate => candidate.relationshipId === relationship.relationshipId);
+    if (!committed?.enabled || committed.committedAtMs === null
+      || !resolvePersistedWorkerCopyCreation(installed, relationship, source.id, target.id, localServerId)) return undefined;
+    const installedSource = resolveWorkspaceRefById(installed?.workspaceRefs ?? [], source.id, localServerId);
+    const installedTarget = resolveWorkspaceRefById(installed?.workspaceRefs ?? [], target.id, localServerId);
+    if (!installedSource || installedSource.rootPath !== source.rootPath
+      || resolveWorkspaceSyncExecutionMachineIdV1(installedSource) !== binding.sourceWorkspace.machineId
+      || !installedTarget || installedTarget.rootPath !== target.rootPath || !isLocalWorkspace(installedTarget)
+      || binding.target.installationId !== readInstallationIdentityIfExistsSync()?.installationId) return undefined;
+    return { ...binding, relationship: committed };
+  };
+
   const rehydrateRelationshipEndpoint = async (input: Readonly<{
     relationship: WorkspaceSyncRelationshipV1;
     endpointRole: 'alpha' | 'beta';
@@ -1565,6 +1591,10 @@ export function createWorkspaceSyncTargetAuthority(
         input.projectSnapshot === undefined ? getSnapshot(input.relationship.relationshipId) : input.projectSnapshot,
         input.relationship, input.sourceWorkspace.id, input.targetWorkspace.id, localServerId,
       );
+      // An installed Account can resume its committed copy from the binding
+      // written during signed creation. Foreign custody still needs its own admission.
+      const recoverInstalledCustody = (stored: WorkspaceSyncRequesterCopyCustody) =>
+        resolveInstalledWorkerCopyCustody(stored, input.relationship, input.sourceWorkspace, input.targetWorkspace);
       const prepared = await rehydrateWorkspaceSyncTargetBootstrap({
         rootPath: input.targetWorkspace.rootPath,
         relationshipId: input.relationship.relationshipId,
@@ -1574,7 +1604,8 @@ export function createWorkspaceSyncTargetAuthority(
         contentSelection: input.relationship.contentPolicy.selection,
         ...(input.relationship.contentPolicy.contentOnly ? { contentOnly: true as const } : {}),
         ...(workerCopyCreation ? { workerCopyCreation } : {}),
-        ...(input.requesterCopyCustody ? { requesterCopyCustody: input.requesterCopyCustody } : {}),
+        ...(input.requesterCopyCustody || workerCopyCreation
+          ? { requesterCopyCustody: input.requesterCopyCustody ?? recoverInstalledCustody } : {}),
         materializationDirectory: bootstrap.materializationDirectory,
         rootOwnershipManager: bootstrap.rootOwnershipManager,
         ...(input.recoverMaterializationOnly ? { requireMaterializationReceipt: true } : {}),
@@ -1608,7 +1639,7 @@ export function createWorkspaceSyncTargetAuthority(
         targetRootPath: input.targetWorkspace.rootPath,
         endpointRole: input.endpointRole,
         relationshipDefinition: input.relationship,
-        transientAuthority: prepared.requesterCopyCustody !== undefined,
+        transientAuthority: input.requesterCopyCustody !== undefined,
         createIfMissing: false,
         ...(prepared.requesterCopyCustody ? { requesterCopyCustody: prepared.requesterCopyCustody } : {}),
         ...(prepared.materializationCustody
@@ -3590,12 +3621,18 @@ export function createWorkspaceSyncTargetAuthority(
         await admittedTarget?.assertCurrent();
         const retainedEntry = physicalRetained.get(authorityKey);
         if (retainedEntry) {
+          const persistedRelationshipReentry = isExactPersistedRelationshipReentry(retainedEntry, owner, request);
+          const installedWorkerCopyReentry = persistedRelationshipReentry && retainedEntry.readyPublished
+            && retainedEntry.requesterCopyCustody && owner.relationship && owner.sourceWorkspace
+            && !targetRouting && !sourceWriterTargetRouting && !context?.callerInputAuthorization
+            && (!context?.machineAdmission || context.machineAdmission.actorAccountId === dependencies.localAccountId)
+            && resolveInstalledWorkerCopyCustody(retainedEntry.requesterCopyCustody, owner.relationship, owner.sourceWorkspace, owner.targetWorkspace);
           if (retainedEntry.bootstrapOperationId === request.bootstrapOperationId
+            && !installedWorkerCopyReentry
             && (!isDeepStrictEqual(retainedEntry.targetRouting, targetRouting)
               || !isDeepStrictEqual(retainedEntry.sourceWriterTargetRouting, sourceWriterTargetRouting))) {
             throw authorityError('bootstrap_definition_conflict', 'Workspace sync target authority changed before preparation');
           }
-          const persistedRelationshipReentry = isExactPersistedRelationshipReentry(retainedEntry, owner, request);
           if (retainedEntry.bootstrapOperationId === request.bootstrapOperationId
             && retainedEntry.definition !== definition
             && !persistedRelationshipReentry) {
@@ -3618,7 +3655,8 @@ export function createWorkspaceSyncTargetAuthority(
               physicalRetained.set(authorityKey, { ...retainedEntry, definition });
             }
             await settleNormalTargetRecovery();
-            return { ...retainedEntry.result, targetWorkspace: owner.targetWorkspace };
+            return { ...retainedEntry.result, targetWorkspace: owner.targetWorkspace,
+              ...(installedWorkerCopyReentry ? { created: false } : {}) };
           }
           const currentRoot = await realpath(owner.targetRootPath).catch(() => null);
           const currentFingerprint = currentRoot

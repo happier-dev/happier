@@ -25,6 +25,85 @@ import { createScmBackendRegistry } from '@/scm/registry';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
 import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
 
+it('restores the installed Account’s committed signed Worker copy through ordinary reconciliation', async () => {
+  await withTempDir('workspace-sync-committed-worker-', async fixture => {
+    const sourceRoot = join(fixture, 'source');
+    const targetRoot = join(fixture, 'copy');
+    await mkdir(targetRoot);
+    await writeFile(join(targetRoot, 'payload.txt'), 'existing copy');
+    const operationId = 'installed-worker-copy';
+    const relationshipId = deriveWorkspaceSyncRelationshipId(operationId);
+    const source = { machineId: 'source', installationId: 'source-installation' };
+    const target = { machineId: 'target', installationId: 'target-installation' };
+    const sourceWorkspace = { id: 'alpha', serverId: 'home', machineId: source.machineId, rootPath: sourceRoot, createdAtMs: 1 };
+    const targetWorkspace = { id: 'beta', serverId: 'home', machineId: target.machineId, rootPath: targetRoot, createdAtMs: 1 };
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIncludePatterns: [], extraIgnorePatterns: [] };
+    const contentPolicy = { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) };
+    const staged = { v: 1 as const, relationshipId, controllerMachineId: source.machineId,
+      alphaWorkspaceRefId: sourceWorkspace.id, betaWorkspaceRefId: targetWorkspace.id, mode: 'keep_synced' as const,
+      enabled: true, createdAtMs: 1, updatedAtMs: 1, committedAtMs: null, contentPolicy,
+      provenance: { kind: 'worker_clean_copy' as const, sourceWorkspaceRefId: sourceWorkspace.id, targetWorkspaceRefId: targetWorkspace.id } };
+    let rows: ActiveProjectAccountRowsSnapshot = { source: 'network', accountMode: 'plain', workspaceRefs: [sourceWorkspace, targetWorkspace],
+      relationships: [{ ...staged, enabled: false }], organizations: [], rows: [], graphRevision: 1, loadedAtMs: 1, scopeKey: 'owner' };
+    const prepare = { v: 1 as const, bootstrapOperationId: relationshipId,
+      owner: { kind: 'relationship' as const, relationshipId }, targetWorkspaceRefId: targetWorkspace.id,
+      endpointRole: 'beta' as const, policyDigest: contentPolicy.policyDigest, createIfMissing: true };
+    const admission = { actorAccountId: 'owner', custodianAccountId: 'owner', role: 'manage' as const, encryptionMode: 'plain' as const };
+    // The Home-verified admission enters at the RPC boundary. The target writes READY itself.
+    const callerInputAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-proof', binding: {
+      accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home', ...source,
+      custodianAccountId: 'owner', actionId: 'workspace.sync.relationship.create', requestId: operationId,
+      requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'machine', machineId: source.machineId }, accountEncryptionMode: 'plain',
+    } });
+    const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1, sourceWriter: source, source: {
+      v: 1, phase: 'prepare', operationId, accountServerId: 'home', sourceMachineId: source.machineId, sourceRootPath: sourceRoot,
+      sourceContext: { machineAdmission: { ...admission, ...source }, callerAuthority: 'present_user', workspaceWrites: 'allow' },
+    }, target: { v: 1, phase: 'prepare', operationId, accountServerId: 'home', targetMachineId: target.machineId, targetRootPath: targetRoot } });
+    const context: RpcHandlerContext = { callerAuthority: 'present_user', callerInputAuthorization, machineAdmission: { ...admission, ...target },
+      verifyMachineAdmissionCurrent: async () => true, workspaceSyncSourceWriterTargetRouting: routing };
+    const createTarget = () => createWorkspaceSyncTargetAuthority({ localServerId: 'home', localMachineId: target.machineId,
+      localAccountId: 'owner', getProjectSnapshot: () => rows, callMachineRpc: async () => { throw new Error('Unexpected remote effect'); },
+      resolutionMaterialDirectory: join(fixture, 'resolution'), bootstrap: {
+        materializationDirectory: join(fixture, 'materialization'),
+        rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'locks') }),
+      } });
+    const installation = {
+      version: 1, createdAt: 1, installationId: target.installationId, publicKey: 'fixture', privateKey: 'fixture',
+    } as const;
+    const identity = vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue(installation);
+    const first = createTarget();
+    const restarted = createTarget();
+    try {
+      const original = await first.prepareBootstrapHere({ ...prepare, transientRelationship: staged, targetBootstrap: 'use_existing' }, undefined, context);
+      await first.releaseBootstrapHere({ v: 1, bootstrapOperationId: relationshipId,
+        targetWorkspaceRefId: targetWorkspace.id, reason: 'relationship_committed' }, undefined, {
+        callerAuthority: 'present_user', machineAdmission: { ...admission, ...source }, verifyMachineAdmissionCurrent: async () => true,
+        workspaceSyncSourceWriterTargetRouting: { ...routing, target: { ...routing.target, phase: 'release' } },
+      });
+      rows = { ...rows, relationships: [{ ...staged, committedAtMs: 2, updatedAtMs: 3 }] };
+      const recovered = { state: 'ready', rootFingerprint: original.rootFingerprint, created: false };
+      const warm = await first.prepareBootstrapHere(prepare).catch((error: unknown) => ({ error }));
+      await first.releaseAllRetainedBootstraps();
+      identity.mockReturnValue({ ...installation, installationId: 'replacement-installation' });
+      await expect(restarted.prepareBootstrapHere(prepare)).rejects.toMatchObject({ code: 'target_bootstrap_required' });
+      identity.mockReturnValue(installation);
+      await restarted.reconcileRetainedBootstraps();
+      const cold = await restarted.prepareBootstrapHere(prepare).catch((error: unknown) => ({ error }));
+      expect({ warm, cold }).toMatchObject({ warm: recovered, cold: recovered });
+      const ingress = { operationId: relationshipId, sourceMachineId: source.machineId, targetMachineId: target.machineId, actorAccountId: 'owner' };
+      await expect(restarted.authorizeWorkspaceSyncMachineAgent(ingress)).resolves.toMatchObject({ workspaceRefId: targetWorkspace.id });
+      rows = { ...rows, relationships: [] };
+      await restarted.reconcileRetainedBootstraps();
+      await expect(restarted.authorizeWorkspaceSyncMachineAgent(ingress)).rejects.toMatchObject({ code: 'peer_unavailable' });
+      expect(await readFile(join(targetRoot, 'payload.txt'), 'utf8')).toBe('existing copy');
+    } finally {
+      await first.releaseAllRetainedBootstraps();
+      await restarted.releaseAllRetainedBootstraps();
+      identity.mockRestore();
+    }
+  });
+});
+
 it.each([false, true])('retains signed native target admission at the carrier while the guest owns its filesystem and release (stopped on target: %s)', async stoppedOnTarget => {
   await withTempDir('native-target-dispatch-', async fixture => {
     const root = join(fixture, 'guest'); await mkdir(root);

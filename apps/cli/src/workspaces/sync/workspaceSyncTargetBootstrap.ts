@@ -339,7 +339,8 @@ export async function rehydrateWorkspaceSyncTargetBootstrap(input: Readonly<{
   contentSelection: 'git_worktree' | 'all_files';
   contentOnly?: true;
   workerCopyCreation?: WorkspaceTargetMaterializationWorkerCopyCreation;
-  requesterCopyCustody?: WorkspaceSyncRequesterCopyCustody;
+  requesterCopyCustody?: WorkspaceSyncRequesterCopyCustody
+    | ((stored: WorkspaceSyncRequesterCopyCustody) => WorkspaceSyncRequesterCopyCustody | undefined);
   nativeCopyOwner?: WorkspaceSyncNativeCopyOwner;
   materializationDirectory: string;
   rootOwnershipManager: WorkspaceRootOwnershipManager;
@@ -426,10 +427,12 @@ export async function rehydrateWorkspaceSyncTargetBootstrap(input: Readonly<{
           policyDigest: input.policyDigest,
         } as const;
     const persistedReady = await readWorkspaceSyncFinalReadyFactAtPath(readyPath);
+    const custody = typeof input.requesterCopyCustody === 'function'
+      ? persistedReady?.v === 2 ? input.requesterCopyCustody(persistedReady.requesterCopyCustody) : undefined
+      : input.requesterCopyCustody;
     exactReady = readyFact !== null && persistedReady !== null && (input.nativeCopyOwner && persistedReady.v === 3
       ? matchesWorkspaceSyncNativeCopyReadyFact(persistedReady, input.nativeCopyOwner, readyFact)
-      : matchesWorkspaceSyncFinalReadyFact(persistedReady,
-        { ...readyFact, ...(input.requesterCopyCustody ? { requesterCopyCustody: input.requesterCopyCustody } : {}) }));
+      : matchesWorkspaceSyncFinalReadyFact(persistedReady, { ...readyFact, ...(custody ? { requesterCopyCustody: custody } : {}) }));
     if (materializationCustody && !exactReady) {
       await materializationCustody.abort();
       materializationSettled = true;
