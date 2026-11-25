@@ -213,7 +213,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
     exclusions.push({ ...site, reason: exclusion.reason });
     return true;
   }
-  const { module, modules, symbol, actionArgument, relativePath } = createParitySourceIndex(files, discovery.sourceRoot);
+  const { module, modules, symbol, actionArgument, declaration, relativePath } = createParitySourceIndex(files, discovery.sourceRoot);
   function property(node: ts.Expression, key: string): ts.Expression | undefined {
     node = resolve(node);
     if (!ts.isObjectLiteralExpression(node)) return undefined;
@@ -511,17 +511,30 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       }
       return type;
     }
-    function expressionType(expression: ts.Expression): ts.TypeNode | undefined {
+    function expressionType(expression: ts.Expression, seen = new Set<ts.Node>()): ts.TypeNode | undefined {
       expression = unwrap(expression);
+      if (seen.has(expression)) return undefined;
+      seen.add(expression);
+      if (ts.isCallExpression(expression) && ts.isIdentifier(expression.expression)) {
+        const called = expression.expression;
+        if (lookup(called, called.text)) return undefined;
+        const target = declaration(called.getSourceFile().fileName, called.text);
+        return target && ts.isFunctionDeclaration(target) ? target.type : undefined;
+      }
       if (ts.isIdentifier(expression)) {
         const local = lookup(expression, expression.text);
-        if (local) return local.annotation;
+        if (local) return local.annotation ?? (local.initializer && ts.isCallExpression(unwrap(local.initializer))
+          ? expressionType(local.initializer, seen) : undefined);
         const type = symbol(expression.getSourceFile().fileName, expression.text, 'types');
         return type && ts.isTypeNode(type) ? type : undefined;
       }
       if (ts.isPropertyAccessExpression(expression)) {
-        const owner = expressionType(expression.expression);
-        const type = owner && typeDefinition(owner);
+        const owner = expressionType(expression.expression, seen);
+        let type = owner && typeDefinition(owner);
+        if (type && ts.isUnionTypeNode(type)) {
+          const nonNull = type.types.filter(arm => !(ts.isLiteralTypeNode(arm) && arm.literal.kind === ts.SyntaxKind.NullKeyword));
+          if (nonNull.length === 1) type = typeDefinition(nonNull[0]);
+        }
         if (type && ts.isTypeLiteralNode(type)) {
           const member = type.members.find(member => ts.isPropertySignature(member)
             && member.name.getText().replaceAll(/['"]/g, '') === expression.name.text);
@@ -529,6 +542,34 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
         }
       }
       return undefined;
+    }
+    function isOwnedActionId(type: ts.TypeNode | undefined): boolean {
+      return !!type && /^packages\/protocol\/src\/actions\/actionIds[^/]*\.ts$/.test(relativePath(typeDefinition(type).getSourceFile().fileName));
+    }
+    function isActionExecutorType(type: ts.TypeNode | undefined): boolean {
+      if (!type) return false;
+      type = typeDefinition(type);
+      if (ts.isTypeReferenceNode(type) && type.typeName.getText() === 'ReturnType') type = type.typeArguments?.[0];
+      if (!type || !ts.isTypeQueryNode(type)) return false;
+      const target = type.exprName;
+      const owner = ts.isQualifiedName(target) ? target.left : target;
+      if (!ts.isIdentifier(owner)) return false;
+      const local = lookup(type, owner.text);
+      if (local) return local.dispatch === true;
+      const imported = module(type.getSourceFile().fileName)?.imports.get(owner.text);
+      return /^(createFrontDoorActionExecute|createFrontDoorUiActionExecutor)$/.test(imported?.name ?? owner.text);
+    }
+    function callableActionParameter(expression: ts.Expression): number | undefined {
+      expression = unwrap(expression);
+      const annotation = expressionType(expression);
+      if (isActionExecutorType(annotation)) return 0;
+      // A typed Action operand also appears on readers and acknowledgement
+      // callbacks. Use the dispatch naming convention for authored adapters.
+      if (!/^(execute|invoke|dispatch|call.*Action)/.test(name(expression))) return undefined;
+      const signature = annotation && typeDefinition(annotation);
+      if (!signature || !ts.isFunctionTypeNode(signature) || !ts.isTypeAliasDeclaration(signature.parent)) return undefined;
+      const index = signature.parameters.findIndex(parameter => isOwnedActionId(parameter.type));
+      return index < 0 ? undefined : index;
     }
     function typeStrings(type: ts.TypeNode, seen = new Set<ts.Node>()): string[] | undefined {
       if (seen.has(type)) return undefined;
@@ -766,9 +807,11 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
         // contextually types the returned callback's parameters.
         let returned: ts.Node = callback;
         while (returned.parent && ts.isConditionalExpression(returned.parent)) returned = returned.parent;
-        const factory = returned.parent;
+        const container = returned.parent;
+        const block = ts.isReturnStatement(container) && ts.isBlock(container.parent) ? container.parent : undefined;
+        const factory = block?.parent ?? container;
         const memo = factory?.parent;
-        if (!annotation && factory && ts.isArrowFunction(factory) && factory.body === returned
+        if (!annotation && factory && ts.isArrowFunction(factory) && factory.body === (block ?? returned)
           && memo && ts.isCallExpression(memo) && name(memo.expression) === 'useMemo' && memo.arguments[0] === factory) {
           const expected = memo.typeArguments?.[0];
           const types = expected && ts.isUnionTypeNode(expected) ? expected.types : expected ? [expected] : [];
@@ -798,7 +841,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
           : ts.isCallExpression(init) && /^(useCallback|useMemo)$/.test(name(init.expression))
             && init.arguments[0] && (ts.isArrowFunction(init.arguments[0]) || ts.isFunctionExpression(init.arguments[0]))
             ? init.arguments[0] : undefined;
-        const dispatch = !!callback && !!executorAnnotation(callback)
+        const dispatch = isActionExecutorType(node.type) || !!callback && !!executorAnnotation(callback)
           || ts.isCallExpression(init) && /(?:ActionExecutor|ActionExecute)$/.test(name(init.expression));
         declare(node, node.name.text, { initializer: node.initializer, annotation: node.type, writer, dispatch });
       }
@@ -1005,12 +1048,23 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       if (value !== expression) { delta(value, scope, directWriter, seen, previous); return; }
       if (ts.isConditionalExpression(value)) {
         delta(value.whenTrue, scope, directWriter, new Set(seen), previous); delta(value.whenFalse, scope, directWriter, new Set(seen), previous);
-      } else if (ts.isArrowFunction(value) && !ts.isBlock(value.body)) {
+      } else if (ts.isArrowFunction(value) || ts.isFunctionExpression(value)) {
         const parameter = value.parameters[0];
         const binding = parameter && ts.isIdentifier(parameter.name) ? lookup(parameter.name, parameter.name.text) : undefined;
-        delta(value.body, scope, directWriter, seen, binding ? new Set([...previous, binding]) : previous);
-      }
-      else if (ts.isObjectLiteralExpression(value)) {
+        const snapshot = binding ? new Set([...previous, binding]) : previous;
+        if (ts.isBlock(value.body)) {
+          if (exclude(`${ts.SyntaxKind[value.kind]}: ${value.getText()}`, location(value))) return;
+          function visitResult(node: ts.Node): void {
+            if (ts.isFunctionLike(node)) return;
+            if (ts.isReturnStatement(node) && node.expression) {
+              delta(node.expression, scope, directWriter, new Set(seen), snapshot);
+            } else ts.forEachChild(node, visitResult);
+          }
+          visitResult(value.body);
+        } else delta(value.body, scope, directWriter, seen, snapshot);
+      } else if (value.kind === ts.SyntaxKind.NullKeyword) {
+        // A settings updater can explicitly decline to write.
+      } else if (ts.isObjectLiteralExpression(value)) {
         for (const field of value.properties) {
           if (ts.isPropertyAssignment(field) || ts.isShorthandPropertyAssignment(field)) {
             const keys = ts.isComputedPropertyName(field.name) ? strings(field.name.expression)
@@ -1033,15 +1087,21 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       if (requestAction && property(request, 'input')) { dispatch(requestAction); return; }
       const operand = unwrap(node);
       let rootOperand = operand;
-      while (ts.isPropertyAccessExpression(rootOperand)) rootOperand = rootOperand.expression;
+      while (ts.isPropertyAccessExpression(rootOperand) || ts.isElementAccessExpression(rootOperand)) rootOperand = rootOperand.expression;
       const binding = ts.isIdentifier(rootOperand) ? lookup(rootOperand, rootOperand.text) : undefined;
+      const tuple = binding?.annotation;
+      const forwardedTuple = ts.isElementAccessExpression(operand) && operand.expression === rootOperand
+        && ts.isNumericLiteral(operand.argumentExpression) && operand.argumentExpression.text === '0'
+        && tuple && ts.isTypeReferenceNode(tuple) && tuple.typeName.getText() === 'Parameters'
+        && isActionExecutorType(tuple.typeArguments?.[0]);
       const annotation = expressionType(operand);
       const definition = annotation && typeDefinition(annotation);
-      // A whole-catalog transport parameter does not assert a concrete UI
-      // capability. Its literal/family callers are still walked independently.
-      if (binding?.parameter && definition && relativePath(definition.getSourceFile().fileName) === 'packages/protocol/src/actions/actionIds.ts'
+      const wholeCatalog = definition && relativePath(definition.getSourceFile().fileName) === 'packages/protocol/src/actions/actionIds.ts'
         && ts.isIndexedAccessTypeNode(definition) && ts.isTypeQueryNode(definition.objectType)
-        && definition.objectType.exprName.getText() === 'ACTION_IDS' && definition.indexType.kind === ts.SyntaxKind.NumberKeyword) {
+        && definition.objectType.exprName.getText() === 'ACTION_IDS' && definition.indexType.kind === ts.SyntaxKind.NumberKeyword;
+      // The forwarding parameter carries a family, not the concrete operand.
+      // Resolve the request where the typed dispatcher is called.
+      if (binding?.parameter && (wholeCatalog || forwardedTuple || ts.isIdentifier(operand) && isOwnedActionId(annotation))) {
         exclusions.push({ ...location(node), reason: 'canonical ActionId forwarding parameter; concrete callers remain walked' });
       } else {
         const ids = strings(node);
@@ -1163,8 +1223,9 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
         const callable = ts.isIdentifier(node.expression) ? lookup(node.expression, node.expression.text)
           : ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression)
             ? lookup(node.expression, node.expression.expression.text) : undefined;
-        const adapterArgument = ts.isIdentifier(node.expression)
-          ? callable?.actionArgument ?? (!callable ? actionArgument(file.filePath, node.expression.text) : undefined) : undefined;
+        const typedArgument = callableActionParameter(node.expression);
+        const adapterArgument = typedArgument ?? (ts.isIdentifier(node.expression)
+          ? callable?.actionArgument ?? (!callable ? actionArgument(file.filePath, node.expression.text) : undefined) : undefined);
         const first = node.arguments[adapterArgument ?? (/^executeOn(Machine|Session|Source)$/.test(called) ? 1 : 0)];
         const writer = callable?.writer ?? (ts.isPropertyAccessExpression(node.expression)
           && /^(applySettings|applyLocalSettings)$/.test(called) ? called === 'applyLocalSettings' ? 'local' : 'account' : undefined);
@@ -1239,7 +1300,8 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
             ts.forEachChild(node, visit);
             return;
           }
-          if (isDispatch && property(localValue(first), 'actionId') && property(localValue(first), 'input')) dispatch(first);
+          if (typedArgument !== undefined) dispatch(first);
+          else if (isDispatch && property(localValue(first), 'actionId') && property(localValue(first), 'input')) dispatch(first);
           else if ((isDispatch || conventional) && candidates.some(id => id.includes('.'))) dispatch(first);
           // Catalog ids passed to feature/binding readers or membership checks
           // are data. Thin `read`, `mutate` and `prepare` clients remain walked.

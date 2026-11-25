@@ -1319,6 +1319,58 @@ test('a canonical ActionId forwarding parameter is transport evidence; concrete 
   assert.equal(report.exclusions.length, 2);
 });
 
+test('resolves forwarded Action and setting operands at their callers and retains dynamic inputs', () => {
+  const report = collectUiActionParity([
+    { filePath: 'packages/protocol/src/actions/actionIds.ts', content: `
+      export const DEVICE_ACTIONS = { edit: 'demo.edit', missing: 'demo.missing' } as const;
+      export type DeviceActionId = typeof DEVICE_ACTIONS[keyof typeof DEVICE_ACTIONS];
+    ` },
+    { filePath: 'apps/ui/sources/dispatchDevice.ts', content: `
+      import type { DeviceActionId } from '@happier-dev/protocol/actions/actionIds';
+      export type DeviceDispatch = (action: DeviceActionId, input: unknown) => void;
+      export function useDeviceDispatch() {
+        return React.useMemo<DeviceDispatch>(() => {
+          const send = createFrontDoorActionExecute();
+          return (action, input) => send(action, input);
+        }, []);
+      }
+    ` },
+    { filePath: 'apps/ui/sources/components/Example.tsx', content: `
+      import { DEVICE_ACTIONS } from '@happier-dev/protocol/actions/actionIds';
+      import type { DeviceDispatch } from '../dispatchDevice';
+      function makeControls(input: Readonly<{ executeDeviceOperationAction: DeviceDispatch }>) {
+        input.executeDeviceOperationAction(DEVICE_ACTIONS.missing, {});
+        input.executeDeviceOperationAction(readIncomingId(), {});
+      }
+      const ordinary = createFrontDoorActionExecute();
+      const forward: typeof ordinary = Object.assign(
+        (...args: Parameters<typeof ordinary>) => ordinary(args[0], args[1]), {});
+      forward(DEVICE_ACTIONS.edit, {});
+      forward(readIncomingId(), {});
+      const apply = useApplySettings();
+      apply(({ density }) => {
+        if (density === 'small') return { density: 'big' };
+        return { density: 'small' };
+      });
+      apply(() => {
+        if (condition()) return { density: 'small' };
+        return readUnknownDelta();
+      });
+    ` },
+  ], specs, [
+    { anchor: 'appearance.density', storage: { scope: 'account', key: 'density', access: 'read_write' } },
+  ]);
+  assert.deepEqual(report.actions.filter(site => site.actionId.startsWith('demo.')).map(({ actionId }) => actionId),
+    ['demo.missing', 'demo.edit']);
+  assert.deepEqual(report.findings.map(({ code, operation }) => [code, operation]), [
+    ['unregistered_action', 'demo.missing'],
+    ['dynamic_action', 'CallExpression: readIncomingId()'],
+    ['dynamic_action', 'CallExpression: readIncomingId()'],
+    ['dynamic_setting', 'CallExpression'],
+  ]);
+  assert.deepEqual(report.settings.map(({ key }) => key), ['density', 'density', 'density']);
+});
+
 test('local command request ids remain with their UI owner while its Action effects are scanned', () => {
   const report = collectUiActionParity([
     { filePath: 'apps/ui/sources/sessionCommands.ts', content: `
