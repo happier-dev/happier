@@ -159,7 +159,7 @@ import { createSessionCompanionPanePresentation } from "@/components/sessions/co
 import type { PaneMainColumnState } from "@/components/appShell/panes/mainColumn/usePaneMainColumn";
 import { ComposerAuxiliaryFrame } from "./view/ComposerAuxiliaryFrame";
 import { SessionStartFailureBanner } from "@/components/sessions/startFailure/SessionStartFailureBanner";
-import { canUseDirectPendingDeliveryActions, offersPendingDeliverAndResume } from "@/components/sessions/pending/pendingMessageVisualState";
+import { offersPendingDeliverAndResume, readQueuedInputDeliverable } from "@/components/sessions/pending/pendingMessageVisualState";
 import { createSessionAgentSignInRoute } from "@/components/sessions/presentation/sessionAgentAuthRequiredPresentation";
 import { resolveSessionStartFailureNotice } from "@/components/sessions/startFailure/sessionStartFailureNotice";
 import { readSessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
@@ -2489,10 +2489,13 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
               run: () => fireAndForget(handleResumeSession(), { tag: 'SessionView.startFailure.retry' }),
           }
           : null;
-      const startFailureNotice = resolveSessionStartFailureNotice({ issue: session.lastRuntimeIssue, sessionActive: session.active === true,
-          appliedProviderBinding: readSessionProviderBindingMetadataV1(ownerMetadata),
-          // With a queued message to deliver, the banner's step is that row's Deliver, never "send it again".
-          queuedInputDeliverable: pendingMessages.some(message => canUseDirectPendingDeliveryActions(message, undefined, session)) });
+      // With a queued message to deliver, the banner's step is that row's Deliver, never "send it again"; the banner
+      // waits until the queue can answer, so its words never change once shown.
+      const queuedInputDeliverable = readQueuedInputDeliverable(pendingMessages, session,
+          pendingMessagesLoaded || pendingReadState === 'error');
+      const startFailureNotice = queuedInputDeliverable === null ? null
+          : resolveSessionStartFailureNotice({ issue: session.lastRuntimeIssue, sessionActive: session.active === true,
+              appliedProviderBinding: readSessionProviderBindingMetadataV1(ownerMetadata), queuedInputDeliverable });
       const startFailureProviderRecovery = startFailureNotice?.providerRecovery;
       const startFailureProviderTarget = startFailureProviderRecovery ? readMachineAdministrationTargetRouteParams({
           machineId: ownerMetadata?.machineId,

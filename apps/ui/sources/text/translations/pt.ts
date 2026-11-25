@@ -8682,7 +8682,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     },
     startFailure: {
         queuedInputCause: {
-          team_credential_binding_not_current: "A conexão com o modelo da equipe nesta máquina foi redefinida. Entregue novamente sua mensagem na fila.",
+          team_credential_binding_not_current: "A conexão com o modelo da equipe nesta máquina foi redefinida. Use o botão de enviar da sua mensagem na fila para entregá-la e retomar a sessão.",
         },
         requestId: ({ id }: { id: string }) => `ID da solicitação: ${id}`,
       title: "Não foi possível iniciar esta sessão",

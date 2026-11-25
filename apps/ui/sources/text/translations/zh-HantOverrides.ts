@@ -7083,7 +7083,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           },
           startFailure: {
             queuedInputCause: {
-              team_credential_binding_not_current: "此機器上的 Team 模型連線已重設。請重新傳送佇列中的訊息。",
+              team_credential_binding_not_current: "此機器上的 Team 模型連線已重設。請按佇列中訊息的傳送按鈕，將其送達並繼續工作階段。",
             },
             title: '無法啟動此工作階段',
             modelSelectionRequired: "此工作階段需要先選擇模型才能啟動。",

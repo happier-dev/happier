@@ -8594,7 +8594,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         },
         startFailure: {
             queuedInputCause: {
-              team_credential_binding_not_current: "Die Verbindung zum Team-Modell auf dieser Maschine wurde zurückgesetzt. Stelle deine wartende Nachricht erneut zu.",
+              team_credential_binding_not_current: "Die Verbindung zum Team-Modell auf dieser Maschine wurde zurückgesetzt. Nutze den Senden-Button deiner wartenden Nachricht, um sie zuzustellen und die Sitzung fortzusetzen.",
             },
             requestId: ({ id }: { id: string }) => `Anfrage-ID: ${id}`,
           title: 'Diese Session konnte nicht gestartet werden',

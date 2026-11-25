@@ -8882,7 +8882,7 @@ localTailscale: {
     },
     startFailure: {
         queuedInputCause: {
-          team_credential_binding_not_current: "このマシンの Team モデルへの接続がリセットされました。キューにあるメッセージをもう一度届けてください。",
+          team_credential_binding_not_current: "このマシンの Team モデルへの接続がリセットされました。キューにあるメッセージの送信ボタンで届けると、セッションが再開します。",
         },
         requestId: ({ id }: { id: string }) => `リクエスト ID: ${id}`,
       title: "このセッションを開始できませんでした",

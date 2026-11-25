@@ -8412,7 +8412,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     },
     startFailure: {
         queuedInputCause: {
-          team_credential_binding_not_current: "Połączenie z modelem zespołu na tej maszynie zostało zresetowane. Dostarcz ponownie wiadomość z kolejki.",
+          team_credential_binding_not_current: "Połączenie z modelem zespołu na tej maszynie zostało zresetowane. Użyj przycisku wysyłania przy wiadomości z kolejki, aby ją dostarczyć i wznowić sesję.",
         },
         requestId: ({ id }: { id: string }) => `Identyfikator żądania: ${id}`,
       title: "Nie udało się uruchomić tej sesji",

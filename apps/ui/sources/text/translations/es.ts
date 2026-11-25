@@ -8576,7 +8576,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     },
     startFailure: {
         queuedInputCause: {
-          team_credential_binding_not_current: "La conexión con el modelo del equipo en esta máquina se restableció. Vuelve a entregar tu mensaje en cola.",
+          team_credential_binding_not_current: "La conexión con el modelo del equipo en esta máquina se restableció. Usa el botón de enviar de tu mensaje en cola para entregarlo y reanudar la sesión.",
         },
         requestId: ({ id }: { id: string }) => `ID de solicitud: ${id}`,
       title: "No se pudo iniciar esta sesión",

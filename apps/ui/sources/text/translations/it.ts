@@ -8801,7 +8801,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     },
     startFailure: {
         queuedInputCause: {
-          team_credential_binding_not_current: "La connessione al modello del team su questa macchina è stata reimpostata. Consegna di nuovo il messaggio in coda.",
+          team_credential_binding_not_current: "La connessione al modello del team su questa macchina è stata reimpostata. Usa il pulsante di invio del messaggio in coda per consegnarlo e riprendere la sessione.",
         },
         requestId: ({ id }: { id: string }) => `ID richiesta: ${id}`,
       title: "Impossibile avviare questa sessione",

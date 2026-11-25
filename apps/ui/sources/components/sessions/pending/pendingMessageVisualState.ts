@@ -607,6 +607,20 @@ export function canUseDirectPendingDeliveryActions(
         && deliveryState.deliveryMutationPolicy !== 'effect_possible';
 }
 
+/**
+ * Whether a queued row offers its own Deliver step, for the start-failure banner's step. `null` while the queue is
+ * not read yet or a queued message is still decrypting: the banner waits for that answer instead of saying one step
+ * on a cold load and another once the message has decrypted.
+ */
+export function readQueuedInputDeliverable(
+    messages: readonly PendingMessage[],
+    session: Parameters<typeof canUseDirectPendingDeliveryActions>[2],
+    queueSettled: boolean,
+): boolean | null {
+    if (!queueSettled || messages.some(message => message.pendingDecryption?.kind === 'loading')) return null;
+    return messages.some(message => canUseDirectPendingDeliveryActions(message, undefined, session));
+}
+
 type HeldDeliverySession = Pick<Session, 'active' | 'access' | 'archivedAt' | 'metadata' | 'metadataLayoutVersion'
     | 'ownerMetadataView' | 'pendingActivationAuthorization'>;
 

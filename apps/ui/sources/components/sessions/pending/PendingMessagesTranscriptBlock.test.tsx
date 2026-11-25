@@ -387,6 +387,18 @@ describe('PendingMessagesTranscriptBlock', () => {
             expect.objectContaining({ localId: 'reset' }), expect.anything());
     });
 
+    it('calls a message the failed start never took "Queued", the word its banner and footer use', async () => {
+        sessionValue = { active: false, presence: 'offline', thinking: false,
+            lastRuntimeIssue: { v: 1, scope: 'primary_session', status: 'failed', code: 'team_credential_binding_not_current',
+                source: 'dependency_failure', occurredAt: 1 } };
+        const message = { ...queuedMessage('held', 1), pendingDeliveryStatus: 'blocked',
+            pendingDeliveryBlockedReason: 'provider_unavailable_before_acceptance' } as PendingMessage;
+        const Component = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(Component, { sessionId: 's1', pendingMessages: [message], discardedMessages: [] }));
+        const label = screen.findByTestId('pendingMessages.pendingAffordanceLabel:held');
+        expect(label?.props.children).toBe(t('session.pendingMessages.badgeLabel', { count: 0 }));
+    });
+
     it('names a reset Team binding in words on a refused message whose cause the Session does not already say', async () => {
         sessionValue = { active: false, presence: 'offline', thinking: false };
         const message = { ...queuedMessage('reset', 1), discardedAt: 2, discardedReason: 'team_credential_binding_not_current' as const };

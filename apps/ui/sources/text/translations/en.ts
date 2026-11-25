@@ -9990,7 +9990,7 @@ const enSession = {
   },
   startFailure: {
     queuedInputCause: {
-      team_credential_binding_not_current: "The Team model connection on this machine was reset. Deliver your queued message again.",
+      team_credential_binding_not_current: "The Team model connection on this machine was reset. Use the send button on your queued message to deliver it and resume the session.",
     },
     requestId: ({ id }: { id: string }) => `Request ID: ${id}`,
     title: 'Couldn’t start this session',

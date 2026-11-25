@@ -12,6 +12,7 @@ import {
     getSessionInputFailureLabelKey,
     offersPendingDeliverAndResume,
     pendingMessageStatesBlockedReason,
+    readQueuedInputDeliverable,
     resolvePendingMessagesPresentation,
     resolveSessionDeliveryFailure,
     type PendingMessageVisualStateKind,
@@ -545,6 +546,14 @@ describe('pending delivery actions', () => {
         expect(canUseDirectPendingDeliveryActions(pendingMessage({ pendingOutboxOperation: 'enqueue' }))).toBe(false);
         expect(canUseDirectPendingDeliveryActions(pendingMessage({ pendingDecryptFailure: { kind: 'decrypt_failed' } }))).toBe(false);
         expect(canUseDirectPendingDeliveryActions(pendingMessage({ pendingDeliveryStatus: 'server_delivering' }))).toBe(false);
+    });
+
+    it('waits for the queue before the start-failure step is chosen, so a cold load never flips its words', () => {
+        expect(readQueuedInputDeliverable([pendingMessage()], undefined, false)).toBeNull();
+        expect(readQueuedInputDeliverable([pendingMessage({ pendingDecryption: { kind: 'loading' } })], undefined, true)).toBeNull();
+        expect(readQueuedInputDeliverable([pendingMessage()], undefined, true)).toBe(true);
+        expect(readQueuedInputDeliverable([pendingMessage({ source: 'local_outbound', deliveryStatus: 'queued' })], undefined, true)).toBe(false);
+        expect(readQueuedInputDeliverable([], undefined, true)).toBe(false);
     });
 });
 

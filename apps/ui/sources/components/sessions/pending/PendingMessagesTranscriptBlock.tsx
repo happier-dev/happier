@@ -666,6 +666,9 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                     ? 'session.pendingMessages.deliveryStatus.nextTurn' : 'session.pendingMessages.deliveryStatus.delivering'))
                 : visualState.kind === 'held' || visualState.deliveryBlockedPresentation?.heldByWithdrawal
                     ? t('session.pendingMessages.deliveryStatus.held')
+                // A message the failed start never took is still queued: one word with the banner's step and the footer.
+                : visualState.kind === 'blocked' && visualState.deliveryBlockedPresentation?.statedByStartFailure
+                    ? t('session.pendingMessages.badgeLabel', { count: 0 })
                 : visualState.kind === 'blocked'
                     ? t('session.pendingMessages.deliveryStatus.blocked')
                     : visualState.kind === 'send_failed'
@@ -711,7 +714,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         const blockedDeliveryLabel = presentation.statesBlockedReason && deliveryBlockedPresentation
             ? deliveryBlockedPresentation.message ?? t(deliveryBlockedPresentation.labelKey)
             : null;
-        // A block the start-failure banner states keeps "Blocked" on the line; assistive tech still hears that cause here.
+        // A block the start-failure banner states keeps "Queued" on the line; assistive tech still hears that cause here.
         const startFailureCauseLabel = deliveryBlockedPresentation?.statedByStartFailure ? deliveryBlockedPresentation.message : null;
         const deliveryStateAccessibilityLabel = [deliveryStateLabel, blockedDeliveryLabel ?? startFailureCauseLabel, queuedReasonLabel]
             .filter((part): part is string => Boolean(part)).join('. ');
