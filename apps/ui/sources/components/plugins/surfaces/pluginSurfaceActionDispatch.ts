@@ -1416,7 +1416,9 @@ async function prepareClientContributedAction(
     if (sessionReadSet && projectedAction.execution.target === 'account') {
         const lifetime = initial.registration.accountLifetime;
         if (!lifetime) return clientActionFailure('plugin_surface_account_action_unavailable');
-        const local = input.readObservation || input.hostAction?.context?.localAccountSessionReadSet
+        // The mounted Resource's exact Session stamp is enforced by local admission.
+        const local = input.resourceCaller?.sessionId !== undefined
+            || input.readObservation || input.hostAction?.context?.localAccountSessionReadSet
             || await resolvesAccountActionLocally({ accountScope: lifetime.scope, action: identity,
                 execution: projectedAction.execution, input: normalizedInput, context: input.hostAction?.context ?? {} });
         accountReadSetPlacement = local ? 'local' : 'machine';

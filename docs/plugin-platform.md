@@ -2638,9 +2638,12 @@ without an eligible own Machine receives `target_unavailable` unless the Action
 declares invoking-UI placement. The read-only Channels reply-destination Action
 uses this placement so a Discussion participant can read the shared destination
 names without connecting a Machine. Account read observers retain their local
-dependency subscriptions; their finite Action
-reads follow the same placement rule. Authentication and established credential
-runtimes are separate from this Action placement contract.
+dependency subscriptions. A Session-mounted Account Resource with a registered
+Account read-set dependency also executes its finite read locally. The host
+admits only the exact Session stamped by the Resource, including on browser
+hosts and after readmission. Other finite reads follow the ordinary placement
+rule. Authentication and established credential runtimes are separate from
+this Action placement contract.
 
 In 0.3 development, a person's settled Account Action confirmation travels with
 that relay in the existing private invocation context. It binds the exact

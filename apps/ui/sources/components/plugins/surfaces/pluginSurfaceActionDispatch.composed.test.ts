@@ -6349,12 +6349,12 @@ describe('client Action declared SessionTarget admission', () => {
         }
     });
 
-    it('gives an Account Resource Action only the Session admitted by its host stamp', async () => {
+    it.each(['native', 'browser'] as const)('gives an Account Resource Action only the Session admitted by its host stamp on %s', async host => {
         const accountLifetime = clientAccountLifetime();
         const home = accountLifetime.scope.serverId;
         const reads: unknown[] = [];
         const lookups: string[] = [];
-        const activation = createClientActionActivation({ accountPlacement: true, invokingUi: true, accountLifetime,
+        const activation = createClientActionActivation({ accountPlacement: true, accountLifetime,
             surfaces: ['plugin'], readOnly: true, sessionTarget: { field: 'sessionIds.*', cardinality: 'many' },
             inputSchema: { anyOf: [
                 { type: 'object', properties: { sessionIds: { type: 'array', items: { type: 'string' }, minItems: 1 } },
@@ -6383,6 +6383,7 @@ describe('client Action declared SessionTarget admission', () => {
             }),
         }));
         const unregister = registerCurrentUiContextActionPort(createPort);
+        accountBrowserRelay.enabled = host === 'browser';
         try {
             await activation.composition.reconcile([activation.activation]);
             const sourceCustody = activation.projection.actionsById[`${CALLER_PLUGIN_ID}/${activation.action.id}`]!.hostAccountOrigin!.sourceCustody;
@@ -6403,6 +6404,7 @@ describe('client Action declared SessionTarget admission', () => {
             expect(reads).toEqual([{ sessionIds: ['stamped'] }]);
             expect(lookups).toEqual(['stamped']);
 
+            if (host === 'browser') return;
             const entryResult = await dispatchPluginSurfaceAction({
                 action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id },
                 input: { localRef: 'pull-request:7' },
@@ -6416,7 +6418,10 @@ describe('client Action declared SessionTarget admission', () => {
             expect(entryResult, JSON.stringify(entryResult)).toMatchObject({ ok: true, result: { localRef: 'pull-request:7' } });
             expect(reads).toEqual([{ sessionIds: ['stamped'] }, { localRef: 'pull-request:7' }]);
             expect(lookups).toEqual(['stamped']);
-        } finally { unregister(); await activation.composition.unload(); accountLifetime.retire(); }
+        } finally {
+            accountBrowserRelay.enabled = false;
+            unregister(); await activation.composition.unload(); accountLifetime.retire();
+        }
     });
 
     it.each(['exact', 'manager', 'workers', 'absent', 'external', 'retired', 'presenter'] as const)(
