@@ -1,6 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { AutomationOccurredAtV1Schema } from './automationOccurredAtV1.js';
+import { readAutomationJsonPointerArrayIndexV1, type AutomationEventFilterV1 } from './automationEventFilterV1.js';
 import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from './automationTriggerIdentity.js';
 import { AutomationTriggerActionIdV1Schema, AutomationActionPhaseV1Schema, AutomationActionOutcomeV1Schema } from './automationActionIdentityV1.js';
 
@@ -13,18 +14,28 @@ function checkSettledActionStatus(evidence: Readonly<{ phase: string; status?: s
     }
 }
 
+const AutomationActionTerminalEvidenceV1Schema = lazyZodSchema(() => z.strictObject({
+    status: z.optional(z.enum(['succeeded', 'failed'])),
+    outcome: z.optional(AutomationActionOutcomeV1Schema),
+    errorCode: z.optional(identifier),
+}));
+
 /** Safe provenance only: authored input, output and error text never enter this envelope. */
 export const AutomationActionRunEvidenceV1Schema = lazyZodSchema(() => z.strictObject({
     actionId: AutomationTriggerActionIdV1Schema,
     requestId: identifier,
     phase: AutomationActionPhaseV1Schema,
-    status: z.optional(z.enum(['succeeded', 'failed'])),
-    outcome: z.optional(AutomationActionOutcomeV1Schema),
-    errorCode: z.optional(identifier),
+    ...AutomationActionTerminalEvidenceV1Schema.shape,
     machineId: z.optional(identifier),
     originRunId: z.optional(identifier),
 }).check(z.superRefine(checkSettledActionStatus)));
 export type AutomationActionRunEvidenceV1 = z.infer<typeof AutomationActionRunEvidenceV1Schema>;
+
+const AutomationActionOccurrenceSubjectV1Schema = lazyZodSchema(() => z.strictObject({
+    role: z.enum(['operand', 'context']),
+    kind: identifier,
+    key: identifier,
+}));
 
 export const AutomationActionOccurrenceEvidenceV1Schema = lazyZodSchema(() => z.strictObject({
     ...AutomationActionRunEvidenceV1Schema.shape,
@@ -32,9 +43,29 @@ export const AutomationActionOccurrenceEvidenceV1Schema = lazyZodSchema(() => z.
     kind: z.literal('action'),
     occurredAt: AutomationOccurredAtV1Schema,
     // Typed identities stay in the host. Only the subject owner's digest crosses Home.
-    subjects: z.array(z.strictObject({ role: z.enum(['operand', 'context']), kind: identifier, key: identifier })),
+    subjects: z.array(AutomationActionOccurrenceSubjectV1Schema),
 }).check(z.superRefine(checkSettledActionStatus)));
 export type AutomationActionOccurrenceEvidenceV1 = z.infer<typeof AutomationActionOccurrenceEvidenceV1Schema>;
+
+/** Trigger authoring may refer only to scalar fields the occurrence producer can emit. */
+export function validateAutomationActionOccurrenceFilterV1(
+    phase: AutomationActionOccurrenceEvidenceV1['phase'],
+    filter: AutomationEventFilterV1,
+) {
+    const terminalFields = AutomationActionTerminalEvidenceV1Schema.shape;
+    const fields = Object.keys(AutomationActionOccurrenceEvidenceV1Schema.shape)
+        .filter(field => field !== 'subjects' && (phase === 'after' || !Object.hasOwn(terminalFields, field)))
+        .map(field => `/${field}`);
+    const subjectFields = Object.keys(AutomationActionOccurrenceSubjectV1Schema.shape);
+    const invalidClauses = filter.all.flatMap(({ field }, index) => {
+        if (fields.includes(field)) return [];
+        const [, root, slot, leaf, ...rest] = field.split('/');
+        if (root === 'subjects' && rest.length === 0 && slot !== undefined && leaf !== undefined
+            && readAutomationJsonPointerArrayIndexV1(slot) !== undefined && subjectFields.includes(leaf)) return [];
+        return [index];
+    });
+    return { invalidClauses, availableFields: [...fields, ...subjectFields.map(field => `/subjects/<index>/${field}`)] };
+}
 
 export const AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1 = '/v1/automations/actions/admit' as const;
 export const AutomationActionAdmitTriggerV1Schema = lazyZodSchema(() => z.strictObject({

@@ -4,7 +4,7 @@ import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
 import { PluginSubjectKindContributionV1Schema } from '../plugins/contributions/subjectKinds.js';
 import { PluginSubjectProjectionV1Schema } from '../plugins/actions/v2.js';
 import { AutomationSubjectV1Schema } from './automationSubjectV1.js';
-import { AUTOMATION_EVENT_DECIMAL_V1_PATTERN } from './automationEventFilterV1.js';
+import { AUTOMATION_EVENT_DECIMAL_V1_PATTERN, readAutomationJsonPointerArrayIndexV1 } from './automationEventFilterV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { AutomationObservationOnlyIntentV1Schema } from './automationEventSetupResultV1.js';
@@ -694,9 +694,8 @@ function resolveJsonPointer(value: PluginJsonValueV2, pointer: AutomationJsonPoi
   for (const encodedSegment of pointer.slice(1).split('/')) {
     const segment = encodedSegment.replace(/~1/g, '/').replace(/~0/g, '~');
     if (Array.isArray(current)) {
-      if (!/^(?:0|[1-9][0-9]*)$/u.test(segment)) return undefined;
-      const index = Number(segment);
-      if (!Number.isSafeInteger(index) || index >= current.length) return undefined;
+      const index = readAutomationJsonPointerArrayIndexV1(segment);
+      if (index === undefined || index >= current.length) return undefined;
       current = current[index];
       continue;
     }

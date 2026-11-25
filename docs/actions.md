@@ -10947,6 +10947,11 @@ trigger is added. An undecidable or omitted Role-policy result allows arming
 once ordinary Session admission succeeds. The same Role-policy decision protects
 the later Run start.
 
+Before and After Action filters reference only the closed occurrence evidence.
+Terminal outcome fields apply to After Actions. Raw Action input and output
+are unavailable in both phases. Trigger add and update report an invalid
+condition at the field pointer and name the fields available in its phase.
+
 In unreleased 0.3 source, New's managed Workflow continuation acquires and enrolls
 the reviewed Machine through the existing managed-creation owner, then admits the
 durable Workflow Run through the existing Run owner. Only an accepted Run can

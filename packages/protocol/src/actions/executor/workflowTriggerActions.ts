@@ -8,6 +8,7 @@ import type {
 } from '../../automations/automationApiV3.js';
 import { AutomationV3RunMutationResponseSchema, type AutomationV3RunMutationResponse } from '../../automations/automationApiV3.js';
 import { AutomationTriggerIdSchema } from '../../automations/automationTriggerIdentity.js';
+import { validateAutomationActionOccurrenceFilterV1 } from '../../automations/automationActionOccurrenceV1.js';
 import { isDeploymentReceiptEventSourceV1, readDeploymentReceiptEventSubjectV1 } from '../../deployments/deploymentReceiptEventsV1.js';
 import { HealthCheckSourceConfigV1Schema, isHealthCheckEventSourceV1, readHealthCheckEventSubjectV1 } from '../../deployments/healthCheckSourceV1.js';
 import type { AutomationEventTriggerDefinitionStoredPayloadV1 } from '../../automations/automationEventV1.js';
@@ -559,14 +560,27 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     }
     return source;
   };
-  type TriggerWrite = Readonly<{ triggerId: string; trigger: AutomationTriggerDefinition | AutomationTriggerDefinitionInput }>;
+  type TriggerWrite = Readonly<{
+    triggerId: string;
+    trigger: AutomationTriggerDefinition | AutomationTriggerDefinitionInput;
+    authoredFilterPath?: '/trigger/filter' | '/patch/trigger/filter';
+  }>;
   const assertTargetAccess = async (target: TriggerTargetV1, context: WorkflowTriggerContextV1,
     triggerEvents?: readonly WorkflowTriggerEventDeclarationV1[], triggerWrites: readonly TriggerWrite[] = [],
     caller?: Caller, targetProject?: WorkflowProjectTargetV1) => {
-    for (const { trigger } of triggerWrites) {
+    for (const { trigger, authoredFilterPath } of triggerWrites) {
       if (trigger.kind !== 'action' || 'consentFor' in trigger) continue;
       // Structural headers are host output. A caller cannot author admission facts.
       if ('triggerDefinitionEnvelope' in trigger) refuseInput('trigger_definition_envelope_not_allowed');
+      if (authoredFilterPath && trigger.filter) {
+        const { invalidClauses, availableFields } = validateAutomationActionOccurrenceFilterV1(trigger.phase, trigger.filter);
+        if (invalidClauses.length > 0) refuse('invalid_input', { code: 'invalid_trigger_target', issues: invalidClauses.map(index => ({
+          code: 'invalid_condition',
+          severity: 'error',
+          path: `${authoredFilterPath}/all/${index}/field`,
+          message: `That field is unavailable for ${trigger.phase} Action conditions. Remove the condition or choose from ${availableFields.join(', ')}.`,
+        })) });
+      }
       const { getActionSpec, isActionEffectHookableV1 } = await import('../actionSpecs.js');
       const subject = trigger.subject;
       let declaredPluginSubject = false;
@@ -1370,7 +1384,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         ];
         if (scope?.onComplete !== undefined) mergedContext.onComplete = scope.onComplete;
         const admittedSource = await assertWrite(target, mergedContext, targetProject, caller, scope?.sessionId, false, false, scope,
-          undefined, [{ triggerId, trigger: input.trigger }]);
+          undefined, [{ triggerId, trigger: input.trigger, authoredFilterPath: '/trigger/filter' }]);
         await prepareActionConsent({ context: mergedContext, definition: admittedSource.definition, project: targetProject, target, triggerId,
           enabled: input.trigger.enabled, mode: input.actionApproval,
           initialDeployment: input.trigger.kind === 'pluginEvent' && input.deployment !== undefined,
@@ -1386,7 +1400,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       if (input.deployment !== undefined) context.deploymentTriggers = [{ triggerId, ...input.deployment }];
       const triggerEvents = await readInlineTriggerEvents(target, [input.trigger]);
       const admittedSource = await assertWrite(target, context, targetProject, caller, scope?.sessionId, false, false, scope,
-        triggerEvents, [{ triggerId, trigger: input.trigger }]);
+        triggerEvents, [{ triggerId, trigger: input.trigger, authoredFilterPath: '/trigger/filter' }]);
       // A one-shot notification is an intent to observe this source once. A
       // repeated registration rejoins the Automation owner instead of creating
       // another notification. Repeating/ordinary authored triggers retain add
@@ -1524,7 +1538,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const triggerWrites: TriggerWrite[] = [];
       for (const item of triggers) {
         if (item.trigger) {
-          triggerWrites.push({ triggerId: item.triggerId, trigger: item.trigger });
+          triggerWrites.push({ triggerId: item.triggerId, trigger: item.trigger, authoredFilterPath: '/patch/trigger/filter' });
           continue;
         }
         if (input.triggerId !== undefined && item.triggerId !== input.triggerId && item.enabled === undefined) continue;

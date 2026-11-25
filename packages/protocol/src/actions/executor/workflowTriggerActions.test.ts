@@ -373,6 +373,33 @@ function fixture(savedDefinition = definition) {
   };
 }
 
+describe.each(['add', 'update'] as const)('Action trigger condition admission via %s', method => {
+  it.each([
+    ['before', '/input/definitionId', '/actionId', 'workflow.definition.update'],
+    ['before', '/outcome', '/actionId', 'workflow.definition.update'],
+    ['after', '/input/definitionId', '/outcome', 'succeeded'],
+  ] as const)('refuses a %s condition on %s before writing trigger content', async (phase, unsupported, available, value) => {
+    const f = fixture();
+    const authored = { kind: 'action' as const, phase, actionIds: ['workflow.definition.update'],
+      ...(phase === 'before' ? { mode: 'notify' as const } : {}) };
+    const invalid = { ...authored, filter: { v: 1 as const, all: [{ field: unsupported, op: 'eq' as const, value }] } };
+    const valid = { ...authored, filter: { v: 1 as const, all: [{ field: available, op: 'eq' as const, value },
+      { field: '/subjects/0/kind', op: 'eq' as const, value: 'workflow' }] } };
+    const saved = await f.actions.add({ workflow, project, trigger: { ...valid, enabled: true } });
+    expect(saved.set.triggers[0]).toMatchObject({ filter: valid.filter });
+    const retained = f.rows.get(saved.set.automationId);
+    const attempt = method === 'add'
+      ? f.actions.add({ workflow, project, trigger: { ...invalid, enabled: true } })
+      : f.actions.update({ automationId: saved.set.automationId, triggerId: saved.triggerId,
+          expectedRevision: saved.set.revision, patch: { trigger: invalid } });
+    await expect(attempt).rejects.toMatchObject({ code: 'invalid_input', details: { issues: [{
+      code: 'invalid_condition', severity: 'error', message: expect.stringContaining(available),
+      path: method === 'add' ? '/trigger/filter/all/0/field' : '/patch/trigger/filter/all/0/field',
+    }] } });
+    expect(f.rows.get(saved.set.automationId)).toBe(retained);
+  });
+});
+
 describe('profile subject mutation admission', () => {
   it.each([null, 'session-one'] as const)(
     'removes a whole set in scope %s with one admitted read and preserves Session authority', async scopeSessionId => {

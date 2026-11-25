@@ -34,6 +34,12 @@ export const AutomationJsonPointerV1Schema = lazyZodSchema(() => z.string().chec
   })));
 export type AutomationJsonPointerV1 = z.infer<typeof AutomationJsonPointerV1Schema>;
 
+export function readAutomationJsonPointerArrayIndexV1(segment: string): number | undefined {
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(segment)) return undefined;
+  const index = Number(segment);
+  return Number.isSafeInteger(index) ? index : undefined;
+}
+
 const AutomationEventFilterClauseV1Schema = lazyZodSchema(() => z.discriminatedUnion('op', [
   z.strictObject({
     op: z.enum(['gt', 'gte', 'lt', 'lte']),
