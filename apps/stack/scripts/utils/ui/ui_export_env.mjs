@@ -4,6 +4,7 @@ export function buildStackWebExportEnv({ baseEnv, enableDebugRoutes = false } = 
   // This is a stack-built bundle (served by the stack server), so ensure the app
   // behaves like stack context at runtime (no Cloud seeding/locking).
   env.NODE_ENV = 'production';
+  env.BABEL_ENV = 'production';
   env.EXPO_PUBLIC_DEBUG = enableDebugRoutes ? '1' : '0';
   env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
 

@@ -42,3 +42,32 @@ test('Metro emits compact development modules with working code and source maps 
         console.log(JSON.stringify({ platform, beforeBytes: Buffer.byteLength(before.code), afterBytes: Buffer.byteLength(after.code) }));
     }
 });
+
+test('a reused Metro worker strips production console calls on every transform', async t => {
+    const previousBabelEnv = process.env.BABEL_ENV;
+    t.after(() => {
+        if (previousBabelEnv === undefined) delete process.env.BABEL_ENV;
+        else process.env.BABEL_ENV = previousBabelEnv;
+    });
+    const { transformer } = require('../metro.config.js');
+    const filename = path.join(uiRoot, 'sources/bundleFixture.ts');
+    const source = Buffer.from("export function report() { console.error('production-console-fixture'); return 42; }");
+    const options = {
+        dev: false, hot: false, minify: true, platform: 'web', type: 'module',
+        experimentalImportSupport: false, inlineRequires: true,
+        unstable_transformProfile: 'default', customTransformOptions: {},
+    };
+    const compile = async dev => (await transform(transformer, uiRoot, filename, source, { ...options, dev })).output[0].data.code;
+    delete process.env.BABEL_ENV;
+
+    const first = await compile(false);
+    const second = await compile(false);
+    assert.equal(second, first, 'worker history must not change emitted code');
+    assert.doesNotMatch(first, /production-console-fixture/);
+    assert.equal(process.env.BABEL_ENV, undefined);
+
+    process.env.BABEL_ENV = 'production';
+    assert.match(await compile(true), /production-console-fixture/);
+    assert.equal(process.env.BABEL_ENV, 'production');
+    assert.equal(await compile(false), first);
+});

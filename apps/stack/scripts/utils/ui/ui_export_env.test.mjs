@@ -4,9 +4,10 @@ import assert from 'node:assert/strict';
 import { buildStackTauriExportEnv, buildStackWebExportEnv } from './ui_export_env.mjs';
 
 test('buildStackWebExportEnv forces stack server context and leaves server URL empty for runtime origin', () => {
-  const env = buildStackWebExportEnv({ baseEnv: { ...process.env } });
+  const env = buildStackWebExportEnv({ baseEnv: { NODE_ENV: 'development', BABEL_ENV: 'test' } });
 
   assert.equal(env.NODE_ENV, 'production');
+  assert.equal(env.BABEL_ENV, 'production');
   assert.equal(env.EXPO_PUBLIC_DEBUG, '0');
   assert.equal(env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT, 'stack');
   assert.equal(env.EXPO_PUBLIC_HAPPIER_SERVER_URL, '');
