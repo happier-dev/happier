@@ -1414,6 +1414,14 @@ type UsageWorkMachineInput = Readonly<{
     source?: UsageWorkSourceSnapshot;
 }>;
 
+function withdrawRetainedWorkAdmission(slice: UsageQueryResultSlice, input: UsageWorkMachineInput, refused: ReadonlySet<string>) {
+    const replacement = withdrawUsageQueryWork(slice, input, refused);
+    // Keep the stripped Work for display. Only this entry's read can witness
+    // the admitted turns for reuse.
+    return { slice: replacement.slice, workInput: replacement.slice === slice ? input
+        : { ...input, turns: undefined, source: replacement.source } };
+}
+
 function resolveUsageWorkSessionTargets(scope: UsageQueryAccountContext['accountLifetime']['scope'],
     sessionIds: readonly string[], resolved: Map<string, UsageWorkSessionTarget>): UsageWorkSessionTargets {
     return new Map<string, UsageWorkSessionTarget>(sessionIds.map(sessionId => {
@@ -2367,6 +2375,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         const inputsCurrent = !!admission && admission.inputs.length === readInputs.length
             && admission.inputs.every((identity, index) => identity === readInputs[index]);
         let workMachinesCurrent = true;
+        let workAwaitingOwnRead = false;
         let changedWorkTargets: Map<string, boolean> | undefined;
         let workTargets: Map<string, UsageWorkSessionTarget> | undefined;
         const reconcileWorkInput = (input: UsageWorkMachineInput) => {
@@ -2384,6 +2393,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             return { targetChanged, canSeed, machineChanged: current.machineKey !== input.machineKey };
         };
         for (const input of admission?.workMachineInputs ?? []) {
+            // Only a mirrored refusal retains Work for resolved Sessions without admitted turns.
+            workAwaitingOwnRead ||= input.source !== undefined && input.sessionIds.length > 0 && input.turns === undefined;
             const { targetChanged, canSeed, machineChanged } = reconcileWorkInput(input);
             if (targetChanged) (changedWorkTargets ??= new Map()).set(input.queryKey, canSeed);
             if (machineChanged) workMachinesCurrent = false;
@@ -2394,7 +2405,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         const sourcesCurrent = admission?.settled === true && workMachinesCurrent && admission.inputs.length === readInputs.length
             && admission.inputs.every((identity, index) => index === 0 || identity === readInputs[index]);
         return { readInputs, nowMs, admission, quotaClockCurrent, derivationCurrent, sourcesCurrent, changedWorkTargets, reconcileWorkInput, error: !!snapshot.error,
-            currentSnapshot: current || snapshot.error ? snapshot : undefined,
+            // Views may show the stripped projection while Work is pending. An
+            // Action must wait for this entry's own answer after a withdrawal.
+            currentSnapshot: current && !workAwaitingOwnRead || snapshot.error ? snapshot : undefined,
             content: admitted ? content : undefined, reusable: admitted && admission?.reusable === true };
     };
     const owner: AccountResourceOwner = {
@@ -2542,13 +2555,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             if (!sessionIds.size) return;
             // Keep this viewer's accounting and the Work of other admitted Sessions.
             for (const withdraw of readingAccess) withdraw.work(sessionIds);
-            const replace = (slice: UsageQueryResultSlice, input: UsageWorkMachineInput) => {
-                const replacement = withdrawUsageQueryWork(slice, input, sessionIds);
-                return { slice: replacement.slice, workInput: replacement.slice === slice ? input : { ...input, source: replacement.source } };
-            };
             for (const [key, { slice, workInput }] of slicesByQuery) {
                 if (!workInput || !workInput.sessionIds.some(id => sessionIds.has(id))) continue;
-                slicesByQuery.set(key, replace(slice, workInput));
+                slicesByQuery.set(key, withdrawRetainedWorkAdmission(slice, workInput, sessionIds));
             }
             owner.store.replaceRetainedValues(content => {
                 const admitted = decodedValues.get(content);
@@ -2561,7 +2570,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 const results = value.results.map(slice => {
                     const input = inputs.get(slice.key);
                     if (!input) return slice;
-                    const next = replace(slice, input);
+                    const next = withdrawRetainedWorkAdmission(slice, input, sessionIds);
                     inputs.set(slice.key, next.workInput);
                     changed ||= next.slice !== slice;
                     return next.slice;
@@ -2569,7 +2578,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 if (!changed) return content;
                 const replacement = { ...value, results };
                 const next = createUsageQueryResourceContent(replacement);
-                decodedValues.set(next, { value: replacement, admission: { ...admission,
+                decodedValues.set(next, { value: replacement, admission: { ...admission, reusable: false,
                     workMachineInputs: admission.workMachineInputs.map(input => inputs.get(input.queryKey) ?? input) } });
                 return next;
             });
@@ -2714,11 +2723,11 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                             : acquired;
                         const refusals = refusedWork;
                         if (refusals && workInput && workInput.sessionIds.some(id => refusals.has(id))) {
-                            const replacement = withdrawUsageQueryWork(slice, workInput, refusals);
+                            const replacement = withdrawRetainedWorkAdmission(slice, workInput, refusals);
                             if (replacement.slice !== slice) {
                                 slice = replacement.slice;
                                 (correctedResults ??= [...value.results])[index] = slice;
-                                workInput = { ...workInput, source: replacement.source };
+                                workInput = replacement.workInput;
                             }
                         }
                         if (workInput) workMachineInputs.push(workInput);
@@ -2739,7 +2748,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         && !slice.sources.some(source => isUsageQuerySourceOutstanding(slice.requestedQuery, source)));
                     // A masked sibling may settle this read without disclosing facts,
                     // but only a direct refusal can satisfy another acquisition.
-                    const reusable = settled && value.results.every(slice => !slice.pending
+                    const reusable = settled && !correctedResults && value.results.every(slice => !slice.pending
                         && withdrawn?.get(slice.key)?.direct !== false && slice.sources.every(source => source.status !== 'pending'
                             && (source.status === 'unsupported' || (source.errorCode
                                 ? !readUsageHistoryFailure({ errorCode: source.errorCode }).retryable

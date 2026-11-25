@@ -10034,11 +10034,13 @@ describe('usage query captured Resource adapter', () => {
 });
 
 describe('usage query Work composition', () => {
-  it.each(['refused', 'failed'] as const)('applies a %s batch Work read to the exact-query entry only on refusal', async state => {
+  it.each(['refused', 'failed', 'recovered on Action', 'recovered on wake'] as const)(
+    'handles a %s batch Work read in the exact-query entry', async state => {
     const machineId = 'work-machine';
     const contribution = { ...workContribution, machineId };
+    let eventCount = value.totals.eventCount;
     const captured = await context(request => request.path === '/v2/usage/query'
-      ? Response.json({ ...value, contributions: [contribution] }) : undefined);
+      ? Response.json({ ...value, totals: { ...value.totals, eventCount }, contributions: [contribution] }) : undefined);
     const scope = captured.accountLifetime.scope;
     storage.getState().applySessions([createSessionFixture({ id: contribution.sessionId, serverId: scope.serverId,
       metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' } })]);
@@ -10054,10 +10056,11 @@ describe('usage query Work composition', () => {
         number: 1, title: 'Linked', url: 'https://github.com/owner/repo/pull/1',
         baseBranch: 'main', headBranch: 'work', state: 'merged' },
     };
-    scmTransport.mockImplementationOnce(async (request: { payload: ScmWorkEvidenceReadRequest }) => workBatch(request, {
+    const readLinkedWork = async (request: { payload: ScmWorkEvidenceReadRequest }) => workBatch(request, {
       status: 'partial', pullRequestsRead: true, evidence: [evidence],
       branchEvidence: [{ ...checkpoint, branch: { ref: 'refs/heads/work', headSha: checkpoint.commitSha } }],
-    }));
+    });
+    scmTransport.mockImplementationOnce(readLinkedWork);
     const query = normalizeUsageQuery({ session: [contribution.sessionId], period: { startMs: 0, endMs: 1000 },
       includeQuota: false, includeQuotaHistory: false, includeComparison: false, includeSessionEvidence: false,
       includeTranscriptEvidence: false, includeWorkEvidence: true, includeCoach: false, workProjection: 'detail' });
@@ -10086,36 +10089,55 @@ describe('usage query Work composition', () => {
       assertRetained(prior, firstReadAt);
       expect(scmTransport).toHaveBeenCalledTimes(1);
       scmTransport.mockImplementation(async () => {
-        if (state === 'refused') throw createRpcCallError({ error: 'Work refused', errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        if (state !== 'failed') throw createRpcCallError({ error: 'Work refused', errorCode: RPC_ERROR_CODES.FORBIDDEN });
         throw new RetryableServerResponseError(503, 'Unavailable');
       });
       const stopBatch = batch.subscribe(() => {}, false);
       try {
         await expect.poll(() => batch.getSnapshot().pending).toBe('idle');
         expect(scmTransport).toHaveBeenCalledTimes(2);
-        expect(workSource(read(batch))?.unreadSessions).toEqual(state === 'refused' ? { not_entitled: 1 } : { failed: 1 });
+        expect(workSource(read(batch))?.unreadSessions).toEqual(state === 'failed' ? { failed: 1 } : { not_entitled: 1 });
         expect(read(batch).accounting?.totals).toEqual(prior.accounting?.totals);
         expect(read(single).accounting?.totals).toEqual(prior.accounting?.totals);
+        const assertWithdrawn = (slice: ReturnType<typeof read>) => {
+          expect(slice.work?.outcomes ?? []).toEqual([]);
+          expect(slice.work?.branches ?? []).toEqual([]);
+          expect(workSource(slice)?.asOfMs).toBeUndefined();
+          expect(workSource(slice)?.unreadSessions).toEqual({ not_entitled: 1 });
+        };
+        if (state === 'failed') assertRetained(read(single), firstReadAt);
+        else assertWithdrawn(read(single));
+
+        const recovered = state === 'recovered on Action' || state === 'recovered on wake';
+        if (recovered) scmTransport.mockImplementation(readLinkedWork);
+        if (state === 'recovered on wake') {
+          eventCount++;
+          publishHomeAccountChange(scope.serverId, [contribution.sessionId], { changeKinds: ['account'],
+            usageAccountingChange: { sessionId: contribution.sessionId },
+            sessionReadinessChanges: { sessionIds: [], machineIds: [] } });
+          await expect.poll(() => read(single).accounting?.totals.eventCount).toBe(eventCount);
+          await expect.poll(() => single.getSnapshot().pending).toBe('idle');
+          expect(scmTransport).toHaveBeenCalledTimes(3);
+          expect(read(single).work?.outcomes).toHaveLength(1);
+        }
         const account = await captureLazyActionAccountContext(scope.serverId);
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(account) }));
         const response = await executor.execute('usage.query', exact, { surface: 'ui', authority: 'present_user',
           actionCaller: { kind: 'host' } });
         if (!response.ok) throw new Error(response.errorCode);
         const action = UsageQueryBatchResultSchema.parse(response.result).results[0]!;
-        expect(action.accounting?.totals).toMatchObject(value.totals);
+        expect(action.accounting?.totals).toMatchObject({ ...value.totals, eventCount });
         if (state === 'refused') {
-          for (const slice of [read(single), action]) {
-            expect.soft(slice.work?.outcomes ?? []).toEqual([]);
-            expect.soft(slice.work?.branches ?? []).toEqual([]);
-            expect.soft(workSource(slice)?.asOfMs).toBeUndefined();
-          }
-          expect.soft(workSource(read(single))?.unreadSessions).toEqual({ not_entitled: 1 });
-          expect.soft(workSource(action)?.unreadSessions).toEqual({ not_entitled: 1 });
+          assertWithdrawn(action);
+        } else if (recovered) {
+          expect(action.work?.outcomes).toHaveLength(1);
+          expect(action.work?.branches).toHaveLength(1);
+          expect(workSource(action)?.asOfMs).toEqual(expect.any(Number));
+          expect(workSource(action)?.unreadSessions).toBeUndefined();
         } else {
-          assertRetained(read(single), firstReadAt);
           assertRetained(action, firstReadAt);
         }
-        expect(scmTransport).toHaveBeenCalledTimes(2);
+        expect(scmTransport).toHaveBeenCalledTimes(state === 'failed' ? 2 : 3);
       } finally { stopBatch(); }
     } finally { stop(); }
   });
