@@ -415,8 +415,10 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       onSelect={forge.choose}
     />
   ) : null;
+  const forgeFailure = forge.catalogFailure
+    ?? (owner.kind === 'unavailable' || owner.kind === 'needsAccount' ? owner.code : undefined);
   // The one way on when the chosen forge can't take the repository yet: connect GitHub here, or check again.
-  const forgeRepair = owner.kind === 'needsAccount' && forge.chosen === DEFAULT_PROJECT_REPOSITORY_PROVIDER_KIND_V1 ? (
+  const forgeRepair = forge.catalogFailure ? null : owner.kind === 'needsAccount' && forge.chosen === DEFAULT_PROJECT_REPOSITORY_PROVIDER_KIND_V1 ? (
     <RoundButton testID="newApp.connectGithub" size="small" display="inverted"
       title={t('newApp.connectGithub')} onPress={connectGithub} />
   ) : (owner.kind === 'needsAccount' || owner.kind === 'unavailable') && machine ? (
@@ -983,6 +985,13 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             {...(forgeChoice ? { accessoryLayout: 'adaptive' as const } : {})}
             rightElement={forgeChoice ?? forgeRepair}
           />
+          {forgeFailure ? (
+            <AttentionBanner testID={forge.catalogFailure ? 'newApp.forge.catalogUnavailable' : 'newApp.forge.describeUnavailable'}
+              tone="warning" announce="status" title={t('common.unavailable')} details={[forgeFailure]}
+              {...(forge.catalogFailure
+                ? { action: { label: t('newApp.retry'), onPress: forge.retryCatalog, testID: 'newApp.forge.catalogRetry' } }
+                : {})} />
+          ) : null}
           {forgeChoice && forgeRepair ? (
             <View style={styles.forgeRepair}>{forgeRepair}</View>
           ) : null}

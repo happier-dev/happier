@@ -22,12 +22,12 @@ type PublishTarget = Extract<
 export type ForgeOwnerFact =
   | Readonly<{ kind: 'loading' }>
   | Readonly<{ kind: 'ready'; owner: string; target: PublishTarget }>
-  | Readonly<{ kind: 'needsAccount'; providerName: string | null }>
-  | Readonly<{ kind: 'unavailable'; providerName: string | null }>;
+  | Readonly<{ kind: 'needsAccount' | 'unavailable'; providerName: string | null; code?: string }>;
 
 export type NewAppForge = Readonly<DeploySuggestionCatalogV1['forges'][number]>;
 
 const LOADING: ForgeOwnerFact = Object.freeze({ kind: 'loading' });
+const UNAVAILABLE: ForgeOwnerFact = Object.freeze({ kind: 'unavailable', providerName: null });
 const NO_FORGES: readonly NewAppForge[] = Object.freeze([]);
 
 /**
@@ -46,23 +46,32 @@ export function useNewAppForges(
   }>,
 ) {
   const { serverId, machineId, homeDir, active, suggestion } = params;
-  const [ownCatalog, setOwnCatalog] =
-    React.useState<DeploySuggestionCatalogV1 | null>(null);
+  const [ownCatalog, setOwnCatalog] = React.useState<Readonly<{
+    serverId: string;
+    catalog: DeploySuggestionCatalogV1 | null;
+    code: string | null;
+  }> | null>(null);
   const catalogRead = React.useRef<string | null>(null);
-  React.useEffect(() => {
-    if (!active || suggestion || !serverId || catalogRead.current === serverId)
-      return;
+  const retryCatalog = React.useCallback(() => {
+    if (!active || suggestion || !serverId || catalogRead.current === serverId) return;
     catalogRead.current = serverId;
+    const settle = (catalog: DeploySuggestionCatalogV1 | null, code: string | null) => {
+      if (catalogRead.current !== serverId) return;
+      if (code) catalogRead.current = null;
+      setOwnCatalog({ serverId, catalog, code });
+    };
     void readDeploySuggestionCatalog({ serverId, input: { projection: 'forges' } }).then((listed) => {
-      if (listed.kind === 'catalog') setOwnCatalog(listed.catalog);
-      // Without the snapshot the row keeps the default forge alone; reopening the step reads it again.
-      else catalogRead.current = null;
-    }).catch(() => {
-      catalogRead.current = null;
+      if (listed.kind === 'failed') settle(null, listed.code);
+      else settle(listed.catalog, listed.catalog.issues?.find(issue => issue.section === 'forges')?.code ?? null);
+    }, (error: unknown) => {
+      const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+      settle(null, typeof code === 'string' ? code : 'action_failed');
     });
   }, [active, serverId, suggestion]);
+  React.useEffect(retryCatalog, [retryCatalog]);
 
-  const catalog = suggestion?.catalog ?? ownCatalog;
+  const ownRead = ownCatalog?.serverId === serverId ? ownCatalog : null;
+  const catalog = suggestion?.catalog ?? ownRead?.catalog;
   const forges = React.useMemo((): readonly NewAppForge[] => {
     if (!catalog) return NO_FORGES;
     if (!suggestion) return catalog.forges;
@@ -109,7 +118,7 @@ export function useNewAppForges(
       if (!machineId || !homeDir) {
         setOwners((current) => ({
           ...current,
-          [key]: { kind: 'unavailable', providerName: null },
+          [key]: UNAVAILABLE,
         }));
         return;
       }
@@ -130,32 +139,28 @@ export function useNewAppForges(
       })
         .then((response) => {
           // The Git panel's publish owner decides what a describe answer needs; New app reads the same verdict.
-          const targets =
-            response && 'success' in response
-              ? (response as ScmHostingRepositoryDescribePublishTargetsResponse)
-              : null;
           const target =
-            targets?.success === true
-              ? (targets.targets.find((candidate) => candidate.isDefault) ??
-                targets.targets[0] ??
+            response.success
+              ? (response.targets.find((candidate) => candidate.isDefault) ??
+                response.targets[0] ??
                 null)
               : null;
           const verdict = resolveSourceControlPublishRepositoryRemediation({
-            targetsResponse: targets,
+            targetsResponse: response,
             selectedTarget: target,
             publishFailure: null,
           });
           const providerName = target?.provider.displayName ?? null;
-          if (target && verdict.authState !== null && !verdict.authUnavailable)
+          if (target && verdict.authState !== null && !verdict.authUnavailable) {
             settle({ kind: 'ready', owner: target.owner, target });
-          else if (
-            verdict.action !== null ||
-            (targets?.success === true && !verdict.authState)
-          )
-            settle({ kind: 'needsAccount', providerName });
-          else settle({ kind: 'unavailable', providerName });
+            return;
+          }
+          const code = response.success ? undefined
+            : typeof response.actionErrorCode === 'string' ? response.actionErrorCode : response.errorCode;
+          const kind = verdict.action !== null || (response.success && !verdict.authState) ? 'needsAccount' : 'unavailable';
+          settle({ kind, providerName, ...(code ? { code } : {}) });
         })
-        .catch(() => settle({ kind: 'unavailable', providerName: null }));
+        .catch(() => settle(UNAVAILABLE));
     },
     [homeDir, machineId, scopeKey],
   );
@@ -184,9 +189,11 @@ export function useNewAppForges(
   return {
     forges,
     chosen,
+    catalogFailure: suggestion ? null : ownRead?.code ?? null,
+    retryCatalog,
     owner: chosen
       ? (owners[keyOf(chosen)] ?? LOADING)
-      : ({ kind: 'unavailable', providerName: null } as const),
+      : UNAVAILABLE,
     ownerOf: (providerKind: string): ForgeOwnerFact | undefined => owners[keyOf(providerKind)],
     choose: setPicked,
     recheck,

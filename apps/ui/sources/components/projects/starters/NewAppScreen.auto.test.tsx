@@ -1149,6 +1149,66 @@ it('F2: canonical answers and adjustment notes each start one checked run with z
   } finally { await screen.unmount(); await fixture.dispose(); }
 });
 
+it('keeps the manual forge inventory refusal and retries that read', async () => {
+  const readForges = vi.fn<NonNullable<Ports['deploymentSuggestionForges']>>()
+    .mockRejectedValueOnce(Object.assign(new Error('Forge inventory unavailable'), { code: 'server_target_mismatch' }))
+    .mockResolvedValueOnce([{ providerKind: 'github', title: 'GitHub' }]);
+  const readTargets = vi.fn(async () => ({ targets, stores: [] }));
+  suggestionBoundary({ deploymentSuggestionForges: readForges, deploymentSuggestionTargets: readTargets });
+  const { fixture, screen } = await openDescribe('manual-forge-inventory-refusal');
+  try {
+    await screen.pressByTestIdAsync('newApp.starter:website');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await waitForHomeGovernance(() => expect(readForges).toHaveBeenCalledTimes(1));
+    const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+    const notice = () => screen.findAllByType(AttentionBanner).find(node => node.props.testID === 'newApp.forge.catalogUnavailable');
+    await waitForHomeGovernance(() => expect(notice()?.props.details).toEqual(['server_target_mismatch']));
+    await screen.pressByTestIdAsync('newApp.forge.catalogRetry');
+    await waitForHomeGovernance(() => expect(readForges).toHaveBeenCalledTimes(2));
+    await waitForHomeGovernance(() => expect(notice()).toBeUndefined());
+    expect(readTargets).not.toHaveBeenCalled();
+  } finally {
+    await screen.unmount();
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
+it('keeps the SCM describe refusal with the existing retry', async () => {
+  suggestionBoundary({});
+  const { machineScmHostingRepositoryDescribePublishTargets: describeTargets } = await import('@/sync/ops/scm/machineScm');
+  const { SCM_OPERATION_ERROR_CODES } = await import('@happier-dev/protocol/scm');
+  const fallback = vi.mocked(describeTargets).getMockImplementation();
+  vi.mocked(describeTargets).mockResolvedValue({
+    success: false, error: 'Target refused',
+    errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, actionErrorCode: 'server_target_mismatch',
+  });
+  const { storage } = await import('@/sync/domains/state/storageStore');
+  const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+  const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+  const { fixture, screen } = await openDescribe('forge-describe-refusal');
+  try {
+    const scope = storage.getState().settingsScope;
+    if (!scope) throw new Error('Expected admitted Home Account');
+    await publishMachineInventoryForTest(scope, [createMachineFixture({ activeAt: Date.now() })]);
+    await screen.pressByTestIdAsync('newApp.starter:website');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await waitForHomeGovernance(() => expect(describeTargets).toHaveBeenCalledTimes(1));
+    const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+    const notice = () => screen.findAllByType(AttentionBanner).find(node => node.props.testID === 'newApp.forge.describeUnavailable');
+    await waitForHomeGovernance(() => expect(notice()?.props.details).toEqual(['server_target_mismatch']));
+    vi.mocked(describeTargets).mockClear();
+    await screen.pressByTestIdAsync('newApp.recheckGithub');
+    await waitForHomeGovernance(() => expect(describeTargets).toHaveBeenCalledTimes(1));
+  } finally {
+    vi.mocked(describeTargets).mockReset();
+    if (fallback) vi.mocked(describeTargets).mockImplementation(fallback);
+    await screen.unmount();
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
 it('F5: Code lives on offers only forges that pair with the target, describes each once on open, and a choice reads and writes nothing', async () => {
   const pairing: DeploySuggestionCatalogV1['targets'] = [{ ...targets[0]!, sources: { gitIntegration: ['github', 'bitbucket'], upload: false } }];
   suggestionBoundary({
