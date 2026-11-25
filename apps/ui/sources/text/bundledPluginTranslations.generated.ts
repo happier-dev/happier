@@ -2955,8 +2955,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.gitlab.ui.publication.result": "{published}/{total} comentaris publicats; {uncertain} sense confirmar; {failed} amb errors; {skipped} no intentats. Veredicte: {verdict}.",
     "plugins.gitlab.ui.publication.submit": "Envia la revisió",
     "plugins.gitlab.ui.publication.summary": "Resum de la revisió",
-    "plugins.gitlab.ui.publication.summaryRequired": "Afegeix un resum abans de publicar aquest veredicte.",
-    "plugins.gitlab.ui.publication.title": "Publica la revisió",
     "plugins.gitlab.ui.publication.unknown": "Resultat de la publicació desconegut",
     "plugins.gitlab.ui.publication.unknown.description": "Torna a carregar aquesta entrada abans de decidir si ho tries de nou. El GitLab ja pot contenir el comentari.",
     "plugins.gitlab.ui.publication.unreadable": "El resultat de la publicació és il·legible",
@@ -7683,8 +7681,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.gitlab.ui.publication.result": "{published}/{total} Kommentare veröffentlicht; {uncertain} unbestätigt; {failed} fehlgeschlagen; {skipped} nicht versucht. Entscheidung: {verdict}.",
     "plugins.gitlab.ui.publication.submit": "Review absenden",
     "plugins.gitlab.ui.publication.summary": "Review-Zusammenfassung",
-    "plugins.gitlab.ui.publication.summaryRequired": "Füge vor der Veröffentlichung dieser Entscheidung eine Zusammenfassung hinzu.",
-    "plugins.gitlab.ui.publication.title": "Review veröffentlichen",
     "plugins.gitlab.ui.publication.unknown": "Veröffentlichungsergebnis unbekannt",
     "plugins.gitlab.ui.publication.unknown.description": "Lade diesen Eintrag neu, bevor du entscheidest, ob du es erneut versuchst. GitLab enthält den Kommentar möglicherweise bereits.",
     "plugins.gitlab.ui.publication.unreadable": "Das Veröffentlichungsergebnis ist nicht lesbar",
@@ -12411,8 +12407,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.gitlab.ui.publication.result": "{published}/{total} comments published; {uncertain} unconfirmed; {failed} failed; {skipped} not attempted. Verdict: {verdict}.",
     "plugins.gitlab.ui.publication.submit": "Submit review",
     "plugins.gitlab.ui.publication.summary": "Review summary",
-    "plugins.gitlab.ui.publication.summaryRequired": "Add a summary before publishing this verdict.",
-    "plugins.gitlab.ui.publication.title": "Publish review",
     "plugins.gitlab.ui.publication.unknown": "Publication outcome unknown",
     "plugins.gitlab.ui.publication.unknown.description": "Reload this entry before deciding whether to try again. GitLab may already contain the comment.",
     "plugins.gitlab.ui.publication.unreadable": "The publication result is unreadable",
@@ -13194,6 +13188,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.sourceFailure.posthog/not-found": "Its source could not find this entry.",
     "plugins.triage.sourceFailure.reason": "Reason",
     "plugins.triage.sourceFailure.requestId": "Request ID",
+    "plugins.triage.sourceFailure.scope-outside-binding": "This entry’s source is no longer connected",
     "plugins.triage.sourcePanel.insertConfirmation": "The selected occurrence will be attached to this message. Its title, stack frames, source context, breadcrumbs and allowed tags may be sent to the agent when you send the message. User fields, frame local variables and raw request data are excluded.",
     "plugins.triage.sourcePanel.insertTitle": "Add selected occurrence to message",
     "plugins.triage.sourcePanel.revealConfirmation": "Event user details may include names, email addresses and IP addresses.",
@@ -17139,8 +17134,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.gitlab.ui.publication.result": "{published}/{total} comentarios publicados; {uncertain} sin confirmar; {failed} con error; {skipped} no intentados. Veredicto: {verdict}.",
     "plugins.gitlab.ui.publication.submit": "Enviar revisión",
     "plugins.gitlab.ui.publication.summary": "Resumen de la revisión",
-    "plugins.gitlab.ui.publication.summaryRequired": "Añade un resumen antes de publicar este veredicto.",
-    "plugins.gitlab.ui.publication.title": "Publicar revisión",
     "plugins.gitlab.ui.publication.unknown": "Resultado de la publicación desconocido",
     "plugins.gitlab.ui.publication.unknown.description": "Recarga esta entrada antes de decidir si lo intentas de nuevo. El comentario ya puede estar en GitLab.",
     "plugins.gitlab.ui.publication.unreadable": "El resultado de la publicación es ilegible",
@@ -21867,8 +21860,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.gitlab.ui.publication.result": "{published}/{total} commentaires publiés ; {uncertain} non confirmés ; {failed} en échec ; {skipped} non tentés. Verdict : {verdict}.",
     "plugins.gitlab.ui.publication.submit": "Envoyer la revue",
     "plugins.gitlab.ui.publication.summary": "Résumé de la revue",
-    "plugins.gitlab.ui.publication.summaryRequired": "Ajoute un résumé avant de publier ce verdict.",
-    "plugins.gitlab.ui.publication.title": "Publier la revue",
     "plugins.gitlab.ui.publication.unknown": "Résultat de publication inconnu",
     "plugins.gitlab.ui.publication.unknown.description": "Recharge cet élément avant de décider de réessayer. GitLab contient peut-être déjà le commentaire.",
     "plugins.gitlab.ui.publication.unreadable": "Le résultat de la publication est illisible",
@@ -26595,8 +26586,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.gitlab.ui.publication.result": "{published}/{total} commenti pubblicati; {uncertain} non confermati; {failed} non riusciti; {skipped} non tentati. Verdetto: {verdict}.",
     "plugins.gitlab.ui.publication.submit": "Invia revisione",
     "plugins.gitlab.ui.publication.summary": "Riepilogo della revisione",
-    "plugins.gitlab.ui.publication.summaryRequired": "Aggiungi un riepilogo prima di pubblicare questo verdetto.",
-    "plugins.gitlab.ui.publication.title": "Pubblica revisione",
     "plugins.gitlab.ui.publication.unknown": "Esito della pubblicazione sconosciuto",
     "plugins.gitlab.ui.publication.unknown.description": "Ricarica questa voce prima di decidere se riprovare. GitLab potrebbe già contenere il commento.",
     "plugins.gitlab.ui.publication.unreadable": "Il risultato della pubblicazione è illeggibile",
@@ -31323,8 +31312,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.gitlab.ui.publication.result": "公開されたコメント: {published}/{total}、未確認: {uncertain}、失敗: {failed}、未実施: {skipped}。判定: {verdict}。",
     "plugins.gitlab.ui.publication.submit": "レビューを送信",
     "plugins.gitlab.ui.publication.summary": "レビューの概要",
-    "plugins.gitlab.ui.publication.summaryRequired": "この判定を公開する前に概要を追加してください。",
-    "plugins.gitlab.ui.publication.title": "レビューを公開",
     "plugins.gitlab.ui.publication.unknown": "公開結果は不明です",
     "plugins.gitlab.ui.publication.unknown.description": "再試行するかどうかを決める前に、この項目を再読み込みしてください。GitLab には既にコメントが存在する可能性があります。",
     "plugins.gitlab.ui.publication.unreadable": "公開結果を読み取れません",
@@ -36051,8 +36038,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.gitlab.ui.publication.result": "Opublikowane komentarze: {published}/{total}; niepotwierdzone: {uncertain}; niepowodzenia: {failed}; niepodjęte: {skipped}. Werdykt: {verdict}.",
     "plugins.gitlab.ui.publication.submit": "Wyślij przegląd",
     "plugins.gitlab.ui.publication.summary": "Podsumowanie przeglądu",
-    "plugins.gitlab.ui.publication.summaryRequired": "Dodaj podsumowanie przed opublikowaniem tego werdyktu.",
-    "plugins.gitlab.ui.publication.title": "Opublikuj przegląd",
     "plugins.gitlab.ui.publication.unknown": "Wynik publikacji nieznany",
     "plugins.gitlab.ui.publication.unknown.description": "Odśwież ten wpis, zanim zdecydujesz, czy ponowić próbę. Komentarz może już być w GitLab.",
     "plugins.gitlab.ui.publication.unreadable": "Wynik publikacji jest nieczytelny",
@@ -40779,8 +40764,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.gitlab.ui.publication.result": "{published}/{total} comentários publicados; {uncertain} por confirmar; {failed} com falha; {skipped} não tentados. Veredito: {verdict}.",
     "plugins.gitlab.ui.publication.submit": "Enviar revisão",
     "plugins.gitlab.ui.publication.summary": "Resumo da revisão",
-    "plugins.gitlab.ui.publication.summaryRequired": "Acrescente um resumo antes de publicar este veredito.",
-    "plugins.gitlab.ui.publication.title": "Publicar revisão",
     "plugins.gitlab.ui.publication.unknown": "Resultado da publicação desconhecido",
     "plugins.gitlab.ui.publication.unknown.description": "Recarregue esta entrada antes de decidir se tenta novamente. O GitLab pode já conter o comentário.",
     "plugins.gitlab.ui.publication.unreadable": "O resultado da publicação é ilegível",
@@ -45507,8 +45490,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.gitlab.ui.publication.result": "Опубликовано комментариев: {published}/{total}; не подтверждено: {uncertain}; с ошибкой: {failed}; не предпринималось: {skipped}. Вердикт: {verdict}.",
     "plugins.gitlab.ui.publication.submit": "Отправить ревью",
     "plugins.gitlab.ui.publication.summary": "Итог ревью",
-    "plugins.gitlab.ui.publication.summaryRequired": "Добавьте итог перед публикацией этого вердикта.",
-    "plugins.gitlab.ui.publication.title": "Опубликовать ревью",
     "plugins.gitlab.ui.publication.unknown": "Результат публикации неизвестен",
     "plugins.gitlab.ui.publication.unknown.description": "Обновите эту запись, прежде чем решать, повторять ли попытку. Комментарий уже может быть в GitLab.",
     "plugins.gitlab.ui.publication.unreadable": "Результат публикации не читается",
@@ -50235,8 +50216,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.gitlab.ui.publication.result": "已发布评论：{published}/{total}；未确认：{uncertain}；失败：{failed}；未尝试：{skipped}。结论：{verdict}。",
     "plugins.gitlab.ui.publication.submit": "提交评审",
     "plugins.gitlab.ui.publication.summary": "评审摘要",
-    "plugins.gitlab.ui.publication.summaryRequired": "发布此结论前请先添加摘要。",
-    "plugins.gitlab.ui.publication.title": "发布评审",
     "plugins.gitlab.ui.publication.unknown": "发布结果未知",
     "plugins.gitlab.ui.publication.unknown.description": "在决定是否重试之前，请重新加载此条目。GitLab 可能已经包含该评论。",
     "plugins.gitlab.ui.publication.unreadable": "发布结果无法读取",
@@ -54963,8 +54942,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.gitlab.ui.publication.result": "已發布留言：{published}/{total}；未確認：{uncertain}；失敗：{failed}；未嘗試：{skipped}。結論：{verdict}。",
     "plugins.gitlab.ui.publication.submit": "送出審查",
     "plugins.gitlab.ui.publication.summary": "審查摘要",
-    "plugins.gitlab.ui.publication.summaryRequired": "發布此結論前請先新增摘要。",
-    "plugins.gitlab.ui.publication.title": "發布審查",
     "plugins.gitlab.ui.publication.unknown": "發布結果未知",
     "plugins.gitlab.ui.publication.unknown.description": "在決定是否重試之前，請重新載入此項目。GitLab 可能已包含該留言。",
     "plugins.gitlab.ui.publication.unreadable": "發布結果無法讀取",
@@ -59693,8 +59670,6 @@ export type BundledPluginTranslationKey =
     | 'plugins.gitlab.ui.publication.result'
     | 'plugins.gitlab.ui.publication.submit'
     | 'plugins.gitlab.ui.publication.summary'
-    | 'plugins.gitlab.ui.publication.summaryRequired'
-    | 'plugins.gitlab.ui.publication.title'
     | 'plugins.gitlab.ui.publication.unknown'
     | 'plugins.gitlab.ui.publication.unknown.description'
     | 'plugins.gitlab.ui.publication.unreadable'
@@ -60476,6 +60451,7 @@ export type BundledPluginTranslationKey =
     | 'plugins.triage.sourceFailure.posthog/not-found'
     | 'plugins.triage.sourceFailure.reason'
     | 'plugins.triage.sourceFailure.requestId'
+    | 'plugins.triage.sourceFailure.scope-outside-binding'
     | 'plugins.triage.sourcePanel.insertConfirmation'
     | 'plugins.triage.sourcePanel.insertTitle'
     | 'plugins.triage.sourcePanel.revealConfirmation'
