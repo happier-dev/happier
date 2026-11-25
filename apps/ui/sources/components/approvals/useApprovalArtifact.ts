@@ -48,6 +48,12 @@ function hasCompatibleApprovalArtifact(
     return !expectedServerIdentityId || headerServerIdentityId === expectedServerIdentityId;
 }
 
+export type ApprovalArtifactRead = Readonly<{
+    artifactId: string;
+    artifact: DecryptedArtifact | null;
+    invalidArtifact: boolean;
+}>;
+
 const subscribeNothing = () => () => {};
 const readFocused = () => true;
 
@@ -58,6 +64,8 @@ export function useApprovalArtifact(input: Readonly<{
     scope?: ServerAccountScope;
     /** A mounted Action still owns its result while Inbox review has focus. */
     observeWhileUnfocused?: boolean;
+    /** Deliver a verified exact-Home read while the mounted origin is suspended. */
+    onArtifactRead?: (read: ApprovalArtifactRead) => void;
     /** The detail page names requester/decider Accounts from this Artifact's direct-grant roster. */
     includeAccountActorRoster?: boolean;
 }>) {
@@ -102,7 +110,7 @@ export function useApprovalArtifact(input: Readonly<{
     // Fetch, retained result and receipt observation share this exact Home.
     // An unresolved explicit link must never fall back to the active Home.
     const serverId = unresolvedServer ? null : requestedServerTarget?.serverId ?? activeScope?.serverId ?? null;
-    const { artifactId } = input;
+    const { artifactId, onArtifactRead } = input;
     // Only a requested approval follows focus. Every mounted Action writer holds this reader with no
     // approval, so it must not render when its screen is covered or shown.
     const focusSignal = useDestinationFocusSignal();
@@ -245,16 +253,11 @@ export function useApprovalArtifact(input: Readonly<{
                 pending.current = null;
                 setLoading(false);
             }
-            setLoaded({
-                artifactId,
-                serverId,
-                resolution,
-                artifact: compatible ? full : null,
-                accessGrants: compatible ? result?.grants ?? null : null,
-                invalidArtifact: Boolean(full && !compatible),
-            });
+            const observed = { artifactId, artifact: compatible ? full : null, invalidArtifact: Boolean(full && !compatible) };
+            setLoaded({ ...observed, serverId, resolution, accessGrants: compatible ? result?.grants ?? null : null });
             setError(!full || !compatible);
-            return compatible ? full : null;
+            if (controller && full) onArtifactRead?.(observed);
+            return observed.artifact;
         } catch {
             if (controller && !controller.signal.aborted) setError(true);
         } finally {
@@ -265,7 +268,7 @@ export function useApprovalArtifact(input: Readonly<{
                 setLoading(false);
             }
         }
-    }, [artifactId, input.includeAccountActorRoster, input.scope, requestedByPortableIdentity, requestedServerIdentityId, resolution, scopeMatches, serverId, unresolvedServer]);
+    }, [artifactId, input.includeAccountActorRoster, input.scope, onArtifactRead, requestedByPortableIdentity, requestedServerIdentityId, resolution, scopeMatches, serverId, unresolvedServer]);
     React.useEffect(() => {
         observedHeaderOnlyRevision.current = headerOnlyLocalRevision;
         // Binding the active Home must not create new demand for retained content,

@@ -2,12 +2,13 @@ import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { createActionApprovalContinuationObserver, type ActionApprovalRegistration } from './actionApprovalContinuation';
-import { useApprovalArtifact } from './useApprovalArtifact';
+import { useApprovalArtifact, type ApprovalArtifactRead } from './useApprovalArtifact';
 import { readApprovalPreviewSummary } from './actionApprovalPresentation';
 import { isApprovalRequestV2InFlightStatus, isApprovalRequestV2TerminalStatus } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { buildApprovalHref } from './approvalNavigation';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
+import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 /** React projection of the canonical process-local Action result-custody observer. */
 export function useActionApprovalContinuation(input: Readonly<{
@@ -16,6 +17,7 @@ export function useActionApprovalContinuation(input: Readonly<{
     onExecuted: () => void;
 }>) {
     const language = usePreferredLanguage();
+    const presentation = useLayoutPresentationSignal();
     const router = useRouter();
     const onExecutedRef = React.useRef(input.onExecuted);
     onExecutedRef.current = input.onExecuted;
@@ -41,12 +43,20 @@ export function useActionApprovalContinuation(input: Readonly<{
         if (currentObserver.current !== observer) return;
         observer.requestApproval(registration);
     }, [observer]);
+    const onArtifactRead = React.useCallback(({ artifactId, artifact, invalidArtifact }: ApprovalArtifactRead) => {
+        // Presented origins deliver after their UI has cleared custody. A suspended
+        // origin has no render to commit, so consume the same read directly.
+        if (presentation.get() || currentObserver.current !== observer
+            || observer.getSnapshot().approval?.artifactId !== artifactId) return;
+        observer.observeArtifact(artifact, invalidArtifact);
+        observer.deliverSettlement();
+    }, [observer, presentation]);
     const { approval, settlement } = React.useSyncExternalStore(observer.subscribe, observer.getSnapshot, observer.getSnapshot);
     const approvalId = approval?.artifactId ?? null;
     const artifactScope = approval?.continuation?.scope;
     const artifactBinding = useApprovalArtifact({ artifactId: approvalId,
         serverId: artifactScope?.serverId ?? input.serverId, scope: artifactScope,
-        observeWhileUnfocused: approvalId !== null });
+        observeWhileUnfocused: approvalId !== null, onArtifactRead });
     const approvalStatus = artifactBinding.artifact?.header?.approvalStatus;
     const awaitingTypedBody = Boolean(approval?.continuation)
         && isApprovalRequestV2TerminalStatus(approvalStatus) && typeof artifactBinding.artifact?.body !== 'string';

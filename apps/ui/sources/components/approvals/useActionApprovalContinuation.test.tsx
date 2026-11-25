@@ -858,8 +858,13 @@ describe('useActionApprovalContinuation', () => {
             const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
             await act(async () => { publishHomeAccountChange(serverId, [artifactId], { changeKinds: ['artifact'] }); });
             await waitForHomeGovernance(() => expect(onTerminal).toHaveBeenCalledOnce());
-            expect(onTerminal.mock.calls[0]?.[0]).toBe('rejected');
+            expect(onTerminal).toHaveBeenCalledWith('rejected', expect.objectContaining({ id: artifactId }));
+
+            focus.mockReturnValue(true);
+            originShown = true;
+            await hook.rerender({ scopeKey: `${serverId}:${ACCOUNT_ID}` });
             expect(hook.getCurrent().approvalPending).toBe(false);
+            expect(onTerminal).toHaveBeenCalledOnce();
         } finally {
             focus.mockRestore();
             await hook.unmount();
