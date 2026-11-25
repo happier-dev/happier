@@ -105,6 +105,76 @@ describe("GitHub publication recovery through the real provider adapter and SQL 
         expect(reviews).toHaveLength(2);
     });
 
+    it("preserves a provider permission refusal and reconciles an explicit retry without republishing", async () => {
+        const account = await db.account.create({ data: {
+            id: "account-publication-provider-refusal", publicKey: "pk-publication-provider-refusal", encryptionMode: "plain",
+        }, select: { id: true } });
+        let sequence = 0;
+        const operations = createReviewCommentOperations(createSqlReviewCommentStore(), {
+            now: () => 1234, createId: prefix => `${prefix}-provider-refusal-${++sequence}`,
+        });
+        const localRef = { kindId: "pull-request", collisionScope: "github:4210", entryId: "1284" } as const;
+        const plan: ReviewCommentPublicationPlanV1 = {
+            target: { providerId: "github", configuredAccountId: "account-under-test", subtarget: null,
+                entryRef: { sourceId: "happier.scm.forge.github/github-forge", ...localRef } },
+            baseRevision: "b".repeat(40), headRevision: "a".repeat(40), entries: [],
+            verdict: { kind: "requestChanges", body: "Publication refused by the selected GitHub account." },
+        };
+        const pull = `/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`;
+        const transport = createStubGithubTransport({ respond: request => {
+            const path = new URL(request.url).pathname;
+            if (request.method === "GET" && path === pull) return { status: 200, body: {
+                ...GITHUB_PULL_REQUEST_RESPONSE, state: "open", merged: false,
+                head: { ...(GITHUB_PULL_REQUEST_RESPONSE.head as object), sha: plan.headRevision },
+                base: { ...(GITHUB_PULL_REQUEST_RESPONSE.base as object), sha: plan.baseRevision },
+            } };
+            if (request.method === "GET" && path === `${pull}/reviews`) return { status: 200, body: [] };
+            if (request.method === "POST" && path === `${pull}/reviews`) return {
+                status: 403, headers: { "x-accepted-github-permissions": "pull_requests=write" },
+                body: { message: "Resource not accessible by integration" },
+            };
+            return undefined;
+        } });
+        const client = await createTestGithubApiClient(transport);
+        const claim = () => claimReviewCommentPublication(operations, {
+            accountId: account.id, actor: { kind: "user", userId: account.id }, input: plan,
+        });
+        const publish = () => publishGithubPullRequestReview({
+            localRef, route: { owner: GITHUB_FIXTURE_OWNER, name: GITHUB_FIXTURE_REPOSITORY }, publicationPlan: plan,
+            claimPublicationDispatch: claim,
+            settlePublicationDispatch: async (dispatch, result) => {
+                await claimReviewCommentPublication(operations, {
+                    accountId: account.id, actor: { kind: "user", userId: account.id },
+                    input: { ...plan, settlement: { dispatchToken: dispatch.dispatchToken, result } },
+                });
+            },
+        }, { client, now: () => 1234, signal: transport.context.signal });
+
+        const refused = await publish();
+        expect(refused).toMatchObject({ kind: "settled", failure: {
+            class: "permission", code: "insufficient_scope", detail: "pull_requests=write", requiredPermissions: "pull_requests=write",
+        }, publication: { verdict: { outcome: { kind: "uncertain" } } } });
+        const stored = await claim();
+        expect(stored).toMatchObject({ disposition: "reconcile", instructions: { verdict: "reconcile" },
+            priorResult: { verdict: { outcome: { kind: "uncertain" } } },
+        });
+
+        // Explicit retry consumes the admitted plan's durable evidence. An absent
+        // provider receipt never becomes success or a second notification.
+        const retried = await publish();
+        expect(retried).toMatchObject({ kind: "settled", publication: stored.priorResult });
+        expect(await claim()).toMatchObject({ publicationPlanId: stored.publicationPlanId,
+            verdict: stored.verdict, priorResult: stored.priorResult,
+        });
+        const writes = transport.requests.filter(request => request.method === "POST");
+        expect(writes).toHaveLength(1);
+        expect(readRecordedJsonBody(writes[0]!)).toMatchObject({
+            commit_id: plan.headRevision, event: "REQUEST_CHANGES", comments: [],
+        });
+        expect(transport.requests.filter(request => request.method === "GET"
+            && new URL(request.url).pathname === `${pull}/reviews`)).toHaveLength(2);
+    });
+
     it("reconciles a GitHub review after settlement transport timeout without a second provider POST", async () => {
         const account = await db.account.create({ data: {
             id: "account-publication-settlement-timeout", publicKey: "pk-publication-settlement-timeout", encryptionMode: "plain",
