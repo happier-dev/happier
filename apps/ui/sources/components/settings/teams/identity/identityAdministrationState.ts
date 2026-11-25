@@ -3,6 +3,7 @@ import type {
     TeamIdentityEligibleProviderV1,
 } from '@happier-dev/protocol/teams';
 
+import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 import { retainDeep, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 
 import { sortIdentityConnectionsForAdministration } from './identityAdministrationPresentation';
@@ -11,6 +12,7 @@ import type { ScopedIdentityConnectionV1 } from './identityAdministrationClient'
 export type IdentityAdministrationFailure = Readonly<{
     code: string;
     retryable: boolean;
+    domainFailure?: HomeDomainFailure;
 }>;
 
 export type IdentityAdministrationState =

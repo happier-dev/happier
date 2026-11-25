@@ -20,8 +20,8 @@ import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
 import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 import { useTeamObservedPagedList } from '@/hooks/teams/useTeamObservedPagedList';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
-import type { TeamDirectoryGroupPageV1 } from '@happier-dev/protocol/teams';
-import { identityAdministrationFailureMessage } from '@/components/settings/identity/identityAdministrationFailure';
+import { isTeamLegacyCredentialRefusalV1, type TeamDirectoryGroupPageV1 } from '@happier-dev/protocol/teams';
+import { identityAdministrationFailure, identityAdministrationFailureMessage } from '@/components/settings/identity/identityAdministrationFailure';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { getPreferredLanguage, t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -33,6 +33,7 @@ import type { ActionApprovalRegistration } from '@/components/approvals/actionAp
 
 import { TeamSection } from '../TeamSection';
 import { teamMemberDetailPath } from '../teamsRoutes';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 import { DirectoryListFailure, useDirectoryPeopleList } from './DirectoryPeopleList';
 import { directoryGroupMappingTargetLabel, directorySourcePresentationState, directorySourceStateLabel } from './directoryAdministrationPresentation';
 import { runDirectoryGroupMappingChange } from './directoryGroupMapping';
@@ -340,6 +341,19 @@ const AuthorizedDirectorySourceDetail = React.memo(function AuthorizedDirectoryS
         props.sourceId,
         props.requestApproval,
     );
+    const readRecovery = useTeamReadFailureAction(props.address);
+    const readFailure = state.kind === 'loading' ? null : state.failure;
+    const failedDomain = readFailure?.domainFailure;
+    const sourceFailureTitle = readFailure
+        ? isTeamLegacyCredentialRefusalV1(failedDomain?.code, failedDomain?.details)
+            ? t('teams.errors.signInOutdated')
+            : identityAdministrationFailureMessage(readFailure.code)
+        : null;
+    const sourceFailureAction = failedDomain
+        ? readRecovery(failedDomain, { onPress: refresh, testIDPrefix: 'team-directory-source' })
+        : readFailure?.retryable && identityAdministrationFailure(readFailure.code).kind !== 'policy_unavailable'
+            ? { label: t('common.retry'), onPress: refresh, testID: 'team-directory-source-retry' }
+            : undefined;
     const [actionFailure, setActionFailure] = React.useState<string | null>(null);
     const [workosPortalPending, setWorkosPortalPending] = React.useState(false);
     const portalReturnController = React.useRef(createWorkosPortalReturnController()).current;
@@ -482,9 +496,9 @@ const AuthorizedDirectorySourceDetail = React.memo(function AuthorizedDirectoryS
                             testID="team-directory-source-unavailable"
                             kind="error"
                             size="line"
-                            title={identityAdministrationFailureMessage(state.failure.code)}
+                            title={sourceFailureTitle ?? identityAdministrationFailureMessage(state.failure.code)}
                             diagnosticCode={state.failure.code}
-                            action={state.failure.retryable ? { label: t('common.retry'), onPress: refresh } : undefined}
+                            action={sourceFailureAction}
                             accessibilitySemantics="alert"
                         />
                     </ItemGroup>
@@ -562,13 +576,13 @@ const AuthorizedDirectorySourceDetail = React.memo(function AuthorizedDirectoryS
                 ]}
             />
             {props.shellHeader}
-            {state.stale ? (
+            {state.stale && sourceFailureTitle ? (
                 <AttentionBanner
                     testID="team-directory-source-stale"
-                    title={t('teams.unavailable.offline')}
+                    title={sourceFailureTitle}
                     description={t('teams.stale.label')}
                     accessibilityLiveRegion="polite"
-                    action={{ label: t('common.retry'), onPress: refresh }}
+                    action={sourceFailureAction}
                 />
             ) : null}
             {source.error ? (

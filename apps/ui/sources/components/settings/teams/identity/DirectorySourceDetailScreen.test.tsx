@@ -7,6 +7,7 @@ import { collectRenderedTestIds, createDeferred, renderScreen, standardCleanup, 
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 const routerBack = vi.hoisted(() => vi.fn());
+const routerPush = vi.hoisted(() => vi.fn());
 const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string> }));
 const announce = vi.hoisted(() => vi.fn());
 const openedUrl = vi.hoisted(() => vi.fn(async () => true));
@@ -14,7 +15,7 @@ const focusedItems = vi.hoisted(() => [] as string[]);
 const scrollToIndex = vi.hoisted(() => vi.fn());
 const virtualWindow = vi.hoisted(() => ({ enabled: false }));
 const platform = vi.hoisted(() => ({ OS: 'ios' }));
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { back: routerBack }, params: () => routeParams.current }).module);
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { back: routerBack, push: routerPush }, params: () => routeParams.current }).module);
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock, createFocusablePressableMock } = await import('@/dev/testkit/mocks/reactNative');
     const native = await createReactNativeWebMock();
@@ -103,6 +104,7 @@ beforeEach(async () => {
     scrollToIndex.mockClear();
     announce.mockClear();
     routerBack.mockReset();
+    routerPush.mockReset();
     openedUrl.mockReset().mockResolvedValue(true);
     vi.mocked(Modal.confirm).mockReset().mockResolvedValue(true);
 });
@@ -116,6 +118,25 @@ afterEach(async () => {
 });
 
 describe('DirectorySourceDetailScreen through real Home governance', () => {
+    it.each([
+        { status: 404, body: { error: 'directory_source_not_found' }, message: 'identityAdministration.errorMissing', signIn: false },
+        { status: 403, body: { error: 'team_authentication_required' }, message: 'identityAdministration.errorAuthenticationRequired', signIn: true },
+        { status: 503, body: { error: 'team_authentication_unavailable' }, message: 'identityAdministration.errorPolicyUnavailable', signIn: false },
+    ])('preserves $body.error after an already-open directory source is refused', async ({ status, body, message, signIn }) => {
+        const screen = await renderDetail();
+        harness.answer(serverId, sourcePath, { status, body });
+        await wakeTeams();
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.findByTestId('team-directory-source-retry')).toBeNull();
+        expect(screen.findByTestId('team-directory-source-sign-in') !== null).toBe(signIn);
+        if (signIn) {
+            await screen.pressByTestIdAsync('team-directory-source-sign-in');
+            const destination = new URL(routerPush.mock.lastCall?.[0] ?? '', 'https://app.example');
+            expect(destination.pathname).toBe('/teams/team-1/sign-in');
+            expect(destination.searchParams.get('serverId')).toBe(serverId);
+        }
+    });
+
     it.each([
         ['remove', 'team-directory-source-remove'],
         ['searchGroups', 'directory-groups-search'],
