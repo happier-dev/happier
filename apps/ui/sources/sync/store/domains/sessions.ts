@@ -1214,6 +1214,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             let didAnyDeferredWarmCacheRelevantRenderableChange = false;
             let changedSessionCount = 0;
             let changedRenderableCount = 0;
+            const hydratedSessionIds = new Set<string>();
             const changedRenderableSessionIds = new Set<string>();
             const rowsCopiedThisApply = new Map<object, Record<string, SessionListRenderableSession>>();
             let reconciledSessionMessageCount = 0;
@@ -1241,7 +1242,14 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const ownerRowsKey = resolveSessionListHomeKey(mergedRowsByServerId, ownerServerId);
                 const ownerRows = ownerRowsKey ? mergedRowsByServerId[ownerRowsKey] : {};
                 const previousRenderable = ownerRows[incomingSession.id];
-                const session = reconcileSessionLifecycleProjection(previousRenderable, orderedSession);
+                // Creation time is the list's fallback sort key. An equal detail read
+                // must not promote that fallback into a newly observed Session activity.
+                const previousLifecycle = previousRenderable
+                    && previousRenderable.meaningfulActivityAt === previousRenderable.createdAt
+                    && orderedSession.meaningfulActivityAt == null
+                    ? { ...previousRenderable, meaningfulActivityAt: undefined }
+                    : previousRenderable;
+                const session = reconcileSessionLifecycleProjection(previousLifecycle, orderedSession);
                 // Use centralized resolver for consistent state management
                 const presence = session.presence;
 
@@ -1356,6 +1364,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     : retainDeep(previousSession, nextSession);
                 if (mergedSession !== previousSession) {
                     changedSessionCount += 1;
+                    hydratedSessionIds.add(session.id);
                     if (mergedSessions === state.sessions) {
                         mergedSessions = { ...state.sessions };
                     }
@@ -1616,6 +1625,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                             ...mergedSessions[session.id],
                             latestUsage: updated.sessionLatestUsage,
                         };
+                        hydratedSessionIds.add(session.id);
                     }
                 }
             });
@@ -1800,7 +1810,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 {
                     changedSessionIds: Array.from(changedRenderableSessionIds),
                     removedSessionIds: [],
-                    hydratedSessionIds: sessions.map(session => session.id),
+                    hydratedSessionIds: Array.from(hydratedSessionIds),
                     ordinaryMembershipChanges: ordinaryMembershipDeltaComplete ? ordinaryMembershipChanges : undefined,
                 },
             );

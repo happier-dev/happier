@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { createRenderCommitCounter, renderHook, useRenderCommitCounter } from '@/dev/testkit';
+import { useSession, useSessionListRowRenderablesForItems, useSessionListRowsByServerId } from '@/sync/domains/state/storage';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { areSessionValuesDeepEqual } from '@/sync/store/domains/areStoredSessionsEqual';
 import {
   ExternalSessionOperationSharedPresentationV1Schema} from '@happier-dev/protocol/sessions/external/operationV1';
 import {
@@ -2870,5 +2875,97 @@ it('keeps identical by-ID hydration silent in a thousand-Session store', async (
   } finally {
     stop?.();
     storage.setState(initialState, true);
+  }
+});
+
+
+it.each([1, 10, 50])('publishes one changed Session to mounted list readers across %i pre-frame read-batches', async batchCount => {
+  const serverId = 'server-a';
+  const previous = storage.getState();
+  const sessions = Array.from({ length: 4 }, (_, index) => createSessionFixture({
+    id: `cold-read-batch-${index}`, serverId, active: false,
+    metadata: { name: `Session ${index}`, path: '/fixture', host: 'fixture-host' },
+  }));
+  const items: SessionListIndexItem[] = sessions.map(({ id }) => ({ type: 'session', serverId, sessionId: id }));
+  const responses = new Map(sessions.map(session => [`/v2/sessions/${session.id}`, session]));
+  const readTransport = capturedSessionHttp(async path => {
+    const session = responses.get(path);
+    if (!session) throw new Error(`Unexpected Session read ${path}`);
+    return Response.json(createPlainSessionByIdResponseFixture(session));
+  });
+  const applySessions: Parameters<typeof fetchAndApplySessionById>[0]['applySessions'] =
+    values => storage.getState().applySessions(values);
+  const hydrate = () => Promise.all(sessions.map(({ id }) => fetchAndApplySessionById({
+    sessionId: id, serverId, credentials: { token: 't' }, accountCurrentness: PLAIN_ACCOUNT_CURRENTNESS,
+    encryption: PLAINTEXT_ACCOUNT_SESSION_ENCRYPTION, sessionDataKeys: new Map(), includeTurnsProjection: false,
+    readTransport, applySessions, getExistingSession: id => storage.getState().sessions[id], log: { log() {} },
+  })));
+  const readPhysicalBatches = () => runtimeFetch.mock.calls.filter(([input]) =>
+    new URL(String(input)).pathname === '/v2/sessions/read-batch').length;
+  storage.setState(storage.getInitialState(), true);
+  let hook: Awaited<ReturnType<typeof mountListReaders>> | undefined;
+  const counts = createRenderCommitCounter();
+  const watchedHomes = [serverId];
+  const mountListReaders = () => renderHook(() => {
+    useRenderCommitCounter(counts);
+    return {
+      rows: useSessionListRowRenderablesForItems(items),
+      rowsByServer: useSessionListRowsByServerId(watchedHomes),
+      retainedSession: useSession(sessions[1]!.id, serverId),
+    };
+  });
+  const publications: { changed: readonly string[]; hydrated: readonly string[]; storeChanges: readonly string[]; fields: readonly string[] }[] = [];
+  let stop: (() => void) | undefined;
+  try {
+    // Seed retained rows through the same physical HTTP and storage owners used by replay.
+    expect((await hydrate()).every(result => result.ok)).toBe(true);
+    const seededBatches = readPhysicalBatches();
+    expect(seededBatches).toBe(1);
+    hook = await mountListReaders();
+    const baselineCommits = counts.read().commits;
+    const retained = hook.getCurrent();
+    expect(retained.rows.size).toBe(sessions.length);
+    expect(retained.retainedSession?.id).toBe(sessions[1]!.id);
+    stop = storage.subscribe((next, previous) => {
+      if (next.sessionListRenderableDelta && next.sessionListRenderableDelta !== previous.sessionListRenderableDelta) {
+        const { changedSessionIds, hydratedSessionIds } = next.sessionListRenderableDelta;
+        const storeChanges = (Object.keys(next) as (keyof typeof next)[]).filter(key => next[key] !== previous[key]);
+        const fields = [...new Set([...(hydratedSessionIds ?? []), ...changedSessionIds].flatMap(id => {
+          const from = previous.sessions[id];
+          const to = next.sessions[id];
+          if (!from || !to) return ['record availability'];
+          return [...new Set([...Reflect.ownKeys(from), ...Reflect.ownKeys(to)])]
+            .filter(key => !areSessionValuesDeepEqual(Reflect.get(from, key), Reflect.get(to, key))
+              || Object.hasOwn(from, key) !== Object.hasOwn(to, key)).map(String);
+        }))];
+        publications.push({ changed: changedSessionIds, hydrated: hydratedSessionIds ?? [], storeChanges, fields });
+      }
+    });
+    for (let index = 0; index < batchCount; index++) {
+      // One real display change while the first frame is held; every other response repeats the retained rows.
+      if (index === Math.floor(batchCount / 2)) {
+        const session = sessions[0]!;
+        responses.set(`/v2/sessions/${session.id}`, {
+          ...session, metadataVersion: session.metadataVersion + 1, updatedAt: session.updatedAt + 1,
+          metadata: { ...session.metadata!, name: 'Changed title' },
+        });
+      }
+      await act(async () => { expect((await hydrate()).every(result => result.ok)).toBe(true); });
+    }
+    const visible = hook.getCurrent();
+    expect(readPhysicalBatches() - seededBatches).toBe(batchCount);
+    expect.soft(counts.read().commits - baselineCommits).toBe(1);
+    expect(visible.rowsByServer[serverId]?.[sessions[0]!.id]?.metadata?.name).toBe('Changed title');
+    for (const session of sessions.slice(1)) {
+      expect(visible.rowsByServer[serverId]?.[session.id]).toBe(retained.rowsByServer[serverId]?.[session.id]);
+    }
+    expect(visible.retainedSession).toBe(retained.retainedSession);
+    expect(publications, JSON.stringify(publications)).toEqual([
+      { changed: [sessions[0]!.id], hydrated: [], storeChanges: expect.arrayContaining(['sessions', 'sessionListRowsByServerId']), fields: expect.any(Array) },
+    ]);
+  } finally {
+    stop?.();
+    await hook?.unmount();
+    storage.setState(previous, true);
   }
 });
