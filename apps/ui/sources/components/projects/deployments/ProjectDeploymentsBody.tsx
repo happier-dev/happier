@@ -32,7 +32,7 @@ import { useDestinationPageTitle } from '@/components/appShell/workspace/Destina
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
-import { DeploymentEnvironmentRows } from './DeploymentEnvironmentRows';
+import { DeploymentEnvironmentRows, SERVICES_APPS_COLUMNS_BINDING } from './DeploymentEnvironmentRows';
 import { useCollectionRailWidth } from '@/components/ui/lists/collection/useCollectionRailWidth';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { usePageSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
@@ -675,10 +675,12 @@ const ProjectDeploymentsPage = React.memo(
             {/* Its Environments in the Services row anatomy (Environment, Last deploy, Runs on, State), each opening
                 its page; a pull request's Previews follow under their own label, as they do in the rail. */}
             <DeploymentEnvironmentRows items={projectEnvironments} serverId={props.serverId} lifetime={props.lifetime ?? null}
+              columns={SERVICES_APPS_COLUMNS_BINDING}
               testID="project-deployments.project.environments" accessibilityLabel={t('projects.deployments.environments')} />
             {projectPreviews.length > 0 ? <>
               <ItemGroup testID="project-deployments.project.previews" title={t('projects.deployments.previewsTitle')} />
               <DeploymentEnvironmentRows items={projectPreviews} serverId={props.serverId} lifetime={props.lifetime ?? null}
+                columns={SERVICES_APPS_COLUMNS_BINDING}
                 testID="project-deployments.project.previewRows" accessibilityLabel={t('projects.deployments.previewsTitle')} />
             </> : null}
             {/* The agent ways are one row of the page (R12-D8), as the draft's "Ask an agent" row: Prepare its action,

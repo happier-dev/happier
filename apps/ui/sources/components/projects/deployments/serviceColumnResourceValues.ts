@@ -8,8 +8,10 @@ export type ServiceColumnValue = Readonly<Omit<ServiceColumnResourceRow, 'enviro
 export function projectServiceColumnResourceValues(field: AdmittedPluginListFilterFieldV1,
   rows: readonly ServiceColumnResourceRow[]): ReadonlyMap<string, ServiceColumnValue> {
   const values = new Map<string, ServiceColumnValue>();
+  const { byline, column: columnPlacement, id } = field.declaration;
   for (const { environmentId, facts, ...column } of rows) {
-    const fact = field.declaration.byline ? facts?.[field.declaration.id] : column;
+    const keyedFact = byline ? facts?.[id] : undefined;
+    const fact = keyedFact ?? (columnPlacement || !byline ? column : undefined);
     if (!fact) continue;
     if (fact.value === null || admitPluginListFilterFieldValueV1(field.declaration, fact.value).kind === 'available') {
       values.set(environmentId, fact);

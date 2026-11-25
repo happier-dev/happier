@@ -37,13 +37,12 @@ export type DeploymentEnvironmentBylineFact = Pick<DeploymentEnvironmentResource
  * and the table never disagree. A Machine's own page leaves out the Machine they all run on.
  */
 export function deploymentEnvironmentColumns(hereMachine: boolean, projection?: PluginUiProjectionModel | null,
-  localize: PluginLocalizedTextResolver = (_pluginId, value) => resolvePluginLocalizedStringV2Text(value)):
-  readonly DeploymentEnvironmentColumn[] {
+  localize?: PluginLocalizedTextResolver): readonly DeploymentEnvironmentColumn[] {
   return deploymentEnvironmentFields(hereMachine, projection, localize).columns;
 }
 
-export function deploymentEnvironmentFields(hereMachine: boolean, projection: PluginUiProjectionModel | null | undefined,
-  localize: PluginLocalizedTextResolver) {
+export function deploymentEnvironmentFields(hereMachine: boolean, projection?: PluginUiProjectionModel | null,
+  localize: PluginLocalizedTextResolver = (_pluginId, value) => resolvePluginLocalizedStringV2Text(value)) {
   const byline: DeploymentEnvironmentBylineFact[] = [];
   const pluginColumns = Object.values(projection?.listExtensionsById ?? {}).flatMap(extension => extension.listExtension.entity !== 'service' ? []
     : (extension.listExtension.filterFields ?? []).flatMap(field => {
@@ -52,7 +51,6 @@ export function deploymentEnvironmentFields(hereMachine: boolean, projection: Pl
       const source = projection?.installedPackagesById[extension.pluginId]?.displayName ?? extension.pluginId;
       if (admitted.field.declaration.byline) {
         byline.push({ title: localize(extension.pluginId, field.title), source, pluginId: extension.pluginId, field: admitted.field });
-        return [];
       }
       const { column } = admitted.field.declaration;
       if (!column) return [];

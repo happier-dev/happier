@@ -36,9 +36,13 @@ A service field Resource receives
 coverage. A `trend` contains ordered `{ at, value }` points in the field's unit.
 Use null for a gap or an unknown scalar. Omitted rows also remain unknown.
 To put a service fact on the row's second line, set `byline: true` on its
-field and return it under the matching local field ID in each row's `facts`
-map. Each named fact has its own `value` and optional `provenance`. The host
+field. It reads its matching local field ID in each row's `facts` map.
+Each named fact has its own `value` and optional `provenance`. A field with both
+`column` and `byline: true` uses this same value in both placements. When it
+has no entry in `facts`, it uses the row's top-level value and provenance. The host
 sends `includeTrend: false` when only byline facts are mounted for that Resource.
+On the folded Services row, the host adds up to two declared facts after the
+deployment details. Wide column preferences don't change which facts appear there.
 Matching development hosts are required; an older strict reader can reject the
 added declaration. See the maintained
 [external-author fixture](https://github.com/happier-dev/happier/blob/main/packages/plugin-sdk/fixtures/external-targeted-packages/list-extension-source.ts).

@@ -48,7 +48,7 @@ export function ServiceColumnCell(props: Readonly<{ column: DeploymentEnvironmen
 
 export function ServiceBylineFact(props: Readonly<{ fact: DeploymentEnvironmentBylineFact;
   environmentId: string; collectorMachineId: string | null }>) {
-  const value = useServiceColumnValue({ ...props, pluginId: props.fact.pluginId, field: props.fact.field });
+  const value = useServiceColumnValue({ ...props, pluginId: props.fact.pluginId, field: props.fact.field, includeTrend: false });
   const { theme } = useUnistyles();
   const locale = getPreferredLanguage();
   const scalar = value?.value;
@@ -61,9 +61,15 @@ export function ServiceBylineFact(props: Readonly<{ fact: DeploymentEnvironmentB
           : `${new Intl.NumberFormat(locale).format(scalar)} ${declared.unit}`
     : Array.isArray(scalar) ? scalar.join(', ') : String(scalar);
   const label = `${props.fact.title} ${text}`;
+  const fullValue = typeof scalar === 'number' && declared.kind === 'number'
+    ? declared.unit === '1'
+      ? new Intl.NumberFormat(locale, { style: 'percent', maximumSignificantDigits: 21 }).format(scalar)
+      : [new Intl.NumberFormat(locale, { maximumSignificantDigits: 21 }).format(scalar),
+        declared.unit === '{issue}' ? null : declared.unit].filter(Boolean).join(' ')
+    : text;
   const measurement = value?.provenance;
   const windowEnds = measurement && serviceCheckWindowEnds(measurement.window.since, measurement.window.until, Date.now());
-  const accessibilityLabel = [label, props.fact.source, windowEnds?.join(' – '),
+  const accessibilityLabel = [`${props.fact.title} ${fullValue}`, props.fact.source, windowEnds?.join(' – '),
     measurement?.basis === 'sampled_spans' ? t('deploymentTelemetry.measurement.sampled') : null,
     measurement?.completeness === 'partial' ? t('deploymentTelemetry.measurement.partial') : null,
   ].filter(Boolean).join(' · ');

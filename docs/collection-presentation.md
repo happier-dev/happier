@@ -57,6 +57,8 @@ Collections opt in with `columns: { collectionId }`, using a stable table-kind i
 `CollectionField.key` identifies each movable field; the primary title remains first
 and visible. `defaultHidden` is the sole default-visibility declaration. Unbound
 Collections preserve their declared fields and defaults.
+Services Apps and Project deployment lists explicitly share `happier.services.apps`.
+A Machine's **What runs here** leaves the binding unset and uses its declared fields.
 
 The presentation host supplies `collectionColumns.useShownFieldKeys` once at
 Collection entry. Core reads the Account `collectionColumnPreferencesV1` entry
@@ -178,10 +180,16 @@ declared unit, with null points representing gaps. The public SDK exports the
 input and result schemas from `@happier-dev/plugin-sdk/ui`.
 
 A Resource-backed `byline: true` field uses the same demand batch and scalar
-admission. It reads `facts[field.id]` from each matched row for the second
-line. The host sends `includeTrend: false` when the batch has only byline
-consumers. Column demand keeps the existing trend. Telemetry publishes p95
-and error rate with their coverage in the same read as Requests.
+admission. It reads `facts[field.id]` in both placements. If no keyed fact
+exists, a field with a column declaration uses the row's top-level scalar
+and provenance. Collection gives `byline` and `bylineLead` the displayed
+`layout.shownColumnKeys` after preferences and width fit. Services uses those
+keys to omit duplicates on the wide byline. The folded Services row keeps its
+shipped facts and appends up to two declared facts in declaration order,
+independent of wide column choices. Each added fact supplies its full scalar
+for the accessible label. The host sends `includeTrend: false` when only
+byline consumers are mounted. Telemetry publishes p95 and error rate with
+their coverage in the same read as Requests.
 Open issues come from one Account-scoped batch across the mounted Environments.
 The Telemetry Resource reads the existing own and admitted Team-shared Collection
 index, counts open protected records by owner and row, and refreshes on entitled

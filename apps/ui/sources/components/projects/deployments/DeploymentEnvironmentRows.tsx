@@ -79,37 +79,48 @@ export function deploymentEnvironmentBands<T extends BandRow>(rows: readonly T[]
   return { axis, groupOf };
 }
 
+type DeploymentEnvironmentRowsProps = Readonly<{
+  items: readonly EnvironmentItem[];
+  serverId: string;
+  lifetime: ServerAccountScopeLifetime | null;
+  testID: string;
+  accessibilityLabel: string;
+  /** Rows shown for "Not backed up" open where that Environment's backups are set up. */
+  openBackups?: boolean;
+  /** On a Machine's own page: rows leave out the Machine they all run on (lab hereMachine). */
+  hereMachine?: boolean;
+  /** Explicitly opt in to the Services Apps columns. Machine rows leave this unset. */
+  columns?: DeploymentEnvironmentColumnsBinding;
+}>;
+
 /**
- * The one Environment row (pfc-redesign `rd-row.js` envRow): a page list of Environments banded by Project, each row
- * its name and what was deployed last, then Last deploy (age, or the steps of a deploy at work or stopped), Runs on and
- * the state word that needs the person, in columns that line up down the page. A phone row says the same in its
- * second line with the state at its end. Services → Apps and a Machine's What runs here draw it; a row opens the
- * Environment.
+ * The Environment rows shared by Services Apps, Project deployments and Machine What runs here.
+ * Only callers with a Columns binding follow app-shell declarations and mount field Resources.
  */
-export function DeploymentEnvironmentRows(
-  props: Readonly<{
-    items: readonly EnvironmentItem[];
-    serverId: string;
-    lifetime: ServerAccountScopeLifetime | null;
-    testID: string;
-    accessibilityLabel: string;
-    /** Rows shown for "Not backed up" open where that Environment's backups are set up. */
-    openBackups?: boolean;
-    /** On a Machine's own page: rows leave out the Machine they all run on (lab hereMachine). */
-    hereMachine?: boolean;
-    /** Services → Apps offers its Columns choice (`SERVICES_APPS_COLLECTION_ID`) and hears which columns fit. */
-    columns?: DeploymentEnvironmentColumnsBinding;
-  }>,
-) {
-  const { theme } = useUnistyles();
-  const declarations = useAppShellPluginUiDeclarationSources();
+export function DeploymentEnvironmentRows(props: DeploymentEnvironmentRowsProps) {
+  return props.columns
+    ? <DeploymentEnvironmentRowsWithColumns {...props} />
+    : <DeploymentEnvironmentRowsBody {...props} />;
+}
+
+function DeploymentEnvironmentRowsWithColumns(props: DeploymentEnvironmentRowsProps) {
+  const { projection, accountLifetime } = useAppShellPluginUiDeclarationSources();
   const localize = useProjectedPluginLocalizedTextResolver();
-  const serviceLifetime = props.columns &&
-    areServerAccountScopesEqual(props.lifetime?.scope, declarations.accountLifetime?.scope)
-    ? declarations.accountLifetime : null;
-  const serviceProjection = props.columns ? declarations.projection : null;
-  const contributed = React.useMemo(() => deploymentEnvironmentFields(props.hereMachine === true,
-    serviceProjection, localize), [props.hereMachine, serviceProjection, localize]);
+  const hereMachine = props.hereMachine === true;
+  const contributed = React.useMemo(() => deploymentEnvironmentFields(hereMachine, projection, localize),
+    [hereMachine, projection, localize]);
+  const lifetime = areServerAccountScopesEqual(props.lifetime?.scope, accountLifetime?.scope) ? accountLifetime : null;
+  return <DeploymentEnvironmentRowsBody {...props} contributed={contributed} resourceScope={{ projection, lifetime }} />;
+}
+
+function DeploymentEnvironmentRowsBody(props: DeploymentEnvironmentRowsProps & Readonly<{
+  contributed?: ReturnType<typeof deploymentEnvironmentFields>;
+  resourceScope?: Omit<React.ComponentProps<typeof ServiceColumnResources>, 'children'>;
+}>) {
+  const { theme } = useUnistyles();
+  const hereMachine = props.hereMachine === true;
+  const contributed = React.useMemo(() => props.contributed ?? deploymentEnvironmentFields(hereMachine),
+    [hereMachine, props.contributed]);
   const router = useRouter();
   const parts = useDeploymentEnvironmentRowParts(
     props.items,
@@ -162,7 +173,6 @@ export function DeploymentEnvironmentRows(
     openKey: null,
     onOpenChange: open,
   });
-  const hereMachine = props.hereMachine === true;
   const anatomy = React.useMemo<CollectionAnatomy<Row>>(() => {
     const meta = {
       ...Typography.variant('meta'),
@@ -195,6 +205,7 @@ export function DeploymentEnvironmentRows(
     const fields: CollectionField<Row>[] = contributed.columns.map(column => ({ ...column, render: 'field' in column
       ? row => <ServiceColumnCell column={column} environmentId={row.environmentId} collectorMachineId={row.collectorMachineId} />
       : renders[column.key] }));
+    const foldedByline = contributed.byline.slice(0, 2);
     return {
       glyph: (row) => <DeploymentEnvironmentMark platform={row.platformMark} />,
       title: (row) =>
@@ -203,11 +214,15 @@ export function DeploymentEnvironmentRows(
       // A phone row (no columns) leads line 2 with the state that speaks, so the name keeps line 1 whole (DESIGN
       // "Phones recompose"); wide, the State column says it.
       byline: (row, layout) => {
-        const line = deploymentEnvironmentRowLine(row, row.author, { columns: layout?.fieldColumns === true, hereMachine });
-        if (contributed.byline.length === 0) return line;
+        const columns = layout?.fieldColumns === true;
+        const line = deploymentEnvironmentRowLine(row, row.author, { columns, hereMachine });
+        const facts = columns
+          ? contributed.byline.filter(fact => !layout?.shownColumnKeys?.has(fact.field.id))
+          : foldedByline;
+        if (facts.length === 0) return line;
         return <View style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1, gap: theme.space.s8 }}>
           {line ? <Text variant="meta" style={meta} numberOfLines={1}>{line}</Text> : null}
-          {contributed.byline.map(fact => <ServiceBylineFact key={fact.field.id} fact={fact}
+          {facts.map(fact => <ServiceBylineFact key={fact.field.id} fact={fact}
             environmentId={row.environmentId} collectorMachineId={row.collectorMachineId} />)}
         </View>;
       },
@@ -238,11 +253,11 @@ export function DeploymentEnvironmentRows(
         anatomy={anatomy}
         accessibilityLabel={props.accessibilityLabel}
         useRowActions={useEnvironmentRowActions}
-        columns={props.columns ?? SERVICES_APPS_COLUMNS_BINDING}
+        columns={props.columns}
       />;
   return (
     <EnvironmentRowMenuContext.Provider value={openTab}>
-      {serviceLifetime ? <ServiceColumnResources projection={serviceProjection} lifetime={serviceLifetime}>
+      {props.resourceScope?.lifetime ? <ServiceColumnResources {...props.resourceScope}>
         {list}
       </ServiceColumnResources> : list}
     </EnvironmentRowMenuContext.Provider>
@@ -326,7 +341,7 @@ export type DeploymentEnvironmentColumnsBinding = Readonly<{
   onColumnsFit?: (fieldKeys: readonly string[] | null) => void;
 }>;
 
-const SERVICES_APPS_COLUMNS_BINDING: DeploymentEnvironmentColumnsBinding = { collectionId: SERVICES_APPS_COLLECTION_ID };
+export const SERVICES_APPS_COLUMNS_BINDING: DeploymentEnvironmentColumnsBinding = { collectionId: SERVICES_APPS_COLLECTION_ID };
 
 /** The Environment name's floor before a chosen column gives way. */
 const DEPLOYMENT_ENVIRONMENT_TITLE_MIN_WIDTH = 200;

@@ -387,7 +387,9 @@ const CheckRowBars = React.memo(function CheckRowBars(
 /** Response · 24 h (D36 2A): the retained responses as a small line, then the latest. */
 function CheckResponse(props: Readonly<{ facts: ServiceCheckListFacts; scope: ManagedConfiguredCheckRow['scope'] }>) {
   const { theme } = useUnistyles();
-  if (props.facts.latencyMs === null) return null;
+  const { collectorTrend, latencyMs } = props.facts;
+  // A saved route check can measure error rate and still have a collector latency series for Response.
+  if (latencyMs === null && collectorTrend?.config.measure.kind !== 'route') return null;
   const tone =
     props.facts.status === 'degraded'
       ? theme.colors.state.warning.textForeground
@@ -395,16 +397,18 @@ function CheckResponse(props: Readonly<{ facts: ServiceCheckListFacts; scope: Ma
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
       <ServiceCheckResponseTrend facts={props.facts} scope={props.scope} form="line" label={t(`${m}.columnResponse24h`)} />
-      <Text
-      style={{
-        ...Typography.variant('meta'),
-        color: tone,
-        fontVariant: ['tabular-nums'],
-      }}
-      numberOfLines={1}
-    >
-      {formatServiceCheckLatency(props.facts.latencyMs)}
-      </Text>
+      {latencyMs === null ? null : (
+        <Text
+          style={{
+            ...Typography.variant('meta'),
+            color: tone,
+            fontVariant: ['tabular-nums'],
+          }}
+          numberOfLines={1}
+        >
+          {formatServiceCheckLatency(latencyMs)}
+        </Text>
+      )}
     </View>
   );
 }

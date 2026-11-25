@@ -185,6 +185,8 @@ export type CollectionField<Item> = Readonly<{
   listColumn?: boolean;
 }>;
 
+type CollectionBylineLayout = Readonly<{ fieldColumns: boolean; shownColumnKeys?: ReadonlySet<string> }>;
+
 /** The one item anatomy every presentation draws from. Renderers are pure. */
 export type CollectionAnatomy<Item> = Readonly<{
   /** Described collections default to catalog rows, including peers with no description. */
@@ -278,15 +280,16 @@ export type CollectionAnatomy<Item> = Readonly<{
   /**
    * The list row's second line, where there is room for who as well as where ("payments-api #2481 · Mara
    * Oduya"). Defaults to `where`. `layout.fieldColumns` says whether the row also draws its `listColumn`
-   * fields as columns; when it doesn't (a phone), the byline is where those facts go.
+   * fields as columns; when it doesn't (a phone), the byline is where those facts go. The optional
+   * `layout.shownColumnKeys` carries the keys actually drawn after the person's choice and the width fit.
    */
-  byline?: (item: Item, layout?: Readonly<{ fieldColumns: boolean }>) => ReactNode;
+  byline?: (item: Item, layout?: CollectionBylineLayout) => ReactNode;
   /**
    * The state word that leads the list row's second line ("• Failed · fix(api) · Ana"), when it speaks: a phone row
    * has no State column, so its name keeps line 1 whole and the state leads line 2 (DESIGN "Phones recompose").
    * The anatomy returns null where its State column says it. The Collection draws it before the byline, one line.
    */
-  bylineLead?: (item: Item, layout?: Readonly<{ fieldColumns: boolean }>) => ReactNode;
+  bylineLead?: (item: Item, layout?: CollectionBylineLayout) => ReactNode;
   /** The one loud fact. */
   reason?: (item: Item) => ReactNode;
   /**
@@ -858,6 +861,7 @@ type CollectionStage<Item> = Readonly<{
   narrowRows: boolean;
   /** The `listColumn` fields a page-section list row draws as its end columns (none on a narrow stage). */
   listColumns: readonly CollectionField<Item>[];
+  bylineLayout: CollectionBylineLayout;
   /** The resting list stands on an inset (`restingRows` `ruled`/`air-page`): the row inset at both ends, else null. */
   ruledInsetPx: number | null;
   /** The resting list is ruled (`restingRows` `ruled`): its rows draw the hairline. */
@@ -1687,6 +1691,7 @@ function ListCells<Item>(props: Readonly<{
   rowActionsCell: boolean;
   /** The `listColumn` fields drawn as the row's end columns (`CollectionStage.listColumns`). */
   listColumns: readonly CollectionField<Item>[];
+  bylineLayout: CollectionBylineLayout;
   /** The row draws the one list-row rule under it (every list row but a page sheet's, whose sheet divides its rows). */
   rule: boolean;
   /**
@@ -1708,9 +1713,8 @@ function ListCells<Item>(props: Readonly<{
     ? { paddingLeft: ruledPaddingPx, paddingRight: ruledPaddingPx }
     : { paddingLeft: ruledPaddingPx };
   const age = anatomy.age?.(item) ?? null;
-  const fieldColumns = props.listColumns.length > 0;
-  const byline = anatomy.byline === undefined ? anatomy.where?.(item) : anatomy.byline(item, { fieldColumns });
-  const bylineLead = anatomy.bylineLead?.(item, { fieldColumns }) ?? null;
+  const byline = anatomy.byline === undefined ? anatomy.where?.(item) : anatomy.byline(item, props.bylineLayout);
+  const bylineLead = anatomy.bylineLead?.(item, props.bylineLayout) ?? null;
   const reason = anatomy.reason?.(item);
   const described = anatomy.description !== undefined;
   // The second line ends with the loud reason, or else the caller's one list fact.
@@ -1719,7 +1723,7 @@ function ListCells<Item>(props: Readonly<{
   // Nothing to say beneath the title: one line, with the title suffix and meta on it (see `titleSuffix`).
   const singleLine = !catalog && isSingleLineListAnatomy(anatomy);
   // A row-aligned meta gives its place to the field columns while they are drawn (see `listColumn`).
-  const titleMeta = fieldColumns && anatomy.titleMetaAlign === 'row' ? null : anatomy.titleMeta?.(item);
+  const titleMeta = props.bylineLayout.fieldColumns && anatomy.titleMetaAlign === 'row' ? null : anatomy.titleMeta?.(item);
   const meta = titleMeta === undefined || titleMeta === null || titleMeta === false ? null : titleMeta;
   const badge = anatomy.glyphBadge?.(item) ?? null;
   // An item with no mark (a skill) draws no glyph column in the list; its text starts at the row's inset.
@@ -2113,6 +2117,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
         beneath={beneath}
         rowActionsCell={stage.useRowActions !== undefined && actions.accessory === undefined && listAction === null && chevron === null}
         listColumns={stage.listColumns}
+        bylineLayout={stage.bylineLayout}
         rule={stage.dividedKeys === null}
         divided={stage.dividedKeys?.has(itemKey) === true}
         directory={stage.directoryRow !== null}
@@ -2707,6 +2712,10 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     });
     return shown.length === 0 ? NO_FIELDS : shown;
   }, [anatomy.fields, anatomy.titleMinWidth, columnsShown, rowAccessoryWidth, rowWidth, textScale]);
+  const bylineLayout = useMemo<CollectionBylineLayout>(() => ({
+    fieldColumns: listColumns.length > 0,
+    shownColumnKeys: new Set(listColumns.map((field) => field.key)),
+  }), [listColumns]);
   const catalogList = rowRole === 'catalogRow' && rowGeometry === 'list' && !pageSections;
   const catalogSideList = catalogList && !wrapTitles;
   // Peeks exist in the resting table; while the table fades out (reduced motion) they stay and fade with it.
@@ -2994,6 +3003,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     wrapTitles,
     narrowRows,
     listColumns,
+    bylineLayout,
     ruledInsetPx,
     restingRuled,
     // A directory's rows are catalog rows on the page, not rows on a section's sheet.
@@ -3007,7 +3017,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     dividedKeys,
     onPeekHeight,
     onPeekSettled,
-  }), [anatomy, rowRole, columns, composition, dividedKeys, expandable, model.useExpanded, metrics, model.actions.toggleExpanded, treeStage, wrapTitles, narrowRows, listColumns, ruledInsetPx, restingRuled, pageSections, catalogDirectory, directoryRow, onPeekHeight, onPeekSettled, progress, props.testID, props.useRowActions, props.useRowItem, rowGeometry, transition]);
+  }), [anatomy, rowRole, columns, composition, dividedKeys, expandable, model.useExpanded, metrics, model.actions.toggleExpanded, treeStage, wrapTitles, narrowRows, listColumns, bylineLayout, ruledInsetPx, restingRuled, pageSections, catalogDirectory, directoryRow, onPeekHeight, onPeekSettled, progress, props.testID, props.useRowActions, props.useRowItem, rowGeometry, transition]);
 
   // ---- the List engine's Collection facts ----
   const authorMultiple: NonNullable<CollectionProps<Item>['selection']>['multiple'] = props.selection?.multiple

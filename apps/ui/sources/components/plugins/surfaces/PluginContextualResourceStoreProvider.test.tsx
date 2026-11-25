@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PluginUiResourceSnapshot, PluginUiResourceProjection as PluginUiResourceValueProjection } from '@happier-dev/plugin-ui/hostApi';
 import type { Disposable, PluginAccountApi } from '@happier-dev/plugin-sdk';
 import type { PluginActionReadInvalidation } from '@happier-dev/plugin-sdk/actions';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
@@ -65,6 +65,84 @@ import { createServiceColumnSource } from '../../../../../../packages/plugin-sdk
 import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { createPluginRegistrationScope } from '@/sync/domains/plugins/registrationScope';
+import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarationProjection';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+
+it.each([
+    { case: 'mounts at most two added Services byline facts at phone width and reads their scalars without trends', wideColumn: false, keyed: true },
+    { case: 'folds a drawn Services column into one byline fact and drops its history demand', wideColumn: true, keyed: false },
+    { case: 'shows the same keyed Services fact in a column and a folded byline when another scalar shares the Resource', wideColumn: true, keyed: true },
+])('$case', async ({ wideColumn, keyed }) => {
+    const requests: unknown[] = [];
+    const harness = await createPortableAccountResourceHarness({
+        read({ context }) {
+            if (context.kind !== 'surface') throw new Error('Expected Services surface');
+            const input = PluginServiceListFieldResourceInputV1Schema.parse(context.launchInput);
+            requests.push(input);
+            return JSON.stringify({ items: input.environmentIds.map(environmentId => ({
+                environmentId, value: keyed ? 38 : 1234.567, facts: {
+                    ...(keyed ? { latency: { value: 1234.567 } } : {}), errors: { value: 7 }, issues: { value: 9 },
+                },
+            })) });
+        },
+        observe() { return { dispose() {} }; },
+    }, {}, 'surface');
+    const { DeploymentEnvironmentRows, SERVICES_APPS_COLLECTION_ID } = await import('@/components/projects/deployments/DeploymentEnvironmentRows');
+    const { scope } = harness.account.lifetime;
+    const manifest = PluginManifestV2Schema.parse(definePlugin({
+        id: harness.pluginId, version: '1.0.0',
+        ui: { listExtensions: { facts: { entity: 'service',
+            filterFields: [
+                { id: 'latency', title: 'Latency', value: { kind: 'number' as const, unit: 'ms' },
+                    ...(wideColumn ? { column: { width: 128, priority: 20 } } : {}) },
+                { id: 'errors', title: 'Errors', value: { kind: 'number' as const, unit: '{issue}' } },
+                { id: 'issues', title: 'Issues', value: { kind: 'number' as const, unit: '{issue}' } },
+            ].map(field => ({ ...field, byline: true, source: { resource: 'status' } })),
+        } } },
+    }).manifest);
+    const declarations = normalizePluginInstalledUiDeclarations(projectPluginPortableUiDeclarationsV1(manifest), undefined,
+        widgetInstalledPackage(harness.pluginId, 'Service facts'));
+    const projection = { ...declarations, resourcesById: harness.input.resourcesById };
+    const unpublish = publishCommittedAppShellPluginUiProjection(() => projection);
+    const screen = await renderScreen(<PluginContextualResourceStoreProvider>
+        <AppShellPluginUiProjectionValueProvider value={{
+            pluginUiProjection: projection, accountLifetime: harness.account.lifetime, pluginBrowserProjection: null,
+            phase: 'current', interactionEnabled: true, serverId: scope.serverId, machineId: null, platform: 'web',
+            clientExecutableActivation: { status: 'ready' }, reloadConnectedAccountProjection() {}, reloadClientExecutables() {},
+        }}>
+            <DeploymentEnvironmentRows testID="phone-services" accessibilityLabel="Services" serverId={scope.serverId}
+                lifetime={harness.account.lifetime} columns={{ collectionId: SERVICES_APPS_COLLECTION_ID }} items={[{
+                    environment: createDeploymentEnvironmentHeaderV1({ id: 'env-phone', serverId: scope.serverId }),
+                    currentDeployment: { ...createDeploymentReceiptHeaderV1({ state: 'succeeded' }), commitSubject: 'Ship the storefront' },
+                    title: 'Storefront',
+                }]} />
+        </AppShellPluginUiProjectionValueProvider>
+    </PluginContextualResourceStoreProvider>);
+    try {
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Issues 9'));
+        if (wideColumn) {
+            const field = buildQualifiedPluginContributionKey({ pluginId: harness.pluginId, localId: 'latency' });
+            expect(screen.findByTestId(`phone-services.row.env-phone:column:${field}`)).not.toBeNull();
+            expect(screen.getTextContent()).not.toMatch(/Latency\s+1[.,\s]/u);
+            expect(screen.findAll(node => typeof node.props.accessibilityLabel === 'string'
+                && node.props.accessibilityLabel.includes('Latency')
+                && /1[,\s]?234[.,]567/u.test(node.props.accessibilityLabel)).length).toBeGreaterThan(0);
+        }
+        await act(async () => {
+            screen.findHostByTestId('phone-services.table:stage')!.props.onLayout({ nativeEvent: { layout: { width: 390, height: 640 } } });
+        });
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Latency'));
+        expect(screen.getTextContent()).toContain('Ship the storefront');
+        expect(screen.getTextContent()).toContain('Errors 7');
+        expect.soft(screen.getTextContent()).not.toContain('Issues 9');
+        expect.soft(screen.findAll(node => typeof node.props.accessibilityLabel === 'string'
+            && node.props.accessibilityLabel.includes('Latency')
+            && /1[,\s]?234[.,]567/u.test(node.props.accessibilityLabel)).length).toBeGreaterThan(0);
+        const request = { entity: 'service', serverId: scope.serverId, environmentIds: ['env-phone'] };
+        await vi.waitFor(() => expect(requests).toEqual([...(wideColumn ? [request] : []), { ...request, includeTrend: false }]));
+    } finally { await screen.unmount(); unpublish(); await harness.dispose(); }
+});
 
 it('collects only mounted Services fields into one Resource batch and releases hidden fields', async () => {
     let reads = 0;
@@ -111,8 +189,9 @@ it('collects only mounted Services fields into one Resource batch and releases h
         await vi.waitFor(() => expect(observers).toBe(0));
         expect(reads).toBe(1);
         await act(async () => { screen.tree.update(<App shown collectors />); });
-        await vi.waitFor(() => expect(reads).toBe(3));
-        expect(batches.slice(1).map(ids => ids.length)).toEqual([20, 20]);
+        await vi.waitFor(() => expect(reads).toBe(2));
+        expect(batches[1]).toEqual(batches[0]);
+        expect(observers).toBe(1);
         await screen.unmount();
         await vi.waitFor(() => expect(observers).toBe(0));
         expect(machineResourceRpc.read).not.toHaveBeenCalled();
@@ -123,7 +202,8 @@ it('batches mounted Services subjects once at the real Resource boundary and pre
     installLiveResourceRpc();
     const account = await createAccountLifetime({ accountId: 'service-columns' });
     let fixtureReads = 0;
-    const fixture = createServiceColumnSource(() => fixtureReads++);
+    const selectedValues = { zero: 0, busy: 7, outside: 23 };
+    const fixture = createServiceColumnSource(() => fixtureReads++, selectedValues);
     const parsed = parsePluginManifest(fixture.manifest);
     if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
     const registration = createPluginRegistrationScope({ pluginId: fixture.manifest.id, target: { realm: 'daemon' },
@@ -136,7 +216,7 @@ it('batches mounted Services subjects once at the real Resource boundary and pre
     if (admitted.kind !== 'admitted') throw new Error('Expected public number field');
     const owner = createPluginMountedResourceDemand<ServiceColumnDemand, ServiceColumnValue>();
     const demands = ['zero', 'busy', 'missing'].map(environmentId => ({ key: environmentId, environmentId,
-        collectorMachineId: 'machine-1', field: admitted.field, resource: { pluginId: fixture.manifest.id, localId: producer.localId } }));
+        collectorMachineId: 'machine-1', field: admitted.field, resource: { pluginId: fixture.manifest.id, localId: producer.localId }, includeTrend: true }));
     const releases = demands.map(demand => owner.mount(demand.key, demand));
     const exact = { ...binding(account.lifetime), pluginId: fixture.manifest.id, context: { kind: 'surface' as const, mountInstanceKey: 'services',
         launchInput: { entity: 'service', serverId: account.lifetime.scope.serverId, environmentIds: demands.map(demand => demand.environmentId) } } };
@@ -144,11 +224,16 @@ it('batches mounted Services subjects once at the real Resource boundary and pre
     machineResourceRpc.read.mockImplementation(async () => {
         if (unavailable) return { supported: true, result: { ok: false, reason: 'unavailable', code: 'plugin_resource_unavailable' } };
         const bytes = await producer.value.read(createTestResourceInvocationContext({ context: exact.context }));
-        return { ...resourceResponse('a'), result: { ...resourceResponse('a').result,
+        const response = resourceResponse(selectedValues.busy === 7 ? 'a' : 'b');
+        return { ...response, result: { ...response.result,
             resource: demands[0]!.resource, kind: 'asset', bytesBase64: Buffer.from(typeof bytes === 'string' ? new TextEncoder().encode(bytes) : bytes).toString('base64') } };
     });
     const screen = await renderScreen(<PluginContextualResourceStoreProvider><ServiceColumnResourceBatch owner={owner}
         demands={demands} binding={exact} resource={demands[0]!.resource} /></PluginContextualResourceStoreProvider>);
+    const notifyBusy = vi.fn();
+    const notifyZero = vi.fn();
+    const unsubscribeBusy = owner.subscribe('busy', notifyBusy);
+    const unsubscribeZero = owner.subscribe('zero', notifyZero);
     try {
         await vi.waitFor(() => expect(owner.read('busy')?.value).toBe(7));
         expect(owner.read('zero')?.value).toBe(0);
@@ -168,24 +253,45 @@ it('batches mounted Services subjects once at the real Resource boundary and pre
         expect(machineResourceRpc.read).toHaveBeenCalledTimes(1);
         expect(fixtureReads).toBe(1);
         expect(machineResourceRpc.read.mock.calls[0]?.[1].context.launchInput.environmentIds).toEqual(['zero', 'busy', 'missing']);
+        expect(owner.read('outside')).toBeNull();
         const freshnessId = `services.columns.${fixture.manifest.id}.${producer.localId}.machine-1.freshness`;
         expect(screen.findByTestId(freshnessId)).toBeNull();
+        const refresh = async () => {
+            const lease = acquirePluginContextualResourceStore(exact)!;
+            try { await act(async () => { await lease.store.getEntry(demands[0]!.resource).refresh(); }); }
+            finally { lease.dispose(); }
+        };
+        notifyBusy.mockClear();
+        notifyZero.mockClear();
+        selectedValues.outside++;
+        await refresh();
+        expect(notifyBusy).not.toHaveBeenCalled();
+        expect(notifyZero).not.toHaveBeenCalled();
         unavailable = true;
-        const lease = acquirePluginContextualResourceStore(exact)!;
-        try { await act(async () => { await lease.store.getEntry(demands[0]!.resource).refresh(); }); }
-        finally { lease.dispose(); }
+        await refresh();
         await vi.waitFor(() => expect(screen.findByTestId(freshnessId)).not.toBeNull());
         expect(owner.read('busy')?.value).toBe(7);
         unavailable = false;
+        selectedValues.busy++;
         await act(async () => { await screen.findHostByTestId(`${freshnessId}-action`)!.props.onPress(); });
-        await vi.waitFor(() => expect(screen.findByTestId(freshnessId)).toBeNull());
+        await vi.waitFor(() => expect(owner.read('busy')?.value).toBe(8));
+        expect(screen.findByTestId(freshnessId)).toBeNull();
         expect(owner.read('zero')?.value).toBe(0);
+        expect(notifyBusy).toHaveBeenCalledTimes(1);
+        expect(notifyZero).not.toHaveBeenCalled();
+        expect(machineResourceRpc.read).toHaveBeenCalledTimes(4);
         await screen.unmount();
         releases.forEach(release => release());
         await vi.waitFor(() => expect(machineResourceRpc.close).toHaveBeenCalledTimes(1));
         expect([...owner.demands()]).toEqual([]);
         expect(owner.read('zero')).toBeNull();
-    } finally { await screen.unmount(); releases.forEach(release => release()); await registration.dispose(); }
+    } finally {
+        unsubscribeBusy();
+        unsubscribeZero();
+        await screen.unmount();
+        releases.forEach(release => release());
+        await registration.dispose();
+    }
 });
 
 vi.mock('socket.io-client', async (importOriginal) => (

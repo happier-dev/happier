@@ -18,23 +18,24 @@ export type { ServiceColumnValue } from './serviceColumnResourceValues';
 
 type Resource = Readonly<{ pluginId: string; localId: string }>;
 export type ServiceColumnDemand = Readonly<{ key: string; environmentId: string; collectorMachineId: string | null;
-  field: AdmittedPluginListFilterFieldV1; resource: Resource }>;
+  field: AdmittedPluginListFilterFieldV1; resource: Resource; includeTrend: boolean }>;
 type Owner = ReturnType<typeof createPluginMountedResourceDemand<ServiceColumnDemand, ServiceColumnValue>>;
 const DemandContext = React.createContext<Owner | null>(null);
 
 /** Cells register only while the Collection actually mounts their selected field. */
 export function useServiceColumnValue(input: Readonly<{ environmentId: string; collectorMachineId: string | null;
-  pluginId: string; field: AdmittedPluginListFilterFieldV1 }>): ServiceColumnValue | null {
+  pluginId: string; field: AdmittedPluginListFilterFieldV1; includeTrend?: boolean }>): ServiceColumnValue | null {
   const owner = React.useContext(DemandContext);
+  const includeTrend = input.includeTrend ?? true;
   const source = input.field.declaration.source;
   const resource = 'resource' in source ? readPluginSurfaceResourceReference(input.pluginId, source.resource) : null;
-  const key = JSON.stringify([input.field.id, input.collectorMachineId, input.environmentId]);
+  const key = JSON.stringify([input.field.id, input.collectorMachineId, input.environmentId, includeTrend]);
   const resourceKey = resource ? JSON.stringify(resource) : null;
   React.useEffect(() => {
     if (!owner || !resource) return;
     return owner.mount(key, { key, environmentId: input.environmentId, collectorMachineId: input.collectorMachineId,
-      field: input.field, resource });
-  }, [owner, key, resourceKey, input.field]);
+      field: input.field, resource, includeTrend });
+  }, [owner, key, resourceKey, input.field, includeTrend]);
   const subscribe = React.useCallback((listener: () => void) => owner?.subscribe(key, listener) ?? (() => {}), [owner, key]);
   const read = React.useCallback(() => owner?.read(key) ?? null, [owner, key]);
   return React.useSyncExternalStore(subscribe, read, read);
@@ -78,7 +79,7 @@ function ServiceColumnGroup(props: Readonly<{ owner: Owner; demands: readonly Se
   const projection = account ? props.projection : current.pluginUiProjection;
   const declaration = readPluginUiResourceProjection(projection?.resourcesById, first.resource);
   const environmentIds = [...new Set(props.demands.map(demand => demand.environmentId))].sort();
-  const trendRequested = props.demands.some(demand => !demand.field.declaration.byline);
+  const trendRequested = props.demands.some(demand => demand.includeTrend);
   const context = { kind: 'surface' as const, mountInstanceKey: `services:${JSON.stringify([first.resource, props.machineId])}`,
     launchInput: { entity: 'service', serverId: props.lifetime.scope.serverId, environmentIds,
       ...(trendRequested ? {} : { includeTrend: false }) } };

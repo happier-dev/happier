@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import type { TelemetryMetricsReadResultV1 } from '@happier-dev/database-protocol';
+import type { TelemetryKeyFlowConfigV1, TelemetryMetricsReadResultV1 } from '@happier-dev/database-protocol';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import {
@@ -17,7 +17,9 @@ const account = createProviderSettingsAccountHarness();
 await loadSyncSingletonForTests();
 const { ItemList } = await import('@/components/ui/lists/ItemList');
 const { ServiceCheckDetail } = await import('./ServiceCheckDetail');
+const { ServiceCheckList } = await import('./ServiceCheckList');
 const { ServiceCheckResponseTrend } = await import('./ServiceCheckResponseTrend');
+const { StackedSeriesChart } = await import('@happier-dev/plugin-ui/presentation');
 const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
 const { ServiceCheckCollectorTrendReaderContext } = await import('./useServiceCheckCollectorTrend');
 
@@ -37,16 +39,19 @@ const keyFlow = {
 const result = (minutesAgo: number, status: 'up' | 'down', latencyMs: number) =>
   ({ status, observedAt: NOW - minutesAgo * 60_000, latencyMs, evidence: { kind: 'none' } });
 
-function row(kind: 'keyFlow' | 'http') {
+function row(kind: 'keyFlow' | 'http', config: TelemetryKeyFlowConfigV1 = keyFlow,
+  latest: Readonly<{ status: 'down' | 'degraded'; observedAt: number; latencyMs?: number; evidence: { kind: string } }> = {
+    status: 'down', observedAt: NOW, latencyMs: 1420, evidence: { kind: 'none' },
+  }) {
   return {
     kind: 'configuredCheck', key: `check-${kind}`, scope: { serverId: 'server-1', accountId: 'account-1' },
     automationId: `automation-${kind}`, triggerId: 'trigger-1',
     native: { name: 'Checkout', templateVersion: 1, enabled: true, triggers: [] },
     definitionFacts: { kind: 'available', observerMachineId: 'collector-b', checks: [{ checkId: 'c1', name: kind === 'keyFlow' ? 'Key flow' : 'HTTP',
       targetLabel: kind === 'keyFlow' ? 'POST /checkout, GET /api/cart' : 'shop.example', periodMs: 60_000, domainId: null,
-      keyFlow: kind === 'keyFlow' ? keyFlow : null }] },
-    lastResults: { kind: 'available', checks: [{ checkId: 'c1', result: result(0, 'down', 1420),
-      recentResults: [result(2, 'up', 380), result(1, 'down', 1380), result(0, 'down', 1420)], recentResultsCoverage: 'complete' }] },
+      keyFlow: kind === 'keyFlow' ? config : null }] },
+    lastResults: { kind: 'available', checks: [{ checkId: 'c1', result: latest,
+      recentResults: [result(2, 'up', 380), result(1, 'down', 1380), latest], recentResultsCoverage: 'complete' }] },
   } as never;
 }
 
@@ -88,6 +93,30 @@ it('opens a Key flow check and reads its trend and routes from its collector onc
   expect(screen.findHostByTestId('services.check.keyFlow.route.POST /checkout')).toBeTruthy();
   // The retained check timings no longer draw a second response chart for a Key flow.
   expect(screen.findHostByTestId('services.check.response')).toBeFalsy();
+});
+
+it('Monitoring loads the selected 24 h response for an error-rate flow whose latest check did not report latency', async () => {
+  const { calls, reader } = recordingReader();
+  const config: TelemetryKeyFlowConfigV1 = { ...keyFlow,
+    measure: { ...keyFlow.measure, statistic: 'errorRate' }, threshold: { operator: 'above', value: 0.01 } };
+  const check = row('keyFlow', config, { status: 'degraded', observedAt: NOW, evidence: { kind: 'none' } });
+  const scope = { serverId: 'server-1', accountId: 'account-1' };
+  const screen = await renderScreen(
+    <ServiceCheckCollectorTrendReaderContext.Provider value={reader}>
+      <ItemList><ServiceCheckList rows={[check]} scope={scope} grouping="attention"
+        selection={{ selectedKey: null, onSelect() {}, onSelectedRow() {} }}
+        testID="monitoring-history" accessibilityLabel="Monitoring" /></ItemList>
+    </ServiceCheckCollectorTrendReaderContext.Provider>,
+  );
+  const id = 'services.checks.row.automation-keyFlow.trigger-1';
+  expect(screen.findByTestId(`${id}:column:recent`)).not.toBeNull();
+  expect(screen.findByTestId(`${id}:column:uptime`)).not.toBeNull();
+  expect(calls).toEqual([{ scope, collectorMachineId: 'collector-b', config, since: NOW - 24 * HOUR, until: NOW }]);
+  expect(screen.tree.root.findByType(StackedSeriesChart).props.series).toEqual([
+    expect.objectContaining({ points: read.trend.map(interval => ({
+      id: JSON.stringify([interval.since, interval.until]), x: interval.until, y: interval.p95,
+    })) }),
+  ]);
 });
 
 it('every other check keeps its retained response chart and reads no collector', async () => {
