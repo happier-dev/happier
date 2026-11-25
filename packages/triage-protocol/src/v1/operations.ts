@@ -7,6 +7,7 @@ import {
     defineProtocolString,
     defineProtocolUnion,
     type ProtocolComposableSchema,
+    type ProtocolSchemaOutput,
 } from '@happier-dev/plugin-sdk/protocol';
 import { ScmComparisonSourceSchema } from '@happier-dev/plugin-sdk/scm';
 import { AgentPermissionIntentV1Schema, SessionInputForgeEvidenceV1Schema } from '@happier-dev/plugin-sdk/sessions';
@@ -156,25 +157,29 @@ export const TriageInvestigationDefaultsV1Schema = defineProtocolObject({
 }, { policy: 'closed' });
 export type TriageInvestigationDefaultsV1 = ReturnType<typeof TriageInvestigationDefaultsV1Schema.parse>;
 
+const getPresent = defineProtocolObject({
+    ...TriageSourcePresentObservationV1Fields,
+    comparisonSource: ScmComparisonSourceSchema.optional(),
+    /** Complete current values for declared task edits. Omitted members are
+     * unavailable, never empty or truncated. Exact-read-only, not snapshot,
+     * scan, retained projection, or mutation authority. */
+    taskFields: TriageTaskFieldsV1Schema.optional(),
+    /** What the name-valued task fields can be set to, when the read asked. Exact-read-only, never retained. */
+    taskFieldChoices: TriageTaskFieldChoicesV1Schema.optional(),
+    /** Exact-read-only initial choice for Investigate, never retained in corpus state. */
+    investigationDefaults: TriageInvestigationDefaultsV1Schema.optional(),
+    /** Source-owned presentation from this exact read, never persisted or used as authority. */
+    detailData: defineProtocolJsonValue().optional(),
+    /** Fresh source detail for this exact dispatch. Descriptive data only;
+     * the containing Action/input owns the byte budget. Never retained in
+     * observations or snapshots, and never interpreted as authority. */
+    dispatchEvidence: SessionInputForgeEvidenceV1Schema.optional(),
+}, { policy: 'closed' });
+export interface TriageGetPresentV1 extends ProtocolSchemaOutput<typeof getPresent> {}
+const getPresentSchema: ProtocolComposableSchema<TriageGetPresentV1> = getPresent;
+
 export const TriageGetResultV1Schema = defineProtocolUnion([
-    defineProtocolObject({
-        ...TriageSourcePresentObservationV1Fields,
-        comparisonSource: ScmComparisonSourceSchema.optional(),
-        /** Complete current values for declared task edits. Omitted members are
-         * unavailable, never empty or truncated. Exact-read-only, not snapshot,
-         * scan, retained projection, or mutation authority. */
-        taskFields: TriageTaskFieldsV1Schema.optional(),
-        /** What the name-valued task fields can be set to, when the read asked. Exact-read-only, never retained. */
-        taskFieldChoices: TriageTaskFieldChoicesV1Schema.optional(),
-        /** Exact-read-only initial choice for Investigate, never retained in corpus state. */
-        investigationDefaults: TriageInvestigationDefaultsV1Schema.optional(),
-        /** Source-owned presentation from this exact read, never persisted or used as authority. */
-        detailData: defineProtocolJsonValue().optional(),
-        /** Fresh source detail for this exact dispatch. Descriptive data only;
-         * the containing Action/input owns the byte budget. Never retained in
-         * observations or snapshots, and never interpreted as authority. */
-        dispatchEvidence: SessionInputForgeEvidenceV1Schema.optional(),
-    }, { policy: 'closed' }),
+    getPresentSchema,
     TriageSourceAbsentObservationV1ProtocolSchema,
     TriageSourceMergedObservationV1ProtocolSchema,
     TriageSourceUnresolvedObservationV1ProtocolSchema,

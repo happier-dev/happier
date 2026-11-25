@@ -59,6 +59,7 @@ export {
     TriageTaskTransitionFieldValuesV1Schema,
 } from './tasks.js';
 export type { TriageTaskFieldChoicesV1, TriageTaskFieldsV1, TriageTaskCreateFieldsV1, TriageTaskCreateInputV1, TriageTaskEditInputV1, TriageTaskTransitionInputV1, TriageTaskWriteResultV1, TriageTaskTransitionFieldValuesV1 } from './tasks.js';
+export type { TriageTaskWriteRefusedV1 } from './tasks.js';
 export {
     INTERNAL_TASK_SOURCE_V1,
     internalTaskLocalRefV1,
@@ -290,6 +291,7 @@ export {
 export type {
     TriageGetInputV1,
     TriageGetResultV1,
+    TriageGetPresentV1,
     TriageInvestigationDefaultsV1,
     TriageScanInputV1,
     TriageScanResultV1,
@@ -310,6 +312,8 @@ export {
 export type {
     TriagePrepareReviewWorkspaceInputV1,
     TriagePrepareReviewWorkspaceResultV1,
+    TriagePreparedReviewWorkspaceV1,
+    TriagePriorReviewWorkspacePreparationV1,
     TriagePullRequestReviewRevisionV1,
     TriagePullRequestReviewTargetV1,
     TriageReviewWorkspaceCurrentnessV1,
@@ -317,6 +321,7 @@ export type {
     TriageSelectedWorkspaceScopeV1,
     TriageVerifyReviewWorkspaceInputV1,
     TriageVerifyReviewWorkspaceResultV1,
+    TriageVerifiedReviewWorkspaceV1,
 } from './workspace.js';
 
 export {

@@ -1,7 +1,7 @@
 import {
     defineProtocolArray, defineProtocolJsonValue, defineProtocolLiteral, defineProtocolNumber,
     defineProtocolObject, defineProtocolString, defineProtocolUnion,
-    type ProtocolComposableSchema,
+    type ProtocolComposableSchema, type ProtocolSchemaOutput,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
     TriageEntryLocatorV1Schema, TriageEntryRefV1Schema, TriageIdentifierV1ProtocolSchema,
@@ -94,13 +94,19 @@ export type TriageTaskEditInputV1 = ReturnType<typeof TriageTaskEditInputV1Schem
 export type TriageTaskTransitionInputV1 = ReturnType<typeof TriageTaskTransitionInputV1Schema.parse>;
 
 const observation = defineProtocolObject(TriageSourcePresentObservationV1Fields, { policy: 'closed' });
+const taskWriteRefused = defineProtocolObject({
+    kind: defineProtocolLiteral('refused'), reason: TriageIdentifierV1ProtocolSchema,
+    message: defineProtocolString().optional(), details: defineProtocolJsonValue().optional(),
+    retryable: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]).optional(),
+    requestId: defineProtocolString().optional(),
+}, { policy: 'closed' });
+/** A named result arm keeps the SDK-owned JSON type out of external declaration inference. */
+export interface TriageTaskWriteRefusedV1 extends ProtocolSchemaOutput<typeof taskWriteRefused> {}
+const taskWriteRefusedSchema: ProtocolComposableSchema<TriageTaskWriteRefusedV1> = taskWriteRefused;
+
 export const TriageTaskWriteResultV1Schema = defineProtocolUnion([
     defineProtocolObject({ kind: defineProtocolLiteral('applied'), observation }, { policy: 'closed' }),
-    defineProtocolObject({ kind: defineProtocolLiteral('refused'), reason: TriageIdentifierV1ProtocolSchema,
-        message: defineProtocolString().optional(), details: defineProtocolJsonValue().optional(),
-        retryable: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]).optional(),
-        requestId: defineProtocolString().optional(),
-    }, { policy: 'closed' }),
+    taskWriteRefusedSchema,
     defineProtocolObject({
         kind: defineProtocolLiteral('uncertain'), observation: observation.optional(), failure: TriageSourceFailureV1Schema.optional(),
     }, { policy: 'closed' }),

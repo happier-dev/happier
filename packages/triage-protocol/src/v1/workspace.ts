@@ -8,6 +8,8 @@ import {
     defineProtocolNumber,
     defineProtocolObject,
     defineProtocolUnion,
+    type ProtocolComposableSchema,
+    type ProtocolSchemaOutput,
 } from '@happier-dev/plugin-sdk/protocol';
 
 import {
@@ -176,23 +178,27 @@ export function projectTriagePrepareReviewWorkspaceInputV1(input: Readonly<{
  * authority; `repositoryPath` is the prepared local result and `branch` is
  * display/workspace data that Triage never normalizes (`CONTRACT.md` §5.3).
  */
+const preparedReviewWorkspace = defineProtocolObject({
+    kind: defineProtocolLiteral('prepared'),
+    repositoryPath: TriageLocationV1ProtocolSchema,
+    branch: TriageTextV1ProtocolSchema,
+    created: defineProtocolUnion([
+        defineProtocolLiteral(true),
+        defineProtocolLiteral(false),
+    ]),
+    currentness: TriageReviewWorkspaceCurrentnessV1Schema,
+    /**
+     * An opaque transport of the canonical SCM pull-request
+     * reference. Its parser stays at the SCM/Reviews producer: Triage and
+     * sources must not grow a second `ScmPullRequestReference` grammar.
+     */
+    pullRequest: defineProtocolJsonValue(),
+}, { policy: 'closed' });
+export interface TriagePreparedReviewWorkspaceV1 extends ProtocolSchemaOutput<typeof preparedReviewWorkspace> {}
+const preparedReviewWorkspaceSchema: ProtocolComposableSchema<TriagePreparedReviewWorkspaceV1> = preparedReviewWorkspace;
+
 export const TriagePrepareReviewWorkspaceResultV1Schema = defineProtocolUnion([
-    defineProtocolObject({
-        kind: defineProtocolLiteral('prepared'),
-        repositoryPath: TriageLocationV1ProtocolSchema,
-        branch: TriageTextV1ProtocolSchema,
-        created: defineProtocolUnion([
-            defineProtocolLiteral(true),
-            defineProtocolLiteral(false),
-        ]),
-        currentness: TriageReviewWorkspaceCurrentnessV1Schema,
-        /**
-         * An opaque transport of the canonical SCM pull-request
-         * reference. Its parser stays at the SCM/Reviews producer: Triage and
-         * sources must not grow a second `ScmPullRequestReference` grammar.
-         */
-        pullRequest: defineProtocolJsonValue(),
-    }, { policy: 'closed' }),
+    preparedReviewWorkspaceSchema,
     defineProtocolObject({
         kind: defineProtocolLiteral('workspaceRequired'),
     }, { policy: 'closed' }),
@@ -225,16 +231,20 @@ export type TriagePrepareReviewWorkspaceResultV1 = ReturnType<
  * checkout carries only its path and obtains that reference from the source's
  * authoritative reread. Both require canonical native checkout verification.
  */
+const priorPreparation = defineProtocolObject({
+    repositoryPath: TriageLocationV1ProtocolSchema,
+    pullRequest: defineProtocolJsonValue(),
+}, { policy: 'closed' });
+export interface TriagePriorReviewWorkspacePreparationV1 extends ProtocolSchemaOutput<typeof priorPreparation> {}
+const priorPreparationSchema: ProtocolComposableSchema<TriagePriorReviewWorkspacePreparationV1> = priorPreparation;
+
 const triageVerifyReviewWorkspaceInputFieldsV1 = {
     entryRef: TriageEntryRefV1Schema,
     lastKnownLocator: TriageEntryLocatorV1Schema,
     observed: TriageReviewWorkspaceObservedRevisionV1Schema,
     workspace: TriageSelectedWorkspaceScopeV1Schema,
     prepared: defineProtocolUnion([
-        defineProtocolObject({
-            repositoryPath: TriageLocationV1ProtocolSchema,
-            pullRequest: defineProtocolJsonValue(),
-        }, { policy: 'closed' }),
+        priorPreparationSchema,
         defineProtocolObject({
             kind: defineProtocolLiteral('acceptedCheckout'),
             repositoryPath: TriageLocationV1ProtocolSchema,
@@ -265,11 +275,15 @@ export type TriageVerifyReviewWorkspaceInputV1 = ReturnType<
  * No failing arm returns a replacement path or silently refreshes the user's
  * selection.
  */
+const verifiedReviewWorkspace = defineProtocolObject({
+    kind: defineProtocolLiteral('verified'),
+    pullRequest: defineProtocolJsonValue(),
+}, { policy: 'closed' });
+export interface TriageVerifiedReviewWorkspaceV1 extends ProtocolSchemaOutput<typeof verifiedReviewWorkspace> {}
+const verifiedReviewWorkspaceSchema: ProtocolComposableSchema<TriageVerifiedReviewWorkspaceV1> = verifiedReviewWorkspace;
+
 export const TriageVerifyReviewWorkspaceResultV1Schema = defineProtocolUnion([
-    defineProtocolObject({
-        kind: defineProtocolLiteral('verified'),
-        pullRequest: defineProtocolJsonValue(),
-    }, { policy: 'closed' }),
+    verifiedReviewWorkspaceSchema,
     defineProtocolObject({
         kind: defineProtocolLiteral('workspaceMismatch'),
         failure: TriageSourceFailureV1Schema.optional(),

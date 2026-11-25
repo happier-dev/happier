@@ -5,6 +5,8 @@ import {
     defineProtocolNumber,
     defineProtocolObject,
     defineProtocolUnion,
+    type ProtocolComposableSchema,
+    type ProtocolSchemaOutput,
 } from '@happier-dev/plugin-sdk/protocol';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 
@@ -35,7 +37,7 @@ export const TriagePullRequestRequirementRefV1Schema = defineProtocolObject({
 export type TriagePullRequestRequirementRefV1 = ReturnType<typeof TriagePullRequestRequirementRefV1Schema.parse>;
 
 /** Original Action operands are projected and validated by the admitting source. */
-export const TriagePullRequestOperationOfferV1Schema = defineProtocolObject({
+const pullRequestOperationOffer = defineProtocolObject({
     id: TriageIdentifierV1ProtocolSchema,
     title: TriageTextV1ProtocolSchema,
     titleKey: TriageTextV1ProtocolSchema.optional(),
@@ -51,7 +53,9 @@ export const TriagePullRequestOperationOfferV1Schema = defineProtocolObject({
         input: defineProtocolJsonValue(),
     }, { policy: 'closed' })),
 }, { policy: 'closed' });
-export type TriagePullRequestOperationOfferV1 = ReturnType<typeof TriagePullRequestOperationOfferV1Schema.parse>;
+export interface TriagePullRequestOperationOfferV1 extends ProtocolSchemaOutput<typeof pullRequestOperationOffer> {}
+export const TriagePullRequestOperationOfferV1Schema: ProtocolComposableSchema<TriagePullRequestOperationOfferV1> =
+    pullRequestOperationOffer;
 
 /** One source-owned decision shared by source detail and portable PR cards. */
 export const TriagePullRequestOperationsV1Schema = defineProtocolObject({
