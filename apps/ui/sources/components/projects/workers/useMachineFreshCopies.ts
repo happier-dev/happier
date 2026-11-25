@@ -10,6 +10,8 @@ import type { ProjectWorkerCopyRetireInputV1 } from '@happier-dev/protocol/actio
 import { ProjectWorkerDependencyV1Schema, type ProjectWorkerDependencyV1 } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getWorkspaceSyncCommittedCopyPreview, listWorkspaceSyncStatuses, type WorkspaceSyncCommittedCopyReviewResult } from '@/sync/ops/workspaceSync';
+import { presentWorkspaceSyncFailure } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 type CopyFacts = Readonly<{ lastCleanSyncAtMs: number | null; sizeBytes: number | null; review: WorkspaceSyncCommittedCopyReviewResult | null }>;
 export type MachineFreshCopy = MachineFreshCopyRow & CopyFacts & Readonly<{ name: string; sourceRefId: string; sourceMachineId: string }>;
@@ -17,10 +19,16 @@ export type MachineFreshCopyNotice = Readonly<{
   relationshipId: string;
   /** Captured before retirement; the relationship may disappear before file removal settles. */
   targetRootPath: string;
-  kind: 'saving' | 'approval' | 'unknown' | 'in_use' | 'failed';
+  /** `retired`: the copy is gone and some Machines could not be asked (`uncheckedMachineIds`). */
+  kind: 'saving' | 'approval' | 'unknown' | 'in_use' | 'failed' | 'retired';
   text: string;
+  /** Why a refused removal kept the copy, from the Sync owner's sentence for its typed cause. */
+  reason?: string;
   errorCode?: string;
   details?: unknown;
+  failureCause?: ActionFailureCauseV1;
+  /** Machines the retirement could not ask about dependent work; named by the section, never by id. */
+  uncheckedMachineIds?: readonly string[];
   /** Typed work the executor reported as still using this copy (in_use, or alongside an unknown result). */
   dependencies?: readonly ProjectWorkerDependencyV1[];
   /** File removal was attempted and its outcome is unknown; the definition may already be retired. */
@@ -185,11 +193,16 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
         setRetired(current => ({ key, definitions: new Set([
           ...(current?.key === key ? current.definitions : []), copy.relationship,
         ]) }));
-        publishNotice(null);
+        // Everyone asked: nothing to add. Otherwise the section says which Machines could not be asked.
+        publishNotice(result.uncheckedMachineIds?.length
+          ? { relationshipId: copy.relationship.relationshipId, kind: 'retired', text: t('projectWorkers.copyDefinitionRetired'),
+            uncheckedMachineIds: result.uncheckedMachineIds }
+          : null);
       }
     } catch (error) {
       const code = error instanceof ProjectWorkerActionError ? error.errorCode : '';
       const details = error instanceof ProjectWorkerActionError ? error.details : undefined;
+      const failureCause = error instanceof ProjectWorkerActionError ? error.failureCause : undefined;
       const detailRecord = details !== null && typeof details === 'object' ? details : null;
       const kind = detailRecord && Reflect.get(detailRecord, 'kind') === 'outcomeUnknown'
         || code === 'outcome_unknown' || code === 'outcomeUnknown' ? 'unknown'
@@ -197,7 +210,12 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
           ? 'in_use' : 'failed';
       const dependencies = z.array(ProjectWorkerDependencyV1Schema).safeParse(detailRecord ? Reflect.get(detailRecord, 'dependencies') : undefined);
       const filesUnknown = kind === 'unknown' && code === 'workspace_copy_removal_unknown';
+      // A refusal reads the Sync owner's sentence for its typed cause; the code stays under Technical details.
+      const refusal = kind === 'failed' && code ? presentWorkspaceSyncFailure({ code, failureCause, details },
+        undefined, t('projectWorkers.removeFailed')) : null;
       publishNotice({ relationshipId: copy.relationship.relationshipId, kind, errorCode: code, details,
+        ...(failureCause ? { failureCause } : {}),
+        ...(refusal && refusal.message !== t('projectWorkers.removeFailed') ? { reason: refusal.message } : {}),
         ...(dependencies.success && dependencies.data.length > 0 ? { dependencies: dependencies.data } : {}),
         ...(filesUnknown ? { filesUnknown } : {}),
         text: t(filesUnknown ? 'projectWorkers.removeFilesUnknown' : kind === 'unknown' ? 'projectWorkers.removeUnknown' : kind === 'in_use' ? 'projectWorkers.removeInUse' : 'projectWorkers.removeFailed') });

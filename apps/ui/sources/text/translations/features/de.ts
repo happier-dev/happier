@@ -21343,6 +21343,8 @@ const de = completeWorkspaceSyncTranslation({
         ownFolderOnly: "Mit Nutzungszugriff kannst du nur in einen neuen Ordner in deinem eigenen Bereich auf dieser Maschine synchronisieren. Wähle dort einen Ordner oder bitte den Eigentümer um Verwaltungszugriff.",
         manageRequired: "Dafür ist Verwaltungszugriff auf die Zielmaschine nötig. Bitte den Eigentümer um Verwaltungszugriff.",
         projectWorkspaceChanged: "Dieser Ordner gehört zu einem anderen Projekt. Wähle einen neuen Ordner oder nutze das Projekt, zu dem er bereits gehört.",
+        requesterLinkUnavailable: "Um eine Kopie mitzunehmen, öffne das Projekt zuerst auf deiner eigenen Maschine. Oder übergib ohne Kopie.",
+        dependenciesUnavailable: "Auf der anderen Maschine konnte nicht geprüft werden, ob Arbeit diese Kopie nutzt. Versuche es erneut oder frage den Eigentümer dieser Maschine.",
         provenanceConflict: "Diese Ordner werden bereits für einen anderen Zweck synchronisiert. Wähle einen anderen Ordner.",
         notWorkerCopy: "Dieser Ordner wurde nicht als Arbeitskopie erstellt, daher hat Happier ihn belassen. Es wurde nichts entfernt.",
         workspaceUnavailable: "Dieser Ordner ist für diese Synchronisierung nicht mehr verfügbar. Aktualisiere die Synchronisierung und versuche es erneut.",

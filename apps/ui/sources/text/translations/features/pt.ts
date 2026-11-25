@@ -21835,6 +21835,8 @@ const pt = completeWorkspaceSyncTranslation({
         ownFolderOnly: "Com acesso de uso, você só pode sincronizar para uma nova pasta no seu próprio espaço nessa máquina. Escolha uma pasta lá ou peça ao proprietário acesso de gestão.",
         manageRequired: "Isso exige acesso de gestão à máquina de destino. Peça esse acesso ao proprietário.",
         projectWorkspaceChanged: "Essa pasta pertence a outro projeto. Escolha uma pasta nova ou use o projeto ao qual ela já pertence.",
+        requesterLinkUnavailable: "Para levar uma cópia, abra primeiro o projeto na sua própria máquina. Ou transfira sem cópia.",
+        dependenciesUnavailable: "Não foi possível verificar na outra máquina se há trabalho usando esta cópia. Tente novamente ou fale com o dono dessa máquina.",
         provenanceConflict: "Estas pastas já são sincronizadas para outra finalidade. Escolha outra pasta.",
         notWorkerCopy: "Esta pasta não foi criada como cópia de trabalho, então o Happier a manteve no lugar. Nada foi removido.",
         workspaceUnavailable: "Essa pasta não está mais disponível para esta sincronização. Atualize a sincronização e tente novamente.",

@@ -15204,6 +15204,8 @@ const enWorkspaceSync = {
       "This needs Manage access to the destination machine. Ask its owner for Manage access.",
     projectWorkspaceChanged:
       "That folder belongs to another Project. Pick a new folder, or use the Project it already belongs to.",
+    requesterLinkUnavailable: "To bring a copy along, open the project on your own machine first. Or hand off without a copy.",
+    dependenciesUnavailable: "The other machine couldn’t be checked for work that uses this copy. Try again, or ask that machine’s owner.",
     provenanceConflict:
       "These folders are already synced for a different purpose. Pick another folder.",
     notWorkerCopy:

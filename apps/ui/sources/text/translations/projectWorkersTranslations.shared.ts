@@ -123,8 +123,9 @@ export const projectWorkersEn = {
     manageInSync: 'Manage links in Sync',
     copyFrom: ({ machine }: { machine: string }) => `From ${machine}`,
     remove: 'Remove…',
-    removeDetail:
-      'Work that depends on this copy is checked first. Its files stay on the machine.',
+    removeDetail: 'The copy stops updating. Sessions working in it keep their files.',
+    removeUnchecked: ({ machines }: { machines: string }) => `${machines} didn’t answer, so work there wasn’t checked.`,
+    removeUncheckedUnnamed: 'The other machine didn’t answer, so work there wasn’t checked.',
     removeInUse: 'This copy is in use. Finish or cancel its work first.',
     removeUnknown: 'The result is unknown. Check the copy before trying again.',
     removeFailed: 'Couldn’t remove this copy.',

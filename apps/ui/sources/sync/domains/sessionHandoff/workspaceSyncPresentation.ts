@@ -55,6 +55,8 @@ export type WorkspaceSyncErrorTranslationKey =
     | 'workspaceSync.error.notWorkerCopy'
     | 'workspaceSync.error.workspaceUnavailable'
     | 'workspaceSync.error.reviewedFolderChanged'
+    | 'workspaceSync.error.requesterLinkUnavailable'
+    | 'workspaceSync.error.dependenciesUnavailable'
     | 'sessionHandoff.failure.partialLinked'
     | 'workspaceSync.error.needsAttention';
 
@@ -85,7 +87,9 @@ export type WorkspaceSyncFailurePresentation = Readonly<{
  * other diagnostics stay on the carried error. A dispatch failure's safe originating reason stays in that disclosure.
  * Own-folder guidance is for the Can use route only; `placement` is Add Machine's decided route.
  */
-export function presentWorkspaceSyncFailure(error: unknown, placement?: WorkspaceSyncDestinationPlacement): WorkspaceSyncFailurePresentation | null {
+export function presentWorkspaceSyncFailure(error: unknown, placement?: WorkspaceSyncDestinationPlacement,
+    /** The surface's own sentence when no owner knows the code (otherwise the generic request failure). */
+    fallbackMessage?: string): WorkspaceSyncFailurePresentation | null {
     const code = readWorkspaceSyncErrorCode(error);
     if (!code) return null;
     const record = error as Readonly<Record<string, unknown>>;
@@ -101,7 +105,7 @@ export function presentWorkspaceSyncFailure(error: unknown, placement?: Workspac
     }
     if (key === 'workspaceSync.error.ownFolderOnly' && placement !== 'destination_open') key = 'workspaceSync.error.needsAttention';
     const message = key ? t(key) : presentActionExecutionFailure({ ok: false, errorCode: code, details: record.details,
-        ...(failureCause ? { failureCause } : {}) }).reason;
+        ...(failureCause ? { failureCause } : {}) }, fallbackMessage).reason;
     const reason = failureCause?.phase === 'dispatch' && typeof record.error === 'string'
         ? redactBugReportSensitiveText(record.error).trim() : '';
     return { message, code: shownCode,
@@ -187,6 +191,13 @@ export function resolveWorkspaceSyncErrorTranslationKey(value: unknown): Workspa
             return 'workspaceSync.error.notWorkerCopy';
         case 'workspace_unavailable':
             return 'workspaceSync.error.workspaceUnavailable';
+        // Until a person's own link owner exists for a handoff, a copy cannot come from another person's SOURCE
+        // (phase workspace_sync.relationship_owner.select; Sync owner's ruling 2026-11-24 23:16Z).
+        case 'workspace_sync_requester_link_unavailable':
+            return 'workspaceSync.error.requesterLinkUnavailable';
+        // A Fresh copy's removal could not ask the other Machine about work that depends on it (b23dbc684a9).
+        case 'workspace_sync_dependencies_unavailable':
+            return 'workspaceSync.error.dependenciesUnavailable';
         case 'engine_problems':
         case 'relationship_not_ready':
         case 'workspace_root_in_use':

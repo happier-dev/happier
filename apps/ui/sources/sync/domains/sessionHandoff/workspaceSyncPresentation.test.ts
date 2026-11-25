@@ -181,6 +181,20 @@ describe('workspaceSyncPresentation', () => {
         expect(JSON.stringify(presented)).not.toContain('root_fingerprint');
     });
 
+    it('says how to bring a copy when the handoff link owner refused it, from its carried cause', () => {
+        const refusal = { code: 'RPC_FORBIDDEN', failureCause: { phase: 'workspace_sync.relationship_owner.select', errorClass: 'Error',
+            errorCode: 'workspace_sync_requester_link_unavailable', httpStatus: null } };
+        expect(presentWorkspaceSyncFailure(refusal))
+            .toEqual(failure(t('workspaceSync.error.requesterLinkUnavailable'), 'workspace_sync_requester_link_unavailable'));
+    });
+
+    it('says a Fresh copy was kept when its dependency check was refused, and keeps the surface fallback for unknown codes', () => {
+        const refusal = { code: 'workspace_sync_dependencies_unavailable', failureCause: { phase: 'workspace_sync.retirement.dependencies',
+            errorClass: 'Error', errorCode: 'workspace_sync_dependencies_unavailable', httpStatus: null, nativeErrorCode: 'RPC_FORBIDDEN' } };
+        expect(presentWorkspaceSyncFailure(refusal, undefined, 'fallback')?.message).toBe(t('workspaceSync.error.dependenciesUnavailable'));
+        expect(presentWorkspaceSyncFailure({ code: 'something_new' }, undefined, 'fallback')?.message).toBe('fallback');
+    });
+
     it('settles a completed observation with no engine session as unavailable', () => {
         expect(resolveWorkspaceSyncRelationshipStateLabel({
             enabled: true, statusState: null, errorCode: null,

@@ -789,6 +789,98 @@ describe('Machine › Work from your projects through the Machine policy Actions
     );
   });
 
+  it('after a removal says which Machine could not be asked, and says nothing extra when all were asked', async () => {
+    const { screen } = await setup({ waive: ['projects.worker.copy.retire'] });
+    await seedWorkerCopy();
+    const retire = vi.fn(async () => ({ status: 'retired', uncheckedMachineIds: ['source-machine'] }));
+    rpc.machine.mockImplementation(async ({ method }: { method: string }) => {
+      if (method === 'projects.worker.copy.retire') return await retire();
+      throw new Error(`unexpected_rpc:${method}`);
+    });
+    const menu = () =>
+      screen.findAll(
+        (node) =>
+          typeof node.props.onSelect === 'function' &&
+          Array.isArray(node.props.items) &&
+          node.props.items.some((item: { id: string }) => item.id === 'files'),
+      )[0]!;
+    await vi.waitFor(() => expect(menu()).toBeTruthy());
+    await act(async () => {
+      menu().props.onSelect('keep');
+    });
+    // The banner itself, not the notice owner that passes its testID down.
+    const notice = () =>
+      screen.findAllByTestId('work.copies.notice:proven-worker-target').find(node => typeof node.props.title === 'string')?.props;
+    // Lengths, never instances: a failed match must not pretty-print the rendered tree.
+    await vi.waitFor(() => expect(retire).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(String(notice()?.title ?? screen.findAllByTestId('work.copy:proven-worker-target.notice')[0]?.props.title))
+      .toBe('projectWorkers.copyDefinitionRetired'));
+    expect(notice()?.description).toBe('projectWorkers.removeUncheckedUnnamed');
+    expect(screen.findAllByTestId('work.copy:proven-worker-target').length).toBe(0);
+    await act(async () => {
+      notice()?.onDismiss();
+    });
+    expect(screen.findAllByTestId('work.copies.notice:proven-worker-target').length).toBe(0);
+  });
+
+  it('a removal that asked every Machine leaves no notice behind', async () => {
+    const { screen } = await setup({ waive: ['projects.worker.copy.retire'] });
+    await seedWorkerCopy();
+    rpc.machine.mockImplementation(async ({ method }: { method: string }) => {
+      if (method === 'projects.worker.copy.retire') return { status: 'retired' };
+      throw new Error(`unexpected_rpc:${method}`);
+    });
+    const menu = () =>
+      screen.findAll(
+        (node) =>
+          typeof node.props.onSelect === 'function' &&
+          Array.isArray(node.props.items) &&
+          node.props.items.some((item: { id: string }) => item.id === 'files'),
+      )[0]!;
+    await vi.waitFor(() => expect(menu()).toBeTruthy());
+    await act(async () => {
+      menu().props.onSelect('keep');
+    });
+    await vi.waitFor(() => expect(String(screen.findAllByTestId('work.copy:proven-worker-target.notice')[0]?.props.title
+      ?? screen.findAllByTestId('work.copy:proven-worker-target').length)).toBe('0'));
+    expect(screen.findAllByTestId('work.copies.notice:proven-worker-target').length).toBe(0);
+  });
+
+  it('says why a refused removal kept the copy, with the code and phase under Technical details', async () => {
+    const { screen } = await setup({ waive: ['projects.worker.copy.retire'] });
+    await seedWorkerCopy();
+    rpc.machine.mockImplementation(async ({ method }: { method: string }) => {
+      if (method === 'projects.worker.copy.retire') return {
+        ok: false, error: 'Worker dependency observation is unavailable', errorCode: 'workspace_sync_dependencies_unavailable',
+        failureCause: { phase: 'workspace_sync.retirement.dependencies', errorClass: 'Error',
+          errorCode: 'workspace_sync_dependencies_unavailable', httpStatus: null, nativeErrorCode: 'RPC_FORBIDDEN' },
+      };
+      throw new Error(`unexpected_rpc:${method}`);
+    });
+    const menu = () =>
+      screen.findAll(
+        (node) =>
+          typeof node.props.onSelect === 'function' &&
+          Array.isArray(node.props.items) &&
+          node.props.items.some((item: { id: string }) => item.id === 'files'),
+      )[0]!;
+    await vi.waitFor(() => expect(menu()).toBeTruthy());
+    await act(async () => {
+      menu().props.onSelect('keep');
+    });
+    const notice = () =>
+      screen.findAllByTestId('work.copy:proven-worker-target.notice')[0]?.props;
+    await vi.waitFor(() => expect(notice()?.title).toBe('projectWorkers.removeFailed'));
+    expect(notice()?.description).toBe('workspaceSync.error.dependenciesUnavailable');
+    const alert = vi.spyOn(Modal, 'alert');
+    await act(async () => {
+      notice()?.secondaryAction?.onPress();
+    });
+    expect(alert).toHaveBeenCalledWith('approvals.technicalDetails', expect.stringContaining('workspace_sync_dependencies_unavailable'));
+    expect(alert).toHaveBeenCalledWith('approvals.technicalDetails', expect.stringContaining('workspace_sync.retirement.dependencies'));
+    expect(screen.findAllByTestId('work.copy:proven-worker-target').length).toBeGreaterThan(0);
+  });
+
   it('keeps an asleep Machine out of the Project-read failure and retry state', async () => {
     const { screen } = await setup({ deferMachineDiscovery: true });
     const scope = storage.getState().profileScope!;

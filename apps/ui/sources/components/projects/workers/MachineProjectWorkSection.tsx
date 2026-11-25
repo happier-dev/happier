@@ -31,7 +31,9 @@ import type { ActionOperationProjection } from '@/sync/domains/actionOperations/
 import { useMachineFreshCopies, type MachineFreshCopy, type MachineFreshCopyNotice } from './useMachineFreshCopies';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
-import { useServerScopedMachine } from '@/sync/store/hooks';
+import { useMachineDisplayNamesById, useServerScopedMachine } from '@/sync/store/hooks';
+import { joinList } from '@/utils/text/joinList';
+import { showActionFailureDetails } from '@/utils/errors/alertActionFailure';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import { executeProjectWorkerActionV1 } from '@/sync/ops/actions/projectWorkerActions';
 import { isMachineActivityPlaceholder } from '@/sync/domains/machines/machineActivity';
@@ -156,7 +158,7 @@ const DEPENDENCY_STATE: Readonly<Record<NonNullable<MachineFreshCopyNotice['depe
   running: () => t('projectWorkers.dependencyRunning'),
 };
 
-function FreshCopyRow(
+export function FreshCopyRow(
   props: Readonly<{
     testID: string;
     serverId: string;
@@ -304,7 +306,13 @@ function FreshCopyRow(
           testID={`${props.testID}.notice`}
           tone={props.notice.kind === 'saving' || props.notice.kind === 'approval' ? 'neutral' : 'warning'}
           title={props.notice.text}
+          description={props.notice.reason}
           details={dependencyLines.length > 0 ? dependencyLines : undefined}
+          secondaryAction={props.notice.kind === 'failed' && props.notice.errorCode ? {
+            label: t('approvals.technicalDetails'),
+            testID: `${props.testID}.technicalDetails`,
+            onPress: () => showFreshCopyFailureDetails(props.notice!),
+          } : null}
           action={
             approvalId
               ? {
@@ -337,6 +345,42 @@ function FreshCopyRow(
         />
       ) : null}
     </>
+  );
+}
+
+/** The deliberate reveal of a refused removal: its code and the owner's typed cause, never prose. */
+function showFreshCopyFailureDetails(notice: MachineFreshCopyNotice) {
+  const cause = notice.failureCause && !('kind' in notice.failureCause) ? notice.failureCause : null;
+  showActionFailureDetails({ code: notice.errorCode ?? '', context: cause ? {
+    causePhase: cause.phase,
+    // The answering Machine's own code is the cause the person can quote; the wrapper code is already shown.
+    ...(cause.nativeErrorCode ? { causeCode: cause.nativeErrorCode }
+      : cause.errorCode && cause.errorCode !== notice.errorCode ? { causeCode: cause.errorCode } : {}),
+  } : {} });
+}
+
+const NO_MACHINE_IDS: readonly string[] = Object.freeze([]);
+
+/** A removed copy whose retirement could not ask some Machines: named by the Machine name owner, never by id. */
+export function FreshCopyRetiredNotice(props: Readonly<{
+  testID: string;
+  serverId: string;
+  notice: MachineFreshCopyNotice;
+  onDismiss: () => void;
+}>) {
+  const ids = props.notice.uncheckedMachineIds ?? NO_MACHINE_IDS;
+  const names = useMachineDisplayNamesById(ids, { serverId: props.serverId });
+  const named = ids.map(id => names[id]).filter((name): name is string => Boolean(name));
+  return (
+    <AttentionBanner
+      testID={props.testID}
+      tone="warning"
+      title={props.notice.text}
+      description={named.length > 0
+        ? t('projectWorkers.removeUnchecked', { machines: joinList(named) })
+        : t('projectWorkers.removeUncheckedUnnamed')}
+      onDismiss={props.onDismiss}
+    />
   );
 }
 
@@ -553,6 +597,16 @@ export function MachineProjectWorkSection(
           />
         }
       >
+        {[...freshCopies.notices.values()].filter(notice => notice.kind === 'retired'
+          && !freshCopies.copies?.some(copy => copy.relationship.relationshipId === notice.relationshipId)).map(notice => (
+          <FreshCopyRetiredNotice
+            key={notice.relationshipId}
+            testID={`${testID}.copies.notice:${notice.relationshipId}`}
+            serverId={props.serverId}
+            notice={notice}
+            onDismiss={() => freshCopies.dismissNotice(notice.relationshipId)}
+          />
+        ))}
         {[...freshCopies.notices.values()].filter(notice => (notice.filesUnknown || notice.filesPresent)
           && !freshCopies.copies?.some(copy => copy.relationship.relationshipId === notice.relationshipId)).map(notice => (
           <AttentionBanner
