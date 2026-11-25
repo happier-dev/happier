@@ -41,10 +41,9 @@ import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/proto
 import { openExternalActionRequesterAccountContextV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
-import { ACTION_OPERATION_GET_ACTION_ID_V1, isRequesterOperationActionIdV1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { isRequesterOperationActionIdV1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { readRequesterOperationRequestV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
 import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
-import { ActionOperationGetActionInputV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
 import { deriveWorkspaceSyncRelationshipId, projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
@@ -78,7 +77,6 @@ const shared = vi.hoisted(() => ({
   /** The device class the platform adapter reports; unset keeps the real one. */
   device: null as 'phone' | null,
   operationRead: vi.fn(),
-  requesterOperationReads: [] as Array<ReturnType<typeof ActionOperationGetActionInputV1Schema.parse>>,
   actionSettings: {} as Record<string, { approvalRequiredSurfaces: Array<'ui'> }>,
   navigate: vi.fn(),
   /** The Home's Project Source routes (an HTTP boundary); unset answers like a Home without them. */
@@ -175,7 +173,6 @@ afterEach(async () => {
   terminalScopes.clear();
   shared.trustMutations = [];
   shared.operationRead.mockReset();
-  shared.requesterOperationReads = [];
   await connection?.dispose();
   connection = null;
   disposeExecutor?.();
@@ -487,8 +484,6 @@ async function render(
           const operation = readRequesterOperationRequestV1(actionId, opened.input);
           if (!operation) throw new Error('Expected a requester operation input');
           expect(operation.input).toMatchObject({ serverId: workspace.serverId, machineId });
-          if (actionId === ACTION_OPERATION_GET_ACTION_ID_V1)
-            shared.requesterOperationReads.push(ActionOperationGetActionInputV1Schema.parse(operation.input));
           const result = await executeActionOperationActionV1({ ...operation,
             transport: request => shared.operationRead(request) });
           return Response.json(prepareExternalActionResponseV2({ binding, request: envelope, material,
@@ -1498,9 +1493,10 @@ describe('ProjectScriptsBody runs', () => {
       shared.calls.filter((call) => call.actionId === 'projects.script.run'),
     ).toHaveLength(1);
     // "Until it changes" (chosen; This time is the default) is the person's own grant for this Project's exact effect.
-    await vi.waitFor(() => expect(shared.requesterOperationReads).toContainEqual({
-      serverId: workspace.serverId, machineId: held.scope.machineId, operationId: held.operationId, refreshSetupReview: true,
-    }));
+    await vi.waitFor(() => expect(shared.operationRead).toHaveBeenCalledWith(expect.objectContaining({
+      serverId: workspace.serverId, machineId: held.scope.machineId, accountId: held.scope.accountId,
+      method: ACTION_OPERATION_RPC_METHODS_V2.get, payload: { operationId: held.operationId, refreshSetupReview: true },
+    })));
     await vi.waitFor(() => expect(shared.trustMutations).toEqual([
       expect.objectContaining({
         project: { serverId: workspace.serverId, projectId: 'w1' },
