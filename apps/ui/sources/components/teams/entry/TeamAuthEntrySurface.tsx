@@ -832,12 +832,7 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                     ) : null}
                     {entryActions.map((action, index) => {
                         if (action.kind === 'provider_unavailable') {
-                            /*
-                             * An accepted Team sign-in that cannot run right now is
-                             * named with the Home's safe reason (teams-lane-03/01
-                             * §10.2, TA-R17) instead of vanishing. Its one useful
-                             * action is to ask the Home again.
-                             */
+                            // The Home names an accepted method this person cannot use.
                             const reasonCopy = action.reason === 'provider_disabled'
                                 ? t('teams.entry.providerUnavailableDisabled')
                                 : action.reason === 'provider_setup_incomplete'
@@ -850,8 +845,7 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                                     primary={false}
                                     title={t('teams.entry.providerUnavailableTitle', { method: action.presentation.displayName })}
                                     subtitle={reasonCopy}
-                                    iconName={asIconName(action.presentation.iconHint) ?? 'cloud-slash'}
-                                    onPress={retry}
+                                    unavailable={{}}
                                 />
                             );
                         }

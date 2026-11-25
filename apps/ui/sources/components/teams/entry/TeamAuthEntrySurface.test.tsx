@@ -420,7 +420,11 @@ describe('TeamAuthEntrySurface', () => {
         expect(actionIconNames(screen, 'team-auth-entry-action:team-unknown-hint')).toContain('sign-in');
     });
 
-    it('names an accepted Team sign-in that cannot run with the Home reason, and re-asks the Home on press', async () => {
+    it.each([
+        ['provider_disabled', 'teams.entry.providerUnavailableDisabled'],
+        ['provider_setup_incomplete', 'teams.entry.providerUnavailableSetupIncomplete'],
+        ['provider_unavailable', 'teams.entry.providerUnavailableUnavailable'],
+    ] as const)('names the unavailable sign-in reason %s without offering a Retry', async (reason, message) => {
         // teams-lane-03/01 §10.2 / TA-R17: the per-provider safe unavailable reason
         // is a real wire field, so the page says it instead of dropping the choice.
         const withUnavailable = () => readyResponse('team', undefined, undefined, 'Acme Home', [{
@@ -428,7 +432,7 @@ describe('TeamAuthEntrySurface', () => {
             methodId: 'team-backup',
             origin: 'team',
             presentation: { displayName: 'Backup SSO', providerKind: 'oidc' },
-            reason: 'provider_setup_incomplete',
+            reason,
         }, {
             kind: 'authenticate',
             methodId: 'team-oidc',
@@ -456,15 +460,12 @@ describe('TeamAuthEntrySurface', () => {
         await waitForTestId(screen, 'team-auth-entry-ready');
         const unavailable = screen.findByTestId('team-auth-entry-unavailable:team-backup');
         if (!unavailable) throw new Error('expected the unavailable Team sign-in to be named');
-        expect(unavailable.props.accessibilityLabel).toBe(t('teams.entry.providerUnavailableTitle', { method: 'Backup SSO' }));
-        expect(unavailable.props.accessibilityHint).toBe(t('teams.entry.providerUnavailableSetupIncomplete'));
+        expect(screen.getTextContent()).toContain(t('teams.entry.providerUnavailableTitle', { method: 'Backup SSO' }));
+        expect(screen.getTextContent()).toContain(t(message));
+        expect(unavailable.props.onPress).toBeUndefined();
         // The runnable choice is unaffected by the richer descriptor.
         expect(screen.findByTestId('team-auth-entry-action:team-oidc')).not.toBeNull();
 
-        const requestsBefore = endpointFetch.mock.calls.length + authorityFetch.mock.calls.length;
-        await screen.pressByTestIdAsync('team-auth-entry-unavailable:team-backup');
-        await waitForTestId(screen, 'team-auth-entry-ready');
-        expect(endpointFetch.mock.calls.length + authorityFetch.mock.calls.length).toBeGreaterThan(requestsBefore);
         expect(onSelectAction).not.toHaveBeenCalled();
     });
 

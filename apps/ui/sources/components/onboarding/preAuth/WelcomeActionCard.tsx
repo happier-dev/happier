@@ -58,16 +58,12 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
      * action: it stays operable and runs immediately.
      */
     escape?: boolean;
-    /**
-     * The action cannot run right now (its service is unreachable, or still being checked). The card
-     * keeps saying what it is for — the subtitle carries why it cannot — and stops being a button:
-     * `accessory` (Retry, a spinner) is its only control, so no disabled button wraps a live one.
-     */
-    unavailable?: Readonly<{ accessory?: React.ReactNode }>;
     disabled?: boolean;
     controlRef?: React.ComponentProps<typeof HappierPressable>['controlRef'];
-    onPress: () => Promise<void> | void;
-}>) {
+}> & Readonly<
+    | { unavailable?: Readonly<{ accessory?: React.ReactNode }>; onPress: () => Promise<void> | void }
+    | { unavailable: Readonly<{ accessory?: React.ReactNode }>; onPress?: () => Promise<void> | void }
+>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const admission = React.useContext(WelcomeActionAdmissionContext);
@@ -93,6 +89,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
     const link = props.presentation === 'link';
     const linkLine = link && Boolean(props.subtitle);
 
+    // The subtitle describes why this sign-in can't run. An accessory, when present, is its only control.
     if (props.unavailable) {
         return (
             <View
@@ -109,6 +106,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
         );
     }
 
+    const onPress = props.onPress;
     return (
         <HappierPressable
             testID={props.testID}
@@ -120,7 +118,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
             describedById={subtitleId}
             disabled={props.disabled || (!escape && admission.pendingActionId !== null)}
             busy={pending}
-            onPress={escape ? () => props.onPress() : () => admission.run(actionId, props.onPress)}
+            onPress={escape ? onPress : () => admission.run(actionId, onPress)}
             onPressIn={pressFeedback.onPressIn}
             onPressOut={pressFeedback.onPressOut}
             // The ring belongs to the card frame inside the hit area; a pill's hit area is its own width.
