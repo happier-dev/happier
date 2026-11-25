@@ -32,7 +32,7 @@ import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { listCurrentAccountMachines } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { dispatchOriginalAccountAction, readReviewedServiceMoveInput, isReviewedServiceMoveChild } from '@/api/externalActionExecutionAuthorization';
-import { isProjectServiceMoveChildInputV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
+import { isAdmittedProjectServiceMoveChildInputV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
@@ -476,7 +476,7 @@ export function createCliProjectActionDeps(
         const authorization = context.externalActionExecutionAuthorization;
         const move = authorization && await readReviewedServiceMoveInput({ authorization,
           envelope: context.originalActionEnvelope, signal });
-        if (!move || !isProjectServiceMoveChildInputV1(move, actionId, machineId, request)) {
+        if (!move || !isAdmittedProjectServiceMoveChildInputV1(move, actionId, machineId, request)) {
           return { ok: false, errorCode: 'target_not_local', error: 'target_not_local' };
         }
       }

@@ -4,7 +4,7 @@ import { readHostAdmittedReviewedChildV1, readHostReviewedParentV1 } from '@happ
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import { isProjectServiceMoveChildInputV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
+import { isAdmittedProjectServiceMoveChildInputV1, readProjectServiceMoveFromAdmittedRootV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { ProjectWorkerActionInputSchemasV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import type { ProjectWorkerStatusResultV1 } from '@happier-dev/protocol';
 import { ProjectWorkerDependencyV1Schema } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
@@ -69,10 +69,11 @@ export function createProjectWorkerAction(options: Readonly<{
         if (context.externalActionExecutionAuthorization && (!requesterContext
           || !await trace('requester_currentness', () => (requesterContext.isCustodyCurrent ?? requesterContext.isCurrent)()))) return refused('unavailable');
         const child = readHostAdmittedReviewedChildV1(context);
-        const parent = readHostReviewedParentV1(context);
-        const admittedMoveStatus = child?.actionId === actionId && parent?.actionId === 'projects.service.relocate'
+        const move = child?.actionId === actionId
+          ? readProjectServiceMoveFromAdmittedRootV1(readHostReviewedParentV1(context)) : null;
+        const admittedMoveStatus = move && child
           && sameStrictJsonValue(child.input, projectNativeJsonValueForTransport(request))
-          && isProjectServiceMoveChildInputV1(parent.input, actionId, options.machineId, request);
+          && isAdmittedProjectServiceMoveChildInputV1(move, actionId, options.machineId, request);
         // SOURCE already selected the exact copy before review. This admitted
         // child observes host capacity; the exact Start child owns its effect.
         if (!admittedMoveStatus) {

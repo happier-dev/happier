@@ -13,6 +13,8 @@ import { ProjectServicePlacementGetV1Schema, ProjectServicePlacementSetV1Schema 
 import { ProjectExecutionChoiceV1Schema } from './projectWorkerPreferencesV1.js';
 import { ProjectDefinitionInspectInputSchema } from '../actions/projectDefinitionActionFamily.js';
 import { ProjectSetupReviewV1Schema } from '../actions/projectSetupConsentFailure.js';
+import { PROJECT_SERVICE_RELOCATE_ACTION_ID_V1 } from '../actions/actionIds.js';
+import type { HostReviewedParentV1 } from '../actions/executor/deploymentRoleChild.js';
 
 /** Reuses Local Services' exact managed identity; input never establishes control authority. */
 export const ProjectServiceRelocateInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ProjectServicePlacementGetV1Schema, {
@@ -29,6 +31,11 @@ export const ProjectServiceRelocateInputV1Schema = lazyZodSchema(() => (<T exten
   setupReview: z.optional(ProjectSetupReviewV1Schema),
 })));
 export type ProjectServiceRelocateInputV1 = z.infer<typeof ProjectServiceRelocateInputV1Schema>;
+
+/** The private issuer retains the schema-admitted operand in its generic JSON parent projection. */
+export function readProjectServiceMoveFromAdmittedRootV1(parent: HostReviewedParentV1 | null): ProjectServiceRelocateInputV1 | null {
+  return parent?.actionId === PROJECT_SERVICE_RELOCATE_ACTION_ID_V1 ? parent.input as ProjectServiceRelocateInputV1 : null;
+}
 
 /** The SOURCE runner consumes its active Move's Start admission; no durable replay ledger. */
 export const ProjectServiceMoveStartClaimV1Schema = lazyZodSchema(() => z.strictObject({
@@ -66,9 +73,13 @@ export function readProjectServiceMoveChildMachineV1(rootInput: unknown, actionI
 /** Sender and decrypted receiver share the exact reviewed service/destination decision. */
 export function isProjectServiceMoveChildInputV1(rootInput: unknown, actionId: string, machineId: string, value: unknown): boolean {
   const root = ProjectServiceRelocateInputV1Schema.safeParse(rootInput);
-  if (!root.success) return false;
-  const move = root.data;
-  if (actionId !== 'projects.inspect' && readProjectServiceMoveChildMachineV1(move, actionId) !== machineId) return false;
+  return root.success && isAdmittedProjectServiceMoveChildInputV1(root.data, actionId, machineId, value);
+}
+
+/** Bind an untrusted child operand to the Move already parsed by this host. */
+export function isAdmittedProjectServiceMoveChildInputV1(
+  move: ProjectServiceRelocateInputV1, actionId: string, machineId: string, value: unknown,
+): boolean {
   const wrapper = TargetedActionRpcRequestV1Schema.safeParse(value);
   if (wrapper.success && (wrapper.data.target.kind !== 'machine' || wrapper.data.target.machineId !== machineId)) return false;
   const input = wrapper.success ? wrapper.data.input : value;

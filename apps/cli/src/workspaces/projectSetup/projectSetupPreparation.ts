@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readHostAdmittedReviewedRootV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
+import { readProjectServiceMoveFromAdmittedRootV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { WorkspaceRefV1Schema, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -631,9 +631,8 @@ export async function admitReviewedProjectSetup(input: ProjectSetupPreparationIn
     if (input.expectedEffectDigest !== undefined && input.expectedEffectDigest !== plan.reviewedEffectDigest) {
         return { kind: 'pendingApproval', code: 'project_setup_effect_changed', plan };
     }
-    const root = readHostAdmittedReviewedRootV1(input.approvalContext);
-    const move = root?.actionId === 'projects.service.relocate' ? ProjectServiceRelocateInputV1Schema.safeParse(root.input) : null;
-    const moveReview = move?.success && move.data.workspace.serverId === plan.project.serverId ? move.data.setupReview : undefined;
+    const move = readProjectServiceMoveFromAdmittedRootV1(readHostAdmittedReviewedRootV1(input.approvalContext));
+    const moveReview = move?.workspace.serverId === plan.project.serverId ? move.setupReview : undefined;
     // The compound Action admitted projects.prepare policy in its single review.
     // Only the private admitted root carries that decision; a public parent projection does not.
     // Destination-native resolution (including platform, tools and environment) must still match.

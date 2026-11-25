@@ -92,7 +92,7 @@ import { EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, ExternalActionExecutionAuthorizati
 import { openExternalActionRequestV2, openExternalActionResponseV2, projectExternalActionEncryptionBindingV2, sealExternalActionRequestV2,
   type ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { ProjectServiceRelocateInputV1Schema, isProjectServiceMoveChildInputV1, readProjectServiceMoveChildEffectV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
+import { ProjectServiceRelocateInputV1Schema, isAdmittedProjectServiceMoveChildInputV1, readProjectServiceMoveChildEffectV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { DaemonLocalServiceLauncherStartRequestV1Schema, DaemonLocalServiceLauncherSnapshotRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
@@ -631,7 +631,7 @@ export async function isReviewedMachineRpcChild(family: ReviewedMachineRpcChildF
 
 async function isReviewedServiceMoveChildForInput(input: Parameters<typeof isReviewedServiceMoveChild>[0],
   move: Awaited<ReturnType<typeof readReviewedServiceMoveInput>>): Promise<boolean> {
-  if (!move || input.signal?.aborted || !isProjectServiceMoveChildInputV1(move, input.actionId, input.machineId, input.params)) return false;
+  if (!move || input.signal?.aborted || !isAdmittedProjectServiceMoveChildInputV1(move, input.actionId, input.machineId, input.params)) return false;
   if (input.actionId !== 'localServices.launcher.start' && input.actionId !== 'localServices.launcher.snapshot'
     && input.actionId !== 'projects.inspect') return true;
   const requester = readRequesterAccountActionContext(input.authorization);
