@@ -375,7 +375,7 @@ describe('useActionApprovalContinuation', () => {
         }
     });
 
-    it('keeps an issued approval decision disabled while its Home is unreachable and consumes the later receipt', async () => {
+    it('shows an issued approval as executing while its Home is unreachable and consumes the later receipt', async () => {
         const serverId = await addApprovalHome();
         const artifactId = await openRenameApproval(serverId, 'pending-home');
         const previous = storage.getState();
@@ -389,6 +389,7 @@ describe('useActionApprovalContinuation', () => {
         storage.setState({ endpointStatus: 'online', socketStatus: 'connected' });
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
         const { ApprovalDecisionBar } = await import('./ApprovalDecisionBar');
+        const { t } = await import('@/text');
         const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifactId} serverId={serverId} />);
         let decision!: Promise<void>;
         try {
@@ -399,14 +400,11 @@ describe('useActionApprovalContinuation', () => {
             await act(async () => { decision = screen.pressByTestIdAsync('approvals.approve'); });
             await waitForHomeGovernance(() => expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(1));
             await act(async () => { storage.setState({ endpointStatus: 'offline' }); });
-            expect(screen.findByTestId('approvals.home-unavailable')).not.toBeNull();
-            const bar = screen.findAllByType(ApprovalDecisionBar)[0];
-            if (bar) {
-                expect(bar.props.busy).toBe(false);
-                expect(bar.props.approve.disabled).toBe(true);
-                expect(bar.props.reject.disabled).toBe(true);
-                expect(bar.props.dismiss.disabled).toBe(true);
-            }
+            await waitForHomeGovernance(() => {
+                expect(screen.getTextContent()).toContain(t('approvals.status.executing'));
+                expect(screen.findAllByType(ApprovalDecisionBar)).toHaveLength(0);
+            });
+            expect(screen.findByTestId('approvals.home-unavailable')).toBeNull();
             await act(async () => { respond(); await decision; });
             await waitForHomeGovernance(() => expect(harness.artifacts(serverId).readPlainBody(artifactId)).toContain('"status":"executed"'));
             expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(1);
