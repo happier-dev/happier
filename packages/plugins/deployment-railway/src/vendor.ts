@@ -1,5 +1,6 @@
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
-import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
+import { isPluginError, PluginError, projectActionFailureCauseV1, withActionFailureDiagnostic,
+  type ActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import { isRecord, projectDeploymentTargetHttpFailureV1, settleDeploymentTargetResourceRemovalV1 } from '@happier-dev/plugin-sdk';
 import { isMachineProvisionerCreateRefusal } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { RailwayNativeError } from '@happier-dev/railway-api';
@@ -81,20 +82,33 @@ function writeRefused(error: unknown): boolean {
     || isPluginError(error) && (error.code === 'credential_unavailable' || error.code === 'deployment_access_denied');
 }
 
-export function removeDatabase(selection: ServiceSelection, context: PluginAccountActionContext, observeOnly: boolean) {
+export async function removeDatabase(selection: ServiceSelection, context: PluginAccountActionContext, observeOnly: boolean) {
   const { project } = railway(context);
-  return settleDeploymentTargetResourceRemovalV1({
-    ...(observeOnly ? {} : { remove: async () => {
-      try {
-        return await project.deleteServiceInstance(selection);
-      } catch (error) {
-        context.signal.throwIfAborted();
-        if (writeRefused(error)) return readFailure(error);
-        // A lost acknowledgement can still settle from the scoped inventory.
-        return false;
-      }
-    } }),
-    observeAbsent: () => project.observeServiceAbsent(selection),
-    now: Date.now,
-  });
+  const phase = 'deployment.railway.data.delete';
+  let deleteCause: ActionFailureCauseV1 | undefined;
+  try {
+    return await settleDeploymentTargetResourceRemovalV1({
+      ...(observeOnly ? {} : { remove: async () => {
+        try {
+          return await project.deleteServiceInstance(selection);
+        } catch (error) {
+          context.signal.throwIfAborted();
+          if (writeRefused(error)) return readFailure(error);
+          // A lost acknowledgement can still settle from the scoped inventory.
+          deleteCause = {
+            ...projectActionFailureCauseV1(error, phase, { allowUnknownErrorCode: true }),
+            ...(error instanceof RailwayNativeError && error.nativeErrorCode !== undefined
+              ? { nativeErrorCode: error.nativeErrorCode } : {}),
+          };
+          return false;
+        }
+      } }),
+      observeAbsent: () => project.observeServiceAbsent(selection),
+      now: Date.now,
+    });
+  } catch (error) {
+    if (!deleteCause || !isPluginError(error) || error.code !== 'outcome_unknown') throw error;
+    throw withActionFailureDiagnostic(new PluginError({ ...error.data, failureCause: deleteCause }),
+      { phase, causeKind: 'native_failure', error });
+  }
 }

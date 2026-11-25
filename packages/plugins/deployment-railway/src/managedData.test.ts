@@ -157,4 +157,23 @@ describe('adopted Railway database removal', () => {
       if (!acknowledged) expect(h.calls[1]?.variables).toMatchObject({ projectId: 'project-one', environmentId: 'production' });
     } finally { await h.kit.dispose(); }
   });
+
+  it('keeps the Railway DELETE cause when the exact database is still present', async () => {
+    const present = { data: { environment: { id: 'production', projectId: 'project-one',
+      serviceInstances: { edges: [{ node: databaseService }], pageInfo: { endCursor: null, hasNextPage: false } } } } };
+    const h = await host({ errors: [{ extensions: { code: 'INTERNAL_SERVER_ERROR' } }] }, present);
+    try {
+      const { providerAccountId: _account, ...prepared } = preparation(action);
+      await expect(h.kit.invokeAction(action, { ...prepared, ...linkedScope, targetLinkId: 'data-link',
+        expectedTargetLinkRevision: 1 })).rejects.toMatchObject({
+        code: 'outcome_unknown',
+        data: { failureCause: { phase: 'deployment.railway.data.delete', errorCode: 'railway_graphql_unavailable',
+          httpStatus: 200, nativeErrorCode: 'INTERNAL_SERVER_ERROR' } },
+      });
+      expect(h.calls.map(call => call.variables)).toEqual([
+        { environmentId: 'production', id: 'database-one' },
+        { projectId: 'project-one', environmentId: 'production', after: null },
+      ]);
+    } finally { await h.kit.dispose(); }
+  });
 });
