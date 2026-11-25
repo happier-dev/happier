@@ -1978,6 +1978,8 @@ export const de: TranslationStructure = {
         earlierFailuresShow: 'Anzeigen',
         failureGeneric: 'Die freigegebene Aktion ist fehlgeschlagen',
         failureNoReason: 'Es wurde kein Grund aufgezeichnet.',
+        failureDispatchRefused: 'Die Maschine hat die Anfrage nicht angenommen. Die Ursache steht unter Technische Details.',
+        failureUnworded: 'Der Vorgang wurde vor dem Abschluss beendet. Die Ursache steht unter Technische Details.',
         failureNamed: ({ action }: { action: string }) => `Nicht abgeschlossen: ${action}`,
         pluginChangeDaemonUnavailable: 'Happier konnte den Rechner nicht erreichen, um seine Plugins zu ändern, daher wurde nichts geändert.',
         failureNotRun: ({ action }: { action: string }) => `Nicht ausgeführt: ${action}`,

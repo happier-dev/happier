@@ -497,3 +497,19 @@ describe('deploy refused for missing required secrets', () => {
           label: 'Open your own private checkout using projects.open with clone.' } } };
     expect(presentActionFailureOutcome(failure).reason).toBe(failure.details.remediation.label);
  });
+
+describe('approval failure Technical details', () => {
+    it('names a code once: a cause code equal to the Error code is not repeated (W33 G04)', () => {
+        const lines = presentActionFailureTechnicalDetails({ errorCode: 'machine_target_not_current',
+            error: 'Machine 3d46d1fe RPC target refused: requester_unavailable',
+            failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'machine_target_not_current', httpStatus: null } });
+        expect(lines.filter(line => line.value === 'machine_target_not_current')).toHaveLength(1);
+        expect(lines.find(line => line.key === 'failure-cause-phase')?.value).toBe('dispatch');
+    });
+
+    it('keeps a cause code that differs from the Error code', () => {
+        const lines = presentActionFailureTechnicalDetails({ errorCode: 'action_failed', error: 'action_failed',
+            failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'machine_offline', httpStatus: null } });
+        expect(lines.find(line => line.key === 'failure-cause-code')?.value).toBe('machine_offline');
+    });
+});

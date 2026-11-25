@@ -2351,6 +2351,8 @@ export const ja: TranslationStructure = {
     earlierFailuresShow: '表示',
     failureGeneric: '承認した操作に失敗しました',
     failureNoReason: '理由は記録されていません。',
+    failureDispatchRefused: 'マシンがリクエストを受け付けませんでした。原因は技術的な詳細にあります。',
+    failureUnworded: '完了する前に停止しました。原因は技術的な詳細にあります。',
     failureNamed: ({ action }: { action: string }) => `完了できませんでした：${action}`,
     pluginChangeDaemonUnavailable: 'Happier がマシンに接続できずプラグインを変更できなかったため、何も変更されていません。',
     failureNotRun: ({ action }: { action: string }) => `未実行：${action}`,

@@ -2197,6 +2197,8 @@ export const pl: TranslationStructure = {
     earlierFailuresShow: 'Pokaż',
     failureGeneric: 'Zatwierdzona akcja nie powiodła się',
     failureNoReason: 'Nie zapisano przyczyny.',
+    failureDispatchRefused: 'Maszyna nie przyjęła żądania. Przyczyna jest w Szczegółach technicznych.',
+    failureUnworded: 'Zatrzymało się przed zakończeniem. Przyczyna jest w Szczegółach technicznych.',
     failureNamed: ({ action }: { action: string }) => `Nie udało się dokończyć: ${action}`,
     pluginChangeDaemonUnavailable: 'Happier nie połączył się z maszyną, aby zmienić jej wtyczki, więc nic się nie zmieniło.',
     failureNotRun: ({ action }: { action: string }) => `Nie wykonano: ${action}`,

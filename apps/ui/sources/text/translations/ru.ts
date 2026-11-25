@@ -2198,6 +2198,8 @@ export const ru: TranslationStructure = {
     earlierFailuresShow: 'Показать',
     failureGeneric: 'Одобренное действие не выполнено',
     failureNoReason: 'Причина не записана.',
+    failureDispatchRefused: 'Машина не приняла запрос. Причина — в разделе «Технические сведения».',
+    failureUnworded: 'Действие остановилось, не завершившись. Причина — в разделе «Технические сведения».',
     failureNamed: ({ action }: { action: string }) => `Не удалось завершить: ${action}`,
     pluginChangeDaemonUnavailable: 'Happier не смог связаться с машиной, чтобы изменить её плагины, поэтому ничего не изменилось.',
     failureNotRun: ({ action }: { action: string }) => `Не выполнено: ${action}`,

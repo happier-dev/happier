@@ -1622,8 +1622,8 @@ describe('ApprovalDetailScreen', () => {
     }))).toEqual({ status: 'approvals.status.notRun', reason: 'approvals.failureNoReason', failureRow: false });
     expect(await outcomeOf(failedWith({
       errorCode: 'executor_failed', error: 'Executor failed', effectAttempted: true,
-    // An attempted failure with no recorded reason reads "Failed" alone: the title already names what failed.
-    }))).toMatchObject({ reason: undefined, failureRow: false });
+    // An attempted failure whose cause has no words still says, truthfully, that it stopped; its code waits in Technical details.
+    }))).toMatchObject({ reason: 'approvals.failureUnworded', failureRow: false });
   });
 
   it('says what failed when a recorded failure carries only a machine code, never that the decision could not be saved', async () => {
@@ -1644,6 +1644,27 @@ describe('ApprovalDetailScreen', () => {
     expect(await reasonOf('plugin_change_daemon_unavailable')).toBe('approvals.pluginChangeDaemonUnavailable');
     expect(await reasonOf('terminal_busy')).toBe('terminalEmbedded.errors.busy');
     expect(await reasonOf('executor_failed')).toBe('approvals.failureNoReason');
+  });
+
+  it('says a cross-Machine request its target refused at dispatch, and keeps the delivered result apart from the failed run', async () => {
+    // The corridor's record (W33 G04, approval f33cf232): the effect failed at dispatch, and the asking Session got the result.
+    const artifact = await createDaemonRoutedApprovalArtifact();
+    const request = ApprovalRequestV2Schema.parse({
+      ...JSON.parse(artifact.body), status: 'failed', updatedAtMs: 2, automaticChecks: undefined,
+      decision: { kind: 'approve', decidedAtMs: 2 },
+      execution: { executedAtMs: 2, ok: false, errorCode: 'machine_target_not_current',
+        error: 'Machine 3d46d1fe-4eed-4dc2-a72c-716fde062060 RPC target refused: requester_unavailable',
+        failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'machine_target_not_current', httpStatus: null } },
+      delivery: { status: 'accepted', localId: `approval-result:${artifact.id}` },
+    });
+    currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
+    expect(approvalStatus(screen)).toBe('approvals.status.failed');
+    expect(approvalItem(screen, 'approvals.status')?.props.subtitle).toBe('approvals.failureDispatchRefused');
+    expect(approvalItem(screen, 'approvals.result-delivery')?.props.detail).toBe('session.askRecord.sent');
+    expect(screen.getTextContent()).not.toContain('approvals.failureNoReason');
+    await screen.unmount();
   });
 
   it('says a refused request did not run, with its cause, and keeps the executor diagnostic in Technical details', async () => {

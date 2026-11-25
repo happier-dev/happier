@@ -2182,6 +2182,8 @@ export const zhHans: TranslationStructure = {
     earlierFailuresShow: '显示',
     failureGeneric: '已批准的操作失败了',
     failureNoReason: '未记录原因。',
+    failureDispatchRefused: '该机器未接受此请求。原因见技术详情。',
+    failureUnworded: '它在完成前停止了。原因见技术详情。',
     failureNamed: ({ action }: { action: string }) => `未能完成：${action}`,
     pluginChangeDaemonUnavailable: 'Happier 无法连接到这台机器来更改其插件，因此没有任何更改。',
     failureNotRun: ({ action }: { action: string }) => `未执行：${action}`,

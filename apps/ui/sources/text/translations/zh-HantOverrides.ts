@@ -1647,6 +1647,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     earlierFailuresShow: '顯示',
     failureGeneric: '已核准的操作失敗了',
     failureNoReason: '未記錄原因。',
+    failureDispatchRefused: '該機器未接受此請求。原因請見技術詳細資料。',
+    failureUnworded: '它在完成前停止了。原因請見技術詳細資料。',
     failureNamed: ({ action }: { action: string }) => `未能完成：${action}`,
     pluginChangeDaemonUnavailable: 'Happier 無法連線到這台機器來變更其外掛程式，因此沒有任何變更。',
     failureNotRun: ({ action }: { action: string }) => `未執行：${action}`,

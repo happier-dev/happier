@@ -2405,6 +2405,8 @@ export const pt: TranslationStructure = {
     earlierFailuresShow: 'Mostrar',
     failureGeneric: 'A ação aprovada falhou',
     failureNoReason: 'Nenhum motivo foi registrado.',
+    failureDispatchRefused: 'A máquina não aceitou a solicitação. A causa está em Detalhes técnicos.',
+    failureUnworded: 'Parou antes de terminar. A causa está em Detalhes técnicos.',
     failureNamed: ({ action }: { action: string }) => `Não foi possível concluir: ${action}`,
     pluginChangeDaemonUnavailable: 'O Happier não conseguiu alcançar a máquina para alterar seus plugins, então nada foi alterado.',
     failureNotRun: ({ action }: { action: string }) => `Não executado: ${action}`,

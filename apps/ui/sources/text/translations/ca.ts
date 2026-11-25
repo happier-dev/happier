@@ -2204,6 +2204,8 @@ export const ca: TranslationStructure = {
         earlierFailuresShow: 'Mostra',
         failureGeneric: "L'acció aprovada ha fallat",
         failureNoReason: "No s'ha registrat cap motiu.",
+        failureDispatchRefused: 'La màquina no ha acceptat la sol·licitud. La causa és a Detalls tècnics.',
+        failureUnworded: 'S’ha aturat abans d’acabar. La causa és a Detalls tècnics.',
         failureNamed: ({ action }: { action: string }) => `No s'ha pogut completar: ${action}`,
         pluginChangeDaemonUnavailable: "Happier no ha pogut connectar amb la màquina per canviar-ne els connectors, així que no s'ha canviat res.",
         failureNotRun: ({ action }: { action: string }) => `No executada: ${action}`,

@@ -90,8 +90,9 @@ export function presentActionFailureTechnicalDetails(failure: ApprovalFailureDia
     add('failure-cause-phase', t('approvals.failureTechnicalLabels.causePhase'), cause?.phase ?? sourceAdmission?.phase
         ?? (domainFailure && 'phase' in domainFailure ? domainFailure.phase : domainFailure?.nativeCommand?.phase));
     add('failure-error-class', t('approvals.failureTechnicalLabels.errorClass'), cause?.errorClass);
-    add('failure-cause-code', t('approvals.failureTechnicalLabels.causeCode'), cause?.errorCode
-        ?? (domainFailure && 'errorCode' in domainFailure ? domainFailure.errorCode : undefined));
+    // A cause code equal to the Error code says nothing new: the code is named once.
+    const causeCode = cause?.errorCode ?? (domainFailure && 'errorCode' in domainFailure ? domainFailure.errorCode : undefined);
+    add('failure-cause-code', t('approvals.failureTechnicalLabels.causeCode'), causeCode === presented.code ? undefined : causeCode);
     const nativeFailure = scope === 'deployment'
         ? readDeploymentBackupMaintenanceFailureEvidenceV1({ details: failure.details })?.nativeFailure : undefined;
     add('failure-native-exit-code', t('tools.structuredResult.exit'), finiteCommand.success ? finiteCommand.data.exitCode : nativeFailure?.exitCode);
@@ -194,6 +195,18 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
 }
 
 /**
+ * A recorded failure whose code has no sentence of its own still says what happened, from its typed phase:
+ * refused before it was authorized, refused by the target Machine, or stopped before it finished. The code and
+ * the executor's words stay in Technical details. Only a failure that recorded nothing at all says no reason.
+ */
+function readUnwordedFailureReason(failure: ActionExecuteFailure, message: string | null): string | null {
+    const phase = failure.failureCause ? readActionFailureCauseV1(failure.failureCause).phase : null;
+    if (phase === 'execution_authorization') return t('approvals.failureNotAuthorized');
+    if (phase === 'dispatch') return t('approvals.failureDispatchRefused');
+    return message !== null ? t('approvals.failureUnworded') : null;
+}
+
+/**
  * What a settled approval whose effect failed says to a person: a plain headline for the outcome, a readable
  * reason when the failure has one, and the executor's own words and code for the Details disclosure.
  */
@@ -225,8 +238,7 @@ export function presentApprovalFailureOutcome(approval: ApprovalRequest, failure
                     : approval.actionId === 'doc.edit.propose' && approval.status === 'outcome_unknown'
                 ? t('artifacts.browser.proposal.publicationUnknown')
                 // The Home refused the signed request before any effect: its cause, said once.
-                : presented.reason ?? (failure.failureCause && readActionFailureCauseV1(failure.failureCause).phase === 'execution_authorization'
-                    ? t('approvals.failureNotAuthorized') : null),
+                : presented.reason ?? readUnwordedFailureReason(failure, presented.message),
         message: presented.message,
         code: presented.code,
         technicalDetails,

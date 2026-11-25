@@ -580,7 +580,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const originalDelivery = (recordedAnswer?.artifactId === props.artifactId ? recordedAnswer.delivery : undefined)
     ?? (parsed.kind === 'built_in' ? readApprovalResultDelivery(parsed.request) : undefined);
   // The result's delivery is the receipt's own fact, said in the Session ask-record words; a delivered result stays quiet.
-  const deliveryReceipt = presentApprovalResultDelivery(originalDelivery);
+  const deliveryReceipt = presentApprovalResultDelivery(originalDelivery, {
+    sayDelivered: parsed.request.status === 'failed' || parsed.request.status === 'outcome_unknown' });
   const deliveryFailure = deliveryReceipt?.failure ?? null;
   const executionFailureResult = builtInExecutionFailure ?? (parsed.kind === 'host_action'
     || parsed.request.status !== 'failed' && parsed.request.status !== 'outcome_unknown'

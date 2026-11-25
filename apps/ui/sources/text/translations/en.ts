@@ -1772,6 +1772,8 @@ const enApprovals = {
   earlierFailuresShow: 'Show',
   failureGeneric: 'The approved action failed',
   failureNoReason: 'No reason was recorded.',
+  failureDispatchRefused: 'The machine didn’t accept the request. The cause is under Technical details.',
+  failureUnworded: 'It stopped before it finished. The cause is under Technical details.',
   failureNamed: ({ action }: { action: string }) => `Couldn't finish: ${action}`,
   pluginChangeDaemonUnavailable: 'Happier couldn’t reach the Machine to change its plugins, so nothing changed.',
   failureNotRun: ({ action }: { action: string }) => `Not run: ${action}`,

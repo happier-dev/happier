@@ -23,7 +23,7 @@ export function isApprovalResultUndelivered(
 }
 
 export type ApprovalResultDeliveryReceipt = Readonly<{
-  kind: 'not_sent' | 'held' | 'unsure';
+  kind: 'sent' | 'not_sent' | 'held' | 'unsure';
   /** The Session ask-record word for where the result went. */
   detail: string;
   /** Why, when the receipt knows. */
@@ -37,7 +37,17 @@ export type ApprovalResultDeliveryReceipt = Readonly<{
  */
 export function presentApprovalResultDelivery(
   delivery: SessionInputAdmissionResultV1 | undefined,
+  options?: Readonly<{
+    /**
+     * The run failed: a result that did reach the asking Session says so, so a failed run is never
+     * read as a failed delivery. A successful run's delivered result stays quiet.
+     */
+    sayDelivered?: boolean;
+  }>,
 ): ApprovalResultDeliveryReceipt | null {
+  if (options?.sayDelivered && (delivery?.status === 'accepted' || delivery?.status === 'alreadyAccepted')) {
+    return { kind: 'sent', detail: t('session.askRecord.sent'), failure: null };
+  }
   if (delivery?.status === 'rejected') {
     const failure = presentActionFailureOutcome({
       errorCode: delivery.code,
