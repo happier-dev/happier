@@ -1,6 +1,6 @@
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import type { OpenProjectInputV1, OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
+import type { OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import {
     TEAM_SETUP_RUN_ACTION_ID_V1, TeamSetupBatchResultV1Schema, type TeamSetupBatchResultV1,
 } from '@happier-dev/protocol/teams';
@@ -88,12 +88,15 @@ export async function runTeamSetupPlan(params: Readonly<{
         : TeamSetupBatchResultV1Schema.parse({ completed: false, machine: null, machineSettlement: execution, repositories: [] });
 }
 
+/** Where a session starts: an opened checkout, or a registered checkout whose setup is already current. */
+export type TeamSetupSessionTarget = Readonly<{ workspace: Readonly<{ serverId: string }>; directory: string }>;
+
 /** Opening an editable composer is a separate person action, never a side effect of joining or setup. */
 export async function openTeamSetupFirstTask(params: Readonly<{
     executeAction: FrontDoorActionExecute;
     context: TeamSetupActionContext;
     lifetime: ServerAccountScopeLifetime;
-    project: Extract<OpenProjectResultV1, { kind: 'opened' }>;
+    project: TeamSetupSessionTarget;
     machineId: string;
     prompt: string;
 }>) {
@@ -105,7 +108,7 @@ export async function openTeamSetupFirstTask(params: Readonly<{
 
 /** The composer seed for one opened checkout; a blank prompt opens an empty draft (the seed owner refuses blank text). */
 export function buildTeamSetupFirstTaskInput(params: Readonly<{
-    project: Extract<OpenProjectResultV1, { kind: 'opened' }>;
+    project: TeamSetupSessionTarget;
     machineId: string;
     prompt: string;
 }>) {

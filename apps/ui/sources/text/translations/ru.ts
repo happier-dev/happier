@@ -2029,6 +2029,7 @@ export const ru: TranslationStructure = {
         ...actionOperationInboxTranslations,
         actionOperations: {
             ...actionOperationInboxTranslations.actionOperations,
+            setupReviewTitle: ({ project }: { project: string }) => `Настроить ${project}`,
             openBackups: 'Открыть резервные копии',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
                 outcomeUncertain: 'Результат не подтверждён. Проверьте машину.',

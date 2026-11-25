@@ -2035,6 +2035,7 @@ export const ca: TranslationStructure = {
         ...actionOperationInboxTranslations,
         actionOperations: {
             ...actionOperationInboxTranslations.actionOperations,
+            setupReviewTitle: ({ project }: { project: string }) => `Configura ${project}`,
             openBackups: 'Obre les còpies de seguretat',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
                 outcomeUncertain: 'Resultat sense confirmar. Comprova la màquina.',

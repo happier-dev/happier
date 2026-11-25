@@ -2201,6 +2201,7 @@ export const es: TranslationStructure = {
         ...actionOperationInboxTranslations,
         actionOperations: {
             ...actionOperationInboxTranslations.actionOperations,
+            setupReviewTitle: ({ project }: { project: string }) => `Configurar ${project}`,
             openBackups: 'Abrir copias de seguridad',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
                 outcomeUncertain: 'Resultado sin confirmar. Revisa la máquina.',

@@ -17553,6 +17553,8 @@ const spanish: TeamsTranslationRoot = {
                 statusReady: 'Listo',
                 repositoryReadyNotice: ({ repository }) => `${repository} está listo`,
                 repositoryReadyStart: ({ repository }) => `Empezar en ${repository}`,
+                heldTitle: 'Esperándote',
+                heldReason: ({ repository }: { repository: string }) => `La configuración inicial de ${repository} espera tu revisión.`,
                 statusApproval: 'Esperando aprobación',
                 statusFailed: 'No se pudo abrir',
                 partial: 'Algunos pasos de configuración todavía requieren atención',

@@ -1809,6 +1809,7 @@ export const de: TranslationStructure = {
         ...actionOperationInboxTranslations,
         actionOperations: {
             ...actionOperationInboxTranslations.actionOperations,
+            setupReviewTitle: ({ project }: { project: string }) => `${project} einrichten`,
             openBackups: 'Backups öffnen',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
                 outcomeUncertain: 'Ergebnis nicht bestätigt. Prüfe den Rechner.',

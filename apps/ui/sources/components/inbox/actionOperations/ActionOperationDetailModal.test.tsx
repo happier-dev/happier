@@ -89,10 +89,48 @@ describe('ActionOperationDetailModal', () => {
                 reviewedEffectDigest: 'reviewed', reviewedEffect: {} },
         });
         actionOperationStore.mergeSnapshots({ serverId, snapshots: [snapshot] });
-        const screen = await renderScreen(<ActionOperationDetailModal serverId={serverId} operationId={snapshot.operationId} onClose={vi.fn()} />);
+        const setChrome = vi.fn();
+        const screen = await renderScreen(<ActionOperationDetailModal serverId={serverId} operationId={snapshot.operationId} onClose={vi.fn()} setChrome={setChrome} />);
 
         expect(screen.findByTestId('project-setup-session-review:team-source-setup')).not.toBeNull();
         expect(screen.findByTestId('action-operation-cancel')).toBeNull();
+        // The open review leads the dialog, named after its project, as a sheet on a phone: no status pill, Machine,
+        // elapsed time, output or Collapse restate what its question and its own Run setup / Deny already say.
+        const text = screen.getTextContent();
+        expect(text).not.toContain('inbox.actionOperations.elapsed');
+        expect(text).not.toContain('inbox.actionOperations.machine');
+        expect(text).not.toContain('projects.scripts.output.title');
+        expect(screen.findByTestId('action-operation-collapse')).toBeNull();
+        expect(setChrome).toHaveBeenLastCalledWith(expect.objectContaining({
+            title: 'inbox.actionOperations.setupReviewTitle', phonePresentation: 'sheet',
+        }));
+    });
+
+    it('keeps the ordinary detail for a live Project preparation without an open setup review', async () => {
+        // Parity for every other consumer: without an open review, the status, Machine, elapsed time, output and
+        // Collapse render exactly as before, in a centred card titled by the operation.
+        const serverId = await homes.addHome({ name: 'Setup Home', serverUrl: 'https://modal-setup-plain.test', accountId: 'account-1' });
+        const snapshot = ActionOperationSnapshotV1Schema.parse({
+            version: 1, operationId: 'team-source-setup-running', revision: 1, actionId: 'projects.prepare',
+            state: 'running', scope: { accountId: 'account-1', machineId: 'machine-1' },
+            title: 'Set up a project', createdAt: 100, startedAt: 110, cancellation: 'supported',
+            domainRef: { kind: 'projectCommand', purpose: 'setup', serverId, machineId: 'machine-1',
+                workspaceRefId: 'checkout', cwd: '/repo',
+                sourceWorkspace: { serverId, machineId: 'machine-1', workspaceId: 'checkout', rootPath: '/repo' } },
+        });
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [snapshot] });
+        const setChrome = vi.fn();
+        const screen = await renderScreen(<ActionOperationDetailModal serverId={serverId} operationId={snapshot.operationId} onClose={vi.fn()} setChrome={setChrome} />);
+        try {
+            const text = screen.getTextContent();
+            expect(text).toContain('inbox.actionOperations.elapsed');
+            expect(text).toContain('inbox.actionOperations.machine');
+            expect(text).toContain('projects.scripts.output.title');
+            expect(screen.findByTestId('action-operation-collapse')).not.toBeNull();
+            const chrome = setChrome.mock.lastCall?.[0];
+            expect(chrome).toMatchObject({ title: 'Set up a project' });
+            expect(chrome).not.toHaveProperty('phonePresentation');
+        } finally { await screen.unmount(); }
     });
 
     it('opens the exact Workflow recovery from a failed Machine Setup receipt', async () => {

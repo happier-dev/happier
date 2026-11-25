@@ -78,21 +78,19 @@ export function TeamSetupSourceChangeNotice(
 }
 
 /**
- * Reads the existing per-checkout setup inspection for one listed row (demand-owned, never scheduled, no writes) and
- * shows the daemon's pending shared setup. Review opens the checkout's Scripts page, where the review and apply live.
+ * Reads the existing per-checkout setup inspection for one listed row (demand-owned, never scheduled, no writes): the
+ * daemon's pending shared setup, which Review opens on the checkout's Scripts page where the review and apply live,
+ * and the checkout's current setup readiness, which lets a row say Ready after a cold return without a run.
  */
-export const TeamSetupSourceChange = React.memo(function TeamSetupSourceChange(
-  props: Readonly<{
-    source: ProjectSourceV1;
-    teamName: string;
-    checkout: WorkspaceRefV1;
-  }>,
-) {
-  const { checkout, source } = props;
+export function useTeamSetupCheckoutSetup(source: ProjectSourceV1, checkout: WorkspaceRefV1 | null): Readonly<{
+  pending: ProjectPendingSharedSetupV1 | null;
+  ready: boolean;
+  onReview: () => void;
+}> {
   const router = useRouter();
-  const { binding } = useServerCredentialAccountScopeBinding(checkout.serverId);
+  const { binding } = useServerCredentialAccountScopeBinding(checkout?.serverId);
   const address = React.useMemo(
-    () => workspaceAddressFromRefV1(checkout),
+    () => (checkout ? workspaceAddressFromRefV1(checkout) : null),
     [checkout],
   );
   // The listed Source already carries the publication metadata. Only a changed
@@ -100,7 +98,7 @@ export const TeamSetupSourceChange = React.memo(function TeamSetupSourceChange(
   const setup = source.attachments?.find((attachment) => attachment.purpose === 'setup');
   const publication = setup ? JSON.stringify([source.id, setup.ref.artifactId, setup.ref.serverId,
     setup.contentRevision.headerVersion, setup.contentRevision.bodyVersion]) : null;
-  const { effectiveDefinition } = useProjectDefinitionInspection(
+  const { read, effectiveDefinition } = useProjectDefinitionInspection(
     address,
     binding,
     SETUP_READ,
@@ -110,25 +108,23 @@ export const TeamSetupSourceChange = React.memo(function TeamSetupSourceChange(
     effectiveDefinition?.kind === 'available'
       ? (effectiveDefinition.value.pendingSharedSetup ?? null)
       : null;
-  const review = React.useCallback(
-    () =>
-      router.push(
-        buildProjectRouteHref({
-          workspaceRefId: checkout.id,
-          serverId: checkout.serverId,
-          segment: 'scripts',
-          activeRootPath: checkout.rootPath,
-          defaultRootPath: checkout.rootPath,
-        }) as never,
-      ),
-    [checkout, router],
-  );
-  return pending ? (
-    <TeamSetupSourceChangeNotice
-      sourceId={source.id}
-      teamName={props.teamName}
-      pending={pending}
-      onReview={review}
-    />
-  ) : null;
-});
+  const readiness = read && !('error' in read) ? read.value.setupReadiness ?? null : null;
+  const onReview = React.useCallback(() => {
+    if (!checkout) return;
+    router.push(
+      buildProjectRouteHref({
+        workspaceRefId: checkout.id,
+        serverId: checkout.serverId,
+        segment: 'scripts',
+        activeRootPath: checkout.rootPath,
+        defaultRootPath: checkout.rootPath,
+      }) as never,
+    );
+  }, [checkout, router]);
+  return {
+    pending,
+    // The checkout owner's own fact: its reviewed setup is current, or it has none to run.
+    ready: !pending && (readiness?.kind === 'current' || readiness?.kind === 'notRequired'),
+    onReview,
+  };
+}

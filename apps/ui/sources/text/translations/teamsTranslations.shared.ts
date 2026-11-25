@@ -879,6 +879,8 @@ export const english = {
                 statusReady: 'Ready',
                 repositoryReadyNotice: ({ repository }: { repository: string }) => `${repository} is ready`,
                 repositoryReadyStart: ({ repository }: { repository: string }) => `Start on ${repository}`,
+                heldTitle: 'Waiting for you',
+                heldReason: ({ repository }: { repository: string }) => `${repository}’s first-time setup is waiting for your review.`,
                 statusApproval: 'Waiting for approval',
                 statusFailed: 'Couldn’t open',
                 partial: 'Some setup steps still need attention',

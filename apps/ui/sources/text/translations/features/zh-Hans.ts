@@ -17493,6 +17493,8 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 statusReady: '就绪',
                 repositoryReadyNotice: ({ repository }) => `${repository} 已就绪`,
                 repositoryReadyStart: ({ repository }) => `在 ${repository} 中启动`,
+                heldTitle: '等待你处理',
+                heldReason: ({ repository }: { repository: string }) => `${repository} 的首次设置正在等待你审核。`,
                 statusApproval: '等待批准',
                 statusFailed: '无法打开',
                 partial: '部分设置步骤仍需处理',

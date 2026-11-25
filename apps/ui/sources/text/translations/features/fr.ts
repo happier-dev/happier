@@ -17674,6 +17674,8 @@ const french: TeamsTranslationRoot = {
                 statusReady: 'Prêt',
                 repositoryReadyNotice: ({ repository }) => `${repository} est prêt`,
                 repositoryReadyStart: ({ repository }) => `Démarrer dans ${repository}`,
+                heldTitle: 'En attente de vous',
+                heldReason: ({ repository }: { repository: string }) => `La première configuration de ${repository} attend votre validation.`,
                 statusApproval: 'En attente d’approbation',
                 statusFailed: 'Ouverture impossible',
                 partial: 'Certaines étapes de configuration nécessitent encore une intervention',

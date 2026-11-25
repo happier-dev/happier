@@ -18,6 +18,8 @@ import { ConnectedServiceMark } from '@/components/settings/connectedServices/Co
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SkeletonTitle } from '@/components/ui/lists/SkeletonRows';
+import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { useMachineField, useSetting } from '@/sync/store/hooks';
 import { t } from '@/text';
 
@@ -122,7 +124,7 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
     connectedServiceKey?: string;
   }>,
 ) {
-  const { items: rows, start } = useMachineCliSignIns({
+  const { items: rows, start, phase } = useMachineCliSignIns({
     serverId: props.serverId,
     machineId: props.machineId,
     presented: props.presented,
@@ -178,10 +180,25 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
     }), { tag: 'MachineSignIns.useConnected' });
   }, [accounts, defaultAccounts, execution, props.machineId, props.serverId, router]);
   // The owner lists only CLIs installed on this Machine (512b12e307d); each row says what the Machine reported.
-  if (rows.length === 0) return null;
+  // While the Machine reports its CLIs the section holds one row's shape, so the rows that land replace it in place
+  // instead of pushing the page down. A Machine that reports none drops the held section.
+  if (rows.length === 0 && phase !== 'loading') return null;
   return <MachineSignInsList serverId={props.serverId} machineId={props.machineId} machineName={props.machineName}
     rows={rows} editable={props.editable} onSignIn={(row) => { void open(row); }} onUseConnected={useConnected} />;
 });
+
+/** One sign-in row's shape (its name and status lines) while the Machine's report is still arriving. */
+function MachineSignInsHeldRow() {
+  const rowMetrics = usePageRowMetrics();
+  return (
+    <Item
+      testID="machine-setup-sign-ins-loading"
+      title={<SkeletonTitle lineHeight={rowMetrics.title.lineHeight} />}
+      subtitle={<SkeletonTitle lineHeight={rowMetrics.subtitle.lineHeight} />}
+      showChevron={false}
+    />
+  );
+}
 
 /** The rows themselves, drawn from the owner's reported rows; the section and its `/dev` specimen both mount it. */
 export const MachineSignInsList = React.memo(function MachineSignInsList(
@@ -205,6 +222,7 @@ export const MachineSignInsList = React.memo(function MachineSignInsList(
         machine: props.machineName,
       })}
     >
+      {props.rows.length === 0 ? <MachineSignInsHeldRow /> : null}
       {props.rows.map((row) => (
         <Item
           key={row.id}

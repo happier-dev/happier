@@ -2182,6 +2182,7 @@ export const ja: TranslationStructure = {
         ...actionOperationInboxTranslations,
         actionOperations: {
             ...actionOperationInboxTranslations.actionOperations,
+            setupReviewTitle: ({ project }: { project: string }) => `${project} をセットアップ`,
             openBackups: 'バックアップを開く',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
                 outcomeUncertain: '結果を確認できていません。マシンを確認してください。',

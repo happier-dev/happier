@@ -17631,6 +17631,8 @@ const catalan: TeamsTranslationRoot = {
                 statusReady: 'Llest',
                 repositoryReadyNotice: ({ repository }) => `${repository} està a punt`,
                 repositoryReadyStart: ({ repository }) => `Comença a ${repository}`,
+                heldTitle: 'Esperant-te',
+                heldReason: ({ repository }: { repository: string }) => `La configuració inicial de ${repository} espera la teva revisió.`,
                 statusApproval: 'Esperant aprovació',
                 statusFailed: 'No s’ha pogut obrir',
                 partial: 'Alguns passos de configuració encara necessiten atenció',

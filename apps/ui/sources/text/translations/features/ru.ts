@@ -17642,6 +17642,8 @@ const russian: TeamsTranslationRoot = {
                 statusReady: 'Готово',
                 repositoryReadyNotice: ({ repository }) => `Репозиторий ${repository} готов`,
                 repositoryReadyStart: ({ repository }) => `Начать работу в ${repository}`,
+                heldTitle: 'Ждёт вас',
+                heldReason: ({ repository }: { repository: string }) => `Первоначальная настройка ${repository} ждёт вашей проверки.`,
                 statusApproval: 'Ждёт одобрения',
                 statusFailed: 'Не удалось открыть',
                 partial: 'Некоторые шаги настройки всё ещё требуют внимания',

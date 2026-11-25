@@ -2013,6 +2013,7 @@ export const zhHans: TranslationStructure = {
         ...actionOperationInboxTranslations,
         actionOperations: {
             ...actionOperationInboxTranslations.actionOperations,
+            setupReviewTitle: ({ project }: { project: string }) => `设置 ${project}`,
             openBackups: '打开备份',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
                 outcomeUncertain: '结果尚未确认。请检查机器。',

@@ -76,6 +76,13 @@ it('reopens an exact held checkout on cold Team Setup entry without offering a f
         await act(async () => reconcileActionOperationsOnce({ scope: { ...scope, machineId }, list }));
         expect(screen.findByTestId('team-setup-run')).toBeNull();
         expect(screen.findByTestId('team-setup-repository-include:shared-earlier')).not.toBeNull();
+        // The page opens on the Machine the hold waits on (none was chosen on this device): the rail stays with the
+        // held review as its one pointer, every row says where it lives there, and the other include is locked.
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('/checkout/later'));
+        expect(screen.getTextContent()).toContain('/other');
+        expect(screen.findByTestId('team-setup-before')).not.toBeNull();
+        expect(screen.findByTestId('team-setup-held')).not.toBeNull();
+        expect(screen.findByTestId('team-setup-repository-include:shared-earlier')?.props.disabled).toBe(true);
         expect(screen.findByTestId('team-setup-repository-include:shared-later')).toBeNull();
         await screen.pressByTestIdAsync('team-setup-repository:shared-later');
         await waitForHomeGovernance(() => expect(screen.findByTestId('project-setup-session-review:exact-hold')).not.toBeNull());

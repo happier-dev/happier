@@ -17432,6 +17432,8 @@ const german: TeamsTranslationRoot = {
                 statusReady: 'Bereit',
                 repositoryReadyNotice: ({ repository }) => `${repository} ist bereit`,
                 repositoryReadyStart: ({ repository }) => `In ${repository} starten`,
+                heldTitle: 'Wartet auf dich',
+                heldReason: ({ repository }: { repository: string }) => `Die Ersteinrichtung von ${repository} wartet auf deine Prüfung.`,
                 statusApproval: 'Wartet auf Freigabe',
                 statusFailed: 'Konnte nicht geöffnet werden',
                 partial: 'Einige Einrichtungsschritte benötigen noch Aufmerksamkeit',

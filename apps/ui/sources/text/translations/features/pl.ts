@@ -17641,6 +17641,8 @@ const polish: TeamsTranslationRoot = {
                 statusReady: 'Gotowe',
                 repositoryReadyNotice: ({ repository }) => `Repozytorium ${repository} jest gotowe`,
                 repositoryReadyStart: ({ repository }) => `Rozpocznij w ${repository}`,
+                heldTitle: 'Czeka na Ciebie',
+                heldReason: ({ repository }: { repository: string }) => `Pierwsza konfiguracja ${repository} czeka na Twoją akceptację.`,
                 statusApproval: 'Czeka na zatwierdzenie',
                 statusFailed: 'Nie udało się otworzyć',
                 partial: 'Niektóre kroki konfiguracji nadal wymagają uwagi',

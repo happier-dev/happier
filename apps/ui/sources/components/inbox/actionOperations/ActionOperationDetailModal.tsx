@@ -36,7 +36,9 @@ import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { useSessionAudienceContext } from '@/hooks/teams/useSessionAudienceContext';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
-import { useSessionListHomeObservations } from '@/sync/store/hooks';
+import { useSessionListHomeObservations, useWorkspaceRefsSelector } from '@/sync/store/hooks';
+import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
+import { resolveWorkspacePathBasenameV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
 import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 
@@ -184,6 +186,15 @@ export const ActionOperationDetailModal = React.memo(
     );
     const setupReviewScope = setupReviewBinding?.isCurrent()
       && setupReviewBinding.accountId === operation?.snapshot.scope.accountId ? setupReviewBinding.scope : null;
+    // An open setup review is the one decision this operation waits on: it leads, named after its project, and
+    // nothing above it restates the status or the Machine its question already names.
+    const reviewLeads = Boolean(operation?.snapshot.setupReview && setupReviewScope);
+    const reviewWorkspace = reviewLeads && operation?.snapshot.domainRef?.kind === 'projectCommand'
+      ? operation.snapshot.domainRef.sourceWorkspace ?? null : null;
+    const reviewWorkspaceRef = useWorkspaceRefsSelector(React.useCallback((refs) => reviewWorkspace
+      ? refs.find((ref) => ref.id === reviewWorkspace.workspaceId) ?? null : null, [reviewWorkspace?.workspaceId]));
+    const reviewProject = reviewWorkspaceRef ? resolveWorkspaceRefDisplayName(reviewWorkspaceRef)
+      : reviewWorkspace ? resolveWorkspacePathBasenameV1(reviewWorkspace.rootPath) ?? null : null;
     const session = useSessionListRenderableWithServerScope(
       exactServerId,
       exactServerId && sessionId ? sessionId : '',
@@ -233,18 +244,20 @@ export const ActionOperationDetailModal = React.memo(
     React.useEffect(() => {
       props.setChrome?.({
         kind: 'card',
-        title:
-          operation?.snapshot.title ??
-          t('inbox.actionOperations.unavailableTitle'),
+        title: reviewProject
+          ? t('inbox.actionOperations.setupReviewTitle', { project: reviewProject })
+          : operation?.snapshot.title ?? t('inbox.actionOperations.unavailableTitle'),
         testID: 'action-operation-detail',
         titleTestID: 'action-operation-detail-heading',
         // The dialog preset's own height bound holds the card in the window; its body scrolls inside (FIN P4).
         scrollHost: 'bounded',
         bodyScroll: 'auto',
         dimensions: { size: 'dialog' },
+        // A decision on a phone sits in thumb reach, as every approval review does.
+        ...(reviewLeads ? { phonePresentation: 'sheet' as const } : {}),
       });
       return () => props.setChrome?.(null);
-    }, [operation?.snapshot.title, props.setChrome]);
+    }, [operation?.snapshot.title, props.setChrome, reviewLeads, reviewProject]);
 
     const previousOperation = React.useRef(operation);
     React.useEffect(() => {
@@ -364,9 +377,20 @@ export const ActionOperationDetailModal = React.memo(
         });
     };
 
+    const setupReviewCard = reviewLeads && setupReviewScope ? (
+      <ProjectSetupConsentReviewCard
+        operation={operation}
+        scope={setupReviewScope}
+        decided={null}
+        canApprovePermissions
+        onDecided={props.onClose}
+      />
+    ) : null;
+    const hasDetailRows = !reviewLeads || Boolean(pluginIdentity) || Boolean(sessionId) || detail.fields.length > 0;
+
     return (
       <View style={styles.body}>
-        <View
+        {reviewLeads ? setupReviewCard : <View
           accessibilityLiveRegion="polite"
           style={[
             styles.hero,
@@ -431,7 +455,7 @@ export const ActionOperationDetailModal = React.memo(
               </Text>
             ) : null}
           </View>
-        </View>
+        </View>}
 
         {isolationUnknown ? (
           <AgentIsolationRecovery
@@ -454,7 +478,8 @@ export const ActionOperationDetailModal = React.memo(
           </ItemGroup>
         ) : null}
 
-        <ItemGroup title={t('inbox.actionOperations.details')}>
+        {hasDetailRows ? (
+          <ItemGroup title={t('inbox.actionOperations.details')}>
           {pluginIdentity ? (
             <Item
               mode="info"
@@ -462,16 +487,18 @@ export const ActionOperationDetailModal = React.memo(
               subtitle={pluginIdentity}
             />
           ) : null}
-          <Item
-            mode="info"
-            title={t('inbox.actionOperations.machine')}
-            subtitle={joinHappierFacts(
-              sourceContext.machineTitle ??
-                projectCommandRef?.machineId ??
-                snapshot.scope.machineId,
-              sessionId ? null : sourceContext.contextLine,
-            )}
-          />
+          {reviewLeads ? null : (
+            <Item
+              mode="info"
+              title={t('inbox.actionOperations.machine')}
+              subtitle={joinHappierFacts(
+                sourceContext.machineTitle ??
+                  projectCommandRef?.machineId ??
+                  snapshot.scope.machineId,
+                sessionId ? null : sourceContext.contextLine,
+              )}
+            />
+          )}
           {sessionId ? (
             <Item
               mode="info"
@@ -482,15 +509,18 @@ export const ActionOperationDetailModal = React.memo(
               )}
             />
           ) : null}
-          <Item
-            mode="info"
-            title={
-              terminal
-                ? t('inbox.actionOperations.settled')
-                : t('inbox.actionOperations.elapsed')
-            }
-            subtitle={formatActionOperationAge(snapshot)}
-          />
+          {/* A held review is waiting, not running: an elapsed time would read as work in progress. */}
+          {reviewLeads ? null : (
+            <Item
+              mode="info"
+              title={
+                terminal
+                  ? t('inbox.actionOperations.settled')
+                  : t('inbox.actionOperations.elapsed')
+              }
+              subtitle={formatActionOperationAge(snapshot)}
+            />
+          )}
           {detail.fields.map((field) => (
             <Item
               key={field.id}
@@ -500,7 +530,8 @@ export const ActionOperationDetailModal = React.memo(
               subtitle={translateDetailFieldValue(field, detail.kind)}
             />
           ))}
-        </ItemGroup>
+          </ItemGroup>
+        ) : null}
 
         {attempts.length > 1 ? (
           <ItemGroup title={t('inbox.actionOperations.attempts')}>
@@ -518,16 +549,6 @@ export const ActionOperationDetailModal = React.memo(
           </ItemGroup>
         ) : null}
 
-        {snapshot.setupReview && setupReviewScope ? (
-          <ProjectSetupConsentReviewCard
-            operation={operation}
-            scope={setupReviewScope}
-            decided={null}
-            canApprovePermissions
-            onDecided={props.onClose}
-          />
-        ) : null}
-
         {detail.agentIsolationReview ? (
           <AgentIsolationReview
             operation={operation}
@@ -536,14 +557,15 @@ export const ActionOperationDetailModal = React.memo(
         ) : null}
 
         {detail.machineSetup ? <MachineSetupStepsChecklist operation={operation} attachment={detail.machineSetup} /> : null}
-        {detail.projectCommand?.steps?.length ? (
+        {/* The open review already lists the reviewed steps, and nothing has run to show output for. */}
+        {!reviewLeads && detail.projectCommand?.steps?.length ? (
           <MachineSetupStepsChecklist operation={operation} attachment={detail.projectCommand} stepOutput
             title={describeProjectCommandPurpose(detail.projectCommand.purpose)} />
         ) : null}
         {detail.machineFirewallRecovery ? <MachineFirewallRecovery recovery={detail.machineFirewallRecovery} /> : null}
 
         {/* Setup without attached output would only restate the status and Machine shown above. */}
-        {detail.projectCommand || detail.machineSetup?.terminalId ? (
+        {!reviewLeads && (detail.projectCommand || detail.machineSetup?.terminalId) ? (
           <ItemGroup title={t('projects.scripts.output.title')}>
             <Item
               testID="action-operation-project-command.target"
@@ -679,7 +701,8 @@ export const ActionOperationDetailModal = React.memo(
             testID="action-operation-investigate" />
         </SectionContentRow> : null}
 
-        <ActionOperationDetailControls
+        {/* The review's own Run setup and Deny are this dialog's actions; Collapse would only repeat its close. */}
+        {reviewLeads ? null : <ActionOperationDetailControls
           operation={operation}
           terminal={terminal}
           canCancel={Boolean(operation.serverId) && detail.canCancel && !setupReviewScope}
@@ -741,7 +764,7 @@ export const ActionOperationDetailModal = React.memo(
               ) : null}
             </>
           }
-        />
+        />}
       </View>
     );
   },

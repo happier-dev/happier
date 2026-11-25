@@ -17553,6 +17553,8 @@ const japanese: TeamsTranslationRoot = {
                 statusReady: '準備完了',
                 repositoryReadyNotice: ({ repository }) => `${repository} の準備ができました`,
                 repositoryReadyStart: ({ repository }) => `${repository} で開始`,
+                heldTitle: 'あなたの対応待ち',
+                heldReason: ({ repository }: { repository: string }) => `${repository} の初回セットアップがあなたの確認を待っています。`,
                 statusApproval: '承認待ち',
                 statusFailed: '開けませんでした',
                 partial: '一部のセットアップ手順に対応が必要です',
