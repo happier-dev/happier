@@ -59,7 +59,7 @@ import { ResourceProposalBody } from './resourceProposal/ResourceProposalBody';
 import { resolveResourceProposalLabels } from './resourceProposal/resourceProposalLabels';
 import { useResourceProposalCheck } from './resourceProposal/useResourceProposalCheck';
 import { ConfidentialSecretApproval } from './ConfidentialSecretApproval';
-import { readConfidentialFillSettlement } from './confidentialSecretApprovalModel';
+import { readConfidentialFillSettlement, resolveConfidentialFillOutcome } from './confidentialSecretApprovalModel';
 import { useActionApprovalReview, readApprovalCannotRunReason } from './actionApprovalReview';
 import { useComputerApprovalChoice } from './useComputerApprovalChoice';
 import { useEnvironmentBindingApprovalChoice } from './useEnvironmentBindingApprovalChoice';
@@ -601,12 +601,15 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   // A confidential entry that did not happen is said here, from its durable record, in the entry's own words.
   const recordedFill = parsed.kind === 'built_in' ? readConfidentialFillSettlement(parsed.request) : null;
   const fillNotEntered = recordedFill !== null && recordedFill.status !== 'filled';
+  const fillOutcome = fillNotEntered && recordedFill.status !== 'canceled' ? resolveConfidentialFillOutcome(recordedFill) : null;
   // The shared outcome owns the summary: executor prose already sits in Technical details, so it never
   // leads here; "no reason" is said only when nothing was recorded.
   const failureSummary = executionFailure === null ? undefined : failureOutcome
     ? failureOutcome.reason ?? (failureOutcome.message === null ? t('approvals.failureNoReason') : undefined)
-    : fillNotEntered ? undefined : executionFailure.reason;
-  const failureStatement = executionFailure && !readApprovalAutomaticChecksCarryRefusal(automaticChecks) ? failureSummary : undefined;
+    : executionFailure.reason;
+  const failureStatement = fillNotEntered
+    ? fillOutcome ? joinHappierFacts(fillOutcome.title, fillOutcome.detail) : undefined
+    : readApprovalAutomaticChecksCarryRefusal(automaticChecks) ? undefined : failureSummary;
   // One Technical details disclosure per page: the failure's code joins the arguments' own lines when
   // the Details card is shown, and otherwise sits with the failure.
   const failureCodeInDetails = Boolean((executionFailure?.code || deliveryFailure) && shownActionFields && shownActionFields.rows.length > 0
@@ -629,7 +632,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const statusFollowsFacts = (deploymentDecision !== null || confidentialApproval !== null || confidentialInputs !== null)
     && parsed.request.status === 'open';
   const open = parsed.request.status === 'open' && !answeredWhileOpen;
-  const requestNotice = Boolean(deliveryFailure || executionFailure || (cannotRun && parsed.request.status === 'open') || approvalRouteUnavailable);
+  const requestNotice = Boolean(fillOutcome || deliveryFailure || executionFailure || (cannotRun && parsed.request.status === 'open') || approvalRouteUnavailable);
   const previewShown = parsed.kind === 'built_in' && Boolean(previewSummary) && !deploymentDecision && !computerAction;
   // A request with nothing else to say reads its status as one header fact, not a section of one row, while it waits and
   // after it settles, so Executed or Declined replaces Pending in place (DESIGN-ACCEPT-7 NF-24). A settled request whose
