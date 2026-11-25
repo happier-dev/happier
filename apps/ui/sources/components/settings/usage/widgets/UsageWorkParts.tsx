@@ -15,7 +15,6 @@ import { UsageWorkProviderMark, usageWorkProviderIdentities, usageWorkProviderNa
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { readUsageWorkOutcomesEvidence } from './usageWorkPresentation';
-import { canRetryUsageCoverageFailure } from '@/sync/api/account/usageReadFailure';
 import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
 import type {
   UsageWorkIdentities,
@@ -48,15 +47,11 @@ export function usageWorkRetainedChangeLine(changes: readonly UsageWorkRetainedC
   }).join(' · ');
 }
 
-/**
- * Present the Work owner's unread counts. A settled partial result whose Sessions failed retryably also names its
- * Retry (`retryLabel`, the control's accessible name), said beside the gap; Sessions on unreachable Machines alone
- * have none, since a reread cannot change them (acceptance r226 J-B46).
- */
-export function usageWorkLinksNotice(slice: UsageQueryResultSlice): Readonly<{ title: string; cause: string | null; retryLabel: string | null }> {
+/** Present the Work owner's unread counts. The page header owns the Retry for a retryable gap (ruling 11-25). */
+export function usageWorkLinksNotice(slice: UsageQueryResultSlice): Readonly<{ title: string; cause: string | null }> {
   const source = slice.sources.find(row => row.source === 'work');
   if (source?.status !== 'partial' || readUsageWorkOutcomesEvidence(slice, 'work') === 'observed') {
-    return { title: t('usage.board.work.workUnavailableTitle'), cause: null, retryLabel: null };
+    return { title: t('usage.board.work.workUnavailableTitle'), cause: null };
   }
   const unread = source.unreadSessions ?? {};
   const other = (unread.not_entitled ?? 0) + (unread.timed_out ?? 0) + (unread.failed ?? 0);
@@ -67,11 +62,7 @@ export function usageWorkLinksNotice(slice: UsageQueryResultSlice): Readonly<{ t
       : source.errorCode === 'machine_offline' ? t('usage.board.work.workUnreadUnreachableSome') : null,
     unreadOther,
   ].filter(Boolean).join(' · ');
-  // The Retry's name counts only what it can change: Sessions that failed or timed out, never refused ones.
-  const retryable = (unread.timed_out ?? 0) + (unread.failed ?? 0);
-  const retryLabel = !canRetryUsageCoverageFailure(source) ? null
-    : retryable > 0 ? `${t('common.retry')}: ${t('usage.board.work.workUnreadOther', formatCount(retryable))}` : t('common.retry');
-  return { title: t('usage.board.work.workPartialTitle'), cause: cause || null, retryLabel };
+  return { title: t('usage.board.work.workPartialTitle'), cause: cause || null };
 }
 
 /**

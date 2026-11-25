@@ -26,7 +26,7 @@ import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
 import { clearProjectedAgentUiBehaviorDescriptors, publishProjectedAgentUiBehaviorDescriptors } from '@/agents/registry/agentUiBehaviorProjection';
 import { isUsageObservationFromEarlierDay } from '@/sync/domains/usage/usageCalendarPresentation';
-import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageFailure, readUsagePageFreshness, readUsagePageWorkOffline, readUsagePageWorkRetryPlacement,readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useUsageAnalyticsView } from './usageBodyKit';
+import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageFailure, readUsagePageFreshness, readUsagePageWorkOffline,readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useUsageAnalyticsView } from './usageBodyKit';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -513,11 +513,13 @@ describe('shared Usage identity and dependent coverage', () => {
                 refused: failure?.scopeRefusal != null };
         };
         const failedWork = t('usage.board.page.coverageFailed', { sources: usageSourceTitle('work') });
-        // Settled with evidence: Machines unreachable, Sessions that failed retryably, or both. Nothing in the header.
+        // Settled with evidence and only unreachable Machines behind the gap: nothing in the header.
         expect.soft(header({ status: 'partial', errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 1229 } }))
             .toEqual({ reason: null, retry: false, offline: false, refused: false });
+        // Some Sessions failed retryably inside the settled answer: a quiet true line in the page's partial-coverage
+        // pattern, with the page's one Retry; never the outage line (ruling 11-25 00:15Z).
         expect.soft(header({ status: 'partial', errorCode: 'work_evidence_failed', unreadSessions: { machine_unavailable: 1229, failed: 2 } }))
-            .toEqual({ reason: null, retry: false, offline: false, refused: false });
+            .toEqual({ reason: t('usage.board.page.coverageWitnessed', { sources: usageSourceTitle('work') }), retry: true, offline: false, refused: false });
         expect.soft(header({ status: 'available' })).toEqual({ reason: null, retry: false, offline: false, refused: false });
         // A quiet reread of a settled answer says nothing either.
         expect.soft(header({ status: 'pending', asOfMs: 100 })).toEqual({ reason: null, retry: false, offline: false, refused: false });
@@ -531,19 +533,20 @@ describe('shared Usage identity and dependent coverage', () => {
         // A typed refusal keeps its own line, never a Retry.
         expect.soft(header({ status: 'error', errorCode: 'forbidden' })).toEqual({ reason: '', retry: false, offline: false, refused: true });
     });
-    it('places the one Retry for a settled Work gap: at the ledger when the view has it, else the header, and the header when it already retries (J-B46)', () => {
+    it('folds every batch entry into the one header Retry for a settled Work gap, beside a complete ledger read and other failures (J-B46)', () => {
         const slice = (...sources: readonly Readonly<Record<string, unknown>>[]) =>
-            ({ sources }) as unknown as Parameters<typeof readUsagePageWorkRetryPlacement>[0][number];
-        const failed = { source: 'work', status: 'partial', errorCode: 'work_evidence_failed', unreadSessions: { failed: 1 } };
-        expect.soft(readUsagePageWorkRetryPlacement([slice(failed)], true)).toBe('body');
-        // Costs, Agents or a Work view without the ledger: the header carries it.
-        expect.soft(readUsagePageWorkRetryPlacement([slice(failed)], false)).toBe('header');
-        // Coach failed beside it: the header's batch Retry is the one; the ledger draws no second button.
-        expect.soft(readUsagePageWorkRetryPlacement([slice(failed, { source: 'how_you_work', status: 'error' })], true)).toBe('header');
-        // Nothing a Retry can change: Machines unreachable alone, a typed refusal, a read in flight.
-        expect.soft(readUsagePageWorkRetryPlacement([slice({ source: 'work', status: 'partial', errorCode: 'machine_offline' })], false)).toBeNull();
-        expect.soft(readUsagePageWorkRetryPlacement([slice({ source: 'work', status: 'error', errorCode: 'forbidden' })], false)).toBeNull();
-        expect.soft(readUsagePageWorkRetryPlacement([slice({ source: 'work', status: 'pending' })], false)).toBeNull();
+            ({ sources }) as unknown as Parameters<typeof readUsagePageFailure>[0][number];
+        const gap = { source: 'work', status: 'partial', errorCode: 'work_evidence_failed', unreadSessions: { failed: 1 } };
+        const witnessed = t('usage.board.page.coverageWitnessed', { sources: usageSourceTitle('work') });
+        // A saved view: a ledger pinned to a period whose Work read is complete, and Outcomes following a partial one.
+        expect.soft(readUsagePageFailure([slice({ source: 'work', status: 'available' }), slice(gap)])).toMatchObject({ reason: witnessed, retryable: true, quiet: true });
+        // Two bodies following the same partial scope: still one line and one Retry.
+        expect.soft(readUsagePageFailure([slice(gap), slice(gap)])).toMatchObject({ reason: witnessed, retryable: true });
+        // Another page read failed too: one line names both, one Retry rereads both.
+        expect.soft(readUsagePageFailure([slice(gap, { source: 'accounting', status: 'error' })])).toMatchObject({ retryable: true,
+            reason: t('usage.board.page.coverageFailedWitnessed', { sources: usageSourceTitle('accounting'), witnessed: usageSourceTitle('work') }) });
+        // The outage line is said only when nothing of Work arrived.
+        expect.soft(readUsagePageFailure([slice(gap)])?.reason).not.toBe(t('usage.board.page.workNotRead'));
     });
     it('says a settled partial activity read once for the header, never while it is still reading', () => {
         const slice = (sources: readonly { source: string; status: string }[]) =>

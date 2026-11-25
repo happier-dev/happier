@@ -80,8 +80,7 @@ import {
 } from './widgets/usageWidgetBatch';
 import { useOpenNewSession } from '@/components/sessions/new/navigation/newSessionEntry';
 import type { UsagePageHistoryFact } from './useUsageWidgetPageContext';
-import { usageWorkLinksNotice } from './widgets/UsageWorkParts';
-import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageFailure, readUsagePageFreshness, readUsagePageWorkOffline, readUsagePageWorkRetryable, readUsagePageWorkRetryPlacement, UsageScopeRefusalLine, UsageWorkRetryAtBodyContext, usageSourceTitle, useUsageSessionRecipient } from './widgets/usageBodyKit';
+import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageFailure, readUsagePageFreshness, readUsagePageWorkOffline, UsageScopeRefusalLine, usageSourceTitle, useUsageSessionRecipient } from './widgets/usageBodyKit';
 
 const PRESET_ICON: Readonly<Record<UsageWidgetPresetId, IconName>> = {
   overview: 'squares-four',
@@ -257,11 +256,8 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   const { binding, page } = props;
   const layout = props.layout;
   const needsFilterFallback = !useUsageWidgetBatchInventorySelection(Boolean, Object.is);
-  // Whether a body on this view states the Work gap (the ledger total), read from the view's own widget list once.
-  const workGapStatedByBody = React.useMemo(() => layout.state.status === 'ready' && flattenWidgetLayoutWidgetsV1(layout.state.items)
-    .some(row => row.instance.definition.kind === 'builtin' && row.instance.definition.id === USAGE_WORK_GAP_BODY_ID), [layout.state]);
   const selectPageFacts = React.useCallback((slices: readonly UsageQueryResultSlice[]) =>
-    readUsagePageFacts(slices, needsFilterFallback, workGapStatedByBody), [needsFilterFallback, workGapStatedByBody]);
+    readUsagePageFacts(slices, needsFilterFallback), [needsFilterFallback]);
   const pageRead = useUsageWidgetBatchSelection(selectPageFacts, sameUsagePageFacts);
   const { facts, agentIds: resultAgents } = pageRead;
   const filterSlices = React.useMemo(() => pageRead.filterFallback ?? [], [pageRead.filterFallback]);
@@ -412,7 +408,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     costBasisOptions,
     filterCommands,
     selectLayout: selectAreaLayout,
-    retryRead: (facts.failure?.retryable || facts.workRetryable) && pageReadRetry ? pageReadRetry : undefined,
+    retryRead: facts.failure?.retryable && pageReadRetry ? pageReadRetry : undefined,
     retryLayouts: homeUnavailable ? undefined : bar.readFailure?.retry,
     history: historyRead,
   });
@@ -536,7 +532,6 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
       <View testID="usage-page.cards" style={appsNothing ? styles.cardsWithdrawn : undefined}
         accessibilityElementsHidden={appsNothing} importantForAccessibility={appsNothing ? 'no-hide-descendants' : 'auto'}>
       <UsageDrillProvider value={drill}>
-      <UsageWorkRetryAtBodyContext.Provider value={facts.workRetry === 'body'}>
       <WidgetArea
         port={props.port}
         context={props.context}
@@ -547,33 +542,20 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
         dashboard={dashboard}
         testID="usage-area"
       />
-      </UsageWorkRetryAtBodyContext.Provider>
       </UsageDrillProvider>
       </View>
     </UsageAgentColorProvider>
   );
 }
 
-/** The body that states the Work gap with its Retry when the page places it there (J-B46). */
-const USAGE_WORK_GAP_BODY_ID = 'usage_project_ledger';
-
-/** The settled Work gap in the ledger total's own words (the Work owner's counts), for a view without the ledger. */
-function describeUsagePageWorkGap(slices: readonly UsageQueryResultSlice[]): string | null {
-  const slice = slices.find(row => readUsagePageWorkRetryable([row]));
-  if (!slice) return null;
-  const notice = usageWorkLinksNotice(slice);
-  return [notice.title, notice.cause].filter(Boolean).join(' · ');
-}
-
 /** Select only facts rendered by page chrome; widget evidence stays with its body. */
-function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilterFallback: boolean, workGapStatedByBody = false) {
+function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilterFallback: boolean) {
   const accounting = slices.find(slice => slice.accounting)?.accounting;
   const freshness = accounting ? readUsagePageFreshness(slices) : null;
   const observedAt = freshness?.asOfMs ?? null;
   const olderReadAtMs = freshness?.retainedAccountingReadAtMs
     ?? (observedAt !== null && isUsageObservationFromEarlierDay(observedAt) ? observedAt : null);
   const olderSource = freshness?.olderSource ?? null;
-  const workRetry = readUsagePageWorkRetryPlacement(slices, workGapStatedByBody);
   return {
     // Until unfiltered inventory answers, keep the existing displayed-result choices.
     filterFallback: needsFilterFallback ? slices : null,
@@ -583,11 +565,6 @@ function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilte
       failure: readUsagePageFailure(slices),
       newerServer: describeUsagePageNewerServerSources(slices),
       workOffline: readUsagePageWorkOffline(slices),
-      // The header says nothing over settled Work; its retryable gap still publishes the page's Retry (J-B46).
-      workRetryable: readUsagePageWorkRetryable(slices),
-      workRetry: workRetry,
-      // A view with no body stating the Work gap says it in the header, quietly, with the one Retry.
-      workGap: workRetry === 'header' && !workGapStatedByBody ? describeUsagePageWorkGap(slices) : null,
       partial: describeUsagePagePartialSources(slices),
       // The displayed minute, not the raw clock: a refresh within the same minute changes nothing on screen.
       observedAtMs: observedAt === null ? null : Math.floor(observedAt / 60_000) * 60_000,
@@ -631,20 +608,17 @@ function resolveUsagePageNotice(
   layouts: Readonly<{ retry: () => void }> | null | undefined,
   startSession: () => void,
 ): UsagePageNotice | null {
-  const { pending, failure, newerServer, partial, workGap } = facts;
+  const { pending, failure, newerServer, partial } = facts;
   // A refusal is disclosed independently. This line owns recovery for the unread data and Views.
-  if (failure?.reason || workGap) {
-    // When the saved views could not be read either, the one notice says both: its Retry rereads both (J-B8). A view
-    // without the ledger says the settled Work gap here too, in the total's words, never as an outage (J-B46).
-    const reason = [failure?.reason, workGap, layouts ? t('usage.board.page.viewsReadFailed') : null].filter(Boolean).join(' · ');
-    const retryable = failure?.retryable === true || workGap !== null;
-    return { testID: failure?.reason ? 'usage-page.header.failed' : 'usage-page.header.workGap', reason,
-      tone: (failure?.reason ? failure.quiet : true) && !layouts ? 'neutral' : 'warning',
+  if (failure?.reason) {
+    // When the saved views could not be read either, the one notice says both: its Retry rereads both (J-B8).
+    const reason = layouts ? [failure.reason, t('usage.board.page.viewsReadFailed')].join(' · ') : failure.reason;
+    return { testID: 'usage-page.header.failed', reason, tone: failure.quiet && !layouts ? 'neutral' : 'warning',
       // The page still shows what arrived: on a phone the line says "Partial" with Details beside its Retry (#9).
       ...(!layouts ? { short: t('usage.board.charts.coveragePartialShort') } : {}),
       // The one Retry, which also rereads the views and Sessions that failed: bodies with nothing to draw only
       // say they were not read (`UsageBodyReadFailed`).
-      ...(retryable && retry ? { action: { label: t('common.retry'), onPress: retry, testID: 'usage-page.header.retry' } }
+      ...(failure.retryable && retry ? { action: { label: t('common.retry'), onPress: retry, testID: 'usage-page.header.retry' } }
         : layouts ? { action: { label: t('common.retry'), onPress: layouts.retry, testID: 'usage-page.header.viewsRetry' } } : {}) };
   }
   if (layouts) {

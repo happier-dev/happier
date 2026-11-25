@@ -814,26 +814,10 @@ export function readUsageWorkReadAsOfMs(slice: Pick<UsageQueryResultSlice, 'sour
   return source?.asOfMs !== undefined && USAGE_WORK_READABLE_STATUSES.has(source.status) ? source.asOfMs : null;
 }
 
-/** A settled Work answer whose Sessions failed retryably: its Retry sits at the ledger total, and the page publishes it. */
-export function readUsagePageWorkRetryable(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[]): boolean {
+/** A settled Work answer whose Sessions failed retryably: partly read, so the header says so truly with its Retry. */
+function readUsagePageWorkRetryable(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[]): boolean {
   return slices.some(slice => slice.sources.some(source => isUsageWorkSettledWithEvidence(source) && canRetryUsageCoverageFailure(source)));
 }
-
-/**
- * Where the one visible Retry for a settled Work answer's retryable gap sits (J-B46), decided once by the page and
- * consumed by the header and the ledger: in the header when it already offers the batch Retry for another failed
- * read, or when no body on the view states the Work gap; otherwise at that body (the ledger total). Null when the
- * settled answer has nothing a Retry can change.
- */
-export function readUsagePageWorkRetryPlacement(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[],
-  workGapStatedByBody: boolean): 'header' | 'body' | null {
-  if (!readUsagePageWorkRetryable(slices)) return null;
-  if (readUsagePageFailure(slices)?.retryable) return 'header';
-  return workGapStatedByBody ? 'body' : 'header';
-}
-
-/** The page's placement for the Work gap's Retry, read by the body that states the gap; outside a page, no Retry there. */
-export const UsageWorkRetryAtBodyContext = React.createContext(false);
 
 export function readUsagePageWorkOffline(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[]): boolean {
   return slices.some(slice => slice.sources.some(source => isUsageWorkOffline(source) && !isUsageWorkSettledWithEvidence(source)));
@@ -1006,22 +990,26 @@ export function readUsagePageFailure(slices: readonly Pick<UsageQueryResultSlice
   const scopeRefusal = readUsageScopeRefusal(failures);
   const retryable = failures.filter(canRetryUsageCoverageFailure);
   const ownershipUnproven = failures.some(isUsageQuotaOwnershipUnproven);
-  if (!scopeRefusal && !retryable.length && !ownershipUnproven) return null;
+  // A settled Work answer with Sessions that failed retryably is partly read: said as what arrived, never as an outage
+  // (r226 #61), and the page's one Retry rereads it (ruling 11-25 00:15Z: the header is the one recovery surface).
+  const workPartlyRead = readUsagePageWorkRetryable(slices);
+  if (!scopeRefusal && !retryable.length && !ownershipUnproven && !workPartlyRead) return null;
   const quiet = !ownershipUnproven && retryable.every(source => source.source === 'work');
   const names = [...new Set(retryable.map(source => usageSourceTitle(usagePageReadFamily(source.source))))].join(', ');
-  const witnessed = readUsagePageWitnessedNames(slices);
+  const witnessed = [...readUsagePageWitnessedNames(slices), ...(workPartlyRead ? [usageSourceTitle('work')] : [])];
   // "Not available" only while nothing of Work is shown; a failed reread over retained links says what arrived.
   const nothingShown = retryable.every(source => source.status === 'error');
   const reason = [
     ...(names ? [quiet && nothingShown && !witnessed.length ? t('usage.board.page.workNotRead') : witnessed.length
       ? t('usage.board.page.coverageFailedWitnessed', { sources: names, witnessed: witnessed.join(', ') })
-      : t('usage.board.page.coverageFailed', { sources: names })] : []),
+      : t('usage.board.page.coverageFailed', { sources: names })]
+      : workPartlyRead ? [t('usage.board.page.coverageWitnessed', { sources: witnessed.join(', ') })] : []),
     ...(ownershipUnproven ? [t('connectedServices.errors.quotaOwnershipUnproven', {})] : []),
   ].join(' · ');
   const quotaTimes = retryable.flatMap(source => usagePageReadFamily(source.source) === 'quota' && source.asOfMs !== undefined ? [source.asOfMs] : []);
   // An ownership refusal is retried by an explicit reread (the owner's same-material recovery), so the notice offers the
   // page's one Retry for it too (acceptance 11-22 #20).
-  return { scopeRefusal, reason, quiet, retryable: retryable.length > 0 || ownershipUnproven, retainedQuotaAsOfMs: quotaTimes.length ? Math.min(...quotaTimes) : null };
+  return { scopeRefusal, reason, quiet, retryable: retryable.length > 0 || ownershipUnproven || workPartlyRead, retainedQuotaAsOfMs: quotaTimes.length ? Math.min(...quotaTimes) : null };
 }
 
 /**
@@ -1042,7 +1030,7 @@ function readUsagePageWitnessedNames(slices: readonly Pick<UsageQueryResultSlice
 /** Said alone only when no page read failed; otherwise the failed fact carries it. */
 export function describeUsagePagePartialSources(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[]): string | null {
   const names = readUsagePageWitnessedNames(slices);
-  if (!names.length || readUsagePageFailures(slices).some(canRetryUsageCoverageFailure)) return null;
+  if (!names.length || readUsagePageFailures(slices).some(canRetryUsageCoverageFailure) || readUsagePageWorkRetryable(slices)) return null;
   return t('usage.board.page.coverageWitnessed', { sources: names.join(', ') });
 }
 

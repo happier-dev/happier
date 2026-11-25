@@ -1919,34 +1919,17 @@ describe('Work and Coach widget bodies', () => {
     expect.soft(String(screen.findByTestId('ledger.conservation')?.props.accessibilityLabel ?? '').toLowerCase()).not.toContain(said);
     expect.soft(readUsagePageFreshness([unsupported]).olderSource).toBeNull();
   });
-  it('draws the Work gap Retry at the total only where the page places it, as its own control outside the total (J-B46)', async () => {
-    const { UsageWorkRetryAtBodyContext } = await import('./usageBodyKit');
+  it('states a settled Work gap at the total with the owner counts and no button of its own: the header retries (J-B46)', async () => {
     const witness = evidence('s1', 't1', 2493);
     const witnessedWork = allocateUsageOutcomes({ contributions, evidence: [witness] });
     const gap = { ...slice, workSummary: projectUsageWorkSummary(witnessedWork.outcomes, false, witnessedWork), work: witnessedWork, sources: [
       { source: 'work', status: 'partial', asOfMs: 1000, errorCode: 'work_evidence_failed', unreadSessions: { failed: 1, not_entitled: 1 } },
     ] } satisfies UsageQueryResultSlice;
-    const ledger = (here: boolean) => <UsageWorkRetryAtBodyContext.Provider value={here}>
-      <UsageProjectLedgerWidget {...props} slice={gap} id="usage_project_ledger" testID="ledger" />
-    </UsageWorkRetryAtBodyContext.Provider>;
-    const screen = await renderScreen(ledger(false));
-    // The page put the Retry in its header: the total keeps its statement and draws no second button.
-    expect.soft(screen.findAllHostsByTestId('ledger.workRetry')).toHaveLength(0);
-    await screen.update(ledger(true));
-    const retry = screen.findAllHostsByTestId('ledger.workRetry');
-    expect(retry).toHaveLength(1);
-    // Its name counts only what a Retry can change: the failed Session, never the refused one.
-    expect.soft(retry[0]!.props.accessibilityLabel).toBe(`${t('common.retry')}: ${t('usage.board.work.workUnreadOther', { count: 1, formattedCount: '1' })}`);
-    expect.soft(retry[0]!.props.accessibilityRole ?? retry[0]!.props.role).toBe('button');
-    expect.soft(retry[0]!.props.tabIndex ?? 0).not.toBe(-1);
-    // A sibling of the total: no pressable, button or accessible group above it swallows its focus or name.
-    // Start above the control's own layers (they share its test ID), then walk to the root.
-    let top: ReactTestInstance = retry[0]!;
-    while (top.parent && top.parent.props.testID === 'ledger.workRetry') top = top.parent;
-    const ancestors: ReactTestInstance[] = [];
-    for (let node = top.parent; node; node = node.parent) ancestors.push(node);
-    expect.soft(ancestors.filter(node => node.props.onPress || node.props.accessible === true || node.props.accessibilityRole === 'button'
-      || node.props.role === 'button').map(node => node.props.testID ?? String(node.type))).toEqual([]);
+    const screen = await renderScreen(<UsageProjectLedgerWidget {...props} slice={gap} id="usage_project_ledger" testID="ledger" />);
+    expect.soft(screen.findAll(node => typeof node.props?.testID === 'string' && node.props.testID.startsWith('ledger.workRetry'))).toHaveLength(0);
+    // Outside a page (Home, a board) the body's own coverage line keeps its Retry; on a page the header owns it.
+    expect.soft(screen.findByTestId('ledger.conservation')?.props.accessibilityLabel).toContain(
+      `${t('usage.board.work.workPartialTitle')} · ${t('usage.board.work.workUnreadOther', { count: 2, formattedCount: '2' })}`);
   });
   it('shows prior linked Work rows with an unknown merged figure during and after a failed refresh', async () => {
     const witness = evidence('s1', 't1', 2493);

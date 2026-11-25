@@ -49,6 +49,7 @@ import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coa
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { t } from '@/text';
+import { usageSourceTitle } from '@/sync/domains/usage/usageLabels';
 
 // Real Socket.IO serialization with the canonical cold external transport.
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -1019,13 +1020,13 @@ describe('Usage page batch', () => {
     } finally { await screen.unmount(); }
   });
 
-  it('rereads the Sessions whose Work links failed retryably from the Retry beside the ledger total, with the header silent (J-B46)', async () => {
+  it('rereads the Sessions whose Work links failed retryably through the page Retry; the header line is true and the ledger has no button (J-B46)', async () => {
     const [{ installSessionActionRpcBoundary }, { createHydratedPlainMachineFixture, createPlainMachineReadHttpResponseFixture },
       { publishMachineInventoryForTest }, { ScmWorkEvidenceReadRequestSchema, ScmWorkEvidenceReadResponseSchema },
-      { UsageProjectLedgerWidget }, { readUsagePageFailure, UsageWorkRetryAtBodyContext }] = await Promise.all([
+      { UsageProjectLedgerWidget }, { readUsagePageFailure }, { useUsageWidgetPageRetry }] = await Promise.all([
       import('@/dev/testkit/harness/sessionActionRpcBoundary'), import('@/dev/testkit/fixtures/machineFixtures'),
       import('@/dev/testkit/harness/machinePresence'), import('@happier-dev/protocol/scm'),
-      import('./UsageProjectLedgerWidget'), import('./usageBodyKit'),
+      import('./UsageProjectLedgerWidget'), import('./usageBodyKit'), import('./usageWidgetBatch'),
     ]);
     const nowMs = Date.UTC(2026, 10, 7, 12);
     vi.spyOn(Date, 'now').mockReturnValue(nowMs);
@@ -1069,13 +1070,14 @@ describe('Usage page batch', () => {
     const input = { ...scope, period: { startMs: nowMs - 1000, endMs: nowMs } };
     let observed: UsageWidgetBodyModel | undefined;
     const headerSaid: (string | null)[] = [];
+    let pageRetry: (() => void) | null = null;
     function Ledger() {
       const { model, query } = useUsageWidgetModel(input, 'usage_project_ledger');
       observed = model;
+      pageRetry = useUsageWidgetPageRetry();
       if (model.slice) headerSaid.push(readUsagePageFailure([model.slice])?.reason ?? null);
-      // The default Work view mounts the ledger, so the page places the Work gap's Retry at its total.
-      return model.slice && query ? <UsageWorkRetryAtBodyContext.Provider value><UsageProjectLedgerWidget id="usage_project_ledger" model={model}
-        slice={model.slice} query={query} serverId={server.id} testID="ledger" /></UsageWorkRetryAtBodyContext.Provider> : null;
+      return model.slice && query ? <UsageProjectLedgerWidget id="usage_project_ledger" model={model}
+        slice={model.slice} query={query} serverId={server.id} testID="ledger" /> : null;
     }
     const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
       <UsageWidgetBatchProvider clauses={clauses}><Ledger /></UsageWidgetBatchProvider>
@@ -1085,19 +1087,19 @@ describe('Usage page batch', () => {
         { status: 'partial', errorCode: 'work_evidence_failed', unreadSessions: { failed: 1 } });
       await expect.poll(() => observed?.pending).toBe(false);
       expect(observed?.slice?.work?.outcomes.map(outcome => outcome.pullRequest.number)).toEqual([1]);
-      // The gap is said at the total, with its Retry beside it; never a second alert.
-      const retry = () => screen.findHostByTestId('ledger.workRetry');
-      await expect.poll(() => retry()).not.toBeNull();
-      expect(retry()?.props.accessibilityLabel).toBe(`${t('common.retry')}: ${t('usage.board.work.workUnreadOther', { count: 1, formattedCount: '1' })}`);
+      // The total states the gap and draws no button; the header says it truly and offers the page's one Retry.
+      expect(screen.findAllHostsByTestId('ledger.workRetry')).toHaveLength(0);
+      expect(headerSaid.at(-1)).toBe(t('usage.board.page.coverageWitnessed', { sources: usageSourceTitle('work') }));
       const before = requested.length;
       failingAnswers = true;
-      await screen.pressByTestIdAsync('ledger.workRetry');
+      await act(async () => { pageRetry!(); });
       await expect.poll(() => observed?.slice?.work?.outcomes.map(outcome => outcome.pullRequest.number).sort(), { timeout: 5_000 }).toEqual([1, 2]);
       // One Work read: the Machine's one request rereads the Session that failed.
       expect(requested.slice(before)).toHaveLength(1);
       expect(requested.slice(before)[0]).toContain(failing);
-      await expect.poll(() => retry()).toBeNull();
-      expect(headerSaid.every(reason => reason === null)).toBe(true);
+      // Recovered: nothing left to say or retry, and the outage line was never said over the settled answer.
+      await expect.poll(() => headerSaid.at(-1)).toBeNull();
+      expect(headerSaid).not.toContain(t('usage.board.page.workNotRead'));
     } finally { await screen.unmount(); }
   });
 

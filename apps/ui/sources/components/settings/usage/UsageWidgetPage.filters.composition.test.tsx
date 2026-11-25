@@ -1105,7 +1105,7 @@ describe('mounted Usage page scope commands', () => {
         expect(screen.findByType(UsageFilterBar).props.costBasisPending).toBe(true);
     });
 
-    it.each([['costs', 'header'], ['work', 'ledger']] as const)('places one Retry for a settled Work gap on the %s view (%s), never the outage line (J-B46)', async (layoutId, place) => {
+    it.each(['costs', 'work'] as const)('says a settled Work gap on the %s view in one quiet header line with the one Retry, never the outage line and no ledger button (J-B46)', async (layoutId) => {
         const [{ installSessionActionRpcBoundary }, { createHydratedPlainMachineFixture, createPlainMachineReadHttpResponseFixture },
             { publishMachineInventoryForTest }, { ScmWorkEvidenceReadRequestSchema, ScmWorkEvidenceReadResponseSchema },
             { createSessionFixture }] = await Promise.all([
@@ -1154,11 +1154,9 @@ describe('mounted Usage page scope commands', () => {
             && (node.props.testID === 'usage-page.header.retry' || node.props.testID.endsWith('.workRetry'))).map(node => node.props.testID as string))];
         await waitForHomeGovernance(() => expect(retries().length).toBeGreaterThan(0));
         const unique = retries();
-        expect(unique).toHaveLength(1);
-        expect(unique[0]!.endsWith('.workRetry')).toBe(place === 'ledger');
+        expect(unique).toEqual(['usage-page.header.retry']);
+        expect(screen.getTextContent()).toContain(t('usage.board.page.coverageWitnessed', { sources: usageSourceTitle('work') }));
         expect(screen.getTextContent()).not.toContain(t('usage.board.page.workNotRead'));
-        if (place === 'header') expect(screen.getTextContent()).toContain(t('usage.board.work.workUnreadOther', { count: 1, formattedCount: '1' }));
-        else expect(screen.findAllHostsByTestId('usage-page.header.workGap')).toHaveLength(0);
     });
 
     it('publishes the failed page read Retry and recovers through the agent command', async () => {
