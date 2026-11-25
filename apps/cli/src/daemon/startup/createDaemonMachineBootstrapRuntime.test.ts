@@ -11,6 +11,7 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createProjectDefinitionAction, registerProjectDefinitionHandlers } from '@/rpc/handlers/projectDefinitions';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createDeferred } from '@/testkit/async/deferred';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { updateSettings, writeStoredCredentialsForServerId } from '@/persistence';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
@@ -103,6 +104,21 @@ import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approva
 import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { WorkflowInvocationGetRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE } from '@happier-dev/protocol';
+import { createProductionWorkflowRunCoordinator } from '../workflows/production';
+import { requesterSessionCredentialPath } from '../sessionEncryption/requesterSessionCustody';
+
+const custodyRenameBarrier = vi.hoisted(() => ({
+  beforeRename: undefined as ((source: string, target: string) => Promise<void>) | undefined,
+}));
+vi.mock('node:fs/promises', async importOriginal => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...fs, rename: async (...args: Parameters<typeof fs.rename>) => {
+    if (typeof args[0] === 'string' && typeof args[1] === 'string')
+      await custodyRenameBarrier.beforeRename?.(args[0], args[1]);
+    return await fs.rename(...args);
+  } };
+});
 
 const automationWorkerMocks = vi.hoisted(() => ({
   startAutomationWorker: vi.fn(),
@@ -1485,6 +1501,140 @@ describe('createDaemonMachineBootstrapRuntime', () => {
       expect(exitSpy).toHaveBeenCalledWith(0);
     } finally {
       exitSpy.mockRestore();
+    }
+  });
+
+  it('publishes active direct Run custody retirement before daemon exit', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'workflow-shutdown-custody-'));
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL']);
+    envScope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: 'http://workflow-shutdown.test' });
+    reloadConfiguration();
+    const machineId = 'machine_1';
+    const accountId = 'account_1';
+    const runId = 'b0132f42-6ca5-4acd-84c8-2c5a92c43606';
+    const homeId = 'srv_workflow_shutdown';
+    const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.fixture`, encryption: null };
+    const currentness = { mode: 'plain', version: 1, contentKeyFingerprint: null } as const;
+    const resumeReview = createDeferred();
+    const finishRename = createDeferred();
+    let reviewing = false;
+    let scratch: string | undefined;
+    let shutdown: Promise<void> | undefined;
+    let worker: AutomationWorkerHandle | null = null;
+    const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    try {
+      const installation = await readOrCreateInstallationIdentity();
+      const attribution = { serverId: configuration.activeServerId, accountId, machineId, installationId: installation.installationId };
+      const path = requesterSessionCredentialPath({ happyHomeDir: home, sessionId: runId, scope: 'workflow_trigger', attribution });
+      const snapshot = await materializeWorkflowAcceptedSnapshotV1({
+        definition: { version: 1, defaults: {
+          agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        }, blocks: [{ kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] } }] },
+        context: { source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'session' },
+          workspaceTarget: { project: { machineId, directory: home, checkoutRootPath: home } },
+          authorization: { principal: { kind: 'host' } } },
+        admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true },
+      });
+      if (!snapshot.ok) throw new Error(snapshot.error.code);
+      const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+        mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: snapshot.snapshot,
+      }));
+      const storage = createWorkflowRunStorageTestkit({ runId, accountId, machineId, state: 'claimed',
+        origin: { kind: 'direct' }, acceptedEnvelope });
+      vi.spyOn(axios, 'get').mockImplementation(async url => {
+        if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: accountId } };
+        if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { ...currentness, updatedAt: 1, signingKeyFingerprint: null } };
+        if (url.endsWith('/v3/automations/worker/run-lifecycle')) return { data: { sources: [] } };
+        return { data: { assignments: [], settings: { maxActiveRunsPerMachine: DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE } } };
+      });
+      let claimed = false;
+      vi.spyOn(axios, 'post').mockImplementation(async url => {
+        if (url.endsWith('/workflow-storage')) return { data: { runs: [storage.run()] } };
+        if (claimed || !url.endsWith('/runs/claim')) return { data: { run: null, automation: null, accountCurrentness: null } };
+        claimed = true;
+        return { data: { automation: null, accountCurrentness: currentness, run: { id: runId, automationId: null,
+          attempt: 1, leaseExpiresAt: Date.now() + 120_000, revision: 0, recipeKind: 'workflow-v2', triggerRetired: false,
+          origin: { kind: 'direct' }, triggerId: null, workflowAcceptedSnapshotEnvelope: acceptedEnvelope } } };
+      });
+      const { startAutomationWorker: startRealWorker } = await vi.importActual<typeof import('../automation/automationWorker')>('../automation/automationWorker');
+      automationWorkerMocks.startAutomationWorker.mockImplementationOnce(startRealWorker);
+      admitWorkflowRequester();
+      const runtime = createDaemonMachineBootstrapRuntime(createBaseRuntimeParams({
+        api: { machineSyncClient: () => ({}) } as never, credentials,
+        resolveCurrentServerIdentityId: async () => homeId,
+        isWorkflowFeatureEnabled: () => true,
+        createWorkflowRunCoordinatorForMachine: () => {
+          const coordinate = createProductionWorkflowRunCoordinator({
+            token: credentials.token, accountId, machineId, storage,
+            resolveAccountEncryption: async () => ({ kind: 'available', witness: currentness }),
+            isAcceptedAuthorizationCurrent: async () => true,
+            resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation' }),
+            onReviewEntered: async () => { reviewing = true; await resumeReview.promise; },
+            workspaceScm: { realizeWorktree: async () => { throw new Error('unexpected_worktree'); },
+              inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
+            execution: { credentials, serverId: attribution.serverId,
+              machineAdmissionTransport: async () => { throw new Error('unexpected_session_input'); },
+              resolveExistingSessionConversation: async () => null,
+              detachedRun: { actionExecutor: { execute: async () => { throw new Error('unexpected_action'); } },
+                buildActionContext: () => ({ surface: 'cli', authority: 'account_automation' }) } },
+          });
+          return async claim => {
+            claim.signal?.addEventListener('abort', () => resumeReview.resolve(), { once: true });
+            return await coordinate(claim);
+          };
+        },
+      }));
+      await runtime.createConnectedApiMachine({ id: machineId, encryptionMode: 'plain',
+        metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+      worker = await runtime.startAutomationWorkerForMachine(machineId);
+      if (!worker) throw new Error('worker was unavailable');
+      worker.handleServerUpdate({ id: 'queued-direct-run', seq: 1, createdAt: 1, body: {
+        t: 'automation-run-updated', runId, automationId: null, state: 'queued', scheduledAt: 1,
+        startedAt: null, finishedAt: null, updatedAt: 1, machineId: null, targetMachineId: machineId,
+      } });
+      await expect.poll(() => reviewing).toBe(true);
+      const { readFile, access } = await import('node:fs/promises');
+      expect(JSON.parse(await readFile(path, 'utf8')).retireWhenIdle).toBeUndefined();
+      // The only wake was queued. The production bootstrap's coordinator finally
+      // owns this retirement write when the stopped claim unwinds.
+      custodyRenameBarrier.beforeRename = async (source, target) => {
+        if (target !== path) return;
+        scratch = source;
+        await finishRename.promise;
+      };
+      shutdown = cleanupAndShutdown({
+        source: 'happier-cli', processEnv: {}, resolvePositiveIntEnv: (_raw, fallback) => fallback,
+        restartOnStaleVersionAndHeartbeat: null, connectedServiceRefreshLoopHandle: null,
+        connectedServiceQuotasLoopHandle: null, apiMachine: null, machineConnectionStateCleanup: null,
+        automationWorker: worker, trackedSessionCount: 0,
+        ...{ roleActivations: null, memoryWorker: null, voiceInferenceWorker: null },
+        stopDirectPeerServer: async () => {}, stopTailscaleTransferServeLifecycle: async () => {},
+        stopControlServer: async () => {}, stopKeepAwake: async () => {},
+        daemonLockHandle: null, releaseDaemonLock: async () => {},
+      });
+      await expect.poll(() => scratch).toBeDefined();
+      expect(JSON.parse(await readFile(scratch!, 'utf8')).retireWhenIdle).toBe(true);
+      expect(exit).not.toHaveBeenCalled();
+      finishRename.resolve();
+      await shutdown;
+      expect(exit).toHaveBeenCalledOnce();
+      expect(JSON.parse(await readFile(path, 'utf8')).retireWhenIdle).toBe(true);
+      await expect(access(scratch!)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      resumeReview.resolve();
+      finishRename.resolve();
+      await shutdown;
+      await worker?.stop();
+      if (scratch) {
+        const { access } = await import('node:fs/promises');
+        await expect.poll(() => access(scratch!).then(() => true, () => false)).toBe(false);
+      }
+      custodyRenameBarrier.beforeRename = undefined;
+      homeAdmission.admitted = null;
+      vi.restoreAllMocks();
+      envScope.restore();
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
     }
   });
 

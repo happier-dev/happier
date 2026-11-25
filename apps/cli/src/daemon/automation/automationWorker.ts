@@ -39,7 +39,8 @@ import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import { configuration } from '@/configuration';
 import { acquireWorkflowAutomationRequesterCredentials, acquireWorkflowRequesterCredentials, createWorkflowRequesterCustody,
   listWorkflowRequesterCredentialScopes, observeWorkflowRequesterCredentialCustody, reconcileWorkflowRequesterCredentialScope,
-  retireWorkflowRequesterCredentials, settleWorkflowAutomationRequesterRetirement, settleWorkflowRequesterCredentialRetirement } from '../workflows/requesterCustody';
+  retireWorkflowRequesterCredentials, settleWorkflowAutomationRequesterRetirement, settleWorkflowRequesterCredentialRetirement,
+  waitForWorkflowRequesterCredentialWrites } from '../workflows/requesterCustody';
 
 type RequesterScope = Readonly<{ kind: 'exact'; id: string }> | Readonly<{ kind: 'automation'; id: string; accountId: string }>;
 
@@ -54,7 +55,7 @@ type WorkflowRecoveryRequester = Readonly<{ credentials: StoredCredentials; attr
 
 export type AutomationWorkerHandle = Readonly<{
   liveWorkProducer: LiveWorkProducerV1;
-  stop: () => void;
+  stop: () => void | Promise<void>;
   refreshAssignments: () => Promise<void>;
   /** Rejoin queued work after connection, or for Runs named by the durable feed. */
   catchUp: (changedRunIds?: readonly string[]) => Promise<void>;
@@ -165,6 +166,8 @@ export function startAutomationWorker(params: {
     coordinatorWork?: LiveWorkProducerV1;
     unsubscribeCoordinatorWork?: () => void;
   }>();
+  // Unwind can still release custody after the claim stops owning capacity.
+  const executionUnwinds = new Set<Promise<void>>();
   const activityListeners = new Set<LiveWorkListenerV1>();
   const publishActivity: LiveWorkListenerV1 = change => { for (const listener of activityListeners) listener(change); };
   const liveWorkProducer: LiveWorkProducerV1 = {
@@ -393,23 +396,26 @@ export function startAutomationWorker(params: {
     if (!claimInFlight) rescheduleClaim('assignment-recovery', true);
   }
 
-  const stopWorker = (reason: 'manual') => {
-    if (stopped) return;
-    stopped = true;
-    cancelAssignmentRead();
-    workerCancellation.abort();
-    managedTargetBackfillCancellation.abort();
-    unsubscribeAdmission?.();
-    sourceObservers.clear();
-    requesterCustodyObservation?.dispose();
-    for (const active of activeExecutions.values()) {
-      active.controller.abort();
+  const stopWorker = async (reason: 'manual') => {
+    if (!stopped) {
+      stopped = true;
+      cancelAssignmentRead();
+      workerCancellation.abort();
+      managedTargetBackfillCancellation.abort();
+      unsubscribeAdmission?.();
+      sourceObservers.clear();
+      requesterCustodyObservation?.dispose();
+      for (const active of activeExecutions.values()) {
+        active.controller.abort();
+      }
+      clearClaimTimer();
+      logAutomationInfo('Automation worker stopped', {
+        machineId: params.machineId,
+        reason,
+      });
     }
-    clearClaimTimer();
-    logAutomationInfo('Automation worker stopped', {
-      machineId: params.machineId,
-      reason,
-    });
+    await Promise.allSettled(executionUnwinds);
+    await waitForWorkflowRequesterCredentialWrites();
   };
 
   const invalidateActiveExecution = (update: Update) => {
@@ -632,6 +638,7 @@ export function startAutomationWorker(params: {
         requester = claimedRequester;
         await previousRequester.release();
       }
+      if (stopped) return;
       const executionCredentials = requester?.credentials ?? selectedCredentials;
       const executionClaimClient = requester ? createAutomationClaimClient({ token: executionCredentials.token }) : selectedClaimClient;
 
@@ -659,7 +666,7 @@ export function startAutomationWorker(params: {
         isAutomationRunCurrent: caller => activeExecutions.get(caller.runId)?.automationId === caller.automationId,
         ...(params.machineAdmissionTransport ? { machineAdmissionTransport: params.machineAdmissionTransport } : {}) }) : actionExecutor;
 
-      void (async () => {
+      const execution = (async () => {
         try {
           await executeClaimedRun({
             machineId: params.machineId,
@@ -764,6 +771,10 @@ export function startAutomationWorker(params: {
           }
         }
       })();
+      executionUnwinds.add(execution);
+      void execution.finally(() => { executionUnwinds.delete(execution); }).catch(error => {
+        logAutomationWarn('Automation worker unwind failed', error, { runId: claimed.run.id });
+      });
     } catch (error) {
       const errorClass = classifyAutomationWorkerError(error);
       claimReadFailed = true;

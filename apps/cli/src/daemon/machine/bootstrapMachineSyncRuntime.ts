@@ -569,7 +569,7 @@ export async function retireMachineSyncRuntimeAttempt(
     logger.warn('[DAEMON RUN] Failed to stop peer mediation loopback after machine-sync attempt failure', error);
   }
   try {
-    params.automationWorker?.stop();
+    await params.automationWorker?.stop();
   } catch (error) {
     logger.warn('[DAEMON RUN] Failed to stop automation worker after machine-sync attempt failure', error);
   }

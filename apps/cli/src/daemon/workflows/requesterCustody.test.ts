@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
-import { access, mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import fastify from 'fastify';
@@ -192,8 +192,15 @@ it('keeps direct Run custody across offline terminal cleanup until the exact Run
   try {
     const retained = await retainWorkflowRequesterCredentials({ ...binding, attribution,
       credentials: { token: 'guest-token', encryption: null } });
+    const scratch = `${retained.path}.1234.abcdefab-cdef-4abc-8def-abcdefabcdef.tmp`;
+    const unrelated = [
+      `${retained.path}.1234.not-an-atomic-write.tmp`,
+      retained.path.replace('direct-run.json', 'direct-run-other.json.1234.abcdefab-cdef-4abc-8def-abcdefabcdef.tmp'),
+    ];
+    for (const path of [scratch, ...unrelated]) await writeFile(path, 'synthetic private state', { mode: 0o600 });
     await retireWorkflowRequesterCredentials(binding);
     await expect(access(retained.path)).resolves.toBeUndefined();
+    await expect(access(scratch)).resolves.toBeUndefined();
     // All in-process execution holds are gone. Reconnect must still recover
     // the admitted requester while its terminal Run has unfinished child custody.
     await requesterCustody.reconcileWorkflowRequesterCredentialScope(binding);
@@ -205,6 +212,8 @@ it('keeps direct Run custody across offline terminal cleanup until the exact Run
     await requesterCustody.reconcileWorkflowRequesterCredentialScope(binding);
     expect(await acquireWorkflowRequesterCredentials(binding)).toBeNull();
     await expect(access(retained.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(access(scratch)).rejects.toMatchObject({ code: 'ENOENT' });
+    for (const path of unrelated) await expect(access(path)).resolves.toBeUndefined();
     expect(selectors.length).toBeGreaterThan(0);
     expect(selectors.every(selector => JSON.stringify(selector) === JSON.stringify({ runId: binding.scopeId,
       machineId: attribution.machineId }))).toBe(true);

@@ -3,6 +3,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import type { AdmittedWorkflowApprovalRequester } from '../externalActions/daemonExternalActionTargetResolver';
 import type { StoredCredentials } from '@/persistence';
+import { removeProtectedLocalStateAtomicScratchSiblings } from '@/utils/fs/protectedLocalState';
 import { AsyncLock } from '@/utils/lock';
 import { z } from 'zod/mini';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -28,6 +29,11 @@ const custodyChanges = new Set<() => void>();
 const notifyCustodyChange = () => { for (const listener of custodyChanges) listener(); };
 const binding = (input: ScopeBinding, attribution: RequesterWorkAttributionV1) => ({ happyHomeDir: input.happyHomeDir,
   sessionId: input.scopeId, attribution, scope: 'workflow_trigger' as const });
+
+/** Join mutations already in flight after the worker has cancelled custody observation. */
+export async function waitForWorkflowRequesterCredentialWrites(): Promise<void> {
+  await custodyMutation.inLock(() => {});
+}
 
 function holdExecutionScope(input: ScopeBinding, value: ReturnType<typeof binding>, retire = false) {
   const path = requesterSessionCredentialPath(value);
@@ -151,6 +157,7 @@ async function markWorkflowRequesterCredentialsForRetirement(record: NonNullable
 
 export async function retireWorkflowRequesterCredentials(input: ScopeBinding): Promise<void> {
   await custodyMutation.inLock(async () => {
+    input.signal?.throwIfAborted();
     const record = await readBinding(input);
     if (record) await markWorkflowRequesterCredentialsForRetirement(record);
   });
@@ -243,9 +250,10 @@ export async function settleWorkflowRequesterCredentialRetirement(input: ScopeBi
   // admitted-work inventory was in flight.
   await custodyMutation.inLock(async () => {
     if (activeScopes.get(stored.path) !== active || !active.retire || active.count) return;
-    await retireRequesterSessionCredentialCustody(stored.value);
+    const removed = await retireRequesterSessionCredentialCustody(stored.value);
     activeScopes.delete(stored.path);
     notifyCustodyChange();
+    if (removed) await removeProtectedLocalStateAtomicScratchSiblings(stored.path);
   });
 }
 

@@ -23,7 +23,7 @@ import {
   type FileHandle,
 } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import {
   createWindowsProtectedAclBoundary,
@@ -680,6 +680,19 @@ export async function removeProtectedLocalStateFile(
   await assertProtectedPath(path, 'file', options);
   await rm(path);
   await fsyncDirectory(dirname(path), resolvePlatform(options));
+}
+
+/** The caller must own the canonical file's lifecycle exclusively. */
+export async function removeProtectedLocalStateAtomicScratchSiblings(path: string): Promise<void> {
+  const directory = dirname(path);
+  const prefix = `${basename(path)}.`;
+  // Matches the suffix both atomic publishers create using process.pid and randomUUID().
+  const scratchSuffix = /^[1-9]\d*\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/u;
+  await assertProtectedPath(directory, 'directory', {});
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.startsWith(prefix) || !scratchSuffix.test(entry.name.slice(prefix.length))) continue;
+    await removeProtectedLocalStateFile(join(directory, entry.name));
+  }
 }
 
 export async function listProtectedLocalStateDirectory(
