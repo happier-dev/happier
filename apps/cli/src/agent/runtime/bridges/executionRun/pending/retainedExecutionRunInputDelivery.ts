@@ -133,13 +133,16 @@ export function createRetainedExecutionRunInputDelivery(
             beginTurn(event.turnId);
             options.onInputTurnUpdated?.();
         } else if (event.kind === 'turn-complete' || event.kind === 'turn-failed' || event.kind === 'turn-cancelled') {
+            const acceptedInput = controller.currentInputTurn?.turnId === event.turnId ? controller.currentInputTurn : undefined;
             // Earlier model deltas can still be queued behind input acceptance on this barrier.
             if (event.kind === 'turn-complete' && activeTurnId === event.turnId && options.onTurnComplete) {
                 const completed = { turnId: event.turnId, finishedAtMs: event.emittedAtMs,
-                    inputIds: controller.currentInputTurn?.turnId === event.turnId ? controller.currentInputTurn.inputIds : undefined };
-                controller.pendingHostBarrier = appendExecutionRunControllerHostBarrier(
+                    inputIds: acceptedInput?.inputIds };
+                const publication = appendExecutionRunControllerHostBarrier(
                     controller, () => options.onTurnComplete!({ ...completed, rawText: controller.buffer }), options.onInputTurnUpdated,
                 );
+                controller.pendingHostBarrier = publication;
+                if (acceptedInput) controller.hostCompletionPublication = { turnId: event.turnId, publication };
             }
             if (event.kind === 'turn-failed' && activeTurnId === event.turnId && options.onTurnFailed) {
                 const failed = { turnId: event.turnId, finishedAtMs: event.emittedAtMs,

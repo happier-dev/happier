@@ -66,6 +66,8 @@ export type RuntimeTranscriptProjectionSession = Readonly<{
   sessionId: string;
   /** Run-scoped transcript targets require a durable marker even for zero-output turns. */
   requiresDurableTurnCompletionMarker?: true;
+  /** Joins the exact host publication only when its runtime listener received this completion. */
+  readHostTurnCompletionPublication?: (turnId: string) => Promise<void> | undefined;
   enqueueUserTextMessageCommitted?: (
     text: string,
     opts: CommittedTranscriptMessageOptions,
@@ -1006,6 +1008,11 @@ async function projectRuntimeTranscriptEventContent(
     // controller custody before this write can reach the parent Session.
     if (params.provider && params.session.requiresDurableTurnCompletionMarker === true
       && params.questionWaitTurnId !== event.turnId) {
+      const hostPublication = params.session.readHostTurnCompletionPublication?.(event.turnId);
+      if (hostPublication) {
+        await hostPublication;
+        return { projected: true, kind: event.kind, ...assistantReceipt };
+      }
       const completion = await commitRequiredRuntimeTranscriptMessage({
         session: params.session,
         provider: params.provider,

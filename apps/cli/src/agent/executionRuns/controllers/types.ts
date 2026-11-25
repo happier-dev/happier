@@ -117,6 +117,8 @@ export type ExecutionRunBackendController = {
   releaseSessionInputAttachment?: () => Promise<void>;
   failureSignal?: ExecutionRunControllerFailureSignal;
   pendingHostBarrier?: Promise<void>;
+  /** Exact retained completion queued by the runtime listener, private to this controller. */
+  hostCompletionPublication?: Readonly<{ turnId: string; publication: Promise<void> }>;
   /** Host publication on the current barrier has not settled yet. */
   hostWorkPending?: boolean;
   /** A profile-authored continuation is preparing or awaiting native acceptance. */

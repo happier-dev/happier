@@ -96,6 +96,7 @@ export type NativeAgentSessionRunTranscriptTarget = Pick<ApiSessionClient,
 > & Readonly<{
     sessionId: string;
     requiresDurableTurnCompletionMarker: true;
+    readHostTurnCompletionPublication?: (turnId: string) => Promise<void> | undefined;
     enqueueUserTextMessageCommitted?: ApiSessionClient['enqueueUserTextMessageCommitted'];
 }>;
 

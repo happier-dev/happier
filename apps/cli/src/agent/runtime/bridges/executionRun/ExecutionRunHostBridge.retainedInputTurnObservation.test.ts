@@ -772,6 +772,33 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
         } finally { await attachment.release(); }
     });
 
+    it('publishes a failed native turn marker once for an accepted retained input', async () => {
+        const { internals, attachment, acceptInput, emitRuntimeEvent, transcriptPublications, replyMutations } = composeRetainedRun();
+        const transcript = internals.createSessionOwnedRunScope('run-1')!.projectRunTranscriptSession();
+        const stream = createKeyedStreamedTranscriptBridge({ provider: 'test.agent', createSessionForStream: () => transcript });
+        try {
+            await acceptInput('failed-input', 'failed-turn');
+            const failure = {
+                kind: 'turn-failed', sessionId: 'session-1', sequence: 2, emittedAtMs: 2,
+                turnId: 'failed-turn', diagnostic: { code: 'provider_error', severity: 'error' },
+            };
+            emitRuntimeEvent(failure);
+            await expect(projectRuntimeTranscriptEvent({
+                session: transcript, provider: 'test.agent', runtimeMessageDeltaBridge: stream, event: failure,
+            })).resolves.toMatchObject({
+                projected: true, terminalSourceMessage: { localId: 'failed-turn:turn_failed' },
+            });
+            expect(transcriptPublications.filter(item => item.meta?.runtimeTurnId === 'failed-turn'
+                && (item.body.type === 'turn_failed' || item.body.type === 'task_complete'))).toEqual([
+                expect.objectContaining({ localId: 'failed-turn:turn_failed',
+                    body: { type: 'turn_failed', id: 'failed-turn', sidechainId: 'sidechain-1' } }),
+            ]);
+            expect(replyMutations).toMatchObject([{ requestLocalId: 'failed-input', operation: {
+                turnId: 'failed-turn', outcome: { kind: 'failed' },
+            } }]);
+        } finally { stream.clear(); await attachment.release(); }
+    });
+
     it.each(['native', 'stop'] as const)('retains the exact committed partial across a later tool call on %s cancellation', async cancellation => {
         const { manager, internals, attachment, acceptInput, replyMutations, committedResultLookups } = composeRetainedRun();
         try {

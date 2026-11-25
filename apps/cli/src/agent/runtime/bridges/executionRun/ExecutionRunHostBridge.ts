@@ -728,6 +728,12 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         const target: NativeAgentSessionRunTranscriptTarget = {
           sessionId: parentSession.sessionId,
           requiresDurableTurnCompletionMarker: true,
+          readHostTurnCompletionPublication: (turnId) => {
+            const controller = this.controllers.get(runId);
+            if (controller?.kind !== 'backend' || controller.cancelled) return;
+            const hostCompletion = controller.hostCompletionPublication;
+            return hostCompletion?.turnId === turnId ? hostCompletion.publication : undefined;
+          },
           updateMetadata: (updater) => parentSession.updateMetadata(updater),
           enqueueUserTextMessageCommitted: async (text, opts) => {
             const controller = this.controllers.get(runId);
