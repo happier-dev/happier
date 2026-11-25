@@ -486,7 +486,7 @@ const SessionCockpitSceneActivityBoundary = React.memo((props: Readonly<{
 });
 
 const readExplicitSurfaceHint = (params: Readonly<Record<string, string | string[] | undefined>>) =>
-    typeof params.mobileSurface === 'string' ? params.mobileSurface : null;
+    normalizeSessionMobileSurface(typeof params.mobileSurface === 'string' ? params.mobileSurface : null);
 
 const SessionCockpitNavigatorInitialSurfaceBridge = React.memo((props: BottomTabBarProps & Readonly<{
     cockpit: boolean;
@@ -539,20 +539,26 @@ const SessionCockpitNavigatorInitialSurfaceBridge = React.memo((props: BottomTab
     }, [activeSurface, props.cockpit, props.navigation, props.readViewerPresenting, props.requestedInitialSurface, props.scopeId, props.state, readPaneState]);
 
     const restoredInitialPluginSurfaceRef = React.useRef<SessionMobileSurface | null>(null);
-    const requestedRouteIntent = JSON.stringify([props.requestedInitialSurface,
+    // An explicit address is a new intent even when it names the retained mount hint.
+    const requestedRouteIntent = JSON.stringify([explicitSurfaceHint,
+        explicitSurfaceHint === null ? props.requestedInitialSurface : null,
         presentsDetails ? paneUrlState?.details ?? null : paneUrlState ?? null, presentsDetails]);
     const consumedRouteIntentRef = React.useRef<string | null>(null);
     React.useEffect(() => {
         if (!props.cockpit) return;
         const paneIntentSurface = resolveSessionPaneIntentSurface(paneUrlState, props.terminalTabAvailable, explicitSurfaceHint);
-        const hasPaneIntent = presentsDetails || paneIntentSurface !== null;
+        const hasRouteIntent = presentsDetails || paneIntentSurface !== null || explicitSurfaceHint !== null;
         // A Details route presents retained/contributed tabs even when its URL still carries a sidebar.
-        const requestedSurface = presentsDetails ? 'tabs' : paneIntentSurface ?? props.requestedInitialSurface;
+        // The first selection already accounts for mount-only presentation, such as a docked viewer.
+        const explicitRouteSurface = consumedRouteIntentRef.current === null ? null : explicitSurfaceHint;
+        const requestedSurface = presentsDetails
+            ? 'tabs'
+            : paneIntentSurface ?? explicitRouteSurface ?? props.requestedInitialSurface;
         if (consumedRouteIntentRef.current === requestedRouteIntent) return;
         // Consume external route intent once. Native/history Back owns the
         // next transition; an unchanged retained URL must not trap the user.
         const route = props.state.routes.find((candidate) => candidate.name === requestedSurface);
-        if (hasPaneIntent) {
+        if (hasRouteIntent) {
             if (!route) return;
             consumedRouteIntentRef.current = requestedRouteIntent;
             restoredInitialPluginSurfaceRef.current = null;

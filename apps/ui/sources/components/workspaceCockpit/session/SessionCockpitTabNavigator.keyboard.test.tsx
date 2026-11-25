@@ -1087,4 +1087,65 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
             Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
         }
     });
+
+    async function makeNavigator(serverId?: string) {
+        const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+        const { SessionCockpitTabNavigator } = await import('./SessionCockpitTabNavigator');
+        const navigation = { push: vi.fn(), replace: vi.fn(), back: vi.fn(), setParams: vi.fn() };
+
+        return (surface?: SessionMobileSurface, experience: 'cockpit' | 'classic' = 'cockpit', initialSurface = surface ?? 'chat') => (
+            <DestinationInstanceHost tabId="session-test" pathname="/session/s1" focused visible navigation={navigation}
+                ref={{ kind: 'session', params: {
+                    id: 's1',
+                    ...(serverId ? { serverId } : {}),
+                    ...(surface ? { mobileSurface: surface } : {}),
+                    ...(surface === 'collaboration' ? { collaborationFocus: 'access' } : {}),
+                } }}>
+                <SessionCockpitTabNavigator experience={experience} initialSurface={initialSurface}
+                    routeServerId="server-session" scopeId="session:s1" sessionId="s1" terminalTabAvailable />
+            </DestinationInstanceHost>
+        );
+    }
+
+    it.each([undefined, 'server-session'])('follows a late Share target once (Home %s)', async (serverId) => {
+        const body = await makeNavigator(serverId);
+        const screen = await renderScreen(body());
+        expect(navigatorState.activeRouteName).toBe('chat');
+
+        await screen.update(body('collaboration'));
+        expect(navigatorState.activeRouteName).toBe('collaboration');
+
+        await act(async () => { navigatorState.registeredChrome?.switchSurface('chat'); });
+        await screen.update(body('collaboration'));
+        expect(navigatorState.activeRouteName).toBe('chat');
+
+        await screen.update(body('git'));
+        expect(navigatorState.activeRouteName).toBe('git');
+        await screen.update(body('collaboration'));
+        expect(navigatorState.activeRouteName).toBe('collaboration');
+    });
+
+    it('opens explicit Collaboration on mount and keeps the selected tab across a plain Session open', async () => {
+        const body = await makeNavigator();
+        const screen = await renderScreen(body('collaboration'));
+        expect(navigatorState.activeRouteName).toBe('collaboration');
+
+        await act(async () => { navigatorState.registeredChrome?.switchSurface('chat'); });
+        await screen.update(body(undefined, 'cockpit', 'collaboration'));
+        expect(navigatorState.activeRouteName).toBe('chat');
+
+        // The explicit target can match the preceding mount hint and still be a new intent.
+        await screen.update(body('collaboration'));
+        expect(navigatorState.activeRouteName).toBe('collaboration');
+    });
+
+    it('keeps the wide Chat navigator selected when the phone target changes', async () => {
+        const body = await makeNavigator('server-session');
+        const screen = await renderScreen(body(undefined, 'classic'));
+        expect(navigatorState.activeRouteName).toBe('chat');
+
+        await screen.update(body('collaboration', 'classic'));
+        expect(navigatorState.activeRouteName).toBe('chat');
+    });
+
 });
