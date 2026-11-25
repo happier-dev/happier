@@ -1187,9 +1187,21 @@ describe('UI Workflow Action front door', () => {
             const slice = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!;
             const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice, pending: false,
                 error: null, freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
-            screen = await renderScreen(React.createElement(UsageCoachWidget, {
-                id: 'usage_coach', model, slice, query, serverId: h.account.serverId, testID: 'digest',
-            }));
+            const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+            const { usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+            const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+            function Publication() {
+                const commands = useCurrentUiContextComposedCommands();
+                usePublishCurrentUiContext(React.useMemo(() => ({ commands }), [commands]));
+                return null;
+            }
+            screen = await renderMountedCurrentUiContext(React.createElement(CurrentUiContextCommandsProvider, {
+                authority: h.account.accountLifetime,
+                children: React.createElement(React.Fragment, null, React.createElement(Publication),
+                    React.createElement(UsageCoachWidget, {
+                        id: 'usage_coach', model, slice, query, serverId: h.account.serverId, testID: 'digest',
+                    })),
+            }), { withModalProvider: true });
             expect(h.automationWrites).toEqual([]);
             expect(screen.findByTestId('digest.digest.configure')).toBeTruthy();
             expect(screen.findByTestId('digest.digest.editor')).toBeNull();
