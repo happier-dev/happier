@@ -8,7 +8,7 @@ import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, readRpcErrorCod
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { readSessionPreparationFailureCode, readSessionRuntimeIssueCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
-import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { parseActionExecuteFailure, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { buildInactiveSessionResumeSpawnOptions, type InactiveSessionResumeRuntimeOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
 import type { StoredCredentials } from '@/persistence';
@@ -189,6 +189,12 @@ function resolveThrownResumeFailureCode(
   return 'resume_failed';
 }
 
+function projectResumeExecutionAuthorizationFailure(value: unknown): Extract<InactiveSessionResumeResult, { ok: false }> | null {
+  const failure = parseActionExecuteFailure(value);
+  if (failure?.failureCause?.phase !== 'execution_authorization') return null;
+  return { ok: false, code: 'authority_unavailable', message: failure.error, failureCause: failure.failureCause };
+}
+
 /** Canonical inactive resume; automatic delivery retains explicit Stop custody. */
 export async function requestInactiveSessionResume(params: Readonly<{
   credentials: StoredCredentials;
@@ -292,7 +298,8 @@ export async function requestInactiveSessionResume(params: Readonly<{
   const refuse = (failure: Extract<InactiveSessionResumeResult, { ok: false }>, cause: unknown, error?: unknown) => {
     logger.infoFile('[SessionResume] Readiness refused', {
       requestId, sessionId: params.sessionId, machineId, spawnRpcRequestId, phase,
-      cause: typeof cause === 'string' && resumeDiagnosticCauseCodes.has(cause) ? cause : 'unclassified',
+      cause: failure.failureCause?.errorCode
+        ?? (typeof cause === 'string' && resumeDiagnosticCauseCodes.has(cause) ? cause : 'unclassified'),
       ...(failure.spawnRefusalReason ? { spawnRefusalReason: failure.spawnRefusalReason } : {}),
       ...(failure.runtimeFailureReason ? { runtimeReason: failure.runtimeFailureReason } : {}),
       outcomeCode: failure.code, elapsedMs: Date.now() - startedAtMs,
@@ -332,6 +339,8 @@ export async function requestInactiveSessionResume(params: Readonly<{
           ...(params.signal ? { signal: params.signal } : {}),
           ...(params.externalAction ? { externalAction: params.externalAction } : {}),
         });
+    const authorizationFailure = projectResumeExecutionAuthorizationFailure(response);
+    if (authorizationFailure) return refuse(authorizationFailure, undefined);
     const responseSessionId = response && typeof response === 'object'
       ? readNonEmptyString((response as { sessionId?: unknown }).sessionId)
       : null;
@@ -427,6 +436,8 @@ export async function requestInactiveSessionResume(params: Readonly<{
     }
     return { ok: true };
   } catch (error) {
+    const authorizationFailure = projectResumeExecutionAuthorizationFailure(error);
+    if (authorizationFailure) return refuse(authorizationFailure, undefined);
     const code = readRpcErrorCode(error) ?? (error && typeof error === 'object' ? Reflect.get(error, 'code') : null);
     const details = error && typeof error === 'object' ? Reflect.get(error, 'details') : undefined;
     const facts = readResumeSpawnFailureFacts({ errorCode: code,

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createExternalActionHeaderRefusalError, externalActionHeaderRefusalFailure, refuseExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import {
   deriveSessionCreationTagV1,
@@ -744,6 +745,19 @@ describe('requestInactiveSessionResume', () => {
       rawSession: rawSession(), metadata })).resolves.toMatchObject({ ok: false, code: 'authority_unavailable' });
     expect(diagnostic).toHaveBeenCalledWith('[SessionResume] Readiness refused', expect.objectContaining({
       phase: 'spawn_rpc', cause: RPC_ERROR_CODES.FORBIDDEN, outcomeCode: 'authority_unavailable',
+    }));
+  });
+
+  it.each(['returned', 'thrown'] as const)('preserves an execution authorization refusal from %s transport', async transport => {
+    const diagnostic = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    const refusal = refuseExternalActionHeaders('authorization_headers_missing', 'resume-header-refusal');
+    const failure = externalActionHeaderRefusalFailure(refusal);
+    if (transport === 'returned') callMachineRpc.mockResolvedValueOnce(failure);
+    else callMachineRpc.mockRejectedValueOnce(createExternalActionHeaderRefusalError(refusal));
+    await expect(requestInactiveSessionResume({ credentials, sessionId: 'session-1', localId: 'local-1',
+      rawSession: rawSession(), metadata })).resolves.toMatchObject({ ok: false, code: 'authority_unavailable', failureCause: failure.failureCause });
+    expect(diagnostic).toHaveBeenCalledWith('[SessionResume] Readiness refused', expect.objectContaining({
+      phase: 'spawn_rpc', cause: refusal.reason, outcomeCode: 'authority_unavailable',
     }));
   });
 
