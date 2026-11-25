@@ -175,8 +175,8 @@ export function projectActionWorkflowSelectionInputV1(
         projected[profileField] = selected.profileId;
     if (projected.agentModeId === undefined && projected.acpSessionModeId === undefined && selected.acpSessionModeId !== undefined)
         projected.agentModeId = selected.acpSessionModeId;
-    // Review inherits model and config per reviewer through the native start projection below.
-    if (actionId !== 'review.start' && projected.modelSelection === undefined && projected.modelId === undefined && projected.teamCredentialModel === undefined) {
+    // Review inherits model references per reviewer; a native reset applies to every target.
+    if (projected.modelSelection === undefined && projected.modelId === undefined && projected.teamCredentialModel === undefined) {
         const model = readAuthoredSessionModelSelection(selected);
         if (actionId === 'session.spawn_new') {
             const binding = selected.modelSelection?.v !== 2 && model?.v === 2
@@ -189,7 +189,7 @@ export function projectActionWorkflowSelectionInputV1(
                 }
             }
         } else if (model === null) projected.modelSelection = null;
-        else if (model) Object.assign(projected, projectSessionModelRefToExecutionModelSelection(model.ref));
+        else if (model && actionId !== 'review.start') Object.assign(projected, projectSessionModelRefToExecutionModelSelection(model.ref));
     }
     if (actionId !== 'session.spawn_new' && actionId !== 'review.start' && projected.sessionConfigOptionOverrides === undefined && projected.configOptions === undefined
         && selected.sessionConfigOptionOverrides !== undefined) projected.sessionConfigOptionOverrides = selected.sessionConfigOptionOverrides;
@@ -303,7 +303,7 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
         const projected = projectAgentStartSelectionV1(input, { engine: { agentTargetKey: buildBackendTargetKeyV2(selected.agentTarget),
                 ...(selected.modelSelection ? { modelId: selected.modelSelection.ref.modelId } : {}), ...(typeof effort === 'string' ? { effort } : {}) },
             ...(kind === 'spawn_new' && selected.profileId ? { profileId: selected.profileId } : {}),
-        }, kind, baseline, selected.modelSelection ?? undefined);
+        }, kind, baseline, selected.modelSelection);
         // A native Execution Action profile is plugin-owned execution policy, not
         // the portable Launch Profile used to materialize Workflow Agent settings.
         return kind === 'spawn_new' ? projected : { ...projected,
@@ -709,7 +709,7 @@ export function projectAgentStartSelectionV1(input: Readonly<Record<string, unkn
     intent?: Extract<ReturnType<typeof admitAgentStartV1>, {
         ok: true;
     }>['stamped']['intent'];
-}>, kind: 'spawn_new' | 'execution_run', baseline: AgentStartContextV1['baseline'], modelSelection?: SessionModelSelection) {
+}>, kind: 'spawn_new' | 'execution_run', baseline: AgentStartContextV1['baseline'], modelSelection?: SessionModelSelection | null) {
     const stamped = selection;
     const target = parseBackendTargetKeyV2(stamped.engine.agentTargetKey);
     const result: Record<string, unknown> = { ...input, ...(kind === 'spawn_new' ? { agentTarget: target } : { backendTarget: target }) };
@@ -755,6 +755,7 @@ export function projectAgentStartSelectionV1(input: Readonly<Record<string, unkn
             Object.assign(result, projectSessionModelRefToExecutionModelSelection(selected.ref));
         }
     }
+    else if (modelSelection === null || input.modelSelection === null) result.modelSelection = null;
     if (stamped.profileId)
         result[kind === 'spawn_new' ? 'profileId' : 'launchProfileId'] = stamped.profileId;
     if (stamped.intent && kind === 'execution_run')

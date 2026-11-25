@@ -84,6 +84,16 @@ describe('Review roster Agent admission', () => {
       .toEqual({ ok: true, effectiveInput: { reviewers }, requests: [] });
   });
 
+  it.each([false, true])('preserves a Workflow native model reset in the admitted reviewer request: override=%s', overrideEngine => {
+    const resolved = resolveActionAgentStartRequestsV1({ actionId: 'review.start',
+      input: { reviewers: [{ kind: 'engine', engineId }], instructions: 'Review' },
+      context: {}, baseline, effectiveSelection: { overrideEngine, selection: { agentTarget, modelSelection: null } },
+    });
+    expect(resolved).toMatchObject({ ok: true, effectiveInput: {
+      reviewers: [{ kind: 'engine', engineId, modelSelection: null }],
+    } });
+  });
+
   it.each([false, true])('inherits Workflow configuration while preserving an explicit reviewer model: override=%s', overrideEngine => {
     const resolved = resolveActionAgentStartRequestsV1({ actionId: 'review.start', input: {
       reviewers: [{ kind: 'engine', engineId, modelId: 'reviewer-model' }],
