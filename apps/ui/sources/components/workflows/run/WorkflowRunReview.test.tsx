@@ -288,7 +288,7 @@ it('finds a Review by its workflowRunId when a contributed PR action produced it
   } finally { await screen.unmount(); }
 });
 
-it('keeps the produced Review name and this Workflow round outcomes after a later retry', async () => {
+it('keeps this Workflow round outcomes after a later retry', async () => {
   homes.artifacts(serverId).replaceStoredRow(createPlainArtifactHttpFixture({
     id: reviewId, title: 'Code review', isDecrypted: true,
     header: { kind: 'review.v1', v: 1, reviewId, title: 'Code review' },
@@ -320,7 +320,6 @@ it('keeps the produced Review name and this Workflow round outcomes after a late
   try {
     await waitForHomeGovernance(() => {
       const result = JSON.parse(screen.getTextContent());
-      expect(result.title?.replace(/\s/g, ' ')).toBe('Code review · Changes');
       expect(result).toMatchObject({ reviewId, reviewers: [
         { reviewerId: 'step-1-reviewer-1', outcome: 'partial' },
         { reviewerId: 'step-1-reviewer-2', outcome: 'failed' },

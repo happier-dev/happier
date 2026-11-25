@@ -36,8 +36,15 @@ import { SessionStatusResultSchema } from '../../../sessions/control/contract.js
 import { AgentsBackendsListOutputSchema } from '../../agentBackendInventory.js';
 import { buildQualifiedPluginContributionKey } from '../../../plugins/contributionIdentity.js';
 import { reviewStartExecutionRunCompletion } from '../../specs/executionRunCompletion.js';
+import type { ReviewSubjectKindV1 } from '../../../reviews/reviewArtifactV1.js';
 
 export { reviewScopeForInput } from '../../../reviews/reviewEngines.js';
+
+const REVIEW_SUBJECT_TITLES = {
+  comparison: 'Changes',
+  repository: 'Repository',
+  pull_request: 'Pull request',
+} as const satisfies Record<ReviewSubjectKindV1, string>;
 
 async function readReviewTranscriptInput(sourceSession: NonNullable<ReviewStartInput['sourceSession']>,
   execute: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>,
@@ -426,7 +433,8 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             return [key, { displayName: item?.label, agentId }] as const;
           })));
           const composedRunId = globalThis.crypto.randomUUID();
-          const reviewRound = await records.start({ reviewId: globalThis.crypto.randomUUID(), title: 'Code review',
+          const reviewTitle = 'Code review';
+          const reviewRound = await records.start({ reviewId: globalThis.crypto.randomUUID(), title: reviewTitle,
             subjectKind,
             sourceKind: creatingWorkflowRunId ? 'workflow' : 'direct',
             ...(ctx.actionCaller?.kind === 'workflowRun' ? { workflowId: ctx.actionCaller.workflowId } : {}),
@@ -472,6 +480,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             parent: { actionId, input: parsed.data as JsonObject }, context: workflowContext,
             child: { action: 'workflow.run.start', role: 'workflow.run.start', input: {
               runId: composedRunId, source: { kind: 'inline', definition: built.definition }, inputs: built.inputs,
+              metadata: { title: `${reviewTitle} · ${REVIEW_SUBJECT_TITLES[subjectKind]}` },
             } as JsonObject },
             execute: (input, context, childId) => executeHostChild(childId, input, context),
           });

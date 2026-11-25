@@ -1,5 +1,5 @@
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { reviewRoundReviewerOutcomeLabel, type ReviewRoundReviewer } from '@/components/reviews/reviewRoundReviewers';
+import { reviewRoundReviewerStateLabel, type ReviewRoundReviewer } from '@/components/reviews/reviewRoundReviewers';
 import { describeWorkflowInvocationLifecycle, type WorkflowLifecyclePresentation } from '../presentation/workflowLifecyclePresentation';
 
 export type WorkflowReviewerStatus = Pick<WorkflowLifecyclePresentation, 'label' | 'variant' | 'marker'>;
@@ -12,7 +12,8 @@ export function projectWorkflowReviewerStatuses(reviewers: readonly ReviewRoundR
       ? { variant: 'warning', marker: { kind: 'icon', icon: 'warning-circle' } } as const
       : describeWorkflowInvocationLifecycle(reviewer.outcome);
     return [[reviewer.reviewerId, {
-      label: reviewRoundReviewerOutcomeLabel(reviewer.outcome),
+      // Unknown outcomes were excluded above, so the shared presenter always supplies a label.
+      label: reviewRoundReviewerStateLabel(reviewer)!,
       variant: presentation.variant,
       marker: presentation.marker,
     } satisfies WorkflowReviewerStatus] as const];

@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { View } from 'react-native';
 
@@ -12,7 +11,6 @@ import { useReviewHistory } from '@/components/reviews/useReviewHistory';
 import { useReviewList } from '@/components/reviews/useReviewList';
 import { useReviewDetail } from '@/components/reviews/useReviewDetail';
 import { projectReviewRoundReviewers, type ReviewRoundReviewer } from '@/components/reviews/reviewRoundReviewers';
-import { reviewSubjectFact } from '@/components/reviews/list/reviewSubjectLabel';
 import { readReviewFindingDecision } from '@/components/sessions/reviews/findings/reviewFindingComment';
 import { formatReviewFindingLocation } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
 import { useReviewComments } from '@/components/sessions/reviews/findings/useReviewRunComments';
@@ -43,7 +41,6 @@ export function useWorkflowRunProducedReview(runId: string, scope: ServerAccount
 export type WorkflowRunResultReview = Readonly<{
     reviewId: string;
     isResult: boolean;
-    title?: string | null;
     /** Settled outcomes for this Run's own round, even after another Run retries the Review. */
     reviewers?: readonly ReviewRoundReviewer[];
 }>;
@@ -69,13 +66,11 @@ export function useWorkflowRunResultReview(params: Readonly<{
     return React.useMemo(() => {
         if (reviewId === null) return null;
         const round = record?.rounds.filter(round => round.runs.some(run => run.kind === 'workflow' && run.runId === params.runId)).at(-1);
-        const subject = detail.data?.review.subjectKind;
-        return { reviewId, title: record ? joinHappierFacts(record.title,
-            subject ? reviewSubjectFact(subject, round?.comparisonCapture?.input.source).text : null) : null,
+        return { reviewId,
             reviewers: round && round.state !== 'running' ? projectReviewRoundReviewers(round, undefined) : undefined,
             isResult: workflowRunReviewIsResult({ reviewId, finalOutputInvocationId: params.finalOutputInvocationId,
                 result: params.result }) };
-    }, [reviewId, record, detail.data?.review.subjectKind, params.runId, params.finalOutputInvocationId, params.result]);
+    }, [reviewId, record, params.runId, params.finalOutputInvocationId, params.result]);
 }
 
 /**

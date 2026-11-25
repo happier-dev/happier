@@ -599,7 +599,6 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // opened from the header, and no step pane prints its raw record (U8 R4 R1, R2).
     const producedReviewId = props.resultReview?.reviewId ?? null;
     const finalOutputIsReview = props.resultReview?.isResult === true;
-    const runTitle = finalOutputIsReview ? props.resultReview?.title ?? props.title : props.title;
     const reviewerStatuses = React.useMemo(() => projectWorkflowReviewerStatuses(props.resultReview?.reviewers), [props.resultReview?.reviewers]);
     const router = useRouter();
     const selectPage = React.useCallback((id: string) => {
@@ -1391,7 +1390,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 // the pane's own controls at its end, and the Run's controls on the row beneath.
                 <DetailsTabHeader
                     testID={`${testIDPrefix}-header`}
-                    title={runTitle ?? t('workflows.contentUnavailable')}
+                    title={props.title ?? t('workflows.contentUnavailable')}
                     columnMaxWidthPx={maxWidthStyle.maxWidth}
                     leading={<Icon name="tree-structure" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
                     meta={embeddedHeaderMeta}
@@ -1402,7 +1401,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 <NavigationLargeTitleProvider largeTitle={phone}>
                 <PageHeader
                     testID={`${testIDPrefix}-header`}
-                    title={runTitle ?? t('workflows.contentUnavailable')}
+                    title={props.title ?? t('workflows.contentUnavailable')}
                     alwaysShowTitle
                     // A phone gives the title the full width; the origin fact keeps the workflow glyph (lab P1).
                     leading={phone ? undefined : (
@@ -2096,7 +2095,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
 
     const hideWorkflowLabel = t('panes.mainColumn.hideWorkflow');
     const showWorkflowLabel = t('panes.mainColumn.showWorkflow');
-    const runName = runTitle ?? t('workflows.contentUnavailable');
+    const runName = props.title ?? t('workflows.contentUnavailable');
     const runMarkColor = theme.colors.text.secondary;
     const runPaneState = props.run.attentionRequired === true || attentionRows.length > 0 ? 'attention'
         : props.run.state === 'running' ? 'working' : undefined;

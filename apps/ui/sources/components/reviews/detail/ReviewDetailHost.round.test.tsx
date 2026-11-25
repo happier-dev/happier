@@ -121,6 +121,9 @@ it('uses the same persisted reviewer results on the round, Runs, notice and Acti
     .flatMap(node => node.children).filter((child): child is string => typeof child === 'string').join(' ') ?? '';
   try {
     await vi.waitFor(() => expect(textOf('review-detail:participant:first')).toContain(t('reviewWalkthrough.collection.statePartial')));
+    // UI refinements 12:32Z: retained partial work needs warning attention, not failure severity.
+    expect(screen.findByType(ReviewDetailView).props.rounds[0].groups[0].participants
+      .find((reviewer: { id: string }) => reviewer.id === 'first')?.tone).toBe('attention');
     expect(textOf('review-detail:participant:second')).toContain(t('reviewWalkthrough.collection.stateCompleted'));
     expect(screen.findHostByTestId('review-detail:partial')).toBeNull();
     await act(async () => screen.findByType(ReviewDetailView).props.onSelectTab('runs'));
@@ -196,6 +199,7 @@ it('keeps the step-2 name in round 2 and says why it did not finish (U8 R5 P7, r
   const stepTwo = t('reviewWalkthrough.detail.reviewerInStep', { name: 'Claude', step: 2 });
   try {
     await vi.waitFor(() => expect(textOf('review-detail:participant:step-2-reviewer-1')).toContain(stepTwo));
+    expect(screen.findByType(ReviewDetailView).props.rounds[1].groups[0].participants[0].tone).toBe('failed');
     expect(screen.findHostByTestId('review-detail:partial')).toBeNull();
     expect(textOf('review-detail:partial:retry')).toContain(t('reviewWalkthrough.detail.retryReviewer', { name: stepTwo }));
     await act(async () => screen.findByType(ReviewDetailView).props.onSelectTab('runs'));

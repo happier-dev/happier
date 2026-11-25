@@ -54,17 +54,20 @@ describe('projectWorkflowInvocationStructure', () => {
             variant: 'neutral', marker: { kind: 'icon', icon: 'check-circle' },
         } });
     });
-    it('projects a settled reviewer warning instead of mechanical invocation success', () => {
+    it('projects the settled typed reviewer cause instead of mechanical invocation success', async () => {
         const definition = definitionOf([step('step-1-reviewer-1')]);
         const invocation = createWorkflowInvocationIndexFixture({ id: 'reviewer', parentRecordId: 'root',
             memberOrdinal: '0', sequence: '1', lifecycle: 'completed' });
         const invocations = [root, invocation];
         const reviewers = projectReviewRoundReviewers({ state: 'partial', reviewerIds: ['step-1-reviewer-1'], runs: [],
-            reviewerOutcomes: [{ reviewerId: 'step-1-reviewer-1', outcome: 'failed' }],
+            reviewerOutcomes: [{ reviewerId: 'step-1-reviewer-1', outcome: 'failed',
+                reason: { run: 'launch_failed', errorCode: 'provider_model_not_found' } }],
         }, undefined);
         const structure = projectWorkflowInvocationStructure({ definition, invocations });
         const state = projectWorkflowFlowRunStates({ invocations, structure, reviewerStatuses: projectWorkflowReviewerStatuses(reviewers) }).get('step-1-reviewer-1')?.[0];
+        const { t } = await import('@/text');
         expect(state).toMatchObject({ lifecycle: 'completed', statusPresentation: {
+            label: t('settingsProviders.errors.modelNotFoundTitle'),
             variant: 'warning', marker: { kind: 'icon', icon: 'warning-circle' },
         } });
     });

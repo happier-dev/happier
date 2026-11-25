@@ -4135,24 +4135,24 @@ describe('WorkflowRunContent', () => {
     }] });
     const row = (id: string, parentRecordId: string | null, memberOrdinal: string, sequence: string) =>
       createWorkflowInvocationIndexFixture({ id, parentRecordId, memberOrdinal, sequence, lifecycle: 'completed' });
-    const screen = await renderContent({ title: 'Prepare the Review round and 4 more', definition, view: 'flow',
+    const screen = await renderContent({ title: 'Code review · Changes', definition, view: 'flow',
       run: createWorkflowRunSummaryFixture({ state: 'succeeded', availability: { cancel: false, pause: false } }),
-      resultReview: { reviewId: 'review-49c7', isResult: true, title: 'Code review · Changes', reviewers },
+      resultReview: { reviewId: 'review-49c7', isResult: true, reviewers },
       invocations: [row('root', null, '0', '0'), row('parallel', 'root', '0', '1'),
         row('first-frame', 'parallel', '0', '2'), row('first-reviewer', 'first-frame', '0', '3'),
         row('second-frame', 'parallel', '1', '4'), row('second-reviewer', 'second-frame', '0', '5')],
     });
     const warnings = () => screen.findAllByType(StatusPill).filter(pill => pill.props.variant === 'warning')
       .map(pill => pill.props.label);
-    expect(warnings()).toEqual(expect.arrayContaining(['reviewWalkthrough.collection.statePartial', 'reviewWalkthrough.collection.stateFailed']));
+    expect(warnings()).toEqual(expect.arrayContaining(['reviewWalkthrough.collection.statePartial', 'settingsProviders.errors.modelNotFoundTitle']));
     expect(screen.getTextContent().replace(/\s/g, ' ')).toContain('Code review · Changes');
     await screen.update(<WorkflowRunContent {...screen.contentProps} view="steps" />);
-    expect(warnings()).toEqual(expect.arrayContaining(['reviewWalkthrough.collection.statePartial', 'reviewWalkthrough.collection.stateFailed']));
+    expect(warnings()).toEqual(expect.arrayContaining(['reviewWalkthrough.collection.statePartial', 'settingsProviders.errors.modelNotFoundTitle']));
     // Include the two reviewer rows beyond the structural rows in the recycler's measured viewport.
     virtualizedListState.renderItemLimit = 5;
     await screen.update(<WorkflowRunContent {...screen.contentProps} view="activity" />);
     expect(screen.getTextContent()).toContain('reviewWalkthrough.collection.statePartial');
-    expect(screen.getTextContent()).toContain('reviewWalkthrough.collection.stateFailed');
+    expect(screen.getTextContent()).toContain('settingsProviders.errors.modelNotFoundTitle');
   });
 
   it('offers the canonical Steps view when a successful Run has no final output', async () => {

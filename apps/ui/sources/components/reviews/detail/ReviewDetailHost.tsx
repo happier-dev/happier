@@ -164,7 +164,8 @@ export function projectRound(round: ReviewRecordRound, reads?: ReadonlyMap<strin
             : reviewer.outcome === 'completed' && reviewer.findingsCount !== null
               ? t('reviewWalkthrough.detail.findingsCount', { count: reviewer.findingsCount })
               : reviewRoundReviewerStateLabel(reviewer),
-          tone: reviewer.outcome === 'failed' || reviewer.outcome === 'partial' || unfinished.has(reviewer.reviewerId) ? 'failed' : null,
+          tone: reviewer.outcome === 'failed' ? 'failed'
+            : reviewer.outcome === 'partial' || unfinished.has(reviewer.reviewerId) ? 'attention' : null,
         })),
       },
     ],
