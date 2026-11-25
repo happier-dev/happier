@@ -17,8 +17,7 @@ import { sanitizeDockerEnv } from '../../scripts/extended-db-docker.plan.mjs';
 import { LocalServiceLauncherSnapshotV1Schema,
   DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
-import { startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
-import { applyTrustedLocalPluginFixture } from '../../src/testkit/externalSessionLiveLifecycleFixture';
+import { installDatabaseCapturePluginFixture, startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
 import { repoRootDir } from '../../src/testkit/paths';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { waitFor } from '../../src/testkit/timing';
@@ -27,7 +26,8 @@ const run = createRunDirs({ runLabel: 'core' });
 const execute = promisify(execFile);
 
 it('P5-F7-known-good-capture records a Happier-started service query and turns recording off', async () => {
-  const fixture = await startDatabaseWorkbenchInsightsFixture({ testDir: run.testDir('dbw-capture-f7') });
+  const testDir = run.testDir('dbw-capture-f7');
+  const fixture = await startDatabaseWorkbenchInsightsFixture({ testDir });
   // Extract the pinned fixture dependencies on Linux. The reviewed launcher owns the service process and its loopback listeners.
   const image = process.platform === 'linux' ? `happier-f7-app:${randomUUID()}` : undefined;
   const dockerOptions = { env: sanitizeDockerEnv(process.env) };
@@ -35,25 +35,29 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
   try {
     const target = fixture.targets.selected;
     const pluginId = DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId;
-    await applyTrustedLocalPluginFixture({ daemonPort: fixture.machine.daemon.state.httpPort,
-      controlToken: fixture.machine.daemon.state.controlToken,
-      pluginRoot: join(repoRootDir(), 'packages/plugins/telemetry'), pluginId,
-      interactionId: 'dbw-f7-capture-install' });
+    await installDatabaseCapturePluginFixture({ testDir, daemonPort: fixture.machine.daemon.state.httpPort,
+      controlToken: fixture.machine.daemon.state.controlToken });
     const project = { serverId: fixture.serverId, machineId: fixture.machine.target.machineId, projectId: target.projectKey };
     const source = { kind: 'worktree' as const, ...project, workspaceId: target.workspace.workspaceId };
     async function capture(actionId: typeof DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1 | typeof DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1 | typeof DATABASE_CAPTURE_STATUS_ACTION_ID_V1
       | typeof DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1 | typeof DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, input: unknown) {
-      const result = await fixture.owner.execute('action.invoke', { action: { pluginId, localId: databaseActionLocalIdV1(actionId) }, input },
+      const result = await fixture.owner.executeReviewed('action.invoke', { action: { pluginId, localId: databaseActionLocalIdV1(actionId) }, input },
         { externalActionTarget: { kind: 'machine', machineId: project.machineId }, presentUserConfirmation: { actionId: 'action.invoke' } });
       expect(result.ok, JSON.stringify(result)).toBe(true);
       if (!result.ok) throw new Error(`F7 capture Action refused (${result.errorCode})`);
       return result.result;
     }
-    expect(DatabaseCaptureConfigureResultV1Schema.parse(await capture(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1,
-      { project, enabled: true }))).toMatchObject({ ok: true, enabled: true });
+    const configured = await capture(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, { project, enabled: true });
+    const parsedConfigure = DatabaseCaptureConfigureResultV1Schema.safeParse(configured);
+    if (!parsedConfigure.success) {
+      const fields = configured && typeof configured === 'object' ? Object.keys(configured) : [typeof configured];
+      throw new Error(`F7 Configure returned an unexpected result shape (${fields.join(', ')})`);
+    }
+    expect(parsedConfigure.data).toMatchObject({ ok: true, enabled: true });
     const root = fixture.machine.workspaceDir;
     await mkdir(join(root, '.happier'), { recursive: true });
     let command: string;
+    let clientVersion: string;
     if (image) {
       const workload = join(repoRootDir(), 'apps/cli/src/deployments/testkit/telemetryApp');
       await execute('docker', ['build', '--tag', image, workload], dockerOptions);
@@ -68,9 +72,13 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
         await execute('docker', ['rm', containerId], dockerOptions);
       }
       command = `${JSON.stringify(process.execPath)} --expose-gc capture-app/app.cjs`;
+      const client = createRequire(join(appDir, 'app.cjs'))('pg/package.json') as { version: string };
+      clientVersion = client.version;
     } else {
       // Retain the existing wire-only G1 fixture outside the Linux composed test lane.
-      const pg = createRequire(new URL('../../../plugins/database-workbench/package.json', import.meta.url)).resolve('pg');
+      const require = createRequire(new URL('../../../plugins/database-workbench/package.json', import.meta.url));
+      const pg = require.resolve('pg');
+      clientVersion = (require('pg/package.json') as { version: string }).version;
       await writeFile(join(root, 'capture-app.cjs'), `const {Client}=require(${JSON.stringify(pg)}); const http=require('node:http');
       http.createServer(async(req,res)=>{ const client=new Client({connectionString:process.env.DATABASE_URL});
         try { await client.connect(); await client.query("SELECT id FROM sentinel WHERE id=1"); res.end('ok'); }
@@ -117,6 +125,23 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
         (image ? row.statementKind === 'select' : row.shape?.includes('sentinel')));
     }, { context: 'F7 query visible through public Action' });
     console.info('P5-F7-known-good-capture passed', fixture.runtime);
+    const workloadUrl = image ? new URL('/checkout', endpoint) : new URL(endpoint);
+    const wireRows = async () => {
+      const result = DatabaseCaptureQueriesListResultV1Schema.parse(await capture(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
+        { source, page: { limit: 20 } }));
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('F7 wire count unavailable');
+      return result.items.filter(row => row.source === 'wire').map(row => row.id).sort();
+    };
+    const beforeObserving = await wireRows();
+    const observed = await fetch(workloadUrl);
+    expect(observed.ok).toBe(true);
+    const observedBody = await observed.text();
+    await waitFor(async () => (await wireRows()).length > beforeObserving.length,
+      { context: 'F7 M4 observing commit' });
+    const observing = { requests: 1, retainedWireQueries: (await wireRows()).length - beforeObserving.length };
+    expect(observing.retainedWireQueries).toBe(1);
+    let extendedObserving: { requests: number; executions: number; retainedWireQueries: number } | undefined;
     if (image) {
       const measurement = async () => {
         const response = await fetch(new URL('/measurement', endpoint));
@@ -186,6 +211,7 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
       expect(queries.items.filter(row => row.source === 'wire')).toHaveLength(3);
       expect(queries.items.filter(row => row.source === 'otlp')).toHaveLength(3);
       expect(JSON.stringify({ queries, waterfall })).not.toContain('must-be-masked');
+      extendedObserving = { requests: 1, executions: 3, retainedWireQueries: queries.items.filter(row => row.source === 'wire').length };
     }
     expect(DatabaseCaptureConfigureResultV1Schema.parse(await capture(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1,
       { project, enabled: false }))).toMatchObject({ ok: true, enabled: false });
@@ -197,10 +223,38 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
       .find(row => row.id === service.id)?.endpointUrl;
     if (!runningEndpoint) throw new Error('F7 running app lost its endpoint');
     // Turning capture off must preserve forwarding for the admitted service.
-    const forwarded = await fetch(image ? new URL('/checkout', runningEndpoint) : runningEndpoint);
+    const beforeRelaying = await wireRows();
+    const forwarded = await fetch(new URL(workloadUrl.pathname, runningEndpoint));
     expect(forwarded.ok).toBe(true);
-    if (image) expect(await forwarded.json()).toEqual({ ok: true });
-    else expect(await forwarded.text()).toBe('ok');
+    expect(await forwarded.text()).toBe(observedBody);
+    const afterRelaying = await wireRows();
+    expect(afterRelaying).toEqual(beforeRelaying);
+    const relaying = { requests: 1, retainedWireQueries: afterRelaying.length - beforeRelaying.length };
+    let extendedRelaying: typeof extendedObserving;
+    if (image) {
+      const readWork = async () => {
+        const response = await fetch(new URL('/measurement', runningEndpoint));
+        expect(response.ok).toBe(true);
+        return await response.json() as { requests: number; queries: number };
+      };
+      const before = await readWork();
+      const orders = await fetch(new URL('/orders', runningEndpoint));
+      expect(orders.status).toBe(200);
+      expect(await orders.json()).toEqual({ ok: true });
+      const after = await readWork();
+      expect(after).toMatchObject({ requests: before.requests + 1, queries: before.queries + 3 });
+      const retained = await wireRows();
+      expect(retained).toEqual(beforeRelaying);
+      extendedRelaying = { requests: after.requests - before.requests, executions: after.queries - before.queries,
+        retainedWireQueries: retained.length - beforeRelaying.length };
+    }
+    console.info('P5 M4 loaded wire counts', {
+      workload: image ? 'checkout simple SELECT and orders parameterized SELECT' : 'sentinel simple SELECT',
+      clientVersion,
+      nodeVersion: process.version,
+      simple: { observing, relaying },
+      extended: { observing: extendedObserving, relaying: extendedRelaying },
+    });
     const stopped = await fixture.owner.executeReviewed('localServices.actions.stopManaged', {
       requestId: 'f7-stop-app', action: 'stop_managed', target: launch.currentTarget, force: false,
     }, { presentUserConfirmation: { actionId: 'localServices.actions.stopManaged' } });

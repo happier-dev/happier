@@ -7,7 +7,7 @@ import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openPr
 import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import type { Settings } from '../../../../apps/cli/src/persistence';
-import { DatabaseWorktreeTargetV1Schema } from '@happier-dev/plugin-sdk/database';
+import { DATABASE_CAPTURE_RESOURCE_REF_V1, DatabaseWorktreeTargetV1Schema } from '@happier-dev/plugin-sdk/database';
 import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_CONNECT_ACTION_ID_V1, databaseActionLocalIdV1, type DatabaseActionIdV1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
 import { DatabaseTargetsConnectInputV1Schema } from '../../../database-protocol/src/databaseTargetActions';
 import { DatabaseDescriptorV1Schema as DatabaseTargetsConnectResultV1Schema } from '@happier-dev/plugin-sdk/database';
@@ -20,19 +20,29 @@ import { startSessionMcpAgent } from './sessionMcpAgent';
 
 /** Register authored source owned by this run. The daemon watches the registered
  * root, so another lane editing the checkout must not reload this fixture. */
-export async function installDatabaseWorkbenchPluginFixture(params: Readonly<{
+type FixturePluginInstallation = Readonly<{
   testDir: string;
   daemonPort: number;
   controlToken?: string | null;
-}>) {
-  const sourceRoot = join(repoRootDir(), 'packages/plugins/database-workbench');
+}>;
+
+export function installDatabaseWorkbenchPluginFixture(params: FixturePluginInstallation) {
+  return installDatabaseFixturePlugin(params, 'database-workbench', DATABASE_PLUGIN_ID_V1);
+}
+
+export function installDatabaseCapturePluginFixture(params: FixturePluginInstallation) {
+  return installDatabaseFixturePlugin(params, 'telemetry', DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId);
+}
+
+async function installDatabaseFixturePlugin(params: FixturePluginInstallation, packageName: string, pluginId: string) {
+  const sourceRoot = join(repoRootDir(), 'packages/plugins', packageName);
   const packageJsonPath = join(sourceRoot, 'package.json');
   const packageJson = await readFile(packageJsonPath, 'utf8');
   const { dependencies, devDependencies } = JSON.parse(packageJson) as {
     dependencies: Record<string, string>;
     devDependencies: Record<string, string>;
   };
-  const pluginRoot = join(await realpath(params.testDir), 'database-workbench-plugin');
+  const pluginRoot = join(await realpath(params.testDir), `${packageName}-plugin`);
   await mkdir(pluginRoot);
   await Promise.all([
     cp(join(sourceRoot, 'src'), join(pluginRoot, 'src'), { recursive: true, dereference: true }),
@@ -49,7 +59,7 @@ export async function installDatabaseWorkbenchPluginFixture(params: Readonly<{
   const { applyTrustedLocalPluginFixture } = await import('./externalSessionLiveLifecycleFixture');
   const installation = await applyTrustedLocalPluginFixture({
     daemonPort: params.daemonPort, controlToken: params.controlToken, pluginRoot,
-    pluginId: DATABASE_PLUGIN_ID_V1, interactionId: 'database-workbench-fixture-install',
+    pluginId, interactionId: `${packageName}-fixture-install`,
   });
   return { sourceRoot: pluginRoot, installation };
 }
