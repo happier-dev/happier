@@ -248,12 +248,14 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       </FieldItem>
   </> : null;
   // Until Cloudflare is connected nothing below can be filled: the prerequisite and its one action stand alone (R15-D9).
-  const prerequisite = props.enabled && props.linkedZone === undefined && needsConnect;
+  const prerequisite = props.enabled && props.linkedZone === undefined && needsConnect
+    ? { kind: 'cloudflareConnection' as const }
+    : null;
   return { advancedFields, prerequisite, selection: props.enabled ? selected : undefined, zone: props.enabled && zonesOnly ? selectedZone : undefined,
     dns: props.enabled && dns.success ? dns.data : undefined, fields: props.enabled ? (
     <View style={styles.fields}>
       {props.linkedZone === undefined ? <>
-      {needsConnect ? <EmptyState testID={`${id}.connect`} layout="centered"
+      {prerequisite?.kind === 'cloudflareConnection' ? <EmptyState testID={`${id}.connect`} layout="centered"
         icon={<PluginMark title="Cloudflare" pluginId={binding.service.pluginId} />}
         title={t('projects.deployments.editors.domainConnectTitle')}
         subtitle={t('projects.deployments.editors.domainConnectBody')}

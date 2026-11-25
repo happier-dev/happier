@@ -14146,6 +14146,7 @@ settingsSession: {
       title: "專案",
         deployments: {
             receipt: { homeStorageUnavailable: "此 Home 暫時無法使用。" },
+            checksBackingUp: "正在備份",
             providerDomainPending: "供應商指派的位址",
             domainAddressKind: "位址類型",
             domainAddressCustom: "自訂網域",

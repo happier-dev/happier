@@ -19557,6 +19557,7 @@ settingsSession: {
         checksWaiting: "Czekam na pierwszy test",
         checksFailing: ({ names }: { names: string }) => `${names} nie przechodzi`,
         checksAllPassing: "Wszystko przechodzi",
+        checksBackingUp: "Tworzenie kopii zapasowej",
         checksOnMachine: ({ summary, machine }: { summary: string; machine: string }) => `${summary} · na ${machine}`,
         alertsRow: "Alerty",
         notAvailableYet: "Jeszcze niedostępne",

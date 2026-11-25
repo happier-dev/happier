@@ -19732,6 +19732,7 @@ settingsSession: {
         checksWaiting: "Esperando la primera comprobación",
         checksFailing: ({ names }: { names: string }) => `${names} no pasa`,
         checksAllPassing: "Todo pasa",
+        checksBackingUp: "Creando copia de seguridad",
         checksOnMachine: ({ summary, machine }: { summary: string; machine: string }) => `${summary} · en ${machine}`,
         alertsRow: "Alertas",
         notAvailableYet: "Aún no disponible",

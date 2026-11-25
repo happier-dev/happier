@@ -19606,6 +19606,7 @@ settingsSession: {
         checksWaiting: "En attente de la première vérification",
         checksFailing: ({ names }: { names: string }) => `${names} en échec`,
         checksAllPassing: "Tout passe",
+        checksBackingUp: "Sauvegarde en cours",
         checksOnMachine: ({ summary, machine }: { summary: string; machine: string }) => `${summary} · sur ${machine}`,
         alertsRow: "Alertes",
         notAvailableYet: "Pas encore disponible",

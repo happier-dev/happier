@@ -520,7 +520,8 @@ function DomainAddForm(
   const ready = !props.busy && (assigned || host.length > 0 && !duplicate && (provider ? !needsZone || !!zone
     : service.trim().length > 0 && portValid && pathValid && checkValid && (!needsSelection || !!ingress)));
   // A disabled Add domain names the first field it still needs (zone and tunnel choices say so in their own rows).
-  const missingField = assigned || props.busy || duplicate ? null : host.length === 0 ? t('projects.deployments.domainFieldHost')
+  const missingField = assigned || props.busy || duplicate || ingressPrerequisite ? null
+    : host.length === 0 ? t('projects.deployments.domainFieldHost')
     : provider ? null
     // Until the tunnel's zone is chosen (or Cloudflare connected) that row is the blocker and says so itself (R14-D11).
     : needsSelection && !ingress ? null

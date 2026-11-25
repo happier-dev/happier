@@ -19838,6 +19838,7 @@ settingsSession: {
         checksWaiting: "Aguardando a primeira verificação",
         checksFailing: ({ names }: { names: string }) => `${names} não passa`,
         checksAllPassing: "Tudo passando",
+        checksBackingUp: "A criar cópia de segurança",
         checksOnMachine: ({ summary, machine }: { summary: string; machine: string }) => `${summary} · em ${machine}`,
         alertsRow: "Alertas",
         notAvailableYet: "Ainda não disponível",

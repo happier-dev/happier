@@ -1,5 +1,9 @@
 import type { PluginUiFailureActionsBindingV1 } from '@happier-dev/protocol/plugins/contributions/ui/failureActions';
-import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import {
+    readCurrentAppShellPluginUiProjection,
+    readCurrentAppShellDeclarationsPending,
+    subscribeCommittedAppShellPluginUiProjection,
+} from '@/components/appShell/plugins/committedPluginUiProjection';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 export type FailureActionsBinding = PluginUiFailureActionsBindingV1 & Readonly<{ pluginId: string }>;
@@ -12,4 +16,21 @@ export function readFailureActionsBinding(scope: ServerAccountScope | null): Fai
   if (declarations.length !== 1) return null;
   const view = declarations[0];
   return { pluginId: view.pluginId, ...view.failureActions! };
+}
+
+/** The shell's declaration source owns when an absent binding becomes a final answer. */
+export function waitForFailureActionsBinding(scope: ServerAccountScope, signal?: AbortSignal): Promise<FailureActionsBinding | null> {
+  const source = { scope, declarationsOnly: true } as const;
+  return new Promise(resolve => {
+    const settle = () => {
+      const binding = signal?.aborted ? null : readFailureActionsBinding(scope);
+      if (!signal?.aborted && !binding && readCurrentAppShellDeclarationsPending(source)) return;
+      stop();
+      signal?.removeEventListener('abort', settle);
+      resolve(binding);
+    };
+    const stop = subscribeCommittedAppShellPluginUiProjection(settle);
+    signal?.addEventListener('abort', settle);
+    settle();
+  });
 }

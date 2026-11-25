@@ -19842,6 +19842,7 @@ settingsSession: {
             checksWaiting: "Warte auf die erste Prüfung",
             checksFailing: ({ names }: { names: string }) => `${names} nicht bestanden`,
             checksAllPassing: "Alle bestanden",
+            checksBackingUp: "Sicherung läuft",
             checksOnMachine: ({ summary, machine }: { summary: string; machine: string }) => `${summary} · auf ${machine}`,
             alertsRow: "Benachrichtigungen",
             notAvailableYet: "Noch nicht verfügbar",

@@ -262,6 +262,8 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             || previous.pluginUiProjection !== snapshot.pluginUiProjection
             || previous.candidateFactsByPluginId !== snapshot.candidateFactsByPluginId
             || previous.executionOriginReportsByPluginId !== snapshot.executionOriginReportsByPluginId
+            || previous.accountCensusPending !== snapshot.accountCensusPending
+            || previous.projectionUnion.hasEstablishingMembers !== snapshot.projectionUnion.hasEstablishingMembers
             || previous.projectionUnion.phase !== snapshot.projectionUnion.phase
             || previous.projectionUnion.interactionEnabled !== snapshot.projectionUnion.interactionEnabled
             || (previous.accountUiProjection === null) !== (snapshot.accountUiProjection === null)

@@ -258,6 +258,31 @@ async function renderTab(
 }
 
 describe('Environment → Domains', () => {
+  it('leads with the missing Cloudflare connection before asking for a Tunnel hostname', async () => {
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+    const previous = storage.getState();
+    storage.setState({ profileScope: scope, profile: { ...profileDefaults, id: scope.accountId, connectedAccountsV4: [] } });
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, content: { ...base.content, ingress: undefined } };
+    const { screen, controller, settle } = await renderTab('domains', detail,
+      { listDomains: async () => ({ ok: true, value: { items: [], nextCursor: null } }) },
+      { domainActions: { addDomain: vi.fn(), inspectPlatformTarget: vi.fn(), verifyDomain: vi.fn(), removeDomain: vi.fn() } });
+    const id = 'project-deployments.environment.domains.add';
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      await screen.pressByTestIdAsync(`${id}.ingress.mode:cloudflare`);
+      expect(await settle(`${id}.ingress.connect.add`)).not.toBeNull();
+      expect(screen.findByTestId(`${id}.save`)?.props.accessibilityState?.disabled).toBe(true);
+      expect(screen.findByTestId(`${id}.needs`)).toBeNull();
+    } finally {
+      await screen.unmount();
+      controller.retire();
+      storage.setState({ profileScope: previous.profileScope, profile: previous.profile });
+    }
+  });
+
   it('shows missing recorded ingress and leaves automatic placement to the Domain owner', async () => {
     const base = createDeploymentEnvironmentDetailV1();
     const detail = { ...base, content: { ...base.content, ingress: undefined } };
@@ -1383,6 +1408,52 @@ describe('Environment → Settings: checks, backups, previews', () => {
       // History and missed schedules belong to the Database page (P9), never a second list here.
       expect(screen.findByTestId(`${id}.history`)).toBeNull();
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
+  it('does not count an unchecked database paused by the backup owner as a failed check', async () => {
+    const { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+    const { t } = await import('@/text');
+    const detail = createDeploymentEnvironmentDetailV1();
+    const link = detail.targetLinks[0]!.targetLink;
+    const member = link.members[0]!;
+    const snapshot = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'backup-run',
+      revision: 1, actionId: DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, state: 'running',
+      scope: { accountId: scope.accountId, machineId: member.machineId }, title: 'Back up', createdAt: 1, startedAt: 2,
+      cancellation: 'supported', domainRef: { kind: 'deployment', serverId: detail.environment.serverId,
+        environmentId: detail.environment.id, deploymentId: link.activeDeploymentId,
+        expectedDown: { operation: 'backup', targetLinkId: link.id, machineId: member.machineId,
+          installationId: member.installationId, serviceIds: ['app/database'], domains: [] } } });
+    actionOperationStore.mergeSnapshots({ serverId: detail.environment.serverId, snapshots: [snapshot] });
+    let updateHealth: ((afterBackup: boolean) => void) | undefined;
+    const { screen, controller, settle } = await renderTab('settings', detail, {
+      observeEnvironmentHealth: (_scope, _detail, publish) => {
+        updateHealth = afterBackup => publish({ environmentId: detail.environment.id, status: 'ready', members: [{
+          machineId: member.machineId, installationId: member.installationId, status: 'ready', services: [
+            { serviceId: 'app/web', name: 'web', state: afterBackup ? 'down' : 'up', reason: null, observedAt: afterBackup ? 200 : 100 },
+            { serviceId: 'app/database', name: 'database', state: afterBackup ? 'unknown' : 'down',
+              reason: afterBackup ? 'running_unverified' : 'stopped', observedAt: afterBackup ? 200 : 100 },
+          ],
+        }] }, undefined);
+        updateHealth(false);
+        return () => {};
+      },
+    });
+    const id = `project-deployments.environment.settings.checks-alerts.member.${member.machineId}`;
+    try {
+      expect(await settle(id)).not.toBeNull();
+      expect(screen.getTextContent()).toContain(t('projects.deployments.checksServices', { count: 1 }));
+      expect(screen.getTextContent()).toContain(t('projects.deployments.checksBackingUp'));
+      expect(screen.getTextContent()).not.toContain(t('projects.deployments.healthUnhealthy'));
+      await act(async () => {
+        actionOperationStore.mergeSnapshots({ serverId: detail.environment.serverId, snapshots: [
+          ActionOperationSnapshotV1Schema.parse({ ...snapshot, revision: 2, state: 'succeeded', settledAt: 3 }),
+        ] });
+        updateHealth?.(true);
+      });
+      expect(screen.getTextContent()).not.toContain(t('projects.deployments.checksBackingUp'));
+      expect(screen.getTextContent()).toContain(t('projects.deployments.checksFailing', { names: 'web' }));
+      expect(screen.getTextContent()).toContain(t('projects.deployments.checksServices', { count: 1 }));
+    } finally { await screen.unmount(); controller.retire(); }
   });
 
   it('opens the health-check trigger editor for this Environment on its controller without creating a trigger', async () => {

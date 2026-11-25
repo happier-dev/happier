@@ -19686,6 +19686,7 @@ settingsSession: {
         checksWaiting: "Ожидание первой проверки",
         checksFailing: ({ names }: { names: string }) => `${names}: не проходит`,
         checksAllPassing: "Все проходят",
+        checksBackingUp: "Создание резервной копии",
         checksOnMachine: ({ summary, machine }: { summary: string; machine: string }) => `${summary} · на ${machine}`,
         alertsRow: "Оповещения",
         notAvailableYet: "Пока недоступно",

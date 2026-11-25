@@ -19352,6 +19352,7 @@ settingsSession: {
         checksWaiting: "正在等待第一次检查",
         checksFailing: ({ names }: { names: string }) => `${names} 未通过`,
         checksAllPassing: "全部通过",
+        checksBackingUp: "正在备份",
         checksOnMachine: ({ summary, machine }: { summary: string; machine: string }) => `${summary} · 在 ${machine}`,
         alertsRow: "告警",
         notAvailableYet: "暂不可用",

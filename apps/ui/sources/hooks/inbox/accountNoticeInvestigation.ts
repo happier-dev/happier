@@ -12,7 +12,7 @@ import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/a
 import { readOwnedNoticeArtifactV1, ACCOUNT_NOTICE_ARTIFACT_KIND_V1, type AccountNoticeRecoveryChoiceV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import { readFailureActionsBinding, type FailureActionsBinding } from './failureActionsBinding';
+import { readFailureActionsBinding, waitForFailureActionsBinding, type FailureActionsBinding } from './failureActionsBinding';
 
 export type FailureInvestigationSubject = AccountNoticeArtifact | TriageFailureSubjectV1;
 export type FailureInvestigationExecutionOptions = Readonly<{
@@ -73,14 +73,17 @@ export function createAccountNoticeInvestigation(input: Readonly<{
     };
     const unavailable = () => ({ ok: false,
         errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' } as const);
-    const binding = () => input.binding === undefined ? readFailureActionsBinding(input.scope) : input.binding;
     async function invoke(command: Readonly<Record<string, unknown>>, options?: FailureInvestigationExecutionOptions) {
-        const contribution = binding();
         if (!input.scope || !input.isCurrent() || options?.signal?.aborted) return unavailable();
+        const execution = context(options);
+        const contribution = input.binding !== undefined ? input.binding
+            : command.kind === 'readAgentActions' ? await waitForFailureActionsBinding(input.scope, options?.signal)
+                : readFailureActionsBinding(input.scope);
+        if (options?.signal?.aborted || !await execution.verifyMachineAdmissionCurrent()) return unavailable();
         if (!contribution) return { ok: false, errorCode: 'failure_actions_unavailable', error: 'failure_actions_unavailable' } as const;
         const result = await input.execute('action.invoke', {
             action: { pluginId: contribution.pluginId, localId: contribution.action }, input: command,
-        }, context(options));
+        }, execution);
         return input.isCurrent() && !options?.signal?.aborted ? result : unavailable();
     }
     const recoveryChoices = (entry: AccountNoticeArtifact): readonly AccountNoticeRecoveryChoiceV1[] => {

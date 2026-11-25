@@ -37,7 +37,9 @@ it.each([false, true])('offers first Connect with no saved account (DNS records 
   try {
     const { EmptyState } = await import('@/components/ui/empty/EmptyState');
     const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
-    expect(screen.findByTestId('project-deployments.environment.domains.add.ingress.zones.read')).not.toBeNull();
+    const id = 'project-deployments.environment.domains.add.ingress';
+    expect(screen.findByTestId(`${id}.connect.add`)).not.toBeNull();
+    expect(screen.findByTestId(`${id}.zones.read`)).toBeNull();
     expect(screen.findAllByType(EmptyState).some(node => typeof node.props.primaryAction?.onPress === 'function')).toBe(true);
     expect(screen.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(0);
   } finally {

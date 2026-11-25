@@ -64,6 +64,7 @@ import {
   useDeploymentBackupFacts,
 } from './DeploymentBackupControls';
 import { deploymentDataTargetOperands } from '@happier-dev/deployments';
+import { useDeploymentServiceInterruptions } from '@/sync/domains/actionOperations/useActionOperations';
 import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { createDeploymentActions } from './deploymentActions';
 import { DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
@@ -610,19 +611,28 @@ type SectionProps = Readonly<{
 
 /** Native deployed-service health; saved checks and alerts use the source editor above. */
 function ChecksRows(props: SectionProps) {
-  const checks = useDeploymentEnvironmentChecks(props.controller, props.detail.environment.id, props.demand);
+  const { environment, runtimeTargetLink } = props.detail;
+  const checks = useDeploymentEnvironmentChecks(props.controller, environment.id, props.demand);
+  const interruptions = useDeploymentServiceInterruptions(props.demand.mounted && props.demand.visible && props.demand.focused
+    ? props.controller.scope : null, environment.id, runtimeTargetLink?.id, runtimeTargetLink?.activeDeploymentId);
   const members = checks.result.items.filter((member) => member.status !== 'unavailable');
   return (
     <>
       {members.map((member) => {
-        const reportable = member.services.filter(service =>
-          !isDeploymentServiceRunningWithoutCheckV1(service.state, service.reason));
+        const affected = interruptions.filter(interruption => interruption.machineId === member.machineId
+          && interruption.installationId === member.installationId);
+        const backingUp = affected.some(interruption => interruption.operation === 'backup'
+          && member.services.some(service => interruption.serviceIds.includes(service.serviceId)));
+        const reportable = member.services.filter(service => service.expectedDown !== 'stop'
+          && !affected.some(interruption => interruption.serviceIds.includes(service.serviceId))
+          && !isDeploymentServiceRunningWithoutCheckV1(service.state, service.reason));
         const passing = reportable.filter(service => service.observedAt !== null && service.state === 'up');
         const failing = reportable.filter(service => service.observedAt !== null
           && (service.state === 'down' || service.state === 'degraded'));
         const checkCount = passing.length + failing.length;
         const summary = failing.length > 0
           ? t('projects.deployments.checksFailing', { names: failing.map(service => service.name ?? service.serviceId).join(', ') })
+          : backingUp ? t('projects.deployments.checksBackingUp')
           : member.status === 'ready' && passing.length > 0 && reportable.length === passing.length
             ? t('projects.deployments.checksAllPassing')
             : t('projects.deployments.checksWaiting');

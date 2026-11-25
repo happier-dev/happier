@@ -23153,6 +23153,7 @@ const enProjects = {
       checksWaiting: "Waiting for the first check",
       checksFailing: ({ names }: { names: string }) => `${names} not passing`,
       checksAllPassing: "All passing",
+      checksBackingUp: "Backing up",
       checksOnMachine: ({ summary, machine }: { summary: string; machine: string }) => `${summary} · on ${machine}`,
       alertsRow: "Alerts",
       notAvailableYet: "Not available yet",

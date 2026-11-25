@@ -7,7 +7,8 @@ import { useShallow } from 'zustand/react/shallow';
 import { actionOperationSelectors, createActionOperationSelectors, selectTerminalActionOperationState, type DeploymentTargetLinkOperationQuery, type TerminalActionOperationQuery } from './actionOperationSelectors';
 import { actionOperationStore, isActionOperationTerminal, type ActionOperationReadOwner } from './actionOperationStore';
 import type { ActionOperationAddress, ActionOperationSessionAddress, ActionOperationProjectScriptQuery, ActionOperationProjectWorkspaceQuery, ActionOperationManagedMachineQuery, ActionOperationProjectServicesQuery } from './qualifiedActionOperation';
-import type { ServerAccountScopeLifetime } from '../scope/serverAccountScope';
+import type { ServerAccountScope, ServerAccountScopeLifetime } from '../scope/serverAccountScope';
+import { readDeploymentServiceInterruption } from '../artifacts/projectExpectedHealthNotice';
 import type { ActionOperationProjectSourceQuery } from './qualifiedActionOperation';
 import type { ActionOperationMachineSetupRunQuery, ActionOperationMachineSetupQuery } from './qualifiedActionOperation';
 
@@ -158,6 +159,18 @@ export function useMachineRebootActionOperations(scope: Readonly<{ serverId: str
         return () => selectors.selectMachineReboots(actionOperationStore.getSnapshot(), scope);
     }, [scope]);
     return useActionOperationSelector(read);
+}
+
+/** Read only the published interruption for this serving generation. Unrelated Activity cannot redraw Checks. */
+export function useDeploymentServiceInterruptions(scope: ServerAccountScope | null, environmentId: string,
+    targetLinkId: string | undefined, deploymentId: string | undefined) {
+    const enabled = Boolean(scope && targetLinkId && deploymentId);
+    const select = useShallow(() => scope && targetLinkId && deploymentId
+        ? actionOperationSelectors.selectActive(actionOperationStore.getSnapshot()).flatMap(operation => {
+            const interruption = readDeploymentServiceInterruption(operation, scope, environmentId, targetLinkId, deploymentId);
+            return interruption ? [interruption] : [];
+        }) : []);
+    return React.useSyncExternalStore(enabled ? actionOperationStore.subscribe : subscribeToNothing, select, select);
 }
 
 export function useDeploymentTargetLinkOperations(query: DeploymentTargetLinkOperationQuery) {

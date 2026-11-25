@@ -389,6 +389,13 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
             const snapshot = props.publication.getSnapshot();
             return snapshot.accountLifetime !== lifetime || snapshot.registrySourcesPending;
         };
+        const readDeclarationsPending = (input: AppShellPluginUiProjectionRead) => {
+            if (!lifetime?.isCurrent() || !areServerAccountScopesEqual(input.scope, lifetime.scope)) return false;
+            if (!props.publication) return standaloneDeclarationReady === false;
+            const snapshot = props.publication.getSnapshot();
+            return snapshot.accountLifetime !== lifetime || snapshot.accountCensusPending
+                || snapshot.projectionUnion.hasEstablishingMembers;
+        };
         const readExecutionOriginSelectionPending = (pluginId: string, input: AppShellPluginUiProjectionRead) => {
             if (!lifetime?.isCurrent() || !areServerAccountScopesEqual(input.scope, lifetime.scope)) return false;
             const snapshot = props.publication?.getSnapshot();
@@ -401,7 +408,7 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
         committedProjectionCleanup.current = publishCommittedAppShellPluginUiProjection(read, readCandidates,
             publication ? listener => publication.subscribe(listener, 'committed') : undefined, translationRuntime,
             providerId => valueRef.current.getVoiceProviderActivation?.(providerId) ?? null, readRegistrySourcesPending,
-            publication?.acquireExecutionOriginDemand, readExecutionOriginSelectionPending);
+            publication?.acquireExecutionOriginDemand, readExecutionOriginSelectionPending, readDeclarationsPending);
     }, [lifetime, props.publication, standaloneProjection, standalonePhase, standaloneDeclarationReady, standaloneCandidates, standaloneSkills, translationRuntime]);
     React.useLayoutEffect(() => () => {
         committedProjectionCleanup.current?.();

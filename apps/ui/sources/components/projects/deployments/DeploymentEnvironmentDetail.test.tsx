@@ -3990,6 +3990,7 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
     { page: 'Receipt', state: 'agent_unavailable', reason: 'agentActionsNeedAgent' },
     { page: 'Receipt', state: 'empty', reason: 'agentActionsNotConfigured' },
     { page: 'Environment', state: 'loading', reason: 'agentActionsLoading' },
+    { page: 'Environment', state: 'cold-declarations', reason: 'agentActionsLoading' },
     { page: 'Environment', state: 'contributed_action_unavailable', reason: 'agentActionsUnavailable' },
     { page: 'Environment', state: 'plugin_action_execution_failed', reason: null },
   ] as const)('$page shows a quiet agent catalog $state reason with Retry', async ({ page, state, reason }) => {
@@ -4011,8 +4012,12 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
     const { controller, detail } = controllerFor({ detail: base, receipt });
     const machineId = detail.environment.controllerMachineId;
     const placement = createPluginPagePlacementFixture({ pluginId: TRIAGE_FAILURE_TEST_BINDING.pluginId, localId: 'triage', title: 'Triage', targetKind: 'app' });
-    const unpublish = publishCommittedAppShellPluginUiProjection(() => ({ ...EMPTY_PLUGIN_UI_PROJECTION,
-      surfacePlacementsById: { [placement.id]: { ...placement, failureActions: { action: TRIAGE_FAILURE_TEST_BINDING.action } } } }));
+    let declarationPending = state === 'cold-declarations';
+    let publishDeclaration = () => {};
+    const unpublish = publishCommittedAppShellPluginUiProjection(() => declarationPending ? null : ({
+      ...EMPTY_PLUGIN_UI_PROJECTION,
+      surfacePlacementsById: { [placement.id]: { ...placement, failureActions: { action: TRIAGE_FAILURE_TEST_BINDING.action } } },
+    }), undefined, listener => { publishDeclaration = listener; return () => {}; }, undefined, undefined, undefined, undefined, undefined, () => declarationPending);
     const heldRead = createDeferred<ActionExecuteResult>();
     const available: ActionExecuteResult = { ok: true, result: { v: 1, kind: 'choices', defaultActionId: 'investigate',
       actions: [{ label: 'Investigate', forSubject: true, selection: { configuredActionId: 'investigate',
@@ -4021,7 +4026,7 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
     let retry = false;
     contributedFailureRead.answer = async () => {
       reads++;
-      if (retry) return available;
+      if (retry || state === 'cold-declarations') return available;
       if (state === 'loading') return heldRead.promise;
       if (state === 'empty') return { ok: true, result: { v: 1, kind: 'choices', defaultActionId: null, actions: [] } };
       return { ok: false, errorCode: state, error: state };
@@ -4036,6 +4041,16 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
         rollback={null} cancel={null} linkPath={null} readLogs={null} onBack={() => {}} review={noReview} onOpenReceipt={() => {}} />);
       const mounted = screen;
       await waitForContent(mounted, page === 'Receipt' ? 'project-deployments.receipt.outcome.failed' : 'project-deployments.environment.menu');
+      if (state === 'cold-declarations') {
+        expect(mounted.findByTestId('investigation.agentActions.loading')).not.toBeNull();
+        expect(mounted.findByTestId('investigation.agentActions.unavailable')).toBeNull();
+        expect(reads).toBe(0);
+        await act(async () => { declarationPending = false; publishDeclaration(); });
+        await waitForHomeGovernance(() => expect(mounted.findAllByType(AgentActionButton)
+          .map(button => button.props.title)).toEqual(['Investigate']));
+        expect(reads).toBe(1);
+        return;
+      }
       await waitForHomeGovernance(() => expect(reads).toBeGreaterThan(0));
       const line = `investigation.agentActions.${state === 'loading' ? 'loading' : 'unavailable'}`;
       await waitForHomeGovernance(() => {

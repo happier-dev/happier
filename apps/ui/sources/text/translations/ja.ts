@@ -19646,6 +19646,7 @@ settingsSession: {
         checksWaiting: "最初のチェックを待っています",
         checksFailing: ({ names }: { names: string }) => `${names} が不合格`,
         checksAllPassing: "すべて合格",
+        checksBackingUp: "バックアップ中",
         checksOnMachine: ({ summary, machine }: { summary: string; machine: string }) => `${summary} · ${machine}`,
         alertsRow: "アラート",
         notAvailableYet: "まだ利用できません",

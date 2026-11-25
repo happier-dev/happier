@@ -14,6 +14,7 @@ type CommittedProjectionBinding = Readonly<{
     acquireCandidates?: (pluginId: string) => () => void;
     translationRuntime?: PluginUiTranslationRuntime;
     getVoiceProviderActivation?: (providerId: string) => Promise<void> | null;
+    readDeclarationsPending?: (input: AppShellPluginUiProjectionRead) => boolean;
     readRegistrySourcesPending?: (input?: AppShellPluginUiProjectionRead) => boolean;
     readExecutionOriginSelectionPending?: (pluginId: string, input: AppShellPluginUiProjectionRead) => boolean;
     disposeSource(): void;
@@ -67,6 +68,11 @@ export function readCurrentAppShellPluginUiExecutionOriginSelectionPending(plugi
     return committed?.readExecutionOriginSelectionPending?.(pluginId, input) ?? false;
 }
 
+/** Whether the current Account is still establishing its contributed UI declarations. */
+export function readCurrentAppShellDeclarationsPending(input: AppShellPluginUiProjectionRead): boolean {
+    return committed?.readDeclarationsPending?.(input) ?? false;
+}
+
 /** The publication's fact that a registry source may still arrive; without a published app shell nothing will. */
 export function readCurrentAppShellRegistrySourcesPending(input?: AppShellPluginUiProjectionRead): boolean {
     return committed?.readRegistrySourcesPending?.(input) ?? false;
@@ -93,6 +99,7 @@ export function publishCommittedAppShellPluginUiProjection(
     readRegistrySourcesPending?: (input?: AppShellPluginUiProjectionRead) => boolean,
     acquireCandidates?: (pluginId: string) => () => void,
     readExecutionOriginSelectionPending?: (pluginId: string, input: AppShellPluginUiProjectionRead) => boolean,
+    readDeclarationsPending?: (input: AppShellPluginUiProjectionRead) => boolean,
 ): () => void {
     let unsubscribe: (() => void) | undefined;
     const binding: CommittedProjectionBinding = {
@@ -101,6 +108,7 @@ export function publishCommittedAppShellPluginUiProjection(
         acquireCandidates,
         translationRuntime,
         getVoiceProviderActivation,
+        readDeclarationsPending,
         readRegistrySourcesPending,
         readExecutionOriginSelectionPending,
         disposeSource() { unsubscribe?.(); unsubscribe = undefined; },
