@@ -23,19 +23,36 @@ describe('CLI Action failure presentation', () => {
     expect(projectCliActionFailure(normalized)).toMatchObject({ code: refusal.errorCode, message: details.remedy, details });
   });
 
-  it('retains the CLI target parser refusal and its cause at the command boundary', () => {
-    const failure = normalizeCliActionThrownError(Object.assign(new Error('--machine-id is required for a Workflow project target.'), {
+  it('retains the raw CLI target parser refusal without authoring a nested cause', () => {
+    const { failure, unexpected } = normalizeCliActionThrownError(Object.assign(new Error('--machine-id is required for a Workflow project target.'), {
       code: 'invalid_arguments',
     }));
-    expect(failure).toMatchObject({ unexpected: false, failure: { errorCode: 'invalid_arguments',
-      failureCause: { errorCode: 'invalid_arguments' } } });
+    expect(unexpected).toBe(false);
+    expect(failure.errorCode).toBe('invalid_arguments');
+    expect(failure.failureCause?.errorCode ?? null).toBeNull();
   });
 
-  it('keeps an unclassified vendor code diagnostic instead of promoting it to a CLI refusal', () => {
-    expect(normalizeCliActionThrownError(Object.assign(new Error('Invalid vendor payload'), {
-      code: 'vendor_payload_invalid',
-    }))).toMatchObject({ failure: { errorCode: 'action_failed',
-      failureCause: { errorCode: 'vendor_payload_invalid' } } });
+  it('classifies a codeless CLI usage error as an argument refusal', () => {
+    expect(normalizeCliActionThrownError(new Error('Usage: happier session run <subcommand>')))
+      .toMatchObject({ unexpected: false, failure: { errorCode: 'invalid_arguments' } });
+  });
+
+  it('keeps a Protocol-approved provider code', () => {
+    const { failure } = normalizeCliActionThrownError(Object.assign(new Error('Invalid vendor payload'), {
+      code: 'invalid_provider_output',
+    }));
+    expect(projectCliActionFailure(failure)).toMatchObject({ code: 'invalid_provider_output',
+      failureCause: { errorCode: 'invalid_provider_output' } });
+  });
+
+  it.each([
+    Object.assign(new Error('Invalid vendor payload'), { code: 'vendor_payload_invalid' }),
+    new Error('Invalid vendor payload', { cause: Object.assign(new Error(), { code: 'vendor_payload_invalid' }) }),
+    new Error('Invalid vendor payload'),
+  ])('keeps vendor prose out of CLI control refusals (%#)', error => {
+    const { failure } = normalizeCliActionThrownError(error);
+    expect(projectCliActionFailure(failure)).toMatchObject({ code: 'action_failed',
+      failureCause: { errorCode: null } });
   });
 
   it.each(['direct', 'cause'] as const)('keeps the typed public failure authoritative over CLI-like diagnostics (%s)', kind => {
@@ -59,7 +76,7 @@ describe('CLI Action failure presentation', () => {
     const error = Object.assign(new Error('Invalid vendor payload'), { code: 'vendor_payload_invalid' });
     Object.defineProperty(error, 'cause', { get() { throw new Error('Private cause'); } });
     expect(normalizeCliActionThrownError(error)).toMatchObject({ failure: { errorCode: 'action_failed',
-      failureCause: { errorCode: 'vendor_payload_invalid' } } });
+      failureCause: { errorCode: null } } });
   });
 
   it.each([null, { message: ['PRIVATE'], stderr: 'PRIVATE' }, { message: '   ', stderr: 'PRIVATE' }])('uses a generic refusal for malformed safe reasons (%j)', details => {

@@ -1,10 +1,14 @@
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SessionControlErrorCodeSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { TailscaleCommandError } from '@happier-dev/cli-common/tailscale';
-import { readHttpStatus } from '@/api/client/httpStatusError';
+import { HttpStatusError, readHttpStatus } from '@/api/client/httpStatusError';
 
 export type ControlCliMappedError = Readonly<{ code: string; unexpected: boolean; message?: string }>;
 
-export function mapUnknownErrorToControlError(error: unknown): ControlCliMappedError {
+export function mapUnknownErrorToControlError(
+  error: unknown,
+  messageFallback: 'legacy' | 'cli_arguments' | 'none' = 'legacy',
+): ControlCliMappedError {
   if (error instanceof TailscaleCommandError && error.failure) {
     return { code: error.failure.code, unexpected: false, message: error.failure.remediation };
   }
@@ -53,7 +57,8 @@ export function mapUnknownErrorToControlError(error: unknown): ControlCliMappedE
   }
 
   // A typed server 403 is a refusal with its own reason (httpStatusError owner), not a sign-in failure.
-  if (rawCode && rawCode !== 'not_authenticated' && readHttpStatus(error) === 403) {
+  if (rawCode && rawCode !== 'not_authenticated' && (messageFallback === 'legacy' || error instanceof HttpStatusError)
+    && readHttpStatus(error) === 403) {
     return { code: rawCode, unexpected: false, ...(error instanceof Error && error.message ? { message: error.message } : {}) };
   }
 
@@ -75,6 +80,16 @@ export function mapUnknownErrorToControlError(error: unknown): ControlCliMappedE
   const message = error instanceof Error ? error.message : String(error ?? '');
   const lower = message.toLowerCase();
 
+  const unexpected = { code: 'unknown_error', unexpected: true, ...(message ? { message } : {}) };
+  if (messageFallback === 'none' || readActionErrorCodeV1(error) !== null) return unexpected;
+
+  // Action execution can surface codeless provider prose. Only CLI syntax
+  // emitted by legacy argument parsers is meaningful at that boundary.
+  if (messageFallback === 'cli_arguments') {
+    return /^(?:usage: happier |invalid (?:--|session create argument:|backend target )|unknown (?:session |or disabled action:))/u.test(lower)
+      ? { code: 'invalid_arguments', unexpected: false, message } : unexpected;
+  }
+
   if (
     lower.startsWith('usage:') ||
     lower.startsWith('missing ') ||
@@ -92,5 +107,5 @@ export function mapUnknownErrorToControlError(error: unknown): ControlCliMappedE
     return { code: 'timeout', unexpected: false, ...(message ? { message } : {}) };
   }
 
-  return { code: 'unknown_error', unexpected: true, ...(message ? { message } : {}) };
+  return unexpected;
 }

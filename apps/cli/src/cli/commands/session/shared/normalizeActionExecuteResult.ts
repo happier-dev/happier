@@ -1,5 +1,5 @@
 import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol';
-import { ActionFailureCauseV1Schema, parseActionExecuteFailure, projectActionExecuteFailure, projectActionFailureForAgentV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionFailureCauseV1Schema, parseActionExecuteFailure, projectActionExecuteFailure, projectActionFailureForAgentV1, readActionErrorCodeV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { readDeploymentInstallationReplacementRefusalV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { SessionGoalControlFailureV1Schema, type SessionGoalControlFailureV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
@@ -152,24 +152,30 @@ export function normalizeCliActionThrownError(error: unknown): Readonly<{ failur
     if (!normalized.ok) return { failure: normalized, unexpected: false };
   }
   const failure = normalizeActionExecutorThrownError(error);
-  const mapped = mapUnknownErrorToControlError(error);
-  // CLI parsers already own a closed set of control refusals. An unknown
-  // diagnostic code, or a message-only guess, cannot promote itself to one.
   let hasTypedFailure = parseActionExecuteFailure(error) !== null;
+  let cause: unknown;
   if (!hasTypedFailure && error instanceof Error) {
-    try { hasTypedFailure = parseActionExecuteFailure(error.cause) !== null; }
-    catch { /* A private cause accessor cannot replace the original failure. */ }
+    try {
+      cause = error.cause;
+      hasTypedFailure = parseActionExecuteFailure(cause) !== null;
+    } catch { /* A private cause accessor cannot replace the original failure. */ }
   }
-  const errorCode = !hasTypedFailure && failure.errorCode === 'action_failed' && !mapped.unexpected
-    && mapped.code === failure.failureCause.errorCode ? mapped.code : failure.errorCode;
-  if (hasTypedFailure || errorCode !== 'action_failed' || failure.failureCause.errorCode !== null) {
-    return { failure: { errorCode, errorMessage: resolveActionFailureMessage(failure.error, failure.failureCause, errorCode, failure.details),
-      failureCause: failure.failureCause,
-      ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
-      ...(failure.details === undefined ? {} : { details: failure.details }),
-      ...(failure.effectAttempted !== undefined ? { effectAttempted: failure.effectAttempted } : {}) }, unexpected: false };
+  // A raw code can suppress text inference even when the closed Protocol
+  // projection withholds it. Only typed CLI refusals or CLI parser syntax can
+  // refine a failure that Protocol could not classify.
+  if (!hasTypedFailure && failure.errorCode === 'action_failed' && failure.failureCause.errorCode === null) {
+    const mapped = mapUnknownErrorToControlError(error, readActionErrorCodeV1(cause) !== null ? 'none' : 'cli_arguments');
+    if (!mapped.unexpected) {
+      return { failure: { errorCode: mapped.code, errorMessage: failure.error }, unexpected: false };
+    }
   }
-  return { failure: { errorCode: mapped.code, ...(mapped.message ? { errorMessage: mapped.message } : {}) }, unexpected: mapped.unexpected };
+  return { failure: { errorCode: failure.errorCode,
+    errorMessage: resolveActionFailureMessage(failure.error, failure.failureCause, failure.errorCode, failure.details),
+    failureCause: failure.failureCause,
+    ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
+    ...(failure.details === undefined ? {} : { details: failure.details }),
+    ...(failure.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }) },
+    unexpected: !hasTypedFailure && failure.errorCode === 'action_failed' && failure.failureCause.errorCode === null };
 }
 
 export function unwrapCliActionSuccessPayload(data: unknown): unknown {
