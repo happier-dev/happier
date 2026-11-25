@@ -246,6 +246,11 @@ function storedTrigger(triggerId: string, trigger: AutomationTriggerDefinitionIn
         return { ...structural, enabled: trigger.enabled, id, revision, createdAt: 1, updatedAt: 1,
             remainingOccurrences: null, status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: JSON.stringify(envelope) };
     }
+    if (trigger.kind === 'action' && 'triggerDefinitionEnvelope' in trigger) {
+        const { triggerDefinitionEnvelope, ...structural } = trigger;
+        return { ...structural, id: AutomationTriggerIdSchema.parse(triggerId), revision, createdAt: 1, updatedAt: 1,
+            reachesOthers: false, triggerDefinitionEnvelope: JSON.stringify(triggerDefinitionEnvelope) };
+    }
     if (trigger.kind === 'pluginEvent') {
         const id = AutomationTriggerIdSchema.parse(triggerId);
         const sourceSelectorId = 'sourceSelectorId' in trigger ? trigger.sourceSelectorId : AutomationSourceSelectorIdV1Schema.parse(crypto.randomUUID());
@@ -628,6 +633,68 @@ function useSessionTriggers(sessionId: string) {
 }
 
 describe('UI Workflow Action front door', () => {
+    it('links a current contributed Action when an unrelated Action body cannot be read', async () => {
+        const h = await createHarness('plain', { identity: true });
+        try {
+            const {
+                buildDeferredDaemonProjectionSections,
+                DaemonContributionRegistryProjectionSectionsResponseSchema,
+                readDaemonProjectionSectionPartPlugin,
+            } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+            const { loadDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+            const { pluginUiSections } = await import('@/sync/domains/plugins/ui/projectionSections');
+            const { formatQualifiedPluginActionId } = await import('@happier-dev/protocol/plugins/actions/qualifiedActionId');
+            const { buildQualifiedPluginContributionKey } = await import('@happier-dev/protocol/plugins/contribution-identity');
+            const pluginId = 'acme.reverse-action';
+            const unrelatedPluginId = 'acme.unrelated';
+            const localId = 'apply';
+            const identity = { pluginId, localId };
+            const actionId = formatQualifiedPluginActionId(identity);
+            const actionKey = buildQualifiedPluginContributionKey(identity);
+            const project = { machineId: 'machine-a', directory: '/repo' };
+            const actionDeclaration = {
+                id: localId, occurrenceId: 'reverse-action-v2', title: 'Apply', description: null,
+                dangerLevel: 'safe', readOnly: false, scopes: ['global'], surfaces: ['ui', 'mcp'], available: true,
+                execution: { target: 'client', client: { artifactId: 'client', exportName: 'activate' }, platforms: ['web'] },
+            };
+            const snapshot = buildDeferredDaemonProjectionSections({
+                protocolVersion: 1, projectionDigest: '2'.repeat(64),
+                projection: PluginProjectionV2Schema.parse({ v: 2, generation: 2, actionsById: {
+                    [actionKey]: { ...actionDeclaration, pluginId },
+                    [buildQualifiedPluginContributionKey({ pluginId: unrelatedPluginId, localId })]:
+                        { ...actionDeclaration, pluginId: unrelatedPluginId },
+                } }),
+            });
+            const index = snapshot.read(snapshot.manifest.sections.actionsById!, 0);
+            if (!index) throw new Error('Expected the published Action index');
+            const frame = DaemonContributionRegistryProjectionSectionsResponseSchema.parse(JSON.parse(index.chunk));
+            const unrelated = frame.parts.find(part =>
+                typeof part !== 'string' && readDaemonProjectionSectionPartPlugin(frame, part) === unrelatedPluginId);
+            if (!unrelated || typeof unrelated === 'string') throw new Error('Expected an independent Action body');
+            machineRpc.mockImplementation(async ({ machineId, payload }: {
+                machineId: string;
+                payload: { sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } };
+            }) => {
+                expect(machineId).toBe(project.machineId);
+                const section = payload.sectionRead;
+                if (!section) return snapshot.manifest;
+                if (section.digest === unrelated.digest) throw new Error('Unrelated Action body unavailable');
+                return snapshot.read(section.digest, section.offset,
+                    section.includeDigests?.filter(digest => digest !== unrelated.digest));
+            });
+            const presented = await loadDaemonMergedProjectionInputs({ machineId: project.machineId,
+                serverId: h.account.serverId, accountLifetime: h.account.accountLifetime, sections: pluginUiSections(pluginId) });
+            expect(presented?.pluginProjectionV2).toMatchObject({ generation: 2, actionsById: { [actionKey]: { available: true } } });
+
+            const result = await h.execute('workflow.trigger.add', {
+                project, target: { kind: 'inline', definition },
+                trigger: { kind: 'action', phase: 'after', enabled: true, actionIds: [actionId] },
+            }, h.context);
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { set: { project } } });
+            expect(h.automationRows.size).toBe(1);
+        } finally { h.account.dispose(); }
+    });
+
     it.each(['full', 'opaque'] as const)('saves a controller trigger from a %s Managed read and refuses a different controller', async format => {
         const h = await createHarness('plain', { identity: true });
         try {

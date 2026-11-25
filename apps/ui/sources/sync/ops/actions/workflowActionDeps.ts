@@ -76,7 +76,7 @@ import { loadDaemonMergedProjectionCacheEntry, loadDaemonMergedProjectionInputs 
 import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { createPluginUiProjectedActionResolver, isPluginProjectedActionExecutable } from '@/sync/domains/plugins/ui/projection';
-import { PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
+import { pluginUiSections } from '@/sync/domains/plugins/ui/projectionSections';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readSessionByIdHttp } from '@/sync/engine/sessions/sessionByIdHttp';
@@ -388,7 +388,7 @@ export function createUiWorkflowAction(params: Readonly<{
             account.assertCurrent();
             const inputs = await loadDaemonMergedProjectionInputs({
                 machineId: placement.machineId, serverId: account.serverId, accountLifetime: account.accountLifetime,
-                signal: caller?.signal ?? account.invocationSignal, sections: PLUGIN_UI_SECTIONS,
+                signal: caller?.signal ?? account.invocationSignal, sections: pluginUiSections(identity.pluginId),
             });
             account.assertCurrent();
             const projection = inputs?.pluginUiProjection;
