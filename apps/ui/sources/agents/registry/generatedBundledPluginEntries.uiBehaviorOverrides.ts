@@ -583,6 +583,26 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
         descriptor: Object.freeze({
   "components": {
     "slots": []
+  },
+  "externalSessions": {
+    "browse": {
+      "sourceOptions": [
+        {
+          "key": "cursor:cli",
+          "labelKey": "externalSessions.browseSourceCursorCli",
+          "source": {
+            "kind": "cursorHome"
+          }
+        },
+        {
+          "key": "cursor:app",
+          "labelKey": "externalSessions.browseSourceCursorApp",
+          "source": {
+            "kind": "cursorApp"
+          }
+        }
+      ]
+    }
   }
 } as const),
     }),
