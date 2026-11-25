@@ -38,7 +38,7 @@ import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/preparePro
 import type { MachineNativeEffectKey } from './machineNativeEffectAdmission';
 import { discoverLocalServiceRunTargets } from './runTargets';
 import type { LocalServiceLauncherStartExecutionOutcome, LocalServiceLauncherStartResolution } from './start';
-import { DaemonLocalServiceLauncherStartResponseV1Schema, LocalServiceNativePrerequisiteV1Schema, LocalServiceEstablishmentFailureV1Schema,
+import { DaemonLocalServiceLauncherStartResponseV1Schema, LocalServiceNativePrerequisiteV1Schema, LocalServiceEstablishmentFailureV1Schema, LocalServiceStartFailureDetailsV1Schema,
     LocalServiceStartApprovalReviewV1Schema, type LocalServiceStartApprovalReviewV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isPluginError } from '@happier-dev/plugin-sdk';
@@ -701,12 +701,9 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
         } catch (error) {
             uncertain = isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError;
             if (uncertain) throw error;
-            const denied = refusal(error);
-            return { ok: false, errorCode: denied.reasonCode, error: denied.reasonCode,
-                ...(denied.reviewedEffect !== undefined || denied.reviewedEffectDigest ? { details: {
-                    ...(denied.reviewedEffect !== undefined ? { reviewedEffect: denied.reviewedEffect } : {}),
-                    ...(denied.reviewedEffectDigest ? { reviewedEffectDigest: denied.reviewedEffectDigest } : {}),
-                } } : {}) };
+            const { ok, reasonCode, failureCause, ...details } = refusal(error);
+            return { ok, errorCode: reasonCode, error: reasonCode, failureCause,
+                ...(Object.keys(details).length ? { details } : {}) };
         } finally { if (!uncertain) await Promise.all([...nativeInvocations].map(production => production.release())); }
     }
 
@@ -759,7 +756,12 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 rpcContext: ingress, ...(context.actionRequestId ? { actionRequestId: context.actionRequestId } : {}), execute });
         if (uncertainError) throw uncertainError;
         if (outcome) return outcome;
-        if (!observed.ok) return { status: 'failed', reasonCode: observed.errorCode };
+        if (!observed.ok) {
+            const details = LocalServiceStartFailureDetailsV1Schema.safeParse(observed.details);
+            return { status: 'failed', reasonCode: observed.errorCode,
+                ...(observed.failureCause ? { failureCause: observed.failureCause } : {}),
+                ...(details.success ? details.data : {}) };
+        }
         const result = observed.result && typeof observed.result === 'object' ? observed.result : {};
         const target = LocalServiceManagedServiceActionTargetV1Schema.safeParse('currentTarget' in result ? result.currentTarget : undefined);
         const terminal = SessionTerminalViewTargetV1Schema.safeParse('terminalView' in result ? result.terminalView : undefined);

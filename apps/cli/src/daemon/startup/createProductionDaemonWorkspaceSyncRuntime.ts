@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readWorkspaceSyncRuntimeErrorCode } from '@/workspaces/sync/workspaceSyncSidecarLifecycle';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { assertWorkspaceSyncSeedExportSucceeded, prepareSignedWorkspaceSyncSeed, type CallWorkspaceSyncSeedExport } from '@/workspaces/sync/workspaceSyncSeedTransfer';
@@ -1929,7 +1930,9 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
             }
             // The person sees which step refused and the answering Machine's own code.
             throw Object.assign(compositionError('workspace_sync_dependencies_unavailable', 'Worker dependency observation is unavailable'), {
-              failureCause: { phase: 'workspace_sync.retirement.dependencies', errorClass: 'Error',
+              failureCause: error && typeof error === 'object' && 'failureCause' in error && error.failureCause !== undefined
+                ? projectActionFailureCauseV1(error)
+                : { phase: 'workspace_sync.retirement.dependencies', errorClass: 'Error',
                 errorCode: 'workspace_sync_dependencies_unavailable', httpStatus: null,
                 ...(typeof code === 'string' ? { nativeErrorCode: code } : {}) } });
           }

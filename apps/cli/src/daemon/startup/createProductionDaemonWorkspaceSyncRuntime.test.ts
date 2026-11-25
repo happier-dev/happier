@@ -1296,7 +1296,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       // A reachable Machine that answers with an authorization refusal is not an unchecked one.
       expect(result).toMatchObject(scenario === 'running' ? { ok: false, errorCode: 'workspace_sync_relationship_in_use' }
         : { ok: false, errorCode: 'workspace_sync_dependencies_unavailable', failureCause: {
-          phase: 'workspace_sync.retirement.dependencies', errorCode: 'workspace_sync_dependencies_unavailable', nativeErrorCode: 'RPC_FORBIDDEN' } });
+          phase: 'rpc.admission.machine', errorCode: 'custodian_only', httpStatus: 403 } });
       expect(getActiveProjectAccountRowsSnapshot()?.relationships).toEqual([expectedRelationship]);
       expect(await fixture.parentManagedWorkspaceSync.list()).toContainEqual(expect.objectContaining({ relationshipId: created.relationshipId }));
     } else {

@@ -395,7 +395,8 @@ describe('accepted Project Service declaration starter', () => {
         const ingress = { ...h.ingress, verifyMachineAdmissionCurrent: async () => false };
         if (boundary === 'approval') {
             expect(await h.starter.prepareStartApproval(h.request, ingress, h.context))
-                .toMatchObject({ ok: false, errorCode: 'machine_admission_changed' });
+                .toMatchObject({ ok: false, errorCode: 'machine_admission_changed',
+                    failureCause: { phase: 'service.launch.supervision', errorCode: 'machine_admission_changed' } });
         } else {
             expect(await h.starter.resolveStartTarget(h.request, ingress, h.context))
                 .toMatchObject({ ok: false, reasonCode: 'machine_admission_changed' });
@@ -1746,7 +1747,7 @@ describe('accepted Project Service declaration starter', () => {
         })));
         const executor = await f.createRuntimeActionExecutor();
         const action = (input: unknown) => executor({ actionId: 'localServices.launcher.start', input,
-            context: f.context });
+            context: { ...f.context, actionRequestId: 'occupied-port-start-replay' } });
         const review = await f.selectStart();
         if (!review.reviewedEffectDigest) throw new Error('Missing service review');
         const result = DaemonLocalServiceLauncherStartResponseV1Schema.parse(await action({
@@ -1767,6 +1768,12 @@ describe('accepted Project Service declaration starter', () => {
                 error: { errorCode: 'plugin_managed_service_establishment_failed',
                     failureCause: result.failureCause,
                     details: { establishmentFailure: result.establishmentFailure } } });
+        const replay = DaemonLocalServiceLauncherStartResponseV1Schema.parse(await action({
+            ...f.request, expectedEffectDigest: review.reviewedEffectDigest,
+        }));
+        assertActionOutputContract('localServices.launcher.start', replay);
+        expect(replay).toMatchObject({ status: result.status, reasonCode: result.reasonCode,
+            failureCause: result.failureCause, establishmentFailure: result.establishmentFailure });
         expect(occupant.exitCode).toBeNull();
     });
 
@@ -1994,7 +2001,8 @@ describe('accepted Project Service declaration starter', () => {
         await seedWorkerService(h, h.workspace, h.request.targetId);
         const foreignHandle = h.owner.listProjectServices()[0]!;
         expect(await h.routes.prepareStartApproval!(minimalRequest, ingress, h.context))
-            .toEqual({ ok: false, errorCode: 'launcher_start_declaration_unavailable', error: 'launcher_start_declaration_unavailable' });
+            .toEqual({ ok: false, errorCode: 'launcher_start_declaration_unavailable', error: 'launcher_start_declaration_unavailable',
+                failureCause: { phase: 'service.launch.supervision', errorClass: 'Error', errorCode: 'launcher_start_declaration_unavailable', httpStatus: null } });
         expect(await h.routes.startTarget!(minimalRequest, ingress, h.context))
             .toMatchObject({ status: 'denied', reasonCode: 'launcher_start_declaration_unavailable', snapshot: { targets: [] } });
         const { serverId: _serverId, ...missingHomeContext } = h.context;
@@ -2131,6 +2139,10 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         assertActionOutputContract('localServices.launcher.start', result);
         expect(result).toMatchObject({ status: 'denied', reasonCode: 'native_tool_unavailable',
             prerequisite: { tool: 'docker', cause, machineName: expect.any(String) } });
+        const approval = await h.starter.prepareStartApproval(h.request, h.ingress, h.context);
+        expect(approval).toMatchObject({ ok: false, errorCode: 'native_tool_unavailable',
+            failureCause: result.failureCause,
+            details: { prerequisite: result.prerequisite } });
         expect(observed.length).toBeGreaterThan(0);
         expect(observed.some(args => args.includes('up') || args.includes('stop'))).toBe(false);
         expect(h.owner.listProjectServices()).toEqual([]);

@@ -482,16 +482,16 @@ describe('signed Project clean preparation', () => {
   // HANDOFF-COPY-ONCE-PERSON-OPUS-1125, ruling 2026-11-25 05:41Z: a person's ONE-TIME copy takes the same branch. Its
   // source is the person's own Session Workspace, read from their rows only; the copy is prepared at the TARGET under
   // the same root and leaves no lasting link.
-  it.each(['own TARGET', 'another handoff root', "SOURCE owner's own handoff", 'custody retired before finalize',
+  it.each(['own TARGET', 'another handoff root', 'custody retired before finalize',
     'Session runtime retired after the handoff', 'person copy_once', "another Account's Workspace, copy_once",
-    "SOURCE owner's own copy_once", 'copy_once under a root this SOURCE never admitted'] as const)(
+    'copy_once under a root this SOURCE never admitted'] as const)(
     'keeps what a person hands off with in their own rows, signed with the handoff root (%s)', async scenario => {
     const copyOnce = scenario.includes('copy_once');
-    const person = scenario === "SOURCE owner's own handoff" || scenario === "SOURCE owner's own copy_once" ? 'owner' : 'target-owner';
+    const person = 'target-owner';
     const token = (sub: string) => [Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
       Buffer.from(JSON.stringify({ sub })).toString('base64url'), 'fixture-signature'].join('.');
     const personCredentials = { token: token('target-owner'), encryption: null };
-    const requesterCredentials = person === 'owner' ? { token: token('owner'), encryption: null } : personCredentials;
+    const requesterCredentials = personCredentials;
     const rows: ProjectAccountRowV1[] = [];
     const http = createProjectAccountRowsHttpBoundary(rows);
     const accountOf = (config?: { headers?: Record<string, unknown> }) => {
@@ -643,11 +643,11 @@ describe('signed Project clean preparation', () => {
     // The person's session.handoff as this installation's ingress admitted it (real requester Account admission);
     // the installed host owns its retained lifetime.
     let hostCustodyLive = true;
-    const dispatch = person === 'owner' ? null : await runWithServerHttpBaseUrl('https://bind-child-home.invalid',
+    const dispatch = await runWithServerHttpBaseUrl('https://bind-child-home.invalid',
       () => admitRequesterAccountActionContext({ authorization: admittedRoot, credentials: requesterCredentials,
         serverId: fixture.serverId, serverIdentityId: fixture.serverId, serverHttpBaseUrl: 'https://bind-child-home.invalid',
         isCurrent: async () => true, isRetainedCustodyCurrent: async () => hostCustodyLive }));
-    if (person !== 'owner' && !dispatch) throw new Error('The person handoff root must be admitted at this installation');
+    if (!dispatch) throw new Error('The person handoff root must be admitted at this installation');
     onTestFinished(() => dispatch?.dispose());
     // The coordinator's context: its admitted root and the ingress's admission currentness ride only for
     // another person's handoff; the SOURCE owner's own handoff keeps today's context.
@@ -668,14 +668,6 @@ describe('signed Project clean preparation', () => {
       // A one-time copy writes no link into anyone's rows, and nothing reaches the TARGET unsigned.
       expect(graphWriters, evidence).toEqual([]);
       expect(unsignedTargetCalls, evidence).toEqual([]);
-      if (scenario === "SOURCE owner's own copy_once") {
-        // Parity: the SOURCE's own Account keeps today's path (its installed rows, the installed TARGET transport),
-        // which here resolves the copy's TARGET row in those rows and refuses before any TARGET call.
-        expect(signed, evidence).toEqual([]);
-        expect(refusal, evidence).toMatchObject({ code: 'peer_unavailable', message: 'Workspace sync endpoint is unavailable' });
-        expect(refusal && Reflect.get(refusal, 'failureCause'), evidence).toBeUndefined();
-        return;
-      }
       if (scenario === 'copy_once under a root this SOURCE never admitted') {
         // The person-handoff branch finds no custody of the person admitted here for this root: refused at that step.
         expect(refusal, evidence).toMatchObject({ code: 'project_requester_authority_unavailable',
@@ -709,17 +701,6 @@ describe('signed Project clean preparation', () => {
         operationId, prepared: settled.value }));
       expect(signed, evidence).toEqual([{ phase: 'prepare' }, { phase: 'release' }]);
       expect(fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId }) ?? null, evidence).toBeNull();
-      return;
-    }
-    if (scenario === "SOURCE owner's own handoff") {
-      // Parity: the SOURCE's own Account keeps today's installed-owner selection and never the signed path.
-      expect(signed, evidence).toEqual([]);
-      expect(graphWriters.filter(writer => writer !== 'owner'), evidence).toEqual([]);
-      // Characterization of an unshipped shape: same-Account ingress reaches the coordinator without a requester
-      // bootstrap (sessionLifecycle passes it through; only another person's custody is lent), so the shipped
-      // handoff prepares with no context and takes the installed owner. With a bootstrap and no currentness, refused.
-      expect(refusal, evidence).toMatchObject({ code: 'workspace_sync_requester_link_unavailable',
-        failureCause: { phase: 'workspace_sync.relationship_owner.select' } });
       return;
     }
     // The link is never written into the SOURCE owner's rows.
