@@ -1,9 +1,6 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import {
-    HappierPressable,
-} from '@happier-dev/plugin-ui/presentation';
+import { StyleSheet } from 'react-native-unistyles';
 import { createTransientInteractionOwner } from '@happier-dev/protocol/plugins/interactions/owner';
 import type {
     InteractionTransientConfirmationAuthorRequestV1,
@@ -17,8 +14,9 @@ import type {
     InteractionTransientResultV1,
 } from '@happier-dev/protocol/plugins/interactions/transientV1';
 
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
+import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import { TransientQuestionForm } from './TransientQuestionForm';
 import { Modal, type CustomModalInjectedProps, type IModal } from '@/modal';
 import { t } from '@/text';
@@ -29,10 +27,9 @@ import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMe
 
 const styles = StyleSheet.create((theme) => ({
     body: { maxHeight: 520, padding: theme.space.s16, gap: theme.space.s16 },
-    prompt: { color: theme.colors.text.primary, ...Typography.variant('label', 'regular') },
-    actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: theme.space.s10 },
-    action: { paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s8, justifyContent: 'center' },
-    actionText: { color: theme.colors.text.link, ...Typography.variant('label') },
+    // Card chrome pads only its header and footer; the body aligns with the title's edge.
+    confirmationBody: { paddingHorizontal: theme.space.s16, paddingBottom: theme.space.s16 },
+    prompt: { color: theme.colors.text.primary },
 }));
 
 type QuestionDialogProps = CustomModalInjectedProps & Readonly<{
@@ -58,6 +55,8 @@ type AppShellTransientConfirmationPresentation = Readonly<{
     confirmLabel?: string;
     /** `null` preserves an author request that intentionally omitted a heading. */
     title?: string | null;
+    /** The producer's decision that the confirmed Action destroys something (its danger level or irreversibility). */
+    destructive?: true;
 }>;
 
 function readConfirmationPresentation(
@@ -68,55 +67,69 @@ function readConfirmationPresentation(
     const confirmLabel = record.confirmLabel;
     const title = record.title;
     const hasTitle = title === null || (typeof title === 'string' && title.trim().length > 0);
+    const destructive = record.destructive === true;
     return (
-        (typeof confirmLabel === 'string' && confirmLabel.trim().length > 0) || hasTitle
+        (typeof confirmLabel === 'string' && confirmLabel.trim().length > 0) || hasTitle || destructive
     )
         ? Object.freeze({
             ...(typeof confirmLabel === 'string' && confirmLabel.trim().length > 0 ? { confirmLabel } : {}),
             ...(hasTitle ? { title: title as string | null } : {}),
+            ...(destructive ? { destructive: true as const } : {}),
         })
         : null;
 }
 
+function normalizeSentence(value: string): string {
+    return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+}
+
+/** A body that only repeats the heading says nothing new, so the card shows the heading alone. */
+function readConfirmationBody(description: string, title: string | undefined): string | null {
+    if (description.trim().length === 0) return null;
+    return title !== undefined && normalizeSentence(description) === normalizeSentence(title) ? null : description;
+}
+
 type ConfirmationDialogProps = CustomModalInjectedProps & Readonly<{
-    description: string;
+    /** The consequence under the title; `null` when there is none beyond the title. */
+    description: string | null;
     confirmLabel: string;
+    /**
+     * `cancel` for a confirmation the person started themselves; `decline` when they answer someone
+     * else's request (an approval), where the negative is a decision the requester acts on.
+     */
+    negative: 'cancel' | 'decline';
+    destructive: boolean;
     onConfirm(): void;
     onCancel(): void;
 }>;
 
-export function AppShellConfirmationDialog(props: ConfirmationDialogProps): React.ReactElement {
-    const { theme } = useUnistyles();
+/** The shared confirmation card: title in the chrome, the consequence once, then Cancel and the Action's verb. */
+export function AppShellConfirmationDialog(props: ConfirmationDialogProps): React.ReactElement | null {
+    const { onCancel, onConfirm, onClose, setChrome, negative, confirmLabel, destructive } = props;
+    React.useEffect(() => {
+        setChrome?.({
+            kind: 'card',
+            footer: (
+                <ModalCardFooterActions cancel={{
+                    testID: 'app-shell-confirmation-decline',
+                    title: negative === 'decline' ? t('common.decline') : t('common.cancel'),
+                    onPress: () => { onCancel(); onClose(); },
+                }}>
+                    <RoundButton
+                        testID="app-shell-confirmation-confirm"
+                        size="normal"
+                        display={destructive ? 'destructive' : 'default'}
+                        title={confirmLabel}
+                        onPress={() => { onConfirm(); onClose(); }}
+                    />
+                </ModalCardFooterActions>
+            ),
+        });
+    }, [confirmLabel, destructive, negative, onCancel, onClose, onConfirm, setChrome]);
+    if (props.description === null) return null;
     return (
-        <View style={styles.body}>
-            <Text style={styles.prompt}>{props.description}</Text>
-            <View style={styles.actions}>
-                {/*
-                  * This control settles `declined` — an explicit negative
-                  * DECISION the requester acts on — while dismissing the dialog
-                  * settles `userCancelled`. Labelling it "Cancel" told the user
-                  * it did the same thing as walking away, so it names the
-                  * decision it actually makes.
-                  */}
-                <HappierPressable
-                    testID="app-shell-confirmation-decline"
-                    accessibilityRole="button"
-                    hitReach={{ left: theme.space.s10 / 2, right: theme.space.s10 / 2 }}
-                    onPress={() => { props.onCancel(); props.onClose(); }}
-                    style={styles.action}
-                >
-                    <Text style={styles.actionText}>{t('common.decline')}</Text>
-                </HappierPressable>
-                <HappierPressable
-                    testID="app-shell-confirmation-confirm"
-                    accessibilityRole="button"
-                    hitReach={{ left: theme.space.s10 / 2, right: theme.space.s10 / 2 }}
-                    onPress={() => { props.onConfirm(); props.onClose(); }}
-                    style={styles.action}
-                >
-                    <Text style={styles.actionText}>{props.confirmLabel}</Text>
-                </HappierPressable>
-            </View>
+        <View style={styles.confirmationBody}>
+            <Text testID="app-shell-confirmation-body" variant="body" style={styles.prompt}>{props.description}</Text>
         </View>
     );
 }
@@ -196,17 +209,19 @@ export async function presentAppShellTransientInteraction(input: Readonly<{
         } else {
             const request = input.request;
             const presentation = readConfirmationPresentation(input.presentationContext);
-            const description = request.kind === 'confirmation'
-                ? request.message
-                : request.description ?? request.subject.name;
             const title = presentation && Object.prototype.hasOwnProperty.call(presentation, 'title')
                 ? presentation.title ?? undefined
                 : request.title;
+            const description = readConfirmationBody(request.kind === 'confirmation'
+                ? request.message
+                : request.description ?? request.subject.name, title);
             modalId = modal.show({
                 component: AppShellConfirmationDialog,
                 props: {
                     description,
                     confirmLabel: presentation?.confirmLabel ?? t('common.ok'),
+                    negative: request.kind === 'approval' ? 'decline' : 'cancel',
+                    destructive: presentation?.destructive === true,
                     onConfirm: () => complete(request.kind === 'approval'
                         ? { requestId: request.requestId, kind: 'approval', status: 'approved' }
                         : { requestId: request.requestId, kind: 'confirmation', status: 'approved' }),
@@ -220,6 +235,8 @@ export async function presentAppShellTransientInteraction(input: Readonly<{
                     kind: 'card',
                     ...(title === undefined ? {} : { title }),
                     testID: 'app-shell-transient-interaction-dialog',
+                    // The same presentation as the native Action confirmation: a bottom sheet on a phone.
+                    phonePresentation: 'sheet',
                     dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.default, maxHeightRatio: 0.7, size: 'dialog' },
                 },
                 closeOnBackdrop: true,

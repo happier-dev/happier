@@ -162,7 +162,9 @@ export async function preparePluginActionConfirmation(input: Readonly<{
         : [];
     const message = operands.length ? `${body}\n\n${operands.join('\n')}` : body;
     scoped?.dispose();
-    return { title, message, confirmLabel };
+    // The confirm takes the destructive treatment for an Action that destroys something.
+    const destructive = request.action.dangerLevel === 'destructive' || request.action.irreversible === true;
+    return { title, message, confirmLabel, destructive };
 }
 
 export function createPluginActionCurrentIntentHandler(input: Readonly<{
@@ -192,7 +194,7 @@ export function createPluginActionCurrentIntentHandler(input: Readonly<{
         }
         const presentation = await preparePluginActionConfirmation(input, request);
         if (!presentation) return { status: 'unavailable', code: 'plugin_action_generation_retired' };
-        const { title, message, confirmLabel } = presentation;
+        const { title, message, confirmLabel, destructive } = presentation;
         const outcome = await interactions.confirm({
             kind: 'confirmation',
             title,
@@ -202,6 +204,7 @@ export function createPluginActionCurrentIntentHandler(input: Readonly<{
             presentationContext: {
                 title,
                 ...(confirmLabel === undefined ? {} : { confirmLabel }),
+                ...(destructive ? { destructive: true } : {}),
             },
         });
         if (!input.isCurrent()) {

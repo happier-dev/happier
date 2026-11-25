@@ -6,8 +6,7 @@ import type {
 } from '@happier-dev/protocol/plugins/interactions/transientV1';
 import { describe, expect, it, vi } from 'vitest';
 import { flattenTestStyle } from '@/dev/testkit';
-import { createLayoutChangeEvent } from '@/dev/testkit/fixtures/nativeEventFixtures';
-import { hitAreaOverlap, readHitArea } from '@/dev/testkit/harness/hitFrameReach';
+import { t } from '@/text';
 
 import {
     AppShellConfirmationDialog,
@@ -102,7 +101,7 @@ function host(tree: renderer.ReactTestRenderer, testID: string): renderer.ReactT
 }
 
 describe('app-shell transient interaction presenter', () => {
-    it('draws every transient question and confirmation control at its design size and reaches the 48dp Android target by hit area', async () => {
+    it('draws every transient question control at its design size', async () => {
         const { Platform } = await import('react-native');
         const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
         const previousPlatform = Platform.OS;
@@ -120,22 +119,12 @@ describe('app-shell transient interaction presenter', () => {
                 },
             ] as const satisfies readonly InteractionTransientQuestionV1[];
             let questionTree!: renderer.ReactTestRenderer;
-            let confirmationTree!: renderer.ReactTestRenderer;
             await act(async () => {
                 questionTree = renderer.create(<HappierUiPlatformProvider platform={{ platform: 'android', colorScheme: 'light' }}>
                     <AppShellQuestionDialog
                         onClose={vi.fn()}
                         questions={questions}
                         onAnswer={vi.fn()}
-                        onCancel={vi.fn()}
-                    />
-                </HappierUiPlatformProvider>);
-                confirmationTree = renderer.create(<HappierUiPlatformProvider platform={{ platform: 'android', colorScheme: 'light' }}>
-                    <AppShellConfirmationDialog
-                        onClose={vi.fn()}
-                        description="Proceed?"
-                        confirmLabel="Confirm"
-                        onConfirm={vi.fn()}
                         onCancel={vi.fn()}
                     />
                 </HappierUiPlatformProvider>);
@@ -150,21 +139,6 @@ describe('app-shell transient interaction presenter', () => {
             ]) {
                 expect(flattenTestStyle(host(questionTree, testID).props.style).minHeight).toBeUndefined();
             }
-            for (const testID of ['app-shell-confirmation-decline', 'app-shell-confirmation-confirm']) {
-                expect(flattenTestStyle(host(confirmationTree, testID).props.style).minHeight).toBeUndefined();
-            }
-
-            // The two actions are drawn as labels with a gap between: each reaches 48 tall by hit area
-            // and the pair never overlap.
-            const drawn = { width: 72, height: 36 };
-            for (const testID of ['app-shell-confirmation-decline', 'app-shell-confirmation-confirm']) {
-                await act(async () => { host(confirmationTree, testID).props.onLayout(createLayoutChangeEvent({ x: 0, y: 0, ...drawn })); });
-            }
-            const decline = readHitArea(host(confirmationTree, 'app-shell-confirmation-decline'), drawn);
-            const confirm = readHitArea(host(confirmationTree, 'app-shell-confirmation-confirm'), drawn);
-            expect(decline.height).toBe(48);
-            expect(confirm.height).toBe(48);
-            expect(hitAreaOverlap(decline, confirm, { axis: 'horizontal', gap: 10 })).toBe(0);
         } finally {
             (Platform as { OS: string }).OS = previousPlatform;
         }
@@ -547,21 +521,85 @@ describe('app-shell transient interaction presenter', () => {
         });
     });
 
-    // The visible negative control settles `declined` — a decision — while only
-    // dismissal settles `userCancelled`. Naming it "Cancel" told the user it did
-    // the second while it did the first.
-    it('names the confirmation negative control as a decline, not a cancel', async () => {
-        const { t } = await import('@/text');
-        let confirmationTree!: renderer.ReactTestRenderer;
-        let questionTree!: renderer.ReactTestRenderer;
+    // The confirmation's footer is the shared card footer: the dialog publishes it through its chrome.
+    async function renderConfirmation(props: Partial<React.ComponentProps<typeof AppShellConfirmationDialog>> = {}) {
+        let chrome: any = null;
+        let body!: renderer.ReactTestRenderer;
+        let footer!: renderer.ReactTestRenderer;
         await act(async () => {
-            confirmationTree = renderer.create(<AppShellConfirmationDialog
+            body = renderer.create(<AppShellConfirmationDialog
                 onClose={vi.fn()}
-                description="Proceed?"
-                confirmLabel="Confirm"
+                setChrome={(next) => { chrome = next; }}
+                description="Removes recorded requests."
+                confirmLabel="Clear capture"
+                negative="cancel"
+                destructive={false}
                 onConfirm={vi.fn()}
                 onCancel={vi.fn()}
+                {...props}
             />);
+        });
+        await act(async () => { footer = renderer.create(<>{chrome?.footer}</>); });
+        return { body, footer };
+    }
+
+    function presentConfirmation(request: InteractionTransientRequestV1, presentationContext?: unknown) {
+        const harness = createModalHarness();
+        void presentAppShellTransientInteraction({
+            request,
+            signal: new AbortController().signal,
+            modal: harness.modal,
+            ...(presentationContext === undefined ? {} : { presentationContext }),
+        });
+        return harness.readConfig();
+    }
+
+    it('omits the body when it only repeats the title and keeps a distinct body', () => {
+        const repeated = presentConfirmation({ ...confirmationRequest(), message: '  delete the captured  database activity? ' },
+            { title: 'Delete the captured database activity?' });
+        expect(repeated.chrome.title).toBe('Delete the captured database activity?');
+        expect(repeated.props.description).toBeNull();
+
+        const distinct = presentConfirmation(confirmationRequest());
+        expect(distinct.chrome.title).toBe('Create?');
+        expect(distinct.props.description).toBe('Creates an agent.');
+
+        const untitled = presentConfirmation(confirmationRequest(), { title: null });
+        expect(untitled.chrome.title).toBeUndefined();
+        expect(untitled.props.description).toBe('Creates an agent.');
+    });
+
+    it('answers a confirmation the person started with Cancel and an approval with the decline', () => {
+        expect(presentConfirmation(confirmationRequest()).props.negative).toBe('cancel');
+        expect(presentConfirmation(approvalRequest()).props.negative).toBe('decline');
+    });
+
+    it('takes the destructive confirm only for a destructive Action and the metadata confirm label when present', () => {
+        const destructive = presentConfirmation(confirmationRequest(), { confirmLabel: 'Clear capture', destructive: true });
+        expect(destructive.props).toMatchObject({ destructive: true, confirmLabel: 'Clear capture' });
+        const ordinary = presentConfirmation(confirmationRequest());
+        expect(ordinary.props.destructive).toBe(false);
+        expect(ordinary.props.confirmLabel).toBe(t('common.ok'));
+    });
+
+    it('draws the body only when present and the footer as Cancel then the Action verb', async () => {
+        const shown = await renderConfirmation({ destructive: true });
+        expect(shown.body.root.findAll((node) => node.props.testID === 'app-shell-confirmation-body' && typeof node.type === 'string')).toHaveLength(1);
+        const cancel = shown.footer.root.findAll((node) => node.props.testID === 'app-shell-confirmation-decline')[0]!;
+        expect(readControlText(cancel)).toBe(t('common.cancel'));
+        const confirm = shown.footer.root.findAll((node) => node.props.testID === 'app-shell-confirmation-confirm' && node.props.display !== undefined)[0]!;
+        expect(confirm.props.display).toBe('destructive');
+
+        const quiet = await renderConfirmation({ description: null, negative: 'decline' });
+        expect(quiet.body.root.findAll((node) => node.props.testID === 'app-shell-confirmation-body')).toHaveLength(0);
+        expect(readControlText(quiet.footer.root.findAll((node) => node.props.testID === 'app-shell-confirmation-decline')[0]!)).toBe(t('common.decline'));
+        const ordinary = quiet.footer.root.findAll((node) => node.props.testID === 'app-shell-confirmation-confirm' && node.props.display !== undefined)[0]!;
+        expect(ordinary.props.display).toBe('default');
+    });
+
+    it('keeps the questions dialog naming its own control a cancel', async () => {
+        let questionTree!: renderer.ReactTestRenderer;
+        await act(async () => {
             questionTree = renderer.create(<AppShellQuestionDialog
                 onClose={vi.fn()}
                 questions={[{ id: 'text', prompt: 'Text', type: 'text', required: false }]}
@@ -569,15 +607,7 @@ describe('app-shell transient interaction presenter', () => {
                 onCancel={vi.fn()}
             />);
         });
-
-        const declineControl = confirmationTree.root.findByProps({ testID: 'app-shell-confirmation-decline' });
-        expect(readControlText(declineControl)).toBe(t('common.decline'));
-        expect(readControlText(declineControl)).not.toBe(t('common.cancel'));
-
-        // The questions dialog genuinely settles `userCancelled`, so it keeps
-        // naming its control a cancel.
-        const questionCancel = questionTree.root.findByProps({ testID: 'app-shell-question-cancel' });
-        expect(readControlText(questionCancel)).toBe(t('common.cancel'));
+        expect(readControlText(questionTree.root.findByProps({ testID: 'app-shell-question-cancel' }))).toBe(t('common.cancel'));
     });
 
     it('preserves canonical approval, decline, and user-cancel candidates', async () => {

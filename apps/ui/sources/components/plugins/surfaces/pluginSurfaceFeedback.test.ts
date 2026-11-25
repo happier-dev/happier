@@ -441,6 +441,27 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
         });
         const confirmation = await preparePluginActionConfirmation({ isCurrent: () => true }, { action, input: {} });
         expect(confirmation?.confirmLabel).toBe('Publish preview');
+        expect(confirmation?.destructive).toBe(false);
+    });
+
+    it('marks a destructive or irreversible Action confirmation destructive', async () => {
+        const parse = (extra: Record<string, unknown>) => PluginProjectedActionV2Schema.parse({
+            pluginId: 'acme.preview', id: 'clear', occurrenceId: 'occurrence-1', title: 'Clear preview',
+            scopes: ['global'], surfaces: ['ui'], execution: { target: 'daemon' }, available: true,
+            confirmation: { title: 'Delete the preview?' }, dangerLevel: 'writesLocal', ...extra,
+        });
+        for (const action of [parse({ dangerLevel: 'destructive' }), parse({ irreversible: true })]) {
+            expect((await preparePluginActionConfirmation({ isCurrent: () => true }, { action, input: {} }))?.destructive).toBe(true);
+        }
+        const requestCurrentIntent = createPluginActionCurrentIntentHandler({
+            requester: { pluginId: 'acme.preview', contributionId: 'clear', occurrenceId: 'occurrence-1', invocationId: 'surface-1' },
+            isCurrent: () => true,
+        });
+        const pending = requestCurrentIntent({ action: parse({ dangerLevel: 'destructive' }), input: {}, fingerprint: 'clear-1', surface: 'ui', invocationSurface: 'ui' });
+        await openedDialog();
+        expect(modalHarness.readConfig().props.destructive).toBe(true);
+        modalHarness.readConfig().props.onConfirm();
+        await expect(pending).resolves.toMatchObject({ status: 'approved' });
     });
 
     it('shows the configured Action label and exact Session title in the host Send confirmation', async () => {
