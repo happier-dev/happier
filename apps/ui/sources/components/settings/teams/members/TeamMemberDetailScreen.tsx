@@ -146,8 +146,8 @@ const MemberGroupsSection = React.memo(function MemberGroupsSection(props: Reado
     groups: TeamMemberGroups;
 }>) {
     const router = useRouter();
-    const readFailureAction = useTeamReadFailureAction();
     const { context, groups } = props;
+    const readFailureAction = useTeamReadFailureAction(context.address);
     const groupDisplayNames = useTeamGroupDisplayNames({ scope: context.scope, groups: groups.rows });
 
     if (!context.team.capabilities.viewRoster) return null;
@@ -163,7 +163,7 @@ const MemberGroupsSection = React.memo(function MemberGroupsSection(props: Reado
             kind="error"
             size="line"
             title={teamReadFailureLabel(groups.error)}
-            action={readFailureAction(groups.error, { onPress: () => void groups.reload(), testIDPrefix: 'team-member-groups' })}
+            action={readFailureAction(groups.error, { onPress: () => void groups.reload(), testIDPrefix: 'team-member-groups', reloadsFirstPage: true })}
             accessibilitySemantics="alert"
         />
     ) : null;
@@ -311,6 +311,7 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
 }>) {
     const router = useRouter();
     const { context, membershipId } = props;
+    const readFailureAction = useTeamReadFailureAction(context.address);
     // The roster this device already read holds this person's row: the page opens on it (last-known) while the
     // Home is asked for the current membership, instead of a "Members" header that the person's own replaces.
     const [load, setLoad] = React.useState<MembershipLoad>(() => {
@@ -498,7 +499,7 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
                     testID="team-member-unavailable"
                     kind="unavailable"
                     title={readFailure ? teamReadFailureLabel(readFailure) : t('teams.errors.notFound')}
-                    action={readFailure?.retryable ? { label: t('teams.unavailable.retry'), onPress: reload } : undefined}
+                    action={readFailure ? readFailureAction(readFailure, { onPress: reload }) : undefined}
                     accessibilitySemantics="alert"
                 />
             </>
@@ -624,11 +625,7 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
                 <AttentionBanner
                     testID="team-member-read-failure"
                     title={teamReadFailureLabel(readFailure)}
-                    action={readFailure.retryable ? {
-                        label: t('teams.unavailable.retry'),
-                        onPress: reload,
-                        testID: 'team-member-retry',
-                    } : undefined}
+                    action={readFailureAction(readFailure, { onPress: reload, testIDPrefix: 'team-member' })}
                 />
             ) : null}
 

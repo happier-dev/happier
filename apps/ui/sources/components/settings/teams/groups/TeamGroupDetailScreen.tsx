@@ -54,6 +54,7 @@ import { TeamSection, type TeamPageStaleRead, type TeamSectionRenderHeader } fro
 import { useEditedMetadataDraft } from '../useEditedMetadataDraft';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamMutationFailureLabel, teamReadFailureLabel } from '../teamMutationPresentation';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 import { groupManagementLabel } from '../teamLabels';
 import { sessionHistoryChoiceOptions } from '../teamPolicyPresentation';
 import {
@@ -281,6 +282,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
     const { theme } = useUnistyles();
     const router = useRouter();
     const { context, groupId } = props;
+    const readFailureAction = useTeamReadFailureAction(context.address);
     const [busy, setBusy] = React.useState(false);
     const [notice, setNotice] = React.useState<GroupNotice | null>(null);
     const rosterNotice = notice?.place === 'roster' ? notice.message : null;
@@ -1022,8 +1024,8 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                         testID="team-group-unavailable"
                         kind="unavailable"
                         title={message}
-                        action={failure?.retryable
-                            ? { label: t('teams.unavailable.retry'), onPress: () => void detail.reload() }
+                        action={failure
+                            ? readFailureAction(failure, { onPress: () => void detail.reload() })
                             : undefined}
                         accessibilitySemantics="alert"
                     />

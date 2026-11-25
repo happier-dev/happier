@@ -310,6 +310,20 @@ describe('member encrypted-access state', () => {
 });
 
 describe('TeamMemberEncryptionSection mounted membership history', () => {
+    it.each([
+        { status: 403, code: 'team_authentication_required', message: 'session.access.authenticationRequired' },
+        { status: 503, code: 'team_authentication_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable' },
+    ] as const)('presents the history read refusal $code once without Retry', async ({ status, code, message }) => {
+        const request = vi.fn(async () => Response.json({ error: code }, { status }));
+        const setup = await setupMountedMemberRequest(request);
+        const screen = await renderSettingsView(React.createElement(TeamMemberEncryptionSection, {
+            context: createMountedContext(setup.profile.id, vi.fn()),
+        }));
+        await vi.waitFor(() => expect(screen.getTextContent().split(t(message))).toHaveLength(2));
+        expect(screen.getTextContent()).not.toContain(t('common.retry'));
+        expect(screen.getTextContent().includes(t('teams.errors.signInRequiredAction'))).toBe(code === 'team_authentication_required');
+    });
+
     it('refuses the disabled UI read without reaching the membership envelope collection', async () => {
         const request = vi.fn(async () => new Response('{}'));
         const setup = await setupMountedMemberRequest(request);

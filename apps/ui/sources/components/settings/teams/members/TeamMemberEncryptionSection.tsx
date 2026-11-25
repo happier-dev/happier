@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { isActionTurnedOffErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -14,6 +15,8 @@ import { getTeamMembershipHistoryReadiness, prepareTeamMembershipHistory } from 
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
 import { t } from '@/text';
 
+import { teamReadFailureLabel } from '../teamMutationPresentation';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 import type { TeamMemberSectionContext } from './teamMemberSectionContext';
 
 /**
@@ -35,6 +38,10 @@ type EncryptedAccess =
         kind: 'unavailable';
         reason: 'unsupported' | 'forbidden' | 'not_found' | 'transient';
         retryable: boolean;
+    }>
+    | Readonly<{
+        kind: 'refused';
+        code: string;
     }>
     | Readonly<{ kind: 'setup_required'; reason: 'plain_account' | 'encryption_setup_required' | 'encryption_inconsistent' }>
     | Readonly<{
@@ -93,8 +100,12 @@ export function classifyTeamMemberRecipientEncryptionState(
  * resources are intentionally omitted; a transient Home/network failure stays visible and can be
  * retried from the member detail surface.
  */
-export function classifyTeamMemberEncryptionDiscoveryFailure(error: unknown): Extract<EncryptedAccess, { kind: 'unavailable' }> {
+export function classifyTeamMemberEncryptionDiscoveryFailure(error: unknown): Extract<EncryptedAccess, { kind: 'unavailable' | 'refused' }> {
     if (error instanceof SessionAccessApiError) {
+        if (error.code === 'team_authentication_required' || error.code === 'team_authentication_unavailable'
+            || isActionTurnedOffErrorCode(error.code)) {
+            return { kind: 'refused', code: error.code };
+        }
         if (error.code === 'unsupported_action' || error.code === 'session_access_sharing_unavailable') {
             return { kind: 'unavailable', reason: 'unsupported', retryable: false };
         }
@@ -180,6 +191,7 @@ export function TeamMemberEncryptionSection(props: Readonly<{
     autoStartPreparation?: boolean;
 }>) {
     const { context } = props;
+    const readFailureAction = useTeamReadFailureAction(context.address);
     const availabilityState = useSessionCollaborationAvailabilityState(context.scope.serverId);
     // The preparation request is an action admission and stays fail-closed while presentation remains loading.
     const availability: SessionCollaborationAvailability = availabilityState === 'available' ? 'available' : 'unavailable';
@@ -325,19 +337,23 @@ export function TeamMemberEncryptionSection(props: Readonly<{
         prepare();
     }, [props.autoStartPreparation, autoStartKey, state, context.mutationsAvailable, prepare]);
 
-    if (state.kind === 'unavailable') {
-        if (!state.retryable) return null;
+    if (state.kind === 'unavailable' || state.kind === 'refused') {
+        if (state.kind === 'unavailable' && !state.retryable) return null;
+        const refusal = state.kind === 'refused'
+            ? { kind: 'forbidden' as const, retryable: false, code: state.code }
+            : null;
+        const retry = () => discover();
+        const action = refusal
+            ? readFailureAction(refusal, { onPress: retry })
+            : { label: t('common.retry'), onPress: retry };
         return (
-            <ItemGroup
-                title={t('teams.members.encryption.title')}
-                description={t('teams.unavailable.offline')}
-            >
+            <ItemGroup title={t('teams.members.encryption.title')}>
                 <Item
                     testID="team-member-encryption-unavailable"
-                    title={t('teams.unavailable.offline')}
-                    detail={t('common.retry')}
+                    title={refusal ? teamReadFailureLabel(refusal) : t('teams.unavailable.offline')}
+                    detail={action?.label}
                     loading={refreshing}
-                    onPress={() => discover()}
+                    onPress={action?.onPress}
                     showChevron={false}
                 />
             </ItemGroup>

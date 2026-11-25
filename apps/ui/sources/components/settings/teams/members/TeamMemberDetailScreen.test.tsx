@@ -581,6 +581,20 @@ describe('TeamMemberDetailScreen role picker', () => {
 
 describe('TeamMemberDetailScreen effective Groups', () => {
     it.each([
+        { status: 403, code: 'team_authentication_required', message: 'session.access.authenticationRequired', signIn: true },
+        { status: 503, code: 'team_authentication_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable', signIn: false },
+    ])('offers the working recovery when member details return $code', async ({ status, code, message, signIn }) => {
+        const serverId = await addHome(teamSummaryFixture({ capabilities: teamCapabilitiesFixture({}) }));
+        harness.answer(serverId, MEMBER_GET_PATH, { status, body: { error: code } });
+
+        const screen = await renderDetail(serverId);
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-member-unavailable'));
+        expect(screen.getTextContent()).toContain(message);
+        expect(screen.getTextContent().includes('teams.errors.signInRequiredAction')).toBe(signIn);
+        expect(screen.getTextContent()).not.toContain('teams.unavailable.retry');
+    });
+
+    it.each([
         { status: 403, label: 'teams.errors.forbidden' },
         { status: 404, label: 'teams.unavailable.updateRequired' },
     ])('explains an initial Group read refusal ($status) without offering an ineffective retry', async ({ status, label }) => {

@@ -456,6 +456,24 @@ describe('TeamGroupDetailScreen', () => {
         expect(screen.getTextContent()).toContain('teams.errors.forbidden');
     });
 
+    it.each([
+        { status: 403, code: 'team_authentication_required', message: 'session.access.authenticationRequired', signIn: true },
+        { status: 503, code: 'team_authentication_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable', signIn: false },
+    ])('offers the working recovery when group details return $code', async ({ status, code, message, signIn }) => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, GROUP_GET_PATH, { status, body: { error: code } });
+
+        const screen = await renderGroupDetail(serverId);
+        await waitForTestId(screen, 'team-group-unavailable');
+        expect(screen.getTextContent()).toContain(message);
+        expect(screen.getTextContent().includes('teams.errors.signInRequiredAction')).toBe(signIn);
+        expect(screen.getTextContent()).not.toContain('teams.unavailable.retry');
+        if (signIn) {
+            await screen.pressByTestIdAsync('team-group-unavailable-action');
+            expect(groupRouterPush).toHaveBeenCalledWith(expect.stringContaining(`/teams/team-1/sign-in?serverId=${encodeURIComponent(serverId)}`));
+        }
+    });
+
     it('opens the person when a roster row is pressed, and keeps removal in its menu', async () => {
         const serverId = await addManagedHome();
         harness.answer(serverId, GROUP_GET_PATH, {
