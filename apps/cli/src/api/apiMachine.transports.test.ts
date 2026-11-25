@@ -982,6 +982,73 @@ describe('ApiMachineClient transports', () => {
     }]);
   });
 
+  it('records each producer stream lifetime egress maximum only in its end event', async () => {
+    const { createDaemonPeerMediationObservabilityStore } = await import('@/daemon/peer/mediation/observability/store');
+    const machineSocket = createApiSessionSocketStub();
+    bindApiSessionSocketMock(mockIo, machineSocket);
+    const client = new ApiMachineClient('fake-token', {
+      id: 'source', encryptionMode: 'e2ee', encryptionKey: new Uint8Array(32).fill(7),
+      encryptionVariant: 'dataKey', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+    });
+    client.connect();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const store = createDaemonPeerMediationObservabilityStore({ nowMs: () => Date.now() });
+    const captures = new Map<string, import('@/daemon/peer/mediation/stream/captureAdapter').MachineLiveStreamCaptureStartInput>();
+    const sends: Promise<unknown>[] = [];
+    const relay = createMachineLiveStreamRelayTerminator({
+      machineId: 'source', nowMs: () => Date.now(),
+      captureAdapter: { async start(input) {
+        captures.set(input.streamId, input);
+        return { ok: true, session: { stop() {} } };
+      } },
+      emitEnvelope: (...args) => { sends.push(client.sendMachineLiveStreamRelayEnvelope(...args)); },
+      observability: { emit: event => { store.publish(event); } },
+    });
+    try {
+      for (const streamId of ['aged', 'fresh', 'empty']) {
+        const payload = { v: 1 as const, grantId: 'grant', accountId: 'owner', sourceMachineId: 'source',
+          targetMachineId: 'viewer', flowKind: 'live_stream' as const, routeKind: 'server_relay' as const,
+          streamId, streamFamily: 'simulator' as const, iat: 1_000, exp: 61_000,
+          aud: 'happier-live-stream-relay-authorization' as const };
+        expect(await relay.start({ v: 1, streamId, streamFamily: 'simulator', routeKind: 'server_relay',
+          sourceMachineId: 'source', targetMachineId: 'viewer', authorization: { payload,
+            signature: { keyId: 'home', alg: 'Ed25519', valueBase64Url: 'AbCdEf012_-' } } })).toEqual({ ok: true, streamId });
+      }
+      for (const [streamId, sequence, age] of [['aged', 1, 35], ['fresh', 1, 0], ['aged', 2, 90], ['aged', 3, 20]] as const) {
+        const stamp = 2_000 + sequence * 1_000;
+        clock.mockReturnValue(stamp);
+        expect(captures.get(streamId)?.offerFrame({ v: 1, streamId, sequence, timestampMs: stamp,
+          payloadKind: 'image_keyframe', payloadEncoding: 'binary_base64', payloadBase64: 'AQID', payloadSizeBytes: 3 })).toEqual({ ok: true });
+        // Sealing is asynchronous: advance the real clock boundary before its continuation emits.
+        clock.mockReturnValue(stamp + age);
+        await Promise.all(sends);
+      }
+      expect(store.delta('source', 'owner').events.filter(event => event.kind === 'flow.closed')).toHaveLength(0);
+      const closeLogs = () => vi.mocked(logger.infoFile).mock.calls.filter(([message]) => message === '[DAEMON] Live stream producer closed');
+      expect(closeLogs()).toHaveLength(0);
+      for (const streamId of ['aged', 'fresh', 'empty']) {
+        await relay.stop(streamId);
+        await relay.stop(streamId); // Repeated stop must not duplicate the terminal log.
+      }
+      await Promise.all(sends);
+      const ends = store.delta('source', 'owner').events.filter(event => event.kind === 'flow.closed');
+      expect(ends).toHaveLength(3);
+      const summary = (id: string) => ends.find(event => event.flow.flowId === id)?.data;
+      expect(summary('aged')).toMatchObject({ producerFramesEmitted: 3, producerMaxEgressAgeMs: 90, producerMaxEgressAgeSequence: 2 });
+      expect(summary('fresh')).toMatchObject({ producerFramesEmitted: 1, producerMaxEgressAgeMs: 0, producerMaxEgressAgeSequence: 1 });
+      expect(summary('empty')).toMatchObject({ producerFramesEmitted: null, producerMaxEgressAgeMs: null, producerMaxEgressAgeSequence: null });
+      expect(closeLogs().map(([, data]) => data)).toEqual([
+        { streamId: 'aged', producerFramesEmitted: 3, producerMaxEgressAgeMs: 90, producerMaxEgressAgeSequence: 2 },
+        { streamId: 'fresh', producerFramesEmitted: 1, producerMaxEgressAgeMs: 0, producerMaxEgressAgeSequence: 1 },
+        { streamId: 'empty', producerFramesEmitted: null, producerMaxEgressAgeMs: null, producerMaxEgressAgeSequence: null },
+      ]);
+    } finally {
+      await relay.dispose();
+      clock.mockRestore();
+      await client.shutdown();
+    }
+  });
+
   it('encrypts live-stream pixels before emitting them to the relay', async () => {
     const machineSocket = createApiSessionSocketStub();
     bindApiSessionSocketMock(mockIo, machineSocket);

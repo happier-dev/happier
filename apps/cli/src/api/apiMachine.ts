@@ -374,6 +374,7 @@ import {
     createMachineContentCodec,
     type MachineContentCodec,
 } from './machine/machineStoredContent';
+import type { MachineLiveStreamProducerEgress } from '@/daemon/peer/mediation/stream/relay';
 import { resolveMachineLiveStreamFramePayloadByteLimit } from './machine/liveStreamFrameBudget';
 import {
     registerMachineConnectedAccountRpcHandlers,
@@ -4342,7 +4343,7 @@ export class ApiMachineClient {
         return resolveMachineLiveStreamFramePayloadByteLimit({ envelope, maxFrameBytes, codec: this.readLiveStreamContentCodec(envelope) });
     }
 
-    async sendMachineLiveStreamRelayEnvelope(payload: MachineLiveStreamRelayEnvelopeV1): Promise<
+    async sendMachineLiveStreamRelayEnvelope(payload: MachineLiveStreamRelayEnvelopeV1, producerEgress?: MachineLiveStreamProducerEgress): Promise<
         Readonly<{ ok: true } | { ok: false; code: MachineLiveStreamPayloadErrorCodeV1 }>
     > {
         const socket = this.socket;
@@ -4367,6 +4368,15 @@ export class ApiMachineClient {
             return sealed;
         }
         if (this.socket !== socket || machineCodec !== this.machineContentCodec || !this.machineContentReady) return { ok: false, code: 'stream_transport_unavailable' };
+        if (producerEgress && parsed.data.message.kind === 'frame') {
+            const frame = parsed.data.message.frame;
+            const ageMs = Date.now() - frame.timestampMs;
+            producerEgress.producerFramesEmitted = (producerEgress.producerFramesEmitted ?? 0) + 1;
+            if (producerEgress.producerMaxEgressAgeMs === null || ageMs > producerEgress.producerMaxEgressAgeMs) {
+                producerEgress.producerMaxEgressAgeMs = ageMs;
+                producerEgress.producerMaxEgressAgeSequence = frame.sequence;
+            }
+        }
         socket.emit(MACHINE_LIVE_STREAM_SOCKET_EVENT, sealed.value);
         return { ok: true };
     }

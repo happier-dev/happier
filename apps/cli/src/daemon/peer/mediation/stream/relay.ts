@@ -6,6 +6,7 @@ import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/med
 import { validateMachineLiveStreamControlLeaseV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
 import type { ActionExecutorContext, MachineLiveStreamControlLeaseV1, MachineLiveStreamControlSourceV1, MachineLiveStreamCaptureSourceKindV1, MachineLiveStreamControlV1, MachineLiveStreamFrameV1, MachineLiveStreamRelayEnvelopeV1, MachineLiveStreamReceiptV1, MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
 import type { MachineContentCodec } from '@/api/machine/machineStoredContent';
+import { logger } from '@/ui/logger';
 
 import { startMachineLiveStreamFramePump } from './framePump';
 import {
@@ -32,7 +33,14 @@ export type MachineLiveStreamRelayTerminator = Readonly<{
     getContentCodec: (streamId: string) => MachineContentCodec | undefined;
 }>;
 
-type ActiveRelayStream = {
+// Lifetime scalars updated at the socket handoff, after asynchronous sealing.
+export type MachineLiveStreamProducerEgress = {
+    producerFramesEmitted: number | null;
+    producerMaxEgressAgeMs: number | null;
+    producerMaxEgressAgeSequence: number | null;
+};
+
+type ActiveRelayStream = MachineLiveStreamProducerEgress & {
     contentCodec?: MachineContentCodec;
     captureSession: MachineLiveStreamCaptureSession | null;
     controlSource: MachineLiveStreamControlSourceV1 | null;
@@ -132,7 +140,7 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
     resolveRelayAuthorizationTrustRoots?: () => readonly DirectRouteGrantTrustRoot[];
     captureAdapter?: MachineLiveStreamCaptureAdapter;
     nowMs: () => number;
-    emitEnvelope: (envelope: MachineLiveStreamRelayEnvelopeV1) => void;
+    emitEnvelope: (envelope: MachineLiveStreamRelayEnvelopeV1, producerEgress?: MachineLiveStreamProducerEgress) => void;
     getFramePayloadByteLimit?: (envelope: MachineLiveStreamRelayEnvelopeV1, maxFrameBytes: number) => number;
     readActiveControlLease?: (leaseInput: Readonly<{
         streamId: string;
@@ -150,6 +158,7 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
         startRequest: MachineLiveStreamStartRequestV1;
         reasonCode?: string;
         bytesOut?: number;
+        producerEgress?: MachineLiveStreamProducerEgress;
     }>): void {
         input.observability?.emit(createDaemonPeerMediationFlowEvent({
             accountId: inputEvent.startRequest.authorization?.payload.accountId ?? 'unknown',
@@ -167,6 +176,11 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
                 streamFamily: inputEvent.startRequest.streamFamily,
                 targetMachineId: inputEvent.startRequest.targetMachineId,
                 routeKind: inputEvent.startRequest.routeKind,
+                ...(inputEvent.producerEgress ? {
+                    producerFramesEmitted: inputEvent.producerEgress.producerFramesEmitted,
+                    producerMaxEgressAgeMs: inputEvent.producerEgress.producerMaxEgressAgeMs,
+                    producerMaxEgressAgeSequence: inputEvent.producerEgress.producerMaxEgressAgeSequence,
+                } : {}),
             },
         }));
     }
@@ -205,11 +219,18 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
         } catch {
             reasonCode ??= 'capture_stop_failed';
         }
+        logger.infoFile('[DAEMON] Live stream producer closed', {
+            streamId: active.startRequest.streamId,
+            producerFramesEmitted: active.producerFramesEmitted,
+            producerMaxEgressAgeMs: active.producerMaxEgressAgeMs,
+            producerMaxEgressAgeSequence: active.producerMaxEgressAgeSequence,
+        });
         emitObservability({
             kind: closeInput.observabilityKind,
             startRequest: active.startRequest,
             ...(reasonCode ? { reasonCode } : {}),
             bytesOut: active.bytesOut,
+            producerEgress: active,
         });
     };
 
@@ -311,7 +332,7 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
                     sourceMachineId: active.startRequest.sourceMachineId,
                     targetMachineId: active.startRequest.targetMachineId,
                     ...viewerSocketIdEcho(active.startRequest), frame,
-                }));
+                }), active);
             };
 
             const receiveReceipt = (receipt: MachineLiveStreamReceiptV1): void => {
@@ -370,6 +391,7 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
                     ? session.session.startedAtMs + startRequest.maxDurationMs : Number.POSITIVE_INFINITY,
                 expiresAtMs: session.session.expiresAtMs,
                 expiryTimer: null, closedReason: null, bytesOut: 0,
+                producerFramesEmitted: null, producerMaxEgressAgeMs: null, producerMaxEgressAgeSequence: null,
             };
             activeStreams.set(session.session.streamId, active);
             scheduleExpiry(active);

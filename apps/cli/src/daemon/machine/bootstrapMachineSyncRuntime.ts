@@ -1657,7 +1657,7 @@ export async function bootstrapMachineSyncRuntime(
         resolveRelayAuthorizationTrustRoots: params.resolvePeerMediationTrustRoots,
         captureAdapter: liveStreamCaptureAdapter,
         nowMs: params.peerMediationMachineRpc?.nowMs ?? (() => Date.now()),
-        emitEnvelope: (payload) => connectedApiMachine.sendMachineLiveStreamRelayEnvelope(payload),
+        emitEnvelope: (payload, producerEgress) => connectedApiMachine.sendMachineLiveStreamRelayEnvelope(payload, producerEgress),
         getFramePayloadByteLimit: (envelope, maxFrameBytes) => connectedApiMachine.getMachineLiveStreamFramePayloadByteLimit(envelope, maxFrameBytes),
         observability: peerMediationObservabilityEmitter,
         ...(liveStreamOptions.readActiveControlLease
