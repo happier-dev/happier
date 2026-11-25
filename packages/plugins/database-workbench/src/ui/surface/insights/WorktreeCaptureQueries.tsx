@@ -11,7 +11,10 @@ import {
   DatabaseCaptureTraceGetResultV1Schema,
   type DatabaseActionIdV1,
   type DatabaseCaptureCursorV1,
+  type DatabaseCaptureQueriesListResultV1,
+  type DatabaseCaptureQueryGetResultV1,
   type DatabaseCaptureSummaryV1,
+  type DatabaseCaptureTraceGetResultV1,
   type DatabaseFailureV1,
   type DatabaseWorktreeTargetV1,
 } from '@happier-dev/plugin-sdk/database';
@@ -105,7 +108,8 @@ function CaptureQueryPage({ selection, selectedId, onSelect, before }: Readonly<
   const input = React.useMemo(() => ({
     ...selection, page: { limit, ...(before ? { before } : {}) },
   }), [selection, before]);
-  const { state, retry } = useCaptureRead(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, input, DatabaseCaptureQueriesListResultV1Schema.parse);
+  const { state, retry } = useCaptureRead<Extract<DatabaseCaptureQueriesListResultV1, { ok: true }>>(
+    DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, input, DatabaseCaptureQueriesListResultV1Schema.parse);
   const [older, showOlder] = React.useState(false);
   if (state.kind !== 'ready') return <CaptureReadStatus state={state} retry={retry} />;
   const { items, nextCursor } = state.value;
@@ -134,7 +138,8 @@ function CaptureQueryDetail({ selection, query }: Readonly<{
 }>) {
   const t = usePluginTranslation();
   const input = React.useMemo(() => ({ ...selection, id: query.id }), [selection, query.id]);
-  const { state, retry } = useCaptureRead(DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1, input, DatabaseCaptureQueryGetResultV1Schema.parse);
+  const { state, retry } = useCaptureRead<Extract<DatabaseCaptureQueryGetResultV1, { ok: true }>>(
+    DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1, input, DatabaseCaptureQueryGetResultV1Schema.parse);
   const [inspect, setInspect] = React.useState(false);
   if (state.kind !== 'ready') return <CaptureReadStatus state={state} retry={retry} />;
   const sql = state.value.detail?.sql;
@@ -153,7 +158,8 @@ function CaptureQueryDetail({ selection, query }: Readonly<{
 function CaptureRequestDetail({ selection, traceId }: Readonly<{ selection: Selection; traceId: string }>) {
   const t = usePluginTranslation();
   const input = React.useMemo(() => ({ ...selection, traceId, page: { limit } }), [selection, traceId]);
-  const { state, retry } = useCaptureRead(DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, input, DatabaseCaptureTraceGetResultV1Schema.parse);
+  const { state, retry } = useCaptureRead<Extract<DatabaseCaptureTraceGetResultV1, { ok: true }>>(
+    DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, input, DatabaseCaptureTraceGetResultV1Schema.parse);
   if (state.kind !== 'ready') return <CaptureReadStatus state={state} retry={retry} />;
   const findings = state.value.repeatedQueries.filter(query => query.kind === 'suspected_n_plus_one');
   if (!findings.length) return <Text tone="secondary">
