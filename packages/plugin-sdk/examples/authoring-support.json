@@ -17,6 +17,7 @@
     "examples/session-agent": "maintained-public-reference",
     "examples/team-credential-administrator": "maintained-public-reference",
     "examples/tracked-action": "advanced-public-preview",
+    "examples/widget-areas": "advanced-public-preview",
     "fixtures/action-contract-composition": "conformance-reference",
     "fixtures/authoring-inference": "inference-fixture",
     "fixtures/external-targeted-packages": "conformance-reference"
