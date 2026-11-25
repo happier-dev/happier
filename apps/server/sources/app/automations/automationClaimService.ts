@@ -782,7 +782,7 @@ export async function claimAutomationRun(params: {
                 where: { ...(params.scope === 'workflow' && params.claimRequest ? {} : { accountId: params.accountId }), id: params.machineId, ...persistentMachineWhere,
                     revokedAt: null, replacedByMachineId: null },
                 select: { id: true, accountId: true, installationId: true,
-                    ...(params.scope === 'workflow' ? { account: { select: { encryptionMode: true } } } : {}) },
+                    account: { select: { encryptionMode: true } } },
             });
             machineCustodianAccountId = machine?.accountId ?? null;
             machineInstallationId = machine?.installationId ?? null;

@@ -28,6 +28,7 @@ import { admitAutomationRunTx } from './automationRunAdmissionService';
 import { observePrismaRequests } from "@/testkit/observeSqliteRequests";
 import { projectNativeJsonValueForTransport } from "@happier-dev/protocol/json/strictJsonValue";
 import { sameAutomationAccountContentIdentityV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+import { admitWorkflowRun } from '@/app/workflows/workflowRunService';
 
 import {
     claimAutomationRun,
@@ -570,9 +571,12 @@ describe("automationClaimService (integration)", () => {
         }))).toMatchObject({ run: { id: run.id, attempt: 2, workflowAcceptedSnapshotEnvelope: currentEnvelope } });
     });
 
-    it("claims and reclaims a direct Workflow Run without an Automation relation", async () => {
+    it.each(['workflow', 'execution'] as const)("claims and replays admitted direct Workflow custody through %s scope", async scope => {
         const machineId = "machine-direct-workflow-claim";
         const { accountId } = await createAccountWithMachine(machineId, "plain");
+        await publishInstalledTestMachine(machineId);
+        const { installationId } = await db.machine.findUniqueOrThrow({ where: { id: machineId }, select: { installationId: true } });
+        if (!installationId) throw new Error('Missing installed Workflow Machine');
         const runId = randomUUID();
         const materialized = await materializeWorkflowAcceptedSnapshotV1({
             definition: {
@@ -610,30 +614,22 @@ describe("automationClaimService (integration)", () => {
             binding: { v: 1, purpose: "accepted_snapshot", accountId, runId },
             acceptedSnapshot: materialized.snapshot,
         }));
-        await db.automationRun.create({
-            data: {
-                id: runId,
-                originKind: "direct",
-                automationId: null,
-                accountId,
-                state: "queued",
-                causeKind: null,
-                scheduledAt: new Date(Date.now() - 1_000),
-                dueAt: new Date(Date.now() - 1_000),
-                workflowAcceptedSnapshotEnvelope: acceptedSnapshotEnvelope,
-                workflowCustodyState: "pending",
-                assignments: frozenRunAssignments([machineId]),
-            },
-        });
+        const account = await db.account.findUniqueOrThrow({ where: { id: accountId }, select: automationAccountCurrentnessSelect });
+        await admitWorkflowRun({ accountId, machineId, runId, origin: { kind: 'direct' },
+            accountCurrentness: deriveAutomationAccountCurrentnessWitness(account), acceptedEnvelope: acceptedSnapshotEnvelope });
 
         await expect(listDaemonAssignments({ accountId, machineId })).resolves.toEqual([]);
 
-        const claimed = toAutomationV3WorkerClaimResponse(await claimAutomationRun({
+        const claimRequest = { machineInstallationId: installationId, nonce: randomUUID(), expiresAt: new Date(Date.now() + 300_000) };
+        const claim = () => claimAutomationRun({
             accountId,
             machineId,
+            scope,
             leaseDurationMs: 30_000,
             recipeFeaturePolicy: { workflowsEnabled: true },
-        }));
+            claimRequest,
+        });
+        const claimed = toAutomationV3WorkerClaimResponse(await claim());
         expect(claimed).toMatchObject({
             run: {
                 id: runId,
@@ -642,11 +638,16 @@ describe("automationClaimService (integration)", () => {
                 workflowAcceptedSnapshotEnvelope: acceptedSnapshotEnvelope,
                 attempt: 1,
                 revision: 1,
+                machineAdmission: { actorAccountId: accountId, custodianAccountId: accountId, machineId,
+                    installationId, role: 'manage', encryptionMode: 'plain' },
             },
             automation: null,
         });
         const initialLease = await db.automationRun.findUniqueOrThrow({ where: { id: runId }, select: { leaseExpiresAt: true } });
         expect(claimed.run).toHaveProperty("leaseExpiresAt", initialLease.leaseExpiresAt!.getTime());
+        const replayed = toAutomationV3WorkerClaimResponse(await claim());
+        expect(replayed.run).toEqual(claimed.run);
+        expect(replayed.automation).toBeNull();
 
         // A daemon/storage interruption keeps the same direct Run available
         // to the existing lease owner, even with no Automation assignment row.
@@ -657,8 +658,10 @@ describe("automationClaimService (integration)", () => {
         const reclaimed = toAutomationV3WorkerClaimResponse(await claimAutomationRun({
             accountId,
             machineId,
+            scope,
             leaseDurationMs: 30_000,
             recipeFeaturePolicy: { workflowsEnabled: true },
+            claimRequest: { ...claimRequest, nonce: randomUUID() },
         }));
         expect(reclaimed).toMatchObject({
             run: {
@@ -668,6 +671,7 @@ describe("automationClaimService (integration)", () => {
                 workflowAcceptedSnapshotEnvelope: acceptedSnapshotEnvelope,
                 attempt: 2,
                 revision: 2,
+                machineAdmission: claimed.run!.machineAdmission,
             },
             automation: null,
         });
