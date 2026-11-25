@@ -76,6 +76,21 @@ describe('health.checks.saved options', () => {
     expect(reads).toEqual([{ serverId: 'home-1' }]);
   });
 
+  it('offers saved transition source ids by the saved Check name', async () => {
+    const deps = {
+      savedHealthChecksList: async () => ({
+        items: [
+          { automationId: 'check-a', triggerId: 'trigger-a', sourceInstanceId: 'native:a', label: 'Checkout' },
+          { automationId: 'check-a', triggerId: 'trigger-b', sourceInstanceId: 'native:a', label: 'Checkout' },
+        ],
+      }),
+    } as unknown as ActionExecutorDeps;
+    expect(await resolveInputOptions({
+      deps, ctx: context, actionId: null, optionsSourceId: 'host-input:savedHealthSourceId',
+      input: {}, readFailure: () => null, resolveSessionId: () => null, reviewScope: () => undefined,
+    })).toEqual({ ok: true, result: [{ value: 'native:a', label: 'Checkout' }] });
+  });
+
   it('needs a selected Home and a host that can name Checks', async () => {
     let reads = 0;
     const deps = {

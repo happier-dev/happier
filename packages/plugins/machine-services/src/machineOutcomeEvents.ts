@@ -75,6 +75,10 @@ export const machineOutcomeEventActions = Object.fromEntries(eventIds.map(event 
     title: usesRetainedSummary(event) ? 'Choose Home' : 'Choose Machine',
     execution: { target: 'daemon' as const }, scopes: ['global', 'machine'] as const,
     surfaces: ['plugin', 'ui', 'cli', 'agent', 'mcp'] as const, dangerLevel: 'safe' as const, readOnly: true,
+    ...(descriptors[event].scope === 'backup' ? { inputHints: { fields: [
+        { path: 'serverId', title: 'Home', widget: 'select' as const,
+            inputType: { hostType: 'homeId' as const }, required: true },
+    ] } } : {}),
     inputSchema: setupFor(event),
     resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, sourceSchema.jsonSchema),
     async run(value: unknown, context: PluginInvocationContext) {

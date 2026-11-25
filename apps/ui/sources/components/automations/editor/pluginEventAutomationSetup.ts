@@ -324,7 +324,13 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
     try {
         const initial = await load(currentOrigin);
         if ('kind' in initial) return initial;
-        const seed = params.initialSetupSeed;
+        const explicitSeed = params.initialSetupSeed;
+        const serverId = initial.origin.machineTarget.serverId;
+        // The setup Action declares whether it can use the chosen Watcher's Home.
+        const seed: PluginUiOpenAutomationEventRequestV1 | undefined = !explicitSeed && !params.initialSource && serverId
+            && initial.event.setupAction.inputHints?.fields.some(({ path, inputType }) =>
+                path === 'serverId' && inputType && 'hostType' in inputType && inputType.hostType === 'homeId')
+            ? { eventRef: initial.event.event.identity, setupInput: { serverId } } : explicitSeed;
         if (seed && (!arePluginContributionIdentitiesEqual(seed.eventRef, initial.event.event.identity)
             || (seed.monitoringMachineId !== undefined && seed.monitoringMachineId !== initial.origin.machineTarget.target.machineId))) return { kind: 'unavailable', reason: 'invalid_seed' };
         const customSetupSurface = initial.event.setupSurface?.selectedRenderer.availability.state === 'available';
@@ -430,7 +436,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                     }
                     // A resource supplies every editable operand. A partial or Account-bearing seed still opens the form.
                     const setupInput = seed?.setupInput;
-                    if (!saved && !seed?.connectedAccount && setupInput && Object.keys(setupInput).length > 0
+                    if (explicitSeed && !saved && !seed?.connectedAccount && setupInput && Object.keys(setupInput).length > 0
                         && !selection.form.presentation.choosesConnectedAccount
                         && selection.form.getFields().every(field => readInputPath(setupInput, field.path) !== undefined)) {
                         const submitted = await selection.form.submit();

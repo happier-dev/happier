@@ -7,7 +7,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 
 export const HostInputTypeReferenceV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ hostType: z.literal('usageQuery'), field: z.optional(z.enum(['period', 'session'])) }),
-  z.strictObject({ hostType: z.enum(['session', 'workspace', 'machine', 'agentParticipant', 'savedSecretReference']) }),
+  z.strictObject({ hostType: z.enum(['session', 'workspace', 'machine', 'agentParticipant', 'savedSecretReference', 'homeId', 'savedHealthSourceId']) }),
 ]));
 export type HostInputTypeReferenceV1 = z.infer<typeof HostInputTypeReferenceV1Schema>;
 export const InputTypeReferenceV1Schema = lazyZodSchema(() => z.union([HostInputTypeReferenceV1Schema, asProtocolZod(PluginContributionIdentityV1Schema)]));
@@ -15,6 +15,7 @@ export type InputTypeReferenceV1 = z.infer<typeof InputTypeReferenceV1Schema>;
 
 /** A type selects its declared Resource; it is never an executable callback id. */
 export function inputTypeOptionsSourceId(type: InputTypeReferenceV1): string {
+  if ('hostType' in type && type.hostType === 'homeId') return 'sessions.spawn.servers.available';
   if ('hostType' in type) return type.hostType === 'session' ? 'sessions' : `host-input:${type.hostType}${type.hostType === 'usageQuery' && type.field ? `:${type.field}` : ''}`;
   return `plugin-input:${buildQualifiedPluginContributionKey(type)}`;
 }

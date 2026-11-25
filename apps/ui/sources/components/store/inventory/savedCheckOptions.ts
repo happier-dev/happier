@@ -57,6 +57,7 @@ export function projectSavedServiceCheckOptions(
           {
             automationId: native.id,
             triggerId: trigger.id,
+            ...(detail ? { sourceInstanceId: detail.storedDefinition.sourceInstanceId } : {}),
             label: named.title,
             ...(description ? { description } : {}),
           },

@@ -48,6 +48,11 @@ export function validateHostInputTypeValue(reference: HostInputTypeReferenceV1, 
     return participant ? { status: 'valid', value: projectNativeJsonValueForTransport(participant) }
       : { status: 'invalid', reasonCode: 'input_type_value_invalid' };
   }
+  if (reference.hostType === 'homeId' || reference.hostType === 'savedHealthSourceId') {
+    return typeof value === 'string' && (reference.hostType === 'savedHealthSourceId' || value.length > 0)
+      ? { status: 'valid', value }
+      : { status: 'invalid', reasonCode: 'input_type_value_invalid' };
+  }
   const parsed = reference.hostType === 'session'
     ? VoiceTrackedSessionAddressV1Schema.safeParse(value)
     : reference.hostType === 'machine' ? MachineTargetV1Schema.safeParse(value) : WorkspaceRefV1Schema.safeParse(value);

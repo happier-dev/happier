@@ -7,6 +7,17 @@ import { plugin } from './manifest.js';
 it('publishes the saved health check operand for the setup Action catalog', () => {
     const action = plugin.manifest.contributes.actions?.find(row => row.id === 'health/setup');
     expect(action?.approvalScope).toBe('healthCheck');
+    for (const id of ['health-check-failed/setup', 'health-check-recovered/setup', 'backup-failed/setup', 'backup-succeeded/setup']) {
+        const fields = plugin.manifest.contributes.actions?.find(row => row.id === id)?.inputHints?.fields;
+        expect(fields).toEqual(expect.arrayContaining([
+            expect.objectContaining({ path: 'serverId', widget: 'select', inputType: { hostType: 'homeId' } }),
+        ]));
+        if (id.startsWith('health-check')) {
+            expect(fields).toEqual(expect.arrayContaining([
+                expect.objectContaining({ path: 'nativeSourceInstanceId', widget: 'select', inputType: { hostType: 'savedHealthSourceId' } }),
+            ]));
+        }
+    }
 });
 
 it('chooses saved health transitions without configuring another probe', async () => {

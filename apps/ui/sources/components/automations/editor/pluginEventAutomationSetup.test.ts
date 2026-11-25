@@ -440,6 +440,27 @@ describe('Plugin Event Automation setup orchestration', () => {
         })).resolves.toMatchObject({ kind: 'configured' });
         expect(params.dispatch).toHaveBeenCalledWith(expect.objectContaining({ input: setupInput }));
     });
+    it('prefills an opted-in Home from the selected watcher and still asks for source selection', async () => {
+        const base = eligibleEvent();
+        const inputSchema = { type: 'object', properties: {
+            v: { const: 1 }, serverId: { type: 'string' }, nativeSourceInstanceId: { type: 'string' },
+        }, required: ['v', 'serverId'], additionalProperties: false };
+        const event = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
+            ...base, setupAction: { ...base.setupAction, inputSchema, inputHints: { fields: [
+                { path: 'serverId', title: 'Home', widget: 'select', inputType: { hostType: 'homeId' }, required: true },
+                { path: 'nativeSourceInstanceId', title: 'Saved check', widget: 'text' },
+            ] } },
+        });
+        setupSchemas.set(event.setupAction.id, inputSchema);
+        const params = durablePushSetupParams(event);
+        const presented = vi.fn();
+        await expect(configurePluginEventAutomationSetup({ ...params, observationTransport: 'checkpointedPull',
+            present: ({ form }) => { presented(form.getInput()); form.cancel(); },
+        })).resolves.toMatchObject({ kind: 'cancelled' });
+        expect(presented).toHaveBeenCalledWith({ serverId: SERVER_ID });
+        expect(params.dispatch).not.toHaveBeenCalled();
+    });
+
     it('reopens a saved source and gives the shared presenter the bound Action and Account', async () => {
         const fixture = eligibleEvent();
         const event = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({

@@ -28,6 +28,12 @@ export type SavedHealthTransitionSource = SavedHealthTransitionSourceV1;
 export const savedHealthTransitionActions = Object.fromEntries([HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT].map(event => [`${event}/setup`, {
     title: 'Choose saved health transitions', execution: { target: 'daemon' as const }, scopes: ['global', 'machine'] as const,
     surfaces: ['plugin', 'ui', 'cli', 'agent', 'mcp'] as const, dangerLevel: 'safe' as const, readOnly: true,
+    inputHints: { fields: [
+        { path: 'serverId', title: 'Home', widget: 'select' as const,
+            inputType: { hostType: 'homeId' as const }, required: true },
+        { path: 'nativeSourceInstanceId', title: 'Saved health check', widget: 'select' as const,
+            inputType: { hostType: 'savedHealthSourceId' as const }, placeholder: 'Any saved health check' },
+    ] },
     inputSchema: setup, resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, savedHealthTransitionSourceSchema.jsonSchema),
     async run(input: unknown, context: PluginInvocationContext) {
         const selected = setup.parse(input);

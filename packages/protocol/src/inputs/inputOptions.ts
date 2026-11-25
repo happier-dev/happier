@@ -544,8 +544,10 @@ export async function resolveInputOptions(params: Readonly<{
     return await resolveDeploymentTelemetryRouteOptionsV1({ deps, ctx, input, readFailure: params.readFailure });
   }
 
-  if (optionsSourceId === SAVED_HEALTH_CHECKS_OPTIONS_SOURCE_ID_V1) {
-    return await resolveSavedHealthCheckOptionsV1({ deps, ctx, readFailure: params.readFailure });
+  const savedHealthSource = optionsSourceId === inputTypeOptionsSourceId({ hostType: 'savedHealthSourceId' });
+  if (optionsSourceId === SAVED_HEALTH_CHECKS_OPTIONS_SOURCE_ID_V1 || savedHealthSource) {
+    return await resolveSavedHealthCheckOptionsV1({ deps, ctx, readFailure: params.readFailure,
+      ...(savedHealthSource ? { valueKind: 'transitionSource' } : {}) });
   }
 
   if (optionsSourceId === 'machines.volumes.available') {

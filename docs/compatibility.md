@@ -10625,6 +10625,11 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 machine-services Event setup declarations use the `homeId` and
+`savedHealthSourceId` host input types. Load matching App, daemon and plugin
+declarations. The setup Action inputs and saved Event source formats keep
+their existing string operands.
+
 In unreleased 0.3, the selected Worktree capture status reports
 `preparing: true` while a local capture listener is binding. It reports
 `restartRequired: true` when recording has stopped and a live launch still

@@ -10006,6 +10006,10 @@ explicit source whose resolved choices intersect both the type schema and its
 declared Resource choices. Workflow input declarations retain their
 existing domain exclusion between a type and an explicit source or enum, and
 public plugin Action hints still do not admit arbitrary `optionsSourceId`.
+In unreleased 0.3, the host input types `homeId` and `savedHealthSourceId`
+offer the Home inventory and the existing saved Check inventory. These select
+fields keep the string IDs expected by the setup Actions. Workflow Event setup
+prefills a declared `serverId` Home field from its selected Watcher.
 In 0.3 development, a contributed Action hint can declare the draft paths its
 options Resource reads in `optionsDraftDependencies`. The UI keys and sends the
 request using those values and the draft's Connected Account reference,

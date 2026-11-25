@@ -26,6 +26,7 @@ export type SavedHealthCheckRefV1 = z.infer<typeof SavedHealthCheckRefV1Schema>;
 export type SavedHealthCheckOptionV1 = Readonly<{
   automationId: string;
   triggerId: string;
+  sourceInstanceId?: string;
   label: string;
   description?: string;
 }>;
@@ -41,6 +42,7 @@ export async function resolveSavedHealthCheckOptionsV1(
   params: Readonly<{
     deps: Pick<ActionExecutorDeps, 'savedHealthChecksList'>;
     ctx: ActionExecutorContext;
+    valueKind?: 'transitionSource';
     readFailure: (result: unknown) => ActionExecuteFailure | null;
   }>,
 ): Promise<
@@ -73,6 +75,15 @@ export async function resolveSavedHealthCheckOptionsV1(
       errorCode: 'invalid_action_output',
       error: 'invalid_action_output',
     };
+  if (params.valueKind === 'transitionSource') {
+    const sources = new Map<string, InputOption>();
+    for (const { sourceInstanceId, label, description } of listed.items) {
+      if (!sourceInstanceId || sources.has(sourceInstanceId)) continue;
+      sources.set(sourceInstanceId, { value: sourceInstanceId, label,
+        ...(description === undefined ? {} : { description }) });
+    }
+    return { ok: true, result: [...sources.values()] };
+  }
   return {
     ok: true,
     result: listed.items.map((item) => ({
