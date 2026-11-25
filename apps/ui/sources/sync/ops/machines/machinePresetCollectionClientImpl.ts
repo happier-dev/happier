@@ -41,7 +41,8 @@ import {
 import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { classifyHomeActionOutcome, observeHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
-import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
+import { homeDomainFailureCode, homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
+import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 import { classifyAccountStorageReadFailure } from '@/sync/encryption/accountStorageContext';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ProfileAccountContext } from '@/sync/api/account/apiProfileCatalog';
@@ -72,7 +73,7 @@ import { commitMachinePresetRecipientRepair } from './machinePresetRecipientRepa
 export type MachinePresetCollectionResult<T> =
     | Readonly<{ kind: 'succeeded'; value: T }>
     | Readonly<{ kind: 'approval_pending'; approval: ActionApprovalContinuation }>
-    | Readonly<{ kind: 'failed'; code: string; diagnosticDetail?: string }>;
+    | Readonly<{ kind: 'failed'; code: string; diagnosticDetail?: string; failure?: HomeDomainFailure<string> }>;
 export type MachinePresetCollectionSettledResult<T> = Exclude<MachinePresetCollectionResult<T>, { kind: 'approval_pending' }>;
 export type MachinePresetContentOverrideResult =
     | Readonly<{ kind: 'unchanged' }>
@@ -160,7 +161,7 @@ export type MachinePresetCollectionOptions<T> = Readonly<{
     onApprovalPending?: (approval: ActionApprovalRegistration) => void;
     onApprovalSettled?: () => void;
     onApprovalSucceeded?: (value: T) => void | Promise<void>;
-    onApprovalFailed?: (code: string) => void;
+    onApprovalFailed?: (code: string, failure?: Parameters<typeof homeDomainFailureFromActionFailure>[0]) => void;
 }>;
 
 type MachinePresetListPageOptions = MachinePresetCollectionFilter
@@ -841,14 +842,14 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
             onSucceeded: settleApproval,
             onFailed: (code, failure) => {
                 const raw = readPresetDomainFailureResult(actionId, code, failure?.details);
-                if (!raw) { options?.onApprovalFailed?.(code); return; }
+                if (!raw) { options?.onApprovalFailed?.(code, failure); return; }
                 void settleApproval(raw).catch(() => options?.onApprovalFailed?.('content_unavailable'));
             },
         });
         if (outcome.kind === 'failed') {
             const code = homeDomainFailureCode(outcome.failure);
             const raw = readPresetDomainFailureResult(actionId, code, outcome.failure.details);
-            if (!raw) return { kind: 'failed', code };
+            if (!raw) return { kind: 'failed', code, failure: outcome.failure };
             return await complete(raw);
         }
         if (outcome.kind === 'approval_pending') {
@@ -871,7 +872,10 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
                 } });
                 return result.kind === 'approval_pending' ? { approvalPending: true } : result;
             },
-            succeeded: value => ({ kind: 'succeeded', value }), failed: code => ({ kind: 'failed', code }),
+            succeeded: value => ({ kind: 'succeeded', value }),
+            failed: (code, failure) => ({ kind: 'failed', code,
+                ...(failure ? { failure: homeDomainFailureFromActionFailure(failure, actionId) } : {}),
+            }),
             aborted: () => ({ kind: 'failed', code: 'aborted' }), ...(options?.signal ? { signal: options.signal } : {}),
         }).finally(() => { if (awaitingApproval) options?.onApprovalSettled?.(); });
     }

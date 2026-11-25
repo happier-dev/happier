@@ -153,6 +153,20 @@ afterEach(async () => {
 
 describe('Team shared kind list', () => {
   it.each([
+    { code: 'permission_denied', status: 403, message: 'teams.errors.forbidden' },
+    { code: 'invalid_request', status: 400, message: 'homeGovernance.invalidRead' },
+  ] as const)('explains a settled preset list refusal $code without Retry', async ({ code, status, message }) => {
+    const serverId = await addHome([], { serverIdentityId: 'srv_shared_machine_presets' });
+    harness.answer(serverId, '/v1/machines/presets/list', { status, body: { kind: 'refused', code } });
+
+    const screen = await renderScreen(<TeamSharedKindScreen serverId={serverId} teamId="team-1" kind="machinePresets" />);
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t(message)));
+    expect(ids(screen)).toContain('team-shared-kind-failed');
+    expect(ids(screen)).not.toContain('team-shared-kind-failed-retry');
+    expect(ids(screen)).not.toContain('team-shared-kind-more');
+  });
+
+  it.each([
     { title: 'loads only the visible preset page and repairs recipients only for the selected preset', failContinuation: false },
     { title: 'keeps visible presets and allows a manual retry after a failed scroll continuation', failContinuation: true },
   ])('$title', async ({ failContinuation }) => {
@@ -232,8 +246,9 @@ describe('Team shared kind list', () => {
     if (failContinuation) {
       await waitForHomeGovernance(() => expect(readCounts()).toEqual({ pageRequests: 2, listBodies: 2, detailBodies: 0, census: 0 }));
       expect(ids(screen)).toContain('team-shared-kind-row:preset-2');
-      expect(ids(screen)).toContain('team-shared-kind-more');
-      await screen.pressByTestIdAsync('team-shared-kind-more');
+      await waitForHomeGovernance(() => expect(ids(screen)).toContain('team-shared-kind-failed'));
+      expect(ids(screen)).not.toContain('team-shared-kind-more');
+      await screen.pressByTestIdAsync('team-shared-kind-failed-retry');
     }
     const pageRequests = failContinuation ? 3 : 2;
     await waitForHomeGovernance(() => expect(ids(screen)).toContain('team-shared-kind-row:preset-3'));

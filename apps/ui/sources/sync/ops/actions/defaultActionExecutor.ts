@@ -4044,7 +4044,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         });
       } catch (error) {
         if (error instanceof MachinePresetActionError) {
-          return { ok: false, errorCode: error.errorCode, error: error.message };
+          return { ok: false, errorCode: error.errorCode, error: error.message, details: { httpStatus: error.status } };
         }
         throw error;
       }

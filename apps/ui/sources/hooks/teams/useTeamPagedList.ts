@@ -31,6 +31,7 @@ export type TeamPagedList<TRow> = Readonly<{
     status: TeamPagedListStatus;
     /** Retained across transport failure; authoritative access loss withdraws rows. */
     error: HomeDomainFailure | null;
+    failedContinuation?: true;
     hasMore: boolean;
     loadMore: () => Promise<void>;
     reload: () => Promise<void>;
@@ -40,6 +41,7 @@ export type TeamPagedListState<TRow> = Readonly<{
     rows: readonly TRow[];
     status: TeamPagedListStatus;
     error: HomeDomainFailure | null;
+    failedContinuation?: true;
     cursor: string | null;
     hasMore: boolean;
 }>;
@@ -154,6 +156,7 @@ export function useTeamPagedList<TRow>(params: TeamPagedListOptions<TRow>): Team
                     hasMore: !withdrawn && base.cursor !== null,
                     status: 'error',
                     error: outcome.failure,
+                    failedContinuation: mode === 'more' && !withdrawn ? true : undefined,
                 };
                 onStateChange?.(failed);
                 publish(failed);
@@ -219,6 +222,7 @@ export function useTeamPagedList<TRow>(params: TeamPagedListOptions<TRow>): Team
         rows: state.rows,
         status: state.status,
         error: state.error,
+        failedContinuation: state.failedContinuation,
         hasMore: state.hasMore,
         loadMore,
         reload,

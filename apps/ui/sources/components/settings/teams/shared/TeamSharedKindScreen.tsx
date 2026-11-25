@@ -39,6 +39,7 @@ import { useTeamSharedMachines } from '@/hooks/teams/useTeamSharedMachines';
 import { useTeamSharedSavedSecrets } from '@/hooks/teams/useTeamSharedSavedSecrets';
 import { useTeamSharedResourcesSummary } from '@/hooks/teams/useTeamSharedResourcesSummary';
 import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
+import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
@@ -46,6 +47,7 @@ import { t } from '@/text';
 import { TeamSection, TeamSectionPageHeader } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamReadFailureLabel } from '../teamMutationPresentation';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 import {
   TEAM_SHARED_KIND_PRESENTATION,
   type TeamSharedListKind,
@@ -66,7 +68,8 @@ type KindRow = Readonly<{
 type KindListState = Readonly<{
   rows: readonly KindRow[];
   loading: boolean;
-  failure: string | null;
+  failure: Parameters<typeof teamReadFailureLabel>[0] | string | null;
+  failedContinuation?: true;
   hasMore: boolean;
   loadMore?: () => unknown;
   reload?: () => void | Promise<unknown>;
@@ -237,7 +240,7 @@ function CollectionList({ context, icon, collection }: ListProps & Readonly<{ co
     return <CollectionRows context={context} icon={icon} collectionRef={contract.ref} sharedRowDestination={contract.sharedRowDestination} />;
   }
   if (!contract || contract.code === 'account_availability_not_loaded') {
-    return <KindList icon={icon} state={{ rows: [], loading: true, failure: null, hasMore: false }} />;
+    return <KindList address={context.address} icon={icon} state={{ rows: [], loading: true, failure: null, hasMore: false }} />;
   }
   return <SurfaceStateCard testID="team-shared-collection-unavailable" kind="unavailable" size="line" title={t('common.unavailable')} />;
 }
@@ -273,7 +276,7 @@ function CollectionRows({ context, icon, collectionRef, sharedRowDestination }: 
       }),
     };
   }), [list.rows, open, refused]);
-  return <KindList icon={icon} state={pagedState(list, rows)} />;
+  return <KindList address={context.address} icon={icon} state={pagedState(list, rows)} />;
 }
 
 function MachinesList({ context, icon }: ListProps) {
@@ -295,7 +298,7 @@ function MachinesList({ context, icon }: ListProps) {
       })),
     [list.rows],
   );
-  return <KindList icon={icon} state={pagedState(list, rows)} />;
+  return <KindList address={context.address} icon={icon} state={pagedState(list, rows)} />;
 }
 
 function MachinePoolsList({ context, icon }: ListProps) {
@@ -315,7 +318,7 @@ function MachinePoolsList({ context, icon }: ListProps) {
       })),
     [list.rows, serverId],
   );
-  return <KindList icon={icon} state={pagedState(list, rows)} />;
+  return <KindList address={context.address} icon={icon} state={pagedState(list, rows)} />;
 }
 
 function MachinePresetsList({ context, icon, scrollContinuation }: ListProps & Readonly<{ scrollContinuation: PresetScrollContinuation }>) {
@@ -335,7 +338,7 @@ function MachinePresetsList({ context, icon, scrollContinuation }: ListProps & R
       })),
     [list.rows, serverId],
   );
-  return <KindList icon={icon} state={pagedState(list, rows)} />;
+  return <KindList address={context.address} icon={icon} state={pagedState(list, rows)} />;
 }
 
 function ProjectSourcesList({ context, icon }: ListProps) {
@@ -355,6 +358,7 @@ function ProjectSourcesList({ context, icon }: ListProps) {
   );
   return (
     <KindList
+      address={context.address}
       icon={icon}
       state={{
         rows,
@@ -365,7 +369,7 @@ function ProjectSourcesList({ context, icon }: ListProps) {
             : null,
         hasMore: state.coverage.nextCursor !== null,
         loadMore: () => state.coverage.nextCursor ? controller.load(state.query, state.coverage.nextCursor) : undefined,
-        reload: () => controller.load(),
+        reload: state.status === 'offline' ? () => controller.load() : undefined,
       }}
     />
   );
@@ -394,7 +398,7 @@ function DiscussionsList({ context, icon }: ListProps) {
       })),
     [list.rows, serverId],
   );
-  return <KindList icon={icon} state={pagedState(list, rows)} />;
+  return <KindList address={context.address} icon={icon} state={pagedState(list, rows)} />;
 }
 
 function SavedSecretsList({ context, icon }: ListProps) {
@@ -420,7 +424,7 @@ function SavedSecretsList({ context, icon }: ListProps) {
       })),
     [list.rows, serverId],
   );
-  return <KindList icon={icon} state={pagedState(list, rows)} />;
+  return <KindList address={context.address} icon={icon} state={pagedState(list, rows)} />;
 }
 
 function ArtifactsList({
@@ -460,13 +464,14 @@ function ArtifactsList({
       };
     });
   }, [kind, list.rows, serverId]);
-  return <KindList icon={icon} state={pagedState(list, rows)} />;
+  return <KindList address={context.address} icon={icon} state={pagedState(list, rows)} />;
 }
 
 function pagedState(
   list: Readonly<{
     status: string;
     error: Parameters<typeof teamReadFailureLabel>[0] | null;
+    failedContinuation?: true;
     hasMore: boolean;
     loadMore: () => Promise<void>;
     reload: () => Promise<void>;
@@ -476,7 +481,8 @@ function pagedState(
   return {
     rows,
     loading: list.status === 'loading' && rows.length === 0,
-    failure: list.error ? teamReadFailureLabel(list.error) : null,
+    failure: list.error,
+    failedContinuation: list.failedContinuation,
     hasMore: list.hasMore,
     loadMore: list.loadMore,
     reload: list.reload,
@@ -486,9 +492,14 @@ function pagedState(
 const LOADING_ROWS = 4;
 
 /** The rows of one kind, each opening the record at its owner; loading, empty and failed states said once. */
-function KindList(props: Readonly<{ icon: IconName; state: KindListState }>) {
+function KindList(props: Readonly<{ address: TeamAddress; icon: IconName; state: KindListState }>) {
   const router = useRouter();
+  const presentAction = useTeamReadFailureAction(props.address);
   const { state } = props;
+  const { failure } = state;
+  const testID = 'team-shared-kind-failed';
+  const restart = typeof failure === 'object' && failure?.code === 'invalid_team_cursor';
+  const retry = state.failedContinuation && !restart ? state.loadMore : state.reload;
   return (
     <ItemGroup testID="team-shared-kind-list">
       {state.loading ? (
@@ -498,14 +509,27 @@ function KindList(props: Readonly<{ icon: IconName; state: KindListState }>) {
           rows={LOADING_ROWS}
         />
       ) : null}
-      {state.failure && state.rows.length === 0 ? (
+      {typeof failure === 'string' ? (
         <ItemLoadStateRows
-          testID="team-shared-kind-failed"
+          testID={testID}
           state={{
             kind: 'failed',
-            reason: state.failure,
+            reason: failure,
             onRetry: state.reload,
           }}
+        />
+      ) : failure ? (
+        <SurfaceStateCard
+          testID={testID}
+          kind="error"
+          size="line"
+          accessibilitySemantics="alert"
+          title={failure.code === 'invalid_request' ? t('homeGovernance.invalidRead') : teamReadFailureLabel(failure)}
+          action={retry ? presentAction(failure, {
+            testIDPrefix: testID,
+            onPress: () => { void retry(); },
+            ...(restart ? { reloadsFirstPage: true } : {}),
+          }) : undefined}
         />
       ) : null}
       {!state.loading && !state.failure && state.rows.length === 0 ? (
@@ -529,7 +553,7 @@ function KindList(props: Readonly<{ icon: IconName; state: KindListState }>) {
           onPress={row.href ? () => router.push(row.href as never) : row.onOpen}
         />
       ))}
-      {state.hasMore && state.loadMore ? (
+      {!state.failure && state.hasMore && state.loadMore ? (
         <Item
           testID="team-shared-kind-more"
           title={t('teams.overview.shared.loadMore')}

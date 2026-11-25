@@ -37,7 +37,8 @@ export function useTeamSharedMachinePresets(input: Readonly<{
                 return { kind: 'succeeded', value: { items: result.value.presets.map(({ id, name }) => ({ id, name })), nextCursor: result.value.cursor ?? null } };
             }
             const code = result.kind === 'failed' ? result.code : 'invalid_action_output';
-            const failure = homeDomainFailureFromActionFailure({ errorCode: code });
+            const failure = (result.kind === 'failed' && 'failure' in result ? result.failure : undefined)
+                ?? homeDomainFailureFromActionFailure({ errorCode: code });
             return { kind: 'failed', failure: isMachinePresetAccessLost(code) ? { ...failure, kind: 'forbidden', retryable: false } : failure };
         },
     });
