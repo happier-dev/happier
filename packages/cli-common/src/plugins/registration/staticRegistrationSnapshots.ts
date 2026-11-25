@@ -1,5 +1,36 @@
 import type { PluginWorkItemsResolveRequestV1, PluginWorkItemsFindLinkedRequestV1, PluginWorkItemsWatchRequestV1 } from '@happier-dev/protocol/plugins/contributions/workItems';
 import { PluginWorkItemsResolveRequestV1Schema, PluginWorkItemsResolveResultV1Schema, PluginWorkItemsFindLinkedRequestV1Schema, PluginWorkItemsFindLinkedResultV1Schema, PluginWorkItemsWatchRequestV1Schema } from '@happier-dev/protocol/plugins/contributions/workItems';
+import { captureStaticRegistrationMethod, requireStaticRegistrationObject, type CapturedMethod } from './staticCapture.js';
+
+export function snapshotRegistrationCallbacks(
+    value: unknown,
+    label: string,
+    required: readonly string[],
+    optional: readonly string[] = [],
+): Readonly<Record<string, CapturedMethod>> {
+    const receiver = requireStaticRegistrationObject(value, label);
+    const descriptors = Object.getOwnPropertyDescriptors(receiver);
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+        if (descriptor.enumerable && typeof descriptor.value === 'function'
+            && !required.includes(key) && !optional.includes(key)) {
+            throw new TypeError(`${label}.${key} is not an approved callback`);
+        }
+    }
+    const captured: Record<string, CapturedMethod> = {};
+    for (const key of [...required, ...optional]) {
+        const method = captureStaticRegistrationMethod<CapturedMethod>(receiver, key, `${label}.${key}`, required.includes(key));
+        if (method !== undefined) captured[key] = method;
+    }
+    return Object.freeze(captured);
+}
+
+export function snapshotDynamicResourceRuntime(value: unknown) {
+    const receiver = requireStaticRegistrationObject(value, 'Dynamic Resource runtime');
+    return Object.freeze({
+        read: captureStaticRegistrationMethod<CapturedMethod>(receiver, 'read', 'Dynamic Resource runtime.read', true),
+        observe: captureStaticRegistrationMethod<CapturedMethod>(receiver, 'observe', 'Dynamic Resource runtime.observe', true),
+    });
+}
 
 /** Trusted executable callbacks keep their receiver; Protocol owns result identities. */
 export function normalizeWorkItemsRuntime(value: unknown) {

@@ -1,9 +1,11 @@
 import type { Disposable, JsonValue } from './contracts.js';
 import type { PluginContributionRegistrationRight } from '@happier-dev/protocol';
 import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
-import { normalizeWorkItemsRuntime } from './staticRegistrationSnapshots.js';
+import { normalizeWorkItemsRuntime, snapshotDynamicResourceRuntime, snapshotRegistrationCallbacks } from './staticRegistrationSnapshots.js';
 import { snapshotConnectedAccountRuntime } from './connectedAccountSnapshots.js';
 import { withPluginActionReadObserver } from './actionInputParser.js';
+import { validateAgentExternalSessionHooksContribution } from './externalSessionHooks.js';
+import { validateAgentExternalSessionTakeoverContribution } from './externalSessionTakeover.js';
 
 export type PluginRegistrationFamily = (typeof REGISTRATION_FAMILY)[keyof typeof REGISTRATION_FAMILY];
 export type PluginRuntimeRegistration = Readonly<{ family: PluginRegistrationFamily; localId: string; value: unknown }>;
@@ -22,6 +24,18 @@ export type PluginRegistrationScopeTarget =
     }>;
 
 type StagedAgentRuntimeRegistration = Readonly<Record<string, unknown>>;
+
+const agentCallbackCaptures = {
+    terminal: (value: unknown) => snapshotRegistrationCallbacks(value, 'Agent terminal contribution', ['resolveLaunch']),
+    externalSessions: (value: unknown) => snapshotRegistrationCallbacks(value, 'Agent External Sessions contribution', [
+        'resolveSource', 'listCandidates', 'resolveLinkIdentity', 'resolveLinkedIdentity', 'pageTranscript', 'readAfterTranscript',
+    ], ['resolveManagedEndpointService', 'readAccounting', 'hydrateCandidates', 'materializeTranscriptMedia']),
+    externalSessionObservation: (value: unknown) => snapshotRegistrationCallbacks(value, 'Agent External Session observation', [
+        'describeResource', 'observeResource', 'reconcileResource',
+    ]),
+    externalSessionHooks: validateAgentExternalSessionHooksContribution,
+    externalSessionTakeover: validateAgentExternalSessionTakeoverContribution,
+} satisfies Record<string, (value: unknown) => unknown>;
 
 type StagedProviderRuntimeRegistration = Readonly<Record<string, unknown>>;
 
@@ -254,8 +268,13 @@ export function createPluginRegistrationScope(
         assertRegistrationOpen();
         assertRegistrationLocalId(localId);
         const key = registrationKey(REGISTRATION_FAMILY.agents, localId);
-        if (!rightsByKey.has(key)) {
+        const right = rightsByKey.get(key);
+        if (!right) {
             fail(`Plugin '${params.pluginId}' cannot register undeclared contribution 'agents/${localId}'`);
+        }
+        if ((fields.externalSessionHooks !== undefined || fields.externalSessionObservation !== undefined
+            || fields.externalSessionTakeover !== undefined) && !right.requiredFields?.includes('externalSessions')) {
+            fail(`Plugin '${params.pluginId}' cannot register ${duplicateLabel} without External Sessions entitlement for Agent '${localId}'`);
         }
         const existing = stagedByKey.get(key);
         if (existing && existing.family !== REGISTRATION_FAMILY.agents) {
@@ -533,14 +552,44 @@ export function createPluginRegistrationScope(
             }
             state = 'committing';
             const registrations = [...stagedByKey.values()].map(staged => {
-                if (staged.family === REGISTRATION_FAMILY.agents) {
+                const { family, localId } = staged;
+                if (family === REGISTRATION_FAMILY.agents) {
                     const { options, ...fields } = staged.value as StagedAgentRuntimeRegistration;
-                    return { ...staged, value: { ...(options as Readonly<Record<string, unknown>> | undefined), ...fields } };
+                    const value = { ...(options as Readonly<Record<string, unknown>> | undefined), ...fields };
+                    try {
+                        for (const [field, capture] of Object.entries(agentCallbackCaptures)) {
+                            if (fields[field] === undefined) delete value[field];
+                            else value[field] = capture(fields[field]);
+                        }
+                    } catch {
+                        fail(`Plugin '${params.pluginId}' registered an invalid '${family}/${localId}' runtime`);
+                    }
+                    const required = rightsByKey.get(registrationKey(family, localId))?.requiredFields;
+                    if (required?.includes('factory') && fields.factory === undefined) {
+                        fail(`Plugin '${params.pluginId}' activation is missing Agent runtime for '${family}/${localId}'`);
+                    }
+                    if (required?.includes('externalSessions') && fields.externalSessions === undefined) {
+                        fail(`Plugin '${params.pluginId}' activation is missing Agent External Sessions contribution for '${family}/${localId}'`);
+                    }
+                    if (required && required.includes('terminal') !== (fields.terminal !== undefined)) {
+                        if (fields.terminal === undefined) {
+                            fail(`Plugin '${params.pluginId}' activation is missing Agent terminal contribution for '${family}/${localId}'`);
+                        }
+                        fail(`Plugin '${params.pluginId}' registered an undeclared Agent terminal contribution for '${family}/${localId}'`);
+                    }
+                    return freezeRegistration(family, localId, Object.freeze(value));
                 }
-                if (staged.family === REGISTRATION_FAMILY.workItems) {
+                if (family === REGISTRATION_FAMILY.dynamicResources) {
+                    try {
+                        return freezeRegistration(family, localId, snapshotDynamicResourceRuntime(staged.value));
+                    } catch {
+                        fail(`Plugin '${params.pluginId}' registered an invalid '${family}/${localId}' runtime`);
+                    }
+                }
+                if (family === REGISTRATION_FAMILY.workItems) {
                     return { ...staged, value: normalizeWorkItemsRuntime(staged.value) };
                 }
-                if (staged.family === REGISTRATION_FAMILY.connectedAccounts) {
+                if (family === REGISTRATION_FAMILY.connectedAccounts) {
                     return { ...staged, value: snapshotConnectedAccountRuntime(staged.value) };
                 }
                 return staged;
