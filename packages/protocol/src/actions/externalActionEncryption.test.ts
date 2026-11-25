@@ -183,13 +183,29 @@ describe('whole external Action encryption', () => {
     const { browserSessionId: _session, ...missingProjection } = request;
     expect(open(missingProjection)).toBeNull();
   });
-  it.each(['deployments.bindings.set', 'deployments.environments.controller.set', 'deployments.cancel', 'deployments.restart', 'deployments.environments.delete', 'deployments.targets.unlink'] as const)(
+  it('binds Stop to the selected Environment, receipt and revision', () => {
+    const stop = { ...binding, actionId: 'deployments.cancel' };
+    const input = { serverId: binding.serverIdentityId, environmentId: 'environment', deploymentId: 'receipt', expectedReceiptRevision: 2 };
+    const request = sealExternalActionRequestV2({
+      projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: stop, input, material, randomBytes,
+    });
+    const open = (envelope: unknown) => openExternalActionRequestV2({
+      projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding: stop, material,
+    });
+    expect(request.deploymentMetadataEnvironmentId).toBe(input.environmentId);
+    expect(request.deploymentStopReceipt).toEqual({ deploymentId: input.deploymentId, expectedReceiptRevision: input.expectedReceiptRevision });
+    expect(open(request)).toEqual({ input });
+    expect(open({ ...request, deploymentMetadataEnvironmentId: 'another-environment' })).toBeNull();
+    expect(open({ ...request, deploymentStopReceipt: { deploymentId: input.deploymentId, expectedReceiptRevision: 3 } })).toBeNull();
+    const { deploymentStopReceipt: _receipt, ...unbound } = request;
+    expect(open(unbound)).toBeNull();
+  });
+
+  it.each(['deployments.bindings.set', 'deployments.environments.controller.set', 'deployments.restart', 'deployments.environments.delete', 'deployments.targets.unlink'] as const)(
     'binds the selected %s Environment while keeping authored values encrypted', actionId => {
     const bindingRequest = { ...binding, actionId };
     const input = actionId === 'deployments.environments.controller.set'
       ? { serverId: 'home', environmentId: 'environment', expectedRevision: 2, controllerMachineId: 'private-value' }
-      : actionId === 'deployments.cancel'
-      ? { serverId: 'home', environmentId: 'environment', deploymentId: 'private-value', expectedReceiptRevision: 2 }
       : actionId === 'deployments.restart'
       ? { serverId: 'home', environmentId: 'environment', deploymentId: 'deployment', targetLinkId: 'link',
         machineId: 'machine-1', installationId: 'installation', expectedGeneration: 'generation',
