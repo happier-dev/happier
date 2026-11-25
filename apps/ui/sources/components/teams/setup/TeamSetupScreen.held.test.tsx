@@ -163,7 +163,8 @@ it('holds the plan behind one loading line until its first reads settle, so its 
   const held = await renderScreen(view({ arriving: true, canRun: true }));
   try {
     expect(held.findByTestId('team-setup-sources-loading')).not.toBeNull();
-    expect(held.findByTestId('team-setup-repositories')).toBeNull();
+    // The rows mount hidden so their own checkout reads answer before the plan shows.
+    expect(held.findByTestId('team-setup-repositories-frame')?.props.style).toMatchObject({ visibility: 'hidden' });
     expect(held.findByTestId('team-setup-run')).toBeNull();
     expect(held.findByTestId('team-setup-before')).not.toBeNull();
   } finally {
@@ -172,7 +173,7 @@ it('holds the plan behind one loading line until its first reads settle, so its 
   const arrived = await renderScreen(view({ arriving: false, canRun: true }));
   try {
     expect(arrived.findByTestId('team-setup-sources-loading')).toBeNull();
-    expect(arrived.findByTestId('team-setup-repositories')).not.toBeNull();
+    expect(arrived.findByTestId('team-setup-repositories-frame')?.props.style).toBeUndefined();
     expect(arrived.findByTestId('team-setup-run')).not.toBeNull();
   } finally {
     await arrived.unmount();

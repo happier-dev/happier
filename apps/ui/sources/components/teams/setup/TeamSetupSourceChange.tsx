@@ -85,10 +85,12 @@ export function TeamSetupSourceChangeNotice(
 export function useTeamSetupCheckoutSetup(source: ProjectSourceV1, checkout: WorkspaceRefV1 | null): Readonly<{
   pending: ProjectPendingSharedSetupV1 | null;
   ready: boolean;
+  /** The inspection has answered (or there is nothing to read): the row's shape no longer waits on it. */
+  settled: boolean;
   onReview: () => void;
 }> {
   const router = useRouter();
-  const { binding } = useServerCredentialAccountScopeBinding(checkout?.serverId);
+  const { binding, resolution } = useServerCredentialAccountScopeBinding(checkout?.serverId);
   const address = React.useMemo(
     () => (checkout ? workspaceAddressFromRefV1(checkout) : null),
     [checkout],
@@ -125,6 +127,8 @@ export function useTeamSetupCheckoutSetup(source: ProjectSourceV1, checkout: Wor
     pending,
     // The checkout owner's own fact: its reviewed setup is current, or it has none to run.
     ready: !pending && (readiness?.kind === 'current' || readiness?.kind === 'notRequired'),
+    // Answered, or nothing will be read: no checkout, or a Home that resolved without a current credential.
+    settled: !address || read !== null || (resolution.kind !== 'resolving' && !binding?.isCurrent()),
     onReview,
   };
 }

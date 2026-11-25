@@ -359,6 +359,55 @@ describe('selected Team batch progress', () => {
             });
         } finally { await screen.unmount(); }
     });
+    it('keeps the plan arriving until a found checkout’s setup readiness answers, so its row lands once as Ready', async () => {
+        // Cold load at 600 ms (TS-GAPS-ACCEPT-1125 run 1): the rows landed with an include switch, then the checkout's
+        // readiness answered and the row swapped the switch for Ready while rows below dropped.
+        const [{ TeamSetupPageView }, { ItemList }, { answerExternalActionAccountForHome }, { resolveProjectDefinitionV1 }] = await Promise.all([
+            import('./TeamSetupScreen'), import('@/components/ui/lists/ItemList'),
+            import('@/dev/testkit/harness/externalActionAccountHttpBoundary'),
+            import('@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1'),
+        ]);
+        const id = 'ready-source';
+        const workspace = { id: 'ready-checkout', serverId: query.serverId, machineId: query.machineId,
+            rootPath: '/checkout/ready', createdAtMs: 1, source: { sourceId: id, revision: 1 } };
+        const source = teamProjectSourceFixture({ id, name: 'Ready repository', nameWithOwner: 'team/ready' });
+        const answer = createDeferred<void>();
+        await answerExternalActionAccountForHome(homes, homeProfileId, {
+            machineId: query.machineId, actionId: 'projects.inspect', tokenEpoch: 0, requesterInvocation: 'none',
+            execute: async () => {
+                await answer.promise;
+                return {
+                    definition: { basis: { kind: 'absent' }, document: null },
+                    detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] },
+                    importCandidates: [],
+                    effectiveDefinition: resolveProjectDefinitionV1({ repositoryManifest: null }),
+                    setupReadiness: { kind: 'current', reviewedEffectDigest: 'reviewed', completedAtMs: 1 },
+                };
+            },
+        });
+        const screen = await renderScreen(<ItemList pageColumn="wide"><TeamSetupPageView
+            header={null} teamName="Team" selection={createMachineAdministrationTargetSelectionFixture()}
+            machineId={query.machineId} machineLabel="Member Machine" homeDir="/home/member"
+            run={{ kind: 'idle' }} canRun onRun={vi.fn()} onOpenOperation={vi.fn()} onStartSession={vi.fn()}
+            sources={{ loading: false, failure: null, onRetry: vi.fn() }} arriving={false}
+            hasPreset={false} machinePlan={null} repositories={[source]} repositoryFreeSources={[]}
+            checkouts={new Map([[id, workspace]])}
+            excluded={new Set()} onToggleRepository={vi.fn()} batch={null} sharedKeys={[]} keyDisplayNames={{}}
+            firstTask={null} presetChange={null}
+            clones={{ onFind: vi.fn(), searching: false, folder: null, adopted: new Map(), failure: null, noneFound: false }}
+        /></ItemList>);
+        try {
+            // The page's own reads settled, but this row's final shape is not known yet: one line stands for the plan.
+            expect(screen.findByTestId('team-setup-sources-loading')).not.toBeNull();
+            expect(screen.findByTestId('team-setup-repositories-frame')?.props.style).toMatchObject({ visibility: 'hidden' });
+            expect(screen.findByTestId('team-setup-run')).toBeNull();
+            answer.resolve();
+            await vi.waitFor(() => expect(screen.findByTestId(`team-setup-repository-start:${id}`)).not.toBeNull());
+            expect(screen.findByTestId('team-setup-sources-loading')).toBeNull();
+            expect(screen.findByTestId('team-setup-repositories-frame')?.props.style).toBeUndefined();
+            expect(screen.findByTestId(`team-setup-repository-include:${id}`)).toBeNull();
+        } finally { answer.resolve(); await screen.unmount(); }
+    });
     it('requires actual setup success, retains native failure, and announces only a live ready transition', async () => {
         daemonReply.mockReturnValue(new Promise(() => {}));
         const batch = selectedBatch();

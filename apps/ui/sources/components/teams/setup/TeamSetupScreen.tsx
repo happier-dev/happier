@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View, type ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -60,9 +61,10 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import {
   useActiveServerAccountScopeLifetime,
   useServerScopedMachine,
-  useServerScopedMachineLabel,
+  useServerScopedMachineLabelState,
   useWorkspaceRefsSelector,
 } from '@/sync/store/hooks';
+import { useProjectAccountRows } from '@/sync/domains/workspaces/projectAccountRows';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -256,10 +258,9 @@ function TeamSetupPlanPage(
   );
   // A preview stands for a new member's own machine: none of the viewer's Machines is read or planned against.
   const machineId = props.preview ? null : selection.selectedTarget?.machineId ?? null;
-  const machineName = useServerScopedMachineLabel(
-    context.scope.serverId,
-    machineId,
-  );
+  // Undefined while the Machine's name (and the home folder that comes with its record) is still opening.
+  const machineLabelState = useServerScopedMachineLabelState(context.scope.serverId, machineId);
+  const machineName = machineLabelState ?? null;
   const homeDir = useServerScopedMachine(
     context.scope.serverId,
     machineId,
@@ -344,6 +345,9 @@ function TeamSetupPlanPage(
   const checkoutList = useWorkspaceRefsSelector(React.useCallback((refs) => repositories.map((source) =>
     findTeamSetupSourceCheckout(refs, { serverId, machineId, sourceId: source.id, revision: source.revision })),
   [machineId, repositories, serverId]));
+  // Whether that lookup has answered for this Account: before it does, "no checkout" is not yet known.
+  const checkoutLookupSettled = useProjectAccountRows(rows => !!rows && areServerAccountScopesEqual(rows.scope, context.scope)
+    && rows.status !== 'idle' && rows.status !== 'loading', !!machineId);
   const checkouts = React.useMemo(() => new Map(repositories.flatMap((source, index) => {
     const checkout = checkoutList[index];
     return checkout ? [[source.id, checkout] as const] : [];
@@ -441,13 +445,13 @@ function TeamSetupPlanPage(
   const sourcesState = resources.sources.state;
   const sourcesLoading = sourcesState.status === 'initial' || sourcesState.status === 'loading';
   const sourcesFailed = sourcesState.status === 'offline' || sourcesState.status === 'refused';
-  // The page's shape is known once Sources settle and each included repository's environment read answers. Kept once
-  // reached: a later refresh or a new Source revision updates rows in place instead of folding the plan back up.
-  const [arrived, setArrived] = React.useState(false);
-  if (!arrived && !sourcesLoading && (!requirementsEnabled || included.every((source) => {
+  // The page's own reads that shape the plan: Sources, each included repository's environment read, and on a chosen
+  // Machine its name and home folder and the checkout lookup. The view latches arrival once these and each found
+  // checkout's setup read have answered.
+  const planReadsSettled = !sourcesLoading && (!requirementsEnabled || included.every((source) => {
     const entry = requirements.entries.get(source.id);
     return entry?.revision === source.revision && entry.read.status !== 'loading';
-  }))) setArrived(true);
+  })) && (!machineId || (machineLabelState !== undefined && checkoutLookupSettled));
   const sourceIssue = sourcesFailed ? presentProjectSourceIssue(sourcesState.issue, context.homeName) : null;
   // Keys the Team already shares: sessions on any of the member's Machines use them without the value
   // reaching the member, so they need no step here. Keys a repository asks each member for are owed.
@@ -538,7 +542,7 @@ function TeamSetupPlanPage(
       clones={clones}
       checkouts={checkouts}
       onSetUpAnother={setUpAnother}
-      arriving={!arrived}
+      arriving={!planReadsSettled}
     />
   );
 }
@@ -591,7 +595,10 @@ export function TeamSetupPageView(
     checkouts?: ReadonlyMap<string, WorkspaceRefV1>;
     /** After Done, the rail offers the same setup on another Machine instead of a spent button. */
     onSetUpAnother?: () => void;
-    /** The first reads that decide the plan's shape (Sources, each included repository's environment keys) are pending. */
+    /**
+     * The page's own reads that decide the plan's shape are pending (Sources, each included repository's environment keys,
+     * the chosen Machine's record and checkout lookup). Each found checkout's setup read is waited on here as well.
+     */
     arriving?: boolean;
     /** Preview as a member: a new member's own machine stands in for the selector, and nothing runs. */
     preview?: Readonly<{
@@ -603,8 +610,18 @@ export function TeamSetupPageView(
 ) {
   const { teamName, machineId, machineLabel, run, repositories } = props;
   // Until the plan's first reads settle, one loading line stands for the whole plan, so its sections arrive together
-  // instead of each pushing the next one down as its own read lands.
-  const arriving = props.arriving === true;
+  // instead of each pushing the next one down as its own read lands. The rows mount hidden meanwhile, so each found
+  // checkout's own setup read (Ready, or a changed shared setup) answers before the plan shows. Kept once reached: a
+  // later refresh or a new Source revision updates rows in place instead of folding the plan back up.
+  const [settledCheckouts, setSettledCheckouts] = React.useState<ReadonlySet<string>>(() => new Set());
+  const settleCheckout = React.useCallback((checkoutId: string) => setSettledCheckouts(current =>
+    current.has(checkoutId) ? current : new Set(current).add(checkoutId)), []);
+  const [arrived, setArrived] = React.useState(false);
+  if (!arrived && props.arriving !== true && repositories.every((source) => {
+    const checkout = props.checkouts?.get(source.id);
+    return !checkout || settledCheckouts.has(checkout.id);
+  })) setArrived(true);
+  const arriving = !arrived;
   const router = useRouter();
   const { theme } = useUnistyles();
   const compact = useDeviceType() === 'phone';
@@ -870,8 +887,10 @@ export function TeamSetupPageView(
           ) : null}
         </>
       ) : null}
-      {arriving ? null : props.signIns}
-      {!arriving && repositories.length > 0 ? (
+      {/* Mounted hidden while arriving too, so the Machine's sign-in report is read alongside the plan's reads. */}
+      {props.signIns ? <TeamSetupArrivalHold held={arriving}>{props.signIns}</TeamSetupArrivalHold> : null}
+      {repositories.length > 0 ? (
+        <TeamSetupArrivalHold testID="team-setup-repositories-frame" held={arriving}>
         <ItemGroup
           testID="team-setup-repositories"
           title={t('teams.join.setupPage.repositoriesTitle')}
@@ -919,9 +938,11 @@ export function TeamSetupPageView(
               disabled={running || run.kind === 'done' || !!heldEntry}
               iconColor={theme.colors.text.secondary}
               onToggle={(next) => props.onToggleRepository(source.id, next)}
+              onCheckoutSetupSettled={arrived ? undefined : settleCheckout}
             />
           ))}
         </ItemGroup>
+        </TeamSetupArrivalHold>
       ) : null}
       {arriving ? null : props.clones.failure && props.clones.folder ? (
         <SurfaceStateCard
@@ -981,6 +1002,22 @@ export function TeamSetupPageView(
   );
 }
 
+// Laid out at the column's width but not drawn, reachable or read: `display: none` would measure the rows at zero width,
+// and the phone header and row wraps would then reflow the moment the plan shows.
+const ARRIVAL_HELD = {
+  position: 'absolute', left: 0, right: 0, top: 0, pointerEvents: 'none', opacity: 0, visibility: 'hidden',
+} as ViewStyle;
+
+/** Keeps a plan section mounted (so its own reads start with the page's) while the plan is still arriving. */
+function TeamSetupArrivalHold(props: Readonly<{ held: boolean; testID?: string; children: React.ReactNode }>) {
+  return (
+    <View testID={props.testID} style={props.held ? ARRIVAL_HELD : undefined}
+      accessibilityElementsHidden={props.held} importantForAccessibility={props.held ? 'no-hide-descendants' : 'auto'}>
+      {props.children}
+    </View>
+  );
+}
+
 const STATUS_WORD: Record<TeamSetupRepositoryPhase, () => string> = {
   queued: () => t('teams.join.setupPage.statusQueued'),
   opening: () => t('teams.join.setupPage.statusOpening'),
@@ -1016,6 +1053,8 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
     disabled: boolean;
     iconColor: string;
     onToggle: (included: boolean) => void;
+    /** Told once this row's checkout setup read has answered, while the plan is still arriving. */
+    onCheckoutSetupSettled?: (checkoutId: string) => void;
   }>,
 ) {
   const progress = useTeamSetupBatchProgress(props.batch, props.source.id, undefined, { observeOpen: false });
@@ -1027,6 +1066,11 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
   // and whether its setup is already current.
   const { checkout } = props;
   const checkoutSetup = useTeamSetupCheckoutSetup(props.source, checkout);
+  const { onCheckoutSetupSettled } = props;
+  const checkoutId = checkout?.id;
+  React.useEffect(() => {
+    if (checkoutId && checkoutSetup.settled) onCheckoutSetupSettled?.(checkoutId);
+  }, [checkoutId, checkoutSetup.settled, onCheckoutSetupSettled]);
   const checkoutReady = !progress && !heldReview && !!checkout && checkoutSetup.ready
     && (!props.adoptedPath || checkout.rootPath === props.adoptedPath);
   const opened: TeamSetupSessionTarget | null | undefined = progress?.readyProject
