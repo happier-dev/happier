@@ -1,7 +1,7 @@
 import { OH_MY_PI_PROVIDER_BINDING_ADAPTER, OH_MY_PI_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding.js';
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/plugin-sdk';
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 import { resolveSessionFileStoreLaunchEnvironment } from '@happier-dev/plugin-sdk/sessions/file-stores';
 

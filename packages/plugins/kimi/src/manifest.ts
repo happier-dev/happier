@@ -1,7 +1,7 @@
 import { createKimiAgentRuntime } from './agent/runtime/factory.js';
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/plugin-sdk';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { KIMI_ACP_COMMAND, KIMI_PREFLIGHT_SESSION_CONTROLS } from './agent/acp/preflight.js';
