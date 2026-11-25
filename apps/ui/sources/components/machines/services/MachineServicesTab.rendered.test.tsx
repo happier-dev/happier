@@ -11,6 +11,7 @@ import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/proto
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { resolvePluginUiHostReadActionIdV1 } from '@happier-dev/protocol/plugins/ui/subscriptions';
+import { readSessionInputForgeEvidenceAttachmentV1 } from '@happier-dev/protocol/sessions/messages/sessionInputForgeEvidenceV1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol/v1';
@@ -28,9 +29,6 @@ import type { MachinePageTabParams } from '@/components/machines/page/machinePag
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { t } from '@/text';
 import { AccountNoticeInvestigationBoundary } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
-import { registerCurrentUiContextActionPort } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
-import { TriageReadSessionHandoffChoicesInputV1Schema, TriageSessionHandoffChoicesV1Schema } from '@happier-dev/triage-protocol/v1';
-import { TriageRunConfiguredActionInputV1Schema, TriageRunConfiguredActionResultV1Schema } from '../../../../../../packages/plugins/triage/src/actions/configuredActionRunProtocol';
 import { AgentActionButton } from '@happier-dev/plugin-ui/components';
 
 // The log viewport's recycler depends on native layout; render its rows deterministically at that boundary.
@@ -44,6 +42,15 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).creat
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
     const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
     return createServerScopedMachineRpcBoundaryMock(machineTransport.rpc);
+});
+// Load the native Triage Action through the test realm; its nested Actions use the real front door.
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
+    const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+    const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+    const { createTriageFailureFrontDoorForTest } = await import('@/dev/testkit/harness/triageFailureActionBoundary');
+    return { ...original, createFrontDoorActionExecute: createTriageFailureFrontDoorForTest({
+        ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original),
+    }) };
 });
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -241,7 +248,7 @@ function textOf(node: { children: readonly unknown[] }): string {
     return node.children.map(child => typeof child === 'string' ? child : textOf(child as { children: readonly unknown[] })).join('');
 }
 
-async function mount(options: Readonly<{ online?: boolean; params?: MachinePageTabParams }> = {}) {
+async function mount(options: Readonly<{ online?: boolean; params?: MachinePageTabParams; serverId?: string }> = {}) {
     const setParams = vi.fn();
     // The Machine page shell's presence fact, which the tab consumes as `online`.
     let setPresence: (online: boolean) => void = () => {};
@@ -249,7 +256,7 @@ async function mount(options: Readonly<{ online?: boolean; params?: MachinePageT
         const [params, update] = React.useState<MachinePageTabParams>(options.params ?? { id: 'services' });
         const [online, setOnline] = React.useState(options.online ?? true);
         setPresence = setOnline;
-        return <MachineServicesTab serverId={serverId} machineId={machineId} machineName={machineName}
+        return <MachineServicesTab serverId={options.serverId ?? serverId} machineId={machineId} machineName={machineName}
             online={online} params={params} setParams={next => { setParams(next); update(next); }} />;
     }
     // The Machine page shell presents its tabs as a page, which is where the page sentence and its action show.
@@ -366,40 +373,64 @@ describe('MachineServicesTab rendered production wiring', () => {
             capabilities: { start: false, stop: false, restart: false, logs: false, accounting: false } });
         answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
         machineTransport.rpc.mockResolvedValue({ kind: 'service', service: row });
-        const handoffs: unknown[] = [];
-        // The contributed plugin realm is the execution boundary. Account custody, the Action
-        // front door and investigation domain stay real; Triage's published schemas admit both sides.
-        const unregister = registerCurrentUiContextActionPort(() => ({
-            readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {},
-            invokeAction: async request => {
-                expect(request.action.pluginId).toBe('happier.triage');
-                if (request.action.localId === 'actions/read-v1') {
-                    TriageReadSessionHandoffChoicesInputV1Schema.parse(request.input);
-                    return { ok: true, result: TriageSessionHandoffChoicesV1Schema.parse({ v: 1, kind: 'choices', defaultActionId: 'investigate',
-                        actions: [{ label: 'Investigate', launchMode: 'start', startable: true,
-                            selection: { configuredActionId: 'investigate', sessionChoice: { kind: 'configured' },
-                                agentChoice: { kind: 'configured' }, delivery: 'configured' } }] }) };
-                }
-                expect(request.action.localId).toBe('sessions/run-configured-v1');
-                handoffs.push(TriageRunConfiguredActionInputV1Schema.parse(request.input));
-                return { ok: true, result: TriageRunConfiguredActionResultV1Schema.parse({ v: 1,
-                    handoff: { kind: 'unavailable', reason: 'catalogUnavailable' } }) };
-            },
-        }));
+        const { answerTriageFailureCatalogForHome } = await import('@/dev/testkit/harness/triageFailureActionBoundary');
+        const { answerSourceDeclaredAccountPluginForHome, prepareSourceDeclaredAccountPluginsForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { TRIAGE_PLUGIN } = await import('../../../../../../packages/plugins/triage/src/definition');
+        const { createTestkitAccountKv } = await import('../../../../../../packages/plugins/triage/src/settings/testkit/accountKv.test-support');
+        const { administerTriageAction } = await import('../../../../../../packages/plugins/triage/src/actions/actionsCatalog');
+        const { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } = await import('../../../../../../packages/plugins/triage/src/settings/actions');
+        const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+        const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+        const catalog = createTestkitAccountKv();
+        const label = 'Investigate this service';
+        const configured = await administerTriageAction({ v: 1, kind: 'update', actionId: 'investigate',
+            expectedRevision: 'absent', label, enabled: true, appliesTo: ['other'], profileId: null,
+            workspaceMode: 'reference_only', target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' } },
+        { catalog: catalog.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1), mintActionId: () => 'investigate' });
+        expect(configured.status).toBe('applied');
+        const entry = await catalog.kv.get(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1);
+        if (!entry) throw new Error('Expected a configured Triage catalog row');
+        answerSourceDeclaredAccountPluginForHome(homes, serverId, TRIAGE_PLUGIN.manifest.id);
+        const catalogPath = answerTriageFailureCatalogForHome(homes, serverId, entry, Promise.resolve());
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected Services Account');
+        const homeId = lifetime.scope.serverId;
+        const installTriage = await prepareSourceDeclaredAccountPluginsForTest([{ manifest: TRIAGE_PLUGIN.manifest,
+            activate: TRIAGE_PLUGIN.activateAccount, packageName: '@happier-dev/plugins-triage' }]);
+        await prepareSessionDraftPersistenceStorage();
+        const installed = await installTriage({ accountLifetime: lifetime, publishProjection: true });
+        let screen: Awaited<ReturnType<typeof mount>>['screen'] | undefined;
         try {
-            const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
-            await vi.waitFor(() => expect(screen.findAllByType(AgentActionButton)).toHaveLength(1));
-            await vi.waitFor(() => expect(screen.findAllByType(AgentActionButton)[0]?.props.launchMode).toBe('start'));
-            const button = screen.findAllByType(AgentActionButton)[0]!;
+            ({ screen } = await mount({ serverId: homeId, params: { id: 'services', page: 'service', service: row.serviceId } }));
+            const button = await waitForHomeGovernance(() => {
+                expect(homes.requestsFor(catalogPath)).toContainEqual(expect.objectContaining({
+                    method: 'GET', serverUrl: 'https://services-rendered.test',
+                }));
+                expect(screen!.findAllByType(AgentActionButton)).toHaveLength(1);
+                const action = screen!.findByType(AgentActionButton);
+                expect(action.props.title).toBe(label);
+                expect(action.props.launchMode).toBe('review');
+                return action;
+            });
             await act(async () => { button.props.onLaunch(button.props.launchMode); });
-            await vi.waitFor(() => expect(handoffs).toHaveLength(1));
-            const subject = { kind: 'service', target: { kind: 'host', page: 'machine_service', machine: { serverId, machineId }, service: identity } };
-            expect(handoffs).toEqual([expect.objectContaining({ handoff: expect.objectContaining({
-                task: 'investigate', configuredActionId: 'investigate', delivery: 'send',
-                context: { kind: 'failure', subject }, evidence: [{ kind: 'failure', subject }],
-            }) })]);
-            await vi.waitFor(() => expect(screen.findByTestId('machine-service-investigate.unavailable')).not.toBeNull());
-        } finally { unregister(); }
+            const draftId = await waitForHomeGovernance(() => {
+                const route = vi.mocked(router.push).mock.calls.find(([href]) =>
+                    typeof href === 'object' && href.pathname === '/new')?.[0];
+                const draftId = typeof route === 'object' ? route.params?.draftId : undefined;
+                if (typeof draftId !== 'string') throw new Error('Expected investigation to open its New Session draft');
+                return draftId;
+            });
+            const draft = readNewSessionDraftFromRepository({ scope: lifetime.scope, draftId });
+            const evidence = readSessionInputForgeEvidenceAttachmentV1(draft?.composerAttachmentSeeds?.[0]?.value.value);
+            expect(evidence?.items.map(item => JSON.parse(item.text))).toEqual([{
+                subject: { kind: 'service', target: { kind: 'host', page: 'machine_service', machine: { serverId: homeId, machineId }, service: identity } },
+                read: { actionId: 'machines.services.detail', input: { serverId: homeId, machineId, serviceId: identity.serviceId } },
+            }]);
+        } finally {
+            await screen?.unmount();
+            await installed.dispose();
+        }
     });
 
     it.each(['healthy', 'running', 'missingIdentity', 'expectedStop'] as const)('offers no investigation for %s service data', async scenario => {
