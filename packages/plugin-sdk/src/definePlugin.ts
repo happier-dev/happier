@@ -1215,7 +1215,7 @@ export type DefinedPluginActionContracts<
     TPluginId extends string = string,
     TActions extends Readonly<Record<string, PluginActionDeclaration>> = Readonly<Record<string, never>>,
 > = Readonly<{
-    [TLocalId in keyof TActions & string]: ActionContract<
+    [TLocalId in keyof TActions & string as [TActions[TLocalId]] extends [never] ? never : TLocalId]: ActionContract<
         ProtocolActionSchemaInput<
             TActions[TLocalId] extends { inputSchema: infer TSchema }
                 ? TSchema
