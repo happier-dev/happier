@@ -7620,7 +7620,7 @@ describe('deployment children retain their controller Action authority', () => {
                 await db.deploymentEnvironment.update({ where: { id: holder.environment.id }, data: acknowledgement });
                 const refused = await submit(first, { ...first.body, telemetrySyncAcknowledgement: acknowledgement });
                 expect(refused.statusCode, refused.body).toBe(409);
-                expect(refused.json()).toEqual({ ok: false, error: 'deployment_conflict' });
+                expect(refused.json()).toEqual({ ok: false, error: 'telemetry_bearer_in_use' });
                 expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } }))
                     .toMatchObject({ revision: environmentRevision, telemetryTokenHash: null });
                 expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } }))
