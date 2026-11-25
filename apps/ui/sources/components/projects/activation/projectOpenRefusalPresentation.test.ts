@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { t } from '@/text';
-import { projectOpenRefusalPresentation } from './projectOpenRefusalPresentation';
+import type { OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
+import { projectOpenRefusalPresentation, readProjectOpenPrivateDestinationReview } from './projectOpenRefusalPresentation';
 
 describe('Project Open refusal presentation', () => {
     it('shows the credential repair supplied by the owning clone failure', () => {
@@ -81,5 +82,31 @@ describe('Project Open refusal presentation', () => {
         expect(shown.title).toBe(t('projects.open.subfolderMissing'));
         expect(shown.description).toBe(t('projects.open.subfolderMissingHint', { subfolder: 'packages/missing' }));
         expect(shown.details).toEqual(['repository_subfolder_missing']);
+    });
+});
+
+describe('Project Open private destination review', () => {
+    // The refusal a member's first Keep updated into an isolated guest returns (ce4efb5cc13).
+    const refused = (review?: Partial<NonNullable<Extract<OpenProjectResultV1, { kind: 'refused' }>['destinationReview']>>) => ({
+        kind: 'refused' as const, code: 'workspace_private_checkout_review_required', effectAttempted: false,
+        ...(review === undefined ? {} : { destinationReview: { accountId: 'member', serverId: 'home', machineId: 'guest-machine',
+            destinationParentPath: '/home/member/.happier/projects', destinationDirectoryName: 'app', ...review } }),
+    });
+    const draft = { serverId: 'home', machineId: 'guest-machine', machineHomeDir: '/home/member' };
+
+    it('reads the proposed private folder as a review for the Machine the person chose, never as an error', () => {
+        expect(readProjectOpenPrivateDestinationReview(refused({}), draft)).toEqual({
+            destination: '/home/member/.happier/projects/app',
+            title: t('projects.open.privateDestinationTitle'),
+            description: t('projects.open.privateDestinationReview', { folder: '~/.happier/projects/app' }),
+            details: ['workspace_private_checkout_review_required'],
+        });
+    });
+
+    it('offers no review for another Machine or Home, or when the refusal carries no destination', () => {
+        expect(readProjectOpenPrivateDestinationReview(refused({ machineId: 'other' }), draft)).toBeNull();
+        expect(readProjectOpenPrivateDestinationReview(refused({ serverId: 'other-home' }), draft)).toBeNull();
+        expect(readProjectOpenPrivateDestinationReview(refused(), draft)).toBeNull();
+        expect(readProjectOpenPrivateDestinationReview({ ...refused({}), code: 'workspace_private_checkout_required' }, draft)).toBeNull();
     });
 });

@@ -2,6 +2,8 @@ import { t } from '@/text';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 
 type ProjectOpenRefusalPresentation = Readonly<{ title: string; description?: string; details: readonly string[] }>;
 
@@ -50,4 +52,27 @@ export function projectOpenRefusalPresentation(code: string, gitRef: string | nu
     if (code.includes('source')) return shown(t('projects.open.sourceUnavailable'), t('projects.open.sourceUnavailableHint'));
     // Unclassified: say it failed, never that the Machine can't do it.
     return shown(t('projects.open.failed'), t('projects.open.failedHint'));
+}
+
+type ProjectOpenRefusal = Extract<OpenProjectResultV1, { kind: 'refused' }>;
+
+/**
+ * A member's first Keep updated or Copy on a Machine that keeps each person's work separate is refused with the
+ * daemon's proposed private folder (`destinationReview`). It is a review, not an error: read here, before the
+ * refusal is mapped to a display error, and offered only for the Home and Machine this Open chose. The person
+ * puts it in the Use section's own folder field and confirms with Open project; nothing is created before that.
+ */
+export function readProjectOpenPrivateDestinationReview(result: ProjectOpenRefusal,
+    draft: Readonly<{ serverId: string; machineId: string | null; machineHomeDir?: string | null }>):
+    (ProjectOpenRefusalPresentation & Readonly<{ destination: string }>) | null {
+    const review = result.code === 'workspace_private_checkout_review_required' ? result.destinationReview : undefined;
+    if (!review || review.machineId !== draft.machineId
+        || !areServerProfileIdentifiersEquivalent(review.serverId, draft.serverId)) return null;
+    const destination = `${review.destinationParentPath.replace(/[\\/]+$/u, '')}/${review.destinationDirectoryName}`;
+    return {
+        destination,
+        title: t('projects.open.privateDestinationTitle'),
+        description: t('projects.open.privateDestinationReview', { folder: formatPathRelativeToHome(destination, draft.machineHomeDir) }),
+        details: [result.code],
+    };
 }

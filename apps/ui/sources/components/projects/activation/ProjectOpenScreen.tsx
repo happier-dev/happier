@@ -90,7 +90,7 @@ import { describeProjectOpenChosenRow, ProjectOpenSourceChooser, ProjectOpenSour
 import { useProjectOpen } from './useProjectOpen';
 import { readProjectAttachedDashboardSelection } from '../detail/projectRouteState';
 import { readProjectOpenSharedSetupSourceId } from '../projectSetup/sharedSetupRoute';
-import { projectOpenRefusalPresentation } from './projectOpenRefusalPresentation';
+import { projectOpenRefusalPresentation, readProjectOpenPrivateDestinationReview } from './projectOpenRefusalPresentation';
 
 /** The source list's width beside the choices (lab `p-open` OPEN), and the narrowest choices column. */
 const SOURCE_LIST_WIDTH_PX = 300;
@@ -567,6 +567,9 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
           />
           <ProjectOpenSubfolderRow subject={subject} subdir={choiceBase.subdir ?? ''} onChangeSubdir={setSubdir} />
           <ProjectOpenOutcome open={open} gitRef={ref} repository={refusalRepository} subfolder={choiceBase.subdir ?? null}
+            place={{ serverId: props.scope.serverId, machineId, machineHomeDir }}
+            destination={effectiveDestination}
+            onUseDestination={setDestination}
             machineName={(id) => machineNames.get(id) ?? getMachineDisplayName(machines.find((candidate) => candidate.id === id) ?? null) ?? id}
             sentenceMachineName={sentenceMachineName}
             onChooseCandidate={candidate => {
@@ -866,6 +869,11 @@ function ProjectOpenOutcome(props: Readonly<{ open: ReturnType<typeof useProject
     subfolder: string | null;
     machineName(machineId: string): string;
     sentenceMachineName(machineId: string): string;
+    /** The Home and Machine this Open chose: a proposed private folder is offered only for them. */
+    place: Readonly<{ serverId: string; machineId: string | null; machineHomeDir?: string | null }>;
+    /** The Use section's folder, which the private folder review fills before the person confirms. */
+    destination: string;
+    onUseDestination(path: string): void;
     onChooseCandidate(candidate: WorkspaceRefV1): void }>) {
     const result = props.open.result;
     if (props.open.pending) return <AttentionBanner testID="projects.open.pending" tone="neutral" title={t('projects.open.resolving')} />;
@@ -915,6 +923,14 @@ function ProjectOpenOutcome(props: Readonly<{ open: ReturnType<typeof useProject
                     : t('projects.open.githubRateLimited')}
                 description={result.remediation?.action === 'connect_github' ? t('projects.open.githubConnectHint') : undefined}
                 details={[result.code]} />;
+            {
+                // A Machine that keeps each person's work separate proposes the member's own folder: a review, not an error.
+                const review = readProjectOpenPrivateDestinationReview(result, props.place);
+                if (review) return <AttentionBanner testID="projects.open.privateDestination" tone="warning"
+                    title={review.title} description={review.description} details={review.details}
+                    action={props.destination.trim() === review.destination ? undefined
+                        : { label: t('projects.open.privateDestinationUse'), onPress: () => props.onUseDestination(review.destination) }} />;
+            }
             return <AttentionBanner testID="projects.open.refused" tone="danger"
                 {...projectOpenRefusalPresentation(result.code, props.gitRef, result.remediation, props.repository, result.failureCause, props.subfolder)} />;
     }
