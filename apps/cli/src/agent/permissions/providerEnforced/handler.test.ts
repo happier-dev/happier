@@ -342,7 +342,7 @@ describe('native Agent tool approval policy', () => {
     } } as const;
     try {
       await expect(handler.handleToolCall('listed-write-readonly', 'Write', { file_path: '/tmp/example', content: 'not authorized' }, context))
-        .resolves.toEqual({ decision: 'denied', rationale: 'permission_exceeds_ceiling' });
+        .resolves.toEqual({ decision: 'denied', reasonCode: 'permission_exceeds_ceiling', rationale: 'permission_exceeds_ceiling' });
       await expect(handler.handleToolCall('listed-mcp-readonly', 'mcp__wilson-intake__intake_lead', {}, context))
         .resolves.toMatchObject({ decision: 'approved_for_session' });
       expect(session.agentState.requests).toEqual({});
@@ -363,7 +363,7 @@ describe('native Agent tool approval policy', () => {
       signal: new AbortController().signal, isCurrent: () => true,
     });
     expect(handler.getImmediateDecision('unlisted-read', 'Read', {}))
-      .toEqual({ decision: 'denied', rationale: 'unlisted_tool_denied' });
+      .toEqual({ decision: 'denied', reasonCode: 'unlisted_tool_denied', rationale: 'unlisted_tool_denied' });
     for (const name of ['Read', 'Bash', 'WebFetch', 'AskUserQuestion']) {
       await expect(services.interactions.requestApproval({
         kind: 'approval', title: 'Tool request', subject: { kind: 'tool', name, input: {} },
@@ -513,7 +513,7 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     handler.setPermissionMode('yolo');
     try {
       await expect(handler.handleToolCall('workspace-write', 'Write', { file_path: '/tmp/example', content: 'private' }))
-        .resolves.toEqual({ decision: 'denied', rationale: 'workspace_write_denied' });
+        .resolves.toEqual({ decision: 'denied', reasonCode: 'workspace_write_denied', rationale: 'workspace_write_denied' });
     } finally { await handler.reset(); }
   });
 
@@ -532,7 +532,7 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
           admittedPermissionCeiling: 'not-a-real-mode',
         },
       } as never,
-    )).resolves.toEqual({ decision: 'denied', rationale: 'causal_permission_authority_invalid' });
+    )).resolves.toEqual({ decision: 'denied', reasonCode: 'causal_permission_authority_invalid', rationale: 'causal_permission_authority_invalid' });
     expect(session.agentState.requests['malformed-causal-authority-provider']).toBeUndefined();
     expect(session.agentState.completedRequests['malformed-causal-authority-provider']).toEqual(expect.objectContaining({
       status: 'denied',
@@ -568,7 +568,7 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     handler.setPermissionMode('read-only');
     session.releaseNextUpdate();
 
-    await expect(result).resolves.toEqual({ decision: 'denied', rationale: 'permission_exceeds_ceiling' });
+    await expect(result).resolves.toEqual({ decision: 'denied', reasonCode: 'permission_exceeds_ceiling', rationale: 'permission_exceeds_ceiling' });
     expect(session.agentState.requests['direct-provider-auto-mode-currentness']).toBeUndefined();
     expect(session.agentState.completedRequests['direct-provider-auto-mode-currentness']).toEqual(expect.objectContaining({
       status: 'denied',
@@ -733,7 +733,7 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
 
       await expect(handler.handleToolCall(`remove-${permissionMode}`, 'happier_action_execute', {
         actionId: 'session.board.item.remove',
-      })).resolves.toEqual({ decision: 'denied', rationale: `permission_exceeds_ceiling: This Action is unavailable in ${permissionMode} mode.` });
+      })).resolves.toEqual({ decision: 'denied', reasonCode: 'permission_exceeds_ceiling', rationale: `permission_exceeds_ceiling: This Action is unavailable in ${permissionMode} mode.` });
       expect(session.agentState.requests[`remove-${permissionMode}`]).toBeFalsy();
 
       await expect(handler.handleToolCall(`read-${permissionMode}`, 'happier_action_execute', {
@@ -812,7 +812,7 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
         const toolCallId = `custom-safe-write-${permissionMode}-${index}`;
         await expect(
           handler.handleToolCall(toolCallId, toolName, {}, { origin: 'host_acp_fs_write' }),
-        ).resolves.toEqual({ decision: 'denied', rationale: 'permission_exceeds_ceiling' });
+        ).resolves.toEqual({ decision: 'denied', reasonCode: 'permission_exceeds_ceiling', rationale: 'permission_exceeds_ceiling' });
         expect(session.agentState.requests[toolCallId]).toBeFalsy();
       }
     }
@@ -878,10 +878,10 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     });
 
     await expect(handler.handleToolCall('title-1', 'mcp__happier__change_title', { title: 'Renamed' })).resolves.toEqual({
-      decision: 'denied', rationale: 'session_title_updates_disabled',
+      decision: 'denied', reasonCode: 'session_title_updates_disabled', rationale: 'session_title_updates_disabled',
     });
     await expect(handler.handleToolCall('title-2', 'happier_action_execute', { actionId: 'session.title.set' })).resolves.toEqual({
-      decision: 'denied', rationale: 'session_title_updates_disabled',
+      decision: 'denied', reasonCode: 'session_title_updates_disabled', rationale: 'session_title_updates_disabled',
     });
     expect(session.agentState.requests['title-1']).toBeFalsy();
     expect(session.agentState.requests['title-2']).toBeFalsy();

@@ -187,10 +187,13 @@ export async function requestClaudeNativePermissionDecision(
   });
   const selected = result.nativeChoice
     ? nativeChoices?.choices.find((choice) => choice.id === result.nativeChoice?.choiceId) : undefined;
-  return selected
+  const decision: ClaudePermissionDecision = selected
     ? { ...selected.response, decision: selected.decision, nativeChoice: result.nativeChoice }
     : { decision: result.status === 'approved' ? 'approved' : result.status === 'userCancelled' ? 'abort' : 'denied',
         ...(result.nativeChoice ? { nativeChoice: result.nativeChoice } : {}) };
+  return result.status === 'declined' && result.reasonCode
+    ? { ...decision, reasonCode: result.reasonCode }
+    : decision;
 }
 
 export function createClaudeNativePermissionEngine(context: AgentRuntimeContext): ClaudePermissionEngine {

@@ -110,7 +110,7 @@ function resolveExecutionRunImmediateDecision(args: Readonly<{
   // A supplied causal authority that cannot be proved valid is itself a typed
   // non-authorizing fact. Returning a pending prompt here would let a buffered
   // or later response bypass the malformed admitted ceiling.
-  if (!effective.ok) return { decision: 'denied' };
+  if (!effective.ok) return { decision: 'denied', reasonCode: effective.reason };
   const effectiveMode = effective.effectiveMode;
   const mcpTool = resolveMcpToolIdentity({ toolName: args.toolName, context: args.getMcpToolContext?.(), permissionMode: parseAgentPermissionIntentV1Alias(effectiveMode) ?? 'default' });
   if (isWorkspaceWriteDeniedByRole({ workspaceWrites: args.workspaceWrites, toolName: args.toolName, toolInput: args.input, mcpEffectClass: mcpTool?.decision.effectClass })) return { decision: 'denied' };

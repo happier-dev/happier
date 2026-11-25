@@ -55,6 +55,12 @@ effective decision or grant payload. The permission response owner resolves the
 stored offer, refuses missing or stale native answers, and applies the native
 decision before reporting success. Application failure leaves the occurrence pending.
 
+In 0.3 development, the host can include a fixed policy code in a declined
+native approval result. Claude includes it in the denial message and OpenCode
+sends it as the native rejection message. The transient result carries the
+code separately from rationale text and human feedback. Use matching 0.3
+development hosts and plugins for the closed approval result shape.
+
 In 0.3 development, Muse shell and network approvals use the native approval
 ID and requirement index as the host request identity. A compound shell command
 can offer a separate approval for each command stage, and a network grant can

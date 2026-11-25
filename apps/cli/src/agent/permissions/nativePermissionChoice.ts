@@ -108,12 +108,14 @@ export function resolveNativePermissionImmediateDecision<T extends PermissionRes
         const answer = resolveMediatedNativePermissionChoice(nativeChoices, decision.decision === 'abort' ? 'abort' : 'deny', 'request');
         const selected = answer ? resolveNativePermissionChoice(nativeChoices, answer) : null;
         if (!selected) return decision;
-        if (decision.rationale === undefined) return selected.result;
         return {
             ...selected.result,
-            rationale: decision.rationale,
-            ...(selected.choice.allowsFeedback === true
-                ? { nativeChoice: { ...selected.answer, feedback: decision.rationale } } : {}),
+            ...(decision.reasonCode ? { reasonCode: decision.reasonCode } : {}),
+            ...(decision.rationale !== undefined ? {
+                rationale: decision.rationale,
+                ...(selected.choice.allowsFeedback === true
+                    ? { nativeChoice: { ...selected.answer, feedback: decision.rationale } } : {}),
+            } : {}),
         };
     }
     if (!policyOwner) return null;

@@ -159,7 +159,7 @@ export function mapOpenCodeApprovalResultToReply(
 }
 
 export function readOpenCodeApprovalReplyMessage(
-  _result: InteractionTransientApprovalResultV1,
+  result: InteractionTransientApprovalResultV1,
 ): string | null {
-  return null;
+  return result.status === 'declined' ? result.reasonCode ?? null : null;
 }

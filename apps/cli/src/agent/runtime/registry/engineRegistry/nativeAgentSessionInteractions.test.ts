@@ -578,6 +578,19 @@ describe('native Agent current-session interactions', () => {
         expect(fixture.session.__getAgentState().requests ?? {}).toEqual({});
     });
 
+    it('carries the host refusal code through an ordinary native denial', async () => {
+        const fixture = createFixture();
+        const nativeChoices = { requirementId: 'tool-denied', source: 'test-agent', choices: [{
+            id: 'deny', label: 'Deny', decision: 'denied' as const, scope: 'once' as const,
+            response: { approved: false, decision: 'denied' as const },
+        }] };
+        await expect(fixture.current.request({ ...approvalRequest, nativeChoices }, {
+            permissionContext: { turnId: 'turn-1', causalPermissionAuthority: null },
+        })).resolves.toMatchObject({
+            kind: 'approval', status: 'declined', reasonCode: 'causal_permission_authority_invalid',
+        });
+    });
+
     it('maps real approval RPC outcomes into the strict result vocabulary and session ceiling', async () => {
         for (const [decision, status, persistence] of [
             ['approved', 'approved', 'once'], ['denied', 'declined', undefined],

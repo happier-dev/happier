@@ -27,7 +27,7 @@ export type ClaudePermissionEngine = Readonly<{
     ): Promise<PermissionResult>;
 }>;
 
-export type ClaudePermissionDecision = SessionPermissionDecisionResultV1;
+export type ClaudePermissionDecision = SessionPermissionDecisionResultV1 & Readonly<{ reasonCode?: string }>;
 
 export type ClaudePermissionContext = Readonly<{
     agentRuntime?: Readonly<{ modes?: AgentSessionModesService }>;
@@ -106,7 +106,9 @@ export function resolveClaudePermissionResult(
     }
     return {
         behavior: 'deny',
-        message: result.nativeChoice?.feedback || result.rationale || 'Permission denied',
+        message: result.reasonCode
+            ? `Permission denied (${result.reasonCode})`
+            : result.nativeChoice?.feedback || result.rationale || 'Permission denied',
         ...(result.decision === 'abort' ? { interrupt: true } : {}),
     };
 }

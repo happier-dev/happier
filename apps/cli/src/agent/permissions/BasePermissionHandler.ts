@@ -169,6 +169,8 @@ export interface PendingRequest {
 export interface PermissionResult {
     nativeChoice?: NativePermissionChoiceAnswerV1;
     rationale?: string;
+    /** A host policy code suitable for native Agent replies. */
+    reasonCode?: string;
     mode?: SessionPermissionRespondRpcParamsV1['mode'];
     allowedTools?: readonly string[];
     updatedPermissions?: unknown;

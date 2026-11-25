@@ -266,7 +266,10 @@ async function presentBoundPermissionRequest(
     if (request.kind === 'approval') {
         const nativeAnswer = result.nativeChoice ? { nativeChoice: result.nativeChoice } : {};
         if (decision === 'abort') return Object.freeze({ requestId: request.requestId, kind: 'approval', status: 'userCancelled', ...nativeAnswer });
-        if (decision === 'denied') return Object.freeze({ requestId: request.requestId, kind: 'approval', status: 'declined', ...nativeAnswer });
+        if (decision === 'denied') return Object.freeze({
+            requestId: request.requestId, kind: 'approval', status: 'declined', ...nativeAnswer,
+            ...(result.reasonCode ? { reasonCode: result.reasonCode } : {}),
+        });
         if (decision !== 'approved' && decision !== 'approved_for_session'
             && !(decision === 'approved_execpolicy_amendment' && result.nativeChoice)) {
             return unavailable(request, request.requestId);

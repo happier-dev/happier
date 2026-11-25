@@ -2749,12 +2749,11 @@ describe('createOpenCodeServerRuntime', () => {
 
   it('bridges OpenCode permission asks through the session permission service and replies once', async () => {
     const permissionRequests: unknown[] = [];
-    const { ctx } = createContextFixture({
-      onPermissionDecision: async (request) => {
-        permissionRequests.push(request);
-        return { decision: 'denied', rationale: 'read-only mode denied bash' };
-      },
-    });
+    const { ctx } = createContextFixture();
+    ctx.sessions.current.permissions.requestDecision = async (request) => {
+      permissionRequests.push(request);
+      return { requestId: 'approval-denied', kind: 'approval', status: 'declined' };
+    };
     const client = createClientFixture();
     const runtime = await createStartedRuntime({ ctx, client });
 
@@ -2787,9 +2786,7 @@ describe('createOpenCodeServerRuntime', () => {
           kind: 'tool',
           name: 'bash',
           input: expect.objectContaining({
-            permission: 'bash',
             patterns: ['echo "WAVE90_CLI_SURFACE_OK"'],
-            providerSessionId: 'ses-1',
           }),
         }),
       }),
@@ -2799,6 +2796,24 @@ describe('createOpenCodeServerRuntime', () => {
       sessionId: 'ses-1',
       requestId: 'per_123',
       reply: 'reject',
+    });
+  });
+
+  it('sends the host refusal code to OpenCode on an ordinary denial', async () => {
+    const { ctx } = createContextFixture();
+    ctx.sessions.current.permissions.requestDecision = async () => ({
+      requestId: 'approval-denied', kind: 'approval', status: 'declined',
+      reasonCode: 'causal_permission_authority_invalid',
+    });
+    const client = createClientFixture();
+    const runtime = await createStartedRuntime({ ctx, client });
+
+    await runtime.handleProviderEvent({ payload: { type: 'permission.asked', properties: {
+      sessionID: 'ses-1', id: 'per_denied', permission: 'bash', patterns: ['git status'],
+    } } });
+
+    expect(client.permissionReply).toHaveBeenCalledWith({
+      sessionId: 'ses-1', requestId: 'per_denied', reply: 'reject', message: 'causal_permission_authority_invalid',
     });
   });
 

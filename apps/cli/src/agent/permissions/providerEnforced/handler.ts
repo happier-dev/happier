@@ -67,6 +67,10 @@ const DEFAULT_SAFE_TOOL_NAME_SEGMENTS = SHARED_PROVIDER_ENFORCED_SAFE_TOOL_NAME_
 // policy input without inventing a second permission owner.
 const HOST_ACP_FS_WRITE_PERMISSION_SOURCE = 'happier.host_acp_fs_write.v1';
 
+function denyWithReasonCode(reasonCode: string, detail?: string): PermissionResult {
+  return { decision: 'denied', reasonCode, rationale: detail ? `${reasonCode}: ${detail}` : reasonCode };
+}
+
 function isFullAccessPermissionMode(mode: PermissionMode): boolean {
   return mode === 'yolo' || mode === 'bypassPermissions';
 }
@@ -235,19 +239,19 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
   ): PermissionResult | null {
     // Structured questions ask for input and grant no tool authority.
     if (!context?.nativeChoices && isAgentStructuredQuestionRequest({ toolName, source: context?.source })) return null;
-    if (this.isUnlistedToolDenied(toolName, input)) return { decision: 'denied', rationale: 'unlisted_tool_denied' };
+    if (this.isUnlistedToolDenied(toolName, input)) return denyWithReasonCode('unlisted_tool_denied');
     const effective = resolveCausalPermissionMode({
       currentPermissionMode: this.currentPermissionMode,
       context,
     });
     if (!effective.ok) {
       logger.debug(`${this.getLogPrefix()} Causal permission authority is invalid for ${toolName} (${toolCallId})`);
-      return { decision: 'denied', rationale: effective.reason };
+      return denyWithReasonCode(effective.reason);
     }
     const permissionMode = effective.effectiveMode;
     const mcpTool = this.resolveMcpTool(toolName, context, permissionMode);
     const workspaceDecision = this.resolveWorkspaceWriteDecision(toolName, input, mcpTool?.decision.effectClass);
-    if (workspaceDecision) return { ...workspaceDecision, rationale: 'workspace_write_denied' };
+    if (workspaceDecision) return denyWithReasonCode('workspace_write_denied');
 
     if (shouldDenyAgentSessionTitleToolCall({
       settings: this.getAccountSettingsSnapshot(),
@@ -256,13 +260,13 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
       toolName,
       input,
     })) {
-      return { decision: 'denied', rationale: 'session_title_updates_disabled' };
+      return denyWithReasonCode('session_title_updates_disabled');
     }
     if (
       context?.origin === 'host_acp_fs_write'
       && deniesHostMediatedFsWrites(permissionMode)
     ) {
-      return { decision: 'denied', rationale: 'permission_exceeds_ceiling' };
+      return denyWithReasonCode('permission_exceeds_ceiling');
     }
     const happierActionPermission = resolveProviderPermissionForHappierAction({
       toolName,
@@ -275,14 +279,14 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
       // effective permission-mode ceiling before delegating to that owner.
       return resolveNativePermissionImmediateDecision(
         happierActionPermission.decision === 'denied'
-          ? { decision: 'denied', rationale: `permission_exceeds_ceiling: This Action is unavailable in ${permissionMode} mode.` }
+          ? denyWithReasonCode('permission_exceeds_ceiling', `This Action is unavailable in ${permissionMode} mode.`)
           : { decision: 'approved' },
         context?.nativeChoices, happierActionPermission);
     }
     if (mcpTool) {
       return resolveNativePermissionImmediateDecision(
         mcpTool.decision.approval === 'deny'
-          ? { decision: 'denied', rationale: mcpTool.decision.exposed ? 'permission_exceeds_ceiling' : 'permission_denied' }
+          ? denyWithReasonCode(mcpTool.decision.exposed ? 'permission_exceeds_ceiling' : 'permission_denied')
           : mcpTool.decision.approval === 'allow' ? { decision: 'approved' } : null,
         context?.nativeChoices, mcpTool);
     }
@@ -292,7 +296,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
       && isWorkspaceWriteDeniedByRole({ workspaceWrites: 'deny', toolName, toolInput: input })) {
       // A birth seed cannot widen the admitted builtin workspace ceiling.
       // Explicit external MCP grants and Action decisions remain with their owners.
-      return { decision: 'denied', rationale: 'permission_exceeds_ceiling' };
+      return denyWithReasonCode('permission_exceeds_ceiling');
     }
     if (isFullAccessPermissionMode(permissionMode) && resolveAgentRequestKind(toolName) === 'permission') {
       return { decision: 'approved' };

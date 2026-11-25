@@ -34,7 +34,8 @@ describe('execution-run hands-off permission ceiling', () => {
       callerPermissionMode: publicInput.effectiveCallerPermissionMode };
     expect(handler.getImmediateDecision('public-read', 'Read', { file_path: '/repo/a' }, context)).toEqual({ decision: 'approved' });
     expect(handler.getImmediateDecision('public-write', 'Write', { path: '/repo/a' }, context)).toEqual({ decision: 'denied' });
-    expect(handler.getImmediateDecision('idle-read', 'Read', { file_path: '/repo/a' }, { causalPermissionAuthority: null })).toEqual({ decision: 'denied' });
+    expect(handler.getImmediateDecision('idle-read', 'Read', { file_path: '/repo/a' }, { causalPermissionAuthority: null }))
+      .toMatchObject({ decision: 'denied', reasonCode: 'causal_permission_authority_invalid' });
     expect(resolveExecutionRunInputAuthority({ permissionMode: 'yolo', effectiveCallerPermissionMode: 'read-only' }))
       .toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed', error: 'causal_permission_authority_invalid' });
     expect(resolveExecutionRunInputAuthority({ permissionMode: 'yolo', causalPermissionAuthority: null }))
@@ -93,7 +94,7 @@ describe('execution-run hands-off permission ceiling', () => {
       { actionId: 'settings.get', input: { anchor: 'voiceConversations.minSpeechMs' } })).toEqual({ decision: 'approved' });
     expect(handler.getImmediateDecision('write', 'Write', { path: '/repo/a' })).toEqual({ decision: 'denied' });
     expect(handler.getImmediateDecision('invalid', 'mcp__happier__session_stop', { sessionId: 'other-session' },
-      { causalPermissionAuthority: null })).toEqual({ decision: 'denied' });
+      { causalPermissionAuthority: null })).toEqual({ decision: 'denied', reasonCode: 'causal_permission_authority_invalid' });
   });
 
   it('uses the attached Run policy ahead of parent grants and preserves parent denial', async () => {
@@ -108,7 +109,7 @@ describe('execution-run hands-off permission ceiling', () => {
     await expect(run.handler.handleToolCall('listed', 'Read', { file_path: '/repo/a' })).resolves.toEqual({ decision: 'approved_for_session' });
     await expect(run.handler.handleToolCall('parent-deny', 'Write', { path: '/repo/a' })).resolves.toEqual({ decision: 'denied' });
     await expect(run.handler.handleToolCall('causal-deny', 'Read', { file_path: '/repo/a' },
-      { causalPermissionAuthority: null })).resolves.toEqual({ decision: 'denied' });
+      { causalPermissionAuthority: null })).resolves.toEqual({ decision: 'denied', reasonCode: 'causal_permission_authority_invalid' });
     await run.dispose('test completed');
   });
 

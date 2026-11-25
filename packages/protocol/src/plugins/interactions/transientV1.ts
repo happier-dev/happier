@@ -576,6 +576,7 @@ const ApprovalDeclinedResultV1Schema = lazyZodSchema(() => z.strictObject({
   requestId: boundedIdentifier('Interaction result request ids'),
   kind: z.literal('approval'),
   status: z.literal('declined'),
+  reasonCode: z.optional(z.string().check(z.regex(/^[a-z][a-z0-9_]*$/u))),
 }));
 const ApprovalTerminalResultV1Schema = lazyZodSchema(() => z.strictObject({
   nativeChoice: z.optional(NativePermissionChoiceAnswerV1Schema),

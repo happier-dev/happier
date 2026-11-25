@@ -13,6 +13,19 @@ describe('createClaudeNativePermissionEngine', () => {
     await expect(createClaudeNativePermissionEngine(context).canCallTool('ExitPlanMode', {}, { toolUseId: 'tool-feedback' }))
       .resolves.toMatchObject({ behavior: 'deny', message: 'Use the read-only inspection tool.' });
   });
+  it.each([undefined, { requirementId: 'tool-denied', choiceId: 'deny' }])(
+    'delivers a host refusal code on an ordinary denial (selection: %j)',
+    async (nativeChoice) => {
+      const context = { services: { interactions: { requestApproval: async () => ({
+        requestId: 'approval-denied', kind: 'approval', status: 'declined',
+        reasonCode: 'causal_permission_authority_invalid',
+        ...(nativeChoice ? { nativeChoice } : {}),
+      }) } } } as unknown as AgentSessionRuntimeContext;
+      await expect(createClaudeNativePermissionEngine(context).canCallTool('Bash', {}, { toolUseId: 'tool-denied' }))
+        .resolves.toEqual({ behavior: 'deny', message: 'Permission denied (causal_permission_authority_invalid)' });
+    },
+  );
+
   it('keeps an MCP Session grant on the host while returning only a native once decision', async () => {
     const engine = createClaudeNativePermissionEngine({ services: { interactions: {
       requestApproval: async (request: { allowSessionPersistence?: boolean }) => request.allowSessionPersistence === true
