@@ -9,6 +9,7 @@ import { MachineSetupApplyResultV1Schema, MachineSetupPlanResultV1Schema, machin
 import { ManagedMachinePresetRecipientCensusResultV1Schema, PresetMutationResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams';
+import { TeamInvitationCreateResultV1Schema } from '@happier-dev/protocol/teams/invitation';
 import { HomeHubLayoutResultSchema } from '@happier-dev/protocol/actions/specs/homeHub';
 import { ProjectSourcesListOutputV1Schema, ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
@@ -535,4 +536,70 @@ it('TS.D.changedReferences receives Source and preset pushes and keeps both effe
     await waitFor(() => !notices.some(notice => notice.presetId === presetId),
       { context: 'member receives the applied preset observation' });
   } finally { await screen.unmount(); }
+});
+
+it('TS.D.memberSources keeps a repository-free Source shared by another principal visible on Team setup', async () => {
+  if (!ui || !fixture) throw new Error('UI Action client not started');
+  const context = { surface: 'ui', authority: 'present_user', serverId: ui.serverId,
+    actionCaller: { kind: 'host' } } as const;
+  const folder = join(testDir, 'member-source-control');
+  await mkdir(folder, { recursive: true });
+  // P04: the owner Account reaches the real server and daemon before testing the member projection.
+  expect(await ui.executeConfirmed('projects.open', { serverId: ui.serverId, machineId,
+    source: { kind: 'folder', path: folder }, materialization: { kind: 'attach' } }, context))
+    .toMatchObject({ ok: true, result: { kind: 'opened', directory: folder } });
+  const createdTeam = await ui.executeConfirmed('teams.create', { v: 1, name: 'Member setup Sources',
+    initialOwnerAccountId: accountId, requestKey: randomUUID() }, context);
+  if (!createdTeam.ok) throw new Error(createdTeam.errorCode);
+  const team = TeamSummaryV1Schema.parse(createdTeam.result);
+  // Captured QA shape: an Account-owned Source shared with the Team, with no repository selector.
+  const createdSource = await ui.executeConfirmed('projects.sources.create', { serverId: ui.serverId,
+    name: 'Shared setup without a repository', requestKey: randomUUID(),
+    audience: [{ principal: { kind: 'team', teamId: team.id }, level: 'view' }] }, context);
+  if (!createdSource.ok) throw new Error(createdSource.errorCode);
+  const source = ProjectSourcesReadOutputV1Schema.parse(createdSource.result);
+  if (!source.ok) throw new Error(source.error);
+  expect(source.source.repository).toBeUndefined();
+  const invitation = await ui.executeConfirmed('teams.invitations.create', { v: 1, teamId: team.id,
+    role: 'member', historyAccess: 'from_membership', recipientEmail: null, requestKey: randomUUID() }, context);
+  if (!invitation.ok) throw new Error(invitation.errorCode);
+  const { joinUrl } = TeamInvitationCreateResultV1Schema.parse(invitation.result);
+  if (!joinUrl) throw new Error('Invitation URL unavailable');
+  const recipient = await fixture.createAccount('setup-source-recipient');
+  expect(await recipient.executeAsPerson('teams.invitations.accept', {
+    v: 1, token: new URL(joinUrl).pathname.split('/').at(-1)!,
+  }, { presentUserConfirmation: { actionId: 'teams.invitations.accept' } }))
+    .toMatchObject({ ok: true, result: { outcome: 'joined' } });
+  await ui.close();
+  ui = undefined;
+  const recipientUi = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials: recipient.uiCredentials });
+  try {
+    await waitFor(() => recipientUi.isAccountReady(), { timeoutMs: 60_000 });
+    const recipientContext = { ...context, serverId: recipientUi.serverId };
+    // Native read controls distinguish query/admission defects from a consumer dropping the admitted row.
+    expect(await recipientUi.execute('teams.get', { v: 1, teamId: team.id }, recipientContext))
+      .toMatchObject({ ok: true, result: { id: team.id, hasSetup: true } });
+    expect(await recipientUi.execute('projects.sources.list', {
+      serverId: recipientUi.serverId, sharedWithTeamId: team.id,
+    }, recipientContext)).toMatchObject({ ok: true, result: { ok: true,
+      sources: [expect.objectContaining({ id: source.source.id, createdByAccountId: accountId })] } });
+    const { TeamSetupScreen } = await import('../../../../apps/ui/sources/components/teams/setup/TeamSetupScreen');
+    const { AuthenticatedTeamSetupPlanProvider } = await import('../../../../apps/ui/sources/components/teams/setup/TeamSetupPlanProvider');
+    const { InjectedAuthProvider } = await import('../../../../apps/ui/sources/auth/context/AuthContext');
+    const { renderScreen } = await import('../../../../apps/ui/sources/dev/testkit');
+    const screen = await renderScreen(React.createElement(InjectedAuthProvider, { credentials: recipient.uiCredentials,
+      children: React.createElement(AuthenticatedTeamSetupPlanProvider, null,
+        React.createElement(TeamSetupScreen, { serverId: recipientUi.serverId, teamId: team.id })) }));
+    try {
+      await vi.waitFor(() => expect(screen.findByTestId(`team-setup-source:${source.source.id}`), screen.getTextContent()).not.toBeNull(),
+        { timeout: 60_000 });
+      expect(screen.findByTestId('team-setup-empty')).toBeNull();
+      expect(screen.getTextContent()).toContain(source.source.name);
+      expect(screen.findByTestId(`team-setup-repository-include:${source.source.id}`)).toBeNull();
+    } finally { await screen.unmount(); }
+  } finally {
+    await recipientUi.close();
+    ui = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials });
+    await waitFor(() => ui!.isAccountReady(), { timeoutMs: 60_000 });
+  }
 });
