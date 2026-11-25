@@ -34,6 +34,11 @@ export function MessageActionRow(props: Readonly<{
     timestampText: string | null;
     /** A glyph that leads the timestamp line (drawn by the host in the timestamp's ink). */
     timestampGlyph?: React.ReactNode;
+    /**
+     * The line sits at the message's leading edge instead of its end: a spoken reply's "Spoken aloud" stays under
+     * the start of its left-aligned text. The actions keep their place.
+     */
+    timestampLeading?: boolean;
 }>): React.ReactElement {
     // On the web the controls of a closed row are not mounted: a transcript mounts a row per message, and
     // these controls are most of what each one costs. The closed row keeps one focusable stand-in, so a
@@ -79,6 +84,7 @@ export function MessageActionRow(props: Readonly<{
             style={[
                 styles.container,
                 props.invertTimestampAndActions ? styles.containerInverted : null,
+                props.timestampLeading && props.invertTimestampAndActions ? styles.containerLeadingInverted : null,
                 props.isWeb ? styles.containerWebPointerEvents : null,
             ]}
             testID={`transcript-message-actions-row:${props.messageId}`}
@@ -89,6 +95,8 @@ export function MessageActionRow(props: Readonly<{
                     styles.timestamp,
                     styles.timestampSpacing,
                     props.invertTimestampAndActions ? styles.timestampTextInverted : null,
+                    props.timestampLeading
+                        ? (props.invertTimestampAndActions ? styles.timestampLeadingInverted : styles.timestampLeading) : null,
                 ]}>
                     {props.timestampGlyph}
                     <Text
@@ -188,5 +196,18 @@ const styles = StyleSheet.create((theme) => ({
     timestampTextInverted: {
         marginLeft: theme.space.s12,
         marginRight: 0,
+    },
+    // Leading: the line takes the row's start and the actions stay at its end.
+    timestampLeading: {
+        marginRight: 'auto',
+    },
+    // Inverted rows already start with their actions; a leading line comes first and the actions follow it.
+    containerLeadingInverted: {
+        flexDirection: 'row',
+        justifyContent: 'flex-start',
+    },
+    timestampLeadingInverted: {
+        marginLeft: 0,
+        marginRight: theme.space.s12,
     },
 }));

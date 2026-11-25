@@ -18275,6 +18275,7 @@ const voiceMomentsTranslations = { es: {
         setupClose: 'Cerrar',
         setupNotNow: 'Ahora no',
         setupFooterNote: 'No se envía nada hasta que hablas.',
+        setupInCallNote: 'Esto ya es tu conversación con esta sesión.',
         needsYouEnded: 'Hay una aprobación pendiente.',
         needsYouReview: 'Revisar solicitud',
         briefWantsTo: ({ action }: { action: string }) => `Quiere ${action}`,

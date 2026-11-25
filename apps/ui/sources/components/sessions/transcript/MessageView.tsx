@@ -1669,7 +1669,9 @@ function AgentTextBlock(props: {
       settings={props.messageDisplayCommon} rollbackAction={props.rollbackAction}
       messagePins={props.messagePins} onToggleMessagePin={props.onToggleMessagePin}
       showActions={showMessageActions} showPinAction={showPinButton}
-      timestampText={timestampText} timestampGlyph={timestampGlyph} invertTimestampAndActions={timestampPresentation.invertTimestampAndActions}
+      timestampText={timestampText} timestampGlyph={timestampGlyph}
+      // A spoken reply's marker sits under the start of its left-aligned text; the person's sits under their bubble.
+      timestampLeading={messageDisplay.isVoiceAgentTurn} invertTimestampAndActions={timestampPresentation.invertTimestampAndActions}
       onActionsFocus={handleActionsFocus} onActionsBlur={handleActionsBlur}
       hoverProps={hoverProps}
       touchRevealKey={touchRevealKey}

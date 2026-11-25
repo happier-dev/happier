@@ -48,6 +48,8 @@ export type VoiceMomentsTranslation = Readonly<{
     setupClose: string;
     setupNotNow: string;
     setupFooterNote: string;
+    /** In a running Try: the try is already the person's conversation with the Session. */
+    setupInCallNote: string;
     needsYouEnded: string;
     needsYouReview: string;
     briefWantsTo: (params: { action: string }) => string;
@@ -123,6 +125,7 @@ export const voiceMomentsTranslationsEnglish = { en: {
         setupClose: 'Close',
         setupNotNow: 'Not now',
         setupFooterNote: 'Nothing is sent until you speak.',
+        setupInCallNote: 'This is already your conversation with this session.',
         needsYouEnded: 'An approval is still waiting.',
         needsYouReview: 'Review request',
         briefWantsTo: ({ action }) => `Wants to ${action}`,

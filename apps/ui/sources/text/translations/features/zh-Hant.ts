@@ -18215,6 +18215,7 @@ const voiceMomentsTranslations = { 'zh-Hant': {
         setupClose: '關閉',
         setupNotNow: '以後再說',
         setupFooterNote: '你開口之前不會傳送任何內容。',
+        setupInCallNote: '這已經是你和這個工作階段的對話。',
         needsYouEnded: '仍有待核准的請求。',
         needsYouReview: '檢視請求',
         briefWantsTo: ({ action }: { action: string }) => `想要${action}`,

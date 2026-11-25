@@ -18275,6 +18275,7 @@ const voiceMomentsTranslations = { ja: {
         setupClose: '閉じる',
         setupNotNow: '今はしない',
         setupFooterNote: '話すまで何も送信されません。',
+        setupInCallNote: 'これはもう、このセッションとの会話です。',
         needsYouEnded: '承認待ちのリクエストがあります。',
         needsYouReview: 'リクエストを確認',
         briefWantsTo: ({ action }: { action: string }) => `リクエスト: ${action}`,

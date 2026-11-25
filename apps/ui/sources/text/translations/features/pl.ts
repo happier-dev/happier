@@ -18363,6 +18363,7 @@ const voiceMomentsTranslations = { pl: {
         setupClose: 'Zamknij',
         setupNotNow: 'Nie teraz',
         setupFooterNote: 'Nic nie zostanie wysłane, dopóki nie zaczniesz mówić.',
+        setupInCallNote: 'To już Twoja rozmowa z tą sesją.',
         needsYouEnded: 'Zatwierdzenie nadal czeka.',
         needsYouReview: 'Sprawdź prośbę',
         briefWantsTo: ({ action }: { action: string }) => `Chce ${action}`,

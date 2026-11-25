@@ -18353,6 +18353,7 @@ const voiceMomentsTranslations = { ca: {
         setupClose: 'Tanca',
         setupNotNow: 'Ara no',
         setupFooterNote: 'No s’envia res fins que parles.',
+        setupInCallNote: 'Això ja és la teva conversa amb aquesta sessió.',
         needsYouEnded: 'Encara hi ha una aprovació pendent.',
         needsYouReview: 'Revisa la sol·licitud',
         briefWantsTo: ({ action }: { action: string }) => `Vol ${action}`,

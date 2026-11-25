@@ -18364,6 +18364,7 @@ const voiceMomentsTranslations = { ru: {
         setupClose: 'Закрыть',
         setupNotNow: 'Не сейчас',
         setupFooterNote: 'Ничего не отправляется, пока вы не заговорите.',
+        setupInCallNote: 'Это уже ваш разговор с этой сессией.',
         needsYouEnded: 'Подтверждение всё ещё ждёт.',
         needsYouReview: 'Просмотреть запрос',
         briefWantsTo: ({ action }: { action: string }) => `Хочет ${action}`,

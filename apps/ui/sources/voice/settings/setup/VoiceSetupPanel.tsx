@@ -85,7 +85,9 @@ export const VoiceSetupPanel = React.memo(function VoiceSetupPanel(props: Readon
     const sideBySide = laidOut >= SIDE_BY_SIDE_MIN_WIDTH_PX;
     const { model, actions } = props;
     const { facts } = model;
-    const complete = facts.complete;
+    // The first reply completes setup while the call is still live: the card stays on the Try step until the
+    // call ends (lab T1), so "Voice is ready" never titles a sheet whose conversation is still running.
+    const complete = facts.complete && !model.tryLive;
     const [changingService, setChangingService] = React.useState(false);
 
     const failed = isVoiceSetupFailed(facts);
@@ -142,14 +144,12 @@ export const VoiceSetupPanel = React.memo(function VoiceSetupPanel(props: Readon
                     {description}
                     {complete ? (
                         <>
-                            {/* The first reply finishes setup while the conversation is still on: it stays in view. */}
-                            {model.tryLive && props.renderTry ? <View style={styles.doneTry}>{props.renderTry}</View> : null}
-                            <View style={styles.gestures}>
-                                <GestureHint keyLabel={t('voiceMoments.setupGestureTap')} meaning={t('voiceMoments.setupGestureStartEnd')} />
-                                {model.shortcutLabel ? (
+                            {/* The description already says tap starts and ends; only the keyboard shortcut adds a fact. */}
+                            {model.shortcutLabel ? (
+                                <View style={styles.gestures}>
                                     <GestureHint keyLabel={model.shortcutLabel} meaning={t('voiceMoments.setupGestureAnywhere')} />
-                                ) : null}
-                            </View>
+                                </View>
+                            ) : null}
                             <View style={styles.footer}>
                                 <RoundButton
                                     testID={`${props.testID}.done`}
@@ -171,17 +171,32 @@ export const VoiceSetupPanel = React.memo(function VoiceSetupPanel(props: Readon
                             <View style={styles.steps}>
                                 <SetupSteps testID={`${props.testID}.steps`} steps={steps} />
                             </View>
-                            {/* The block can be left at any step; nothing is sent before the person speaks (lab TB/T1). */}
-                            <View style={styles.stepsFooter}>
-                                <Text style={styles.footerNote}>{t('voiceMoments.setupFooterNote')}</Text>
-                                <RoundButton
-                                    testID={`${props.testID}.notNow`}
-                                    size="small"
-                                    display="inverted"
-                                    title={t('voiceMoments.setupNotNow')}
-                                    onPress={actions.onClose}
-                                />
-                            </View>
+                            {model.tryLive ? (
+                                // In the call the try is already the conversation; Done leaves the card and the call
+                                // goes on (End stays with the call). Its first reply finishes setup (lab T1).
+                                <View style={styles.stepsFooter}>
+                                    <Text style={styles.footerNote}>{t('voiceMoments.setupInCallNote')}</Text>
+                                    <RoundButton
+                                        testID={`${props.testID}.done`}
+                                        size="small"
+                                        display="secondary"
+                                        title={t('voiceMoments.setupDoneAction')}
+                                        onPress={facts.complete ? actions.onDone : actions.onClose}
+                                    />
+                                </View>
+                            ) : (
+                                // The block can be left at any step; nothing is sent before the person speaks (lab TB/T1).
+                                <View style={styles.stepsFooter}>
+                                    <Text style={styles.footerNote}>{t('voiceMoments.setupFooterNote')}</Text>
+                                    <RoundButton
+                                        testID={`${props.testID}.notNow`}
+                                        size="small"
+                                        display="inverted"
+                                        title={t('voiceMoments.setupNotNow')}
+                                        onPress={actions.onClose}
+                                    />
+                                </View>
+                            )}
                         </>
                     )}
                 </View>
@@ -352,6 +367,10 @@ function buildStep(
             };
         }
         case 'first_turn': {
+            // While the call runs the try stays in its doing state, even once its first reply completes it.
+            if (model.tryLive && context.renderTry) {
+                return { key: step.id, testID, state: 'current', title: t('voiceMoments.setupTryTitle'), body: context.renderTry };
+            }
             if (step.state === 'done') return { key: step.id, testID, state: 'done', title: t('voiceMoments.setupTryDone') };
             const current = stepMarker(step.state) === 'current';
             return {
@@ -362,7 +381,6 @@ function buildStep(
                 // The phrase card says what to do; the detail line speaks only when Start is refused.
                 detail: current ? model.startRefusal?.reason : undefined,
                 body: current ? (
-                    model.tryLive && context.renderTry ? context.renderTry : (
                         <>
                             {/* The card is the action: pressing the phrase starts the try (lab T1). */}
                             <VoiceSetupTryPhrase
@@ -377,7 +395,6 @@ function buildStep(
                                 onPress={model.startRefusal.onRecover}
                             /> : null}
                         </>
-                    )
                 ) : undefined,
             };
         }
@@ -495,9 +512,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 1,
         minWidth: 0,
         color: theme.colors.text.tertiary,
-    },
-    doneTry: {
-        marginTop: theme.space.s16,
     },
     gallery: {
         alignSelf: 'stretch',

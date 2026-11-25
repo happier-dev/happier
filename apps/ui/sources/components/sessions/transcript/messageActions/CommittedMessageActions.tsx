@@ -34,6 +34,8 @@ type Props = Omit<CommittedMessageActionInput, 'openSavePrompt' | 'openSaveDecis
     timestampText: string | null;
     /** A glyph that leads the timestamp line (the Voice planet on a spoken turn's marker). */
     timestampGlyph?: IconName;
+    /** The timestamp line sits at the message's leading edge (a spoken reply under its left-aligned text). */
+    timestampLeading?: boolean;
     invertTimestampAndActions: boolean;
     onActionsFocus: () => void;
     onActionsBlur: () => void;
@@ -153,6 +155,7 @@ export function CommittedMessageActions(props: Props) {
         onOpenActions={touchRevealKey !== null && !props.showActions ? openActions : undefined}
         timestampText={props.timestampText} timestampGlyph={props.timestampGlyph
             ? <Icon name={props.timestampGlyph} size={ICON_SIZE.xxs} color={theme.colors.text.tertiary} /> : undefined}
+        timestampLeading={props.timestampLeading}
         invertTimestampAndActions={props.invertTimestampAndActions}
     >
         {rowActions.map((action) => {

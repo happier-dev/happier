@@ -156,13 +156,46 @@ describe('VoiceSetupPanel', () => {
         expect(screen.findByTestId('voice-setup.step.first_turn.phrase.heard')).toBeNull();
     });
 
-    it('keeps the live try in view when its first reply completes setup', async () => {
+    it('stays on the Try step while the call runs, says the call is already the conversation, and is ready only once it ends', async () => {
+        const handlers = actions();
+        // The first reply completes setup while the call is still live (lab T1): no "Voice is ready" over a live call.
         const live = { ...model({ done: [true, true, true, true] }), tryLive: true };
         screen = await renderScreen(
-            <VoiceSetupPanel testID="setup" model={live} actions={actions()} renderTry={<Text>live try</Text>} />,
+            <VoiceSetupPanel testID="setup" model={live} actions={handlers} renderTry={<Text>live try</Text>} />,
         );
-
         expect(screen.getTextContent()).toContain('live try');
-        expect(screen.findByTestId('setup.done')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(t('voiceMoments.setupTryTitle'));
+        expect(screen.getTextContent()).not.toContain(t('voiceMoments.setupDoneTitle'));
+        // Once talking, "Nothing is sent until you speak" is no longer true.
+        expect(screen.getTextContent()).not.toContain(t('voiceMoments.setupFooterNote'));
+        expect(screen.getTextContent()).toContain(t('voiceMoments.setupInCallNote'));
+        expect(screen.findByTestId('setup.notNow')).toBeNull();
+        screen.pressByTestId('setup.done');
+        expect(handlers.onDone).toHaveBeenCalledTimes(1);
+        await screen.unmount();
+
+        // Before the first reply, Done only closes the card: the call goes on in the conversation.
+        const talking = { ...model({ done: [true, true, true, false] }), tryLive: true };
+        screen = await renderScreen(
+            <VoiceSetupPanel testID="setup" model={talking} actions={handlers} renderTry={<Text>live try</Text>} />,
+        );
+        expect(screen.getTextContent()).toContain('live try');
+        expect(screen.getTextContent()).not.toContain(t('voiceMoments.setupFooterNote'));
+        screen.pressByTestId('setup.done');
+        expect(handlers.onClose).toHaveBeenCalledTimes(1);
+        expect(handlers.onDone).toHaveBeenCalledTimes(1);
+        await screen.unmount();
+
+        screen = await renderScreen(
+            <VoiceSetupPanel testID="setup" model={model({ done: [true, true, true, true] })} actions={handlers} renderTry={<Text>live try</Text>} />,
+        );
+        expect(screen.getTextContent()).toContain(t('voiceMoments.setupDoneTitle'));
+        expect(screen.getTextContent()).not.toContain('live try');
+    });
+
+    it('says how to start once: the ready description, not a repeated Tap chip', async () => {
+        screen = await renderScreen(<VoiceSetupPanel testID="setup" model={model({ done: [true, true, true, true] })} actions={actions()} />);
+        expect(screen.getTextContent()).toContain(t('voiceMoments.setupDoneBody'));
+        expect(screen.getTextContent()).not.toContain(t('voiceMoments.setupGestureStartEnd'));
     });
 });
