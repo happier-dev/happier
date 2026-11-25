@@ -1,8 +1,10 @@
 import { spawn as nodeSpawn, type SpawnOptionsWithoutStdio } from 'node:child_process';
 import { readdir } from 'node:fs/promises';
-import { join } from 'node:path';
-import type { Readable, Writable } from 'node:stream';
+import { basename, dirname, join } from 'node:path';
+import { Readable, type Writable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { StringDecoder } from 'node:string_decoder';
+import { create as createTar } from 'tar';
 
 import { WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES, WorkspaceSyncEntryExpectationV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { WorkspaceSyncEntryExpectationV1 } from '@happier-dev/protocol';
@@ -70,9 +72,11 @@ export type RunNativeConfinedApplyInput = WorkspaceSyncNativeConfinedCommonInput
   expectedDestination: WorkspaceSyncEntryExpectationV1;
   selectedExpectation: WorkspaceSyncEntryExpectationV1;
   materialPath: string | null;
-  recoveryDirectory: string;
   operationId: string;
-}>;
+}> & (
+  | Readonly<{ recoveryDirectory: string; stageOnTarget?: never }>
+  | Readonly<{ recoveryDirectory?: never; stageOnTarget: AbortSignal }>
+);
 
 export type NativeConfinedApplyOutcome =
   | Readonly<{ status: 'installed' | 'restored' }>
@@ -336,6 +340,7 @@ async function runExchange<T>(input: Readonly<{
   assertCurrentAuthority?: () => Promise<void>;
   parseResult(line: string): T;
   maxContentBytes?: number;
+  targetStage?: Readonly<{ path: string | null; signal: AbortSignal }>;
   dependencies: WorkspaceSyncNativeConfinedDependencies;
 }>): Promise<T> {
   const platform = input.dependencies.platform ?? process.platform;
@@ -366,7 +371,7 @@ async function runExchange<T>(input: Readonly<{
     let stderr = '';
     let stderrBytes = 0;
     const stderrDecoder = new StringDecoder('utf8');
-    let result: Readonly<{ value: T }> | undefined;
+    let result: Readonly<{ value: T }> | Readonly<{ error: unknown }> | undefined;
     let processing = Promise.resolve();
 
     const finishReject = (error: unknown, kill = true) => {
@@ -384,7 +389,13 @@ async function runExchange<T>(input: Readonly<{
           await input.assertCurrentAuthority?.();
         } catch (error) {
           child.stdin.end(`${JSON.stringify({ v: 1, decision: 'abort' })}\n`);
-          finishReject(error);
+          if (input.targetStage) {
+            // Let the helper release its guest staging before the holder is released.
+            result = { error };
+            phase = 'closing';
+          } else {
+            finishReject(error);
+          }
           return;
         }
         phase = 'result';
@@ -432,6 +443,10 @@ async function runExchange<T>(input: Readonly<{
       stderr += stderrDecoder.end();
       void processing.then(() => {
         if (settled) return;
+        if (result && 'error' in result) {
+          finishReject(result.error, false);
+          return;
+        }
         if (code !== 0 || signal !== null || phase !== 'closing' || stdoutBuffer.trim() !== '' || result === undefined) {
           const diagnostic = stderr.trim();
           finishReject(unsafe(diagnostic
@@ -447,6 +462,16 @@ async function runExchange<T>(input: Readonly<{
     child.stdin.write(`${JSON.stringify(input.request)}\n`, (error?: Error | null) => {
       if (error) finishReject(unsafe('native workspace confinement request failed', error));
     });
+    if (input.targetStage?.path) {
+      const { path, signal } = input.targetStage;
+      const archive = Readable.from(createTar({ cwd: dirname(path), portable: true }, [`./${basename(path)}`]));
+      void pipeline(archive, child.stdin, { end: false, signal }).catch((error: unknown) => {
+        if (settled) return;
+        result ??= { error };
+        phase = 'closing';
+        child.stdin.end();
+      });
+    }
   });
 }
 
@@ -543,16 +568,20 @@ export async function runNativeConfinedWorkspaceSyncApply(
   if ((input.selectedExpectation.kind === 'missing') !== (input.materialPath === null)) {
     throw unsafe('native workspace confinement apply material does not match the selected entry');
   }
+  input.stageOnTarget?.throwIfAborted();
   return await runExchange({
     command: 'workspace-confined-apply',
+    ...(input.stageOnTarget
+      ? { targetStage: { path: input.materialPath, signal: input.stageOnTarget } } : {}),
     request: {
       v: 1,
       rootPath: input.rootPath,
       relativePath: input.relativePath,
       expectedDestination: input.expectedDestination,
       selectedExpectation: input.selectedExpectation,
-      materialPath: input.materialPath,
-      recoveryDirectory: input.recoveryDirectory,
+      ...(input.stageOnTarget
+        ? { stageOnTarget: true, materialPath: input.materialPath === null ? null : basename(input.materialPath) }
+        : { materialPath: input.materialPath, recoveryDirectory: input.recoveryDirectory }),
       operationId: input.operationId,
     },
     ...(input.assertCurrentAuthority ? { assertCurrentAuthority: input.assertCurrentAuthority } : {}),

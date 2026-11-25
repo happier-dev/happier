@@ -190,7 +190,7 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
         }
     });
 
-    it('applies the retained review only to the original guest even when the controller has the same preimage', async () => {
+    it('applies a retained review through a holder with no shell on PATH, even with the same preimage on the controller', async () => {
         const dir = await mkdtemp(join(directory, 'return-apply-'));
         const original = join(dir, 'project');
         const staged = join(dir, 'stage');
@@ -198,7 +198,7 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
         const file = 'return-apply-sentinel.txt';
         await Promise.all([mkdir(original), mkdir(staged), mkdir(guest)]);
         const workspaceHolder = spawn(holderExecutable!, ['workspace', '--root', guest], {
-            stdio: ['pipe', 'pipe', 'ignore'], env: { ...process.env, HOME: dir },
+            stdio: ['pipe', 'pipe', 'ignore'], env: { ...process.env, HOME: dir, PATH: '' },
         });
         const holderFinished = new Promise<void>(resolve => workspaceHolder.once('close', () => resolve()));
         const channel = Duplex.from({ readable: workspaceHolder.stdout, writable: workspaceHolder.stdin });

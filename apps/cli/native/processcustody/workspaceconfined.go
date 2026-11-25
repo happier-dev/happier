@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strings"
 )
@@ -66,6 +67,7 @@ type workspaceConfinedCaptureRequest struct {
 }
 
 type workspaceConfinedApplyRequest struct {
+	stageOnTarget       bool
 	rootPath            string
 	relativePath        string
 	expectedDestination workspaceConfinedExpectation
@@ -364,7 +366,7 @@ func decodeWorkspaceConfinedCaptureRequest(encoded []byte) (workspaceConfinedCap
 func decodeWorkspaceConfinedApplyRequest(encoded []byte) (workspaceConfinedApplyRequest, error) {
 	fields, err := decodeClosedWorkspaceConfinedObject(encoded, map[string]bool{
 		"v": true, "rootPath": true, "relativePath": true, "expectedDestination": true, "selectedExpectation": true,
-		"materialPath": true, "recoveryDirectory": true, "operationId": true,
+		"materialPath": true, "recoveryDirectory": true, "operationId": true, "stageOnTarget": true,
 	})
 	if err != nil || decodeVersion(fields) != nil {
 		return workspaceConfinedApplyRequest{}, fmt.Errorf("invalid apply request")
@@ -377,9 +379,20 @@ func decodeWorkspaceConfinedApplyRequest(encoded []byte) (workspaceConfinedApply
 	if err != nil {
 		return workspaceConfinedApplyRequest{}, err
 	}
-	recoveryDirectory, err := decodeRequiredString(fields, "recoveryDirectory")
-	if err != nil {
-		return workspaceConfinedApplyRequest{}, err
+	var recoveryDirectory string
+	stageOnTarget := string(fields["stageOnTarget"]) == "true"
+	if stageOnTarget {
+		if _, ok := fields["recoveryDirectory"]; ok {
+			return workspaceConfinedApplyRequest{}, fmt.Errorf("target staging owns the recovery directory")
+		}
+	} else {
+		if _, ok := fields["stageOnTarget"]; ok {
+			return workspaceConfinedApplyRequest{}, fmt.Errorf("invalid target staging mode")
+		}
+		recoveryDirectory, err = decodeRequiredString(fields, "recoveryDirectory")
+		if err != nil {
+			return workspaceConfinedApplyRequest{}, err
+		}
 	}
 	operationID, err := decodeWorkspaceConfinedOperationID(fields)
 	if err != nil {
@@ -417,7 +430,7 @@ func decodeWorkspaceConfinedApplyRequest(encoded []byte) (workspaceConfinedApply
 		return workspaceConfinedApplyRequest{}, fmt.Errorf("materialPath does not match selected expectation")
 	}
 	return workspaceConfinedApplyRequest{rootPath: rootPath, relativePath: relativePath, expectedDestination: expectedDestination,
-		selectedExpectation: selected, materialPath: materialPath, recoveryDirectory: recoveryDirectory, operationID: operationID}, nil
+		selectedExpectation: selected, materialPath: materialPath, recoveryDirectory: recoveryDirectory, operationID: operationID, stageOnTarget: stageOnTarget}, nil
 }
 
 func decodeWorkspaceConfinedRecoverRequest(encoded []byte) (workspaceConfinedRecoverRequest, error) {
@@ -580,7 +593,7 @@ func runWorkspaceConfinedExchange(
 	args []string,
 	input io.Reader,
 	output io.Writer,
-	decodeRequest func([]byte) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError),
+	decodeRequest func([]byte, io.Reader) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError),
 ) error {
 	if len(args) != 0 {
 		return fmt.Errorf("workspace-confined command accepts no arguments")
@@ -590,7 +603,7 @@ func runWorkspaceConfinedExchange(
 	if err != nil {
 		return fmt.Errorf("read workspace-confined request: %w", err)
 	}
-	operation, domainErr := decodeRequest(requestLine)
+	operation, domainErr := decodeRequest(requestLine, reader)
 	if domainErr != nil {
 		return writeWorkspaceConfinedRecord(output, domainErr.result())
 	}
@@ -619,7 +632,7 @@ func runWorkspaceConfinedExchange(
 }
 
 func workspaceConfinedReadCommand(args []string, input io.Reader, output io.Writer) error {
-	return runWorkspaceConfinedExchange(args, input, output, func(encoded []byte) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	return runWorkspaceConfinedExchange(args, input, output, func(encoded []byte, _ io.Reader) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
 		request, err := decodeWorkspaceConfinedReadRequest(encoded)
 		if err != nil {
 			return nil, workspaceConfinedError("workspace_root_unsafe", "invalid workspace-confined read request")
@@ -629,7 +642,7 @@ func workspaceConfinedReadCommand(args []string, input io.Reader, output io.Writ
 }
 
 func workspaceConfinedDeleteCommand(args []string, input io.Reader, output io.Writer) error {
-	return runWorkspaceConfinedExchange(args, input, output, func(encoded []byte) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	return runWorkspaceConfinedExchange(args, input, output, func(encoded []byte, _ io.Reader) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
 		request, err := decodeWorkspaceConfinedDeleteRequest(encoded)
 		if err != nil {
 			return nil, workspaceConfinedError("workspace_root_unsafe", "invalid workspace-confined delete request")
@@ -639,7 +652,7 @@ func workspaceConfinedDeleteCommand(args []string, input io.Reader, output io.Wr
 }
 
 func workspaceConfinedObserveCommand(args []string, input io.Reader, output io.Writer) error {
-	return runWorkspaceConfinedExchange(args, input, output, func(encoded []byte) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	return runWorkspaceConfinedExchange(args, input, output, func(encoded []byte, _ io.Reader) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
 		request, err := decodeWorkspaceConfinedObserveRequest(encoded)
 		if err != nil {
 			return nil, workspaceConfinedError("workspace_root_unsafe", "invalid workspace-confined observe request")
@@ -649,7 +662,7 @@ func workspaceConfinedObserveCommand(args []string, input io.Reader, output io.W
 }
 
 func workspaceConfinedCaptureCommand(args []string, input io.Reader, output io.Writer) error {
-	return runWorkspaceConfinedExchange(args, input, output, func(encoded []byte) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	return runWorkspaceConfinedExchange(args, input, output, func(encoded []byte, _ io.Reader) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
 		request, err := decodeWorkspaceConfinedCaptureRequest(encoded)
 		if err != nil {
 			return nil, workspaceConfinedError("workspace_root_unsafe", "invalid workspace-confined capture request")
@@ -659,17 +672,48 @@ func workspaceConfinedCaptureCommand(args []string, input io.Reader, output io.W
 }
 
 func workspaceConfinedApplyCommand(args []string, input io.Reader, output io.Writer) error {
-	return runWorkspaceConfinedExchange(args, input, output, func(encoded []byte) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	var stagingDirectory string
+	preserveRecovery := false
+	defer func() {
+		if stagingDirectory != "" && !preserveRecovery {
+			if err := os.RemoveAll(stagingDirectory); err != nil {
+				fmt.Fprintln(os.Stderr, "could not remove managed workspace return staging directory")
+			}
+		}
+	}()
+	return runWorkspaceConfinedExchange(args, input, output, func(encoded []byte, material io.Reader) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
 		request, err := decodeWorkspaceConfinedApplyRequest(encoded)
 		if err != nil {
 			return nil, workspaceConfinedError("workspace_root_unsafe", "invalid workspace-confined apply request")
 		}
-		return prepareWorkspaceConfinedApply(request)
+		if request.stageOnTarget {
+			var domainErr *workspaceConfinedDomainError
+			stagingDirectory, domainErr = stageWorkspaceConfinedApply(&request, material)
+			if domainErr != nil {
+				return nil, domainErr
+			}
+		}
+		operation, domainErr := prepareWorkspaceConfinedApply(request)
+		if domainErr != nil || !request.stageOnTarget {
+			return operation, domainErr
+		}
+		return workspaceConfinedStagedApply{workspaceConfinedPreparedOperation: operation, preserveRecovery: &preserveRecovery}, nil
 	})
 }
 
+type workspaceConfinedStagedApply struct {
+	workspaceConfinedPreparedOperation
+	preserveRecovery *bool
+}
+
+func (operation workspaceConfinedStagedApply) commit() workspaceConfinedResult {
+	result := operation.workspaceConfinedPreparedOperation.commit()
+	*operation.preserveRecovery = result.Status == "recovery_needed"
+	return result
+}
+
 func workspaceConfinedRecoverCommand(args []string, input io.Reader, output io.Writer) error {
-	return runWorkspaceConfinedExchange(args, input, output, func(encoded []byte) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	return runWorkspaceConfinedExchange(args, input, output, func(encoded []byte, _ io.Reader) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
 		request, err := decodeWorkspaceConfinedRecoverRequest(encoded)
 		if err != nil {
 			return nil, workspaceConfinedError("workspace_root_unsafe", "invalid workspace-confined recover request")
@@ -679,7 +723,7 @@ func workspaceConfinedRecoverCommand(args []string, input io.Reader, output io.W
 }
 
 func workspaceConfinedInspectCommand(args []string, input io.Reader, output io.Writer) error {
-	return runWorkspaceConfinedExchange(args, input, output, func(encoded []byte) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	return runWorkspaceConfinedExchange(args, input, output, func(encoded []byte, _ io.Reader) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
 		request, err := decodeWorkspaceConfinedInspectRequest(encoded)
 		if err != nil {
 			return nil, workspaceConfinedError("workspace_root_unsafe", "invalid workspace-confined inspect request")

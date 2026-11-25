@@ -72,6 +72,7 @@ it('brings an SSH Project copy back through the UI review and owner approval to 
   for (const surface of ['owner-api', 'ui'] as const) {
     const sessions = new Map<string, ReturnType<typeof createSessionRecordFixture>>();
     let targetAdmissions = 0;
+    let targetLifetime: AbortController | undefined;
     let openTarget: ReturnType<typeof createManagedMachineAcquisitionDriver>['openProjectWorkspaceTarget'];
     let acquisitionFailure: unknown;
     const prepare = SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1;
@@ -79,7 +80,9 @@ it('brings an SSH Project copy back through the UI review and owner approval to 
     const h = await createHarness(prepare, surface === 'owner-api' ? 'ask' : 'default', false, 'srv_n2', undefined, false, false, {
       authentication: 'account', machineCustodianAccountId: 'account', machineRole: 'manage',
       additionalActionIds: [apply], workspaceReturn: { sessions, openTarget: async request => {
-        const target = await openTarget({ ...request, holder: { version: 'return-fixture', resolveArtifacts: async () => artifacts } }).catch(error => {
+        const lifetime = new AbortController();
+        targetLifetime = lifetime;
+        const target = await openTarget({ ...request, lifetime: AbortSignal.any([request.lifetime, lifetime.signal]), holder: { version: 'return-fixture', resolveArtifacts: async () => artifacts } }).catch(error => {
           acquisitionFailure = error;
           throw error;
         });
@@ -227,6 +230,9 @@ it('brings an SSH Project copy back through the UI review and owner approval to 
       await expect(readFile(join(original, 'tracked.txt'), 'utf8')).resolves.toBe('guest baseline\n');
       expect(files.map(file => file.filePath)).toContain('unselected.txt');
       const admissionsAtReview = targetAdmissions;
+      // Prepare opened the registered holder. End that Project attachment before replaying the saved review.
+      expect(targetLifetime).toBeDefined();
+      if (surface === 'owner-api') targetLifetime?.abort();
       const selection = { ...target, returnId: review.returnId, paths: ['tracked.txt'] };
       const applied = surface === 'owner-api' ? await executeOwnerApproval(apply, selection)
         : await applySessionProjectFilesReturn(selection, { serverId });
@@ -236,13 +242,14 @@ it('brings an SSH Project copy back through the UI review and owner approval to 
       });
       await expect(readFile(join(original, 'tracked.txt'), 'utf8')).resolves.toBe('reviewed copy edit\n');
       await expect(readFile(join(original, 'unselected.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
-      expect(targetAdmissions).toBe(admissionsAtReview);
+      expect(targetAdmissions).toBe(admissionsAtReview + (surface === 'owner-api' ? 1 : 0));
       if (surface === 'ui') {
         const refused = await applySessionProjectFilesReturn({ ...selection, returnId: 'missing-review' }, { serverId });
         expect(refused).toMatchObject({ ok: false, errorCode: 'invalid_request',
           failureCause: { phase: 'workspace.return.apply', errorCode: 'invalid_request' } });
       }
     } finally {
+      targetLifetime?.abort();
       await homes.reset();
       await h.close();
       vi.restoreAllMocks();

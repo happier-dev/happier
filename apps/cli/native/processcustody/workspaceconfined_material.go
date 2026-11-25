@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/tar"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
@@ -139,6 +140,85 @@ func workspaceConfinedValidatePrivateDirectory(path string) (string, *workspaceC
 		return "", workspaceConfinedError("workspace_root_unsafe", "private workspace material directory is unavailable")
 	}
 	return cleaned, nil
+}
+
+// A managed holder receives the reviewed material on the confined writer's
+// stdin. Keep it and any recovery record in the same private guest directory.
+func stageWorkspaceConfinedApply(request *workspaceConfinedApplyRequest, input io.Reader) (string, *workspaceConfinedDomainError) {
+	home, err := os.UserHomeDir()
+	if err != nil || !filepath.IsAbs(home) {
+		return "", workspaceConfinedError("workspace_root_unsafe", "private workspace staging home is unavailable")
+	}
+	parent := filepath.Join(home, ".happier", "workspace-sync")
+	if err := os.MkdirAll(parent, 0700); err != nil {
+		return "", workspaceConfinedError("workspace_root_unsafe", "private workspace staging parent is unavailable")
+	}
+	directory, err := os.MkdirTemp(parent, "return-")
+	if err != nil {
+		return "", workspaceConfinedError("workspace_root_unsafe", "private workspace staging directory is unavailable")
+	}
+	request.recoveryDirectory = directory
+	if request.materialPath != nil {
+		name := *request.materialPath
+		if err := extractWorkspaceConfinedMaterial(directory, name, input); err != nil {
+			return directory, workspaceConfinedError("workspace_root_unsafe", "reviewed workspace material could not be staged")
+		}
+		materialPath := filepath.Join(directory, name)
+		request.materialPath = &materialPath
+	}
+	return directory, nil
+}
+
+func extractWorkspaceConfinedMaterial(directory, name string, input io.Reader) error {
+	if local, err := filepath.Localize(name); err != nil || local == "." || filepath.Base(local) != local {
+		return fmt.Errorf("invalid workspace material name")
+	}
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	archive := tar.NewReader(input)
+	for {
+		entry, err := archive.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		// Node tar emits the reviewed entry as ./name (and directory entries
+		// with a trailing slash). Every member must belong to that entry.
+		relative, err := filepath.Localize(strings.TrimSuffix(strings.TrimPrefix(entry.Name, "./"), "/"))
+		if err != nil {
+			return err
+		}
+		if relative != name && !strings.HasPrefix(filepath.ToSlash(relative), name+"/") {
+			return fmt.Errorf("archive entry is outside the reviewed material")
+		}
+		switch entry.Typeflag {
+		case tar.TypeDir:
+			if err := root.Mkdir(relative, 0700); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			mode := os.FileMode(0600) | (os.FileMode(entry.Mode) & 0100)
+			file, err := root.OpenFile(relative, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+			if err != nil {
+				return err
+			}
+			_, copyErr := io.Copy(file, archive)
+			if err := errors.Join(copyErr, file.Close()); err != nil {
+				return err
+			}
+		case tar.TypeSymlink:
+			if err := root.Symlink(entry.Linkname, relative); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unsupported workspace material entry type")
+		}
+	}
 }
 
 func workspaceConfinedMaterialPath(directory, operationID string) string {

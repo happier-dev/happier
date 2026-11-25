@@ -1285,7 +1285,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     })]);
     const composed = await createProductionDaemonWorkspaceSyncRuntime({ happyHomeDir: configuration.happyHomeDir,
       activeServerDir: configuration.activeServerDir, activeServerId: 'srv_n2', localMachineId: target.machineId,
-      releaseChannel: 'publicdev', credentials }, {
+      releaseChannel: 'publicdev', credentials, openManagedProjectWorkspace: returnFixture.openTarget }, {
       materializeLocalSeed: request => materializeLocalWorkspaceSyncSeed({ ...request, registry }),
     });
     workerWorkspaceSync = composed;

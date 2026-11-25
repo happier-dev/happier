@@ -34,7 +34,7 @@ import { readAcceptedManagedWorkspaceRefFromRows } from '@/workspaces/acceptedMa
 import { reconcileManagedWorkspacePostMaterialization } from '@/scm/workspace/workspacePostMaterialization';
 import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
 import { runWithHolderWorkspaceSource } from '@/workspaces/source/holderWorkspaceSource';
-import { resolveSessionTargetWorkspace, resolveSessionTargetWorkspaceTransfer } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { ensureAcceptedManagedWorkspaceTarget, resolveSessionTargetWorkspace, resolveSessionTargetWorkspaceTransfer } from '@/daemon/sessions/sessionTargetWorkspaces';
 
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
@@ -576,6 +576,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     openMachineCarrierTunnel?: WorkspaceSyncMachineTunnelOpen;
     createRequesterMachineCarrierTunnel?: (request: Readonly<{ credentials: StoredCredentials; accountId: string }>) => WorkspaceSyncMachineTunnelOpen | undefined;
     privateCheckout?: PrivateProjectCheckoutOpenRuntime;
+    openManagedProjectWorkspace?: Parameters<typeof ensureAcceptedManagedWorkspaceTarget>[0]['openTarget'];
     openManagedWorkspaceTarget?(request: Readonly<{ workspace: ManagedWorkspaceRefV2; relationshipId: string;
       requesterAccountId: string; lifetime: AbortSignal }>): Promise<ManagedWorkspaceSyncTarget>;
     agentIsolation?: HostAgentIsolationLaunchContext;
@@ -3401,7 +3402,9 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       }, requester.serverHttpBaseUrl, workspace);
       if (!accepted) throw workspaceTargetUnavailable();
       const placement = { workspace, requesterAccountId: accountId };
-      const source = await selectWorkspaceSource(placement, resolveSessionTargetWorkspace);
+      const openTarget = input.openManagedProjectWorkspace;
+      const source = await selectWorkspaceSource(placement, resolveSessionTargetWorkspace, undefined,
+        openTarget ? workspace => ensureAcceptedManagedWorkspaceTarget({ workspace, requesterAccountId: accountId, openTarget, signal }) : undefined);
       await runManagedWorkspaceReturnTarget({ source, rootPath: workspace.rootPath, signal, apply,
         assertCurrentAuthority: async () => {
           if (resolveSessionTargetWorkspace(placement) !== source) throw workspaceTargetUnavailable();

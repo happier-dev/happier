@@ -1867,6 +1867,15 @@ The retained attachment by itself opens no channel. An in-place Session
 uses its own Agent holder in the guest, independently of the Project's
 panel channel.
 
+Applying a saved Session workspace Return to a managed Project reads the
+requester's accepted workspace row, then uses that Account's registered
+Project holder. If the attachment lifetime ended, the Project target owner
+restores it on demand. The controller streams the reviewed entry to the
+holder's native confined writer, which stages it in the guest's private
+workspace-sync directory and uses the same preimage and recovery rules as
+local Apply. Staging uses the native helper's filesystem operations and
+requires the helper provisioned by the controller.
+
 The binding uses AsyncLocalStorage because the canonical Action dispatcher
 rebuilds the admitted context into the protocol-owned `ActionExecutorContext`,
 which must not carry host-private objects; other host-private request facts
