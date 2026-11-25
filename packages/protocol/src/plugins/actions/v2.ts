@@ -9,6 +9,7 @@ import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConne
 
 import {
   PluginActionDangerLevelV2Schema,
+  PluginActionIconV2Schema,
   PluginActionSurfaceV2Schema,
   type PluginActionDangerLevelV2,
   type PluginActionSurfaceV2,
@@ -152,7 +153,7 @@ export type PluginActionPlacementBindingsV2 = z.infer<
   typeof PluginActionPlacementBindingsV2Schema
 >;
 
-export const PluginActionIconV2Schema = lazyZodSchema(() => z.string().check(z.trim(), z.regex(/^[a-z][a-z0-9.-]*$/i)));
+export { PluginActionIconV2Schema } from './vocabulary.js';
 
 const PluginActionSlashTokenV2Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(2), z.maxLength(128), z.regex(/^\/\S+$/u, 'Composer slash tokens must begin with "/" and contain no whitespace.')));
 

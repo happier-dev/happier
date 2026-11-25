@@ -1,7 +1,7 @@
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
-import { PluginActionIconV2Schema } from '../actions/v2.js';
+import { PluginActionIconV2Schema } from '../actions/vocabulary.js';
 import { normalizePluginJsonSchema } from '../actions/protocolComposableSchema.js';
 import { buildQualifiedPluginContributionKey, createPluginContributionIdentity, PluginContributionLocalIdSchema, type PluginContributionLocalId } from '../contributionIdentity.js';
 import { PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema, type PluginJsonSchemaV2, type PluginLocalizedStringV2 } from './publicTypes.js';

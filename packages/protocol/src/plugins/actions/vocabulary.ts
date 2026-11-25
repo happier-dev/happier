@@ -24,3 +24,5 @@ export const PluginActionDangerLevelV2Schema = lazyZodSchema(() => z.enum([
   'destructive',
 ]));
 export type PluginActionDangerLevelV2 = z.infer<typeof PluginActionDangerLevelV2Schema>;
+
+export const PluginActionIconV2Schema = lazyZodSchema(() => z.string().check(z.trim(), z.regex(/^[a-z][a-z0-9.-]*$/i)));
