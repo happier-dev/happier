@@ -30,5 +30,8 @@ export function readEligibleEventPluginName(
     const candidate = inputs?.pluginProjectionV2?.installedPackagesById[pluginId] ?? null;
     const installed = candidate?.id === pluginId ? candidate : null;
     // A plugin is named by its display name; without one it goes unnamed, never by its raw id (#184 F3).
-    return installed?.displayName ?? inputs?.pluginProjectionById[pluginId]?.title ?? null;
+    const displayName = installed?.displayName;
+    const title = inputs?.pluginProjectionById[pluginId]?.title;
+    if (displayName && displayName !== pluginId) return displayName;
+    return title && title !== pluginId ? title : null;
 }

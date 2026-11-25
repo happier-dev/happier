@@ -247,8 +247,10 @@ function resolveCurrentSetupSnapshot(params: Readonly<{
  * provides the only setup Action reference; the generic controller owns input
  * collection, and the canonical surface dispatcher owns invocation.
  */
+export type PluginEventAutomationSetupSeed = PluginUiOpenAutomationEventRequestV1 & Readonly<{ sourceLabel?: string }>;
+
 export async function configurePluginEventAutomationSetup(params: Readonly<{
-    initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
+    initialSetupSeed?: PluginEventAutomationSetupSeed;
     nativeSetupDraft?: Readonly<Record<string, unknown>>;
     watcherSelection?: NativeSetupWatcherSelection;
     requireNativeRenderer?: boolean;
@@ -360,7 +362,13 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
         });
         const savedCheckField = initial.event.setupAction.inputHints?.fields.find(({ inputType }) =>
             inputType && 'hostType' in inputType && inputType.hostType === 'savedHealthSourceId');
-        const submittedCheck: { current?: Readonly<{ value: string; label: string }> } = {};
+        const homeField = initial.event.setupAction.inputHints?.fields.find(({ inputType }) =>
+            inputType && 'hostType' in inputType && inputType.hostType === 'homeId');
+        const submitted: {
+            check?: ReturnType<ReadSubmittedActionOption>;
+            home?: ReturnType<ReadSubmittedActionOption>;
+            preboundLabel?: string;
+        } = {};
         const settled = selection.kind === 'form'
             ? await (async () => {
                 try {
@@ -447,19 +455,21 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                     if (explicitSeed && !saved && !seed?.connectedAccount && setupInput && Object.keys(setupInput).length > 0
                         && !selection.form.presentation.choosesConnectedAccount
                         && selection.form.getFields().every(field => readInputPath(setupInput, field.path) !== undefined)) {
-                        const submitted = await selection.form.submit();
-                        if (submitted.kind === 'settled' && submitted.outcome.ok) {
+                        const submission = await selection.form.submit();
+                        if (submission.kind === 'settled' && submission.outcome.ok) {
+                            submitted.preboundLabel = explicitSeed.sourceLabel;
                             params.onApplying?.();
                             return await selection.result;
                         }
-                        if (submitted.kind === 'stale') return await selection.result;
+                        if (submission.kind === 'stale') return await selection.result;
                     }
                     (params.present ?? presentActionInputForm)({
                         form: selection.form,
                         signal: operationScope.signal,
                         actionId: formatQualifiedPluginActionId(initial.event.setupAction.identity),
-                        ...(savedCheckField ? { onSubmitOptions: (readOption: ReadSubmittedActionOption) => {
-                            submittedCheck.current = readOption(savedCheckField.path);
+                        ...(savedCheckField || homeField ? { onSubmitOptions: (readOption: ReadSubmittedActionOption) => {
+                            submitted.check = savedCheckField ? readOption(savedCheckField.path) : undefined;
+                            submitted.home = homeField ? readOption(homeField.path) : undefined;
                         } } : {}),
                         pickerContext: {
                             machineId: initial.actionSnapshot.host.machineId,
@@ -545,10 +555,19 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
         const selectsDurablePush = params.observationTransport === 'durablePush'
             || (source.result.webhookDelivery !== undefined
                 && supportsPluginEventAutomationObservationTransport(current.event, 'durablePush'));
-        const selectedCheck = submittedCheck.current;
+        const selectedCheck = submitted.check;
         const savedCheck = selectedCheck ? SavedHealthTransitionSourceV1Schema.safeParse(source.result.sourceConfig) : null;
-        const displayLabel = selectedCheck && savedCheck?.success && savedCheck.data.nativeSourceInstanceId === selectedCheck.value
-            ? AutomationEventSourceDisplayLabelV1Schema.safeParse(selectedCheck.label.normalize('NFC')) : null;
+        const checkLabel = selectedCheck && savedCheck?.success && savedCheck.data.nativeSourceInstanceId === selectedCheck.value
+            ? selectedCheck.label : undefined;
+        // A selected check is more specific than its Home. Leave the check's own label in
+        // place if its setup did not yield an exact named option.
+        const homeLabel = !savedCheckField && homeField && submitted.home
+            && isSetupSurfaceObjectInput(source.result.sourceConfig)
+            && readInputPath(source.result.sourceConfig, homeField.path) === submitted.home.value
+            ? submitted.home.label : undefined;
+        const sourceLabel = submitted.preboundLabel ?? checkLabel ?? homeLabel;
+        const displayLabel = sourceLabel === undefined ? null
+            : AutomationEventSourceDisplayLabelV1Schema.safeParse(sourceLabel.normalize('NFC'));
         const draft = createPluginEventAutomationAuthoringDraft({
             eligibleEvent: current.event,
             setupResult: displayLabel?.success ? { ...source.result, displayLabel: displayLabel.data } : source.result,

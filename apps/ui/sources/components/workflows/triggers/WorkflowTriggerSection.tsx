@@ -431,8 +431,10 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     ...(startId !== null && row.trigger.kind === 'sessionLifecycle'
                         ? (({ word, title: scope }) => ({ detail: scope, detailWord: t(`workflows.sentence.${word}`) }))(
                             formatSessionLifecycleScope(when !== null && 'subject' in when ? when.subject : undefined))
-                        : { detail: startId === null ? null : summary === title || row.trigger.kind === 'runLifecycle'
-                            ? t('workflows.page.inspector.options') : summary }),
+                        : { detail: startId === null ? null
+                            : row.trigger.kind === 'pluginEvent' || row.trigger.kind === 'action'
+                                ? formatTriggerSummary(row.trigger, { form: 'detail' })
+                                : summary === title || row.trigger.kind === 'runLifecycle' ? t('workflows.page.inspector.options') : summary }),
                     onSelectStart: (id) => selectStart(when, id, (next) => editRow(row, next)),
                     onRemove: () => {
                         setEdits(({ [row.key]: _dropped, ...rest }) => rest);

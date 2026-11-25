@@ -589,11 +589,9 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
                     ) : null}
 
                     {model.automationAttention.hasMore ? (
-                        <InboxSection testID="inbox.section.automations" title={t('navigation.automations')} surface={sectionSurface}>
-                            <SectionActionButton testID="inbox.automation_more" icon="caret-down"
-                                title={model.automationAttention.loadMoreFailed ? t('common.retry') : t('automations.detail.loadMoreRuns')}
-                                disabled={model.automationAttention.loadingMore} onPress={model.automationAttention.loadMore} />
-                        </InboxSection>
+                        <SectionActionButton testID="inbox.automation_more" icon="caret-down"
+                            title={model.automationAttention.loadMoreFailed ? t('common.retry') : t('automations.detail.loadMoreRuns')}
+                            disabled={model.automationAttention.loadingMore} onPress={model.automationAttention.loadMore} />
                     ) : null}
 
                     {!page && updatesCount > 0 ? (

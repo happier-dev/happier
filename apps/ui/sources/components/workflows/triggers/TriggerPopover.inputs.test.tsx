@@ -452,9 +452,9 @@ describe('Run a workflow trigger inputs', () => {
         // No popover: the Event's own rows sit in the card, with its edit entry.
         expect(screen.findByTestId('event-workflow-trigger-popover')).toBeNull();
         expect(screen.findByTestId('event-workflow-trigger:saved:event-row-configure-event')).toBeTruthy();
-        // QA-C: a saved source is configured even before its sealed label is read; it offers Edit, never Set up.
+        // The sealed source is configured even before its exact label is read.
         expect(screen.findByTestId('event-workflow-trigger:saved:event-row-configure-event')?.props.accessibilityLabel)
-            .toBe('workflows.triggers.card.source: workflows.triggers.popover.editEvent');
+            .toBe('workflows.triggers.card.source: automations.form.trigger.sourceConfigured');
         expect(screen.findByTestId('event-workflow-trigger:saved:event-row-starts.trigger')?.props.accessibilityLabel)
             .toBe('workflows.triggers.card.when: Issue opened');
         await toggleTrigger(screen, 'event-workflow-trigger:saved:event-row');

@@ -4,14 +4,14 @@ import { StyleSheet } from 'react-native-unistyles';
 import { AutomationEventTestResultV1Schema } from '@happier-dev/protocol/automations/automationEventTestV1';
 import { type AutomationEventTestResultV1 } from '@happier-dev/protocol/automations/automationEventTestV1';
 import type { AutomationRunPluginEventTriggerEvidenceV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
-import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginEventAutomationSetupSeed } from '@/components/automations/editor/pluginEventAutomationSetup';
 
 import { PluginEventAutomationEditor, type PluginEventEditorPresentation } from '@/components/automations/editor/PluginEventAutomationEditor';
 import { Item } from '@/components/ui/lists/Item';
 import { Text } from '@/components/ui/text/Text';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
 import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { Modal } from '@/modal';
@@ -53,7 +53,7 @@ export function TriggerPluginEventRows(props: Readonly<{
     onEditingChange?: (editing: boolean) => void;
     editorMaxHeight?: number;
     editorPresentation?: PluginEventEditorPresentation;
-    initialEventSeed?: PluginUiOpenAutomationEventRequestV1;
+    initialEventSeed?: PluginEventAutomationSetupSeed;
     initialEventEditSeed?: PluginEventAutomationEditSeed;
     onEditSeedApplied?: React.ComponentProps<typeof PluginEventAutomationEditor>['onEditSeedApplied'];
     /**
@@ -70,7 +70,7 @@ export function TriggerPluginEventRows(props: Readonly<{
         props.onEditingChange?.(next);
     };
     const [seedRead, setSeedRead] = React.useState<Readonly<{ status: 'loading' | 'unavailable' | 'ready'; seed: PluginEventAutomationEditSeed | null;
-        automationId?: string; triggerId?: string }>>({ status: 'loading', seed: null });
+        automationId?: string; triggerId?: string; lifetime?: ActiveServerAccountScopeLifetime }>>({ status: 'loading', seed: null });
     const [retry, setRetry] = React.useState(0);
     const [tested, setTested] = React.useState<Readonly<{ when: EventWhen; evidence: AutomationRunPluginEventTriggerEvidenceV1;
         result: AutomationEventTestResultV1['result'] }> | null>(null);
@@ -88,18 +88,24 @@ export function TriggerPluginEventRows(props: Readonly<{
     React.useEffect(() => {
         if (!needsSeed || props.initialEventEditSeed || !automationId || !triggerId) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) return;
         let alive = true;
         setSeedRead({ status: 'loading', seed: null, automationId, triggerId });
         void sync.getAutomationPluginEventEditSeed(automationId, triggerId).then((seed) => {
-            if (alive && lifetime?.isCurrent()) setSeedRead({ status: seed ? 'ready' : 'unavailable', seed, automationId, triggerId });
+            if (alive && lifetime.isCurrent()) setSeedRead({ status: seed ? 'ready' : 'unavailable', seed, automationId, triggerId, lifetime });
         }).catch(() => {
-            if (alive && lifetime?.isCurrent()) setSeedRead({ status: 'unavailable', seed: null, automationId, triggerId });
+            if (alive && lifetime.isCurrent()) setSeedRead({ status: 'unavailable', seed: null, automationId, triggerId, lifetime });
         });
         return () => { alive = false; };
     }, [automationId, triggerId, needsSeed, props.initialEventEditSeed, retry]);
+    const configured = props.when.value !== null || props.eventEdit !== undefined;
+    const matchingSeedRead = seedRead.automationId === automationId && seedRead.triggerId === triggerId
+        && seedRead.lifetime?.isCurrent() === true ? seedRead : null;
+    const sourceLabel = props.when.value?.displayLabel
+        ?? (props.initialEventEditSeed ?? matchingSeedRead?.seed)?.source.displayLabel;
     const eventRef = props.when.value?.eventRef ?? props.when.eventRef;
     const readStatus = props.initialEventEditSeed ? 'ready'
-        : seedRead.automationId === automationId && seedRead.triggerId === triggerId ? seedRead.status : 'loading';
+        : matchingSeedRead?.status ?? 'loading';
     const renderSeedRead = () => {
         const read = <Item testID={`${props.testID}-event-read`}
             title={t(readStatus === 'loading' ? 'common.loading' : 'automations.form.trigger.sourceUnavailable')}
@@ -113,7 +119,7 @@ export function TriggerPluginEventRows(props: Readonly<{
     return <>
         {editing ? needsSeed && readStatus !== 'ready' ? renderSeedRead() : <PluginEventAutomationEditor
                 automationId={automationId ?? 'trigger-draft'} clientId={triggerId ?? 'event-draft'}
-                value={props.when.value} seed={needsSeed ? props.initialEventEditSeed ?? seedRead.seed : null} initialEventRef={eventRef ?? null}
+                value={props.when.value} seed={needsSeed ? props.initialEventEditSeed ?? matchingSeedRead?.seed ?? null : null} initialEventRef={eventRef ?? null}
                 authoringMachineId={props.initialEventSeed?.monitoringMachineId ?? props.machineId} serverId={props.serverId}
                 initialSetupSeed={props.initialEventSeed}
                 onEditSeedApplied={props.onEditSeedApplied}
@@ -122,11 +128,11 @@ export function TriggerPluginEventRows(props: Readonly<{
                 presentation={props.editorPresentation}
                 onComplete={(value, intent) => { props.onChange({ kind: 'pluginEvent', value, ...intent }); setEditing(false); }}
                 onCancel={() => setEditing(false)} /> : props.renderEntry ? props.renderEntry({
-                    detail: props.when.value?.displayLabel, configured: props.when.value !== null || props.eventEdit !== undefined,
+                    detail: sourceLabel ?? (configured ? t('automations.form.trigger.sourceConfigured') : undefined), configured,
                     onPress: () => setEditing(true) }) : <Item testID={`${props.testID}-configure-event`}
                 title={t(props.when.value || props.eventEdit ? 'workflows.triggers.popover.editEvent' : 'workflows.triggers.popover.configureEvent')}
                 subtitle={props.eventTitle}
-                detail={props.when.value?.displayLabel} onPress={() => setEditing(true)} />}
+                detail={sourceLabel} onPress={() => setEditing(true)} />}
         {props.activityEvent ? <Item testID={`${props.testID}-test`} title={t('workflows.triggers.activity.test')}
             disabled={props.when.value === null || editing || testing} loading={testing} showChevron={false}
             onPress={() => {

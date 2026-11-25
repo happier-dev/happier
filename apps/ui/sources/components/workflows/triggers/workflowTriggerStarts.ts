@@ -261,8 +261,7 @@ export function buildWorkflowTriggerStartOptions(
     }
     const currentId = current ? readWorkflowTriggerStartId(current.when) : null;
     if (current && currentId !== null && !options.some((option) => option.id === currentId)) {
-        const eventRef = current.when.kind === 'pluginEvent' ? current.when.value?.eventRef ?? current.when.eventRef : undefined;
-        options.push({ id: currentId, group: eventRef?.pluginId ?? '', section: 'plugins',
+        options.push({ id: currentId, group: '', section: 'plugins',
             title: currentId === DEPLOY_FINISHED_START_ID ? t('workflows.triggers.card.deployFinished') : current.title, glyph: 'lightning' });
     }
     const resource = context?.resource;

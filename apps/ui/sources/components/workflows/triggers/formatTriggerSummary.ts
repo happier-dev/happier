@@ -2,6 +2,7 @@ import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1, type AutomationSessionLif
 import type { AutomationRunLifecycleTrigger } from '@happier-dev/protocol/automations/automationRunLifecycle';
 import { AutomationActionOutcomeV1Schema } from '@happier-dev/protocol/automations/automationActionIdentityV1';
 import { readServiceCheckDefinitions, serviceCheckTitle } from '@/components/projects/deployments/serviceCheckPresentation';
+import { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { AutomationActionConsentTrigger, AutomationActionTrigger } from '@happier-dev/protocol/automations/automationActionTriggerV1';
@@ -181,9 +182,10 @@ export function readSessionLifecycleKind(events: readonly AutomationSessionLifec
 export type TriggerSummaryContext = Readonly<{
     /**
      * `clause`: a generated name needs the event clause, without the Action's execution-policy sentence.
+     * `detail`: the authored selection next to a Sentence chip that already names the start.
      * `name`: what a When field calls the start ("Backup succeeded"), without the "When …" sentence around it.
      */
-    form?: 'clause' | 'name';
+    form?: 'clause' | 'detail' | 'name';
     machineId?: string | null;
     serverId?: string | null;
     projection?: Pick<DaemonMergedProjectionInputs, 'automationEligibleEvents' | 'pluginUiProjection'> | null;
@@ -253,6 +255,25 @@ function readHealthEventSummary(event: Extract<TriggerSummarySource, { kind: 'pl
     }
 }
 
+function readBuiltInEventClause(event: Extract<TriggerSummarySource, { kind: 'pluginEvent' }>['eventRef']): string | undefined {
+    const health = readHealthEventSummary(event);
+    if (health) return health;
+    if (arePluginContributionIdentitiesEqual(event, DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1)) {
+        return t('workflows.triggers.summary.eventClause.deploymentChanged');
+    }
+    if (event.pluginId === HEALTH_CHECK_EVENT_REFS_V1.status.pluginId) {
+        switch (event.localId) {
+            case 'machine-online': return t('workflows.triggers.summary.eventClause.machineOnline');
+            case 'machine-offline': return t('workflows.triggers.summary.eventClause.machineOffline');
+            case 'backup-failed': return t('workflows.triggers.summary.eventClause.backupFailed');
+            case 'backup-succeeded': return t('workflows.triggers.summary.eventClause.backupSucceeded');
+        }
+    }
+    if (event.pluginId === 'happier.database' && event.localId === 'finding-observed') {
+        return t('workflows.triggers.summary.eventClause.databaseFindingObserved');
+    }
+}
+
 function readOfflineEventName(event: Extract<TriggerSummarySource, { kind: 'pluginEvent' }>['eventRef']): string | null {
     // Older rows can retain only the declaration identity. Read descriptive identifiers without
     // showing their namespace or contract version. Opaque names keep the generic label.
@@ -302,6 +323,12 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
             if (!('phase' in trigger)) return t('workflows.triggers.card.action');
             if (isDeployFinishedTrigger(trigger)) {
                 const outcome = readDeployOutcomeSelection(trigger);
+                if (context?.form === 'detail') {
+                    const environment = trigger.subject?.kind === 'environment'
+                        ? context?.subjectTitle?.(trigger.subject) ?? t('workflows.triggers.card.subjectKinds.environment.this') : null;
+                    const selection = outcome === 'any' ? null : t(`workflows.triggers.card.deployOutcome.${outcome}`);
+                    return [environment, selection].filter(Boolean).join(' · ') || t('workflows.page.inspector.options');
+                }
                 if (trigger.subject?.kind === 'environment') {
                     const environment = context?.subjectTitle?.(trigger.subject)
                         ?? t('workflows.triggers.card.subjectKinds.environment.this');
@@ -331,12 +358,13 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
         case 'pluginEvent': {
             const label = trigger.displayLabel?.trim();
             const health = readHealthEventSummary(trigger.eventRef);
-            const declaredTitle = health ? null : readDeclaredEventTitle(trigger, context);
+            const clause = context?.form === 'name' ? health : readBuiltInEventClause(trigger.eventRef);
+            const declaredTitle = clause ? null : readDeclaredEventTitle(trigger, context);
             // Older plugin triggers can carry a whole title in displayLabel. Keep it when the
             // declaration is unavailable and we have no localized title for this event.
-            if (!health && !declaredTitle && label) return label;
-            const title = declaredTitle ?? (health ? null : readOfflineEventName(trigger.eventRef));
-            const event = health ?? (title === null ? t('workflows.triggers.kind.pluginEvent')
+            if (context?.form !== 'detail' && !clause && !declaredTitle && label) return label;
+            const title = declaredTitle ?? readOfflineEventName(trigger.eventRef);
+            const event = clause ?? (title === null ? t('workflows.triggers.kind.pluginEvent')
                 : context?.form === 'name' ? title : t('workflows.triggers.summary.event', { event: title }));
             const check = health && trigger.sourceConfig !== undefined
                 ? readServiceCheckDefinitions({ sourceConfig: trigger.sourceConfig })?.[0] : undefined;
@@ -345,6 +373,7 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
                 ? new Map([[check.titleTarget.id, environmentName]]) : undefined;
             const subject = label && (!health || label !== 'Saved health checks') && label !== title && label !== event
                 ? label : check ? serviceCheckTitle(check, environmentNames).title : environmentName;
+            if (context?.form === 'detail') return subject ?? t('workflows.page.inspector.options');
             return subject ? [event, subject].join(' · ') : event;
         }
         case 'sessionLifecycle':

@@ -26,6 +26,16 @@ function interval(everyMs: number) {
 }
 
 describe('formatTriggerSummary', () => {
+    it.each([
+        ['happier.machine.services', 'machine-online', 'machineOnline'],
+        ['happier.machine.services', 'machine-offline', 'machineOffline'],
+        ['happier.machine.services', 'backup-failed', 'backupFailed'],
+        ['happier.database', 'finding-observed', 'databaseFindingObserved'],
+    ])('keeps the same readable sentence for retained %s/%s without a Machine catalog', (pluginId, localId, key) => {
+        expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef: { pluginId, localId } }, { projection: null }))
+            .toBe(`workflows.triggers.summary.eventClause.${key}`);
+    });
+
     it('names retained Health events without a Machine catalog or private source label', () => {
         expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef: HEALTH_CHECK_EVENT_REFS_V1.failed }, { projection: null }))
             .toBe('workflows.triggers.summary.offlineHealthFailed');
@@ -222,6 +232,13 @@ describe('formatTriggerSummary', () => {
         expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef: { pluginId: 'example.github', localId: 'automation/pull-request-checks-failed-v1' } }))
             .toBe('workflows.triggers.summary.event(event=Pull request checks failed)');
     });
+});
+
+it('puts only the authored source or outcome on the Sentence detail chip', () => {
+    expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef: HEALTH_CHECK_EVENT_REFS_V1.failed,
+        displayLabel: 'HTTP · Production' }, { form: 'detail', projection: null })).toBe('HTTP · Production');
+    expect(formatTriggerSummary({ kind: 'action', phase: 'after', actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1] },
+        { form: 'detail' })).toBe('workflows.page.inspector.options');
 });
 
 it('keeps the health event title alongside a selected check name', () => {

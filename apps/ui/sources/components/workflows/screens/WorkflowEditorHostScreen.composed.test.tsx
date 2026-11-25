@@ -4549,28 +4549,14 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(firstBlock.document.text).toBe('Analyze the repository');
     });
 
-    /**
-     * UX §2.2 J1: a neutral new workflow opens with its first prompt focused.
-     * The intent is source-scoped and consumed exactly once through the page's
-     * focus owner, so a rerender or an ordinary edit does not replay it.
-     */
-    it('focuses the first prompt of a neutral new draft exactly once', async () => {
+    it('keeps the web editor at the top when a neutral new draft opens', async () => {
         const { WorkflowEditorHostScreen } = await import('./WorkflowEditorHostScreen');
         const host = () => <WorkflowEditorHostScreen source={{ kind: 'new' }} />;
         const screen = await renderScreen(host());
         await act(async () => {});
-        const firstBlockId = readBodyProps()?.draftStore.get().blocks[0]?.id;
-        await vi.waitFor(() => expect(focusPromptSpy).toHaveBeenCalledTimes(1));
-        const firstPrompt = screen.findByTestId(`workflow-editor-step-${firstBlockId}-prompt`)!.findByType(AgentInput);
-        expect(firstPrompt.props.inputAccessibilityLabel).toBeTypeOf('string');
-        expect(focusPromptSpy).toHaveBeenCalledWith(expect.objectContaining({
-            accessibilityLabel: firstPrompt.props.inputAccessibilityLabel,
-        }));
-
+        expect(focusPromptSpy).not.toHaveBeenCalled();
         await screen.update(host());
-        await act(async () => readBodyProps()?.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Named' } as never));
-        await screen.update(host());
-        expect(focusPromptSpy).toHaveBeenCalledTimes(1);
+        expect(focusPromptSpy).not.toHaveBeenCalled();
         await screen.unmount();
     });
 

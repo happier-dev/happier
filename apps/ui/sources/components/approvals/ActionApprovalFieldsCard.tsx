@@ -29,11 +29,14 @@ import { getTranslationValue, t, tLoose } from '@/text';
 import {
     readPluginEventTriggerApprovalEnvironmentId,
     readPluginEventTriggerApprovalSummary,
+    readTriggerUpdateApprovalAutomationId,
+    presentTriggerUpdateAutomationName,
     type ApprovalActionFieldsPresentation,
 } from './approvalFieldValues';
 import { presentPluginInstallApprovalRows } from './pluginInstallApprovalFacts';
 import { useApprovalReferenceReading, type ApprovalReferenceReading } from './approvalReferenceReading';
 import { readActionApprovalSubject } from './actionApprovalPresentation';
+import { useAutomation } from '@/sync/store/hooks';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { navigateToSession } from '@/hooks/session/useNavigateToSession';
@@ -176,10 +179,13 @@ export const ActionApprovalFieldsCard = React.memo(function ActionApprovalFields
     const presentation = React.useMemo(() => demoteSelfReferences(demoteAskingSessionTarget(props.presentation, askingSessionId),
         props.serverId, viewer), [askingSessionId, props.presentation, props.serverId, viewer]);
     const reading = { ...props, presentation, detailsOpen, setDetailsOpen };
-    const triggerEnvironmentId = (props.anatomy === 'page' || detailsOpen) && props.request
-        ? readPluginEventTriggerApprovalEnvironmentId(props.request) : null;
-    if (triggerEnvironmentId && props.request && props.serverId) {
-        return <PluginEventTriggerApprovalFields {...reading} request={props.request} environmentId={triggerEnvironmentId} />;
+    if ((props.anatomy === 'page' || detailsOpen) && props.request && props.serverId) {
+        const automationId = readTriggerUpdateApprovalAutomationId(props.request);
+        const triggerEnvironmentId = readPluginEventTriggerApprovalEnvironmentId(props.request);
+        if (automationId || triggerEnvironmentId) {
+            return <WorkflowTriggerApprovalFields {...reading} request={props.request}
+                automationId={automationId} environmentId={triggerEnvironmentId} />;
+        }
     }
     if (props.request && isDiscussionReplyActionIdV1(props.request.actionId) && (props.anatomy === 'page' || detailsOpen)) return (
         <DiscussionReplyApprovalFields request={props.request} serverId={props.serverId ?? null}>
@@ -205,16 +211,19 @@ type ApprovalFieldsReadingProps = React.ComponentProps<typeof ActionApprovalFiel
     homeSettingsRegistry?: ReadonlyMap<string, HomeSettingEntryV1>;
 }>;
 
-function PluginEventTriggerApprovalFields(props: ApprovalFieldsReadingProps & Readonly<{
+function WorkflowTriggerApprovalFields(props: ApprovalFieldsReadingProps & Readonly<{
     request: ApprovalFieldsRequest;
-    environmentId: string;
+    environmentId: string | null;
+    automationId: string | null;
 }>) {
-    const { name } = useEnvironmentName(props.serverId ?? null, props.environmentId);
+    const { name: environmentName } = useEnvironmentName(props.serverId ?? null, props.environmentId);
+    const automationName = useAutomation(props.automationId ?? '', { serverId: props.serverId })?.name;
     const presentation = React.useMemo(() => {
-        const value = name ? readPluginEventTriggerApprovalSummary(props.request, name) : null;
-        return value ? { ...props.presentation, rows: props.presentation.rows.map(row =>
+        const value = environmentName ? readPluginEventTriggerApprovalSummary(props.request, environmentName) : null;
+        const withEnvironment = value ? { ...props.presentation, rows: props.presentation.rows.map(row =>
             row.kind === 'value' && row.path === 'trigger.summary' ? { ...row, value } : row) } : props.presentation;
-    }, [name, props.presentation, props.request]);
+        return presentTriggerUpdateAutomationName(withEnvironment, automationName);
+    }, [automationName, environmentName, props.presentation, props.request]);
     return <ApprovalFieldsReading {...props} presentation={presentation} />;
 }
 

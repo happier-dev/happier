@@ -1,3 +1,4 @@
+import type { PluginEventAutomationSetupSeed } from './pluginEventAutomationSetup';
 import * as React from 'react';
 import type { NativeSetupWatcherChoice, SetupSurfaceHeading } from './presentPluginEventAutomationSetupSurface';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
@@ -296,7 +297,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     /** The original private value, published once when the existing edit seed is applied. */
     onEditSeedApplied?: (trigger: NonNullable<ReturnType<typeof buildPluginEventAutomationTriggerInput>>, seed: PluginEventAutomationEditSeed) => void;
     initialEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
-    initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
+    initialSetupSeed?: PluginEventAutomationSetupSeed;
     newSourceSetup?: NewNativeSourceSetup;
     /** Observe submission of the native form in a direct saved-source edit. */
     savedSourceSetup?: Readonly<{

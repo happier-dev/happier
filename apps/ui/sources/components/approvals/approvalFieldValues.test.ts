@@ -28,7 +28,7 @@ it('names the plugin Event and its check in approval details and the generated I
     expect(summary.find(row => row.path === 'trigger.summary')).toMatchObject({
         value: expect.stringMatching(/health check changes status.*QA environment/i),
     });
-    expect(summary.find(row => row.path === 'observationOnly')).toMatchObject({ technical: true });
+    expect(summary.find(row => row.path === 'observationOnly')).toBeUndefined();
     const title = resolveApprovalRequestTitle({ actionId, actionArgs, storedTitle: getActionSpec(actionId).title,
         triggerEnvironmentName: 'QA environment' }).title;
     expect(title).toContain('Add workflow trigger');
@@ -52,6 +52,16 @@ it.each([WORKFLOW_TRIGGER_ADD_ACTION_ID, WORKFLOW_TRIGGER_UPDATE_ACTION_ID])('re
         expect(rows).toContainEqual(expect.objectContaining({ value: formatTriggerSummary(trigger) }));
         expect(JSON.stringify(rows)).not.toMatch(/raw-machine-id|raw-automation-id|raw-trigger-id|"label":"Kind"|"label":"Enabled"/);
     }
+});
+
+it('names the Automation in a trigger Update without disclosing its id in the main rows', () => {
+    const actionArgs = { automationId: 'raw-automation-id', triggerId: 'trigger', expectedRevision: 1,
+        patch: { trigger: { kind: 'schedule', schedule: { kind: 'once', scheduledAt: 1795166538066 } } } };
+    const { rows } = describeApprovalRequestFields({ actionId: WORKFLOW_TRIGGER_UPDATE_ACTION_ID, actionArgs },
+        undefined, 'Nightly workflow');
+    const mainRows = rows.filter(row => row.kind === 'value' && !row.technical);
+    expect(mainRows).toContainEqual(expect.objectContaining({ value: 'Nightly workflow' }));
+    expect(JSON.stringify(mainRows)).not.toContain('raw-automation-id');
 });
 
 it.each(['open', 'rejected', 'executed'] as const)('does not repeat an installation title on a %s card', status => {

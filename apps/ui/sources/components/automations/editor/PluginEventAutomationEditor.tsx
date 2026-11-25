@@ -1,9 +1,9 @@
+import type { PluginEventAutomationSetupSeed } from './pluginEventAutomationSetup';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
-import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import { getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
@@ -187,7 +187,7 @@ export function PluginEventAutomationEditor(props: Readonly<{
     onEditSeedApplied?: Parameters<typeof usePluginEventAutomationComposer>[0]['onEditSeedApplied'];
     /** Intent from retained activity; source setup still comes from the current catalog's real Action. */
     initialEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
-    initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
+    initialSetupSeed?: PluginEventAutomationSetupSeed;
     /** Open the native setup form for a saved source as soon as its exact editor restores it. */
     savedSourceSetup?: NonNullable<Parameters<typeof usePluginEventAutomationComposer>[0]['savedSourceSetup']> & NativeSetupPresentation;
     /** Open the seeded native form directly and settle an observation without a workflow target. */

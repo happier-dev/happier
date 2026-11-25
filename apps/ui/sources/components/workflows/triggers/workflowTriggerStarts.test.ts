@@ -157,6 +157,12 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
     expect(start(options[1]!.id)).toEqual({ kind: 'pluginEvent', value: null, eventRef: unresolved });
   });
 
+  it('keeps a retained Event with no catalog entry selectable without naming its plugin by id', () => {
+    const eventRef = { pluginId: 'fixture.qa-ui-r-sweep-tickets', localId: 'published' };
+    const current = { when: { kind: 'pluginEvent', value: null, eventRef }, title: 'Ticket published' } as const;
+    expect(buildWorkflowTriggerStartOptions([], current).at(-1)).toMatchObject({ group: '', title: current.title });
+  });
+
   it('leads with the resource\'s own group in a resource host, then everything else in the usual groups', () => {
     const options = buildWorkflowTriggerStartOptions([
       { eventRef: { pluginId: 'happier.github', localId: 'pr-opened' }, title: 'A pull request opens', pluginName: 'GitHub' },

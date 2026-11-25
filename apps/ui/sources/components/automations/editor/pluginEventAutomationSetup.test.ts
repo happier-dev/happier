@@ -435,9 +435,9 @@ describe('Plugin Event Automation setup orchestration', () => {
         const setupInput = { v: 1, serverId: SERVER_ID };
         const params = durablePushSetupParams(event);
         await expect(configurePluginEventAutomationSetup({ ...params, observationTransport: 'checkpointedPull',
-            initialSetupSeed: { eventRef: event.event.identity, setupInput },
+            initialSetupSeed: { eventRef: event.event.identity, setupInput, sourceLabel: 'Production' },
             present: ({ form }) => form.cancel(),
-        })).resolves.toMatchObject({ kind: 'configured' });
+        })).resolves.toMatchObject({ kind: 'configured', draft: { draft: { source: { displayLabel: 'Production' } } } });
         expect(params.dispatch).toHaveBeenCalledWith(expect.objectContaining({ input: setupInput }));
     });
     it('prefills an opted-in Home from the selected watcher and still asks for source selection', async () => {
@@ -459,6 +459,34 @@ describe('Plugin Event Automation setup orchestration', () => {
         })).resolves.toMatchObject({ kind: 'cancelled' });
         expect(presented).toHaveBeenCalledWith({ serverId: SERVER_ID });
         expect(params.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('names a configured Home source from the exact submitted option', async () => {
+        const base = eligibleEvent();
+        const inputSchema = { type: 'object', properties: { serverId: { type: 'string' } },
+            required: ['serverId'], additionalProperties: false };
+        const event = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
+            ...base,
+            event: { ...base.event, automation: { ...base.event.automation, source: {
+                ...base.event.automation.source,
+                sourceConfigSchema: { type: 'object', properties: { serverId: { type: 'string' } },
+                    required: ['serverId'], additionalProperties: false },
+            } } },
+            setupAction: { ...base.setupAction, inputSchema, inputHints: { fields: [
+                { path: 'serverId', title: 'Home', widget: 'select', required: true, inputType: { hostType: 'homeId' } },
+            ] } },
+        });
+        setupSchemas.set(event.setupAction.id, inputSchema);
+        const params = durablePushSetupParams(event);
+        params.dispatch.mockResolvedValue({ ok: true, result: { v: 1, sourceInstanceId: 'backup-source',
+            sourceContractVersion: 3, sourceConfig: { serverId: SERVER_ID }, displayLabel: 'Machine resources' } });
+        const result = await configurePluginEventAutomationSetup({ ...params, observationTransport: 'checkpointedPull',
+            present: ({ form, onSubmitOptions }) => {
+                onSubmitOptions?.(path => path === 'serverId' ? { value: SERVER_ID, label: 'Dev Home' } : undefined);
+                void form.submit();
+            },
+        });
+        expect(result).toMatchObject({ kind: 'configured', draft: { draft: { source: { displayLabel: 'Dev Home' } } } });
     });
 
     it('reopens a saved source and gives the shared presenter the bound Action and Account', async () => {

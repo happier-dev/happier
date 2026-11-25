@@ -66,6 +66,7 @@ installAutomationScreensCommonModuleMocks({
     text: {
         translate: (key: string, params?: Record<string, unknown>) => {
             if (key === 'runs.runLabel') return `run ${String(params?.runId ?? '')}`;
+            if (key === 'workflows.run.outcomeLine') return `${String(params?.word ?? '')} — ${String(params?.sentence ?? '')}`;
             if (key === 'automations.detail.runMeta.scheduled') return 'Scheduled';
             if (key === 'automations.detail.runMeta.occurred') return 'Occurred';
             if (key === 'automations.detail.runMeta.invoked') return 'Invoked';
@@ -335,7 +336,7 @@ describe('canonical Run page occurrence target', () => {
         const pending = createDeferred<void>();
         harness.answer(serverId, DETAIL_PATH, { respondAfter: pending.promise, body: detail(row) });
         const screen = await open(row);
-        const label = workflowRunState === 'waiting_for_review' ? 'workStatus.buckets.needs_you' : 'workflows.runState.interrupted';
+        const label = workflowRunState === 'waiting_for_review' ? 'workflows.review.waitTitle' : 'workflows.runState.interrupted';
         expect(screen.getTextContent()).toContain(label);
         await act(async () => pending.resolve());
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(label));

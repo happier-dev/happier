@@ -193,12 +193,14 @@ export function ResourceLinkWorkflowSheet(
   // The When field's own placeholder already asks for a start; a note under it says only what the field can't.
   const whenNote = !(link.whenStatus === 'ready' && !choice && whenItems.length > 0);
   const eventChoice = choice?.relation === 'event' && when?.kind === 'pluginEvent' ? { choice, when } : null;
+  const eventSetupSeed = React.useMemo(() => choice?.relation === 'event'
+    ? { ...choice.eventSeed, sourceLabel: props.resourceName } : undefined, [choice, props.resourceName]);
   const eventRows = eventChoice ? (editing: boolean, maxHeight?: number, stackedFields = false) => (
     <TriggerPluginEventRows
       testID="resource-link-event"
       eventTitle={eventChoice.choice.label}
       when={eventChoice.when}
-      initialEventSeed={eventChoice.choice.eventSeed}
+      initialEventSeed={eventSetupSeed}
       machineId={props.machineId}
       serverId={props.serverId}
       editing={editing}

@@ -1489,15 +1489,16 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     ]);
 
     /**
-     * A neutral new workflow starts with its first prompt focused (UX §2.2
-     * J1). The intent belongs to this source: it is consumed once through the
+     * Native focuses the first prompt of a neutral new workflow (UX §2.2 J1).
+     * On web, focusing would scroll the title and actions out of view. The native
+     * intent belongs to this source and is consumed once through the
      * page's one focus owner, which waits for that prompt to mount, and it is
      * never replayed by a rerender, a hydrated saved definition, an imported or
      * reviewed document, or an Account change.
      */
     const initialPromptFocusConsumedRef = React.useRef(false);
     React.useEffect(() => {
-        if (initialPromptFocusConsumedRef.current) return;
+        if (Platform.OS === 'web' || initialPromptFocusConsumedRef.current) return;
         if (props.source.kind !== 'new' || reviewedRunSeed !== null || props.source.requestImport === true) return;
         const draft = draftStore.get();
         if (draft === null) return;

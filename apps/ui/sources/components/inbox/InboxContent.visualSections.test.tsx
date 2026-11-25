@@ -314,6 +314,14 @@ afterEach(async () => {
 });
 
 describe('InboxContent rows, attention sources and popover (ORC R-10, lab inbox-I1, P4)', () => {
+    it('keeps pagination reachable without creating an empty Workflows section in Needs you', async () => {
+        const { InboxContent } = await import('./InboxContent');
+        const model = createModel({ needsYou: false });
+        const screen = await renderScreen(<InboxContent model={{ ...model,
+            automationAttention: { ...model.automationAttention, hasMore: true } }} />, { wrapper: PagePresentation });
+        expect(screen.findByTestId('inbox.automation_more')).toBeTruthy();
+        expect(screen.findByTestId('inbox.section.automations')).toBeNull();
+    });
     it('offers the shared reminder presets on a notice row and saves the selected instant', async () => {
         const { InboxContent } = await import('./InboxContent');
         const artifact = createAccountNoticeArtifactFixture({ header: { type: 'decision' } });

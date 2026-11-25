@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { readEligibleEventPresentation } from './pluginEventAutomationEventPresentation';
+import { readEligibleEventPluginName, readEligibleEventPresentation } from './pluginEventAutomationEventPresentation';
 
 const event = (presentation?: Readonly<{ title: unknown; description?: unknown }>) => ({
     event: {
@@ -36,4 +36,10 @@ describe('readEligibleEventPresentation', () => {
             description: 'A deployment stopped before it finished.',
         });
     });
+});
+
+it('does not use a projection that falls back to a raw plugin id as a group name', () => {
+    const pluginId = 'fixture.qa-ui-r-sweep-tickets';
+    expect(readEligibleEventPluginName({ pluginProjectionById: { [pluginId]: { title: pluginId } } } as never, pluginId))
+        .toBeNull();
 });
