@@ -15,9 +15,11 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { DaemonTerminalEnsureResponseSchema } from '@happier-dev/protocol/daemon/terminal';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerMachineRpcHandlers } from '@/api/machine/rpcHandlers';
+import { prepareActionCompletionV1 } from '@happier-dev/protocol/actions/actionCompletion';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { produceEnvironmentProjectServices } from './projectDeclarations';
+import { createMachineServicesRuntime } from './machineServices';
 import * as ptyBoundary from '@/terminal/pty/provider';
 import * as terminationBoundary from '@/processes/terminate/terminateProcessTree';
 import type { PtyProcess, PtySpawnParams } from '@/terminal/pty/provider';
@@ -63,8 +65,8 @@ function finiteOwner(project: nativeCompose.NativeComposeEnvironmentProject) {
 }
 
 describe('admitted finite Compose command', () => {
-    it('publishes admitted native project and member identities without exposing an Environment as a new Machine watch', async () => {
-        await withFiniteComposeFixture(async ({ project, source, io }) => {
+    it('preserves admitted native identities and completes Workflow detail for the same stopped Environment service', async () => {
+        await withFiniteComposeFixture(async ({ project, docker, source, io }) => {
             const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
             if (!lease) throw new Error('Expected the installed runtime');
             try {
@@ -74,6 +76,7 @@ describe('admitted finite Compose command', () => {
                     keys: rendered.keys, settleNative: project.settleNative,
                 }, context => project.activate({ render: rendered, context }));
                 await source.commit();
+                await docker.stopCurrentContainers();
                 const [handle] = await produceEnvironmentProjectServices({ owner: lease.registry.projectManagedServices,
                     serverId: 'finite-home', release: source, specIdentity: 'native-watch-identity',
                     isCurrent: () => true, nativeEffects: { keys: rendered.keys, settleNative: project.settleNative }, io, project: activated });
@@ -87,6 +90,24 @@ describe('admitted finite Compose command', () => {
                 }
                 expect(lease.registry.projectManagedServices.resolveNativeService({ adapter,
                     nativeResourceId: JSON.stringify(['other-engine', rendered.projectName]) }, target)).toBeNull();
+
+                const runtime = createMachineServicesRuntime({ target,
+                    readMetadata: () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
+                    captureMetadataPort() { throw new Error('Detail does not write metadata'); },
+                });
+                try {
+                    const detail = await runtime.execute({ actionId: 'machines.services.detail',
+                        input: { ...target, serviceId: handle.serviceId, expectedGeneration: handle.instanceId },
+                        context: { surface: 'cli', authority: 'present_user' },
+                        canReadEnvironments: async ids => new Set(ids),
+                    });
+                    const completion = prepareActionCompletionV1(undefined, 'ok' in detail ? detail : { ok: true, result: detail });
+                    expect(completion).toMatchObject({ kind: 'completed', value: { kind: 'service',
+                        service: { serviceId: handle.serviceId, generation: handle.instanceId, state: 'stopped' },
+                        runtimeFacts: { freshness: 'current' },
+                    } });
+                    expect(completion).not.toHaveProperty('value.runtimeFacts.accounting');
+                } finally { await runtime.dispose(); }
             } finally { await lease.release(); }
         });
     });

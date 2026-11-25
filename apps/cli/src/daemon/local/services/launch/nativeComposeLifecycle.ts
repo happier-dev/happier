@@ -447,8 +447,9 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
         return output;
     };
     const accounting = createManagedServiceAccountingRead(async (signal): Promise<ProjectNativeAccountingResult> => {
-        const startedAtMs = runtimeFacts.accounting?.startedAtMs;
-        runtimeFacts = { ...runtimeFacts, accounting: startedAtMs === undefined ? undefined : { startedAtMs } };
+        const { accounting: previousAccounting, ...facts } = runtimeFacts;
+        const startedAtMs = previousAccounting?.startedAtMs;
+        runtimeFacts = startedAtMs === undefined ? facts : { ...facts, accounting: { startedAtMs } };
         const selected = nativeContainers?.filter(row => row.service === target).map(row => row.id).sort();
         if (!selected?.length) return { kind: 'unavailable', reason: 'unavailable' };
         try {
