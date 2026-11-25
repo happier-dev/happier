@@ -3,8 +3,9 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { build } from 'vite';
+import { build, type BuildOptions } from 'vite';
 import { describe, expect, it } from 'vitest';
+import packageExportMatch from '../../cli-common/packageExportMatch.cjs';
 
 const protocolLeaves = [
     {
@@ -62,6 +63,15 @@ const workspaceRequire = createRequire(pathToFileURL(resolve(
     '../../../package.json',
 )).href);
 
+const browserRollupOptions: NonNullable<BuildOptions['rollupOptions']> = {
+    onwarn(warning, warn) {
+        if (warning.plugin === 'vite:resolve' && warning.message.includes('has been externalized for browser compatibility')) {
+            throw new Error(warning.message);
+        }
+        warn(warning);
+    },
+};
+
 function readProtocolPackageJson(): Readonly<{ exports: Readonly<Record<string, unknown>> }> {
     return JSON.parse(readFileSync(
         new URL('../../protocol/package.json', import.meta.url),
@@ -79,7 +89,7 @@ async function bundleSchemaProjections(): Promise<Readonly<{
     const webhooksEntry = resolve(import.meta.dirname, './webhooks.ts');
     const emittedModules = new Set<string>();
     const result = await build({
-        configFile: false,
+        configFile: resolve(import.meta.dirname, '../vitest.source.config.ts'),
         logLevel: 'silent',
         resolve: {
             alias: protocolLeaves.map(({ specifier, source }) => ({
@@ -112,6 +122,7 @@ async function bundleSchemaProjections(): Promise<Readonly<{
             target: 'es2022',
             write: false,
             rollupOptions: {
+                ...browserRollupOptions,
                 input: 'virtual:plugin-schema-projections-browser-realm-entry',
                 preserveEntrySignatures: 'strict',
                 output: {
@@ -133,13 +144,14 @@ async function bundleSchemaProjections(): Promise<Readonly<{
 async function bundleMediaContractProjections(): Promise<Readonly<{
     modules: ReadonlySet<string>;
     code: string;
+    externalImports: readonly string[];
 }>> {
     const uiEntry = resolve(import.meta.dirname, './ui/index.ts');
     const resourcesEntry = resolve(import.meta.dirname, './resources/index.ts');
     const protocolUiClient = resolve(import.meta.dirname, '../../protocol/src/plugins/ui/client.ts');
     const emittedModules = new Set<string>();
     const result = await build({
-        configFile: false,
+        configFile: resolve(import.meta.dirname, '../vitest.source.config.ts'),
         logLevel: 'silent',
         resolve: {
             alias: [{
@@ -170,6 +182,7 @@ async function bundleMediaContractProjections(): Promise<Readonly<{
             target: 'es2022',
             write: false,
             rollupOptions: {
+                ...browserRollupOptions,
                 input: 'virtual:plugin-media-contract-projections-browser-realm-entry',
                 preserveEntrySignatures: 'strict',
                 output: {
@@ -185,7 +198,7 @@ async function bundleMediaContractProjections(): Promise<Readonly<{
     if (!entry || entry.type !== 'chunk') {
         throw new Error('Vite did not emit the SDK media-contract browser entry');
     }
-    return { modules: emittedModules, code: entry.code };
+    return { modules: emittedModules, code: entry.code, externalImports: [...entry.imports, ...entry.dynamicImports] };
 }
 
 describe('SDK Protocol schema projection browser graph', () => {
@@ -193,10 +206,16 @@ describe('SDK Protocol schema projection browser graph', () => {
         const protocolPackage = readProtocolPackageJson();
 
         for (const { specifier, source, packageEntry } of protocolLeaves) {
-            expect(protocolPackage.exports).toHaveProperty(
-                specifier.replace('@happier-dev/protocol/', './'),
-                { 'happier-source': source.replace('../../protocol/', './'), ...packageEntry },
-            );
+            const subpath = specifier.replace('@happier-dev/protocol/', './');
+            const match = packageExportMatch.matchPackageExport(protocolPackage.exports, subpath);
+            const expected = { 'happier-source': source.replace('../../protocol/', './'), ...packageEntry };
+            expect(match?.declaration, specifier).toBeTypeOf('object');
+            expect(match?.declaration, specifier).not.toBeNull();
+            const conditions = match!.declaration as Record<string, unknown>;
+            for (const [condition, target] of Object.entries(expected)) {
+                expect(packageExportMatch.substitutePackageExportTarget(conditions[condition], match!.replacement), specifier)
+                    .toBe(target);
+            }
         }
     });
 
@@ -236,7 +255,7 @@ describe('SDK Protocol schema projection browser graph', () => {
             id.includes('/protocol/src/index.')
             || id.includes('/protocol/dist/index.')
             || id.includes('node:')
-            || id.includes('__vite-browser-external')
+            || id.includes('__vite-browser-external:')
             || id.includes('/crypto/accountScopedCipher.')
             || id.includes('/tweetnacl/')
             || id.includes('/marketplace/marketplaceSourceRegistryV1.')
@@ -274,14 +293,15 @@ describe('SDK Protocol schema projection browser graph', () => {
     }, 60_000);
 
     it('keeps public media and transcript Resource contracts on the browser-safe Protocol UI client', async () => {
-        const { modules, code } = await bundleMediaContractProjections();
+        const { modules, code, externalImports } = await bundleMediaContractProjections();
         const moduleIds = [...modules];
 
         expect(moduleIds.filter((id) => (
             id.includes('/protocol/src/index.')
             || id.includes('/protocol/dist/index.')
             || id.includes('node:')
-            || id.includes('__vite-browser-external')
+            // An explicit package browser:false mapping can resolve to Vite's empty module.
+            || id.includes('__vite-browser-external:')
         ))).toEqual([]);
         expect(moduleIds).toContain(resolve(import.meta.dirname, './ui/index.ts'));
         expect(moduleIds).toContain(resolve(import.meta.dirname, './resources/index.ts'));
@@ -298,7 +318,7 @@ describe('SDK Protocol schema projection browser graph', () => {
             import.meta.dirname,
             '../../protocol/src/plugins/contributions/ui/transcriptActivities.ts',
         ));
-        expect(code).not.toContain('node:');
+        expect(externalImports.filter(id => id.startsWith('node:'))).toEqual([]);
         expect(code).not.toContain('__vite-browser-external');
     }, 60_000);
 });
