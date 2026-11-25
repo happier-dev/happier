@@ -17124,6 +17124,7 @@ settingsSession: {
             unlinkedTitle: "尚无关联结果",
             sessionFallback: ({ id }: { id: string | number }) => `会话 ${id}`,
             sessionLine: ({ prs }: { prs: string | number }) => `${prs} 个关联 PR`,
+            mergedCount: ({ count }: { count: string | number }) => `已合并 ${count} 个`,
             openSession: ({ title }: { title: string | number }) => `打开 ${title}`,
             judgement: "成本与关联工作并列展示；是否值得由你判断。",
             outcomesCaption: ({ count }: { count: string | number }) => `${count} 个拉取请求`,

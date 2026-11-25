@@ -49,6 +49,11 @@ export type OutcomeScatterProps = Readonly<{
   legend?: readonly Readonly<{ id: string; label: string; color: string }>[];
   /** The x domain's own exact wording (money); it replaces the generic number on the axis, rows and guides. */
   formatX?: (value: number) => string;
+  /**
+   * The y value's own wording with its unit ("0 merged"), for the value rows, a point's datum and the readout; the
+   * value then reads aloud by itself, without the y heading. Absent: the generic number beside the y heading.
+   */
+  formatY?: (value: number) => string;
   xDomain?: readonly [number, number];
   yDomain?: readonly [number, number];
   basis?: string;
@@ -76,6 +81,9 @@ export function OutcomeScatter(props: OutcomeScatterProps) {
   const unknown = props.unknownLabel ?? 'Unknown';
   const format = (value: number | null) => value !== null && Number.isFinite(value) ? formatHappierDataValue(value, text.locale) : unknown;
   const formatX = (value: number | null) => value !== null && Number.isFinite(value) && props.formatX ? props.formatX(value) : format(value);
+  // A y wording that carries its unit stands alone, aloud and in the readout; otherwise the y heading names the number.
+  const formatY = (value: number | null) => value !== null && Number.isFinite(value) && props.formatY ? props.formatY(value) : format(value);
+  const readY = (value: number | null) => value !== null && Number.isFinite(value) && props.formatY ? props.formatY(value) : `${props.yLabel}: ${format(value)}`;
   const exactX = (value: number | null) => {
     const visible = formatX(value);
     const exact = format(value);
@@ -84,8 +92,8 @@ export function OutcomeScatter(props: OutcomeScatterProps) {
   // A bare amount speaks the caption's basis once, in the x name its readings are built from (review J-B51).
   const spokenX = props.basis ? `${props.xLabel}, ${props.basis}` : props.xLabel;
   const datumOf = (point: OutcomeScatterPoint) => ({ label: point.label,
-    value: `${spokenX}: ${exactX(point.x)} · ${props.yLabel}: ${format(point.y)}`, subtitle: point.annotation, color: point.color });
-  const describe = (point: OutcomeScatterPoint) => [point.label, `${props.xLabel}: ${formatX(point.x)}`, `${props.yLabel}: ${format(point.y)}`,
+    value: `${spokenX}: ${exactX(point.x)} · ${readY(point.y)}`, subtitle: point.annotation, color: point.color });
+  const describe = (point: OutcomeScatterPoint) => [point.label, `${props.xLabel}: ${formatX(point.x)}`, readY(point.y),
     point.annotation, props.basis].filter(Boolean).join(', ');
   const complete = props.points.filter((point) => point.x !== null && point.y !== null && Number.isFinite(point.x) && Number.isFinite(point.y));
   const xDomain = props.xDomain ?? finiteDomain(complete.map((point) => point.x));
@@ -192,13 +200,13 @@ export function OutcomeScatter(props: OutcomeScatterProps) {
     {showPlot && !valuesExpanded ? null : <HappierDataRows theme={props.theme} label={props.label} testID={props.testID ? `${props.testID}-values` : undefined}
       density={props.size === 'inline' || props.size === 'tile' ? 'compact' : 'comfortable'}
       rowIds={props.points.map((point) => point.id)}
-      columns={[{ label: props.label }, { label: spokenX }, { label: props.yLabel },
+      columns={[{ label: props.label }, { label: spokenX }, { label: props.formatY ? '' : props.yLabel },
         { label: props.points.some((point) => point.annotation) ? props.annotationLabel ?? valuesLabel : '' }]}
       renderRow={(_row, visual, index) => {
         const point = props.points[index]!;
         return formatX(point.x).includes(format(point.x)) ? visual
           : <ChartDatum datum={datumOf(point)} testID={props.testID ? `${props.testID}-row-datum-${point.id}` : undefined}>{visual}</ChartDatum>;
       }}
-      rows={props.points.map((point) => [point.label, formatX(point.x), format(point.y), ...(point.annotation ? [point.annotation] : [])])} />}
+      rows={props.points.map((point) => [point.label, formatX(point.x), formatY(point.y), ...(point.annotation ? [point.annotation] : [])])} />}
   </View>;
 }

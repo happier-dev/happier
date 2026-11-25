@@ -17354,6 +17354,7 @@ settingsSession: {
             unlinkedTitle: "Pas encore de résultat lié",
             sessionFallback: ({ id }: { id: string | number }) => `Session ${id}`,
             sessionLine: ({ prs }: { prs: string | number }) => `${prs} PR liées`,
+            mergedCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'fusionnée', plural: 'fusionnées' })}`,
             openSession: ({ title }: { title: string | number }) => `Ouvrir ${title}`,
             judgement: "Coût et travail lié côte à côte ; à toi de juger ce qui valait la peine.",
             outcomesCaption: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'pull request' : 'pull requests'}`,

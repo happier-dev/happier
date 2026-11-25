@@ -17752,6 +17752,7 @@ settingsSession: {
         unlinkedTitle: "Brak powiązanego wyniku",
         sessionFallback: ({ id }: { id: string | number }) => `Sesja ${id}`,
         sessionLine: ({ prs }: { prs: string | number }) => `Powiązane PR: ${prs}`,
+        mergedCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), one: 'scalony', few: 'scalone', many: 'scalonych' })}`,
         openSession: ({ title }: { title: string | number }) => `Otwórz ${title}`,
         judgement: "Koszt i powiązana praca obok siebie; Ty oceniasz, co było warte swojej ceny.",
         outcomesCaption: ({ count }: { count: string | number }) => `Pull requesty: ${count}`,

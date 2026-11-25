@@ -17851,6 +17851,7 @@ settingsSession: {
             unlinkedTitle: "Nessun risultato collegato",
             sessionFallback: ({ id }: { id: string | number }) => `Sessione ${id}`,
             sessionLine: ({ prs }: { prs: string | number }) => `${prs} PR collegate`,
+            mergedCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'integrata', plural: 'integrate' })}`,
             openSession: ({ title }: { title: string | number }) => `Apri ${title}`,
             judgement: "Costo e lavoro collegato fianco a fianco; decidi tu cosa ne è valso la pena.",
             outcomesCaption: ({ count }: { count: string | number }) => `${count} pull request`,

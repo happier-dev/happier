@@ -170,6 +170,7 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
           unknownLabel={t('usage.board.work.noOutcome')}
           size="full"
           formatX={value => captioned(value, plot.moneyBasis)}
+          formatY={count => t('usage.board.work.mergedCount', { count })}
           basis={basisLabel(plot.moneyBasis)}
           annotationLabel={t('usage.board.work.linkedPrs')}
           valuesLabel={t('usage.board.charts.showValues')}

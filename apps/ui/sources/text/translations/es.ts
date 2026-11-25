@@ -17480,6 +17480,7 @@ settingsSession: {
             unlinkedTitle: "Aún sin resultado vinculado",
             sessionFallback: ({ id }: { id: string | number }) => `Sesión ${id}`,
             sessionLine: ({ prs }: { prs: string | number }) => `${prs} PR vinculados`,
+            mergedCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'fusionado', plural: 'fusionados' })}`,
             openSession: ({ title }: { title: string | number }) => `Abrir ${title}`,
             judgement: "Coste y trabajo vinculado, lado a lado; tú decides qué valió la pena.",
             outcomesCaption: ({ count }: { count: string | number }) => `${count} pull requests`,

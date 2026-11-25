@@ -17759,6 +17759,7 @@ settingsSession: {
             unlinkedTitle: "まだリンクされた成果なし",
             sessionFallback: ({ id }: { id: string | number }) => `セッション ${id}`,
             sessionLine: ({ prs }: { prs: string | number }) => `リンク済み PR ${prs} 件`,
+            mergedCount: ({ count }: { count: string | number }) => `マージ済み ${count} 件`,
             openSession: ({ title }: { title: string | number }) => `${title} を開く`,
             judgement: "コストとリンク済みの作業を並べて表示します。価値の判断はあなたです。",
             outcomesCaption: ({ count }: { count: string | number }) => `${count} 件のプルリクエスト`,

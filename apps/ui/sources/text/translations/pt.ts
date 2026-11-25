@@ -17588,6 +17588,7 @@ settingsSession: {
             unlinkedTitle: "Ainda sem resultado vinculado",
             sessionFallback: ({ id }: { id: string | number }) => `Sessão ${id}`,
             sessionLine: ({ prs }: { prs: string | number }) => `${prs} PRs vinculados`,
+            mergedCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'mesclado', plural: 'mesclados' })}`,
             openSession: ({ title }: { title: string | number }) => `Abrir ${title}`,
             judgement: "Custo e trabalho vinculado lado a lado; você decide o que valeu a pena.",
             outcomesCaption: ({ count }: { count: string | number }) => `${count} pull requests`,

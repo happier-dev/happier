@@ -20892,6 +20892,7 @@ const enUsage = {
       unlinkedTitle: "No linked outcome yet",
       sessionFallback: ({ id }: { id: string | number }) => `Session ${id}`,
       sessionLine: ({ prs }: { prs: string | number }) => `${prs} linked PRs`,
+      mergedCount: ({ count }: { count: string | number }) => `${count} merged`,
       openSession: ({ title }: { title: string | number }) => `Open ${title}`,
       judgement: "Cost and linked work, side by side; you decide what was worth it.",
       outcomesCaption: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'pull request' : 'pull requests'}`,

@@ -17427,6 +17427,7 @@ settingsSession: {
             unlinkedTitle: "Пока нет связанного результата",
             sessionFallback: ({ id }: { id: string | number }) => `Сессия ${id}`,
             sessionLine: ({ prs }: { prs: string | number }) => `${prs} ${plural({ count: Number(prs), one: 'связанный PR', few: 'связанных PR', many: 'связанных PR' })}`,
+            mergedCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), one: 'слит', few: 'слиты', many: 'слито' })}`,
             openSession: ({ title }: { title: string | number }) => `Открыть ${title}`,
             judgement: "Стоимость и связанная работа рядом; что того стоило — решать вам.",
             outcomesCaption: ({ count }: { count: string | number }) => `${count} pull request`,

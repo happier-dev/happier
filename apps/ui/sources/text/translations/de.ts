@@ -17625,6 +17625,7 @@ settingsSession: {
             unlinkedTitle: "Noch kein verknüpftes Ergebnis",
             sessionFallback: ({ id }: { id: string | number }) => `Sitzung ${id}`,
             sessionLine: ({ prs }: { prs: string | number }) => `${prs} verknüpfte PRs`,
+            mergedCount: ({ count }: { count: string | number }) => `${count} gemergt`,
             openSession: ({ title }: { title: string | number }) => `${title} öffnen`,
             judgement: "Kosten und verknüpfte Arbeit nebeneinander; du entscheidest, was es wert war.",
             outcomesCaption: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'Pull-Request' : 'Pull-Requests'}`,

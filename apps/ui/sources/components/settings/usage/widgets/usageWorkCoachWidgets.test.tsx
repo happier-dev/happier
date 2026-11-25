@@ -1815,6 +1815,21 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.findHostByTestId('value.open.s2')).not.toBeNull();
   });
 
+  it('labels the merged count in Session value\'s opened rows, said once aloud (acceptance r227 #71)', async () => {
+    const screen = await renderScreen(<WidgetPresentationProvider value={{ size: 'full',
+      footprint: { columns: 2, columnSpan: 2, rowSpan: 2, width: 'full', height: 'tall' },
+      geometry: { width: 700, height: 500 } }}>
+      <UsageSessionValueWidget {...props} id="usage_session_value" testID="value" />
+    </WidgetPresentationProvider>);
+    await screen.pressByTestIdAsync('value.scatter-values-toggle');
+    const row = screen.findHostByTestId('value.scatter-values-row-0');
+    const unit = t('usage.board.work.mergedCount', { count: 1 });
+    expect(screen.getTextContent()).toContain(unit);
+    const spoken = String(row?.props.accessibilityLabel ?? '');
+    expect(spoken).toContain(unit);
+    expect(spoken).not.toContain(t('usage.board.work.yMerged'));
+  });
+
   it('says the cost basis once, by the caption, and leaves Cost per PR, Session value and scatter amounts bare (acceptance r227 #70)', async () => {
     const phrase = usageCostKindPhrase('reported');
     const screen = await renderScreen(<WidgetPresentationProvider value={{ size: 'full',
