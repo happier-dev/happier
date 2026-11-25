@@ -116,6 +116,29 @@ describe('Machine current access (real SQLite)', () => {
             .toMatchObject({ kind: 'admitted', actorAccountId: requester.id, custodianAccountId: f.owner.id, role: 'manage' });
     });
 
+    it('selects the native Sync Stop carrier for the Use requester’s Worker Session', async () => {
+        const source = await fixture();
+        const worker = await fixture();
+        const outsider = await account();
+        await grant(source.owner.id, source.machine.id, worker.owner.id);
+        const actionId = 'workspace.sync.relationship.terminate';
+        const sessionActionOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1, caller: { kind: 'session',
+            sessionId: 'cmwnmxwc000i1oymc7mu36eff', starterDepth: 0, turnDepth: 0 }, sourceTurnId: 'worker-turn',
+            callerPermissionMode: null, requestId: '0b2a5c10-82d2-41f5-9ed1-d222b9f55c26' });
+        const select = (actorAccountId: string, carrier: 'select' | 'home_relay') => inTx(tx =>
+            resolveExternalActionExecutionMachineAdmissionInTx(tx, { actorAccountId, machineId: source.machine.id,
+                actionId, carrier, callerAuthority: 'account_automation', sessionActionOrigin,
+                sessionActionSource: { machineId: worker.machine.id, installationId: worker.machine.installationId! },
+                envelope: { v: 1, requestId: sessionActionOrigin.requestId,
+                    target: { kind: 'machine', machineId: source.machine.id },
+                    input: { relationshipId: 'committed-link', controllerMachineId: source.machine.id } },
+            }));
+        expect(await select(worker.owner.id, 'select')).toMatchObject({ kind: 'admitted', role: 'use',
+            actorAccountId: worker.owner.id, custodianAccountId: source.owner.id });
+        expect(await select(outsider.id, 'select')).toEqual({ kind: 'denied', code: 'access_denied' });
+        expect(await select(worker.owner.id, 'home_relay')).toEqual({ kind: 'denied', code: 'access_denied' });
+    });
+
     it('carries installed Session client Actions for a Use recipient without granting custodian RPC access', async () => {
         const f = await fixture();
         const requester = await account();

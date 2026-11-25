@@ -455,7 +455,8 @@ export async function resolveExternalActionExecutionMachineAdmissionInTx(
             || isOriginalAccountProjectAction(input.actionId)) return admission;
         const action = SignedRootActionIdSchema.safeParse(input.actionId);
         const spec = action.success ? getActionSpec(action.data) : null;
-        if (spec?.surfaces.rpc && spec.bindings?.rpcMethod) return admission;
+        if (spec?.bindings?.rpcMethod && (spec.surfaces.rpc
+            || spec.surfaces.agent && spec.bindings.rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TERMINATE)) return admission;
     }
     return isExternalActionHomeRelayAccountEligible({ accountId: input.actorAccountId,
         custodianAccountId: admission.custodianAccountId, sessionActionOrigin: origin })

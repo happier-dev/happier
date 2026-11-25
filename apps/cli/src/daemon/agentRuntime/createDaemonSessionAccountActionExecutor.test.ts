@@ -11,6 +11,9 @@ import { AgentRuntimeDaemonServiceRequestV1Schema, type AgentRuntimeDaemonServic
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createDaemonSessionAccountActionExecutor } from './createDaemonSessionAccountActionExecutor';
+import { createDaemonSessionAccountActionAuthorizationPreparer } from '../startup/createDaemonSessionAccountActionAuthorizationPreparer';
+import { createPlainProjectAccountRefRow, createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
+import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import nacl from 'tweetnacl';
 import { mintExternalActionExecutionAuthorization, projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
@@ -183,6 +186,63 @@ function createHarness(prepareExternalActionAuthorization?: Parameters<typeof cr
 }
 
 describe('daemon Session Account authority', () => {
+
+  it('asks Home to sign Agent Stop on the original source from its linked Worker', async () => {
+    const serverId = 'srv_agent_sync';
+    const serverHttpBaseUrl = 'https://agent-sync.test';
+    const machineId = 'worker';
+    const relationshipId = 'committed-link';
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'person', tokenEpoch: 0,
+      provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+    const { credentials, readAccountEncryptionMode } = plainSessionAdmission(token);
+    const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
+    vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({
+      version: 1, installationId: 'worker-install', createdAt: 1,
+      publicKey: Buffer.from(keys.publicKey).toString('base64url'),
+      privateKey: Buffer.from(keys.secretKey).toString('base64url'),
+    });
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(url).pathname;
+      if (path === '/v1/account/profile') return { status: 200, data: { id: 'person' } };
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      return { status: 200, data: { session: ownedSessionRecord({}, token, machineId) } };
+    });
+    const ref = (id: string) => createPlainProjectAccountRefRow({ id, machineId: id, serverId, rootPath: `/work/${id}`, createdAtMs: 1 });
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const key = { kind: 'relationship-graph' };
+    const rows = createProjectAccountRowsHttpBoundary([ref('source'), ref(machineId),
+      { key, revision: 1, content: { t: 'plain', v: { key, value: { relationships: [{
+        v: 1, relationshipId, controllerMachineId: 'source', alphaWorkspaceRefId: 'source', betaWorkspaceRefId: machineId,
+        mode: 'keep_synced', enabled: true, createdAtMs: 1, updatedAtMs: 2, committedAtMs: 2,
+        contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) },
+      }] } } } },
+    ]);
+    let mint: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse> | undefined;
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (url.endsWith('/execution-authorization')) {
+        mint = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+        return { status: 403, data: { error: 'access_denied' } };
+      }
+      return rows(url, body);
+    });
+    const execute = createDaemonSessionAccountActionExecutor({ serverId, serverHttpBaseUrl, machineId, token, credentials,
+      readAccountEncryptionMode,
+      prepareExternalActionAuthorization: createDaemonSessionAccountActionAuthorizationPreparer({
+        credentials, requesterRuntime: null, serverHttpBaseUrl, serverId, machineId,
+        resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: serverId, machineId }),
+        isRuntimeCurrent: () => true, isSessionCallerCurrent: async () => true, readTrackedSessionAttribution: () => undefined,
+      }),
+      createExecutor: () => { throw new Error('Home declined to sign the Stop'); },
+    });
+    const requested = await execute({ ...operation, surface: 'agent', actionId: 'workspace.sync.relationship.terminate',
+      input: { relationshipId, controllerMachineId: machineId } }, { sessionId: 'bob-session', isCurrent: async () => true });
+    expect(requested).toMatchObject({ ok: false });
+    expect(mint).toMatchObject({ machineId: 'source', sessionActionSource: { machineId }, envelope: {
+      target: { kind: 'machine', machineId: 'source' }, input: { relationshipId, controllerMachineId: 'source' },
+    } });
+  });
+
   it('returns the owning Voice client result for an admitted active Run without replacing its admission', async () => {
     const child: Operation = { ...operation, executionRun: { runId: 'voice-run', occurrenceId: 'voice-occurrence' } };
     const execute = createDaemonSessionAccountActionExecutor({

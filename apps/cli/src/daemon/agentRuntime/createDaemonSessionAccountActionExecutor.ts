@@ -10,7 +10,9 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isSessionActionRpcMethodV1, type SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
 import { readProjectExecutionOutputMachineAdmissionMethodV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
-import { ActionIdSchema, ACTION_ID_FAMILIES_V1, ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, ACTION_ID_FAMILIES_V1, ACTION_INVOKE_ACTION_ID_V1, isWorkspaceSyncRelationshipControlActionId, WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS } from '@happier-dev/protocol/actions/actionIds';
+import { WorkspaceSyncRelationshipTerminateActionInputV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { resolveWorkspaceSyncStopController } from '@/workspaces/sync/resolveWorkspaceSyncStopController';
 import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { readPluginActionExecutionReference } from '@/session/actions/createDaemonPluginActionExecutor';
@@ -436,6 +438,22 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     let external: Awaited<ReturnType<NonNullable<typeof params.prepareExternalActionAuthorization>>>;
     try {
       const credentials = params.credentials;
+      if (credentials && isWorkspaceSyncRelationshipControlActionId(operation.actionId)
+        && WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS[operation.actionId] === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TERMINATE) {
+        const stop = WorkspaceSyncRelationshipTerminateActionInputV1Schema.safeParse(operation.input);
+        if (!stop.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+        const nominatedMachineId = stop.data.controllerMachineId;
+        const serverIdentityId = readServerIdentityIdFromFeaturesSnapshot(await params.resolveServerFeaturesSnapshot?.());
+        const controllerMachineId = await readRequesterHomeWithinActionLifetime(() => resolveWorkspaceSyncStopController({
+          credentials, serverId: serverIdentityId ?? params.serverId, serverHttpBaseUrl: params.serverHttpBaseUrl,
+          relationshipId: stop.data.relationshipId, nominatedMachineId, signal: authority.signal,
+        }), authority.signal);
+        if (targetMachineId && targetMachineId !== nominatedMachineId && targetMachineId !== controllerMachineId) {
+          return refuse('external_authorization_binding_mismatch', 'target_unavailable');
+        }
+        operation = { ...operation, input: { ...stop.data, controllerMachineId } };
+        targetMachineId = controllerMachineId;
+      }
       const scmWorkspace = operation.actionId.startsWith('scm.') ? operation.scmWorkspace : undefined;
       const needsCallerWorkspace = operation.actionId === 'workflow.run.start' || operation.actionId === 'machines.command.run';
       const workflowTarget = scmWorkspace ? { kind: 'machine' as const,
