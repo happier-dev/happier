@@ -1,3 +1,4 @@
+import { resolveApprovalResultPublicationMachineIdV1 } from '@happier-dev/protocol/actions/executor/approvalOrigins';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -10,7 +11,7 @@ export function createOriginDaemonApprovalOutcomePublisher(input: Readonly<{
   serverUrl: string;
 }>): NonNullable<ActionExecutorDeps['approvalRequestOutcomePublication']> {
   return async ({ artifactId, request, context }) => {
-    const machineId = request.executionOriginV1.machineId?.trim();
+    const machineId = resolveApprovalResultPublicationMachineIdV1(request.executionOriginV1);
     if (!machineId) return null;
     const result = await callExactMachineRpc({ credentials: input.credentials, serverUrl: input.serverUrl,
       machineId, method: RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED,

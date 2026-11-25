@@ -438,7 +438,7 @@ import { resolveSubagentCommandStructuredSend } from '../messages/structured/sub
 import { ParticipantRecipientRoutingIdentityV1Schema } from '../messages/structured/participantMessageV1.js';
 import { ApprovalExecutionOriginV1Schema, StoredApprovalRequestSchema, isHistoricalPublishApprovalRequestV2, isSessionDiscussionApprovalPublicationV1, readApprovalRequesterDecisionV1, admitApprovalRequesterDecisionV1, resolveApprovalRequesterConfirmationV1, APPROVAL_REQUESTER_UNAVAILABLE_MESSAGE_V1, type ApprovalRequest, type ApprovalRequestV1, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
 import { projectApprovalExecutionFailureV2 } from '../approvals/approvalExecutionFailure.js';
-import { resolveApprovalRequestExecutionInput, settleApprovalRequestReplayInputs } from '../approvals/approvalRequestTransition.js';
+import { canReplayApprovalResultDeliveryV1, isApprovalResultRouteUnavailableV1, resolveApprovalRequestExecutionInput, settleApprovalRequestReplayInputs } from '../approvals/approvalRequestTransition.js';
 import { ProviderConnectionIdSchema } from '../providers/ids.js';
 import { BackendTargetKeySchema } from '../backends/targets/backendTargetRef.js';
 import { BackendTargetKeyV2Schema, buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
@@ -881,6 +881,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     return buildApprovalExecutionOriginV1({
       ...params,
       context: prepared ? { ...params.context, ...prepared } : params.context,
+      ...(prepared?.defaultSessionMachineId !== undefined
+        && (!prepared.defaultSessionMachineId || params.targetSessionId !== params.context.defaultSessionId)
+        ? { requesterSessionContext: params.context } : {}),
     });
   };
   const automaticApproval = createAutomaticApprovalContinuation(deps, writeApprovedDecision);
@@ -1570,7 +1573,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         // A signed effect receiver returns its receipt to the deciding Account;
         // that scoped root cannot authorize an unrelated Session input.
         if (context.externalActionExecutionAuthorization) return null;
-        if (request.status === 'approved' && !request.execution && isApprovalRequestExecutionApproved(request)) {
+        if ((request.status === 'open' && origin.requesterSessionMachineId)
+          || (request.status === 'approved' && !request.execution && isApprovalRequestExecutionApproved(request))) {
           // Accepted/blocking replays can still be waiting on another approval.
           // Only an execution acknowledgement warrants observing its receipt.
           if (!replayAcknowledgement?.ok || !readRecord(replayAcknowledgement.result).execution) return null;
@@ -1588,7 +1592,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           || (context.serverIdentityId ?? context.serverId) !== (origin.serverIdentityId ?? origin.serverId)) {
           return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
         }
-        if (request.delivery) return { delivery: request.delivery };
+        if (request.delivery && !(origin.requesterSessionMachineId && canReplayApprovalResultDeliveryV1(request.delivery))) {
+          return { delivery: request.delivery };
+        }
         const recordDelivery = async (delivery: SessionInputAdmissionResultV1) => {
           if (deps.approvalsUpdate) {
             try {
@@ -1605,7 +1611,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         try {
           publication = await deps.approvalRequestOutcomePublication?.({ artifactId, request, context });
         } catch (error) {
-          return await recordDelivery(projectThrownApprovalResultDeliveryV1(error, localId));
+          const failure = normalizeActionExecutorThrownError(error, 'approval.result.delivery');
+          return await recordDelivery(origin.requesterSessionMachineId && isApprovalResultRouteUnavailableV1(failure.errorCode)
+            ? projectApprovalResultDeliveryV1({ ok: false, ...failure }, localId)
+            : projectThrownApprovalResultDeliveryV1(error, localId));
         }
         if (publication != null) {
           const outcome = readApprovalReplayResult(publication);
@@ -8026,7 +8035,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...(data.narrowedInput === undefined ? {} : { narrowedInput: projectNativeJsonValueForTransport(data.narrowedInput) }),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
-          if (forwarded !== null) return forwarded;
+          if (forwarded !== null) {
+            if (!forwarded.ok || !hasDeferredApprovalSessionResult(existing)
+              || !existing.executionOriginV1.requesterSessionMachineId) return forwarded;
+            const settled = await settleApprovalExecutionPublication(artifactId, existing, ctx, forwarded);
+            if (settled && 'ok' in settled) return settled;
+            return withApprovalResultDeliveryV1(forwarded, settled?.delivery);
+          }
         }
         if (decision === 'approve' && existing.v === 2 && existing.status === 'open' && existing.automaticChecks) {
           const settled = await approveApprovalAutomaticChecks(artifactId, existing, ctx, {

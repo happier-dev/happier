@@ -76,7 +76,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** Public reads never spend or transport the private Artifact's replay authority. */
 function projectPublicApprovalExecutionOrigin(origin: ApprovalExecutionOriginV1 | StoredApprovalRequestV2['executionOriginV1']) {
   const { externalActionExecutionAuthorization: _authorization, externalActionInputSignature: _signature,
-    originalActionEnvelope: _envelope, ...metadata } = origin;
+    originalActionEnvelope: _envelope, requesterSessionMachineId: _requesterMachine, ...metadata } = origin;
   return metadata;
 }
 

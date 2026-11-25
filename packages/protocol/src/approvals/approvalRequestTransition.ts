@@ -3,6 +3,8 @@ import { ActionIdSchema } from '../actions/actionIds.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { ApprovalRequestUpdateSchema, ApprovalRequestV2Schema, isHistoricalPublishApprovalRequestV2, type ApprovalRequest, type ApprovalRequestV2, type CurrentApprovalRequest, type StoredApprovalRequestV2 } from './approvalRequestV1.js';
+import { RPC_ERROR_CODES } from '../rpc/errors.js';
+import type { SessionInputAdmissionResultV1 } from '../sessions/messages/sessionInputAdmission.js';
 import { actionAutomationTriggerKeyV1, isApprovalRequestExecutionApproved } from './approvalAutomaticChecks.js';
 export { createApprovalRequestArtifact, deriveApprovalRequestArtifactId, assertApprovalRequestCreationBinding, ApprovalRequestConflict } from './creation.js';
 
@@ -29,6 +31,17 @@ export { createApprovalRequestArtifact, deriveApprovalRequestArtifactId, assertA
  */
 
 type ApprovalRequestStatus = ApprovalRequest['status'];
+
+export function isApprovalResultRouteUnavailableV1(code: string | null | undefined): boolean {
+  return code === 'target_unavailable' || code === 'machine_offline' || code === 'server_unreachable'
+    || code === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE || code === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE;
+}
+
+export function canReplayApprovalResultDeliveryV1(delivery: SessionInputAdmissionResultV1): boolean {
+  const cause = delivery.status === 'rejected' ? delivery.failureCause : undefined;
+  return Boolean(cause && 'errorCode' in cause && cause.phase === 'approval.result.delivery'
+    && isApprovalResultRouteUnavailableV1(cause.errorCode));
+}
 
 const SETTLED_STATUSES: ReadonlySet<ApprovalRequestStatus> = new Set([
   'rejected',
@@ -209,7 +222,9 @@ export function decideApprovalRequestTransition(
   if (!durablyEqual(existing.storageRetryResults, next.storageRetryResults) && !isStorageRetryReceipt) return SUBJECT_MISMATCH;
   const isDeliveryReceipt = existing.v === 2 && next.v === 2
     && isSettled(existing.status) && next.status === existing.status
-    && existing.delivery === undefined && next.delivery !== undefined
+    && next.delivery !== undefined
+    && (existing.delivery === undefined
+      || existing.executionOriginV1.requesterSessionMachineId !== undefined && canReplayApprovalResultDeliveryV1(existing.delivery))
     && durablyEqual(existing.execution, next.execution)
     && durablyEqual(existing.automaticChecks, next.automaticChecks)
     && durablyEqual(existing.storageRetryResults, next.storageRetryResults)

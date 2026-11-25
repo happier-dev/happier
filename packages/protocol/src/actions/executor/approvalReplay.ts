@@ -74,6 +74,12 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
         && (hasDeferredApprovalSessionResult(request) ||
           (request.status !== 'rejected' && request.status !== 'canceled'
             && (isApprovalRequestExecutionApproved(request) || request.v === 2 && request.automaticChecks?.phase === 'refused')))) {
+        const requesterMachineId = hasDeferredApprovalSessionResult(request)
+          ? request.executionOriginV1.requesterSessionMachineId : undefined;
+        if (requesterMachineId && machineIngress?.machineAdmission
+          && machineIngress.machineAdmission.machineId !== requesterMachineId) {
+          return { ok: false, effectAttempted: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
+        }
         return await deps.publishApprovalDecisionResult(artifactId, request, {
           ...(args.callerAuthority ? { authority: args.callerAuthority } : {}),
           ...(args.currentAccount ? { runtimeAccountId: args.currentAccount.accountId, serverId: args.currentAccount.serverId,

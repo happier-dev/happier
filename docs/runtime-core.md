@@ -4157,6 +4157,12 @@ Deferred approval-result inputs retain the originating approval's admitted cause
 through protected host input admission, so a resumed Agent turn keeps its original
 requester. The deciding person's current input, focus and permission level do not
 replace that cause or grant permission to the resumed turn.
+For new deferred Session approvals, the deciding App or standalone CLI sends
+the terminal result to the recorded asking Session host. The effect retains its
+own placement. The receiving daemon uses the original Account's existing custody
+and the stable input identity `approval-result:<artifactId>`. An unavailable
+publication route records a typed delivery refusal. Replaying the same decision
+can deliver after the host returns, and subsequent replays return the saved receipt.
 Spawn first-input handoffs preserve the invoking Action's admitted cause, including
 for plugin and automation callers. Original UI, voice and CLI inputs requiring
 Machine admission retain the authenticated Account requester before content

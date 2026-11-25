@@ -986,6 +986,11 @@ delivery receipt separately from execution. `approval.request.get` exposes it as
 `request.delivery`. Earlier records can omit this field. Strict 0.3 development
 readers require matching source for records carrying it. The released 0.2
 ApprovalRequest V1 has no V2 execution origin for this delivery path.
+Fresh 0.3 development requests retain the asking Session's admitted Machine in
+the optional private `executionOriginV1.requesterSessionMachineId` field.
+The origin stays closed and the approval read DTO omits this placement.
+Earlier V2 rows without it use their recorded execution Machine for daemon
+publication. The current development clients and daemon read the same shape.
 
 Execution-run Action completion observations and review, plan and narration terminal
 values retain optional `runtimeIssueV1`. External-linked takeover operation errors

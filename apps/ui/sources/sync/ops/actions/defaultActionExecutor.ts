@@ -111,6 +111,7 @@ import {
 import { createActionExecutor, prepareVoiceNamedModelSpawn, readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { completeSpawnActionResult } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { projectSessionReferenceFailure, resolveServerIdForSession } from '@happier-dev/protocol/actions/executor/sessionScope';
+import { resolveApprovalResultPublicationMachineIdV1 } from '@happier-dev/protocol/actions/executor/approvalOrigins';
 import { readActionFailureEnvelope, readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { createUiTargetActionApprovalReplay } from './targetActionApprovalReplay';
 import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -3517,10 +3518,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
 
     approvalRequestOutcomePublication: async ({ artifactId, request, context }) => {
       const origin = request.executionOriginV1;
-      const machineId = origin.machineId?.trim();
+      const machineId = resolveApprovalResultPublicationMachineIdV1(origin);
       if (!machineId || !accountContext || accountContext.credentialAuthorityKind !== 'account'
         || context.externalActionCredential || context.rpcSessionAuthorization) return null;
-      // Signed proposals owned by the app need no daemon replay to deliver their result.
+      // Signed app proposals deliver through the Session input owner directly.
       if (origin.externalActionExecutionAuthorization && resolveApprovalExecutor(request).kind === 'app') return null;
       return withAccountLifetime(context.signal, signal => replayApprovedApprovalRequestAtExactDaemon({
         artifactId,

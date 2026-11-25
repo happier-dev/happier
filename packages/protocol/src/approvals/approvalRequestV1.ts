@@ -278,6 +278,8 @@ export const ApprovalExecutionOriginV1Schema = lazyZodSchema(() => z.strictObjec
   /** Immutable qualified targets selected before confirmation; never re-expand a selector on replay. */
   sessionTargetsV1: z.optional(ActionResolvedSessionTargetsV1Schema),
   machineId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  /** Session host captured at admission for deferred result publication. */
+  requesterSessionMachineId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   runId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   runOccurrenceId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   /** Original admitted permission inputs; current runtime policy is rechecked before replay. */
@@ -292,6 +294,9 @@ export const ApprovalExecutionOriginV1Schema = lazyZodSchema(() => z.strictObjec
   actionId: ActionIdSchema,
   requestId: z.string().check(z.trim(), z.minLength(1)),
 }).check(z.superRefine((value, ctx) => {
+  if (value.requesterSessionMachineId !== undefined && value.caller.kind !== 'session') {
+    ctx.addIssue({ code: 'custom', path: ['requesterSessionMachineId'], message: 'Result placement requires a Session caller' });
+  }
   if (value.hostChild && value.caller.kind !== 'host') {
     ctx.addIssue({ code: 'custom', path: ['hostChild'], message: 'Only a host caller opens a host child' });
   }

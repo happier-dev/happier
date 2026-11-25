@@ -24,7 +24,7 @@ import { ApprovalAutomaticChecksV1Schema, ApprovalAutomaticSelectedTriggerV1Sche
 /** Matches projectApprovalRequestForPublicRead; never accepts private replay custody. */
 const ApprovalPublicExecutionOriginV1Schema = lazyZodSchema(() => {
   const { externalActionExecutionAuthorization: _authorization, externalActionInputSignature: _signature,
-    originalActionEnvelope: _envelope, ...shape } = ApprovalExecutionOriginV1Schema.shape;
+    originalActionEnvelope: _envelope, requesterSessionMachineId: _requesterMachine, ...shape } = ApprovalExecutionOriginV1Schema.shape;
   return z.strictObject(shape);
 });
 

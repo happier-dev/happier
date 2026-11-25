@@ -295,3 +295,170 @@ it.each(([
   }
   });
 });
+
+it.each(['same', 'cross', 'offline', 'legacy', 'approve'] as const)('delivers a deferred approval result (%s)', async placement => {
+  const { socketRpcCodec } = await import('@happier-dev/sync-client');
+  const { buildApprovalExecutionOriginV1 } = await import('@happier-dev/protocol/actions/executor/approvalOrigins');
+  const { RPC_METHODS } = await import('@happier-dev/protocol/rpc/methods');
+  const { registerApprovalRpcHandlers } = await import('@/rpc/handlers/approvals');
+  const { createRequesterCurrentnessSocketHarness } = await import('@/testkit/backends/requesterCurrentnessSocketHarness');
+  const { createOriginDaemonApprovalOutcomePublisher } = await import('./publishOutcome');
+  const accountId = 'requester', serverId = 'srv_delivery_repro', sessionId = 'asking-session';
+  const sourceMachine = 'machine-x', targetMachine = placement === 'same' ? sourceMachine : 'machine-y';
+  const actionId = 'deployments.templates.instantiate';
+  const actionArgs = { mode: 'apply', serverId, machineId: targetMachine, projectSourceId: 'source',
+    templateRef: { sourceId: 'apps', itemId: 'web', version: '1',
+      ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+    environment: { kind: 'create', requestKey: 'install', name: 'Web', controllerMachineId: targetMachine,
+      protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers' },
+    target: { kind: 'new', installationId: 'installed' }, destination: { kind: 'stored' }, bindings: [],
+    domainBindings: [{ templateDomainId: 'web', hostname: 'web.example.test' }] };
+  const caller = { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 } as const;
+  const target = { kind: 'machine', machineId: targetMachine } as const;
+  const requestId = 'original-fixture';
+  const envelope = { v: 1, requestId, target, input: actionArgs } as const;
+  const approving = placement === 'approve';
+  const { signExternalActionApprovalInputV1, computeExternalActionRequestEnvelopeDigestV1 } = await import('@happier-dev/protocol/actions/externalActionExecutionAuthorization');
+  const { projectDeploymentPreparationAdmissionV1 } = await import('@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1');
+  const { default: nacl } = await import('tweetnacl');
+  const installation = nacl.sign.keyPair();
+  const executionOriginV1 = buildApprovalExecutionOriginV1({ actionId, input: actionArgs, targetSessionId: null,
+    context: { surface: 'agent', authority: 'account_automation', serverId, serverIdentityId: serverId,
+      runtimeAccountId: accountId, defaultSessionId: sessionId,
+      defaultSessionMachineId: approving ? targetMachine : sourceMachine,
+      actionRequestId: requestId, actionCaller: caller,
+      ...(approving ? {
+        externalActionTarget: target, originalActionEnvelope: envelope, callerPermissionMode: null,
+        sessionInputSource: { via: 'action', sourceSessionId: sessionId, sourceTurnId: 'source-turn' },
+        externalActionExecutionAuthorization: { v: 1, token: 'fixture-approval-origin', binding: {
+          serverIdentityId: serverId, accountId, authentication: { kind: 'account', tokenEpoch: 0 },
+          accountEncryptionMode: 'plain', machineId: targetMachine, actionId, requestId, target,
+          custodianAccountId: 'target-owner', installationId: actionArgs.target.installationId,
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+          deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, actionArgs),
+          sessionActionOrigin: { v: 1, caller, sourceTurnId: 'source-turn', callerPermissionMode: null, requestId },
+          sessionActionSource: { machineId: sourceMachine, installationId: 'source-installation' },
+        } },
+        signExternalActionApprovalInput: ({ authorization, input, actionId, target }) =>
+          signExternalActionApprovalInputV1({ authorizationToken: authorization.token, input, actionId, target,
+            privateKey: installation.secretKey }),
+      } : {}) } });
+  expect(executionOriginV1).toMatchObject({ machineId: targetMachine, caller: { sessionId } });
+  expect(executionOriginV1?.requesterSessionMachineId).toBe(sourceMachine);
+  let online = placement !== 'offline';
+  const outcomeStatus = approving ? 'executed' : 'rejected';
+  if (placement === 'legacy' && executionOriginV1) Reflect.deleteProperty(executionOriginV1, 'requesterSessionMachineId');
+  const { decideApprovalRequestTransition, settleApprovalRequestReplayInputs } = await import('@happier-dev/protocol/approvals/approvalRequestTransition');
+  let stored = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'agent', sessionId }, requestedSurface: 'agent', approval: { flow: 'deferred', result: 'required' },
+    actionId, actionArgs, summary: 'Fixture approval', executionOriginV1 });
+  const credentials = { token: 'fixture', encryption: null, credentialProvenance: 'stored_session' as const };
+  const transport = await createRequesterCurrentnessSocketHarness();
+  onTestFinished(() => transport.close());
+  vi.spyOn(axios, 'get').mockImplementation(async url => {
+    if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+    const machineId = url.endsWith(sourceMachine) ? sourceMachine : targetMachine;
+    return { status: 200, data: { machine: { id: machineId, kind: 'persistent', active: true,
+      storageMode: 'plain', access: { custodian: { accountId: machineId === sourceMachine ? accountId : 'target-owner',
+        displayName: 'Fixture' }, role: machineId === sourceMachine ? 'manage' : 'use', resourceMode: 'plain', accessState: 'ready' } } } };
+  });
+  const inputs: unknown[] = [];
+  const store = { approvalsGet: async () => stored,
+    approvalsUpdate: async ({ request, expectedStatus }: { request: unknown; expectedStatus?: typeof stored.status }) => {
+      const next = ApprovalRequestV2Schema.parse(request);
+      const transition = decideApprovalRequestTransition(stored, next, { expectedStatus });
+      if (!transition.ok) return transition;
+      stored = next;
+      return { ok: true } as const;
+    } };
+  const receiver = createActionExecutor({ ...store, sessionSendMessage: async ({ sessionId, localId, message }) => {
+    inputs.push({ sessionId, localId, outcome: JSON.parse(message) });
+    return { status: 'accepted', localId };
+  } });
+  let receiverAccount = { accountId, serverId, serverIdentityId: serverId };
+  const handlers = new Map<string, Parameters<Parameters<typeof registerApprovalRpcHandlers>[0]['rpcHandlerManager']['registerHandler']>[1]>();
+  registerApprovalRpcHandlers({ actionExecutor: { ...receiver, replayApprovedApprovalRequest: (args, ingress) =>
+    receiver.replayApprovedApprovalRequest({ ...args, currentAccount: receiverAccount }, ingress) },
+    rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } } });
+  const destinations: string[] = [];
+  const replay = handlers.get(RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED)!;
+  const receive = (machineId: string, custodianAccountId: string, params: unknown) =>
+    replay(params, { callerAuthority: 'present_user', signal: new AbortController().signal,
+      machineAdmission: { actorAccountId: accountId, custodianAccountId, machineId, installationId: 'installation',
+        role: custodianAccountId === accountId ? 'manage' : 'use', encryptionMode: 'plain' },
+      verifyMachineAdmissionCurrent: async () => true });
+  transport.server.on('connection', socket => socket.on('rpc-call', async (
+    packet: { method: string; params: unknown }, acknowledge: (value: unknown) => void,
+  ) => {
+    const codec = { mode: 'plain' } as const;
+    const decoded = await socketRpcCodec.decodeRequestParams(codec, packet.params, packet.method);
+    const machineId = packet.method.split(':')[0]!;
+    destinations.push(machineId);
+    if (!online && machineId === sourceMachine) {
+      acknowledge({ ok: false, error: 'RPC target unavailable', errorCode: 'target_unavailable' });
+      return;
+    }
+    const outcome = await receive(machineId, machineId === sourceMachine ? accountId : 'target-owner', decoded.params);
+    acknowledge({ ok: true, result: await socketRpcCodec.encodeResponse(codec, outcome, decoded.callId) });
+  }));
+  const artifactId = 'approval-fixture';
+  const effectDestinations: string[] = [];
+  const decider = createActionExecutor({ ...store, approvalRequestOutcomePublication: createOriginDaemonApprovalOutcomePublisher({
+    credentials, serverUrl: transport.serverUrl,
+  }), ...(approving ? {
+    // The remote effect boundary returns the terminal execution acknowledgement.
+    // Its signed effect cannot author input for the unrelated asking Session.
+    approvalRequestApprovedReplay: async ({ request }) => {
+      effectDestinations.push(request.executionOriginV1!.machineId!);
+      const execution = { executedAtMs: 3, ok: true, result: { ok: true } } as const;
+      stored = ApprovalRequestV2Schema.parse({ ...settleApprovalRequestReplayInputs(stored), status: 'executed', updatedAtMs: 3,
+        decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' }, execution });
+      return { ok: true as const, result: { ok: true, status: 'executed', execution } };
+    },
+  } : {}) });
+  const decision = { artifactId, decision: approving ? 'approve' : 'reject' };
+  const context = { surface: approving ? 'ui' : 'cli', authority: 'present_user',
+    runtimeAccountId: accountId, serverId, serverIdentityId: serverId } as const;
+  const decide = () => decider.execute('approval.request.decide', decision, context);
+  const first = await decide();
+  if (placement === 'legacy') {
+    expect(first).toMatchObject({ ok: true, result: { status: 'rejected', delivery: {
+      status: 'rejected', failureCause: { errorCode: 'requester_account_material_unavailable' },
+    } } });
+    expect(destinations).toEqual([targetMachine]);
+    expect(inputs).toEqual([]);
+    return;
+  }
+  if (placement === 'offline') {
+    expect(first).toMatchObject({ ok: true, result: { status: 'rejected', delivery: {
+      status: 'rejected', failureCause: { errorCode: 'target_unavailable', phase: 'approval.result.delivery' },
+    } } });
+    expect(stored.delivery).toMatchObject({ status: 'rejected' });
+    expect(destinations).toEqual([sourceMachine]);
+    expect(inputs).toEqual([]);
+    online = true;
+  }
+  const result = placement === 'offline' ? await decide() : first;
+  expect(result).toMatchObject({ ok: true, result: {
+    status: outcomeStatus, delivery: { status: 'accepted', localId: 'approval-result:approval-fixture' },
+  } });
+  expect(stored.delivery).toMatchObject({ status: 'accepted' });
+  const savedDecision = stored.decision;
+  expect(await decide()).toEqual(result);
+  expect(stored.decision).toEqual(savedDecision);
+  expect(destinations).toEqual(placement === 'offline' ? [sourceMachine, sourceMachine] : [sourceMachine]);
+  expect(effectDestinations).toEqual(approving ? [targetMachine] : []);
+  if (placement === 'cross') {
+    await expect(receive(targetMachine, 'target-owner', { artifactId }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'requester_account_material_unavailable' });
+    await expect(receive('machine-z', accountId, { artifactId }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'approval_context_unavailable' });
+    receiverAccount = { ...receiverAccount, serverIdentityId: 'srv_other_home' };
+    await expect(receive(sourceMachine, accountId, { artifactId }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'approval_context_unavailable' });
+    receiverAccount = { ...receiverAccount, serverIdentityId: serverId, accountId: 'other-account' };
+    await expect(receive(sourceMachine, accountId, { artifactId }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'approval_context_unavailable' });
+  }
+  expect(inputs).toMatchObject([{ sessionId, localId: 'approval-result:approval-fixture', outcome: { status: outcomeStatus } }]);
+});

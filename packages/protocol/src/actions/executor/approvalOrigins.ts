@@ -172,6 +172,8 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
   admittedInput?: unknown;
   context: ActionExecutorContext;
   targetSessionId: string | null;
+  /** Caller context before preparation of a distinct effect target. */
+  requesterSessionContext?: Pick<ActionExecutorContext, 'defaultSessionId' | 'defaultSessionMachineId'>;
   requesterConfirmation?: ApprovalRequesterConfirmationV1;
   /** The executor's private host-child dispatch admitted this invocation. */
   hostChild?: boolean;
@@ -200,6 +202,12 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
   const accountBinding = externalAuthorization && 'authentication' in externalAuthorization.binding
     ? externalAuthorization.binding : null;
   const sessionActionOrigin = accountBinding?.sessionActionOrigin;
+  const requesterSession = params.requesterSessionContext ?? params.context;
+  const requesterSessionMachineId = caller.kind !== 'session' ? ''
+    : externalAuthorization
+      ? normalizeId(sessionActionOrigin?.caller.sessionId === caller.sessionId ? accountBinding?.sessionActionSource?.machineId : undefined)
+      : normalizeId(requesterSession.defaultSessionId) === caller.sessionId
+        ? normalizeId(requesterSession.defaultSessionMachineId) : '';
   if (sessionActionOrigin && params.context.workspaceWrites !== sessionActionOrigin.workspaceWrites) return null;
   const surface = externalAuthorization
     ? accountBinding
@@ -356,6 +364,7 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
       ? { sessionListAccess: params.context.sessionListAccess }
       : {}),
     ...(machineId ? { machineId } : {}),
+    ...(requesterSessionMachineId ? { requesterSessionMachineId } : {}),
     ...(runId ? { runId } : {}),
     ...(normalizeId(params.context.runtimeRunOccurrenceId)
       ? { runOccurrenceId: normalizeId(params.context.runtimeRunOccurrenceId) }
@@ -378,6 +387,11 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
   if (!parsed.success || params.requesterConfirmation
     && !isApprovalRequesterConfirmationBoundToOriginV1(params.requesterConfirmation, parsed.data)) return null;
   return parsed.data;
+}
+
+/** Older approval Artifacts retain their original delivery route. */
+export function resolveApprovalResultPublicationMachineIdV1(origin: ApprovalExecutionOriginV1): string | undefined {
+  return origin.requesterSessionMachineId ?? origin.machineId;
 }
 
 export function isApprovalActionId(actionId: ActionId): boolean {

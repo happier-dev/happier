@@ -1130,7 +1130,7 @@ describe('createDefaultActionExecutor approvals', () => {
         { surface: 'voice', decision: 'reject', status: 'rejected' },
         { surface: 'ui', decision: 'cancel', status: 'canceled' },
         { surface: 'voice', decision: 'cancel', status: 'canceled' },
-    ] as const)('publishes a $status deferred Override from $surface through the originating Machine', async ({ surface, decision, status }) => {
+    ] as const)('publishes a $status deferred Override from $surface through the asking Session Machine', async ({ surface, decision, status }) => {
         const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
         const artifactId = 'deferred-override-result';
         const machineId = 'requester-machine';
@@ -1143,7 +1143,8 @@ describe('createDefaultActionExecutor approvals', () => {
         await seedApproval(artifactId, ApprovalRequestV2Schema.parse({
             ...original, createdBy: { surface: 'agent', sessionId: 's1' }, requestedSurface: 'agent',
             approval: { flow: 'deferred', result: 'optional' },
-            executionOriginV1: { ...original.executionOriginV1, surface: 'agent', machineId, accountId: 'account-a',
+            executionOriginV1: { ...original.executionOriginV1, surface: 'agent', machineId: 'effect-machine',
+                requesterSessionMachineId: machineId, accountId: 'account-a',
                 serverIdentityId: 'srv_approval_home', caller: { kind: 'session', sessionId: 's1', starterDepth: 0, turnDepth: 0 } },
             automaticChecks: { phase: 'override', humanApprovalRequired: false, selectionStatus: 'ready', subjects: [],
                 selected: [selected], consents: [], notices: [], runs: [run],
