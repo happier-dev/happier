@@ -228,3 +228,65 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
         loadMore, status: request === null ? 'ready' as const : status, retry,
         retryable: unavailableAccount === undefined || unavailableAccount.retry !== undefined, acknowledge };
 }
+
+type TriggerSetsByIdRead = Readonly<{
+    lifetime: ServerAccountScopeLifetime | null;
+    sets: ReadonlyMap<string, WorkflowTriggerSetV1 | null>;
+    /** The change revision each id's answer covers. */
+    readAt: ReadonlyMap<string, number>;
+}>;
+const NO_SETS_BY_ID: ReadonlyMap<string, WorkflowTriggerSetV1 | null> = new Map();
+const NO_READS: ReadonlyMap<string, number> = new Map();
+
+/**
+ * The trigger sets a surface names by id (a Run's inline Workflow): one exact `{ automationId }` read per
+ * shown id, never a list page, so a set beyond the first page still answers (HUNT3-1125). An id the Home
+ * can't read settles as null. A Home change that affects triggers reads the shown ids again, keeping the
+ * last answers on screen meanwhile.
+ */
+export function useWorkflowTriggerSetsById(automationIds: readonly string[], options: Readonly<{
+    demanded: boolean;
+    accountLifetime?: ServerAccountScopeLifetime | null;
+}>): ReadonlyMap<string, WorkflowTriggerSetV1 | null> {
+    const activeLifetime = useActiveServerAccountScopeLifetime();
+    const lifetime = options.accountLifetime === undefined ? activeLifetime : options.accountLifetime;
+    const idsKey = [...new Set(automationIds)].sort().join('\n');
+    const [state, setState] = React.useState<TriggerSetsByIdRead>({ lifetime, sets: NO_SETS_BY_ID, readAt: NO_READS });
+    const [revision, setRevision] = React.useState(0);
+    const pending = React.useRef(new Set<string>());
+    React.useEffect(() => !lifetime ? undefined : subscribeHomeAccountChange(event => {
+        if (!areServerProfileIdentifiersEquivalent(event.serverId, lifetime.scope.serverId)) return;
+        if (event.workflowTriggersAffect === false) return;
+        setRevision(current => current + 1);
+    }), [lifetime]);
+    const held = state.lifetime === lifetime ? state : null;
+    React.useEffect(() => {
+        if (!options.demanded || !lifetime?.isCurrent() || idsKey === '') return;
+        const missing = idsKey.split('\n').filter(id => held?.readAt.get(id) !== revision && !pending.current.has(`${revision}\n${id}`));
+        if (missing.length === 0) return;
+        for (const id of missing) pending.current.add(`${revision}\n${id}`);
+        const controller = new AbortController();
+        const retirement = lifetime.onRetire(() => controller.abort());
+        void Promise.allSettled(missing.map(automationId => listWorkflowTriggerPage({ automationId },
+            { signal: controller.signal, accountLifetime: lifetime }))).then(results => {
+            retirement.dispose();
+            for (const id of missing) pending.current.delete(`${revision}\n${id}`);
+            if (controller.signal.aborted || !lifetime.isCurrent()) return;
+            setState(previous => {
+                const base = previous.lifetime === lifetime ? previous : { lifetime, sets: NO_SETS_BY_ID, readAt: NO_READS };
+                const sets = new Map(base.sets);
+                const readAt = new Map(base.readAt);
+                results.forEach((result, index) => {
+                    const automationId = missing[index]!;
+                    const set = result.status === 'fulfilled'
+                        ? result.value.sets.find(candidate => candidate.automationId === automationId) ?? null : null;
+                    const prior = base.sets.get(automationId);
+                    sets.set(automationId, set === null ? null : retainDeep(prior ?? undefined, set));
+                    readAt.set(automationId, revision);
+                });
+                return { lifetime, sets, readAt };
+            });
+        });
+    }, [held, idsKey, lifetime, options.demanded, revision]);
+    return held?.sets ?? NO_SETS_BY_ID;
+}

@@ -28,7 +28,7 @@ import { resolveWorkStatusTone, type WorkStatusPresentation } from '@/components
 import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '../presentation/workflowRunDisplayName';
 import { useWorkflowReferenceTitles } from '../presentation/workflowReferenceOptions';
-import { useWorkflowTriggerSets } from '../triggers/useWorkflowTriggerSets';
+import { useWorkflowTriggerSetsById } from '../triggers/useWorkflowTriggerSets';
 import { useWorkflowSourcePeople } from '../useWorkflowSourcePeople';
 import { resolveEditedByLabel } from '../run/workflowEditedBy';
 import { describeAccountWorkflowLibraryRecord } from './workflowLibraryCollection';
@@ -38,7 +38,6 @@ import { readCollectionPluginDetails, useCollectionListExtensions } from '@/comp
 
 const runDraft = createCollectionSpaceDraftStore<'workflowRun'>();
 const RUN_ICON = { kind: 'icon', name: 'list' } as const;
-const ACCOUNT_INLINE = { scope: 'account_inline' } as const;
 type GroupLabel = Readonly<{ key: string; title: string }>;
 const DAY_MS = 86_400_000;
 export type WorkflowRunCollectionRow = Readonly<{
@@ -77,15 +76,17 @@ export function useWorkflowRunCollection(focused: boolean) {
     const savedDefinitionIds = React.useMemo(() => runs.rows.flatMap(({ summary }) =>
         summary?.sourceArtifactId ? [summary.sourceArtifactId] : []), [runs.rows]);
     const savedWorkflowTitle = useWorkflowReferenceTitles(savedDefinitionIds, focused, runs.accountLifetime);
-    const hasInlineWorkflow = runs.rows.some(run => !run.summary?.sourceArtifactId
-        && (run.summary?.origin.kind === 'automation' || run.automation !== null));
-    const { sets } = useWorkflowTriggerSets(ACCOUNT_INLINE, undefined, {
-        demanded: focused && hasInlineWorkflow,
-    });
-    const inlineWorkflowTitles = React.useMemo(() => new Map(sets.map(set => {
-        const record = describeAccountWorkflowLibraryRecord(set);
-        return [set.automationId, record.sourceGone ? null : record.name] as const;
-    })), [language, sets]);
+    // An inline Workflow's name comes from its own exact read, not the Account's whole inline inventory (HUNT3-1125).
+    const inlineWorkflowIds = React.useMemo(() => runs.rows.flatMap(({ summary, automation }) => {
+        if (summary?.sourceArtifactId) return [];
+        const automationId = summary?.origin.kind === 'automation' ? summary.origin.automationId : automation?.automationId;
+        return automationId ? [automationId] : [];
+    }), [runs.rows]);
+    const inlineSets = useWorkflowTriggerSetsById(inlineWorkflowIds, { demanded: focused });
+    const inlineWorkflowTitles = React.useMemo(() => new Map([...inlineSets].map(([automationId, set]) => {
+        const record = set === null ? null : describeAccountWorkflowLibraryRecord(set);
+        return [automationId, record === null || record.sourceGone ? null : record.name] as const;
+    })), [language, inlineSets]);
     const sources = React.useMemo(() => focused ? runs.rows.flatMap(({ summary }) => [
         summary?.sourceSavedBy,
         summary?.startedBy === 'user' ? { kind: 'person' as const, accountId: summary.ownerAccountId } : null,

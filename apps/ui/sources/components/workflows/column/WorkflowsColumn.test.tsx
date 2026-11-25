@@ -1128,6 +1128,66 @@ describe('WorkflowsColumn', () => {
         expect(await action.execute(get, {}, context)).toMatchObject({ ok: false, errorCode: 'client_surface_unavailable' });
     });
 
+    // HUNT3-1125 pattern B: an inline Workflow's Run reads that Workflow's name by exact id, never the inline page.
+    it('names inline-Workflow Runs from one exact read per Workflow, including one beyond the first inline page', async () => {
+        const [{ AutomationDefinitionDetailSchema }, { AutomationStoredWorkflowDefinitionRecipeV2Schema },
+            { createWorkflowDefinitionFixture }] = await Promise.all([import('@happier-dev/protocol/automations/automationApiV3'),
+            import('@happier-dev/protocol/automations/automationWorkflowRecipeV2'), import('@/dev/testkit/fixtures/workflowRunFixtures')]);
+        const inlineDefinition = createWorkflowDefinitionFixture({
+            defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } },
+            blocks: [{ kind: 'step', id: 'first', document: { text: 'Summarize the day', references: [], attachments: [] },
+                input: [], result: { kind: 'text' } }],
+        });
+        const named = [['inline-alpha', 'Alpha digest'], ['inline-bravo', 'Bravo digest'], ['inline-charlie', 'Charlie digest']] as const;
+        const details = named.map(([id, name]) => AutomationDefinitionDetailSchema.parse({ id, name, description: null, enabled: true,
+            workflowDefinitionId: null, scopeSessionId: null, targetType: null, existingSessionId: null,
+            templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 5,
+            assignments: [{ machineId: 'm1', enabled: true, priority: 0, updatedAt: 1 }],
+            executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: 1,
+                workflow: { t: 'plain', v: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' }, inlineDefinition } },
+                triggerEvidence: null }),
+            triggers: [{ id: `${id}-daily`, revision: 1, enabled: true, createdAt: 1, updatedAt: 1, kind: 'schedule',
+                triggerDefinitionEnvelope: null, nextRunAt: null,
+                schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } }],
+        }));
+        const automationRequests: string[] = [];
+        automationDefinitionResponse = async (url, init) => {
+            automationRequests.push(`${init?.method ?? 'GET'} ${url.pathname}`);
+            // The inline page holds the two newest; the older Charlie is only on the next page.
+            if (url.pathname === '/v3/automations/query' && init?.method === 'POST') {
+                const older = (JSON.parse(String(init.body)) as { cursor?: string }).cursor === 'older-inline';
+                return Response.json(older ? { automations: details.slice(2), nextCursor: null }
+                    : { automations: details.slice(0, 2), nextCursor: 'older-inline' });
+            }
+            const detail = details.find(candidate => url.pathname === `/v3/automations/${candidate.id}`);
+            return detail ? Response.json(detail) : undefined;
+        };
+        const runRows = named.map(([automationId]) => ({ ...waiting, id: `run-${automationId}`, sourceArtifactId: null,
+            origin: { kind: 'automation' as const, automationId }, automationScopeSessionId: null }));
+        executeMock.mockImplementation(async (actionId: string) => {
+            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [] } };
+            if (actionId === 'workflow.run.list') return { ok: true, result: { runs: runRows, metadataByRunId: Object.fromEntries(
+                runRows.map(run => [run.id, { kind: 'available', value: { title: `Run of ${run.id}` } }])) } };
+            return { ok: false, error: 'unexpected', errorCode: 'unexpected' };
+        });
+        const { settings } = storage.getState();
+        storage.setState({ settings: { ...settings, collectionDisplayPreferencesV1: {
+            ...settings.collectionDisplayPreferencesV1, workflowRun: { groupBy: 'workflow' },
+        } } });
+        routeState.pathname = '/workflows/runs';
+        const screen = await renderScreen(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+            <WorkflowsRunsRoute />
+        </AppShellColumnContext.Provider>, { wrapper: TestAuth });
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Run of run-inline-charlie'));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Charlie digest'));
+        expect(screen.getTextContent()).toContain('Alpha digest');
+        expect(screen.getTextContent()).toContain('Bravo digest');
+        // Exactly one exact read per visible inline Workflow, and no inline page read for names.
+        expect(automationRequests.filter(request => request === 'POST /v3/automations/query')).toEqual([]);
+        expect([...automationRequests].sort()).toEqual(named.map(([id]) => `GET /v3/automations/${id}`).sort());
+        await screen.unmount();
+    });
+
     it('groups Runs by saved Workflow title or a distinct label for each unavailable Workflow', async () => {
         const { createPlainArtifactHttpFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
         const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
