@@ -7,9 +7,8 @@ import { HappierPressable } from '../interaction/Pressable.js';
 import type { HappierLayoutChangeEvent } from '../portableTypes.js';
 import { HappierText } from '../text/Text.js';
 import { useOptionalHappierUiLocalization } from '../../environment/context.js';
-import { HappierDataRows, HappierDataTable } from './DataRows.js';
-import { formatHappierDataValue, resolveHappierDataDomainFraction, resolveHappierDataTableColumns } from './dataModel.js';
-import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
+import { HappierDataRows } from './DataRows.js';
+import { formatHappierDataValue, resolveHappierDataDomainFraction } from './dataModel.js';
 import { HAPPIER_DATA_METRICS, useHappierDataTextStyles } from './dataText.js';
 import { ChartDatum, ChartMark } from './ChartDatum.js';
 import { HappierDataValuesToggle } from './ValuesToggle.js';
@@ -82,9 +81,10 @@ export function OutcomeScatter(props: OutcomeScatterProps) {
     const exact = format(value);
     return visible.includes(exact) ? visible : `${visible} (${exact})`;
   };
+  // A bare amount speaks the caption's basis once, in the x name its readings are built from (review J-B51).
+  const spokenX = props.basis ? `${props.xLabel}, ${props.basis}` : props.xLabel;
   const datumOf = (point: OutcomeScatterPoint) => ({ label: point.label,
-    value: `${props.xLabel}: ${exactX(point.x)} · ${props.yLabel}: ${format(point.y)}`,
-    subtitle: [point.annotation, props.basis].filter(Boolean).join(' · '), color: point.color });
+    value: `${spokenX}: ${exactX(point.x)} · ${props.yLabel}: ${format(point.y)}`, subtitle: point.annotation, color: point.color });
   const describe = (point: OutcomeScatterPoint) => [point.label, `${props.xLabel}: ${formatX(point.x)}`, `${props.yLabel}: ${format(point.y)}`,
     point.annotation, props.basis].filter(Boolean).join(', ');
   const complete = props.points.filter((point) => point.x !== null && point.y !== null && Number.isFinite(point.x) && Number.isFinite(point.y));
@@ -112,21 +112,6 @@ export function OutcomeScatter(props: OutcomeScatterProps) {
   const captionLine = text.caption.lineHeight ?? props.theme.typography.caption.lineHeight;
   const guides = (props.xGuides ?? []).filter((guide) => Number.isFinite(guide.value));
   const radius = HAPPIER_DATA_METRICS.lineStrokePx * 2;
-  // Every column is named, the annotations too (acceptance r227 #71: an unheaded column read as a stray number).
-  const annotated = props.points.some((point) => point.annotation);
-  const columns = [{ label: props.label }, { label: props.xLabel }, { label: props.yLabel },
-    ...(annotated ? [{ label: props.annotationLabel ?? valuesLabel }] : [])];
-  const tableRows = props.points.map((point) => [point.label, exactX(point.x), format(point.y), ...(annotated ? [point.annotation ?? ''] : [])]);
-  // A bare amount speaks the caption's basis once (review J-B51): in the rows through the x column's spoken name, in the
-  // table through each row's spoken reading, whose headers stay the visible words.
-  const spokenX = props.basis ? `${props.xLabel}, ${props.basis}` : props.xLabel;
-  const tableDatums = props.basis ? props.points.map((point) => ({ label: point.label, value: [`${spokenX}: ${exactX(point.x)}`,
-    `${props.yLabel}: ${format(point.y)}`, ...(point.annotation ? [`${columns[3]!.label}: ${point.annotation}`] : [])].join(', ') })) : undefined;
-  // The open table keeps every fact visible (review J-B52): where its columns cannot all fit, the open body is the rows
-  // form, whose facts line wraps, instead of a table that would drop a column.
-  const tableFits = width === null || resolveHappierDataTableColumns({ columns, rows: tableRows, locale: text.locale,
-    characterWidth: (text.body.fontSize ?? props.theme.typography.body.fontSize) * HAPPIER_DATA_METRICS.averageCharacterEm,
-    availableWidth: width - 2 * HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx, gap: HAPPIER_DATA_METRICS.columnGapPx }).length === columns.length;
 
   return <View testID={props.testID} onLayout={(event: HappierLayoutChangeEvent) => setMeasuredWidth(event.nativeEvent.layout.width)}
     style={{ gap: HAPPIER_DATA_METRICS.blockGapPx }}>
@@ -197,18 +182,18 @@ export function OutcomeScatter(props: OutcomeScatterProps) {
     </View> : null}
     {selected ? <HappierText testID={props.testID ? `${props.testID}-readout` : undefined} style={text.captionStrong}
       accessibilityLiveRegion="polite" tabularNumbers>{describe(selected)}</HappierText> : null}
-    {/* The plot is the body: its exact table waits behind Details, as in StackedSeriesChart and IntervalTimeline,
-        instead of listing every point again at rest. Without a plot the rows are the body. */}
+    {/* The plot is the body: its value rows wait behind Details, as in StackedSeriesChart and IntervalTimeline, instead
+        of listing every point again at rest; without a plot they are the body. Rows never drop a column (review J-B52), and
+        every column is named, the annotation too (acceptance r227 #71: an unheaded column read as a stray number). */}
     {showPlot ? <HappierDataValuesToggle theme={props.theme} testID={props.testID ? `${props.testID}-values-toggle` : undefined}
       label={valuesExpanded ? collapseLabel : valuesLabel} expanded={valuesExpanded}
       accessibilityLabel={`${props.label} · ${valuesExpanded ? collapseLabel : valuesLabel}`}
       onPress={() => setValuesExpanded((value) => !value)} style={{ alignSelf: 'flex-end' }} /> : null}
-    {showPlot && valuesExpanded && tableFits ? <HappierDataTable theme={props.theme} label={props.label}
-      testID={props.testID ? `${props.testID}-values` : undefined} columns={columns} rows={tableRows} rowDatums={tableDatums} /> : null}
-    {showPlot && !(valuesExpanded && !tableFits) ? null : <HappierDataRows theme={props.theme} label={props.label} testID={props.testID ? `${props.testID}-values` : undefined}
+    {showPlot && !valuesExpanded ? null : <HappierDataRows theme={props.theme} label={props.label} testID={props.testID ? `${props.testID}-values` : undefined}
       density={props.size === 'inline' || props.size === 'tile' ? 'compact' : 'comfortable'}
       rowIds={props.points.map((point) => point.id)}
-      columns={[columns[0]!, { label: spokenX }, ...columns.slice(2), ...(annotated ? [] : [{ label: '' }])]}
+      columns={[{ label: props.label }, { label: spokenX }, { label: props.yLabel },
+        { label: props.points.some((point) => point.annotation) ? props.annotationLabel ?? valuesLabel : '' }]}
       renderRow={(_row, visual, index) => {
         const point = props.points[index]!;
         return formatX(point.x).includes(format(point.x)) ? visual

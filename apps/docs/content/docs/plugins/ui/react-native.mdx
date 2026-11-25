@@ -1227,15 +1227,14 @@ infer durations from point events.
 
 `OutcomeScatter` plots caller-supplied `points` (`x`, `y`, an optional `color`,
 `annotation` and `labelled` name) against `xLabel` and `yLabel`. When the plot
-fits, it is the body at rest; the exact values sit behind the same Details
-control the other charts use, as a table with one header per column. When the
-card is too narrow for every column, the open values use the rows form instead,
-so no value is hidden. Each amount is read aloud with `basis` once. Name the
-annotation column with `annotationLabel`, and localize the control with
-`valuesLabel` and `valuesCollapseLabel`. When the plot cannot fit (`size="tile"`
-or `"inline"`, a narrow width, or a domain with one value), the value rows are
-shown instead. `formatX` sets the x wording on the axis, rows and guides;
-`basis` is said once, as the caption above the plot.
+fits, it is the body at rest; the value rows sit behind the same Details control
+the other charts use. Each row keeps every value as text at any width, read
+with its column's name; name the annotation column with `annotationLabel`, and
+localize the control with `valuesLabel` and `valuesCollapseLabel`. When the plot
+cannot fit (`size="tile"` or `"inline"`, a narrow width, or a domain with one
+value), the value rows are the body. `formatX` sets the x wording on the axis,
+rows and guides; `basis` is said once, as the caption above the plot, and each
+amount is read aloud with it once.
 
 ### CapacityBar
 

@@ -77,9 +77,11 @@ describe('neutral intervals and outcomes', () => {
       expect(toggle.tabIndex).toBe(0);
       act(() => toggle.click());
       expect(query(mount.container, 'value-values-toggle')!.textContent).toBe('Hide values');
-      const headers = [...mount.container.querySelectorAll<HTMLElement>('[data-testid^="value-values-header-"]')].map(node => node.textContent);
-      expect(headers).toEqual(['Session value', 'Cost', 'Merged PRs', 'Pull request']);
-      expect(query(mount.container, 'value-values-row-0')!.getAttribute('aria-label')).toContain('Merged PRs: 0');
+      // Every value is read with its column's name, the annotation's too.
+      const spoken = query(mount.container, 'value-values-row-0')!.getAttribute('aria-label');
+      expect(spoken).toContain('Cost: 4');
+      expect(spoken).toContain('Merged PRs: 0');
+      expect(spoken).toContain('Pull request: #2 · open');
     } finally { mount.unmount(); }
   });
   it('speaks the caption\'s basis once with each bare amount, opened and without a plot (review J-B51)', async () => {
@@ -100,13 +102,34 @@ describe('neutral intervals and outcomes', () => {
       expect(fallback.getAttribute('aria-label')!.split(basis)).toHaveLength(2);
     } finally { mount.unmount(); }
   });
-  it('keeps every fact visible when Exact values opens in a narrow scatter, by Enter and by Space (review J-B52)', () => {
-    const annotation = 'No merged pull request is linked to this session yet';
-    const mount = mountThroughReactNativeWeb(<OutcomeScatter theme={SURFACE_CONTEXT_THEME_FIXTURE} testID="narrow" label="Session value"
-      xLabel="Session cost" yLabel="Merged PRs" annotationLabel="Linked pull requests and their state" valuesLabel="Exact values"
-      valuesCollapseLabel="Hide values" geometry={{ width: 180, height: 320 }}
-      points={[{ id: 'a', label: 'Audit', x: 1, y: 0 }, { id: 'b', label: 'Docs', x: 9, y: 2 },
-        { id: 'c', label: 'Review', x: 5, y: null, annotation }]} />);
+  it('names a rounded amount\'s focusable datum with the basis once, plotted and without a plot (review J-B51)', async () => {
+    const basis = 'API-equivalent, not your bill · USD';
+    // The host's trigger is named from the datum, as the app's ChartTooltip names it.
+    const render = (width: number) => <ChartInteractionProvider renderDatum={(datum, visual, testID) =>
+      <span data-testid={testID} tabIndex={0} aria-label={datum.accessibilityLabel ?? `${datum.label}: ${datum.value}`}>{visual}</span>}>
+      <OutcomeScatter theme={SURFACE_CONTEXT_THEME_FIXTURE} testID="rounded" label="Session value" xLabel="Session cost" yLabel="Merged PRs"
+        basis={basis} formatX={value => `$${value.toFixed(2)}`} geometry={{ width, height: 320 }}
+        points={[{ id: 'a', label: 'Audit', x: 4.123456, y: 0 }, { id: 'b', label: 'Docs', x: 9.5, y: 2 }]} />
+    </ChartInteractionProvider>;
+    const mount = mountThroughReactNativeWeb(render(40));
+    try {
+      expect(query(mount.container, 'rounded-plot')).toBeNull();
+      const bare = query(mount.container, 'rounded-row-datum-a')!;
+      expect(bare.tabIndex).toBe(0);
+      expect(bare.getAttribute('aria-label')).toContain('4.123456');
+      expect(bare.getAttribute('aria-label')!.split(basis)).toHaveLength(2);
+      expect(bare.textContent).not.toContain(basis);
+      await mount.render(render(500));
+      act(() => query(mount.container, 'rounded-values-toggle')!.click());
+      const plotted = query(mount.container, 'rounded-row-datum-a')!;
+      expect(plotted.getAttribute('aria-label')!.split(basis)).toHaveLength(2);
+    } finally { mount.unmount(); }
+  });
+  it('keeps every fact visible as text when Exact values opens, at every width, by Enter and by Space (review J-B52)', async () => {
+    const render = (width: number, annotation: string, annotationLabel: string) => <OutcomeScatter theme={SURFACE_CONTEXT_THEME_FIXTURE}
+      testID="narrow" label="Session value" xLabel="Cost" yLabel="PRs" annotationLabel={annotationLabel} valuesLabel="Exact values"
+      valuesCollapseLabel="Hide values" geometry={{ width, height: 320 }}
+      points={[{ id: 'a', label: 'A', x: 1, y: 0 }, { id: 'b', label: 'B', x: 9, y: 2 }, { id: 'c', label: 'C', x: 5, y: null, annotation }]} />;
     const press = (key: string) => act(() => {
       const toggle = query(mount.container, 'narrow-values-toggle')!;
       toggle.focus();
@@ -117,20 +140,25 @@ describe('neutral intervals and outcomes', () => {
       expect(toggle.tagName).toBe('BUTTON');
       toggle.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     });
+    const shown = (text: string) => [...mount.container.querySelectorAll<HTMLElement>('[data-testid="narrow-values"] *')]
+      .filter(node => node.children.length === 0 && node.textContent?.includes(text)).length;
+    const long = 'No merged pull request is linked to this session yet';
+    const heading = 'Linked pull requests, their review state and the branch they merged into';
+    const mount = mountThroughReactNativeWeb(render(180, long, heading));
     try {
       expect(query(mount.container, 'narrow-plot')).not.toBeNull();
+      expect(query(mount.container, 'narrow-values')).toBeNull();
       press('Enter');
-      const values = query(mount.container, 'narrow-values')!;
-      // The table measures its room; a narrow card must still show the annotation as text.
-      const handler = (values as unknown as { __reactLayoutHandler?: (event: { nativeEvent: { layout: { x: number; y: number; width: number; height: number } } }) => void }).__reactLayoutHandler;
-      if (handler) act(() => handler({ nativeEvent: { layout: { x: 0, y: 0, width: 180, height: 120 } } }));
-      const shown = [...mount.container.querySelectorAll<HTMLElement>('[data-testid^="narrow-values"] *')]
-        .filter(node => node.children.length === 0 && node.textContent?.includes(annotation));
-      expect(shown.length).toBeGreaterThan(0);
+      expect(shown(long)).toBeGreaterThan(0);
       press(' ');
       expect(query(mount.container, 'narrow-values')).toBeNull();
       press(' ');
       expect(query(mount.container, 'narrow-values')).not.toBeNull();
+      // Short values beside a long heading, at widths around where a measured table would start to drop it.
+      for (const width of [180, 240, 300, 360, 420, 520, 700]) {
+        await mount.render(render(width, 'PR #5 · open', heading));
+        expect.soft(shown('PR #5 · open'), String(width)).toBeGreaterThan(0);
+      }
     } finally { mount.unmount(); }
   });
   it('names a caller-chosen scatter point beside its mark and draws a supplied reference value at its exact position', () => {
