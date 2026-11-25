@@ -2323,14 +2323,14 @@ describe('Work view when Work links are only partly read (USAGE-UI-WORK-R5)', ()
   ])('describes an unread Machine as unreachable ($cause)', async ({ cause, sourceCode }) => {
     const accounting = [{ query: tokensQuery, status: 'available' as const, value: slice.accounting! }];
     const sources = await collectUsageWorkSources({
-      queries: [tokensQuery], accounting, assertCurrent: () => {},
+      queries: [tokensQuery], accounting, assertCurrent: () => {}, now: () => 1000,
       resolveSession: async sessionId => sessionId === 's1' ? { machineId: 'reachable', cwd: '/repo' } : { errorCode: cause },
       readMachine: async () => ({ sessions: [{ sessionId: 's1', status: 'partial', pullRequestsRead: true,
         evidence: [evidence('s1', 't1', 2493)] }] }),
     });
     const result = resolveUsagePageAggregation({ queries: [tokensQuery], accounting, work: sources }, bundledUsageModelPriceCatalog).results[0]!;
     expect(result.sources.find(source => source.source === 'work')).toEqual({
-      source: 'work', status: 'partial', unreadSessions: { machine_unavailable: 1 },
+      source: 'work', status: 'partial', asOfMs: 1000, unreadSessions: { machine_unavailable: 1 },
       ...(sourceCode ? { errorCode: sourceCode } : {}),
     });
     expect(usageWorkLinksNotice(result).cause).toBe(
