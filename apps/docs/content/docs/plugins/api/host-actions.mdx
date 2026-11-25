@@ -173,7 +173,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `email` (text, required): Email
 
 ## `account.encryption.automationTemplates.recover`
@@ -247,7 +247,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (json, required): V
+- `v` (number): V
 - `kind` (json, required): Kind
 - `expectedCredentialRevision` (json, required): Expected credential revision
 - `currentPassword` (json): Current password
@@ -268,7 +268,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (json, required): V
+- `v` (number): V
 - `kind` (json, required): Kind
 - `email` (json, required): Email
 - `targetCredential` (json, required): Target credential
@@ -288,7 +288,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (json, required): V
+- `v` (number): V
 - `kind` (json, required): Kind
 - `expectedCredentialRevision` (json, required): Expected credential revision
 - `currentPassword` (json): Current password
@@ -420,7 +420,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `query` (json, required): Query
 - `layout` (json, required): Layout
 - `appearance` (json, required): Appearance
-- `intent` (text, required): Intent
+- `intent` (text): Intent
 
 ## `account.public_profile.refresh`
 
@@ -766,9 +766,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `actionId` (text, required): Action id
 - `audience` (text, required): Audience
-- `session` (json): Session — Optional &#123;sessionId&#125;: the Session whose own rows to read or change, instead of Account settings.
 - `profiles` (boolean): Approval profiles
 - `scope` (json): Scope
+- `session` (json): Session
 
 ## `actions.policy.reset`
 
@@ -784,8 +784,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `actionId` (text, required): Action id
 - `audience` (text, required): Audience
-- `session` (json): Session — Optional &#123;sessionId&#125;: the Session whose own rows to read or change, instead of Account settings.
 - `scope` (json): Scope
+- `session` (json): Session
 
 ## `actions.policy.set`
 
@@ -801,11 +801,11 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `actionId` (text, required): Action id
 - `audience` (text): Audience
-- `session` (json): Session — Optional &#123;sessionId&#125;: the Session whose own rows to read or change, instead of Account settings.
 - `mode` (text): Audience policy
 - `change` (json): Policy change
 - `profileChange` (json): Approval profile change
 - `scope` (json): Scope
+- `session` (json): Session
 - `sessionConsentsMove` (json): Session consents move
 
 ## `agents.acp.backends.delete`
@@ -1982,7 +1982,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2021,7 +2021,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2045,7 +2045,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2069,7 +2069,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2093,7 +2093,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2117,7 +2117,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2141,7 +2141,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2165,7 +2165,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2189,7 +2189,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2213,7 +2213,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2237,7 +2237,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2261,7 +2261,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2285,7 +2285,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2309,7 +2309,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2333,7 +2333,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2357,7 +2357,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2407,7 +2407,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2431,7 +2431,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2455,7 +2455,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2479,7 +2479,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2503,7 +2503,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2527,7 +2527,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2551,7 +2551,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2575,7 +2575,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2599,7 +2599,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2623,7 +2623,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `automationRequestId` (text, required): Automation request id
 - `browserSessionId` (text, required): Browser session id
 - `viewId` (text, required): View id
@@ -2881,7 +2881,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `commandId` (text, required): Request
 - `browserSessionId` (text, required): Browser session
 - `viewId` (text, required): Browser page
-- `kind` (text, required): Kind
+- `kind` (text): Kind
 
 ## `browser.control.takeControl`
 
@@ -2898,7 +2898,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `commandId` (text, required): Request
 - `browserSessionId` (text, required): Browser session
 - `viewId` (text, required): Browser page
-- `kind` (text, required): Kind
+- `kind` (text): Kind
 
 ## `browser.diagnostics.clear`
 
@@ -2931,11 +2931,11 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `navigationGeneration` (integer, required): Observed navigation
 - `tier` (select, required): Tier
 - `browserSessionId` (text, required): Browser session
-- `v` (number, required): V
+- `v` (number): V
 - `pickerRequestId` (text, required): Picker request id
-- `action` (text, required): Action
+- `action` (text): Action
 - `point` (json): Point
-- `diagnosticsInteractionEnabled` (boolean, required): Diagnostics interaction enabled
+- `diagnosticsInteractionEnabled` (boolean): Diagnostics interaction enabled
 - `clientId` (text): Client id
 
 ## `browser.diagnostics.elementPicker.start`
@@ -2954,11 +2954,11 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `navigationGeneration` (integer, required): Observed navigation
 - `tier` (select, required): Tier
 - `browserSessionId` (text, required): Browser session
-- `v` (number, required): V
+- `v` (number): V
 - `pickerRequestId` (text, required): Picker request id
-- `action` (text, required): Action
+- `action` (text): Action
 - `point` (json): Point
-- `diagnosticsInteractionEnabled` (boolean, required): Diagnostics interaction enabled
+- `diagnosticsInteractionEnabled` (boolean): Diagnostics interaction enabled
 - `clientId` (text): Client id
 
 ## `browser.diagnostics.eval`
@@ -2977,12 +2977,12 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `navigationGeneration` (integer, required): Observed navigation
 - `tier` (select, required): Tier
 - `browserSessionId` (text, required): Browser session
-- `v` (number, required): V
+- `v` (number): V
 - `evalRequestId` (text, required): Eval request id
 - `expression` (text, required): Expression
 - `action` (text): Action
 - `objectGroupId` (text, required): Object group id
-- `diagnosticsInteractionEnabled` (boolean, required): Diagnostics interaction enabled
+- `diagnosticsInteractionEnabled` (boolean): Diagnostics interaction enabled
 - `clientId` (text): Client id
 
 ## `browser.diagnostics.getProperties`
@@ -3001,11 +3001,11 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `navigationGeneration` (integer, required): Observed navigation
 - `tier` (select, required): Tier
 - `browserSessionId` (text, required): Browser session
-- `v` (number, required): V
+- `v` (number): V
 - `propertyRequestId` (text, required): Property request id
 - `objectId` (text, required): Object id
 - `objectGroupId` (text, required): Object group id
-- `diagnosticsInteractionEnabled` (boolean, required): Diagnostics interaction enabled
+- `diagnosticsInteractionEnabled` (boolean): Diagnostics interaction enabled
 - `clientId` (text): Client id
 
 ## `browser.diagnostics.pause`
@@ -3039,10 +3039,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `navigationGeneration` (integer, required): Observed navigation
 - `tier` (select, required): Tier
 - `browserSessionId` (text, required): Browser session
-- `v` (number, required): V
+- `v` (number): V
 - `releaseRequestId` (text, required): Release request id
 - `objectGroupId` (text, required): Object group id
-- `diagnosticsInteractionEnabled` (boolean, required): Diagnostics interaction enabled
+- `diagnosticsInteractionEnabled` (boolean): Diagnostics interaction enabled
 - `clientId` (text): Client id
 
 ## `browser.diagnostics.resume`
@@ -3235,7 +3235,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `commandId` (text, required): Request
 - `browserSessionId` (text, required): Browser session
 - `viewId` (text, required): Browser page
-- `kind` (text, required): Kind
+- `kind` (text): Kind
 
 ## `browser.goForward`
 
@@ -3252,7 +3252,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `commandId` (text, required): Request
 - `browserSessionId` (text, required): Browser session
 - `viewId` (text, required): Browser page
-- `kind` (text, required): Kind
+- `kind` (text): Kind
 
 ## `browser.navigate`
 
@@ -3271,7 +3271,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `viewId` (text, required): Browser page
 - `url` (url, required): URL
 - `navigationIntent` (select): Navigation
-- `kind` (text, required): Kind
+- `kind` (text): Kind
 
 ## `browser.profile.create`
 
@@ -3363,7 +3363,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `target.kind` (select): Page type
 - `target.url` (url): URL
 - `target.machineId` (text): Machine
-- `kind` (text, required): Kind
+- `kind` (text): Kind
 - `target.targetId` (json, required): Target id
 - `target.display` (json): Display
 - `target.sessionId` (json): Session id
@@ -3529,7 +3529,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `commandId` (text, required): Request
 - `browserSessionId` (text, required): Browser session
 - `viewId` (text, required): Browser page
-- `kind` (text, required): Kind
+- `kind` (text): Kind
 
 ## `browser.sandbox.install`
 
@@ -3560,7 +3560,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `commandId` (text, required): Request
 - `browserSessionId` (text, required): Browser session
 - `viewId` (text, required): Browser page
-- `kind` (text, required): Kind
+- `kind` (text): Kind
 
 ## `browser.target.set`
 
@@ -3582,7 +3582,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `target.kind` (select): Page type
 - `target.url` (url): URL
 - `target.machineId` (text): Machine
-- `kind` (text, required): Kind
+- `kind` (text): Kind
 - `target.targetId` (json, required): Target id
 - `target.display` (json): Display
 - `target.sessionId` (json): Session id
@@ -3609,7 +3609,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `commandId` (text, required): Request
 - `browserSessionId` (text, required): Browser session
 - `viewId` (text, required): Browser page
-- `kind` (text, required): Kind
+- `kind` (text): Kind
 
 ## `browser.view.focus`
 
@@ -3626,7 +3626,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `commandId` (text, required): Request
 - `browserSessionId` (text, required): Browser session
 - `viewId` (text, required): Browser page
-- `kind` (text, required): Kind
+- `kind` (text): Kind
 
 ## `browser.view.list`
 
@@ -3665,7 +3665,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `target.kind` (select): Page type
 - `target.url` (url): URL
 - `target.machineId` (text): Machine
-- `kind` (text, required): Kind
+- `kind` (text): Kind
 - `target.targetId` (json, required): Target id
 - `target.display` (json): Display
 - `target.sessionId` (json): Session id
@@ -3729,7 +3729,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `viewId` (text, required): Browser page
 - `emulation.kind` (select): Page size
 - `emulation.presetId` (select): Device
-- `kind` (text, required): Kind
+- `kind` (text): Kind
 
 ## `browser.workspace.open`
 
@@ -4268,7 +4268,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `resourceKind` (json, required): Resource kind
+- `resourceKind` (text): Resource kind
 - `resourceId` (json): Resource id
 - `operation` (json, required): Operation
 - `spaceId` (json): Space id
@@ -6847,7 +6847,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `platform` (select, required): Platform
 - `deviceId` (text, required): Device id
-- `operation` (text, required): Operation
+- `operation` (text): Operation
 - `identifier` (text, required): Identifier
 
 ## `devices.simulator.accessibility.snapshot`
@@ -6864,7 +6864,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `platform` (select, required): Platform
 - `deviceId` (text, required): Device id
-- `operation` (text, required): Operation
+- `operation` (text): Operation
 
 ## `devices.simulator.app.launch`
 
@@ -6880,7 +6880,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `platform` (select, required): Platform
 - `deviceId` (text, required): Device id
-- `operation` (text, required): Operation
+- `operation` (text): Operation
 - `appId` (text, required): App id
 
 ## `devices.simulator.app.terminate`
@@ -6897,7 +6897,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `platform` (select, required): Platform
 - `deviceId` (text, required): Device id
-- `operation` (text, required): Operation
+- `operation` (text): Operation
 - `appId` (text, required): App id
 
 ## `devices.simulator.appearance.set`
@@ -6914,7 +6914,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `platform` (select, required): Platform
 - `deviceId` (text, required): Device id
-- `operation` (text, required): Operation
+- `operation` (text): Operation
 - `appearance` (select, required): Appearance
 
 ## `devices.simulator.device.boot`
@@ -6931,7 +6931,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `platform` (select, required): Platform
 - `deviceId` (text, required): Device id
-- `operation` (text, required): Operation
+- `operation` (text): Operation
 
 ## `devices.simulator.device.powerOff`
 
@@ -6947,7 +6947,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `platform` (select, required): Platform
 - `deviceId` (text, required): Device id
-- `operation` (text, required): Operation
+- `operation` (text): Operation
 
 ## `devices.simulator.hardware.button`
 
@@ -6963,7 +6963,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `platform` (select, required): Platform
 - `deviceId` (text, required): Device id
-- `operation` (text, required): Operation
+- `operation` (text): Operation
 - `button` (select, required): Button
 
 ## `devices.simulator.input.button`
@@ -7222,7 +7222,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `platform` (select, required): Platform
 - `deviceId` (text, required): Device id
-- `operation` (text, required): Operation
+- `operation` (text): Operation
 
 ## `devices.simulator.location.set`
 
@@ -7238,7 +7238,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `platform` (select, required): Platform
 - `deviceId` (text, required): Device id
-- `operation` (text, required): Operation
+- `operation` (text): Operation
 - `latitude` (number, required): Latitude
 - `longitude` (number, required): Longitude
 
@@ -7256,7 +7256,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `platform` (select, required): Platform
 - `deviceId` (text, required): Device id
-- `operation` (text, required): Operation
+- `operation` (text): Operation
 - `appId` (text, required): App id
 - `permission` (text, required): Permission
 - `value` (select, required): Value
@@ -7273,9 +7273,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `platform` (text, required): Platform
+- `platform` (text): Platform
 - `deviceId` (text, required): Device id
-- `operation` (text, required): Operation
+- `operation` (text): Operation
 - `appId` (text, required): App id
 - `payload` (json, required): Payload
 
@@ -7293,7 +7293,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `platform` (select, required): Platform
 - `deviceId` (text, required): Device id
-- `operation` (text, required): Operation
+- `operation` (text): Operation
 - `orientation` (select, required): Orientation
 
 ## `devices.simulator.screenshot.capture`
@@ -7310,7 +7310,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `platform` (select, required): Platform
 - `deviceId` (text, required): Device id
-- `operation` (text, required): Operation
+- `operation` (text): Operation
 - `sessionId` (text, required): Session id
 
 ## `devices.simulator.sideband.request`
@@ -7427,7 +7427,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `platform` (select, required): Platform
 - `deviceId` (text, required): Device id
-- `operation` (text, required): Operation
+- `operation` (text): Operation
 - `sessionId` (text, required): Session id
 
 ## `devices.simulator.textSize.set`
@@ -7444,7 +7444,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `platform` (select, required): Platform
 - `deviceId` (text, required): Device id
-- `operation` (text, required): Operation
+- `operation` (text): Operation
 - `size` (text, required): Size
 
 ## `devices.simulator.url.open`
@@ -7461,7 +7461,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `platform` (select, required): Platform
 - `deviceId` (text, required): Device id
-- `operation` (text, required): Operation
+- `operation` (text): Operation
 - `url` (text, required): Url
 
 ## `diagnostics.daemons.check`
@@ -8828,7 +8828,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `providerInstanceId` (text, required): Provider instance id
 - `externalReference` (json, required): External reference
 - `settings` (json, required): Settings
@@ -8845,7 +8845,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `connectionId` (text, required): Connection id
 - `expectedRevision` (integer, required): Expected revision
 
@@ -8861,7 +8861,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `connectionId` (text, required): Connection id
 - `expectedRevision` (integer, required): Expected revision
 
@@ -8877,7 +8877,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 
 ## `home.identity.connections.remove`
 
@@ -8891,7 +8891,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `connectionId` (text, required): Connection id
 - `expectedRevision` (integer, required): Expected revision
 
@@ -8907,7 +8907,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `connectionId` (text, required): Connection id
 - `expectedRevision` (integer, required): Expected revision
 
@@ -8923,7 +8923,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `connectionId` (text, required): Connection id
 - `expectedRevision` (integer, required): Expected revision
 - `settings` (json, required): Settings
@@ -8940,7 +8940,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `connectionId` (text, required): Connection id
 - `resultHandle` (text, required): Result handle
 
@@ -8956,7 +8956,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `connectionId` (text, required): Connection id
 - `expectedRevision` (integer, required): Expected revision
 
@@ -8972,9 +8972,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `connectionId` (text, required): Connection id
-- `intent` (text, required): Intent
+- `intent` (text): Intent
 
 ## `home.identity.workos.connection.create`
 
@@ -8988,7 +8988,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `displayName` (text, required): Display name
 
 ## `home.identity.workos.connection.set`
@@ -9003,7 +9003,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `connectionId` (text, required): Connection id
 - `expectedRevision` (integer, required): Expected revision
 - `workosConnectionId` (text, required): Workos connection id
@@ -9020,7 +9020,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `connectionId` (text, required): Connection id
 - `expectedRevision` (integer, required): Expected revision
 
@@ -9699,7 +9699,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `profile` (json, required): Profile
-- `expectedRevision` (text, required): Expected revision
+- `expectedRevision` (text): Expected revision
 
 ## `launch_profiles.delete`
 
@@ -12045,7 +12045,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `machines.resources.policy.set`
 
-**Change resource settings** — Changes a machine’s alerts, guard, monitoring and cleanup settings. Monitoring’s read interval applies only while someone watches Live or Overview; otherwise the machine reads every 15 s while a summary is visible and once a minute when nothing is. If they changed meanwhile, you see the current ones first.
+**Change resource settings** — Changes a machine’s alerts, guard, monitoring and cleanup settings. Monitoring’s read interval applies only while someone watches Live or Overview; otherwise the machine reads once a minute. If they changed meanwhile, you see the current ones first.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -13197,7 +13197,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `t` (text, required): T
+- `t` (text): T
 - `machineId` (text, required): Machine id
 - `directory` (text, required): Directory
 - `serverId` (text, required): Server id
@@ -13380,7 +13380,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `source` (json): Native transcript source
 - `sourceItemId` (text): Native message id
 - `cursor` (text): Native page cursor
-- `v` (json): V
+- `v` (number): V
 
 ## `memory.list`
 
@@ -13453,7 +13453,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `machineId` (text, required): Machine id — Machine running the daemon memory index.
 - `query.query` (text, required): Query — What to search for.
 - `query.mode` (select, required): Mode — Which index to search.
-- `query.v` (number, required): V
+- `query.v` (number): V
 - `query.scope` (json, required): Scope
 - `query.corpora` (multiselect): Corpora
 - `query.eligibleSessionIds` (text_list): Eligible session ids
@@ -14727,7 +14727,6 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `locator` (text, required): Plugin folder or package
-- `machineId` (text): Machine
 - `outPath` (text): Archive output path
 - `sdkRegistryOrigin` (url): SDK registry
 
@@ -14866,7 +14865,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `machineId` (text): Machine
 - `ui` (text): UI mode
 - `template` (text): Starting template
-- `themes` (json): Portable themes
+- `themes` (json): Themes
 
 ## `plugins.sessionHooks.disable`
 
@@ -16154,7 +16153,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `enable` (boolean): Enable connection
 - `deployment.kind` (select): Deployment
 - `deployment.purposeBindingDefaults` (json): Subscription slots
-- `action` (text, required): Action
+- `action` (text): Action
 - `savedSecretId` (json, required): Saved secret id
 - `authoringReview.candidateId` (json): Candidate id
 - `authoringReview.fingerprint` (text): Fingerprint
@@ -16184,8 +16183,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `template.catalog` (json): Model catalog
 - `manualModels` (json): Initial manual models
 - `enable` (boolean): Enable connection
-- `action` (text, required): Action
-- `template.v` (number, required): V
+- `action` (text): Action
+- `template.v` (number): V
 - `savedSecretId` (json, required): Saved secret id
 
 ## `providers.connections.delete`
@@ -16202,7 +16201,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `connectionId` (text): Provider connection
 - `machineId` (text): Computer
-- `action` (text, required): Action
+- `action` (text): Action
 
 ## `providers.connections.describe`
 
@@ -16237,7 +16236,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `newConnectionId` (text): New connection
 - `displayName` (text): Connection name
 - `mode` (text): Source
-- `action` (text, required): Action
+- `action` (text): Action
 
 ## `providers.connections.enable_detected`
 
@@ -16253,7 +16252,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `connectionId` (text): Provider connection
 - `machineId` (text): Computer
-- `action` (text, required): Action
+- `action` (text): Action
 - `candidateId` (text, required): Candidate id
 - `displayName` (json, required): Display name
 - `savedSecretId` (json, required): Saved secret id
@@ -16274,7 +16273,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `machineId` (text): Computer
 - `enabled` (boolean): Enabled
 - `scope` (text): Scope
-- `action` (text, required): Action
+- `action` (text): Action
 
 ## `providers.connections.endpoint.set`
 
@@ -16294,7 +16293,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `baseUrl` (json): Provider address
 - `scope` (text): Scope
 - `publicHeaders` (json): Public request policy (null resets inheritance)
-- `action` (text, required): Action
+- `action` (text): Action
 - `expectedRevision` (integer, required): Expected revision
 
 ## `providers.connections.secrets.bind`
@@ -16313,7 +16312,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `machineId` (text): Computer
 - `credentialSlotId` (text): Credential slot
 - `scope` (text): Scope
-- `action` (text, required): Action
+- `action` (text): Action
 - `savedSecretId` (json, required): Saved secret id
 
 ## `providers.connections.start_local`
@@ -16330,7 +16329,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `connectionId` (text): Provider connection
 - `machineId` (text): Computer
-- `action` (text, required): Action
+- `action` (text): Action
 - `contributionKey` (text, required): Contribution key
 
 ## `providers.connections.update`
@@ -16360,7 +16359,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `gatewayPlacement` (json): Gateway runs on
 - `roleModels` (json): Additional models
 - `modelSettings` (json): Model generation settings
-- `action` (text, required): Action
+- `action` (text): Action
 - `displayNameMode` (select): Display name mode
 - `template.v` (number): V
 
@@ -16429,7 +16428,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `connectionId` (text): Provider connection
 - `machineId` (text): Computer
 - `modelId` (text, required): Model id
-- `action` (text, required): Action
+- `action` (text): Action
 
 ## `providers.models.experimental.confirm`
 
@@ -16448,7 +16447,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `connectedAccountTarget` (json): Connected Account
 - `connectionId` (text): Provider connection
 - `machineId` (text): Computer
-- `action` (text, required): Action
+- `action` (text): Action
 - `catalogSourceKey` (text): Catalog source key
 - `expectedConnectionRevision` (integer, required): Expected connection revision
 - `compatibilityFingerprint` (text, required): Compatibility fingerprint
@@ -16483,7 +16482,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `connectionId` (text): Provider connection
 - `machineId` (text): Computer
 - `modelId` (text, required): Model id
-- `action` (text, required): Action
+- `action` (text): Action
 
 ## `providers.models.manual.add`
 
@@ -16499,7 +16498,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `connectionId` (text): Provider connection
 - `machineId` (text): Computer
-- `action` (text, required): Action
+- `action` (text): Action
 - `expectedConnectionRevision` (integer, required): Expected connection revision
 - `models` (json, required): Models
 
@@ -16517,7 +16516,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `connectionId` (text): Provider connection
 - `machineId` (text): Computer
-- `action` (text, required): Action
+- `action` (text): Action
 - `modelId` (text, required): Model id
 - `expectedConnectionRevision` (integer, required): Expected connection revision
 
@@ -16567,7 +16566,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `connectionId` (text): Provider connection
 - `machineId` (text): Computer
-- `forceRefresh` (boolean, required): Force refresh
+- `forceRefresh` (boolean): Force refresh
 
 ## `providers.models.source_visibility.set`
 
@@ -16583,7 +16582,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `connectionId` (text): Provider connection
 - `machineId` (text): Computer
-- `action` (text, required): Action
+- `action` (text): Action
 - `shown` (json, required): Shown
 
 ## `providers.models.visibility.bulk`
@@ -16600,7 +16599,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `connectionId` (text): Provider connection
 - `machineId` (text): Computer
-- `action` (text, required): Action
+- `action` (text): Action
 - `changes` (json, required): Changes
 
 ## `providers.models.visibility.reset`
@@ -16617,7 +16616,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `connectionId` (text): Provider connection
 - `machineId` (text): Computer
-- `action` (text, required): Action
+- `action` (text): Action
 - `scope` (json, required): Scope
 
 ## `providers.models.visibility.set`
@@ -16634,7 +16633,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `connectionId` (text): Provider connection
 - `machineId` (text): Computer
-- `action` (text, required): Action
+- `action` (text): Action
 - `ref` (json, required): Ref
 - `hidden` (boolean, required): Hidden
 
@@ -16915,7 +16914,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `purpose.canonicalServerUrl` (url, required): Personal Home
 - `personalHomeOperation.outputPath` (text): Backup output
 - `runtimeTarget` (json): Runtime target
-- `purpose.kind` (text, required): Kind
+- `purpose.kind` (text): Kind
 - `clientId` (text): Client id
 
 ## `relay.runtime.personal_home.choose_archive`
@@ -16961,7 +16960,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `purpose.canonicalServerUrl` (url, required): Personal Home
 - `personalHomeOperation.accountId` (text, required): Account
 - `runtimeTarget` (json): Runtime target
-- `purpose.kind` (text, required): Kind
+- `purpose.kind` (text): Kind
 - `clientId` (text): Client id
 
 ## `relay.runtime.personal_home.erase`
@@ -16978,7 +16977,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `purpose.canonicalServerUrl` (url, required): Personal Home
 - `runtimeTarget` (json): Runtime target
-- `purpose.kind` (text, required): Kind
+- `purpose.kind` (text): Kind
 - `clientId` (text): Client id
 
 ## `relay.runtime.personal_home.inspect`
@@ -16995,7 +16994,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `purpose.canonicalServerUrl` (url, required): Personal Home
 - `runtimeTarget` (json): Runtime target
-- `purpose.kind` (text, required): Kind
+- `purpose.kind` (text): Kind
 - `clientId` (text): Client id
 
 ## `relay.runtime.personal_home.recover_restore`
@@ -17012,7 +17011,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `purpose.canonicalServerUrl` (url, required): Personal Home
 - `runtimeTarget` (json): Runtime target
-- `purpose.kind` (text, required): Kind
+- `purpose.kind` (text): Kind
 - `clientId` (text): Client id
 
 ## `relay.runtime.personal_home.relocate`
@@ -17050,7 +17049,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `purpose.canonicalServerUrl` (url, required): Personal Home
 - `personalHomeOperation.archivePath` (text, required): Backup archive
 - `runtimeTarget` (json): Runtime target
-- `purpose.kind` (text, required): Kind
+- `purpose.kind` (text): Kind
 - `personalHomeOperation.confirmOverwrite` (boolean): Confirm overwrite
 - `personalHomeOperation.expectedHomeServerIdentityId` (text): Expected home server identity id
 - `clientId` (text): Client id
@@ -17070,7 +17069,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `purpose.canonicalServerUrl` (url, required): Personal Home
 - `personalHomeOperation.archivePath` (text, required): Backup archive
 - `runtimeTarget` (json): Runtime target
-- `purpose.kind` (text, required): Kind
+- `purpose.kind` (text): Kind
 - `clientId` (text): Client id
 
 ## `relay.runtime.restart`
@@ -20540,7 +20539,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `query` (text, required): Query
 - `cursor` (text): Cursor
-- `purpose` (text, required): Purpose
+- `purpose` (text): Purpose
 
 ## `session.access.candidates.inspect`
 
@@ -20554,7 +20553,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `sessionId` (text, required): Session id
 - `subjects` (json, required): Subjects
 
@@ -20680,7 +20679,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `subjects` (json, required): Subjects
 - `creationTeamId` (text): Creation team id
 
@@ -20946,7 +20945,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `sessionId` (text, required): Session id
 - `scopes` (multiselect, required): Scopes
-- `v` (number, required): V
+- `v` (number): V
 - `candidate` (json): Candidate
 - `timing` (select): Timing
 - `label` (text): Label
@@ -21041,10 +21040,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `session.continuation.inspect`
 
-**Inspect Agent continuation** — Inspect one exact Agent selection or a batch for this Session through the hosting machine. Eligibility grants no mutation authority; switching rechecks it.
+**Inspect Agent continuation** — Inspect one exact Agent selection for this Session through the hosting machine. Eligibility grants no mutation authority; switching rechecks it.
 
 - Safety: `safe`; side effect: `read`.
-- Approval: `none` result; `deferred` flow.
+- Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
@@ -21052,8 +21051,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `sessionId` (text, required): Session id
-- `selection` (json): Exact target Agent selection
-- `selections` (json): Exact target Agent selections
+- `selection` (json, required): Exact target Agent selection
 
 ## `session.continue_with_replay`
 
@@ -21473,7 +21471,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `newSession` (json): New Session placement and seed
 - `input` (json, required): Requested work and descriptive evidence
 - `idempotencyKey` (text, required): Delivery intent key
-- `v` (number, required): V
+- `v` (number): V
 
 ## `session.input.result.get`
 
@@ -22353,7 +22351,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `sessionId` (text, required): Session id
 - `scopes` (multiselect, required): Scopes
 - `candidate.source` (select, required): Source
-- `v` (number, required): V
+- `v` (number): V
 - `anchor` (json): Anchor
 - `candidate.backendId` (json): Backend id
 - `candidate.anchor` (json): Anchor
@@ -23519,7 +23517,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `sessions.external.materialize.start`
 
-**Materialize external session** — Start or converge on the canonical external-session materialization operation. To continue a session that cannot be taken over, materialize it, then fork it with the replay strategy (the app's "Continue in a new session"). Requires a mounted plugin caller. Use the host-mounted import; standalone CLI invocation and an explicit Machine do not supply plugin provenance.
+**Materialize external session** — Start or converge on the canonical external-session materialization operation. Requires a mounted plugin caller. Use the host-mounted import; standalone CLI invocation and an explicit Machine do not supply plugin provenance.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
@@ -24109,7 +24107,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `skillId` (json): Skill id
 - `sessionId` (json): Session id
 - `file` (json): File
-- `includeFileContents` (json): Include file contents
+- `includeFileContents` (boolean): Include file contents
 - `name` (json): Name
 
 ## `skills.rules.set`
@@ -24267,7 +24265,6 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `teamCredentialSessionBindingConsent` (json): Team credential session binding consent
 - `sessionConfigOptionOverrides` (json): Session config option overrides
 - `target` (json): Target
-- `previousRoundContext` (json): Previous round context
 
 ## `tasks.internal.create`
 
@@ -24491,7 +24488,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `teamId` (text, required): Team ID
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.create`
 
@@ -24508,7 +24505,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `name` (text, required): Team name
 - `description` (textarea): Description
 - `initialOwnerAccountId` (text): Initial owner Account ID
-- `v` (number, required): V
+- `v` (number): V
 - `requestKey` (text, required): Request key
 
 ## `teams.credentials.activity.list`
@@ -24911,7 +24908,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `sourceId` (text, required): Source id
 - `limit` (integer): Limit
@@ -24930,7 +24927,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `sourceId` (text, required): Source id
 - `limit` (integer): Limit
@@ -24948,7 +24945,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `limit` (integer): Limit
 - `cursor` (json): Cursor
@@ -24966,7 +24963,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (json, required): V
+- `v` (number): V
 - `teamId` (json, required): Team id
 - `displayName` (json, required): Display name
 - `kind` (json, required): Kind
@@ -24986,7 +24983,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `sourceId` (text, required): Source id
 
@@ -25002,7 +24999,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `limit` (integer): Limit
 - `cursor` (json): Cursor
@@ -25019,7 +25016,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `sourceId` (text, required): Source id
 
@@ -25035,7 +25032,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `sourceId` (text, required): Source id
 
@@ -25051,7 +25048,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `sourceId` (text, required): Source id
 
@@ -25067,7 +25064,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `sourceId` (text, required): Source id
 
@@ -25083,7 +25080,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `sourceId` (text, required): Source id
 
@@ -25099,7 +25096,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (json, required): V
+- `v` (number): V
 - `teamId` (json, required): Team id
 - `limit` (json): Limit
 - `cursor` (json): Cursor
@@ -25119,7 +25116,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `bindingId` (text, required): Binding id
 
@@ -25135,7 +25132,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `owner` (json, required): Owner
 - `externalGroupId` (text, required): External group id
@@ -25154,7 +25151,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `teamId` (text, required): Team ID
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.groups.archive`
 
@@ -25170,7 +25167,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `teamId` (text, required): Team ID
 - `groupId` (text, required): Group ID
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.groups.create`
 
@@ -25187,7 +25184,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `teamId` (text, required): Team ID
 - `name` (text, required): Group name
 - `description` (textarea): Description
-- `v` (number, required): V
+- `v` (number): V
 - `groupId` (text, required): Group id
 - `requestKey` (text, required): Request key
 
@@ -25205,7 +25202,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `teamId` (text, required): Team ID
 - `groupId` (text, required): Group ID
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.groups.list`
 
@@ -25221,7 +25218,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `teamId` (text, required): Team ID
 - `archived` (text, required): Group state
-- `v` (number, required): V
+- `v` (number): V
 - `limit` (integer): Limit
 - `cursor` (json): Cursor
 
@@ -25241,7 +25238,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `groupId` (text, required): Group ID
 - `accountId` (text, required): Account ID
 - `historyAccess` (text, required): History access
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.groups.members.list`
 
@@ -25257,7 +25254,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `teamId` (text, required): Team ID
 - `groupId` (text, required): Group ID
-- `v` (number, required): V
+- `v` (number): V
 - `limit` (integer): Limit
 - `cursor` (json): Cursor
 
@@ -25276,7 +25273,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `teamId` (text, required): Team ID
 - `groupId` (text, required): Group ID
 - `accountId` (text, required): Account ID
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.groups.restore`
 
@@ -25292,7 +25289,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `teamId` (text, required): Team ID
 - `groupId` (text, required): Group ID
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.groups.update`
 
@@ -25310,7 +25307,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `groupId` (text, required): Group ID
 - `name` (text): Group name
 - `description` (textarea): Description
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.identity.connections.create`
 
@@ -25324,7 +25321,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `providerInstanceId` (text, required): Provider instance id
 - `externalReference` (json, required): External reference
 - `settings` (json, required): Settings
@@ -25342,7 +25339,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `connectionId` (text, required): Connection id
 - `expectedRevision` (integer, required): Expected revision
@@ -25359,7 +25356,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `connectionId` (text, required): Connection id
 - `expectedRevision` (integer, required): Expected revision
@@ -25376,7 +25373,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 
 ## `teams.identity.connections.remove`
@@ -25391,7 +25388,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `connectionId` (text, required): Connection id
 - `expectedRevision` (integer, required): Expected revision
@@ -25408,7 +25405,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `connectionId` (text, required): Connection id
 - `expectedRevision` (integer, required): Expected revision
@@ -25425,7 +25422,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `connectionId` (text, required): Connection id
 - `expectedRevision` (integer, required): Expected revision
@@ -25443,7 +25440,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `connectionId` (text, required): Connection id
 - `resultHandle` (text, required): Result handle
@@ -25460,7 +25457,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `connectionId` (text, required): Connection id
 - `expectedRevision` (integer, required): Expected revision
@@ -25477,7 +25474,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `connectionId` (text, required): Connection id
 - `directorySourceId` (text): Directory source id
@@ -25495,7 +25492,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `displayName` (text): Display name
 
@@ -25511,7 +25508,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `connectionId` (text, required): Connection id
 - `expectedRevision` (integer, required): Expected revision
@@ -25529,7 +25526,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `v` (number, required): V
+- `v` (number): V
 - `teamId` (text, required): Team id
 - `connectionId` (text, required): Connection id
 - `expectedRevision` (integer, required): Expected revision
@@ -25556,7 +25553,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `state` (text): Invitation state
 - `expiresAt` (text): Expires at
 - `recipientEmailMask` (text): Recipient
-- `v` (json, required): V
+- `v` (number): V
 - `continuation.v` (number): V
 - `continuation.kind` (text): Kind
 
@@ -25576,7 +25573,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `recipientEmail` (text): Recipient email
 - `role` (text, required): Team role
 - `historyAccess` (text, required): History access
-- `v` (number, required): V
+- `v` (number): V
 - `requestKey` (text, required): Request key
 
 ## `teams.invitations.list`
@@ -25593,7 +25590,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `teamId` (text, required): Team ID
 - `state` (text): Invitation state
-- `v` (number, required): V
+- `v` (number): V
 - `cursor` (json, required): Cursor
 - `limit` (integer, required): Limit
 
@@ -25610,7 +25607,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `token` (secret, required): Invitation token
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.invitations.reissue`
 
@@ -25627,7 +25624,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `teamId` (text, required): Team ID
 - `invitationId` (text, required): Invitation ID
 - `recipientEmail` (text): Recipient email
-- `v` (number, required): V
+- `v` (number): V
 - `requestKey` (text, required): Request key
 
 ## `teams.invitations.revoke`
@@ -25644,7 +25641,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `teamId` (text, required): Team ID
 - `invitationId` (text, required): Invitation ID
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.list`
 
@@ -25660,7 +25657,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `scope` (text, required): Scope
 - `archived` (text, required): Team state
-- `v` (number, required): V
+- `v` (number): V
 - `limit` (integer): Limit
 - `cursor` (json): Cursor
 
@@ -25677,7 +25674,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `teamId` (text, required): Team ID
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.logo.set`
 
@@ -25693,7 +25690,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `teamId` (text, required): Team ID
 - `image.mimeType` (text, required): Image type
-- `v` (number, required): V
+- `v` (number): V
 - `image.dataBase64` (text, required): Data base64
 
 ## `teams.members.add`
@@ -25712,7 +25709,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `accountId` (text, required): Account ID
 - `role` (text, required): Team role
 - `historyAccess` (text, required): History access
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.members.get`
 
@@ -25728,7 +25725,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `teamId` (text, required): Team ID
 - `membershipId` (text, required): Membership ID
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.members.groups.list`
 
@@ -25744,7 +25741,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `teamId` (text, required): Team ID
 - `membershipId` (text, required): Membership ID
-- `v` (number, required): V
+- `v` (number): V
 - `limit` (integer): Limit
 - `cursor` (json): Cursor
 
@@ -25795,7 +25792,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `teamId` (text, required): Team ID
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.members.list`
 
@@ -25811,7 +25808,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `teamId` (text, required): Team ID
 - `filter` (text, required): Member filter
-- `v` (number, required): V
+- `v` (number): V
 - `limit` (integer): Limit
 - `cursor` (json): Cursor
 - `query` (text): Query
@@ -25832,7 +25829,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `membershipId` (text, required): Membership ID
 - `management.kind` (text, required): Management owner
 - `management.directorySourceId` (text): Directory source ID
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.members.reactivate`
 
@@ -25848,7 +25845,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `teamId` (text, required): Team ID
 - `membershipId` (text, required): Membership ID
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.members.remove`
 
@@ -25864,7 +25861,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `teamId` (text, required): Team ID
 - `membershipId` (text, required): Membership ID
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.members.role.set`
 
@@ -25881,7 +25878,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `teamId` (text, required): Team ID
 - `membershipId` (text, required): Membership ID
 - `role` (text, required): Team role
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.members.suspend`
 
@@ -25897,7 +25894,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `teamId` (text, required): Team ID
 - `membershipId` (text, required): Membership ID
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.policy.set`
 
@@ -25921,7 +25918,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `authenticationPolicy.accepted` (json): Accepted sign-in methods
 - `managedDefaults` (json): Team member defaults
 - `managedGroupDefaults` (json): Group member defaults
-- `v` (number, required): V
+- `v` (number): V
 - `previousAuthenticationPolicy` (json): Previous authentication policy
 - `authenticationPolicy.v` (number): V
 
@@ -25938,7 +25935,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `teamId` (text, required): Team ID
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.setup.run`
 
@@ -25972,7 +25969,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `teamId` (text, required): Team ID
-- `v` (number, required): V
+- `v` (number): V
 
 ## `teams.update`
 
@@ -25989,7 +25986,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `teamId` (text, required): Team ID
 - `name` (text): Team name
 - `description` (textarea): Description
-- `v` (number, required): V
+- `v` (number): V
 
 ## `template.draft`
 
@@ -28273,7 +28270,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `workflow.authoring.draft.edit`
 
-**Edit mounted Workflow draft** — Apply canonical Workflow edit ops, a settings patch, or a trigger row edit to the open draft at expectedDraftRevision as one undoable change. triggerEdit can stage a Machine event before setup or remove a single unsaved row by clientId. A stale revision is refused. Does not save or run.
+**Edit mounted Workflow draft** — Apply canonical Workflow edit ops, a settings patch, or a trigger row edit to the open draft at expectedDraftRevision as one undoable change. triggerEdit can stage a Machine or Deployment event before setup or remove a single unsaved row by clientId. A stale revision is refused. Does not save or run.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
@@ -28288,12 +28285,12 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `expectedDraftRevision` (number, required): Observed draft revision
 - `ops` (json): Canonical Workflow edit operations
 - `settings` (json): Mounted draft settings patch
-- `triggerEdit` (json): Pending Machine event or selective removal
+- `triggerEdit` (json): Pending event or selective removal
 - `clientId` (text): Client id
 
 ## `workflow.authoring.draft.get`
 
-**Read mounted Workflow draft** — Read the answering client’s open Workflow draft, settings, validation and revision. Omit draftId to list drafts in the scope. Never loads or creates an editor.
+**Read mounted Workflow draft** — Read the answering client’s open Workflow draft, including unfinished triggers, Save conflict, validation and revision. Omit draftId to list drafts in the scope. Never loads or creates an editor.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -28325,7 +28322,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `workflow.authoring.draft.save`
 
-**Save mounted Workflow draft** — Explicitly save through the mounted host’s validation and conflict-checked Save, including its trigger delta. Waits for Save to finish; never starts a Run.
+**Save mounted Workflow draft** — Explicitly save through the mounted host’s validation and conflict-checked Save, including its trigger delta. Use asCopy: true to resolve an editor conflict by saving the definition as a new Workflow. Never starts a Run.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -28337,6 +28334,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `scope` (json, required): Home and Account
 - `draftId` (text, required): Mounted draft id
+- `asCopy` (boolean): Save as a copy
 - `clientId` (text): Client id
 
 ## `workflow.authoring.draft.undo`
@@ -28637,7 +28635,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `value` (json): Reviewed result — With mode use_result, omit to accept the current stored draft, or supply a value matching the invocation’s frozen result contract. Only a present person can complete this review.
 - `followUp` (json): Reviewed follow-up — Optional canonical Workflow follow-up when accepting a result. Generate mode uses the held invocation instead.
 - `runId` (text, required): Run id
-- `mode` (text, required): Mode
+- `mode` (text): Mode
 
 ## `workflow.run.invocations.get`
 
@@ -28790,7 +28788,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `expectedRevision` (number, required): Observed Run revision — Use run.revision from the current workflow.run.get response. A stale revision is refused; reread before deciding again.
 - `invocations` (json): Reviewed recovery choices — For mode recover, supply the canonical recovery choices from the held invocations: reattach, continue or restore_workspace. Boundary resume has no invocation choices.
-- `mode` (text, required): Mode
+- `mode` (text): Mode
 - `runId` (text, required): Run id
 
 ## `workflow.run.review.draft.set`
@@ -28826,14 +28824,14 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `runId` (text, required): New Run id — Allocate a UUID for this new start; reuse it to reconcile a lost response.
+- `source.kind` (select): Source
 - `source.workflow` (select): Workflow
 - `source.replay.runId` (text): Accepted Run to repeat — With an inline source, reopens this authorized Run and preserves its accepted graph and concrete participants.
 - `source.replay.intent` (select): Continuation — Omit for ordinary Run again. Another round retains accepted inputs and supplies authorized outcomes as previousRoundContext; that JSON input must be declared by the workflow.
 - `inputs` (json): Workflow inputs — Values keyed by declared workflow input names. Resolve input choices with action.options.resolve using a workflow consumer and the declared input name as fieldPath. Machine/workspace routing comes from Action context, not this object. Another round inherits the completed Run inputs; it never substitutes current picker defaults.
 - `executionTarget` (json): Step execution kind — Optional leaf execution kind: session or detached_run. This does not select a Machine or directory; a Session caller inherits those from its authenticated context.
-- `managedCreation` (json): Managed creation
 - `managedProjectFiles` (json): Managed project files
-- `source.kind` (json, required): Kind
+- `managedCreation` (json): Managed creation
 - `source.sourceArtifactId` (json): Source artifact id
 - `source.definition` (json): Definition
 - `source.visibleTeamId` (json): Visible team id
@@ -28964,7 +28962,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `kind` (text, required): Kind
+- `kind` (text): Kind
 - `sources` (json): Sources
 - `limit` (integer): Limit
 - `cursor` (text): Cursor
@@ -28993,6 +28991,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `visibleTeamId` (json): Visible team id
 - `roleOverrides` (json): Role overrides
 - `deploymentPreview` (json): Deployment preview
+- `actorConsent` (json): Actor consent
 - `trigger` (json, required): Trigger
 - `managedGithubRepositoryId` (json): Managed github repository id
 - `deployment` (json): Deployment
@@ -29342,7 +29341,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `mode` (select, required): Sync mode
 - `destinationIntent` (select, required): Destination
 - `contentPolicy` (select, required): Content policy
-- `v` (number, required): V
+- `v` (number): V
 - `purpose` (text): Purpose
 
 ## `workspace.sync.relationship.disable`
@@ -29409,7 +29408,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `mode` (select, required): Sync mode
 - `contentPolicy` (select, required): Content policy
 - `destinationIntent` (select, required): Destination
-- `v` (number, required): V
+- `v` (number): V
 - `purpose` (text): Purpose
 
 ## `workspace.sync.relationship.terminate`
