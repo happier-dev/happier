@@ -380,6 +380,11 @@ function harness(fixtures: Fixtures = {}) {
       return { items: [engine, otherEngine].map((value) => ({ value, label: value })) };
     },
     agentsBackendsList: async () => ({ items: [engine, otherEngine].map((targetKey) => ({ targetKey, label: targetKey, enabled: true })) }),
+    sessionStatusGet: async ({ sessionId }) => {
+      expect(sessionId).toBe('origin');
+      return { session: { id: sessionId, title: 'Origin reviewer', createdAt: 1, updatedAt: 1,
+        active: true, activeAt: 1, encryption: null, path: workspace.directory, machineId: workspace.machineId } };
+    },
     reviewCommentAction: async ({ actionId, input }) => {
       if (actionId === 'reviews.comments.get') {
         const { commentId } = input as { commentId: string };
