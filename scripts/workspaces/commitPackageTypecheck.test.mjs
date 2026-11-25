@@ -752,7 +752,7 @@ test('a worker dispatch that returns no rows falls back to the next worker', asy
   assert.deepEqual(rows.get('packages/plugins/codex'), []);
 });
 
-test('an exact-tree worker reads the Git payload even when the source mirror cannot flush', { skip: process.platform === 'win32' }, async t => {
+async function exactTreeWorkerFixture(t) {
   const { repo, commit } = await workspace(t);
   const source = fileURLToPath(new URL('../../', import.meta.url));
   const workerHome = join(repo, 'worker-home');
@@ -785,6 +785,7 @@ exec /bin/bash -c "$2"
     'apps/stack/scripts/utils/fs/fs.mjs',
     'apps/stack/scripts/utils/dev_targets/native_execution_signals.sh',
     'apps/stack/scripts/utils/proc/native_process_identity.sh',
+    'apps/stack/scripts/utils/proc/runtimeImportProbe.mjs',
     'apps/stack/scripts/utils/proc/native_process_priority.sh',
     'scripts/testing/lib/compilerBaseline.mjs',
     'scripts/board/postBoardEntry.mjs',
@@ -805,12 +806,12 @@ exec /bin/bash -c "$2"
     'packages/cli-common/tempDirOwnership.mjs',
   ]) await write(name, readFileSync(join(source, name)));
   await write('apps/stack/bin/hstack-exec', `#!/bin/sh
-if [ "$1" = --execution-workers=gate-package-typecheck ]; then
+if [ "$1" = --execution-workers=gate-package-typecheck ] || [ "$1" = --execution-workers=compilation ]; then
   printf '%s\\0' test-worker configured-worker ${JSON.stringify(config)} ${JSON.stringify(workerHome)} ''
   exit 0
 fi
 if [ "$1" = --heavyweight-admission ]; then
-  case "$2" in --class=dependency-install|--class=gate-package-typecheck) ;; *) exit 94;; esac
+  case "$2" in --class=dependency-install|--class=gate-package-typecheck|--class=compilation) ;; *) exit 94;; esac
   export FIXTURE_WORKER_CLASS="\${2#--class=}"
   printf 'admit %s\\n' "$FIXTURE_WORKER_CLASS" >> ${JSON.stringify(admissionLog)}
   while [ "$1" != -- ]; do shift; done
@@ -865,6 +866,11 @@ if (project !== 'tsconfig.json') {
   }]]], result.stderr);
   assert.equal(existsSync(mirrorLog), false);
 
+  return { repo, state, workerHome, bin, sha, treeId, write, git, source, admissionLog, script, result };
+}
+
+test('an exact-tree worker reads the Git payload even when the source mirror cannot flush', { skip: process.platform === 'win32' }, async t => {
+  const { repo, state, workerHome, bin, sha, treeId, write, git, source, admissionLog } = await exactTreeWorkerFixture(t);
   const runGate = stall => spawnSync(process.execPath, [
     fileURLToPath(new URL('./commitGate.mjs', import.meta.url)),
     '--label=commit-partial', `--base=${sha}^`, `--tree=${sha}`,
@@ -918,6 +924,21 @@ if (project !== 'tsconfig.json') {
     'prepare dependency-install',
     'admit gate-package-typecheck',
   ]);
+});
+
+test('a one-shot exact-tree worker retires its outputs after returning rows', { skip: process.platform === 'win32' }, async t => {
+  const { repo, workerHome, bin, script, result } = await exactTreeWorkerFixture(t);
+  const ephemeralScript = script.replace("lane: 'gate'", "lane: 'adhoc'");
+  const ephemeral = spawnSync(process.execPath, ['--input-type=module', '-e', ephemeralScript], {
+    cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_SSH_VARIANT: 'ssh', PATH: `${bin}:${process.env.PATH}` },
+  });
+  assert.equal(ephemeral.status, 0, ephemeral.stderr);
+  assert.deepEqual(JSON.parse(ephemeral.stdout), JSON.parse(result.stdout));
+  const workerState = join(workerHome, '.happier-stack/cache/commit-typecheck-worker/typecheck-state');
+  for (const name of ['worktree', 'declarations', 'results']) {
+    assert.equal(existsSync(join(workerState, 'lane-adhoc', name)), false, name);
+  }
+  assert.equal(existsSync(join(workerState, 'lane-gate', 'worktree')), true);
 });
 
 async function controllerDeclarationFixture(t, { lockfile } = {}) {

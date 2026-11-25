@@ -1353,51 +1353,73 @@ async function workerRows(argv, entry) {
     return 2;
   }
   const option = name => argv.find(arg => arg.startsWith(`--${name}=`))?.slice(name.length + 3) ?? '';
-  const slugState = join(homedir(), WORKER_STATE, option('slug'));
-  if (option('lane') && !/^[a-z]+$/u.test(option('lane'))) { console.error('[rolling-head-typecheck] --lane must be lowercase letters'); return 2; }
-  const state = option('lane') ? join(slugState, `lane-${option('lane')}`) : slugState;
+  const slug = option('slug');
+  if (!/^[A-Za-z0-9._-]+$/u.test(slug) || slug === '.' || slug === '..') {
+    console.error('[rolling-head-typecheck] invalid worker state name');
+    return 2;
+  }
+  const slugState = join(homedir(), WORKER_STATE, slug);
+  const lane = option('lane');
+  if (lane && !/^[a-z]+$/u.test(lane)) { console.error('[rolling-head-typecheck] --lane must be lowercase letters'); return 2; }
+  const state = lane ? join(slugState, `lane-${lane}`) : slugState;
+  const retireOnFinish = lane && lane !== GATE_LANE;
   const request = { trees: option('tree').split(',').filter(Boolean), packages: option('packages').split(',').filter(Boolean),
-    sides: option('side').split(','), repo: join(slugState, 'repo.git'), ref: option('ref') || 'rolling', gate: option('lane') === GATE_LANE };
+    sides: option('side').split(','), repo: join(slugState, 'repo.git'), ref: option('ref') || 'rolling', gate: lane === GATE_LANE };
   const scope = option('scope') || 'packages';
-  if (!option('slug') || !request.trees.length || !request.packages.length) { console.error('[rolling-head-typecheck] --worker-rows needs --slug, --tree and --packages'); return 2; }
+  if (!request.trees.length || !request.packages.length) { console.error('[rolling-head-typecheck] --worker-rows needs --slug, --tree and --packages'); return 2; }
   // A scoped Git runner has a temporary root. Keep the broker's entry identity stable.
   const workerEntry = relative(process.cwd(), entry);
   const payload = [process.execPath, ...process.execArgv, workerEntry, '--compiler-admitted'];
   mkdirSync(state, { recursive: true });
   // A lane's compile identity names its packages, so the broker sizes each from its own recorded compile peak.
-  const projects = option('lane') ? request.packages.join('\n') : scope === 'packages' ? undefined : scope;
-  return await withWorkspaceBundleLock(async () => {
+  const projects = lane ? request.packages.join('\n') : scope === 'packages' ? undefined : scope;
+  return await withWorkspaceBundleLock(async ({ assertOwned }) => {
     const prepare = treeDependencyPreparer({ repo: request.repo, state, env: process.env, worktreeRev: request.ref });
     const className = request.gate ? GATE_PACKAGE_CHECK_CLASS : 'compilation';
     const rows = {};
-    for (const [index, tree] of request.trees.entries()) {
-      const job = { ...request, trees: [tree], sides: [request.sides[index]] };
-      const workerEnv = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state,
-        HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST: JSON.stringify(job) };
-      // Admission for the previous tree has ended before a new generation can install.
-      if (!prepare.prepared(tree)) {
-        const step = admittedCommand(state, [process.execPath, ...process.execArgv, workerEntry, '--prepare-dependencies'],
-          false, undefined, 'dependency-install');
-        const prepared = spawnSync(step[0], step.slice(1), { env: workerEnv, stdio: 'inherit' });
-        if (prepared.error) throw prepared.error;
-        if (prepared.status !== 0) return prepared.status ?? 2;
+    try {
+      for (const [index, tree] of request.trees.entries()) {
+        const job = { ...request, trees: [tree], sides: [request.sides[index]] };
+        const workerEnv = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state,
+          HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST: JSON.stringify(job) };
+        // Admission for the previous tree has ended before a new generation can install.
+        if (!prepare.prepared(tree)) {
+          const step = admittedCommand(state, [process.execPath, ...process.execArgv, workerEntry, '--prepare-dependencies'],
+            false, undefined, 'dependency-install');
+          const prepared = spawnSync(step[0], step.slice(1), { env: workerEnv, stdio: 'inherit' });
+          if (prepared.error) throw prepared.error;
+          if (prepared.status !== 0) return prepared.status ?? 2;
+        }
+        const command = admittedCommand(state, payload, false, projects, className, { trees: [tree], files: request.packages });
+        const child = spawn(command[0], command.slice(1), { env: workerEnv, stdio: ['inherit', 'pipe', 'inherit'] });
+        let output = '';
+        child.stdout.setEncoding('utf8').on('data', chunk => { output += chunk; });
+        const [status] = await once(child, 'close');
+        // Preserve the worker dispatch's one result envelope. Pass through
+        // broker diagnostics, including a declaration stall, on any exit.
+        for (const line of output.trimEnd().split('\n')) {
+          if (line.startsWith(WORKER_ROWS)) Object.assign(rows, JSON.parse(line.slice(WORKER_ROWS.length)));
+          else if (line) process.stdout.write(line + '\n');
+        }
+        if (status !== 0 || !Object.hasOwn(rows, tree)) return status || 2;
       }
-      const command = admittedCommand(state, payload, false, projects, className, { trees: [tree], files: request.packages });
-      const child = spawn(command[0], command.slice(1), { env: workerEnv, stdio: ['inherit', 'pipe', 'inherit'] });
-      let output = '';
-      child.stdout.setEncoding('utf8').on('data', chunk => { output += chunk; });
-      const [status] = await once(child, 'close');
-      // Preserve the worker dispatch's one result envelope. Pass through
-      // broker diagnostics, including a declaration stall, on any exit.
-      for (const line of output.trimEnd().split('\n')) {
-        if (line.startsWith(WORKER_ROWS)) Object.assign(rows, JSON.parse(line.slice(WORKER_ROWS.length)));
-        else if (line) process.stdout.write(line + '\n');
+    } finally {
+      // Rolling and commit-gate worktrees serve future jobs. A named ad hoc
+      // lane returns its rows to the controller and can retire under this lock.
+      if (retireOnFinish) {
+        assertOwned();
+        const worktree = join(state, 'worktree');
+        if (existsSync(join(worktree, '.git'))) {
+          gitAt(request.repo)(['worktree', 'remove', '--force', '--force', worktree]);
+        }
+        for (const name of ['declarations', 'results', 'dependencies-generation', 'worktree-tree']) {
+          rmSync(join(state, name), { recursive: true, force: true });
+        }
       }
-      if (status !== 0 || !Object.hasOwn(rows, tree)) return status || 2;
     }
     process.stdout.write(`${WORKER_ROWS}${JSON.stringify(rows)}\n`);
     return 0;
-  }, { lockPath: join(state, 'worktree.lock'), timeoutMs: null, wait: option('lane') !== GATE_LANE }).catch(error => {
+  }, { lockPath: join(state, 'worktree.lock'), timeoutMs: null, wait: lane !== GATE_LANE }).catch(error => {
     if (error?.code !== WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE) throw error;
     console.error('[rolling-head-typecheck] exact-tree worker worktree busy');
     return 2;

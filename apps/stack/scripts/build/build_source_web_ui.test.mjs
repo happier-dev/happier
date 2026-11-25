@@ -151,8 +151,11 @@ test('dependency publication web export discards a spanned candidate and returns
   await mkdir(dirname(generationPath), { recursive: true });
   await writeFile(generationPath, JSON.stringify({ generation: 'before', completedGeneration: 'before' }));
   let attempts = 0;
+  const scratch = [];
   const built = await exportSourceWebUi({ repoDir, baseDir: fixture.path('state'), outputDir: fixture.path('export'), env,
-    runImpl: async (_command, args) => {
+    runImpl: async (_command, args, { env: exportEnv }) => {
+      scratch.push(exportEnv.TMPDIR);
+      await writeFile(join(exportEnv.TMPDIR, 'metro-scratch'), 'regenerable');
       const attempt = ++attempts;
       const web = args[args.indexOf('--output-dir') + 1];
       await mkdir(web);
@@ -161,6 +164,8 @@ test('dependency publication web export discards a spanned candidate and returns
       if (attempt === 1) await writeFile(generationPath, JSON.stringify({ generation: 'after-writer', completedGeneration: 'after-writer' }));
     } });
   assert.equal(attempts, 2);
+  assert.notEqual(scratch[0], scratch[1]);
+  for (const directory of scratch) await assert.rejects(access(directory), { code: 'ENOENT' });
   assert.equal(await readFile(join(built.uiDir, 'app.js'), 'utf8'), 'globalThis.pass = 2;');
 });
 

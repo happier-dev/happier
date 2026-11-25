@@ -546,29 +546,34 @@ async function exportCapturedSourceWebUiInputs({ repoDir, baseDir, outputDir, in
     baseDir, kind: 'source-web-export', projectDir: join(repoDir, 'apps/ui'),
     baseEnv: sourceWebExportEnv(env),
   });
-  const exportEnv = applyExpoNodeHeapEnv({
-    ...isolatedEnv, CI: '1', HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: inventoryPath,
-    // The containing producer holds dependency custody of the real installation
-    // (withBuildInputDependencies). Metro's entry check must never install into
-    // the capture: its node_modules are the host's, and a revision capture lacks
-    // the checkout's untracked workspaces, so pnpm refuses its frozen lockfile.
-    HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
-  });
-  const uiDir = resolve(outputDir, 'web');
-  const exportStartedAt = performance.now();
-  const expoCommand = await resolveExpoBin(join(repoDir, 'apps/ui'));
-  const expoArgs = sourceWebExportArgs(exportEnv, uiDir);
-  // The optional runner substitutes only the external Expo boundary in tests.
-  // Real finite exports reuse their containing native envelope and dependency
-  // custody; injected runners replace only the external Expo boundary.
-  if (runImpl) await runImpl(expoCommand, expoArgs, { cwd: uiProjectDir, env: exportEnv, signal });
-  else await runSourceBuildCommand({ repoDir, command: expoCommand, args: expoArgs,
-    cwd: uiProjectDir, env: exportEnv, signal, captureStdout: false, captureStderr: true,
-    admissionClass: SOURCE_WEB_EXPORT_ADMISSION_CLASS, stdoutStream: process.stderr });
-  await assertWebArtifactPayload({ payloadDir: uiDir, entrypoint: 'index.html' });
-  await precompressUiWebAssets({ dir: uiDir });
-  console.log(`[source-ui] phase=web-export elapsedMs=${Math.round(performance.now() - exportStartedAt)}`);
-  return { uiDir, entrypoint: 'index.html', runtimeMode: 'source' };
+  const scratch = await mkdtemp(join(isolatedEnv.TMPDIR, 'export-'));
+  try {
+    const exportEnv = applyExpoNodeHeapEnv({
+      ...isolatedEnv, TMPDIR: scratch, TMP: scratch, TEMP: scratch, CI: '1', HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: inventoryPath,
+      // The containing producer holds dependency custody of the real installation
+      // (withBuildInputDependencies). Metro's entry check must never install into
+      // the capture: its node_modules are the host's, and a revision capture lacks
+      // the checkout's untracked workspaces, so pnpm refuses its frozen lockfile.
+      HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+    });
+    const uiDir = resolve(outputDir, 'web');
+    const exportStartedAt = performance.now();
+    const expoCommand = await resolveExpoBin(join(repoDir, 'apps/ui'));
+    const expoArgs = sourceWebExportArgs(exportEnv, uiDir);
+    // The optional runner substitutes only the external Expo boundary in tests.
+    // Real finite exports reuse their containing native envelope and dependency
+    // custody; injected runners replace only the external Expo boundary.
+    if (runImpl) await runImpl(expoCommand, expoArgs, { cwd: uiProjectDir, env: exportEnv, signal });
+    else await runSourceBuildCommand({ repoDir, command: expoCommand, args: expoArgs,
+      cwd: uiProjectDir, env: exportEnv, signal, captureStdout: false, captureStderr: true,
+      admissionClass: SOURCE_WEB_EXPORT_ADMISSION_CLASS, stdoutStream: process.stderr });
+    await assertWebArtifactPayload({ payloadDir: uiDir, entrypoint: 'index.html' });
+    await precompressUiWebAssets({ dir: uiDir });
+    console.log(`[source-ui] phase=web-export elapsedMs=${Math.round(performance.now() - exportStartedAt)}`);
+    return { uiDir, entrypoint: 'index.html', runtimeMode: 'source' };
+  } finally {
+    removeOwnedDirectorySync(scratch);
+  }
 }
 
 /** Live Metro and finite exports share source artifact construction. Only a
