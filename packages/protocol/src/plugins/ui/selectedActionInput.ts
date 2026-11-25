@@ -1,4 +1,4 @@
-import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
@@ -6,17 +6,66 @@ import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 
 import { pluginJsonValuesEqual } from '../contributions/jsonSchemaValues.js';
 import type { PluginUiJsonValueV1 } from '../contributions/ui/json.js';
+import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../contributionIdentity.js';
+import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
+import { defineProtocolCanonicalJsonValue } from '../actions/protocolComposableSchema.js';
+import { PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1 } from './semanticCommands.js';
+import { ConnectedAccountActionFormSelectionV1Schema } from '../../connect/connectedAccountPurposeBindings.js';
 import { pluginSourceCustodyV1Equal } from '../runtime/sourceCustody.js';
 
 import type {
   PluginUiSelectActionInputResultV1,
-  PluginUiSelectActionInputTargetedSubmittedV1,
 } from './hostApiRequests.js';
-import { PluginUiSelectActionInputTargetedSubmittedV1Schema } from './hostApiRequests.js';
 import {
+  PluginTargetedContributionSelectionV1Schema,
   PluginUiTargetedContributionOperationV1Schema,
   type PluginUiTargetedContributionOperationV1,
 } from './targetedContributions.js';
+
+/**
+ * A resolved contributed Action reference is always exact. Declarative
+ * selectors and mounted-action normalization consume this form after their
+ * caller binding has been established.
+ */
+export const PluginUiQualifiedActionReferenceV1Schema = lazyDefinition(() => PluginContributionIdentityV1Schema);
+export type PluginUiQualifiedActionReferenceV1 = PluginContributionIdentityV1;
+
+export type PluginUiJsonObjectV1 = { readonly [key: string]: PluginUiJsonValueV1 };
+
+function isPluginUiJsonObject(value: PluginUiJsonValueV1): value is PluginUiJsonObjectV1 {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Selection values share the incumbent bounded host-input JSON boundary. */
+export const PluginUiJsonObjectV1Schema = lazyZodSchema(() => asProtocolZod(defineProtocolCanonicalJsonValue<PluginUiJsonObjectV1>({
+  maxSerializedUtf8Bytes: PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1,
+  parse: (value) => isPluginUiJsonObject(value) ? value : null,
+})));
+
+const PluginUiSelectActionInputConnectedAccountV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('none') }),
+  z.strictObject({
+    kind: z.literal('selected'),
+    fieldPath: z.string().check(z.trim(), z.minLength(1)),
+    ref: ConnectedAccountActionFormSelectionV1Schema,
+  }),
+]));
+
+const PluginUiSelectActionInputPresentationV1Schema = lazyZodSchema(() => z.strictObject({
+  connectedAccountLabel: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
+  machineDisplayName: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
+}));
+
+export const PluginUiSelectActionInputTargetedSubmittedV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('submitted'),
+  action: asProtocolZod(PluginUiQualifiedActionReferenceV1Schema),
+  input: PluginUiJsonObjectV1Schema,
+  selection: asProtocolZod(PluginTargetedContributionSelectionV1Schema),
+  connectedAccount: PluginUiSelectActionInputConnectedAccountV1Schema,
+  presentation: PluginUiSelectActionInputPresentationV1Schema,
+}));
+export type PluginUiSelectActionInputTargetedSubmittedV1 =
+  z.infer<typeof PluginUiSelectActionInputTargetedSubmittedV1Schema>;
 
 /**
  * The host-selected facts that are intentionally absent from public Action

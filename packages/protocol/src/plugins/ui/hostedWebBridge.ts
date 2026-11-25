@@ -23,7 +23,7 @@ import {
   PluginUiHostApiWireIdentityV1Schema,
 } from './hostApiWire.js';
 import { PLUGIN_UI_HOST_API_BASE_VERSION_V1 } from './hostApiDefinition.js';
-import { PluginUiLaunchInputV1Schema, PluginUiSubPathV1Schema } from './hostApiRequests.js';
+import { PluginUiLaunchInputV1Schema, PluginUiSubPathV1Schema } from './semanticCommands.js';
 import { ComposerRefV1Schema } from './composer.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
 

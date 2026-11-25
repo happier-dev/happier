@@ -15,8 +15,7 @@ import {
   PluginUiHostApiErrorPayloadV1Schema,
   PluginUiHostApiDiagnosticV1Schema,
 } from './hostApiRequests.js';
-import { PluginUiSelectActionInputTargetedSubmittedV1Schema } from './hostApiRequests.js';
-import { pluginUiSelectedActionInputMatchesOperation } from './selectedActionInput.js';
+import { PluginUiSelectActionInputTargetedSubmittedV1Schema, pluginUiSelectedActionInputMatchesOperation } from './selectedActionInput.js';
 import { PluginUiTargetedContributionOperationV1Schema } from './targetedContributions.js';
 
 export const PLUGIN_UI_HOST_API_WIRE_VERSION_V1 = 1 as const;

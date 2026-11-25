@@ -1,5 +1,12 @@
+import {
+  PluginUiJsonObjectV1Schema,
+  PluginUiQualifiedActionReferenceV1Schema,
+  PluginUiSelectActionInputTargetedSubmittedV1Schema,
+  type PluginUiQualifiedActionReferenceV1,
+} from './selectedActionInput.js';
+export { PluginUiJsonObjectV1Schema, PluginUiQualifiedActionReferenceV1Schema, PluginUiSelectActionInputTargetedSubmittedV1Schema } from './selectedActionInput.js';
+export type { PluginUiJsonObjectV1, PluginUiQualifiedActionReferenceV1, PluginUiSelectActionInputTargetedSubmittedV1 } from './selectedActionInput.js';
 import { SessionForkPointSchema } from '../../sessions/forkPoint.js';
-import { ConnectedAccountActionFormSelectionV1Schema } from '../../connect/connectedAccountPurposeBindings.js';
 import { ConnectedServiceBindingsV2IngressSchema } from '../../connect/connectedServiceBindings.js';
 import { ActionExecuteFailureSchema } from '../../actions/actionExecutionResult.js';
 import { PluginDiagnosticRemediationV1Schema } from '../../daemon/pluginContributionIntrospection.js';
@@ -73,9 +80,7 @@ import {
 import { PluginUiSurfaceContextV1Schema } from './surfaceContext.js';
 import { CurrentUiContextSnapshotV1Schema, PluginUiContextEnrichmentV1Schema } from './currentUiContext.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
-import { defineProtocolCanonicalJsonValue } from '../actions/protocolComposableSchema.js';
 import {
-  PluginTargetedContributionSelectionV1Schema,
   PluginUiTargetedContributionOperationV1Schema,
 } from './targetedContributions.js';
 import { SessionServerStartSpawnDraftV1Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
@@ -488,14 +493,6 @@ export const PluginUiDestinationReferenceV1Schema = lazyDefinition(() => PluginC
 export type PluginUiDestinationReferenceV1 = PluginContributionIdentityV1;
 
 /**
- * A resolved contributed Action reference is always exact. Declarative
- * selectors and mounted-action normalization consume this form after their
- * caller binding has been established.
- */
-export const PluginUiQualifiedActionReferenceV1Schema = lazyDefinition(() => PluginContributionIdentityV1Schema);
-export type PluginUiQualifiedActionReferenceV1 = PluginContributionIdentityV1;
-
-/**
  * The raw mounted host request accepts a bare action string because that string
  * may name either a host ActionSpec or a caller-local contributed Action. Keep
  * it raw: the mounted dispatcher classifies host ActionSpecs before invoking
@@ -659,18 +656,6 @@ export type PluginUiExecuteActionRequestV1 =
 export const PluginUiActionAdmissionResultV1Schema = lazyZodSchema(() => z.strictObject({
   admitted: z.boolean(),
 }));
-
-export type PluginUiJsonObjectV1 = { readonly [key: string]: PluginUiJsonValueV1 };
-
-function isPluginUiJsonObject(value: PluginUiJsonValueV1): value is PluginUiJsonObjectV1 {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** Selection values share the incumbent bounded host-input JSON boundary. */
-export const PluginUiJsonObjectV1Schema = lazyZodSchema(() => asProtocolZod(defineProtocolCanonicalJsonValue<PluginUiJsonObjectV1>({
-  maxSerializedUtf8Bytes: PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1,
-  parse: (value) => isPluginUiJsonObject(value) ? value : null,
-})));
 
 /** The host alone chooses the opaque receiving destination; bytes never ride Action JSON. */
 export const PluginUiDownloadFileRequestV1Schema = lazyZodSchema(() => z.strictObject({
@@ -1001,31 +986,6 @@ export const PluginUiSelectActionInputRequestV1Schema = lazyZodSchema(() => z.un
 ]));
 export type PluginUiSelectActionInputRequestV1 =
   z.infer<typeof PluginUiSelectActionInputRequestV1Schema>;
-
-const PluginUiSelectActionInputConnectedAccountV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('none') }),
-  z.strictObject({
-    kind: z.literal('selected'),
-    fieldPath: z.string().check(z.trim(), z.minLength(1)),
-    ref: ConnectedAccountActionFormSelectionV1Schema,
-  }),
-]));
-
-const PluginUiSelectActionInputPresentationV1Schema = lazyZodSchema(() => z.strictObject({
-  connectedAccountLabel: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
-  machineDisplayName: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
-}));
-
-export const PluginUiSelectActionInputTargetedSubmittedV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('submitted'),
-  action: asProtocolZod(PluginUiQualifiedActionReferenceV1Schema),
-  input: PluginUiJsonObjectV1Schema,
-  selection: asProtocolZod(PluginTargetedContributionSelectionV1Schema),
-  connectedAccount: PluginUiSelectActionInputConnectedAccountV1Schema,
-  presentation: PluginUiSelectActionInputPresentationV1Schema,
-}));
-export type PluginUiSelectActionInputTargetedSubmittedV1 =
-  z.infer<typeof PluginUiSelectActionInputTargetedSubmittedV1Schema>;
 
 /** Session alone projects this no-invoke settlement. */
 export const PluginUiSelectActionInputServerStartDraftV1Schema = lazyZodSchema(() => z.strictObject({
