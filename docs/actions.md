@@ -7176,6 +7176,13 @@ parent interrupts before Fix. A review with usable results and no findings
 skips Fix. A partial round with findings can continue and names the reviewers
 who did not finish. An unconfirmed launch still requires its native outcome.
 
+Failed, interrupted and uncertain Workflow exits also settle the current Review
+round from its retained reviewer receipts. Completed reviewers keep their results
+and scores; failed reviewers retain their own typed causes, and reviewers that
+never ran have no score. The round's coverage follows those reviewer outcomes
+even when the containing Workflow failed or was cancelled. Paused Workflows and
+human review holds keep their current round open for the existing continuation.
+
 `reviews.comments.list` retains its paged default. Callers needing the complete
 read can request `allPages: true`: the shared Action executor drains the existing
 ReviewComment transport with the same scope, principal and cancellation signal.

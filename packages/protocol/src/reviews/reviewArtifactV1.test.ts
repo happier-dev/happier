@@ -121,6 +121,24 @@ describe('durable Review rounds', () => {
     expect((await f.records.read(binding.reviewId))?.rounds[0]?.state).toBe('failed');
   });
 
+  it.each(['failed', 'cancelled'] as const)('preserves completed reviewer evidence when the Workflow is %s', async outcome => {
+    const f = fixture();
+    const binding = await f.records.start({ reviewId: 'stopped-workflow', title: 'Review', subjectKind: 'repository',
+      sourceKind: 'workflow', reviewerIds: ['finished', 'refused'], startedAt: 10 });
+    const round = await f.records.settle({ ...binding, outcome, finishedAt: 20, runs: [], reviewerOutcomes: [
+      { key: 'finished', outcome: 'completed', reviewOutcome: 'complete', materialization: { kind: 'complete' },
+        quality: { score: 4, rationale: 'Reviewed successfully.' } },
+      { key: 'refused', outcome: 'launch_failed', errorCode: 'agent_isolation_unavailable' },
+    ] });
+    expect(round.state).toBe('partial');
+    expect(round.reviewerOutcomes).toMatchObject([{ reviewerId: 'finished', outcome: 'completed' },
+      { reviewerId: 'refused', outcome: 'failed', reason: { run: 'launch_failed', errorCode: 'agent_isolation_unavailable' } }]);
+    expect(round.reviewerQuality).toMatchObject([{ reviewerId: 'finished', score: 4 }]);
+    expect(projectReviewRoundQualityV1(round, 'median')).toBeNull();
+    await f.records.settle({ ...binding, outcome: 'failed', finishedAt: 30, runs: [] });
+    expect((await f.records.read(binding.reviewId))?.rounds[0]).toEqual(round);
+  });
+
   it('opens settled quality for each admitted reviewer without inventing scores for old or missing evidence', async () => {
     const f = fixture();
     const start = { reviewId: 'quality-review', title: 'Review', subjectKind: 'repository' as const,

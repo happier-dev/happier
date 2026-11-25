@@ -265,8 +265,6 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
       const round = current.rounds.find(item => item.ordinal === input.roundOrdinal);
       if (!round) refused('invalid-params');
       if (round.state !== 'running') return round;
-      const outcome = input.outcome !== 'cancelled' && input.outcome !== 'failed'
-        ? projectReviewRoundOutcomeV1(round.reviewerIds, input.reviewerOutcomes ?? []) : input.outcome;
       const byReviewer = new Map((input.reviewerOutcomes ?? []).flatMap(reviewer =>
         reviewer.outcome === 'completed' && reviewer.quality
           ? [[reviewer.key, reviewer.quality] as const] : []));
@@ -277,6 +275,11 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
       });
       const reviewerOutcomes = round.reviewerIds.map(reviewerId =>
         settleReviewerOutcome(reviewerId, round.reviewerDisplayNames?.[reviewerId], round.reviewerAgentIds?.[reviewerId], input));
+      // Reviewer receipts own coverage even when the containing Workflow failed.
+      // With no executable reviewers, the lifecycle owner supplies the result.
+      const outcome = reviewerOutcomes.length === 0 ? input.outcome
+        : reviewerOutcomes.every(reviewer => reviewer.outcome === 'cancelled') ? 'cancelled'
+        : projectReviewRoundOutcomeV1(round.reviewerIds, input.reviewerOutcomes ?? []);
       const nextRound = { ...round, state: outcome, finishedAt: input.finishedAt, runs: [...input.runs],
         ...(reviewerQuality.length ? { reviewerQuality } : {}),
         ...(reviewerOutcomes.length ? { reviewerOutcomes } : {}),

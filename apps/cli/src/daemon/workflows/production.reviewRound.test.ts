@@ -23,23 +23,31 @@ const witness = { mode: 'plain' as const, version: 1, contentKeyFingerprint: nul
 afterEach(() => vi.restoreAllMocks());
 
 describe('production Review round lifecycle', () => {
-  it.each(['cancelled', 'cancelled_before_prepare', 'failed', 'waiting_for_review', 'session_review'] as const)(
+  it.each(['cancelled', 'cancelled_before_prepare', 'failed', 'interrupted', 'outcome_uncertain',
+    'partial_interrupted', 'partial_uncertain', 'resume_interrupted', 'resume_paused', 'waiting_for_review', 'session_review'] as const)(
     'settles only terminal Review execution after %s, using the actual prepared round', async state => {
       const records = createInMemoryReviewRecordPortV1();
+      const partial = state === 'partial_interrupted' || state === 'partial_uncertain';
+      const uncertain = state === 'outcome_uncertain' || state === 'partial_uncertain';
+      const interrupted = state === 'interrupted' || state === 'partial_interrupted';
+      const resume = state === 'resume_interrupted' || state === 'resume_paused';
       const first = await records.start({ reviewId: 'review', title: 'Review', subjectKind: 'comparison',
         sourceKind: 'workflow', reviewerIds: ['reviewer'], startedAt: 1 });
       const beforePrepare = state === 'cancelled_before_prepare';
       if (!beforePrepare) await records.settle({ ...first, outcome: 'completed', finishedAt: 2, runs: [],
         reviewerOutcomes: [{ key: 'reviewer', outcome: 'completed', reviewOutcome: 'complete', materialization: { kind: 'complete' } }] });
       const prepared = beforePrepare ? first : await records.start({ reviewId: 'review', title: 'Review', subjectKind: 'comparison',
-        sourceKind: 'workflow', reviewerIds: ['reviewer'], startedAt: 3, newRound: true });
-      const sessionStep = state === 'failed' || state === 'session_review';
+        sourceKind: 'workflow', reviewerIds: partial ? ['finished', 'reviewer', 'not-started'] : ['reviewer'], startedAt: 3, newRound: true });
+      const sessionStep = state === 'failed' || interrupted || uncertain || state === 'resume_interrupted' || state === 'session_review';
+      const resultContract = { kind: 'json' as const, schema: zodSchemaToJsonSchemaObject(ReviewStartTerminalValueV1Schema, { target: 'draft-7' }) };
       const definition: WorkflowDefinitionV1 = { version: 1,
         inputs: [{ name: 'reviewRound', valueType: 'json', required: true }], defaults: {}, blocks: [
           { kind: 'action', id: 'prepare', actionId: 'review.prepare_round', input: {} },
+          ...(partial ? [{ kind: 'step' as const, id: 'finished', document: { text: 'Review', references: [], attachments: [] },
+            input: [], result: resultContract }] : []),
           sessionStep
             ? { kind: 'step', id: 'review', document: { text: 'Review', references: [], attachments: [] },
-              input: [], result: { kind: 'json', schema: zodSchemaToJsonSchemaObject(ReviewStartTerminalValueV1Schema, { target: 'draft-7' }) } }
+              input: [], result: resultContract }
             : { kind: 'wait', id: 'human', document: { text: 'Continue', references: [], attachments: [] } },
         ] };
       const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
@@ -51,6 +59,8 @@ describe('production Review round lifecycle', () => {
           materializedLeaves: [
             { authoredWorkspace: { kind: 'inherit' }, sourceKey: '$root', blockId: 'prepare', kind: 'action',
               actionId: 'review.prepare_round', selection: {}, executionTarget: { kind: 'session' } },
+            ...(partial ? [{ authoredWorkspace: { kind: 'inherit' as const }, sourceKey: '$root', blockId: 'finished', kind: 'step' as const,
+              selection: {}, executionTarget: { kind: 'session' as const } }] : []),
             sessionStep
               ? { authoredWorkspace: { kind: 'inherit' }, sourceKey: '$root', blockId: 'review', kind: 'step',
                 selection: {}, executionTarget: { kind: 'session' } }
@@ -62,8 +72,8 @@ describe('production Review round lifecycle', () => {
         origin: { kind: 'direct' }, invocationPageSize: 1 });
       const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain',
         binding: { v: 1, purpose: 'checkpoint', accountId, runId }, checkpoint: {
-          kind: 'happier.workflow-checkpoint.v1', rootRecordId, nextSequence: '3',
-          frontier: { nextBlockOrdinal: beforePrepare ? 0 : 1, paused: false },
+          kind: 'happier.workflow-checkpoint.v1', rootRecordId, nextSequence: partial ? '4' : '3',
+          frontier: { nextBlockOrdinal: beforePrepare ? 0 : partial ? 2 : 1, paused: false },
         } }));
       const serialize = (id: string, sequence: string, parentRecordId: string | null, memberOrdinal: string,
         progress: Omit<WorkflowProgressEnvelopeV1, 'logicalInvocationRecordId'>) =>
@@ -85,20 +95,38 @@ describe('production Review round lifecycle', () => {
       const prepareRow = boundary.rowById('prepare')!;
       prepareRow.index = { ...prepareRow.index, lifecycle: 'completed' };
       }
-      if (sessionStep) {
+      if (partial) {
         await boundary.execute({ operation: 'invocations.admit', runId, parentAttempt: 0, accountCurrentness: witness,
-          expectedRevision: boundary.run().revision, checkpointEnvelope, invocations: [{ id: 'reviewer', sequence: '2',
-            parentRecordId: rootRecordId, memberOrdinal: '1', contentEnvelope: serialize('reviewer', '2', rootRecordId, '1', {
+          expectedRevision: boundary.run().revision, checkpointEnvelope, invocations: [{ id: 'finished', sequence: '2',
+            parentRecordId: rootRecordId, memberOrdinal: '1', contentEnvelope: serialize('finished', '2', rootRecordId, '1', {
+              kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'finished', scope: [] }, blockKind: 'step', attempt: '0',
+              execution: { kind: 'session', sessionId, localInputId: 'finished-input' },
+              result: { reviewRound: prepared, reviewedFingerprint: null, commentIds: [], perEngineOutcome: [
+                { key: 'finished', outcome: 'completed', reviewOutcome: 'complete', materialization: { kind: 'complete' },
+                  quality: { score: 4, rationale: 'Reviewed successfully.' }, startedAt: 4, finishedAt: 8 },
+              ] },
+            }) }] });
+        const finished = boundary.rowById('finished')!;
+        finished.index = { ...finished.index, lifecycle: 'completed' };
+      }
+      if (sessionStep) {
+        const sequence = partial ? '3' : '2';
+        const memberOrdinal = partial ? '2' : '1';
+        await boundary.execute({ operation: 'invocations.admit', runId, parentAttempt: 0, accountCurrentness: witness,
+          expectedRevision: boundary.run().revision, checkpointEnvelope, invocations: [{ id: 'reviewer', sequence,
+            parentRecordId: rootRecordId, memberOrdinal, contentEnvelope: serialize('reviewer', sequence, rootRecordId, memberOrdinal, {
               kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'review', scope: [] }, blockKind: 'step', attempt: '0',
-              execution: { kind: 'session', sessionId, localInputId: 'review-input' },
+              ...(uncertain ? {} : { execution: { kind: 'session' as const, sessionId, localInputId: 'review-input' } }),
               workspace: { descriptor: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
               input: { document: { text: 'Review', references: [], attachments: [] }, input: [
                 { reviewRound: prepared }, { kind: 'review_session.v1', reviewerId: 'reviewer' },
               ] },
-              ...(state === 'failed' ? { reason: { code: 'missing_reference' } } : {}),
+              ...(state === 'failed' ? { reason: { code: 'missing_reference' } }
+                : interrupted || uncertain ? { reason: { code: 'agent_isolation_unavailable' } } : {}),
             }) }] });
         const failed = boundary.rowById('reviewer')!;
-        failed.index = { ...failed.index, lifecycle: state === 'failed' ? 'failed' : 'running' };
+        failed.index = { ...failed.index, lifecycle: state === 'failed' || interrupted ? 'failed'
+          : uncertain ? 'outcome_uncertain' : 'running' };
       }
       if (state === 'cancelled' || beforePrepare) boundary.requestControl('cancel_requested');
       if (state === 'session_review') {
@@ -130,15 +158,30 @@ describe('production Review round lifecycle', () => {
       const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId, storage: boundary,
         workspaceScm: { inspectLocation: async () => ({ inspection: { rootPath: '/repo' } }), verifyRecordedWorkspace: async () => 'available' },
         execution, resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation' }),
-        resolveAccountEncryption: async () => ({ kind: 'available', witness }), isAcceptedAuthorizationCurrent: async () => true,
+        resolveAccountEncryption: async () => ({ kind: 'available', witness }), isAcceptedAuthorizationCurrent: async () => !resume,
         onCommittedTransition: () => {}, onReviewEntered: () => {} });
       const coordinated = await coordinate({ runId, attempt: 0, expectedRevision: boundary.run().revision,
-        accountCurrentness: witness, acceptedEnvelope });
-      expect(coordinated, JSON.stringify(coordinated)).toMatchObject({ state: state === 'session_review' ? 'succeeded' : beforePrepare ? 'cancelled' : state });
+        accountCurrentness: witness, acceptedEnvelope, ...(resume ? { workflowResumeRequestedRevision: 1 } : {}) });
+      expect(coordinated, JSON.stringify(coordinated)).toMatchObject({ state: state === 'session_review' ? 'succeeded'
+        : beforePrepare ? 'cancelled' : interrupted || state === 'resume_interrupted' ? 'interrupted'
+        : uncertain ? 'outcome_uncertain' : state === 'resume_paused' ? 'paused' : state });
       const review = await records.read('review');
-      const nonterminal = state === 'waiting_for_review' || state === 'session_review';
-      expect(review?.rounds.map(round => round.state)).toEqual(beforePrepare ? ['cancelled'] : ['completed', nonterminal ? 'running' : state]);
+      const nonterminal = state === 'waiting_for_review' || state === 'session_review' || state === 'resume_paused';
+      expect(review?.rounds.map(round => round.state)).toEqual(beforePrepare ? ['cancelled'] : ['completed', nonterminal ? 'running'
+        : partial ? 'partial' : interrupted || uncertain || state === 'resume_interrupted' ? 'failed' : state]);
       expect(review?.rounds.at(-1)?.runs).toEqual(nonterminal ? [] : [{ kind: 'workflow', runId }]);
+      if (state === 'failed' || interrupted || uncertain) {
+        expect(review?.rounds.at(-1)?.reviewerOutcomes).toMatchObject([
+          ...(partial ? [{ reviewerId: 'finished', outcome: 'completed', startedAt: 4, finishedAt: 8 }] : []),
+          { reviewerId: 'reviewer', outcome: 'failed',
+            reason: { run: 'failed', errorCode: state === 'failed' ? 'missing_reference' : 'agent_isolation_unavailable' } },
+          ...(partial ? [{ reviewerId: 'not-started', outcome: 'failed' }] : []),
+        ]);
+        expect(records.readMetadata('review')?.state).toBe(partial ? 'partial' : 'failed');
+        if (partial) expect(review?.rounds.at(-1)?.reviewerQuality).toEqual([
+          { reviewerId: 'finished', score: 4, rationale: 'Reviewed successfully.' },
+        ]);
+      }
       if (state === 'session_review') {
         const row = boundary.rowById('reviewer')!;
         const opened = openWorkflowProgressStoredEnvelopeV1({ mode: 'plain',

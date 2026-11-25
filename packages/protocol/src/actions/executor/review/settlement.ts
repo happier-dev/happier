@@ -7,7 +7,7 @@ import { ReviewStartTerminalValueV1Schema } from '../../specs/executionRunComple
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 
 /** Collect only retained Review receipts and ordinary collect_outcomes envelopes. */
-function collectReviewRoundOutcomes(input: Readonly<{
+export function collectReviewRoundOutcomes(input: Readonly<{
   reviewRound: ReviewRoundBindingV1;
   reviewerResults: readonly unknown[];
 }>): ReviewReviewerOutcomeV1[] {

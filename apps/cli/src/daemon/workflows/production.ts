@@ -69,6 +69,7 @@ import {
 import { createWorkflowRunStorageClient } from './workflowRunStorageClient';
 import { resolveWorkflowAuthorizedSession } from './invocationRecoveryObserver';
 import { materializeWorkflowSessionReview } from './reviewSessionStep';
+import { collectWorkflowReviewRoundOutcomes } from './reviewRoundSettlement';
 import { createCoordinatorWorkspaceResolver, prepareWorkflowAcceptedWorkspaceTarget, selectManagedWorkflowWorkspaceSource } from './resolveWorkflowWorkspace';
 import { bindAutomationWorkflowInputs, resolveAutomationWorkflowOccurrenceSeed, WorkflowInputResolutionError } from './input';
 import { resolveDeploymentTriggerOccurrence, admitDeploymentTriggerOccurrence } from './deploymentTrigger';
@@ -1975,7 +1976,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const state = control === 'cancel_requested' ? 'cancelled' : hasInputCustody ? 'interrupted' : 'paused';
       // A denied resumed boundary owns no input. Reclaimed active custody must
       // remain recoverable rather than being mislabeled a quiescent pause.
-      if (state === 'cancelled') return await settleCoordinatorResult({ state: 'cancelled', reason: recoveryFailure });
+      if (state !== 'paused') return await settleCoordinatorResult({ state, reason: recoveryFailure });
       const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({
         ...sealMode(encryption), binding: { v: 1, purpose: 'checkpoint', accountId: params.accountId, runId: claim.runId },
         checkpoint: { ...durableStore.checkpoint, frontier: { ...durableStore.checkpoint.frontier, paused: state === 'paused' } },
@@ -2436,7 +2437,8 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         // review holds remain owned by the existing terminal recovery path.
         if (unsettled.some(row => row.recordId !== rootBeforeSettlement.id)) custodyState = undefined;
       }
-      if (result.state === 'failed' || result.state === 'cancelled') {
+      if (result.state === 'failed' || result.state === 'cancelled'
+        || result.state === 'interrupted' || result.state === 'outcome_uncertain') {
         const originalRound = ReviewRoundBindingV1Schema.safeParse(accepted.inputs.reviewRound);
         const preparesRound = accepted.materializedLeaves.some(leaf => leaf.kind === 'action' && leaf.actionId === 'review.prepare_round');
         if (originalRound.success || preparesRound) {
@@ -2475,7 +2477,8 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
             // Settle before releasing the Workflow's existing custody so an
             // Artifact failure stays recoverable. A later Cancel can change
             // the Workflow label; it cannot reopen the settled Review round.
-            await services.records.settle({ ...binding, outcome: result.state, finishedAt: Date.now(), runs });
+            await services.records.settle({ ...binding, outcome: result.state === 'cancelled' ? 'cancelled' : 'failed',
+              reviewerOutcomes: collectWorkflowReviewRoundOutcomes(binding, invocations), finishedAt: Date.now(), runs });
           }
         }
       }
