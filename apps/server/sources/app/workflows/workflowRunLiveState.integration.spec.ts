@@ -344,7 +344,8 @@ describe("workflow Run live state", () => {
             for (const state of ["interrupted", "succeeded", "running"] as const) {
                 const { input } = await admit(seeded, sourceArtifactId);
                 const createdAt: Date = new Date(Date.UTC(2026, 0, records.length + 1));
-                await db.automationRun.update({ where: { id: input.runId }, data: { state, createdAt, workflowCustodyState: state === "succeeded" ? "settled" : "pending", originDeliveryAckRevision: state === "succeeded" ? 0 : null } });
+                const startedAt = new Date(createdAt.getTime() + 1_000);
+                await db.automationRun.update({ where: { id: input.runId }, data: { state, createdAt, startedAt, workflowCustodyState: state === "succeeded" ? "settled" : "pending", originDeliveryAckRevision: state === "succeeded" ? 0 : null } });
                 if (state === "running" || state === "interrupted") {
                     await db.workflowRunInvocation.create({ data: {
                         id: randomUUID(), runId: input.runId, sequence: 0n, memberOrdinal: 0n,
@@ -355,7 +356,7 @@ describe("workflow Run live state", () => {
                     expect(unchanged.revision).toBe(0);
                     await expect(service.waitWorkflowRun({ accountId: seeded.accountId, runId: input.runId, timeoutSeconds: 0 })).resolves.toMatchObject({ observation: "needs_attention" });
                 }
-                records.push({ runId: input.runId, sourceArtifactId, state, createdAt });
+                records.push({ runId: input.runId, sourceArtifactId, state, startedAt });
             }
         }
         await admit(stranger, sourceArtifactIds[0]);
@@ -364,7 +365,9 @@ describe("workflow Run live state", () => {
         expect(result.remainingSourceArtifactIds).toEqual([]);
         for (const summary of result.summaries) {
             const own = records.filter((row) => row.sourceArtifactId === summary.sourceArtifactId).reverse();
-            expect(summary.lastRun).toMatchObject({ runId: own[0].runId, state: own[0].state });
+            expect(summary.lastRun).toMatchObject({
+                runId: own[0].runId, state: own[0].state, startedAt: own[0].startedAt.toISOString(),
+            });
             expect(summary.recent).toEqual(own.slice(0, 2).map(({ runId, state }) => ({ runId, state,
                 workflowCustodyState: state === "succeeded" ? "settled" : "pending",
                 attentionRequired: state !== "succeeded", failureUnseen: false, invocationAttentionRequired: state !== "succeeded",

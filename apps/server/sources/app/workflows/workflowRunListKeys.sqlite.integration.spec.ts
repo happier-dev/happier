@@ -333,8 +333,9 @@ it("keeps summary queries set-oriented for 1129 requested ids without acquiring 
         expect(sources.summaries.map(summary => summary.sourceArtifactId)).toEqual(oversizedIds);
         expect(sources.summaries.every(summary => summary.lastRun === null)).toBe(true);
         expect(sources.remainingSourceArtifactIds).toEqual([]);
+        // The Automation read binds each ID and needs two portable SQL batches for this input.
         expect({ automationQueries, sourceQueries: rawQueries, privatePayloadColumns })
-            .toEqual({ automationQueries: 1, sourceQueries: 1, privatePayloadColumns: 0 });
+            .toEqual({ automationQueries: 2, sourceQueries: 1, privatePayloadColumns: 0 });
         console.info("PERF-S4-workflow-summary-queries", { singleQueries, pageQueries: 1, requestedIds: oversizedIds.length,
             automationQueries, sourceQueries: rawQueries, privatePayloadColumns });
     } finally { stop(); Reflect.set(boundary, "_request", request); }

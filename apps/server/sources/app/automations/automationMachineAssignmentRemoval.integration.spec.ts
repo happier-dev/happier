@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { createAutomationSessionLifecycleFixtureFields } from "@/testkit/automationSessionLifecycleFixture";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { removeAutomationMachineAssignmentsTx, AutomationMachineAssignmentRemovalFenceUnavailableError } from "./automationMachineAssignmentRemoval";
@@ -104,12 +105,11 @@ describe("automation machine-assignment removal (integration)", () => {
     async function seedAutomation(params: Readonly<{
         accountId: string;
         enabled?: boolean;
-        trigger?: Readonly<{
-            kind: "schedule" | "pluginEvent" | "sessionLifecycle";
-            nextRunAt?: Date;
-            sourceSessionId?: string;
-            sourceTurnId?: string;
-        }>;
+        trigger?: Readonly<
+            | { kind: "schedule"; nextRunAt: Date }
+            | { kind: "pluginEvent" }
+            | { kind: "sessionLifecycle"; sourceSessionId: string; sourceTurnId: string }
+        >;
     }>): Promise<{ automationId: string; triggerId: string | null }> {
         const automationId = `automation-${randomUUID()}`;
         const triggerId = params.trigger
@@ -154,12 +154,12 @@ describe("automation machine-assignment removal (integration)", () => {
                                 : {}),
                             ...(params.trigger.kind === "sessionLifecycle"
                                 ? {
-                                    sessionLifecycleEventsJson: JSON.stringify(["parentTurnCompleted"]),
-                                    sessionLifecyclePolicyKind: "currentTurn" as const,
-                                    sessionLifecycleMatchCount: null,
-                                    remainingOccurrences: 1,
-                                    sourceSessionId: params.trigger.sourceSessionId ?? null,
-                                    sourceTurnId: params.trigger.sourceTurnId ?? null,
+                                    ...await createAutomationSessionLifecycleFixtureFields({
+                                        automationId, triggerId, revision: 0, kind: "sessionLifecycle",
+                                        sourceSessionId: params.trigger.sourceSessionId,
+                                        events: ["parentTurnCompleted"],
+                                        policy: { kind: "currentTurn", sourceTurnId: params.trigger.sourceTurnId },
+                                    }),
                                 }
                                 : {}),
                         },
@@ -846,7 +846,7 @@ describe("automation machine-assignment removal (integration)", () => {
         const suffix = randomUUID();
         const sourceSessionId = `session-${suffix}`;
         const sourceTurnId = `turn-${suffix}`;
-        await db.session.create({
+        const sourceSession = await db.session.create({
             data: {
                 id: sourceSessionId,
                 tag: `removal-${suffix}`,
@@ -894,6 +894,8 @@ describe("automation machine-assignment removal (integration)", () => {
         const results = await inTx(async (tx) => await admitSessionLifecycleAutomationRunsTx({
             tx,
             accountId,
+            sourceSession,
+            recipientAccountIds: [],
             occurrence: {
                 v: 1,
                 kind: "sessionLifecycle",
