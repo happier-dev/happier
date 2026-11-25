@@ -281,7 +281,7 @@ describe('public-profile snapshot computation from canonical Usage', () => {
       const compact = projectUsageAnalyticsSummary(accounting, usageQueryToAnalyticsRequest(query, endMs));
       for (const value of [accounting, compact]) {
         const snapshots = [{ query, value, status: 'available' as const, asOfMs: endMs }];
-        const work = await collectUsageWorkSources({ queries: [query], accounting: snapshots, assertCurrent: () => {},
+        const work = await collectUsageWorkSources({ queries: [query], accounting: snapshots, assertCurrent: () => {}, now: () => endMs,
           resolveSession: async sessionId => ({ machineId: sessionId, cwd: '/repo' }),
           readMachine: async machine => ({ sessions: [machine === outside.sessionId
             ? { sessionId: machine, status: 'partial', pullRequestsRead: true, evidence: [merged] }

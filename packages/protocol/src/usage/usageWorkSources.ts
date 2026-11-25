@@ -97,6 +97,7 @@ export async function collectUsageWorkSources(input: Readonly<{
     resolveSession: (sessionId: string) => Promise<Readonly<{ machineId: string; cwd: string } | { errorCode: string }> | null>;
     readMachine: (machineId: string, request: ScmWorkEvidenceReadRequest) => Promise<unknown>;
     assertCurrent: () => void | Promise<void>;
+    now: () => number;
 }>): Promise<readonly UsageWorkSourceSnapshot[]> {
     const { queries, accounting } = input;
     const sessionReads = input.sessionReads ?? new Map<string, Promise<SessionWorkSourceResult>>();
@@ -187,10 +188,11 @@ export async function collectUsageWorkSources(input: Readonly<{
         for (const sessionId of missing) sessionReads.set(readKeys.get(sessionId)!, acquisition.then(results => results.get(sessionId)!));
     }
     const sessions = new Map(await Promise.all([...sessionIds].map(async sessionId => [sessionId, await sessionReads.get(readKeys.get(sessionId)!)!] as const)));
+    const asOfMs = input.now();
     return queries.map((query): UsageWorkSourceSnapshot => {
         const key = getUsageQueryKey(query);
         const admittedTurns = turnsByQuery.get(key);
-        if (!admittedTurns) return { query, status: 'unknown' };
+        if (!admittedTurns) return { query, status: 'unknown', asOfMs };
         const turns = new Set(admittedTurns.map(turn => JSON.stringify([turn.sessionId, turn.turnId])));
         const selectedIds = [...new Set(admittedTurns.map(turn => turn.sessionId))];
         const selected = selectedIds.map(sessionId => sessions.get(sessionId)!);
@@ -219,6 +221,7 @@ export async function collectUsageWorkSources(input: Readonly<{
             : hasOfflineMachine && (status === 'unknown' || status === 'partial') ? 'machine_offline' : undefined;
         return { query, ...(failedReplacement ? {} : { evidence, branchEvidence }), status,
             pullRequestReadSessions,
+            ...(status === 'error' ? {} : { asOfMs }),
             ...(Object.keys(unreadSessions).length ? { unreadSessions } : {}),
             ...(errorCode === undefined ? {} : { errorCode }) };
     });

@@ -514,7 +514,7 @@ describe('callMachineRpc', () => {
       const start = Date.now();
       let completedAt: number | undefined;
       const pending = collectUsageWorkSources({
-        queries: [query], assertCurrent: () => {},
+        queries: [query], assertCurrent: () => {}, now: Date.now,
         accounting: [{ query, status: 'available', value: { v: 1,
           totals: { eventCount: targets.size, tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
             cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } },

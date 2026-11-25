@@ -33,7 +33,7 @@ describe('Usage Work repository admission', () => {
     });
     const accounting = [{ query, value: snapshot, status: 'available' as const }];
     const work = await collectUsageWorkSources({
-      queries: [query], accounting, assertCurrent: () => {},
+      queries: [query], accounting, assertCurrent: () => {}, now: () => 1000,
       resolveSession: async sessionId => sessionId === 'unresolved' ? null : { machineId: sessionId, cwd: '/repo' },
       readMachine: async (machineId, request) => {
         if (machineId === 'unavailable') throw createRpcCallError({ error: 'Unavailable', errorCode: 'target_unavailable' });
@@ -63,7 +63,7 @@ describe('Usage Work repository admission', () => {
     ]);
     expect(result.accounting?.totals.cost.reportedUsd).toBe(reportedUsd);
     const workSource = {
-      source: 'work', status: 'partial', errorCode: fails ? 'work_evidence_failed' : 'machine_offline',
+      source: 'work', status: 'partial', asOfMs: 1000, errorCode: fails ? 'work_evidence_failed' : 'machine_offline',
       unreadSessions: { machine_unavailable: 2, failed: 1, ...(fails ? { not_entitled: 1, timed_out: 1 } : {}) },
     };
     expect(result.sources.find(source => source.source === 'work')).toEqual(workSource);
@@ -81,7 +81,7 @@ describe('Usage Work repository admission', () => {
       checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed',
       branch: { ref: 'refs/heads/feature', headSha: 'b'.repeat(40) } };
     const read = async (readPrs: boolean) => {
-      const work = await collectUsageWorkSources({ queries: [query], accounting: usage, assertCurrent: () => {},
+      const work = await collectUsageWorkSources({ queries: [query], accounting: usage, assertCurrent: () => {}, now: () => 1000,
         resolveSession: async () => ({ machineId: 'machine', cwd: '/repo' }),
         readMachine: async () => ({ sessions: [{ sessionId: 'session', status: 'partial', evidence: [], branchEvidence: [branch],
           ...(readPrs ? { pullRequestsRead: true } : {}) }] }),
@@ -112,7 +112,7 @@ describe('Usage Work repository admission', () => {
     const sessionReads = new Map<string, Promise<SessionWorkSourceResult>>();
     // SCM transport is the genuine boundary; admission, membership and retention are real.
     const input = { queries: [query], accounting: [{ query, value: snapshot, status: 'available' as const }], sessionReads,
-      assertCurrent: () => {},
+      assertCurrent: () => {}, now: () => 1000,
       resolveSession: async (sessionId: string) => targets.get(sessionId)!,
       readMachine: async (machineId: string, request: { sessions: { sessionId: string }[] }) => {
         calls.push(machineId);
@@ -132,7 +132,7 @@ describe('Usage Work repository admission', () => {
     ['Machine admission unavailable', RPC_ERROR_CODES.FORBIDDEN, 'machine_unavailable', true],
     ['Machine admission access denied', RPC_ERROR_CODES.FORBIDDEN, 'access_denied', false],
   ] as const)('distinguishes unavailable Work hosts from authorization failure: %s', async (_scenario, errorCode, causeCode, unavailable) => {
-    const work = await collectUsageWorkSources({ queries: [query], accounting, assertCurrent: () => {},
+    const work = await collectUsageWorkSources({ queries: [query], accounting, assertCurrent: () => {}, now: () => 1000,
       resolveSession: async () => ({ machineId: 'machine', cwd: '/repo' }),
       readMachine: async () => { throw createRpcCallError({
         error: errorCode,
@@ -142,7 +142,7 @@ describe('Usage Work repository admission', () => {
     });
     const result = resolveUsagePageAggregation({ queries: [query], accounting, work }, bundledUsageModelPriceCatalog);
     expect(result.results[0]?.sources.find(source => source.source === 'work')).toEqual(unavailable
-      ? { source: 'work', status: 'unknown', unreadSessions: { machine_unavailable: 1 } }
+      ? { source: 'work', status: 'unknown', asOfMs: 1000, unreadSessions: { machine_unavailable: 1 } }
       : { source: 'work', status: 'error', errorCode: 'work_evidence_failed', unreadSessions: { not_entitled: 1 } });
     expect(work[0]?.evidence ?? []).toEqual([]);
   });
@@ -152,7 +152,7 @@ describe('Usage Work repository admission', () => {
       checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed',
       branch: { ref: 'refs/heads/feature', headSha: 'b'.repeat(40) } };
     const work = await collectUsageWorkSources({ queries: [query],
-      accounting: [{ query, value: { ...value, sessionMembership: { turns } }, status: 'available' }], assertCurrent: () => {},
+      accounting: [{ query, value: { ...value, sessionMembership: { turns } }, status: 'available' }], assertCurrent: () => {}, now: () => 1000,
       resolveSession: async () => ({ machineId: 'machine', cwd: '/repo' }),
       readMachine: async () => ({ sessions: [
         { sessionId: 'allowed', status: 'partial', evidence: [], branchEvidence: [branch] },
@@ -186,7 +186,7 @@ describe('Usage Work repository admission', () => {
         sessionMembership: { turns },
       } }];
       const work = await collectUsageWorkSources({
-        queries: [query], accounting, assertCurrent: () => {},
+        queries: [query], accounting, assertCurrent: () => {}, now: () => 1000,
         resolveSession: async sessionId => ({ machineId: sessionId.split('-')[0]!, cwd: '/repo' }),
         readMachine: async (machineId, request) => {
           if (machineId === 'offline') throw createRpcCallError({ error: 'Offline', errorCode: 'machine_offline' });
@@ -251,7 +251,7 @@ describe('Usage Work repository admission', () => {
       }] };
     };
     const read = (replies: readonly string[], offset: number) => collectUsageWorkSources({
-      queries: [query], accounting, assertCurrent: () => {},
+      queries: [query], accounting, assertCurrent: () => {}, now: () => 1000,
       resolveSession: async sessionId => replies[Number(sessionId) - 1] === 'denied'
         ? { errorCode: RPC_ERROR_CODES.FORBIDDEN } : { machineId: sessionId, cwd: '/repo' },
       readMachine: async machineId => {
@@ -290,7 +290,7 @@ describe('Usage Work repository admission', () => {
   it('acquires a newly admitted turn set while reusing the exact admitted read', async () => {
     let calls = 0;
     const sessionReads = new Map<string, Promise<SessionWorkSourceResult>>();
-    const input = { queries: [query], accounting, sessionReads, assertCurrent: () => {},
+    const input = { queries: [query], accounting, sessionReads, assertCurrent: () => {}, now: () => 1000,
       resolveSession: async () => ({ machineId: 'machine', cwd: '/repo' }),
       readMachine: async (_machineId: string, request: ScmWorkEvidenceReadRequest) => {
         calls++;

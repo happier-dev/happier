@@ -304,7 +304,7 @@ export async function readCliUsageDetail(input: Readonly<{
         for (const id of ids) eligibleIds.add(id);
     }
     for (const id of sessions.keys()) if (!eligibleIds.has(id)) sessions.delete(id);
-    const work = await collectUsageWorkSources({ queries: workQueries, accounting: input.accounting, assertCurrent: input.assertCurrent,
+    const work = await collectUsageWorkSources({ queries: workQueries, accounting: input.accounting, assertCurrent: input.assertCurrent, now: Date.now,
         resolveSession: async sessionId => {
             const session = sessions.get(sessionId);
             if (!session) {

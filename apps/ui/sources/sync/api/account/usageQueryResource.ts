@@ -1845,11 +1845,11 @@ export async function readUiUsageQueryBatch(
             const source = admission?.retained ?? await (async () => {
                 const [read] = await collectUsageWorkSources({
                     queries: [query], accounting: [...accounting.values()], sessionReads: sessionWorkReads,
-                    assertCurrent: () => requireCurrent(context, signal),
+                    assertCurrent: () => requireCurrent(context, signal), now: Date.now,
                     resolveSession: async sessionId => targets.get(sessionId) ?? null,
                     readMachine: readWorkMachine,
                 });
-                return read!.status === 'error' ? read! : { ...read!, asOfMs: Date.now() };
+                return read!;
             })();
             admission?.settle(source);
             work = work.map((previous, sourceIndex) => sourceIndex === index ? source : previous);

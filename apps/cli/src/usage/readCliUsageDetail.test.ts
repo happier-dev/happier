@@ -41,6 +41,39 @@ function twoSessionAccounting(sessionIds: string[]) {
 }
 
 describe('CLI Usage Session evidence demand', () => {
+    it.each([false, true])('dates completed standalone Work, with an unread sibling: %s', async mixed => {
+        const ids = mixed ? ['linked', 'offline'] : ['linked'];
+        const sessions = ids.map(id => createSessionRecordFixture({ id, encryptionMode: 'plain', share: null,
+            metadata: JSON.stringify({ path: '/repo', machineId: id, agent: 'claude' }) }));
+        vi.spyOn(axios, 'post').mockImplementation(async (_url, request) => batchResponse({ results: sessions.map(session => ({
+            sessionId: session.id, detail: { status: 200, body: { session } },
+            turns: { status: 200, body: { v: 1, sessionId: session.id, updatedAt: 180, turns: [] } },
+        })) }, 200, request));
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(200);
+        vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(async ({ machineId }) => {
+            if (machineId === 'offline') throw new RpcError('Machine offline', 'machine_offline');
+            clock.mockReturnValue(275);
+            return { sessions: [{ sessionId: 'linked', status: 'partial', pullRequestsRead: true, evidence: [],
+                branchEvidence: [{ sessionId: 'linked', turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint',
+                    checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40),
+                    attributionScope: 'no_happier_checkpoint_overlap_observed',
+                    branch: { ref: 'refs/heads/feature', headSha: 'b'.repeat(40) } }] }] };
+        });
+        const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, session: ids, includeWorkEvidence: true,
+            includeSessionEvidence: false });
+        const value = twoSessionAccounting(ids);
+        const accounting = [{ query, value, status: 'available' as const }];
+        const detail = await readCliUsageDetail({ queries: [query], accounting, credentials: { token: 'token', encryption: null },
+            serverId: 'home', serverHttpBaseUrl: 'http://usage-batch.test', accountEncryptionMode: 'plain', allowPrivateRead: true,
+            nowMs: 200, assertCurrent: async () => {}, resolveHeaders: () => ({ Authorization: 'Bearer token' }) });
+        const answer = UsageQueryBatchResultSchema.parse(resolveUsagePageAggregation({ queries: [query], accounting,
+            work: detail.work, nowMs: 200 }, bundledUsageModelPriceCatalog)).results[0];
+        expect(answer?.accounting?.totals).toEqual(value.totals);
+        expect(answer?.sources).toContainEqual({ source: 'work', status: 'partial', asOfMs: 275,
+            ...(mixed ? { errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 1 } } : {}) });
+        expect(detail.work[0]?.branchEvidence).toHaveLength(1);
+    });
+
     it.each(['request', 'detail'])('carries a failing Session evidence %s into Work instead of reporting unknown Work', async failed => {
         const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, includeSessionEvidence: false,
             includeWorkEvidence: true });

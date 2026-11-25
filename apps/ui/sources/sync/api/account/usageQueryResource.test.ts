@@ -2904,6 +2904,7 @@ describe('usage query captured Resource adapter', () => {
 
   it('retains Work after repeated HTTP failures while batch transport refusal quarantines denial', async () => {
     let status = 200;
+    let nowMs = 1000;
     let hasEvidence = true;
     const branchEvidence = { sessionId: 'work-session', turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint',
       checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed',
@@ -2917,7 +2918,7 @@ describe('usage query captured Resource adapter', () => {
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeSessionEvidence: false });
     const accounting = [{ query, value: { ...value, contributions: [workContribution] }, status: 'available' as const }];
     const read = async (previous?: ReturnType<typeof resolveUsagePageAggregation>) => {
-      const work = await collectUsageWorkSources({ queries: [query], accounting, assertCurrent: () => {
+      const work = await collectUsageWorkSources({ queries: [query], accounting, now: () => nowMs, assertCurrent: () => {
         if (!captured.accountLifetime.isCurrent()) throw new Error('retired');
       }, resolveSession: async () => ({ machineId: 'work-machine', cwd: '/repo' }), readMachine: async (_machineId, input) => {
         const response = await captured.request('/test/work/scm.workEvidence.read', { method: 'POST', body: JSON.stringify(input) });
@@ -2930,11 +2931,12 @@ describe('usage query captured Resource adapter', () => {
     const first = await read();
     expect(first.results[0]?.work?.branchAllocations[0]?.reason).toBe('allocated');
     status = 503;
+    nowMs = 2000;
     let previous = first;
     for (let attempt = 0; attempt < 2; attempt++) {
       previous = await read(previous);
       expect.soft(previous.results[0]?.work?.branchAllocations[0]?.reason).toBe('allocated');
-      expect.soft(previous.results[0]?.sources).toContainEqual({ source: 'work', status: 'stale', errorCode: 'work_evidence_failed',
+      expect.soft(previous.results[0]?.sources).toContainEqual({ source: 'work', status: 'stale', asOfMs: 1000, errorCode: 'work_evidence_failed',
         unreadSessions: { failed: 1 } });
     }
     status = 403;
