@@ -15,7 +15,8 @@ import { t } from '@/text';
 import { getStorage } from '@/sync/domains/state/storage';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
-import { projectCanonicalVoiceTranscriptEvent } from '@/voice/transcript/voiceConversationTranscript';
+import { voiceRuntimeLevelStore } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
+import { clearLocalVoiceCapturePartial, projectCanonicalVoiceTranscriptEvent, projectLocalVoiceCapturePartial } from '@/voice/transcript/voiceConversationTranscript';
 
 import { VoiceIsland } from './VoiceIsland';
 import { VoiceOrb } from './VoiceOrb';
@@ -447,6 +448,51 @@ describe('VoiceIsland', () => {
             screen = null;
             voiceSessionBindingStore.getState().unbind('compact-tail');
             store.setState({ settings });
+        }
+    });
+
+    it('commits only the compact transcript on a changed partial and no placement on a meter tick', async () => {
+        const storage = getStorage();
+        const settings = storage.getState().settings;
+        const conversation = { serverId: 'compact-server', sessionId: 'compact-arrivals' };
+        storage.setState({ settings: { ...settings, voice: voiceSettingsParse({
+            providerId: 'local_conversation', ui: { activityFeedEnabled: true },
+        }) } });
+        voiceSessionBindingStore.getState().bind({
+            adapterId: 'local_conversation', controlSessionId: 'voice-1', conversationSessionId: conversation.sessionId,
+            conversationSessionAddress: conversation, lifetime: 'runtime_attempt', transcriptMode: 'synthetic',
+            targetSessionAddress: null, updatedAt: 1,
+        });
+        const voice = projection('listening');
+        const startOutput = voiceRuntimeLevelStore.open({ channel: 'output', sourceId: 'compact-meter' });
+        const commits: string[] = [];
+        const recordCommit = (id: string) => { commits.push(id); };
+        try {
+            screen = await renderScreen(<>
+                <React.Profiler id="island" onRender={recordCommit}>{island(voice).element}</React.Profiler>
+                <React.Profiler id="orb" onRender={recordCommit}>
+                    <VoiceOrb voice={voice} anchorRef={React.createRef()} sectionOpen={false} onOpenSection={() => {}}
+                        shouldSuppressPress={() => false} translateX={makeMutable(300)} hostWidth={400} />
+                </React.Profiler>
+                <React.Profiler id="top bar" onRender={recordCommit}><VoiceTopBarPresence voice={voice} /></React.Profiler>
+            </>);
+            expect(commits).toEqual(expect.arrayContaining(['island', 'orb', 'top bar']));
+            commits.length = 0;
+            act(() => projectLocalVoiceCapturePartial(conversation.sessionId, 'Changed words'));
+            expect(screen.getTextContent()).toContain('Changed words');
+            expect(commits).toEqual(['island']);
+
+            act(() => startOutput.write(0.25));
+            commits.length = 0;
+            act(() => startOutput.write(0.5));
+            expect(commits).toEqual([]);
+        } finally {
+            await screen?.unmount();
+            screen = null;
+            startOutput.close();
+            clearLocalVoiceCapturePartial();
+            voiceSessionBindingStore.getState().unbind(conversation.sessionId);
+            storage.setState({ settings });
         }
     });
 

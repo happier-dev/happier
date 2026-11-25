@@ -336,13 +336,15 @@ export function VoiceEnergyProvider(props: Readonly<{
     }
 
     const frameHandle = React.useRef<ReturnType<typeof useFrameCallback> | null>(null);
+    const silentStopPending = useSharedValue(false);
     const stopSilentFrame = React.useCallback(() => {
         // A newer real sample can wake the owner before this UI→JS callback
         // arrives. Never let an old silence observation stop that new audio.
         if (!hasAudioAmplitude() && level.get() === 0 && history.get().every((slot) => slot === 0)) {
             frameHandle.current?.setActive(false);
         }
-    }, [history, level]);
+        silentStopPending.set(false);
+    }, [history, level, silentStopPending]);
 
     // Hoisted: `useFrameCallback` re-registers the worklet whenever the callback
     // identity changes, so an inline arrow costs three UI-thread round-trips per
@@ -405,13 +407,15 @@ export function VoiceEnergyProvider(props: Readonly<{
             next[HISTORY_SLOTS - 1] = peak;
             history.set(next);
         }
-        if (target === 0 && settled === 0 && history.get().every((slot) => slot === 0)) {
+        if (target === 0 && settled === 0 && !silentStopPending.get() && history.get().every((slot) => slot === 0)) {
+            // Keep only one stop in flight while the JS thread handles it.
+            silentStopPending.set(true);
             runOnJS(stopSilentFrame)();
         }
     }, [
         channel, clock, flow, history,
         historyAt, historyPeak, inputLevel, inputSourceActive, level, luminosity,
-        outputLevel, outputSourceActive, stopSilentFrame, targetLuminosity,
+        outputLevel, outputSourceActive, silentStopPending, stopSilentFrame, targetLuminosity,
     ]);
 
     // Never `autostart`: it is captured in the hook's `useRef` initializer, so the

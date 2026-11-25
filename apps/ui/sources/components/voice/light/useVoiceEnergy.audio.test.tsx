@@ -23,6 +23,7 @@ import {
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const nativeScheduler = vi.hoisted(() => ({ pendingJs: null as Array<() => void> | null }));
 const appState = await vi.hoisted(async () => {
     const { createReactNativeAppStateEmitter } = await import('@/dev/testkit/runtime/reactNativeRuntime');
     return createReactNativeAppStateEmitter();
@@ -37,7 +38,13 @@ vi.mock('react-native', async () => {
 // Native Reanimated reacts to SharedValue changes even when React and the frame clock are paused.
 vi.mock('react-native-reanimated', async () => {
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
-    return createReanimatedModuleMock({ reactiveDerivedValues: true });
+    return {
+        ...createReanimatedModuleMock({ reactiveDerivedValues: true }),
+        runOnJS: <T extends unknown[],>(callback: (...args: T) => void) => (...args: T) => {
+            if (nativeScheduler.pendingJs) nativeScheduler.pendingJs.push(() => callback(...args));
+            else callback(...args);
+        },
+    };
 });
 
 const LISTENING: VoiceEnergyState = { luminosity: 0.62, energized: true, direction: 'inward' };
@@ -85,6 +92,7 @@ describe('VoiceEnergyProvider audio bridge', () => {
     });
 
     afterEach(() => {
+        nativeScheduler.pendingJs = null;
         act(() => {
             for (const writer of writers.splice(0)) writer.close();
             tree?.unmount();
@@ -220,6 +228,32 @@ describe('VoiceEnergyProvider audio bridge', () => {
         runFrames(90);
         expect(energy!.flow.get()).toBeGreaterThan(0.9);
         expect(energy!.level.get()).toBeGreaterThan(0.95);
+    });
+
+    it('crosses onto JS once per settle and leaves no frame work in sustained silence', () => {
+        const pendingJs: Array<() => void> = [];
+        nativeScheduler.pendingJs = pendingJs;
+        const input = openWriter('input');
+        mount();
+        drive(input, 1);
+        runFrames(10);
+        act(() => input.reset());
+        runFrames(180);
+        expect(pendingJs).toHaveLength(1);
+
+        // A fresh sample wins if JS handles the silence observation late.
+        drive(input, 1);
+        runFrames(10);
+        act(() => pendingJs.shift()?.());
+        expect(frameRecord().handle.isActive).toBe(true);
+
+        act(() => input.reset());
+        runFrames(180);
+        expect(pendingJs).toHaveLength(1);
+        act(() => pendingJs.shift()?.());
+        expect(frameRecord().handle.isActive).toBe(false);
+        runFrames(180);
+        expect(pendingJs).toHaveLength(0);
     });
 
     it('pauses ongoing presentation when hidden and resumes the same real audio', () => {
