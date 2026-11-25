@@ -1,5 +1,6 @@
 import type { TriageSourceFailureV1, TriageTaskCreateFieldsV1, TriageTaskFieldsV1, TriageTaskWriteResultV1 } from '@happier-dev/triage-protocol/v1';
 import { settleAtMostOnceProviderWrite } from '@happier-dev/triage-sources/runtime';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { decodeGithubJsonResponse } from '../../observations/githubApiClient.js';
 import {
   formatReviewCommentPublicationMarkerV1,
@@ -356,7 +357,8 @@ export async function publishGithubIssueComment(
   let claim: ReviewCommentClaimPublicationDispatchResponseV1;
   try {
     claim = await input.claimPublicationDispatch();
-  } catch {
+  } catch (error) {
+    if (isPluginError(error)) throw error;
     return Object.freeze({
       kind: 'rejected' as const,
       reason: 'dispatch_claim_failed' as const,

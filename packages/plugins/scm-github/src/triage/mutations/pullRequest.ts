@@ -1,4 +1,5 @@
 import type { TriagePullRequestStatusV1, TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import type {
   ReviewCommentClaimPublicationDispatchResponseV1,
   ReviewCommentPublicationEntryV1,
@@ -410,7 +411,8 @@ export async function publishGithubPullRequestReview(
   let claim: Awaited<ReturnType<typeof input.claimPublicationDispatch>>;
   try {
     claim = await input.claimPublicationDispatch();
-  } catch {
+  } catch (error) {
+    if (isPluginError(error)) throw error;
     return Object.freeze({
       kind: 'rejected' as const,
       reason: 'dispatch_claim_failed' as const,
@@ -742,7 +744,8 @@ export async function publishGithubPullRequestComment(
   let claim: ReviewCommentClaimPublicationDispatchResponseV1;
   try {
     claim = await input.claimPublicationDispatch();
-  } catch {
+  } catch (error) {
+    if (isPluginError(error)) throw error;
     return Object.freeze({
       kind: 'rejected' as const,
       reason: 'dispatch_claim_failed' as const,

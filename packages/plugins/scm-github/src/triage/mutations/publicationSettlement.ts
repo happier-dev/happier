@@ -1,4 +1,6 @@
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectTriageSourceInvocationFailureV1 } from '@happier-dev/triage-sources/runtime';
 import type {
   ReviewCommentClaimPublicationDispatchResponseV1,
   ReviewCommentPublicationResultV1,
@@ -46,6 +48,9 @@ export async function recordGithubPublicationSettlement(
     await settle(claim, result);
     return undefined;
   } catch (error) {
+    if (isPluginError(error)) {
+      return projectTriageSourceInvocationFailureV1(error, GITHUB_PUBLICATION_UNRECORDED_FAILURE.code);
+    }
     // A cancelled invocation keeps its own name: the caller's lifetime ended, which
     // is a different fact from an unreachable settlement, and the same signal is
     // about to end the confirming read too.

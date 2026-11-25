@@ -107,6 +107,7 @@ export function normalizeActionExecuteResult(result: ActionExecuteResult): Norma
     return {
       ok: false,
       errorCode,
+      ...(typeof dataObj.requestId === 'string' ? { requestId: dataObj.requestId } : {}),
       ...(result.automationNotices ? { automationNotices: result.automationNotices } : {}),
       ...(errorMessage ? { errorMessage } : {}),
       ...(candidates && candidates.length > 0 ? { candidates } : {}),

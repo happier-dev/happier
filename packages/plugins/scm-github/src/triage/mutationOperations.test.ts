@@ -2,6 +2,7 @@ import {
   REPOSITORY_KEY, OBSERVED_HEAD, OBSERVED_BASE, ADVANCED_HEAD, CONFIGURED_ACCOUNT, configuredInstance, PULL_REQUEST_REF, stateInput, previewStatusInput, previewStatusTransport, pullRequestBody, json, PULL_REQUEST_PATH, REPOSITORY_PATH,
 } from './testkit/githubMutation.test-support.js';
 import type { ConnectedAccountMaterialization } from '@happier-dev/plugin-sdk/connected-accounts';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 import { pluginActionRequiresPresentUserIntent, PluginActionContributionV2Schema } from '@happier-dev/protocol';
 import { PLUGIN_MANIFEST } from '../manifest.js';
@@ -1020,6 +1021,7 @@ function transportFor(input: Readonly<{
   reviewCommentPublicationReads?: readonly unknown[][];
   threadPublicationReads?: readonly unknown[][];
   claimDisposition?: 'dispatch' | 'reconcile';
+  claimError?: Error;
   settlementError?: Error;
   claimInstructions?: Readonly<{
     entries: readonly ('dispatch' | 'reconcile' | 'confirmed' | 'held')[];
@@ -1053,6 +1055,7 @@ function transportFor(input: Readonly<{
     executeAction: async (actionId, actionInput) => {
       expect(actionId).toBe('reviews.comments.claimPublicationDispatch');
       claimedPlans.push(actionInput);
+      if (input.claimError !== undefined) throw input.claimError;
       if (input.settlementError !== undefined
         && typeof actionInput === 'object'
         && actionInput !== null
@@ -1756,7 +1759,18 @@ describe('GitHub pull-request review publication', () => {
     });
   });
 
-  it('keeps the confirmed publication and still rereads when the canonical settlement fails', async () => {
+  it.each(['review', 'comment', 'reply'] as const)('retains a typed claim refusal before publishing a %s', async (kind) => {
+    const failure = new PluginError({ code: 'review_claim_denied', retryable: false,
+      details: { requestId: 'github-publication-claim' } });
+    const stub = transportFor({ reads: [pullRequestBody()], claimError: failure });
+    const result = kind === 'review' ? publishGithubPullRequestReviewAction(publicationInput(), stub.context)
+      : kind === 'comment' ? createGithubPullRequestReviewCommentAction(standaloneInput(), stub.context)
+        : replyToGithubPullRequestThreadAction(threadReplyInput(), stub.context);
+    await expect(result).rejects.toBe(failure);
+    expect(writes(stub)).toHaveLength(0);
+  });
+
+  it.each([false, true])('keeps the confirmed publication and settlement failure evidence (typed: %s)', async (typed) => {
     // The review is on the pull request and the marker reread proved it. Happier's
     // own server being unreachable afterwards cannot unpublish it, so throwing here
     // would discard a confirmed external effect AND skip the post-mutation exact read
@@ -1770,7 +1784,8 @@ describe('GitHub pull-request review publication', () => {
       reviewCommentPublicationReads: [[commentRecord(
         `Comment\n\n<!-- happier-review-comment:v1:${COMMENT_CORRELATION_ID} -->`,
       )]],
-      settlementError: new Error('canonical settlement unavailable'),
+      settlementError: typed ? new PluginError({ code: 'review_claim_denied', retryable: false,
+        details: { requestId: 'github-review-settlement' } }) : new Error('canonical settlement unavailable'),
     });
 
     const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
@@ -1782,7 +1797,9 @@ describe('GitHub pull-request review publication', () => {
     expect(result.publication.verdict).toMatchObject({
       outcome: { kind: 'published', externalRef: '991' },
     });
-    expect(result.failure).toEqual({
+    expect(result.failure).toEqual(typed ? {
+      class: 'unsupportedContract', code: 'review_claim_denied', requestId: 'github-review-settlement',
+    } : {
       class: 'transient',
       code: 'github_publication_settlement_unrecorded',
     });
@@ -3685,6 +3702,7 @@ function issueTransportFor(input: Readonly<{
   repository?: Readonly<Record<string, unknown>>;
   write?: StubHttpResponse | Error;
   commentReads?: readonly unknown[][];
+  claimError?: Error;
   settlementError?: Error;
 }>) {
   let read = 0;
@@ -3694,6 +3712,7 @@ function issueTransportFor(input: Readonly<{
     executeAction: async (actionId, actionInput) => {
       expect(actionId).toBe('reviews.comments.claimPublicationDispatch');
       claimedPlans.push(actionInput);
+      if (input.claimError !== undefined) throw input.claimError;
       if (input.settlementError !== undefined
         && typeof actionInput === 'object'
         && actionInput !== null
@@ -3798,7 +3817,15 @@ describe('GitHub issue comment publication', () => {
     });
   });
 
-  it('keeps a confirmed issue comment and still rereads when the canonical settlement fails', async () => {
+  it('retains a typed claim refusal before publishing an issue comment', async () => {
+    const failure = new PluginError({ code: 'review_claim_denied', retryable: false,
+      details: { requestId: 'github-issue-claim' } });
+    const stub = issueTransportFor({ reads: [issueBody()], claimError: failure });
+    await expect(createGithubIssueCommentAction(issuePublicationInput(), stub.context)).rejects.toBe(failure);
+    expect(writes(stub)).toHaveLength(0);
+  });
+
+  it.each([false, true])('keeps a confirmed issue comment and settlement failure evidence (typed: %s)', async (typed) => {
     // The same ordering defect lives in every publication adapter, so the issue
     // conversation is fixed at the same boundary rather than at a second one.
     const stub = issueTransportFor({
@@ -3807,7 +3834,8 @@ describe('GitHub issue comment publication', () => {
         id: 701,
         body: `Landed\n\n<!-- happier-review-comment:v1:${COMMENT_CORRELATION_ID} -->`,
       }]],
-      settlementError: new Error('canonical settlement unavailable'),
+      settlementError: typed ? new PluginError({ code: 'review_claim_denied', retryable: false,
+        details: { requestId: 'github-issue-settlement' } }) : new Error('canonical settlement unavailable'),
     });
 
     const result = GithubIssueCommentResultV1Schema.parse(
@@ -3816,7 +3844,9 @@ describe('GitHub issue comment publication', () => {
 
     if (result.kind !== 'settled') throw new Error(`expected settled, got ${result.kind}`);
     expect(result.publication.entries[0]?.outcome).toEqual({ kind: 'published', externalRef: '701' });
-    expect(result.failure).toEqual({
+    expect(result.failure).toEqual(typed ? {
+      class: 'unsupportedContract', code: 'review_claim_denied', requestId: 'github-issue-settlement',
+    } : {
       class: 'transient',
       code: 'github_publication_settlement_unrecorded',
     });
