@@ -17,7 +17,11 @@ describe('SDK negative type contracts', () => {
         const output = await runBoundedFixtureCommand(
             'SDK negative type contract analysis',
             resolve(sourceRoot, '..'),
-            ['--experimental-strip-types', resolve(sourceRoot, 'test-support/negativeTypeContracts.fixture.ts')],
+            [
+                '--conditions=happier-source',
+                '--import', resolve(sourceRoot, '../../cli-common/registerSourceRuntime.mjs'),
+                resolve(sourceRoot, 'test-support/negativeTypeContracts.fixture.ts'),
+            ],
             { timeoutMs: 300_000 },
         );
         const result = JSON.parse(output) as NegativeTypeContractsFixtureResult;

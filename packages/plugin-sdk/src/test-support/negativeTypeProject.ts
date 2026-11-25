@@ -39,7 +39,7 @@ export async function compileNegativeCaseSources(
         writeFileSync(config, JSON.stringify({
             extends: join(packageRoot, 'tsconfig.tests.json'),
             compilerOptions: {
-                incremental: false, noEmit: true, rootDir: directory,
+                incremental: false, noEmit: true,
                 paths: {
                     '@happier-dev/plugin-sdk': [join(fixturePackage, 'src/index.ts')],
                     '@happier-dev/plugin-sdk/*': [join(fixturePackage, 'src/*/index.ts'), join(fixturePackage, 'src/*.ts')],
@@ -51,7 +51,7 @@ export async function compileNegativeCaseSources(
         // cancellation. This child neither increases nor competes with them.
         const result = spawnSync(process.execPath, [
             join(repositoryRoot, 'scripts/workspaces/runTypeScriptCli.mjs'),
-            '--project', config, '--pretty', 'false',
+            '--project', config, '--rootDir', directory, '--pretty', 'false',
         ], { cwd: packageRoot, encoding: 'utf8', maxBuffer: fixtureCommandMaxOutputBytes });
         if (result.error || result.signal || ![0, 1, 2].includes(result.status ?? -1)) {
             throw new Error(`Negative compiler failed: ${result.error?.message ?? result.signal ?? result.status}\n${result.stderr}`);
