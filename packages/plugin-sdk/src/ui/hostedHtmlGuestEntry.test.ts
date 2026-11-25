@@ -51,7 +51,7 @@ it('keeps English errors and Action input admission in the independently bundled
     });
     // VM contexts lack the browser clone intrinsic. Rehome the native clone's
     // JSON in that realm so its plain-object prototypes match browser behavior.
-    const realm = { window: {}, TextEncoder, TextDecoder,
+    const realm = { window: {}, TextEncoder, TextDecoder, URL,
         cloneJson: (value: unknown) => JSON.stringify(structuredClone(value)),
         __happierGuestMiniIssue: undefined as string | undefined,
         __happierGuestActionInputAdmitted: undefined as boolean | undefined };
