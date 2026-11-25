@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 
+import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
+import { compileActionInputJsonSchema } from '../../actions/actionInputJsonSchemaValidation.js';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { openEncryptedDataKeyEnvelopeV1 } from '../../crypto/encryptedDataKeyEnvelopeV1.js';
 import { computeContentPublicKeyFingerprint } from '../identity/contentPublicKeyFingerprint.js';
@@ -846,6 +848,18 @@ describe('managed machine preset content envelope', () => {
       presetId: 'preset-private-native-result', mode: 'e2ee', content: { ...content, reviewedFacts, observation },
       recipientCensus: [recipientCensus('owner', ownerSecret)], randomBytes: randomBytesFactory(330),
     })).toThrow('managed_preset_author_observation_forbidden');
+  });
+
+  it('advertises the provider control result while preserving the received wire value', () => {
+    const schema = managedPresetContent.ManagedMachinePresetNativeControlResultV1Schema;
+    const result = { kind: 'rebuild', result: { kind: 'refused', code: '  provider_refused  ' } };
+    const extra = { ...result, result: { ...result.result, undeclared: true } };
+    const validate = compileActionInputJsonSchema(zodSchemaToJsonSchemaObject(schema));
+
+    expect(validate(result)).toBe(true);
+    expect(validate(extra)).toBe(false);
+    expect(schema.parse(result)).toEqual(result);
+    expect(schema.safeParse(extra).success).toBe(false);
   });
 
   it('keeps full provider control outcomes in the sealed snapshot and binds control references to the reviewed launch', () => {

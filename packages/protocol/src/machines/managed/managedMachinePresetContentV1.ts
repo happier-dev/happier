@@ -37,6 +37,8 @@ import { ManagedMachinePresetPreparationV1Schema, ManagedMachinePresetPreparedV1
   createManagedMachinePresetPreparationExecutionV1Schema, ManagedMachinePresetPreparationExecutionV1Schema,
   type ManagedMachinePresetPreparedV1, type ManagedMachinePresetPreparationExecutionV1 } from './managedMachinePresetPreparationV1.js';
 import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.js';
+import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
+import type { ProtocolComposableSchema } from '../../plugins/actions/protocolComposableSchema.js';
 import { MachineProvisionerDestroyResultV1Schema, MachineProvisionerPowerResultV1Schema,
   MachineProvisionerRebuildResultV1Schema, MachineProvisionerResizeResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
 import { MachinePoolIdV1Schema } from '../pools/v1.js';
@@ -71,6 +73,18 @@ function nativeResultMatchesLaunch(
     && reference.schemaVersion === launch.schemaVersion;
 }
 
+function providerControlResult<TInput, TOutput>(definition: ProtocolComposableSchema<TInput, TOutput>) {
+  const schema = z.custom<TOutput>(value => definition.safeParse(value).success);
+  const projection = asProtocolZod(definition);
+  // Preserve the received provider value when validating the sealed snapshot.
+  // Advertise the same provisioner contract through the existing Zod adapter.
+  schema._zod.processJSONSchema = (context, _json, params) => {
+    z.core.process(projection, context, params);
+    context.seen.get(schema)!.ref = projection;
+  };
+  return schema;
+}
+
 /**
  * Provider-private outcomes from a control operation. Home reports only the
  * outcome kind; the exact result remains with the same admitted preset body.
@@ -78,28 +92,20 @@ function nativeResultMatchesLaunch(
 export const ManagedMachinePresetNativeControlResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('power'),
-    intent: z.enum(['start', 'stop', 'suspend', 'resume']),
-    result: z.custom<ReturnType<typeof MachineProvisionerPowerResultV1Schema.parse>>(
-      value => MachineProvisionerPowerResultV1Schema.safeParse(value).success,
-    ),
+    intent: ManagedPowerIntentV1Schema,
+    result: providerControlResult(MachineProvisionerPowerResultV1Schema),
   }),
   z.strictObject({
     kind: z.literal('resize'),
-    result: z.custom<ReturnType<typeof MachineProvisionerResizeResultV1Schema.parse>>(
-      value => MachineProvisionerResizeResultV1Schema.safeParse(value).success,
-    ),
+    result: providerControlResult(MachineProvisionerResizeResultV1Schema),
   }),
   z.strictObject({
     kind: z.literal('delete'),
-    result: z.custom<ReturnType<typeof MachineProvisionerDestroyResultV1Schema.parse>>(
-      value => MachineProvisionerDestroyResultV1Schema.safeParse(value).success,
-    ),
+    result: providerControlResult(MachineProvisionerDestroyResultV1Schema),
   }),
   z.strictObject({
     kind: z.literal('rebuild'),
-    result: z.custom<ReturnType<typeof MachineProvisionerRebuildResultV1Schema.parse>>(
-      value => MachineProvisionerRebuildResultV1Schema.safeParse(value).success,
-    ),
+    result: providerControlResult(MachineProvisionerRebuildResultV1Schema),
   }),
 ]));
 export type ManagedMachinePresetNativeControlResultV1 = Readonly<
