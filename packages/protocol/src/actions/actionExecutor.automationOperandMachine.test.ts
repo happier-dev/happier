@@ -289,8 +289,10 @@ describe('Before checks on the Action operand Machine', () => {
       actionId: 'account.name.set',
       input: { name: 'QA' },
       front: 'ui' as const,
+      onFailure: 'refuse' as const,
     },
     {
+      // The live VOICE-W18 retry: the same sign-in with the optional machineId left out.
       name: 'sign-in without a Machine from Voice',
       actionId: BEGIN_CONNECT,
       input: {
@@ -298,30 +300,23 @@ describe('Before checks on the Action operand Machine', () => {
         modeId: 'password',
       },
       front: 'voice' as const,
+      onFailure: 'ask' as const,
     },
   ])(
-    'visibly skips each check for $name that has no Machine and keeps the effect',
-    async ({ actionId, input, front }) => {
-      const { port, executor, effect, runMachines } = setup(actionId);
+    'runs the actor\'s own check for $name with no invocation Machine and holds the effect',
+    async ({ actionId, input, front, onFailure }) => {
+      const { port, executor, effect, runMachines } = setup(actionId, onFailure);
       try {
         const result = await executor.execute(
           actionId as typeof BEGIN_CONNECT,
           input as never,
           context(actionId, front),
         );
-        // The effect boundary's own output is not under test; the Skip and the effect are.
-        expect(result, JSON.stringify(result)).toMatchObject({
-          automationNotices: [
-            {
-              code: 'action_automation_skipped',
-              reason: 'machineRequired',
-              automationId: 'guard',
-              triggerId: 'before',
-            },
-          ],
-        });
-        expect(runMachines).toEqual([]);
-        expect(effect).toHaveBeenCalledOnce();
+        // Home places an own trigger's Run on its own assignment when evidence names no Machine.
+        expect(runMachines).toEqual([undefined]);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false,
+          errorCode: onFailure === 'ask' ? 'approval_rejected' : 'action_interception_rejected' });
+        expect(effect).not.toHaveBeenCalled();
       } finally {
         port.dispose();
       }

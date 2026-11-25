@@ -353,7 +353,7 @@ describe('createActionExecutor execution interception', () => {
     expect(deploy).not.toHaveBeenCalled();
   });
 
-  it('gives an external Account Action a visible needs-Machine Skip and performs its effect', async () => {
+  it('keeps an external caller\'s own Before check with no Machine instead of skipping it', async () => {
     const row = { automationId: 'own', triggerId: 'before', triggerRevision: 1, workflowId: 'workflow',
       workflowRevision: 1, ownerAccountId: 'actor', actionIds: ['account.name.set'], phase: 'before', mode: 'wait' };
     const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows: [row] }),
@@ -369,11 +369,10 @@ describe('createActionExecutor execution interception', () => {
       externalActionCredential: { accountId: 'actor', principalId: 'token', credentialId: 'token',
         grant: credentials.API_TOKEN_FULL_GRANT_V1 },
     });
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: profile, automationNotices: [{
-      code: 'action_automation_skipped', reason: 'machineRequired',
-      automationId: row.automationId, triggerId: row.triggerId, workflowId: row.workflowId,
-    }] });
-    expect(effects).toBe(1);
+    // The own wait check is selected, so this host without approval custody refuses before the effect.
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    expect(result).not.toHaveProperty('automationNotices');
+    expect(effects).toBe(0);
   });
 
   it('observes an admitted pending deployment without evaluating its grant again', async () => {

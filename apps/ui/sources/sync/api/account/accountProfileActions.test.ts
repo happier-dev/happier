@@ -6,7 +6,10 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createWorkflowAutomationDetailFixture } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
+import { AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionOccurrenceV1';
 import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -27,7 +30,6 @@ const { setAccountName } = await import('./apiAccountName');
 const { setAccountUsername, releaseAccountUsername } = await import('./apiUsername');
 const { useMountedActionExecution } = await import('@/components/approvals/useMountedActionExecution');
 const { readPresentationNotices, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
-const { t } = await import('@/text');
 const { Modal } = await import('@/modal');
 const credentials = { token: createAccountTokenForTests('self', { currentAccount: true }) };
 let serverId: string;
@@ -51,21 +53,34 @@ afterEach(async () => { retirePresentationNotice(); standardCleanup(); disposeSc
 
 describe('self-profile UI Action admission and acknowledgements', () => {
     it.each(['profile adapter', 'settled receipt', 'prepared invocation'] as const)(
-        'shows a skipped Before check when a %s consumes the Action result', async (consumer) => {
+        'runs an own Before check without a Machine when a %s consumes the Action result', async (consumer) => {
             const features = createRootLayoutFeaturesResponse({ features: { automations: { enabled: true }, workflows: { enabled: true } } });
             homes.answer(serverId, '/v1/features', { body: features });
             homes.answer(serverId, '/v1/features/authenticated', { body: features });
             const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
             primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+            const automationId = 'profile-check';
+            const triggerId = 'before-name';
+            const workflowId = '00000000-0000-4000-8000-000000000091';
+            const trigger = { kind: 'action', actionIds: ['account.name.set'], phase: 'before', mode: 'notify' } as const;
+            const binding = { v: 1, automationId, triggerId, triggerRevision: 1, triggerKind: 'action' } as const;
             homes.answer(serverId, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { body: { v: 1, rows: [{
-                automationId: 'profile-check', triggerId: 'before-name', triggerRevision: 1,
-                workflowId: 'profile-check-workflow', workflowRevision: 1, ownerAccountId: 'self',
-                actionIds: ['account.name.set'], phase: 'before', mode: 'notify',
+                automationId, triggerId, triggerRevision: 1, workflowId, workflowRevision: 1, ownerAccountId: 'self',
+                actionIds: trigger.actionIds, phase: trigger.phase, mode: trigger.mode,
             }] } });
+            homes.answer(serverId, `GET /v3/automations/${automationId}`, { body: {
+                ...createWorkflowAutomationDetailFixture({ id: automationId, revision: 1, workflowDefinitionId: workflowId }),
+                triggers: [{ ...trigger, id: triggerId, revision: 1, enabled: true, createdAt: 1, updatedAt: 1,
+                    triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                        mode: 'plain', binding, definition: { ...trigger, actionIds: [...trigger.actionIds] },
+                    })),
+                }],
+            } });
             const response = { name: 'After', firstName: 'After', lastName: null, timestamp: 2 };
-            const receipt = { ok: true, result: response, automationNotices: [
-                expect.objectContaining({ code: 'action_automation_skipped', reason: 'machineRequired' }),
-            ] };
+            homes.answer(serverId, `POST ${AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1}`, { body: { results: [{
+                kind: 'admitted', automationId, triggerId, runId: 'profile-check-run',
+            }] } });
+            const receipt = { ok: true, result: response };
             homes.answer(serverId, 'POST /v1/account/profile', { body: response });
             const mounted = await renderHook(() => useMountedActionExecution(serverId));
             await waitForHomeGovernance(() => expect(mounted.getCurrent().ready).toBe(true));
@@ -89,9 +104,13 @@ describe('self-profile UI Action admission and acknowledgements', () => {
             expect(homes.requestsFor('/v1/account/profile')).toHaveLength(1);
             expect(Modal.confirm).not.toHaveBeenCalled();
             expect(Modal.alert).not.toHaveBeenCalled();
-            await waitForHomeGovernance(() => expect(readPresentationNotices().map(notice => notice.message)).toEqual([
-                t('workflows.triggers.checks.skippedNeedsMachine', { workflow: t('workflows.triggers.checks.aCheck') }),
-            ]));
+            const admissions = homes.requestsFor(AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1);
+            expect(admissions).toHaveLength(1);
+            expect(admissions[0].input).toMatchObject({
+                triggers: [{ automationId, triggerId, triggerRevision: 1 }],
+            });
+            expect(admissions[0].input).not.toHaveProperty('evidence.machineId');
+            expect(readPresentationNotices()).toEqual([]);
         });
 
     it('releases a username directly by default without a native confirmation or self-approval Artifact', async () => {

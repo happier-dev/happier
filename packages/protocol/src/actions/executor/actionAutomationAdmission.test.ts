@@ -18,19 +18,25 @@ import { AutomationRunCauseSchema } from '../../automations/automationRunCause.j
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
 import { ActionAutomationTriggerReferenceV1Schema } from '../../automations/automationActionTriggerV1.js';
 
-it('uses the invoking Machine for Account Action checks and visibly skips when it is absent', async () => {
+it('uses the invoking Machine for Account Action checks; with none, keeps own checks and visibly skips shared ones', async () => {
   const rows = (['before', 'after'] as const).map(phase => ({ automationId: 'own', triggerId: phase,
     triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1, ownerAccountId: 'actor',
     actionIds: ['notifications.notify_me'], phase, ...(phase === 'before' ? { mode: 'wait' as const } : {}) }));
-  const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows }),
+  const subject = { kind: 'machine' as const, serverId: 'home', machineId: 'subject-machine' };
+  const shared = { automationId: 'shared', triggerId: 'shared-before', triggerRevision: 1, workflowId: 'workflow',
+    workflowRevision: 1, ownerAccountId: 'author', reachesOthers: true, actionIds: ['notifications.notify_me'],
+    phase: 'before' as const, mode: 'wait' as const, subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject, 'workflow') };
+  const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows: [...rows, shared] }),
     settle: async () => {} });
   const args = { actionId: 'notifications.notify_me', input: { message: 'Account effect' },
-    context: { defaultSessionMachineId: 'configured-machine' } };
-  expect(await port.select(args)).toMatchObject({ status: 'ready', before: [rows[0]], after: [rows[1]], notices: [] });
-  expect(await port.select({ ...args, context: {} })).toMatchObject({ status: 'ready', before: [], after: [], notices: rows.map(row => ({
-    code: 'action_automation_skipped', reason: 'machineRequired', automationId: row.automationId,
-    triggerId: row.triggerId, workflowId: row.workflowId,
-  })) });
+    subjects: [{ role: 'context' as const, subject }], context: { defaultSessionMachineId: 'configured-machine' } };
+  expect(await port.select(args)).toMatchObject({ status: 'ready', before: [rows[0], { automationId: 'shared' }],
+    after: [rows[1]], notices: [] });
+  // 02-action-triggers.md:70 (R17): a shared check needs the invocation Machine; the actor's own
+  // triggers keep their own assignments, so Home places their Runs there.
+  expect(await port.select({ ...args, context: {} })).toMatchObject({ status: 'ready', before: [rows[0]], after: [rows[1]],
+    notices: [{ code: 'action_automation_skipped', reason: 'machineRequired', automationId: 'shared',
+      triggerId: 'shared-before', workflowId: 'workflow' }] });
 });
 
 it('avoids a nested Ask by excluding only the producing Before trigger from an admitted Workflow child', async () => {
@@ -77,16 +83,13 @@ it('keeps a retained native After match for the actual terminal event', async ()
   expect(published).toEqual([]);
 });
 
-it('skips an automatic before wait check visibly, like any caller, when its Machine is missing', async () => {
-  const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows: [{
-    automationId: 'own', triggerId: 'before', triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1,
-    ownerAccountId: 'actor', actionIds: ['machines.command.run'], phase: 'before', mode: 'wait', onFailure: 'refuse',
-  }] }), settle: async () => {} });
+it('keeps an own automatic before wait check when the invocation has no Machine', async () => {
+  const row = { automationId: 'own', triggerId: 'before', triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1,
+    ownerAccountId: 'actor', actionIds: ['machines.command.run'], phase: 'before', mode: 'wait', onFailure: 'refuse' } as const;
+  const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows: [row] }), settle: async () => {} });
   const selection = await port.select({ actionId: 'machines.command.run', input: { command: 'printf bypass' },
     context: { authority: 'account_automation', serverIdentityId: 'home' } });
-  expect(selection).toMatchObject({ status: 'ready', before: [], after: [], notices: [{
-    code: 'action_automation_skipped', reason: 'machineRequired', automationId: 'own', triggerId: 'before',
-  }] });
+  expect(selection).toMatchObject({ status: 'ready', before: [{ automationId: 'own', triggerId: 'before' }], after: [], notices: [] });
 });
 
 it('matches a Machine subject from the admitted external target', async () => {
