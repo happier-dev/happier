@@ -10,6 +10,7 @@ import {
   type MachineRpcAdmissionBoundary,
 } from './machineRpcAuthorization';
 import { registerMachineWorkspaceSyncRpcHandlers } from './rpcHandlers.workspaceSync';
+import { deriveWorkspaceSyncRelationshipId } from '@/workspaces/sync/workspaceSyncRelationshipIdentity';
 
 // A Can use member hands a Session to another person's Machine with a
 // workspace copy (owner rulings 2026-10-31, 2026-11-14, 2026-11-15). Without
@@ -203,6 +204,49 @@ describe('Can use handoff target effects', () => {
         { errorCode: 'machine_manage_required' },
       ],
     });
+  });
+
+  // Ruling 2026-11-24 23:56Z (3): on the person's own TARGET, Home's admission of the session.handoff root is the
+  // whole admission. The link's prepare is routed by the handoff operation, its bootstrap id the derived relationship.
+  it.each(['own TARGET', 'Can use TARGET'] as const)('admits a handoff link prepare on Home root admission only on an owner TARGET (%s)', async scenario => {
+    const hostEffects: string[] = [];
+    const admission = scenario === 'own TARGET'
+      ? { ...member, custodianAccountId: 'member', role: 'manage' as const } : member;
+    const boundary: MachineRpcAdmissionBoundary = {
+      machineId: member.machineId,
+      resolveInstallationId: () => member.installationId,
+      resolveCustodianAccountId: async () => admission.custodianAccountId,
+      resolveHomeServerIdentityId: async () => 'home',
+      verifyMachineAdmission: async () => true,
+      // An owner TARGET retains no capture for a handoff; none exists here either.
+      resolvePrivateWorkspaceSyncTargetExecution: () => ({ kind: 'no_private_capture' }),
+    };
+    const rpc = new RpcHandlerManager({ scopePrefix: member.machineId, localMachineId: member.machineId,
+      encryptionMode: 'plain', logger: () => {}, authorizeRequest: incoming => authorizeMachineRpcRequest(incoming, boundary) });
+    const unexpected = async (): Promise<never> => { throw new Error('Unexpected service call'); };
+    const relationshipId = deriveWorkspaceSyncRelationshipId(root.binding.requestId);
+    registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: rpc, service: {
+      controller: {} as never, prepareBetween: unexpected,
+      relationshipOwner: { setEnabled: unexpected, stop: unexpected, create: unexpected },
+      readFileAtTarget: unexpected, observeEntryAtTarget: unexpected, inspectRetiredState: unexpected,
+      releaseBootstrapAtTarget: unexpected, preflightHandoffTargetReplacement: unexpected,
+      prepareBootstrapAtTarget: async () => {
+        hostEffects.push('prepare');
+        return { v: 1, bootstrapOperationId: relationshipId, targetWorkspaceRefId: 'target-ref', state: 'ready',
+          created: true, rootFingerprint: '0'.repeat(64), policyDigest: contentPolicy.policyDigest };
+      },
+    } });
+    const relationship = { v: 1 as const, relationshipId, controllerMachineId: 'member-source', alphaWorkspaceRefId: 'source-ref',
+      betaWorkspaceRefId: 'target-ref', mode: 'keep_both_in_sync' as const, contentPolicy, enabled: true,
+      createdAtMs: 1, updatedAtMs: 1 };
+    const result = await rpc.handleRequest({ ...prepare, machineAdmission: admission, params: { ...prepare.params,
+      bootstrapOperationId: relationshipId, owner: { kind: 'relationship', relationshipId }, transientRelationship: relationship } });
+    if (scenario === 'own TARGET') {
+      expect({ result, hostEffects }).toMatchObject({ result: { state: 'ready', bootstrapOperationId: relationshipId }, hostEffects: ['prepare'] });
+      return;
+    }
+    // A member TARGET without its own capture: the same prepare never reaches the host's native owner.
+    expect({ result, hostEffects }).toMatchObject({ result: { errorCode: 'machine_manage_required' }, hostEffects: [] });
   });
 
   it('refuses a same-Machine Can use handoff copy in process without a capture and keeps Manage native', () => {

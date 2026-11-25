@@ -3293,10 +3293,16 @@ export function createWorkspaceSyncTargetAuthority(
             assertCurrent: async () => { signal?.throwIfAborted(); } };
         } else admittedTarget = await bindReplacementTarget(targetRouting.targetMachineId, targetRouting.targetRootPath, signal, context);
         const child = admittedTarget.facts.find(fact => fact.machineId === targetRouting.targetMachineId);
-        if (!child && context?.callerInputAuthorization?.binding.actionId === 'projects.open'
-          && context.workspaceSyncSourceExecution && !context.workspaceSyncTargetRouting
+        const rootBinding = context?.callerInputAuthorization?.binding;
+        // This TARGET qualifies its own row for the Open it was signed for, or for the handoff Home admitted
+        // to it (the root's signed TARGET Machine and installation; ruling 2026-11-24 23:56Z (3)).
+        const ownTargetInstallationId = rootBinding?.actionId === 'projects.open' && context?.workspaceSyncSourceExecution
+          ? rootBinding.installationId
+          : rootBinding?.actionId === 'session.handoff' && rootBinding.handoffAdmission?.targetMachineId === localMachineId
+            ? rootBinding.handoffAdmission.targetInstallationId : undefined;
+        if (!child && ownTargetInstallationId !== undefined && !context?.workspaceSyncTargetRouting
           && targetRouting.targetMachineId === localMachineId
-          && targetRouting.targetContext.machineAdmission.installationId === context.callerInputAuthorization.binding.installationId) {
+          && targetRouting.targetContext.machineAdmission.installationId === ownTargetInstallationId) {
           const own = resolveWorkspaceRefV1(getSnapshot().workspaceRefs, {
             serverId: localServerId, machineId: localMachineId, rootPath: targetRouting.targetRootPath,
           });

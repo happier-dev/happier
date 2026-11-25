@@ -355,6 +355,8 @@ export function doesWorkspaceSyncFinitePrepareRequestMatchRouting(
 /**
  * A TARGET bootstrap prepare carries exactly the definition its requester's admitted
  * workspace action names: owner kind, content policy and, for a relationship, mode.
+ * Boundary (ruling 2026-11-24 23:56Z (3)): a handoff to an owner or Manage TARGET retains no capture,
+ * so Home's admission of the session.handoff root is its whole admission; this check applies where a capture exists.
  */
 export function doesWorkspaceSyncTargetPrepareMatchAdmittedAction(
   request: WorkspaceSyncTargetBootstrapPrepareV1,

@@ -1704,32 +1704,28 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       return result;
     };
   };
-  const resolveHandoffExecutionInput: NonNullable<DaemonWorkspaceSyncRuntimeDependencies['resolveHandoffExecutionInput']> = async (request, authority, context) => {
-    const accepted = await readHandoffExecutionBasis(request, context, authority);
-    const requester = readRequesterAccountActionContext(context?.callerInputAuthorization);
-    if (!runtime?.handoffAdapter.resolvePrivateExecution?.({ operationId: request.operationId })
-      && request.action.kind !== 'copy_once' && request.action.kind !== 'none'
-      && context?.workspaceSyncSourceRouting && context.callerInputAuthorization?.binding.actionId === 'projects.open'
-      && (!canUseInstalledRelationshipOwner(context)
-        || requester?.retainCustody && input.requesterMachineAdmissionBoundary && context.machineAdmission)) {
-      if (!requester) throw compositionError('project_requester_authority_unavailable', 'Requester Sync custody is unavailable');
+  // The one requester-private Sync execution: an admitted Project Open's, or the link a person's
+  // handoff creates (ruling 2026-11-24 23:16Z (a)). Rows, custody and TARGET calls are the requester's.
+  const retainRequesterSyncExecution = (request: Parameters<NonNullable<DaemonWorkspaceSyncRuntimeDependencies['resolveHandoffExecutionInput']>>[0],
+    admittedSnapshot: ActiveProjectAccountRowsSnapshot,
+    requester: NonNullable<ReturnType<typeof readRequesterAccountActionContext>>, accountId: string,
+    admission: RpcHandlerContext['machineAdmission'], targetContext: RpcHandlerContext,
+    sourceWriter: Readonly<{ machineId: string; installationId: string }> | undefined) => {
       const boundary = input.requesterMachineAdmissionBoundary;
-      const admission = context.machineAdmission;
       if (!requester.retainCustody || !boundary || !admission) throw compositionError('project_requester_authority_unavailable', 'Retained requester Sync custody is unavailable');
+      const custodian = admission;
       const custody = requester.retainCustody();
-      const attribution = { serverId: localProfileId, accountId: context.callerInputAuthorization.binding.accountId,
+      const attribution = { serverId: localProfileId, accountId,
         machineId: admission.machineId, installationId: admission.installationId };
       let relationshipId: string | undefined;
-      let snapshot = accepted.snapshot;
+      let snapshot = admittedSnapshot;
       runtime?.handoffAdapter.retainPrivateExecution?.({ input: request, execution: {
         credentials: requester.credentials,
-        accountRowsCustody: { serverId: semanticServerId, accountId: context.callerInputAuthorization.binding.accountId,
+        accountRowsCustody: { serverId: semanticServerId, accountId,
           serverHttpBaseUrl: requester.serverHttpBaseUrl, isCurrent: custody.isCurrent },
         getSnapshot: () => snapshot,
         replaceSnapshot: async next => { snapshot = next; },
-        ...(input.callWorkspaceTargetPhase ? { callTargetPhase: createRequesterTargetPhaseCaller(context,
-          accepted.childMachines.find(child => child.machineId === context.workspaceSyncSourceRouting?.sourceMachineId)?.controller
-            ?? context.callerInputAuthorization?.binding.workspaceSyncAdmission?.source) } : {}),
+        ...(input.callWorkspaceTargetPhase ? { callTargetPhase: createRequesterTargetPhaseCaller(targetContext, sourceWriter) } : {}),
         assertTransferCurrent: async () => {
           if (!relationshipId || !await custody.isCurrent() || !await verifyWorkspaceSyncSourceMachineAdmissionCurrent({
             credentials: requester.credentials, sessionId: relationshipId, attribution,
@@ -1740,11 +1736,54 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         retainRelationship: async id => {
           await createWorkspaceSyncSourceCredentialCustody({ happyHomeDir: input.happyHomeDir,
             relationshipId: id, attribution, credentials: requester.credentials, homeServerIdentityId: semanticServerId,
-            machineAdmission: { custodianAccountId: admission.custodianAccountId, role: admission.role } });
+            machineAdmission: { custodianAccountId: custodian.custodianAccountId, role: custodian.role } });
           relationshipId = id;
         },
         release: custody.release,
       } });
+  };
+  const resolveHandoffExecutionInput: NonNullable<DaemonWorkspaceSyncRuntimeDependencies['resolveHandoffExecutionInput']> = async (request, authority, context) => {
+    // A person's handoff to another Account's SOURCE: the link is the person's, never this
+    // installed Account's (ruling 2026-11-24 23:16Z (a)). The coordinator's admitted session.handoff
+    // root signs its TARGET calls; Home admits them from that root's own signed facts. The private
+    // execution is retained before the basis read, so the basis reads the person's rows.
+    const handoffRoot = context?.localActionContext?.externalActionExecutionAuthorization;
+    const handoffRequester = context?.requesterSessionBootstrap;
+    if (request.action.kind === 'create_relationship' && handoffRoot?.binding.actionId === 'session.handoff'
+      && handoffRequester && context && !context.callerInputAuthorization && handoffRoot.binding.accountId !== installedAccountId
+      && !runtime?.handoffAdapter.resolvePrivateExecution?.({ operationId: request.operationId })
+      && !canUseInstalledRelationshipOwner(context)) {
+      const handoff = handoffRoot.binding.handoffAdmission;
+      const requester = handoff && handoff.sourceMachineId === input.localMachineId
+        && handoff.targetMachineId === request.targetMachineId
+        && handoffRoot.binding.accountId === handoffRequester.attribution.accountId
+        ? await handoffRequester.projectHandoffCaptureAccountContext(handoffRoot, semanticServerId, request.signal) : null;
+      if (!handoff || !requester || !context.machineAdmission) {
+        throw compositionError('project_requester_authority_unavailable', 'Requester Sync custody is unavailable');
+      }
+      const snapshot = await factories.refreshProjectRows({ credentials: requester.credentials,
+        sessionCustody: { serverId: semanticServerId, accountId: handoffRoot.binding.accountId,
+          serverHttpBaseUrl: requester.serverHttpBaseUrl, isCurrent: requester.isCurrent },
+        serverId: semanticServerId, signal: request.signal, selection: { kinds: ['workspace-ref', 'relationship-graph'] } });
+      const workspaceSyncSourceRouting = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare',
+        operationId: handoffRoot.binding.requestId, accountServerId: semanticServerId,
+        sourceMachineId: handoff.sourceMachineId, sourceRootPath: request.sourceRootPath, sourceSessionId: handoff.sessionId,
+        sourceContext: projectWorkspaceSyncPhysicalContextFromActionContext(buildActionExecutorContextForRpc(context)) });
+      retainRequesterSyncExecution(request, snapshot, requester, handoffRoot.binding.accountId, context.machineAdmission,
+        { ...context, callerInputAuthorization: handoffRoot, workspaceSyncSourceRouting },
+        installation ? { machineId: input.localMachineId, installationId: installation.installationId } : undefined);
+    }
+    const accepted = await readHandoffExecutionBasis(request, context, authority);
+    const requester = readRequesterAccountActionContext(context?.callerInputAuthorization);
+    if (!runtime?.handoffAdapter.resolvePrivateExecution?.({ operationId: request.operationId })
+      && request.action.kind !== 'copy_once' && request.action.kind !== 'none'
+      && context?.workspaceSyncSourceRouting && context.callerInputAuthorization?.binding.actionId === 'projects.open'
+      && (!canUseInstalledRelationshipOwner(context)
+        || requester?.retainCustody && input.requesterMachineAdmissionBoundary && context.machineAdmission)) {
+      if (!requester) throw compositionError('project_requester_authority_unavailable', 'Requester Sync custody is unavailable');
+      retainRequesterSyncExecution(request, accepted.snapshot, requester, context.callerInputAuthorization.binding.accountId,
+        context.machineAdmission, context, accepted.childMachines.find(child => child.machineId === context.workspaceSyncSourceRouting?.sourceMachineId)?.controller
+          ?? context.callerInputAuthorization.binding.workspaceSyncAdmission?.source);
       if (request.action.kind === 'relationship') await runtime?.handoffAdapter.bindPrivateExecutionRelationship?.(request.operationId, request.action.relationshipId);
     }
     assertOriginalTargetAuthority(request, accepted.input, authority, context);

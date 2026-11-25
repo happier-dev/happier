@@ -474,6 +474,176 @@ describe('signed Project clean preparation', () => {
       failureCause: { phase: 'workspace_sync.endpoint_machine.read', errorCode: 'workspace_sync_child_unavailable' } });
   });
 
+  // HANDOFF-LINK-OWNER-OPUS-1124, rulings 2026-11-24 23:16Z (a) and 23:56Z (3): the Sync link a person's handoff
+  // creates from another Account's SOURCE is the PERSON's. It is written to their rows and prepared at their own
+  // TARGET over the signed writer → target path, under the admitted session.handoff root and routed by the handoff's
+  // operation id. On an owner TARGET, Home's admission of that root is the whole admission.
+  it.each(['own TARGET', 'another handoff root', "SOURCE owner's own handoff"] as const)(
+    'creates the link a person hands off with in their own rows, signed with the handoff root (%s)', async scenario => {
+    const person = scenario === "SOURCE owner's own handoff" ? 'owner' : 'target-owner';
+    const token = (sub: string) => [Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
+      Buffer.from(JSON.stringify({ sub })).toString('base64url'), 'fixture-signature'].join('.');
+    const personCredentials = { token: token('target-owner'), encryption: null };
+    const requesterCredentials = person === 'owner' ? { token: token('owner'), encryption: null } : personCredentials;
+    const rows: ProjectAccountRowV1[] = [];
+    const http = createProjectAccountRowsHttpBoundary(rows);
+    const accountOf = (config?: { headers?: Record<string, unknown> }) => {
+      const bearer = config?.headers?.Authorization;
+      return typeof bearer === 'string' ? readAccountIdFromToken(bearer.replace(/^Bearer /u, '')) : null;
+    };
+    const graphWriters: Array<string | null> = [];
+    const signed: Array<Readonly<{ phase: string; refused?: true }>> = [];
+    const targetResults: unknown[] = [];
+    const operationId = 'person-handoff-link';
+    const targetInstallation = { machineId: 'target-parent', installationId: 'target-parent-installation',
+      installationPublicKey: Buffer.from(tweetnacl.sign.keyPair().publicKey).toString('base64url') };
+    const homeRefusal = () => createRpcCallError({ error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    // The SOURCE daemon's own installation signs the writer → target calls.
+    const installationStore = await import('@/daemon/identity/store');
+    const writerKeys = tweetnacl.sign.keyPair();
+    const identity = vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1, createdAt: 1,
+      installationId: 'parent-installation', publicKey: Buffer.from(writerKeys.publicKey).toString('base64url'),
+      privateKey: Buffer.from(writerKeys.secretKey).toString('base64url') });
+    onTestFinished(() => identity.mockRestore());
+    let current: Awaited<ReturnType<typeof composeBindChildSourcePhaseTestRuntime>> | undefined;
+    let root: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse> | undefined;
+    const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, projectRowsFromHttp: true,
+      separateTargetParent: true, targetCredentials: personCredentials,
+      requesterMachineAdmissionBoundary: { machineId: 'source-parent', daemonToken: 'source-daemon', isHomeCurrent: () => true,
+        readInstallation: () => ({ installationId: 'parent-installation', privateKey: writerKeys.secretKey }) },
+      readAdditionalHttpResponse: async (url, config) => {
+        const accountId = accountOf(config);
+        if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: accountId } };
+        if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+          mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+        if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+        return undefined;
+      },
+      readAdditionalHttpPostResponse: async (url, body, config) => {
+        if (url.endsWith('/verify')) return { status: 200, data: { ok: true } };
+        if (!url.includes('/v1/account/project-rows/')) return undefined;
+        if (!url.endsWith('/list') && !url.endsWith('/read')
+          && JSON.stringify(body).includes('"relationship-graph"')) graphWriters.push(accountOf(config));
+        return http(url, body);
+      },
+      // Home's writer → target admission of a session.handoff root (readCurrentWorkspaceSyncHandoffWriterTarget):
+      // operation = the root's request, SOURCE = its signed handoff admission, TARGET = its signed TARGET; then the
+      // TARGET daemon's own registered receiver under Home's routing for it.
+      callWorkspaceTargetPhase: async (descriptor, context) => {
+        if (!current || !root) throw new Error('The TARGET runtime is not composed');
+        const phase = descriptor.routing.phase;
+        const writer = context.workspaceSyncSourceWriterTargetRouting;
+        const source = writer?.source ?? context.workspaceSyncSourceRouting;
+        const presented = context.callerInputAuthorization;
+        const handoff = root.binding.handoffAdmission!;
+        const claimed = source?.sourceContext?.machineAdmission;
+        if (phase === 'release') {
+          // Rootless cleanup: only the installed SOURCE writer, under its own custody.
+          if (presented || writer?.target.phase !== 'release' || !descriptor.physicalEndpoint
+            || context.machineAdmission?.actorAccountId !== 'owner' || context.machineAdmission.custodianAccountId !== 'owner') {
+            signed.push({ phase, refused: true });
+            throw homeRefusal();
+          }
+        } else if (!presented || presented.token !== root.token || presented.binding.actionId !== 'session.handoff'
+          || source?.operationId !== presented.binding.requestId || source.sourceMachineId !== handoff.sourceMachineId
+          || source.sourceSessionId !== handoff.sessionId || source.originalActionEnvelope
+          || claimed?.installationId !== presented.binding.installationId
+          || claimed.custodianAccountId !== presented.binding.custodianAccountId
+          || claimed.actorAccountId !== presented.binding.accountId
+          || descriptor.routing.targetMachineId !== handoff.targetMachineId || descriptor.machineId !== handoff.targetMachineId
+          || presented.binding.requestId !== operationId) {
+          signed.push({ phase, refused: true });
+          throw homeRefusal();
+        }
+        signed.push({ phase });
+        const receiver = current.targetParentRpcHandlers.get(descriptor.method);
+        if (!receiver) throw new Error(`The TARGET receiver is not registered: ${descriptor.method}`);
+        const targetAdmission = { actorAccountId: person, custodianAccountId: 'target-owner',
+          machineId: targetInstallation.machineId, installationId: targetInstallation.installationId,
+          role: 'manage' as const, encryptionMode: 'plain' as const };
+        const incoming: RpcHandlerContext = phase === 'release'
+          ? { signal: new AbortController().signal, callerAuthority: 'present_user', machineAdmission: context.machineAdmission,
+              workspaceSyncSourceWriterTargetRouting: writer, verifyMachineAdmissionCurrent: async () => true }
+          : { signal: new AbortController().signal, callerAuthority: source!.sourceContext!.callerAuthority,
+              machineAdmission: targetAdmission, callerInputAuthorization: presented,
+              // The installed TARGET receives the writer → target routing; its own ingress projects the target phase.
+              workspaceSyncSourceWriterTargetRouting: { v: 1, sourceWriter: { machineId: current.sourceRef.machineId,
+                installationId: 'parent-installation' }, source: source!, target: descriptor.routing },
+              verifyMachineAdmissionCurrent: async () => true };
+        await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () => readProjectAccountRows({
+          credentials: personCredentials, serverId: current!.serverId, publication: 'installed' }));
+        await current.settleProjects(targetInstallation.machineId);
+        const result = await receiver(descriptor.request, incoming);
+        targetResults.push({ phase, request: descriptor.request, routing: descriptor.routing, result });
+        // The SOURCE client binds a TARGET-owned result to Home's verified destination.
+        return phase === 'prepare' && result && typeof result === 'object' ? { ...result, physicalEndpoint: targetInstallation } : result;
+      },
+    });
+    current = fixture;
+    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
+    const key = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: fixture.sourceRef.id };
+    rows.push(ProjectAccountRowV1Schema.parse({ key, revision: 0, content: cipher.seal({ key, value: fixture.sourceRef }) }));
+    await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () => readProjectAccountRows({
+      credentials: fixture.credentials, serverId: fixture.serverId, publication: 'installed' }));
+    await fixture.settleProjects();
+    const action = { kind: 'create_relationship' as const, mode: 'keep_both_in_sync' as const, contentPolicy, flushBeforeCommit: true as const };
+    const input = { operationId, accountServerId: fixture.serverId, action,
+      sourceMachineId: fixture.sourceRef.machineId, sourceWorkspaceRefId: fixture.sourceRef.id, sourceRootPath: fixture.sourceRef.rootPath,
+      targetMachineId: fixture.targetRef.machineId, targetRootPath: fixture.targetPath };
+    // The person on the bound SOURCE they hold Manage on, and the root Home admitted for their handoff.
+    const admission = { actorAccountId: person, custodianAccountId: 'owner', machineId: fixture.sourceRef.machineId,
+      installationId: 'parent-installation', role: 'manage' as const, encryptionMode: 'plain' as const };
+    root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-person-handoff-root', binding: {
+      accountId: person, authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: fixture.serverId,
+      accountEncryptionMode: 'plain', actionId: 'session.handoff', machineId: fixture.sourceRef.machineId,
+      installationId: 'parent-installation', custodianAccountId: 'owner',
+      requestId: scenario === 'another handoff root' ? 'another-handoff' : operationId,
+      requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'machine', machineId: fixture.sourceRef.machineId },
+      handoffAdmission: { sessionId: 'person-session', sourceMachineId: fixture.sourceRef.machineId,
+        sourceInstallationId: 'parent-installation', targetMachineId: fixture.targetRef.machineId,
+        targetInstallationId: targetInstallation.installationId } } });
+    const admittedRoot = root;
+    const requesterSessionBootstrap = { credentials: requesterCredentials, serverHttpBaseUrl: 'https://bind-child-home.invalid',
+      attribution: { serverId: fixture.serverId, accountId: person, machineId: fixture.sourceRef.machineId,
+        installationId: 'parent-installation' }, isCurrent: async () => true,
+      // The bootstrap's own capture facet: the real requester Account admission over the root.
+      projectHandoffCaptureAccountContext: async (authorization: typeof admittedRoot) => await admitRequesterAccountActionContext({
+        authorization, credentials: requesterCredentials, serverId: fixture.serverId, serverIdentityId: fixture.serverId,
+        serverHttpBaseUrl: 'https://bind-child-home.invalid', isCurrent: async () => true,
+        isRetainedCustodyCurrent: async () => true }),
+    } as unknown as AdmittedRequesterSessionBootstrap;
+    const context: RpcHandlerContext = { signal: new AbortController().signal, requesterSessionBootstrap,
+      machineAdmission: admission, localActionContext: { externalActionExecutionAuthorization: admittedRoot } };
+    const settled = await runWithServerHttpBaseUrl('https://bind-child-home.invalid',
+      () => fixture.parent.handoffAdapter.prepare(input, undefined, context)).then(value => ({ value }), (error: unknown) => ({ error }));
+    const refusal = 'error' in settled && settled.error && typeof settled.error === 'object' ? settled.error : undefined;
+    const evidence = JSON.stringify({ refusal: refusal && { code: Reflect.get(refusal, 'code'), message: Reflect.get(refusal, 'message') },
+      signed, graphWriters, targetResults });
+    if (scenario === "SOURCE owner's own handoff") {
+      // Parity: the SOURCE's own Account keeps today's installed-owner selection and never the signed path.
+      expect(signed, evidence).toEqual([]);
+      expect(graphWriters.filter(writer => writer !== 'owner'), evidence).toEqual([]);
+      return;
+    }
+    // The link is never written into the SOURCE owner's rows.
+    expect(graphWriters.filter(writer => writer !== person), evidence).toEqual([]);
+    if (scenario === 'another handoff root') {
+      // Home refuses a root for another handoff before the TARGET, and the staged link is withdrawn.
+      expect(signed[0], evidence).toEqual({ phase: 'prepare', refused: true });
+      expect(targetResults, evidence).toEqual([]);
+      expect(refusal, evidence).toMatchObject({ code: RPC_ERROR_CODES.FORBIDDEN });
+      return;
+    }
+    expect(refusal, evidence).toBeUndefined();
+    expect(graphWriters.length, evidence).toBeGreaterThan(0);
+    // The prepare is routed by the handoff operation, with the derived relationship as its bootstrap id,
+    // and the person's own TARGET accepts it.
+    expect(targetResults[0], evidence).toMatchObject({ phase: 'prepare', routing: { operationId },
+      request: { bootstrapOperationId: deriveWorkspaceSyncRelationshipId(operationId),
+        owner: { kind: 'relationship', relationshipId: deriveWorkspaceSyncRelationshipId(operationId) } } });
+    expect(signed, evidence).toEqual([{ phase: 'prepare' }]);
+  });
+
   it.each(['requester', 'owner'] as const)('keeps persistent Script preparation in its requester Account (%s)', async requesterAccountId => {
     const channel = await createRequesterCurrentnessSocketHarness();
     onTestFinished(() => channel.close());

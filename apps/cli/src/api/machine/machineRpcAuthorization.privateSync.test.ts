@@ -185,6 +185,16 @@ describe('private Project Sync ingress', () => {
       await expect(rpc.handleRequest({ ...relationshipPrepare,
         params: { ...relationshipPrepare.params, transientRelationship: { ...relationship, alphaWorkspaceRefId: 'foreign-source' } } }))
         .resolves.toMatchObject(isolated);
+      // A forged definition under the capture's accepted operation (ruling 2026-11-24 23:56Z (3)): another mode,
+      // or another content policy, than the capture admitted never reaches the member's native owner.
+      await expect(rpc.handleRequest({ ...relationshipPrepare,
+        params: { ...relationshipPrepare.params, transientRelationship: { ...relationship, mode: 'mirror_exactly' } } }))
+        .resolves.toMatchObject(isolated);
+      const forgedPolicyInput = { ...policy, extraIgnorePatterns: ['secrets/**'] };
+      const forgedPolicy = { ...forgedPolicyInput, policyDigest: computeWorkspaceSyncPolicyDigest(forgedPolicyInput) };
+      await expect(rpc.handleRequest({ ...relationshipPrepare, params: { ...relationshipPrepare.params,
+        policyDigest: forgedPolicy.policyDigest, transientRelationship: { ...relationship, contentPolicy: forgedPolicy } } }))
+        .resolves.toMatchObject(isolated);
       await expect(rpc.handleRequest({ ...relationshipPrepare,
         params: { ...relationshipPrepare.params, bootstrapOperationId: 'foreign-relationship' } }))
         .resolves.toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
