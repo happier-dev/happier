@@ -328,14 +328,19 @@ describe('createActionExecutor (review.start)', () => {
       reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
       executionRunStart: async () => {
         if (cancel) controller.abort();
-        throw Object.assign(new Error('Launch acknowledgement unavailable'), {
+        return { ok: false, errorCode: 'provider_auth_required', error: 'Sign in required',
           details: { executionRunStart: { v: 1, runCreation } },
-        });
+        };
       },
     } as ActionExecutorDeps);
     const result = await executor.execute('review.start', { sessionId: 's1', reviewers: [{ kind: 'engine', engineId: 'codex' }], comparisonId, instructions: 'Review.' }, { surface: 'ui', signal: controller.signal });
     if (!cancel) expect(result).toMatchObject({ ok: true, result: { results: [{ ok: false }] } });
-    expect((await records.read(reviewId))?.rounds[0]?.state).toBe(expectedState);
+    const round = (await records.read(reviewId))?.rounds[0];
+    expect(round?.state).toBe(expectedState);
+    if (runCreation === 'noRunCreated') expect(round?.reviewerOutcomes).toMatchObject([{
+      reviewerId: expect.any(String), outcome: cancel ? 'cancelled' : 'failed',
+      reason: { errorCode: 'provider_auth_required' },
+    }]);
   });
   it('admits a durable Review before starting reviewers, including clean results', async () => {
     let row: Awaited<ReturnType<ReviewArtifactTransportV1['read']>> = null;

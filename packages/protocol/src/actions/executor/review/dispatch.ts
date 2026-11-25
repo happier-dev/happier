@@ -29,7 +29,7 @@ import { captureReviewComparisonV1, dispatchReviewRoundAction, resolveReviewComp
 import type { ScmComparison } from '../../../scm/comparison.js';
 import { ScmStatusSnapshotResponseSchema } from '../../../scm/index.js';
 import { resolveReviewComparisonSourceV1 } from '../../../reviews/prepareReviewRoundV1.js';
-import { dispatchReviewSettlementAction } from './settlement.js';
+import { collectReviewRoundOutcomes, dispatchReviewSettlementAction } from './settlement.js';
 import { invokeHostReviewedChildV1 } from '../deploymentRoleChild.js';
 import type { JsonObject } from '../../../json/strictJsonValue.js';
 import { SessionStatusResultSchema } from '../../../sessions/control/contract.js';
@@ -715,6 +715,10 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           if (workflowReviewRound && !ctx.signal?.aborted) return completedLaunchRefusals(results);
           if (!reviewInput.reviewRound) await reviewRecords!.settle({ ...reviewRound,
             outcome: ctx.signal?.aborted ? 'cancelled' : 'failed', finishedAt: Date.now(), runs: [],
+            reviewerOutcomes: collectReviewRoundOutcomes({ reviewRound, reviewerResults: [
+              reviewStartExecutionRunCompletion.terminal({ intent: 'review', sessionId, results, reviewRound }, []),
+            ] }).map(outcome => ctx.signal?.aborted
+              ? { ...outcome, outcome: 'cancelled' as const } : outcome),
             ...(ctx.signal?.aborted ? {} : { signal: ctx.signal }) });
         }
         if (!narrationRequested) return { ok: true, result: { intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}) } };
