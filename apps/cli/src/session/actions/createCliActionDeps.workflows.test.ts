@@ -1614,11 +1614,18 @@ describe('createCliActionDeps workflow boundary', () => {
     'arms a lifecycle trigger through production Run observation (%s)', async (scenario) => {
     const sessionId = 'c' + '2'.repeat(24);
     const runId = scenario === 'workflow' ? '11111111-1111-4111-8111-111111111111' : 'run-observed';
+    const credentials = { token: workflowAccountPersonToken, encryption: null };
     const baseGet = http.get.getMockImplementation()!;
     http.get.mockImplementation(async (url: string) => {
       if (url.includes(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
         id: sessionId, active: true, encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'machine-1', path: '/repo' }),
       }) } };
+      if (url.endsWith('/v1/machines/machine-1')) return { status: 200, data: { machine: {
+        id: 'machine-1', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
+        metadata: JSON.stringify({ machineId: 'machine-1' }), metadataVersion: 1,
+        daemonState: '{}', daemonStateVersion: 1,
+        access: { custodian: { accountId: 'account-1', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+      } } };
       if (url.includes('/v3/automations?')) return { status: 200, data: { automations: [], nextCursor: null } };
       return baseGet(url);
     });
@@ -1670,7 +1677,7 @@ describe('createCliActionDeps workflow boundary', () => {
           createdAt: 1, updatedAt: 1, remainingOccurrences: 1, status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: null })),
       }) };
     });
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+    const deps = createCliActionDeps({ token: credentials.token, credentials,
       resolveServerFeaturesSnapshot: () => enabledFeatures as never, sessionId: 'cli-global', mode: 'plain', ctx: null });
     const actions = createActionExecutor({ ...deps });
     const result = await actions.execute('workflow.trigger.add', {
@@ -1689,7 +1696,7 @@ describe('createCliActionDeps workflow boundary', () => {
       controller.abort();
       expect(observedSignal?.aborted).toBe(true);
     } else if (scenario === 'session' || scenario === 'detached') {
-      expect(result).toMatchObject({ ok: true, result: { set: { health: 'available', triggers: [{ kind: 'runLifecycle',
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { set: { health: 'available', triggers: [{ kind: 'runLifecycle',
         source: { runId, observation: { output: 'walkthrough', resultId: 'result' } } }] } } });
       expect(http.request).toHaveBeenCalled();
     } else {
