@@ -55,6 +55,7 @@ import { configuration, reloadConfiguration } from '../../../../cli/src/configur
 import { registerAccountProfileRoute } from '@/app/api/routes/account/registerAccountProfileRoute';
 import { registerAccountSettingsRoutes } from '@/app/api/routes/account/registerAccountSettingsRoutes';
 import { changesRoutes } from '@/app/api/routes/changes/changesRoutes';
+import { registerAutomationActionIndexRoutes } from '@/app/api/routes/automations/registerAutomationActionIndexRoutes';
 import { registerAutomationV3Routes } from '@/app/api/routes/automations/registerAutomationV3Routes';
 import { featuresRoutes } from '@/app/api/routes/features/featuresRoutes';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
@@ -121,7 +122,7 @@ import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/dep
 import type { DeploymentEnvironmentTelemetrySetInputV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_BACKUP_ACTION_IDS_V1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
     DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1,
-    DEPLOYMENT_DRIFT_READ_ACTION_ID_V1, DEPLOYMENT_HEALTH_READ_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_DRIFT_READ_ACTION_ID_V1, DEPLOYMENT_HEALTH_READ_ACTION_ID_V1, DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { buildDeploymentBackupActionInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -566,7 +567,9 @@ describe('deployment children retain their controller Action authority', () => {
     });
 
     it('classifies every deployment root and admits its generated declared read demands only inside its scope', async () => {
-        expect([...DEPLOYMENT_ACTION_IDS_V1].sort()).toEqual(DEPLOYMENT_ACTION_SPECS_V1.map(spec => spec.id).sort());
+        // Target Check is an Account-placed read with its own delegated preparation purpose.
+        expect([...DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1].sort())
+            .toEqual(DEPLOYMENT_ACTION_SPECS_V1.map(spec => spec.id).sort());
         const f = await fixture('account', 'account', { templateRoot: true });
         const foreign = await fixture();
         const source = await db.projectSource.findUniqueOrThrow({ where: { id: f.environment.projectSourceId } });
@@ -2984,7 +2987,7 @@ describe('deployment children retain their controller Action authority', () => {
                             }
                             await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded' } });
                             await expect(read(childAuthorization, effectActionId)).rejects.toMatchObject({
-                                code: 'project_account_rows_unavailable', response: { status: 401 } });
+                                code: 'action_forbidden', response: { status: 401 } });
                             return observation.snapshot.workspaceRefs;
                         },
                     });
@@ -4921,7 +4924,13 @@ describe('deployment children retain their controller Action authority', () => {
                     `/v1/deployments/environments/${f.environment.id}?serverId=foreign-home&projection=approvalScope`,
                     `/v1/deployments/environments/foreign-environment?serverId=${serverId}&projection=approvalScope`,
                     `/v1/deployments/environments/${f.environment.id}?serverId=${serverId}`,
-                ]) expect((await app.inject({ method: 'GET', url, headers: headers(url) })).statusCode).toBe(401);
+                ]) {
+                    const refusal = await app.inject({ method: 'GET', url, headers: headers(url) });
+                    // Stop's exact receipt read can reach the Environment route. Its
+                    // full Environment still follows ordinary visibility on withdrawal.
+                    const expected = actionId === 'deployments.cancel' && !url.includes('projection=approvalScope') ? 404 : 401;
+                    expect(refusal.statusCode, refusal.body).toBe(expected);
+                }
                 expect((await app.inject({ method: 'GET', url: path,
                     headers: headers(path, 'deployments.environments.get') })).statusCode).toBe(401);
             }, { authentication: 'real' });
@@ -5011,11 +5020,6 @@ describe('deployment children retain their controller Action authority', () => {
             roomDiscoveries += 1;
             return [];
         }) });
-        await expect(dispatch({ actionId, envelope,
-            principal: { accountId: f.account.id, authority: 'present_user',
-                authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch } },
-            executionAuthorization: { ...authorization, token: `${authorization.token}forged` },
-        })).resolves.toMatchObject({ kind: 'placement_error', code: 'credential_scope_denied' });
         await withAuthenticatedTestApp(app => { registerExternalActionRoutes(app, { dispatch }); registerDeploymentRoutes(app); artifactsRoutes(app); machinesRoutes(app); }, async app => {
             const relayPath = `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${actionId}`;
             const relayBody = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1,
@@ -5025,6 +5029,9 @@ describe('deployment children retain their controller Action authority', () => {
             const relay = await app.inject({ method: 'POST', url: relayPath, payload: relayBody,
                 headers: headers('POST', relayPath, relayBody) });
             expect(relay.statusCode, relay.body).not.toBe(200);
+            const forged = { ...relayBody, executionAuthorization: { ...authorization, token: `${authorization.token}forged` } };
+            expect((await app.inject({ method: 'POST', url: relayPath, payload: forged,
+                headers: headers('POST', relayPath, forged) })).statusCode).toBe(401);
             expect(roomDiscoveries).toBe(0);
             const substituted = { ...relayBody, envelope: { ...envelope, input: { ...input, deploymentId: crypto.randomUUID() } } };
             expect((await app.inject({ method: 'POST', url: relayPath, payload: substituted,
@@ -5561,6 +5568,7 @@ describe('deployment children retain their controller Action authority', () => {
             registerAccountSettingsRoutes(app);
             changesRoutes(app);
             registerAutomationV3Routes(app);
+            registerAutomationActionIndexRoutes(app);
             featuresRoutes(app);
             registerAccountEncryptionRoutes(app);
             artifactsRoutes(app);
@@ -5603,7 +5611,9 @@ describe('deployment children retain their controller Action authority', () => {
                             contentBodyVersion: f.environment.contentBodyVersion, mode: 'preview', defaultsFor: 'alerts' }, context);
                     expect(preview, JSON.stringify({ exchanges, preview })).toMatchObject({ ok: true,
                         environmentId: f.environment.id, revision: f.environmentRevision });
-                    const nativeExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...native });
+                    const actionAutomations = createCliActionDeps({ credentials, token: credentials.token, serverId,
+                        serverHttpBaseUrl: origin, sessionId: '' }).actionAutomations;
+                    const nativeExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...native, actionAutomations });
                     const sdkAuthorization = Object.defineProperties({ ...authorization }, Object.getOwnPropertyDescriptors(authorization));
                     Object.defineProperty(sdkAuthorization, 'requesterAccountExecutor', { value: nativeExecutor, enumerable: false });
                     const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: {
@@ -9229,8 +9239,8 @@ describe('deployment children retain their controller Action authority', () => {
             // Run from another of the person's Machines (W1-OWNSERVER-LIFECYCLE-165): the child's typed
             // admission cause reaches the caller instead of the HTTP carrier that consumed it.
             const refused = await get(app, job, f.outsider);
-            expect(refused.statusCode, refused.body).toBe(401);
-            expect(refused.json()).toMatchObject({ authorizationRefusal: 'deployment_child_admission',
+            expect(refused.statusCode, refused.body).toBe(403);
+            expect(refused.json()).toMatchObject({ error: 'credential_scope_denied', authorizationRefusal: 'deployment_child_admission',
                 details: { reason: 'controller_placement_mismatch', requiredFact: `controllerMachineId=${f.controller.id}` } });
         }, { authentication: 'real' });
     });
@@ -9681,7 +9691,8 @@ describe('deployment children retain their controller Action authority', () => {
                 sources: [{ kind: 'direct', setup: { items: [{ kind: 'app', authoredKey: crypto.randomUUID(),
                     definition: { name: 'Catalog app', project: { kind: 'existing', projectSourceId: source.id },
                         definition: { from: 'compose', document: 'services: {}', profiles: [], services: [] }, bindings: [] } }] } }],
-                appChildren: [{ sourceIndex: 0, itemIndex: 0, actionId: 'deployments.templates.instantiate', input: f.templateInput }],
+                appChildren: [{ sourceIndex: 0, itemIndex: 0, actionId: 'deployments.templates.instantiate',
+                    input: { ...f.templateInput, machineId: f.controller.id } }],
             }] });
         const target = { kind: 'machine' as const, machineId: f.controller.id };
         const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
@@ -11356,11 +11367,15 @@ describe('deployment children retain their controller Action authority', () => {
             expect(await db.deployment.findUniqueOrThrow({ where: { id: f.receipt.id } })).toMatchObject({ state: 'outcome_unknown', revision: f.receipt.revision });
             // Remove only this test's synthetic newer history to exercise the unsuperseded recovery.
             await db.deployment.delete({ where: { id: newer.id } });
-            await db.deployment.update({ where: { id: f.receipt.id }, data: { cancelRequestedAt: new Date() } });
-            expect.soft((await publish(app)).statusCode).toBe(409);
-            expect(await db.deployment.findUniqueOrThrow({ where: { id: f.receipt.id } }))
-                .toMatchObject({ state: 'outcome_unknown', revision: f.receipt.revision });
-            await db.deployment.update({ where: { id: f.receipt.id }, data: { cancelRequestedAt: null } });
+            // Exact provider success after Stop has its own settlement test. An
+            // unverified observation still cannot publish a stopped rollout.
+            if (operation !== 'deploy' || observedState !== 'succeeded') {
+                await db.deployment.update({ where: { id: f.receipt.id }, data: { cancelRequestedAt: new Date() } });
+                expect.soft((await publish(app)).statusCode).toBe(409);
+                expect(await db.deployment.findUniqueOrThrow({ where: { id: f.receipt.id } }))
+                    .toMatchObject({ state: 'outcome_unknown', revision: f.receipt.revision });
+                await db.deployment.update({ where: { id: f.receipt.id }, data: { cancelRequestedAt: null } });
+            }
             const progress = await publish(app, 'outcome_unknown');
             expect(progress.statusCode, progress.body).toBe(200);
             expect.soft(progress.json()).toMatchObject({ ok: true, state: 'outcome_unknown', deploymentRevision: revision + 1 });
