@@ -6,7 +6,7 @@ import historicalRound from '@/dev/testkit/fixtures/historicalReviewRound.json';
 import twoStepRound from '@/dev/testkit/fixtures/twoStepPartialReviewRound.json';
 import nativeModelReviewer from '@/dev/testkit/fixtures/nativeModelReviewReviewer.json';
 import { ReviewStartInputSchema, reviewReviewerIdentitiesForStartV1 } from '@happier-dev/protocol/reviews/reviewStart';
-import { projectReviewRoundReviewers, reviewRosterOf, reviewRoundReviewerName, reviewRoundReviewerOutcomeLabel, reviewRoundReviewerReasonWords,
+import { projectReviewRoundReviewers, reviewRosterOf, reviewRoundReviewerName, reviewRoundReviewerOutcomeLabel, reviewRoundReviewerReasonWords, reviewRoundReviewerStateLabel,
   reviewRoundReviewerRowCount, reviewRoundUnfinishedReviewers } from './reviewRoundReviewers';
 
 it('keeps an explicit native model reviewer identified by its Agent and mark across steps (U8 R7 NM1)', () => {
@@ -103,7 +103,7 @@ it('names same-Agent reviewers through the catalog with their mark and step, wit
     [t('reviewWalkthrough.detail.reviewerInStep', { name: 'Claude', step: 1 }), 'claude'],
     [t('reviewWalkthrough.detail.reviewerInStep', { name: 'Claude', step: 2 }), 'claude'],
   ]);
-  expect(reviewRoundReviewerOutcomeLabel('partial')).toBe(t('reviewWalkthrough.detail.reviewerDidntFinish'));
+  expect(reviewRoundReviewerOutcomeLabel('partial')).toBe(t('reviewWalkthrough.collection.statePartial'));
   // The Runs tab counts the rows it draws: one per reviewer, not the round's one Workflow run reference.
   expect(reviewRoundReviewerRowCount(round)).toBe(2);
   // Two reviewers of one step with the same Agent are told apart by their place, never by a raw id.
@@ -137,4 +137,12 @@ it('names a reviewer once per Review across rounds, names a lone unfinished revi
   expect(reviewRoundUnfinishedReviewers(historical, projectReviewRoundReviewers(historical, undefined)).map(reviewer => reviewer.name))
     .toEqual(['Claude']);
   expect(reviewRoundUnfinishedReviewers({ ...historical, state: 'completed' }, projectReviewRoundReviewers(historical, undefined))).toEqual([]);
+});
+
+it('keeps a scored partial distinct from a failed reviewer and names the typed provider cause', async () => {
+  const { t } = await import('@/text');
+  expect(reviewRoundReviewerStateLabel({ outcome: 'partial', reason: 'Stopped early' })).toBe(t('reviewWalkthrough.collection.statePartial'));
+  const reason = reviewRoundReviewerReasonWords({ run: 'failed', errorCode: 'provider_model_not_found', runtimeIssue: { source: 'agent_status_error', code: 'provider_model_not_found' } });
+  expect(reason).toBe(t('settingsProviders.errors.modelNotFoundTitle'));
+  expect(reviewRoundReviewerStateLabel({ outcome: 'failed', reason })).toBe(reason);
 });

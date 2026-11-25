@@ -90,7 +90,7 @@ async function renderReview(
   );
 }
 
-it('says nothing about a score when no reviewer gave one, and one line when a round found nothing', async () => {
+it('shows zero scored coverage for a partial round and one line when it found nothing (UI refinements 1125)', async () => {
   const screen = await renderReview({
     reviewId: 'nothing-to-fix',
     state: 'partial',
@@ -106,8 +106,8 @@ it('says nothing about a score when no reviewer gave one, and one line when a ro
     expect(screen.getTextContent()).toContain(
       t('reviewWalkthrough.detail.findingsEmpty'),
     );
-    // "No score" with nothing behind it is not a fact worth a line at rest.
-    expect(screen.findHostByTestId('review-detail:quality')).toBeNull();
+    // A partial round keeps its coverage line even when no reviewer scored.
+    expect(screen.findHostByTestId('review-detail:quality')).not.toBeNull();
   } finally {
     await screen.unmount();
   }

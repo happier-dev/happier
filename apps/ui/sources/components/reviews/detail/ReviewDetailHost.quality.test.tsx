@@ -64,7 +64,7 @@ function reviewArtifact(serverId: string, state: 'completed' | 'partial'): Decry
       reviewId: 'review-quality',
       title: 'Retry reconnect with backoff',
     },
-    body: JSON.stringify({ v: 1, rounds }),
+    body: JSON.stringify({ v: 1, rounds: state === 'partial' ? rounds.map(round => ({ ...round, reviewerIds: round.reviewerIds.slice(0, 2), reviewerQuality: round.reviewerQuality.slice(0, 1) })) : rounds }),
     ownerAccountId: 'alice',
     access: 'owner',
     storageMode: 'plain',
@@ -162,19 +162,17 @@ it('passes partial-round score evidence and the typed reason through the mounted
   }
 });
 
-it('says "No score" for a partial round and names each reviewer under Show all', async () => {
+it('shows score coverage without a duplicate partial warning (UI refinements 1125)', async () => {
   const screen = await renderReview(undefined, 'partial');
   try {
-    await vi.waitFor(() => expect(textOf(screen, 'review-detail:quality-score')).toBe('No score'));
-    // Who didn't finish is said once, on the page's notice line, not again beside the score.
-    expect(screen.findHostByTestId('review-detail:quality-basis')).toBeNull();
-    expect(textOf(screen, 'review-detail:partial')).toContain('Not every reviewer finished');
+    await vi.waitFor(() => expect(textOf(screen, 'review-detail:quality-score')).toBe('No overall score'));
+    // Coverage belongs beside the aggregate; per-reviewer outcomes belong on the round card.
+    expect(textOf(screen, 'review-detail:quality-basis')).toBe('1 of 2 reviewers scored');
+    expect(screen.findHostByTestId('review-detail:partial')).toBeNull();
     await screen.pressByTestIdAsync('review-detail:quality-each');
     // The score leads in its own column, then the name, so "Reviewer 1" never runs into "1/5" (REVIEW-PAGE-DELTA-1122 C).
     expect(textOf(screen, 'review-detail:quality-reviewer:step-1-reviewer-1')).toMatch(/^4\/5/);
     expect(textOf(screen, 'review-detail:quality-reviewer:step-1-reviewer-1')).toContain('Codex');
-    expect(textOf(screen, 'review-detail:quality-reviewer:step-1-reviewer-2')).toMatch(/^2\/5/);
-    expect(textOf(screen, 'review-detail:quality-reviewer:step-1-reviewer-2')).toContain('Reviewer 2');
     // A reviewer without a recorded name gets the generic label, never its positional id.
     expect(textOf(screen, 'review-detail:quality')).not.toContain('step-1-reviewer');
   } finally {

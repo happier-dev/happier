@@ -287,7 +287,7 @@ export function presentExecutionRunFailureSummary(error: ExecutionRunFailureInpu
     if (!error) return null;
     if (error.runtimeIssueV1) {
         const issue = presentSessionRuntimeIssue(error.runtimeIssueV1);
-        if (issue.summary) return { summary: issue.summary, reset: issue.reset };
+        if (issue.summary) return { summary: issue.summary.split('\n')[0]!, reset: issue.reset };
     }
     const presented = presentExecutionRunFailure(error);
     return presented ? { summary: presented.message.split('\n')[0]!, reset: presented.reset } : null;

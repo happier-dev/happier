@@ -82,3 +82,16 @@ it('lists who did what to the Review, newest first: decisions, fixes, verdicts, 
     actor: { name: 'Claude reviewer' }, outcome: 'partial',
   });
 });
+
+it('keeps a reviewer failure cause in Activity (UI refinements 1125)', async () => {
+  const { t } = await import('@/text');
+  const rounds = ReviewArtifactBodyV1Schema.parse(settledRound).rounds;
+  const round = rounds[0]!;
+  const events = projectReviewActivity({ rounds: [{ ...round, reviewerOutcomes: [{
+    reviewerId: 'first', outcome: 'failed', finishedAt: 9000,
+    reason: { run: 'failed', errorCode: 'provider_model_not_found' },
+  }] }], comments: [], verdicts: [] });
+  expect(events.find(event => event.kind === 'reviewerFinished')).toMatchObject({
+    outcome: 'failed', reason: t('settingsProviders.errors.modelNotFoundTitle'),
+  });
+});

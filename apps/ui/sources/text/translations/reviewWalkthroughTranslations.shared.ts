@@ -199,6 +199,7 @@ export type ReviewWalkthroughTranslations = {
         qualityShowAll: string;
         qualityShowReason: string;
         qualityNoScore: string;
+        qualityCoverage: (params: Readonly<{ count: number; total: number }>) => string;
         qualityPartial: string;
         qualityShowLess: string;
         glanceAllDecided: string;
@@ -495,7 +496,8 @@ export const en: ReviewWalkthroughTranslations = {
         qualityMedian: ({ count }) => (count === 1 ? 'From 1 reviewer' : `Median of ${count} reviewers`),
         qualityShowAll: 'Show all',
         qualityShowReason: 'Show reason',
-        qualityNoScore: 'No score',
+        qualityNoScore: 'No overall score',
+        qualityCoverage: ({ count, total }) => `${count} of ${total} reviewers scored`,
         qualityPartial: 'Not every reviewer finished',
         qualityShowLess: 'Show less',
         glanceAllDecided: 'Every finding is decided',

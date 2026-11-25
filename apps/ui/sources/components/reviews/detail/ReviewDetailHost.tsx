@@ -40,7 +40,7 @@ import { formatElapsedDuration } from '@/components/machines/durationWords';
 import { resolveExecutionRunAgentMarkId } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
-import { projectReviewRoundReviewers, reviewCommentEngineName, reviewRoundReviewerIdentity, reviewRoundReviewerOutcomeLabel,
+import { projectReviewRoundReviewers, reviewCommentEngineName, reviewRoundReviewerIdentity, reviewRoundReviewerOutcomeLabel, reviewRoundReviewerStateLabel,
   reviewRosterOf, reviewRoundReviewerRowCount, reviewRoundUnfinishedReviewers, type ReviewRoundReviewer, type ReviewRoundReviewerRead } from '../reviewRoundReviewers';
 import type { ReviewRetriedReviewer } from './useReviewNewRound';
 import { joinList } from '@/utils/text/joinList';
@@ -163,7 +163,7 @@ export function projectRound(round: ReviewRecordRound, reads?: ReadonlyMap<strin
           state: reviewer.outcome === null ? unfinished.has(reviewer.reviewerId) ? reviewRoundReviewerOutcomeLabel('partial') : null
             : reviewer.outcome === 'completed' && reviewer.findingsCount !== null
               ? t('reviewWalkthrough.detail.findingsCount', { count: reviewer.findingsCount })
-              : reviewRoundReviewerOutcomeLabel(reviewer.outcome),
+              : reviewRoundReviewerStateLabel(reviewer),
           tone: reviewer.outcome === 'failed' || reviewer.outcome === 'partial' || unfinished.has(reviewer.reviewerId) ? 'failed' : null,
         })),
       },
@@ -377,9 +377,6 @@ export function ReviewDetailHost(props: Readonly<{
   }) ?? [], [human, names, questionRuns.runs, record, roster, round?.ordinal, scope?.accountId]);
   const unfinishedReviewers = React.useMemo(() => round?.state !== 'partial' ? []
     : reviewRoundUnfinishedReviewers(round, projectReviewRoundReviewers(round, questionRuns.runs, roster)), [questionRuns.runs, roster, round]);
-  // Why they didn't finish, said once when it is the same for each ("Usage limit reached").
-  const unfinishedReason = unfinishedReviewers.length > 0 && unfinishedReviewers.every(reviewer => reviewer.reason === unfinishedReviewers[0]!.reason)
-    ? unfinishedReviewers[0]!.reason : null;
   const findings = useReviewFindingsModel({ members: questionRuns.members, record: findingRound,
     reviewerCount: round?.reviewerIds.length ?? 0, scope, accountLifetime: binding,
     serverId: scope?.serverId ?? null, sessionId: null, canAct: canEdit, pending: comments.pending,
@@ -613,19 +610,14 @@ export function ReviewDetailHost(props: Readonly<{
       title={record.title || t('detailsSurface.review.title')}
       meta={meta}
       primaryAction={primaryAction}
-      notice={round?.state === 'partial' || (scope && ((newRound.approval.approvalPending && newRound.approval.approvalId)
-        || (humanActions.approval.approvalPending && humanActions.approval.approvalId))) ? <>
-        {/* A partial round says once, here, who didn't finish and why (lab notice line); the score line says no more. */}
-        {round?.state === 'partial' ? <SurfaceStateCard testID="review-detail:partial" kind="warning" size="line"
-          title={unfinishedReviewers.length > 0 ? t('reviewWalkthrough.detail.reviewersDidntFinish', {
-            names: joinList(unfinishedReviewers.map(reviewer => reviewer.name)), count: unfinishedReviewers.length })
-            : t('reviewWalkthrough.detail.qualityPartial')}
-          {...(unfinishedReason ? { reason: unfinishedReason } : {})}
-          // Who didn't finish is retried from the notice too, in one new round (lab `detail-runs`: "Retry CodeRabbit").
-          {...(newRound.retry && unfinishedReviewers.length > 0 ? { action: {
-            label: unfinishedReviewers.length === 1 ? t('reviewWalkthrough.detail.retryReviewer', { name: unfinishedReviewers[0]!.name })
-              : t('reviewWalkthrough.detail.retryUnfinished', { count: unfinishedReviewers.length }),
-            testID: 'review-detail:partial:retry', onPress: () => newRound.retry?.(unfinishedReviewers) } } : {})} /> : null}
+      qualityReviewerCount={round?.reviewerIds.length ?? 0}
+      qualityAction={newRound.retry && unfinishedReviewers.length > 0 ? <TextLinkButton size="meta"
+        testID="review-detail:partial:retry"
+        label={unfinishedReviewers.length === 1 ? t('reviewWalkthrough.detail.retryReviewer', { name: unfinishedReviewers[0]!.name })
+          : t('reviewWalkthrough.detail.retryUnfinished', { count: unfinishedReviewers.length })}
+        onPress={() => newRound.retry?.(unfinishedReviewers)} /> : null}
+      notice={scope && ((newRound.approval.approvalPending && newRound.approval.approvalId)
+        || (humanActions.approval.approvalPending && humanActions.approval.approvalId)) ? <>
         {scope && newRound.approval.approvalPending && newRound.approval.approvalId ? <ActionApprovalPendingNotice
         testID="review-detail:new-round-approval" message={t('approvals.title')}
         onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(newRound.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} /> : null}
@@ -822,7 +814,7 @@ export function ReviewRoundRuns(props: Readonly<{
           title={joinHappierFacts(reviewer.name, model)} icon={<ReviewerMark reviewer={reviewer} size={20} />}
           // How it ended and, when it didn't finish, why ("Didn't finish · Usage limit reached"), from the outcome owner.
           subtitle={joinHappierFacts(reviewer.outcome === null ? unfinished.has(reviewer.reviewerId)
-            ? reviewRoundReviewerOutcomeLabel('partial') : null : reviewRoundReviewerOutcomeLabel(reviewer.outcome), reviewer.reason) || undefined}
+            ? reviewRoundReviewerOutcomeLabel('partial') : null : reviewRoundReviewerStateLabel(reviewer), reviewer.outcome === 'failed' ? null : reviewer.reason) || undefined}
           // Its findings and how long it took sit in the row's right-aligned meta column (lab `detail-runs`).
           detail={joinHappierFacts(reviewer.findingsCount === null ? null
             : t('reviewWalkthrough.detail.findingsCount', { count: reviewer.findingsCount }), duration) || undefined}

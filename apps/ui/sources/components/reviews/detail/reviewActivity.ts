@@ -36,7 +36,7 @@ export type ReviewActivityEvent = Readonly<{
       }>
     | Readonly<{ kind: 'fixed'; title: string }>
     | Readonly<{ kind: 'verdict'; verdict: ReviewVerdictKindV1 }>
-    | Readonly<{ kind: 'reviewerFinished'; outcome: Exclude<ReviewRoundReviewerOutcome, 'running'> }>
+    | Readonly<{ kind: 'reviewerFinished'; outcome: Exclude<ReviewRoundReviewerOutcome, 'running'>; reason: string | null }>
     | Readonly<{
         kind: 'roundStarted' | 'roundFinished';
         round: number;
@@ -92,7 +92,7 @@ export function projectReviewActivity(
     for (const reviewer of projectReviewRoundReviewers(round, input.runReads, roster)) {
       if (reviewer.outcome === null || reviewer.outcome === 'running' || reviewer.finishedAt === undefined) continue;
       events.push({ id: `reviewer:${round.ordinal}:${reviewer.reviewerId}`, at: reviewer.finishedAt,
-        actor: { kind: 'reviewer', name: reviewer.name, agentId: reviewer.agentId }, kind: 'reviewerFinished', outcome: reviewer.outcome });
+        actor: { kind: 'reviewer', name: reviewer.name, agentId: reviewer.agentId }, kind: 'reviewerFinished', outcome: reviewer.outcome, reason: reviewer.reason });
     }
   }
   for (const comment of input.comments) {

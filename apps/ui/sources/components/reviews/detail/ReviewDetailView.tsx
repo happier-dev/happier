@@ -98,6 +98,8 @@ export type ReviewDetailViewProps = Readonly<{
   quality?: ReviewRoundQualityV1 | null;
   qualityUnavailableReason?: ReviewRoundQualityUnavailableReasonV1 | null;
   qualityReviewers?: readonly ReviewRoundReviewerQualityV1[];
+  qualityReviewerCount?: number;
+  qualityAction?: React.ReactNode;
   /** One line under the glance when part of the round failed or the Home is offline (with its retry). */
   notice?: React.ReactNode;
   rounds: readonly ReviewDetailRound[];
@@ -149,10 +151,9 @@ export function ReviewDetailView(
     props.rounds.find((item) => item.ordinal === props.selectedRound) ??
     props.rounds.at(-1) ??
     null;
-  // The score line speaks only with something to say: the round's score, or a partial round's reviewer scores behind
-  // its "No score" (each one press away). A bare "No score" at rest is not a fact worth a line.
+  // Partial rounds show coverage even when no reviewer scored, with the retry beside it.
   const qualityReviewers = props.qualityReviewers ?? props.quality?.reviewers ?? NO_QUALITY_REVIEWERS;
-  const showsQuality = Boolean(props.quality) || (props.qualityUnavailableReason === 'partial' && qualityReviewers.length > 0);
+  const showsQuality = Boolean(props.quality) || props.qualityUnavailableReason === 'partial';
   return (
     <ItemList testID={props.testID ?? 'review-detail'} pageColumn="wide" onLayout={measureViewport}>
       <PageHeader
@@ -174,7 +175,7 @@ export function ReviewDetailView(
           <View style={styles.lead}>
             {props.glance || props.detailPending || showsQuality ? <View style={styles.leadInset}>
               {props.detailPending ? <ReviewGlancePending /> : props.glance ? <ReviewGlanceLine glance={props.glance} /> : null}
-              {showsQuality ? <ReviewQualityLines quality={props.quality ?? null} reviewers={qualityReviewers} /> : null}
+              {showsQuality ? <ReviewQualityLines quality={props.quality ?? null} reviewers={qualityReviewers} total={props.qualityReviewerCount} action={props.qualityAction} /> : null}
             </View> : null}
             {props.notice ?? null}
           </View>
@@ -252,13 +253,15 @@ function ReviewQualityLines(props: Readonly<{
   quality: ReviewRoundQualityV1 | null;
   /** Every reviewer's own score and reason, kept even when the round has no aggregate. */
   reviewers: readonly ReviewRoundReviewerQualityV1[];
+  total?: number;
+  action?: React.ReactNode;
 }>) {
   const { quality, reviewers } = props;
   const presentation = quality ? presentReviewRoundQualityV1(quality) : null;
   const [expanded, setExpanded] = React.useState(false);
   const count = reviewers.length;
-  // A partial round's notice line says who didn't finish; the score line only says there is no score.
-  const basis = !quality ? null
+  // Individual scores remain useful when coverage does not permit an overall score.
+  const basis = !quality ? props.total === undefined ? null : t('reviewWalkthrough.detail.qualityCoverage', { count, total: props.total })
     : count > 1 ? t(quality.aggregation === 'median' ? 'reviewWalkthrough.detail.qualityMedian'
       : 'reviewWalkthrough.detail.qualityLowest', { count }) : null;
   const disclosure = count === 0 ? null : expanded ? t('reviewWalkthrough.detail.qualityShowLess')
@@ -275,6 +278,7 @@ function ReviewQualityLines(props: Readonly<{
         </Text>
         {disclosure ? <TextLinkButton size="meta" testID="review-detail:quality-each" expanded={expanded} label={disclosure}
           onPress={() => setExpanded(open => !open)} /> : null}
+        {props.action}
       </View>
       {expanded ? reviewers.map(reviewer => (
         // The score leads in its own tabular column, so a name ending in a number never runs into it.

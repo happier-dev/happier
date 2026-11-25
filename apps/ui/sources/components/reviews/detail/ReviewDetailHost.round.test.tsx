@@ -77,17 +77,17 @@ it('keeps captured historical Review A names with no individual state or timing 
       .filter((child): child is string => typeof child === 'string')
       .join(' ') ?? '';
   try {
-    await vi.waitFor(() => expect(screen.findHostByTestId('review-detail:partial')).not.toBeNull());
+    await vi.waitFor(() => expect(screen.findHostByTestId('review-detail:participant:step-1-reviewer-1')).not.toBeNull());
     expect(textOf('review-detail:participant:step-1-reviewer-1')).toContain('Claude');
     // A one-reviewer Partial round names its reviewer even with no individual result (U8 R5 P8).
-    expect(textOf('review-detail:partial')).toContain(t('reviewWalkthrough.detail.reviewersDidntFinish', { names: 'Claude', count: 1 }));
+    expect(screen.findHostByTestId('review-detail:partial')).toBeNull();
     // The round card says the same outcome as the notice and Runs (U8 R6 P11).
-    expect(textOf('review-detail:participant:step-1-reviewer-1')).toContain(t('reviewWalkthrough.detail.reviewerDidntFinish'));
+    expect(textOf('review-detail:participant:step-1-reviewer-1')).toContain(t('reviewWalkthrough.collection.statePartial'));
     const { ReviewDetailView } = await import('./ReviewDetailView');
     await act(async () => screen.findByType(ReviewDetailView).props.onSelectTab('runs'));
     // Its only reviewer is the one that didn't finish (U8 R5 P8), on Runs as in the notice.
     expect(textOf('review-detail:run:step-1-reviewer-1')).toContain('Claude');
-    expect(textOf('review-detail:run:step-1-reviewer-1')).toContain(t('reviewWalkthrough.detail.reviewerDidntFinish'));
+    expect(textOf('review-detail:run:step-1-reviewer-1')).toContain(t('reviewWalkthrough.collection.statePartial'));
     await act(async () => screen.findByType(ReviewDetailView).props.onSelectTab('activity'));
     expect(screen.findHostByTestId('review-activity:reviewer:1:step-1-reviewer-1')).toBeNull();
   } finally {
@@ -120,13 +120,12 @@ it('uses the same persisted reviewer results on the round, Runs, notice and Acti
   const textOf = (id: string) => screen.findByTestId(id)?.findAll(node => typeof node.type === 'string')
     .flatMap(node => node.children).filter((child): child is string => typeof child === 'string').join(' ') ?? '';
   try {
-    await vi.waitFor(() => expect(textOf('review-detail:participant:first')).toContain(t('reviewWalkthrough.detail.reviewerDidntFinish')));
+    await vi.waitFor(() => expect(textOf('review-detail:participant:first')).toContain(t('reviewWalkthrough.collection.statePartial')));
     expect(textOf('review-detail:participant:second')).toContain(t('reviewWalkthrough.collection.stateCompleted'));
-    expect(textOf('review-detail:partial')).toContain('Claude reviewer');
-    expect(textOf('review-detail:partial')).not.toContain('Codex reviewer');
+    expect(screen.findHostByTestId('review-detail:partial')).toBeNull();
     await act(async () => screen.findByType(ReviewDetailView).props.onSelectTab('runs'));
     expect(textOf('review-detail:run:claude')).toContain('Claude reviewer');
-    expect(textOf('review-detail:run:claude')).toContain(t('reviewWalkthrough.detail.reviewerDidntFinish'));
+    expect(textOf('review-detail:run:claude')).toContain(t('reviewWalkthrough.collection.statePartial'));
     expect(textOf('review-detail:run:claude')).toContain(formatElapsedDuration(7000));
     expect(textOf('review-detail:run:claude')).not.toContain(t('reviewWalkthrough.collection.stateRunning'));
     expect(textOf('review-detail:run:codex')).toContain(t('reviewWalkthrough.collection.stateCompleted'));
@@ -156,11 +155,10 @@ it('names two same-Agent reviewers by step everywhere, counts Runs by its rows a
   try {
     await vi.waitFor(() => expect(textOf('review-detail:participant:step-1-reviewer-1')).toContain(first));
     expect(textOf('review-detail:participant:step-2-reviewer-1')).toContain(second);
-    expect(textOf('review-detail:participant:step-1-reviewer-1')).toContain(t('reviewWalkthrough.detail.reviewerDidntFinish'));
-    // The notice names who didn't finish (never "Both") and offers to retry them together.
-    expect(textOf('review-detail:partial')).toContain(first);
-    expect(textOf('review-detail:partial')).toContain(second);
-    expect(textOf('review-detail:partial')).toContain(t('reviewWalkthrough.detail.retryUnfinished', { count: 2 }));
+    expect(textOf('review-detail:participant:step-1-reviewer-1')).toContain(t('reviewWalkthrough.collection.statePartial'));
+    // Retry stays in the coverage line; no second warning repeats the round card.
+    expect(screen.findHostByTestId('review-detail:partial')).toBeNull();
+    expect(textOf('review-detail:partial:retry')).toContain(t('reviewWalkthrough.detail.retryUnfinished', { count: 2 }));
     const view = screen.findByType(ReviewDetailView);
     expect(view.props.tabs.find((tab: { id: string }) => tab.id === 'runs')?.count).toBe(2);
     await act(async () => view.props.onSelectTab('runs'));
@@ -180,8 +178,8 @@ it('keeps the step-2 name in round 2 and says why it did not finish (U8 R5 P7, r
   const second = { ...first, ordinal: 2, startedAt: first.finishedAt + 1, finishedAt: first.finishedAt + 9000,
     reviewerIds: ['step-2-reviewer-1'], reviewerDisplayNames: { 'step-2-reviewer-1': 'claude' },
     runs: [{ kind: 'workflow', runId: '22222222-2222-4222-8222-222222222222' }],
-    reviewerOutcomes: [{ reviewerId: 'step-2-reviewer-1', displayName: 'claude', outcome: 'partial', runId: 'run-2',
-      startedAt: first.finishedAt + 2, finishedAt: first.finishedAt + 8000, reason: { run: 'launch_failed' } }] };
+    reviewerOutcomes: [{ reviewerId: 'step-2-reviewer-1', displayName: 'claude', outcome: 'failed', runId: 'run-2',
+      startedAt: first.finishedAt + 2, finishedAt: first.finishedAt + 8000, reason: { run: 'launch_failed', errorCode: 'provider_model_not_found' } }] };
   // The findings read never answers; the round, notice and Runs speak from the record alone.
   fixture = await createSessionFilesViewFixture({ serverUrl: 'https://two-round.test', request: async url =>
     new URL(String(url)).pathname === '/v1/reviews/comments' ? new Promise<Response>(() => {}) : Response.json({}, { status: 404 }) });
@@ -198,12 +196,12 @@ it('keeps the step-2 name in round 2 and says why it did not finish (U8 R5 P7, r
   const stepTwo = t('reviewWalkthrough.detail.reviewerInStep', { name: 'Claude', step: 2 });
   try {
     await vi.waitFor(() => expect(textOf('review-detail:participant:step-2-reviewer-1')).toContain(stepTwo));
-    expect(textOf('review-detail:partial')).toContain(stepTwo);
-    expect(textOf('review-detail:partial')).toContain(t('reviewWalkthrough.detail.reasonLaunchFailed'));
-    expect(textOf('review-detail:partial')).toContain(t('reviewWalkthrough.detail.retryReviewer', { name: stepTwo }));
+    expect(screen.findHostByTestId('review-detail:partial')).toBeNull();
+    expect(textOf('review-detail:partial:retry')).toContain(t('reviewWalkthrough.detail.retryReviewer', { name: stepTwo }));
     await act(async () => screen.findByType(ReviewDetailView).props.onSelectTab('runs'));
     expect(textOf('review-detail:run:run-2')).toContain(stepTwo);
-    expect(textOf('review-detail:run:run-2')).toContain(t('reviewWalkthrough.detail.reasonLaunchFailed'));
+    expect(textOf('review-detail:run:run-2')).toContain(t('settingsProviders.errors.modelNotFoundTitle'));
+    expect(textOf('review-detail:participant:step-2-reviewer-1')).toContain(t('settingsProviders.errors.modelNotFoundTitle'));
   } finally { await screen.unmount(); }
 });
 

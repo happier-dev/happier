@@ -7,7 +7,7 @@ import { hasAgentIconMark, isBundledAgentId } from '@/agents/catalog/catalog';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
-import { reviewRoundReviewerOutcomeLabel } from '../reviewRoundReviewers';
+import { reviewRoundReviewerStateLabel } from '../reviewRoundReviewers';
 import { reviewFindingDecisionLabel } from '@/components/sessions/reviews/findings/ReviewFindingRow';
 import {
   presentSharePrincipal,
@@ -151,7 +151,7 @@ function presentActor(
     ? <AgentIcon agentId={actor.agentId} size={ICON_SIZE.sm} /> : null };
 }
 
-function eventSentence(event: ReviewActivityEvent): string {
+function eventSentence(event: ReviewActivityEvent) {
   switch (event.kind) {
     case 'decided':
       return t('reviewWalkthrough.detail.eventDecided', {
@@ -163,10 +163,8 @@ function eventSentence(event: ReviewActivityEvent): string {
     case 'verdict':
       return t(VERDICT_WORDS[event.verdict]);
     case 'reviewerFinished':
-      // A sentence after the reviewer's name ("Claude · step 2 didn't finish"), in the same words as its row.
       return event.outcome === 'completed' ? t('reviewWalkthrough.detail.eventRunFinished')
-        : event.outcome === 'cancelled' ? reviewRoundReviewerOutcomeLabel(event.outcome)
-          : t('reviewWalkthrough.detail.eventRunDidntFinish');
+        : reviewRoundReviewerStateLabel(event);
     case 'roundStarted':
       return t('reviewWalkthrough.detail.eventRoundStarted', {
         round: event.round,

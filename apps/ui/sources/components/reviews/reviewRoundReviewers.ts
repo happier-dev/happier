@@ -44,18 +44,23 @@ export type ReviewRoundReviewerRead = Readonly<{
   findingsCount: number | null;
 }>;
 
-// One reviewer's ending in one word everywhere it is named (round card, Runs, Activity): "Didn't finish", as the lab
-// says it, never the round's "Partial".
+// Present the settled coverage unchanged, everywhere this reviewer is named.
 const OUTCOME_KEYS = {
   running: 'reviewWalkthrough.collection.stateRunning',
   completed: 'reviewWalkthrough.collection.stateCompleted',
-  partial: 'reviewWalkthrough.detail.reviewerDidntFinish',
+  partial: 'reviewWalkthrough.collection.statePartial',
   failed: 'reviewWalkthrough.collection.stateFailed',
   cancelled: 'reviewWalkthrough.collection.stateCancelled',
 } as const satisfies Record<ReviewRoundReviewerOutcome, string>;
 
 export function reviewRoundReviewerOutcomeLabel(outcome: ReviewRoundReviewerOutcome): string {
   return t(OUTCOME_KEYS[outcome]);
+}
+
+/** A failed reviewer's typed cause is its status; a partial result keeps its coverage label. */
+export function reviewRoundReviewerStateLabel(reviewer: Pick<ReviewRoundReviewer, 'outcome' | 'reason'>): string | null {
+  return reviewer.outcome === 'failed' && reviewer.reason ? reviewer.reason
+    : reviewer.outcome ? reviewRoundReviewerOutcomeLabel(reviewer.outcome) : null;
 }
 
 type NamedRound = Pick<ReviewRound, 'reviewerIds' | 'reviewerDisplayNames' | 'reviewerAgentIds'>;
