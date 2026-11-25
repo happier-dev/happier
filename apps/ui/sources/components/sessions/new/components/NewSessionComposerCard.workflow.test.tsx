@@ -18,6 +18,8 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { createMountedCurrentUiContextWrapper } from '@/dev/testkit/harness/mountedCurrentUiContext';
 import { GlassRuntimeEnvironmentProvider } from '@/components/ui/glass/glassRuntimeEnvironment';
+import { glassPresetMaterials } from '@/components/ui/glass/glassMaterial';
+import { GlassMaterialSettingsProvider } from '@/components/ui/glass/useGlassMaterialSettings';
 import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popover/OverlayPortal';
 import { AgentInputActionMenuPopoverContent } from '@/components/sessions/agentInput/components/AgentInputActionMenuPopoverContent';
@@ -29,6 +31,11 @@ import { useDiscussionWorkflowRun } from '@/components/discussions/useDiscussion
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { SessionAgentsLaunchMenu } from '@/components/sessions/agents/launch/SessionAgentsLaunchMenu';
 import type { SessionAgentLauncher } from '@/components/sessions/agents/launch/useSessionAgentLauncher';
+
+const floatingTintSettings = {
+    glassBlurEnabled: true,
+    glassSurfaceMaterials: { ...glassPresetMaterials('everywhere'), floating: { blur: 'off' as const, opacity: 0.2 } },
+};
 
 const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'android', width: 1440 }));
 let home: Awaited<ReturnType<typeof serveActionHomes>> | null = null;
@@ -452,28 +459,24 @@ describe('New workflow entry', () => {
     });
     it('keeps the admitted read-only document on the same floating material plane', async () => {
         const { AgentInput } = await import('@/components/sessions/agentInput');
-        const store = getStorage();
-        const previous = store.getState().settings;
         platformState.os = 'android';
         try {
-            await act(async () => {
-                store.setState({ settings: { ...previous, glassBlurEnabled: true, glassSurfaceMaterials: null } });
-            });
             const screen = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ nativeRenderer: true }}>
-                <AgentInput value="Frozen document" placeholder="Document" surfaceGroup="floating"
-                    autocompleteKinds={[]} autocompleteSuggestions={async () => []} />
+                <GlassMaterialSettingsProvider value={floatingTintSettings}>
+                    <AgentInput value="Frozen document" placeholder="Document" surfaceGroup="floating"
+                        autocompleteKinds={[]} autocompleteSuggestions={async () => []} />
+                </GlassMaterialSettingsProvider>
             </GlassRuntimeEnvironmentProvider>);
             const surface = screen.findByTestId('agent-input-material-surface');
             expect(surface).not.toBeNull();
-            expect(Color(flattenTestStyle(surface?.props.style).backgroundColor as string).alpha()).toBe(0.02);
+            expect(Color(flattenTestStyle(surface?.props.style).backgroundColor as string).alpha()).toBeCloseTo(0.2, 2);
             expect(screen.getTextContent()).toContain('Frozen document');
             expect(screen.findByTestId('new-session-composer-input')).toBeNull();
         } finally {
             platformState.os = 'web';
-            await act(async () => { store.setState({ settings: previous }); });
         }
     });
-    it('gives the phone floating composer its own material coat and restores solid when its group is off', async () => {
+    it('keeps the phone floating composer opaque without Android blur and honors an unblurred tint', async () => {
         const store = getStorage();
         const previous = store.getState().settings;
         platformState.os = 'android';
@@ -486,8 +489,12 @@ describe('New workflow entry', () => {
             </GlassRuntimeEnvironmentProvider>);
             const surface = screen.findByTestId('agent-input-material-surface');
             expect(surface).not.toBeNull();
-            expect(Color(flattenTestStyle(surface?.props.style).backgroundColor as string).alpha()).toBe(0.02);
+            expect(Color(flattenTestStyle(surface?.props.style).backgroundColor as string).alpha()).toBe(1);
             expect(screen.findByTestId('new-session-composer-input')?.props.value).toBe('Keep this brief');
+            await act(async () => {
+                store.setState({ settings: { ...previous, ...floatingTintSettings } });
+            });
+            expect(Color(flattenTestStyle(screen.findByTestId('agent-input-material-surface')?.props.style).backgroundColor as string).alpha()).toBeCloseTo(0.2, 2);
             await act(async () => {
                 store.setState({ settings: { ...previous, glassBlurEnabled: false, glassSurfaceMaterials: null } });
             });
@@ -560,9 +567,6 @@ describe('New workflow entry', () => {
             const NativeContextWrapper = await createMountedCurrentUiContextWrapper();
             const nativeServerId = nativeHome.homes.workflow!.id;
             publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-            await act(async () => {
-                store.setState({ settings: { ...previous.settings, glassBlurEnabled: true, glassSurfaceMaterials: null } });
-            });
             const props = { ...panelProps(), selectedMachineId: 'machine-1', targetServerId: nativeServerId };
             const hook = await renderHook(() => useNewSessionWorkflowStart({ panelProps: props, prompt: 'Keep this brief', surfaceGroup: 'floating' }));
             const content = hook.getCurrent().chip.collapsedContentPopover?.renderContent;
@@ -574,9 +578,9 @@ describe('New workflow entry', () => {
             const composer = hook.getCurrent().composer;
             if (composer === null) throw new Error('Selected workflow composer is missing');
             const screen = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ nativeRenderer: true }}>
-                {composer}
+                <GlassMaterialSettingsProvider value={floatingTintSettings}>{composer}</GlassMaterialSettingsProvider>
             </GlassRuntimeEnvironmentProvider>);
-            expect(Color(flattenTestStyle(screen.findByTestId('agent-input-material-surface')?.props.style).backgroundColor as string).alpha()).toBe(0.02);
+            expect(Color(flattenTestStyle(screen.findByTestId('agent-input-material-surface')?.props.style).backgroundColor as string).alpha()).toBeCloseTo(0.2, 2);
             expect(screen.findByTestId('new-session-composer-input')?.props.value).toBe('Keep this brief');
         } finally {
             await nativeHome.dispose();
