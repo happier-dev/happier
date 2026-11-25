@@ -1764,7 +1764,7 @@ describe('WorkspaceSyncController', () => {
     expect(adapter.terminate).toHaveBeenCalledTimes(2);
   });
 
-  it('retains partially acquired root custody when a later root acquisition fails', async () => {
+  it('reports the blocked endpoint and retains partial custody when root release also fails', async () => {
     const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-controller-partial-root-'));
     const hub = join(fixture, 'hub');
     const target = join(fixture, 'target');
@@ -1806,7 +1806,7 @@ describe('WorkspaceSyncController', () => {
       resolveWorkspaceRef: (id) => ({ machineId: 'm1', rootPath: id === 'a' ? hub : target }),
     });
     try {
-      await expect(controller.ensure(definition)).rejects.toBe(cleanupFailure);
+      await expect(controller.ensure(definition)).rejects.toMatchObject({ code: 'workspace_root_in_use', role: 'beta' });
       const beforeRetry = await rootOwnershipManager.tryAcquire({ ownerId: 'probe-before-retry', canonicalRoot: hub, operation: 'handoff' });
       expect(beforeRetry).toMatchObject({ kind: 'overlap' });
       await expect(controller.shutdown()).resolves.toBeUndefined();
@@ -2289,6 +2289,43 @@ describe('WorkspaceSyncController', () => {
     expect(tryAcquire).toHaveBeenCalledOnce();
     expect(copyOnce).toHaveBeenCalledTimes(2);
     expect(release).toHaveBeenCalledOnce();
+  });
+
+  it.each(['Copy', 'link'] as const)('preserves the native %s refusal when the root ownership filesystem also refuses release', async operation => {
+    const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-copy-release-'));
+    const sourceRoot = join(fixture, 'source');
+    const lockDirectory = join(fixture, 'locks');
+    const parkedLocks = join(fixture, 'parked-locks');
+    await mkdir(sourceRoot);
+    const failureCause = { phase: 'workspace_sync.copy.native', errorClass: 'Error', errorCode: 'stream_limit', httpStatus: null };
+    const refusal = Object.assign(new Error('Too many native streams'), { code: 'stream_limit', effectAttempted: false, failureCause });
+    const resolveWorkspaceRef = (id: string) => id === 'a'
+      ? { machineId: 'm1', rootPath: sourceRoot } : { machineId: 'm2', rootPath: '/remote/target' };
+    let locksParked = false;
+    const controller = new WorkspaceSyncController({ lifecycle: lifecycle(), localMachineId: 'm1', resolveWorkspaceRef,
+      rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory }),
+      adapter: createWorkspaceSyncMutagenAdapter({ resolveWorkspaceRef, send: async command => {
+        if (command.t !== 'list') throw new Error('Refusal must precede native admission');
+        if (locksParked) return { sessions: [], nextCursor: null };
+        await rename(lockDirectory, parkedLocks);
+        locksParked = true;
+        await writeFile(lockDirectory, 'obstruct the next lock-directory access');
+        throw refusal;
+      } }),
+    });
+    try {
+      const outcome = operation === 'Copy' ? controller.copyOnce({ v: 1, operationId: 'copy-refused', controllerMachineId: 'm1',
+        alphaWorkspaceRefId: 'a', betaWorkspaceRefId: 'b', contentPolicy: definition.contentPolicy }) : controller.ensure(definition);
+      await expect(outcome).rejects.toMatchObject({ code: 'stream_limit', effectAttempted: false, failureCause });
+      if (operation === 'Copy') await expect(controller.rehydrateFromSettings([])).resolves.toEqual([]);
+    } finally {
+      if (locksParked) {
+        await rm(lockDirectory, { force: true });
+        await rename(parkedLocks, lockDirectory);
+      }
+      await controller.shutdown();
+      await rm(fixture, { recursive: true, force: true });
+    }
   });
 
   it('retains copy_once runtime and root custody when the operation and required termination both fail', async () => {

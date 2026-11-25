@@ -1,6 +1,7 @@
 import { areWorkspaceSyncEntryExpectationsEqual, areWorkspaceSyncRelationshipDefinitionsEqual, ReadWorkspaceSyncFileV1Schema, WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES, WorkspaceSyncConflictInspectRpcRequestV1Schema, WorkspaceSyncConflictInspectRpcResultV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncConflictResolutionV1Schema, WorkspaceSyncCopyOnceV1Schema, WorkspaceSyncRelationshipsListRpcRequestV1Schema, WorkspaceSyncRelationshipsListRpcResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { deriveWorkspaceSyncTopology, resolveWorkspaceSyncExecutionMachineIdV1 as executionMachineId } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpc/errors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { WorkspaceRefV1Schema, isManagedWorkspaceRefV2, type ManagedWorkspaceRefV2, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { WorkspaceSyncConflictInspectEndpointV1, WorkspaceSyncConflictInspectRpcRequestV1, WorkspaceSyncConflictInspectRpcResultV1, WorkspaceSyncConflictResolutionResultV1, WorkspaceSyncConflictResolutionV1, WorkspaceSyncConflictResolveActionInputV1, WorkspaceSyncEntryExpectationV1, WorkspaceSyncPathSelectionV1, WorkspaceSyncSelectionDiagnoseV1, WorkspaceSyncRelationshipsListRpcRequestV1, WorkspaceSyncRelationshipsListRpcResultV1 } from '@happier-dev/protocol';
 import { machineCarrierUnavailableError } from '@/daemon/peer/iroh/machineCarrier';
@@ -27,6 +28,7 @@ import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { createParkWatch } from '@/daemon/lifecycle/parkWatch';
 import type { WorkspaceSyncStatusWatchRequestV1, WorkspaceSyncStatusWatchResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { computeManagedConnectionBackoffMs, DEFAULT_MANAGED_CONNECTION_POLICY } from '@happier-dev/connection-supervisor';
+import { logger } from '@/ui/logger';
 
 export type WorkspaceSyncResolvedRef = Readonly<{
   serverId?: string;
@@ -223,6 +225,12 @@ function readErrorCode(error: unknown): string | undefined {
   return readRpcErrorCode(error) ?? (typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
     ? error.code
     : undefined);
+}
+
+function reportRefusedRootCleanup(error: unknown): void {
+  logger.warnLocalFile('[Workspace Sync] Refused root custody cleanup failed', {
+    failureCause: projectActionFailureCauseV1(error),
+  });
 }
 
 function isRecoveryHoldCode(code: string | undefined): code is string {
@@ -1212,8 +1220,8 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       if (needsOwnership) {
         if (!previous) this.definitions.delete(valid.relationshipId);
         if (!previous) this.transientDefinitions.delete(valid.relationshipId);
-        await this.releaseRootHandles(acquiredHandles ?? []);
-        await this.releaseSharedHubParticipation(valid.relationshipId);
+        await this.releaseRootHandles(acquiredHandles ?? []).catch(reportRefusedRootCleanup);
+        await this.releaseSharedHubParticipation(valid.relationshipId).catch(reportRefusedRootCleanup);
         this.fences.delete(valid.relationshipId);
       }
       throw error;
@@ -1393,7 +1401,11 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         await this.releaseCopyOperation(valid.operationId);
         return result;
       } catch (error) {
-        if (!isIndeterminate(error)) await this.releaseCopyOperation(valid.operationId);
+        if (!isIndeterminate(error)) {
+          // A settled refusal cannot become copy work again during reconciliation.
+          this.copyOperations.delete(valid.operationId);
+          await this.releaseCopyOperation(valid.operationId).catch(reportRefusedRootCleanup);
+        }
         throw error;
       }
     });

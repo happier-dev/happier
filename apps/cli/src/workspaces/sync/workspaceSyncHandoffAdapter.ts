@@ -687,7 +687,13 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
           ...(context ? { sourcePhaseContext: context } : {}) });
         return prepared;
       } catch (error) {
-        await fence?.release('abort');
+        try {
+          await fence?.release('abort');
+        } catch (cleanupError) {
+          logger.warnLocalFile('[Workspace Sync] Refused target custody release failed', {
+            failureCause: projectActionFailureCauseV1(cleanupError),
+          });
+        }
         throw error;
       }
     },

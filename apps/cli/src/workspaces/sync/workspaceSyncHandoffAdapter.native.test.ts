@@ -63,6 +63,44 @@ describe('native Workspace Sync handoff', () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+  it('carries the native link refusal across failed TARGET custody release', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'workspace-sync-target-release-'));
+    const sourceRootPath = join(directory, 'source');
+    const targetRootPath = join(directory, 'target');
+    await mkdir(sourceRootPath);
+    const workspaceRefs = [
+      { id: 'source-ref', serverId: 'home', machineId: 'source', rootPath: sourceRootPath, createdAtMs: 1 },
+      { id: 'target-ref', serverId: 'home', machineId: 'target', rootPath: targetRootPath, createdAtMs: 1 },
+    ];
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const relationship = { v: 1 as const, relationshipId: 'retained-link', controllerMachineId: 'source',
+      alphaWorkspaceRefId: 'source-ref', betaWorkspaceRefId: 'target-ref', mode: 'keep_synced' as const,
+      contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, enabled: true, createdAtMs: 1, updatedAtMs: 1 };
+    const resolveWorkspaceRef = (id: string) => workspaceRefs.find(ref => ref.id === id) ?? null;
+    const failureCause = { phase: 'workspace_sync.target.admit', errorClass: 'Error', errorCode: 'stream_limit', httpStatus: null };
+    const refusal = Object.assign(new Error('TARGET has reached its stream limit'), { code: 'stream_limit', failureCause });
+    const controller = new WorkspaceSyncController({
+      adapter: createWorkspaceSyncMutagenAdapter({ resolveWorkspaceRef, send: async () => { throw refusal; } }),
+      lifecycle: { start: async () => undefined, stop: async () => undefined },
+      localMachineId: 'source', localServerId: 'home', resolveWorkspaceRef, resolveRelationshipDefinition: () => relationship,
+      rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(directory, 'locks') }),
+    });
+    const adapter = createWorkspaceSyncHandoffAdapter({ sync: controller, bootstrap: async () => ({
+      release: async () => {
+        // The installed TARGET loses its connection as SOURCE aborts its prepare.
+        throw Object.assign(new Error('TARGET disconnected'), { code: 'peer_unavailable' });
+      },
+    }) });
+    try {
+      const prepared = adapter.prepare({ operationId: 'transfer', action: { kind: 'relationship',
+        relationshipId: relationship.relationshipId, flushBeforeCommit: true }, sourceMachineId: 'source', targetMachineId: 'target',
+        sourceWorkspaceRefId: 'source-ref', targetWorkspaceRefId: 'target-ref', sourceRootPath, targetRootPath });
+      await expect(prepared).rejects.toMatchObject({ code: 'stream_limit', failureCause });
+    } finally {
+      await controller.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it.each(['managedId', 'machineId', 'installationId'] as const)('preserves ambiguity when a retained managed %s changes', async field => {
     const directory = await mkdtemp(join(tmpdir(), 'workspace-sync-native-identity-'));
     const controller = new WorkspaceSyncController({
