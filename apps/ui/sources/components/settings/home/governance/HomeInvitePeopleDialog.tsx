@@ -3,7 +3,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { resolveTeamsCreateGuidance } from '@/components/settings/teams/collection/teamsCreateGuidance';
-import { teamsCreateRefusalText } from '@/components/settings/teams/collection/teamsCreateGuidanceText';
+import { teamsCreateEligibilityFailureText, teamsCreateRefusalText } from '@/components/settings/teams/collection/teamsCreateGuidanceText';
 import { TeamSection } from '@/components/settings/teams/TeamSection';
 import { teamsCreatePath } from '@/components/settings/teams/teamsRoutes';
 import { TeamInvitationForm } from '@/components/settings/teams/invitations/TeamInvitationCreateScreen';
@@ -198,6 +198,19 @@ const HomeInvitePeopleChooser = React.memo(function HomeInvitePeopleChooser(prop
                 </ItemGroup>
             ) : null}
 
+            {teams.length === 0 && !directory.hasMore && !loading && !failed && creation.kind === 'refused' && creation.retry ? (
+                <ItemGroup surface="none">
+                    <SectionButtonRow>
+                        <RoundButton
+                            testID="home-invite-people-eligibility-retry"
+                            size="small"
+                            title={t('common.retry')}
+                            onPress={creation.retry}
+                        />
+                    </SectionButtonRow>
+                </ItemGroup>
+            ) : null}
+
             {teams.length === 0 && !directory.hasMore && !loading && !failed && creation.kind === 'can_create' ? (
                 // Nothing to invite to here: the next step is a Team of the viewer's own.
                 <ItemGroup surface="none">
@@ -230,7 +243,7 @@ const HomeInvitePeopleChooser = React.memo(function HomeInvitePeopleChooser(prop
 type TeamCreationOffer =
     | Readonly<{ kind: 'unknown' }>
     | Readonly<{ kind: 'can_create' }>
-    | Readonly<{ kind: 'refused'; reason: string }>;
+    | Readonly<{ kind: 'refused'; reason: string; retry?: () => void }>;
 
 /**
  * Whether the viewer can create a Team on this Home, and if not why and who can: the Home's current
@@ -243,6 +256,13 @@ function useTeamCreationOffer(
 ): TeamCreationOffer {
     const eligibility = useHomeGovernanceEligibilitySnapshots(scopes);
     const snapshot = eligibility.snapshotsByServerId.get(serverId);
+    if (snapshot?.status === 'error' && snapshot.error) {
+        return {
+            kind: 'refused',
+            reason: teamsCreateEligibilityFailureText(snapshot.error),
+            retry: snapshot.error.retryable ? eligibility.refresh : undefined,
+        };
+    }
     const answer = snapshot?.status === 'ready' && !snapshot.stale && snapshot.data?.teamsEnabled === true ? snapshot.data : null;
     if (!answer) return { kind: 'unknown' };
     if (answer.createTeam) return { kind: 'can_create' };

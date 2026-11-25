@@ -366,6 +366,30 @@ describe('TeamCreateScreen', () => {
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('teams-create-managed-only');
     });
 
+    it.each([
+        { status: 404, code: 'home_account_not_found', message: 'homeGovernance.errorAccountNotFound', retry: false },
+        { status: 400, code: 'invalid_home_input', message: 'homeGovernance.invalidRead', retry: false },
+        { status: 503, code: 'unavailable', message: 'teams.unavailable.offline', retry: true },
+    ])('presents the Team creation eligibility answer $code', async ({ status, code, message, retry }) => {
+        const home = await harness.addHome({
+            name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'member-a', teamsEnabled: true,
+        });
+        await harness.selectHomes([home]);
+        harness.answer(home, ELIGIBILITY_PATH, { status, body: { error: code } });
+
+        const screen = await renderCreate();
+        await vi.waitFor(() => expect(screen.findByTestId('teams-create-unavailable')).not.toBeNull());
+        expect(screen.getTextContent()).toContain(message);
+        expect(screen.findByTestId('teams-create-unavailable-action') !== null).toBe(retry);
+        if (retry) {
+            harness.answer(home, ELIGIBILITY_PATH, { body: {
+                teamsEnabled: true, createTeam: true, createTeamForChosenAccount: false,
+            } });
+            await screen.pressByTestIdAsync('teams-create-unavailable-action');
+            await vi.waitFor(() => expect(screen.findByTestId('teams-create-name')).not.toBeNull());
+        }
+    });
+
     it('says a Home has Teams turned off rather than that creation is administered', async () => {
         const home = await harness.addHome({
             name: 'Home A',

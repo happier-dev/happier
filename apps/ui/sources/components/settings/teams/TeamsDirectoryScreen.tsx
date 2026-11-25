@@ -29,7 +29,7 @@ import {
     resolveTeamsCollectionLanding,
 } from './collection/teamsCollection';
 import { useTeamsCollection, type TeamsCollection } from './collection/useTeamsCollection';
-import { teamsCreateRefusalText } from './collection/teamsCreateGuidanceText';
+import { teamsCreateEligibilityFailureText, teamsCreateRefusalText } from './collection/teamsCreateGuidanceText';
 import { homeTeamCreationPolicyHref } from '@/components/settings/home/governance/homeTeamsPolicySettings';
 import { useHappierCollectionIndexView } from '@happier-dev/plugin-ui/presentation';
 
@@ -121,12 +121,13 @@ const TeamsEmptyState = React.memo(function TeamsEmptyState(props: Readonly<{
     const router = useRouter();
     const { collection } = props;
     const { refusal, openCreationPolicyServerId } = collection.createGuidance;
+    const eligibilityFailure = collection.createEligibilityFailure;
     return (
         <EmptyState
             testID="teams-directory-empty"
             layout="page"
             // An invitation to add only when this viewer can create a Team.
-            variant={collection.showCreateTeam ? 'add' : 'default'}
+            variant={collection.showCreateTeam && !eligibilityFailure ? 'add' : 'default'}
             iconName="users"
             // The page's own Daybreak moment (DESIGN.md › Emptiness is designed): a bench under a tree,
             // the place people gather. The page header already says what a Team is, so the state
@@ -134,8 +135,13 @@ const TeamsEmptyState = React.memo(function TeamsEmptyState(props: Readonly<{
             scene="invitePeople"
             title={t('teams.directory.emptyTitle')}
             // One message: when nobody here can start a Team, who creates them replaces the invitation.
-            subtitle={refusal ? teamsCreateRefusalText(refusal) : t('teams.directory.emptyStart')}
-            primaryAction={collection.showCreateTeam ? {
+            subtitle={refusal ? teamsCreateRefusalText(refusal)
+                : eligibilityFailure ? teamsCreateEligibilityFailureText(eligibilityFailure) : t('teams.directory.emptyStart')}
+            primaryAction={eligibilityFailure?.retryable ? {
+                label: t('common.retry'),
+                onPress: collection.refreshCreateEligibility,
+                testID: 'teams-directory-create-eligibility-retry',
+            } : !eligibilityFailure && collection.showCreateTeam ? {
                 label: t('teams.directory.newTeam'),
                 onPress: props.onCreate,
                 disabled: !collection.canCreateTeam,

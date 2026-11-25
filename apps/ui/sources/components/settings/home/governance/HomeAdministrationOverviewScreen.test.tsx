@@ -606,6 +606,16 @@ describe('Invite people', () => {
         expect(ids(screen)).not.toContain('home-invite-people-create-team');
     });
 
+    it('shows the Home’s Team creation refusal in the empty invitations chooser', async () => {
+        const home = await addHome();
+        harness.answer(home, TEAMS_LIST_PATH, { body: { items: [], nextCursor: null } });
+        harness.answer(home, ELIGIBILITY_PATH, { status: 404, body: { error: 'home_account_not_found' } });
+        const screen = await renderDialog(home);
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('homeGovernance.errorAccountNotFound'));
+        expect(ids(screen)).not.toContain('home-invite-people-create-team');
+        expect(ids(screen)).not.toContain('home-invite-people-eligibility-retry');
+    });
+
     it('says there is no Team to invite to rather than offering a form', async () => {
         const home = await addHome();
         harness.answer(home, TEAMS_LIST_PATH, { body: { items: [], nextCursor: null } });

@@ -32,6 +32,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { homeTeamCreationPolicyHref } from '@/components/settings/home/governance/homeTeamsPolicySettings';
+import { teamsCreateEligibilityFailureText } from './collection/teamsCreateGuidanceText';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { useHomeAccountSearch } from '@/hooks/home/useHomeAccountSearch';
@@ -521,12 +522,10 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
             return error ? [error] : [];
         })
         : [];
-    const eligibilityRetryable = eligibilityErrors.some((failure) => failure.retryable);
-    const eligibilityUnavailableMessage = eligibilityErrors.some((failure) => failure.kind === 'forbidden')
-        ? t('teams.errors.forbidden')
-        : eligibilityErrors.length > 0 && eligibilityErrors.every((failure) => failure.kind === 'unsupported')
-            ? t('teams.unavailable.updateRequired')
-            : t('teams.unavailable.offline');
+    const eligibilityFailure = eligibilityErrors.find((failure) => failure.retryable) ?? eligibilityErrors[0];
+    const eligibilityUnavailableMessage = eligibilityFailure
+        ? teamsCreateEligibilityFailureText(eligibilityFailure)
+        : t('teams.unavailable.offline');
     const administrationUnavailable = administrationView?.kind === 'unavailable';
     const administrationError = administrationView?.kind === 'unavailable' ? administrationView.error : null;
     const creationGuidance = resolveTeamsCreateGuidance({
@@ -592,7 +591,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
                 kind="unavailable"
                 title={t('teams.unavailable.title')}
                 reason={eligibilityUnavailableMessage}
-                action={eligibilityRetryable ? { label: t('teams.unavailable.retry'), onPress: eligibility.refresh } : undefined}
+                action={eligibilityFailure?.retryable ? { label: t('teams.unavailable.retry'), onPress: eligibility.refresh } : undefined}
                 accessibilitySemantics="alert"
             />,
         );
@@ -623,7 +622,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
                 kind="unavailable"
                 scene={denied ? 'notAllowed' : undefined}
                 title={denied ? t('homeGovernance.forbiddenTitle') : t('teams.unavailable.title')}
-                reason={denied
+                reason={administrationError?.code ? teamsCreateEligibilityFailureText(administrationError) : denied
                     ? t('teams.errors.forbidden')
                     : unsupported
                         ? t('teams.unavailable.updateRequired')

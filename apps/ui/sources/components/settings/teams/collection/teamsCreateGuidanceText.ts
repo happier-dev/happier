@@ -1,6 +1,13 @@
 import { t } from '@/text';
+import { homeGovernanceFailureNotice } from '@/components/settings/home/governance/homeGovernanceLabels';
+import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
 
 import type { TeamsCreateRefusal } from './teamsCreateGuidance';
+
+export function teamsCreateEligibilityFailureText(failure: ScopedSnapshotError): string {
+    if (failure.retryable && (!failure.code || failure.code === 'unavailable')) return t('teams.unavailable.offline');
+    return homeGovernanceFailureNotice({ ...failure, code: failure.code ?? null }, { effect: 'read' }).body;
+}
 
 /** Past this many administrators a sentence names the first two and counts the rest. */
 const NAMED_ADMINISTRATORS_LIMIT = 3;

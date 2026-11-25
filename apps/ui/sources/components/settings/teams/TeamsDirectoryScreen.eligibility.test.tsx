@@ -309,6 +309,21 @@ describe('TeamsDirectoryScreen Team-creation eligibility', () => {
         expect(ids).not.toContain('teams-directory-open-creation-policy');
     });
 
+    it('shows the Home’s refusal even when its Team directory loaded', async () => {
+        const home = await harness.addHome({
+            name: 'Studio', serverUrl: 'https://studio.example', accountId: 'member-a', teamsEnabled: true,
+        });
+        await harness.selectHomes([home]);
+        harness.answer(home, TEAMS_LIST_PATH, { body: { items: [], nextCursor: null } });
+        harness.answer(home, ELIGIBILITY_PATH, { status: 404, body: { error: 'home_account_not_found' } });
+
+        const screen = await renderDirectory();
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('homeGovernance.errorAccountNotFound'));
+        expect(screen.findByTestId('teams-directory-empty-create')).toBeNull();
+        expect(screen.findByTestId('teams-directory-create-eligibility-retry')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('teams.directory.emptyStart');
+    });
+
     it('tells a member that Team creation is off, with nothing to create', async () => {
         const home = await harness.addHome({
             name: 'Studio', serverUrl: 'https://studio.example', accountId: 'member-a', teamsEnabled: true,

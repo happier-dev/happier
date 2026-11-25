@@ -4,6 +4,7 @@ import { useHomeGovernanceEligibilitySnapshots } from '@/hooks/home/useHomeGover
 import { useTeamsDirectory, type TeamsDirectoryBinding } from '@/hooks/teams/useTeamsDirectory';
 import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
+import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { teamAddressKey, type TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { resolveTeamsCollectionRows } from './teamsCollection';
@@ -40,6 +41,8 @@ export type TeamsCollection = Readonly<{
      * answers; and, for an administrator of managed creation, the Home whose policy could open it up.
      */
     createGuidance: TeamsCreateGuidance;
+    createEligibilityFailure: ScopedSnapshotError | null;
+    refreshCreateEligibility: () => void;
     normalizedQuery: string;
     /** Paging or an unavailable/stale Home prevents claiming a complete collection. */
     activeIncomplete: boolean;
@@ -163,6 +166,13 @@ export function useTeamsCollection(options: Readonly<{
             && snapshot.data?.teamsEnabled === true
             && snapshot.data.createTeam;
     });
+    const eligibilityErrors = !canCreateTeam && !createGuidance.refusal
+        ? active.scopes.flatMap((scope) => {
+            const snapshot = createEligibility.snapshotsByServerId.get(scope.serverId);
+            return snapshot?.status === 'error' && snapshot.error ? [snapshot.error] : [];
+        })
+        : [];
+    const createEligibilityFailure = eligibilityErrors.find((failure) => failure.retryable) ?? eligibilityErrors[0] ?? null;
 
     return {
         active,
@@ -178,6 +188,8 @@ export function useTeamsCollection(options: Readonly<{
         showCreateTeam,
         canCreateTeam,
         createGuidance,
+        createEligibilityFailure,
+        refreshCreateEligibility: createEligibility.refresh,
         normalizedQuery,
         activeCount: supplemented || active.kind === 'loading' || active.hasMore || active.unavailableHomes.length > 0
             ? null : activeRows.length,
