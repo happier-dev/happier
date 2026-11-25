@@ -5,6 +5,7 @@ import type { OpenedManagedMachinePresetCreationV1, OpenedManagedMachinePresetV1
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
 import { useManagedMachineSelectionOffers } from '@/components/sessions/new/components/machineSelection/ManagedMachineSelectionOffers';
 import { useMachinePreset, useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
+import { describeManagedPresetReadFailure } from '@/components/settings/machines/managed/managedNativeFailurePresentation';
 import { Item } from '@/components/ui/lists/Item';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
@@ -104,6 +105,7 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
         placement.kind === 'preset' ? 'teams.settings.memberDefaults.preset' : 'teams.settings.memberDefaults.unavailableMachine');
     const note = props.conflict ? state.conflictNote : null;
     const error = open ? presetState?.error : placement?.kind === 'preset' ? selectedRecord.state.error : null;
+    const readFailure = error ? describeManagedPresetReadFailure(error) : null;
 
     return <>
         {state.editable ? <MachineSelector
@@ -148,7 +150,8 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
             mode="info"
             showChevron={false}
         />}
-        {error ? <SurfaceStateCard kind="error" size="line" title={t('machinePresets.loadFailed')}
-            diagnosticCode={error} action={{ label: t('common.retry'), onPress: open ? presets.refresh : selectedRecord.refresh }} /> : null}
+        {readFailure ? <SurfaceStateCard kind="error" size="line" title={readFailure.title}
+            diagnosticCode={error} action={readFailure.retryable
+                ? { label: t('common.retry'), onPress: open ? presets.refresh : selectedRecord.refresh } : undefined} /> : null}
     </>;
 });

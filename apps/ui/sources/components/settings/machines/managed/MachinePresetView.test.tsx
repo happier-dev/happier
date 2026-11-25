@@ -1076,7 +1076,7 @@ describe('reachable preset detail', () => {
     const serverId = await seed();
     await seedConfiguration(serverId);
     harness.answer(serverId, '/v1/machines/presets/get', {
-      body: { kind: 'refused', code: 'preset_not_found' },
+      status: 404, body: { kind: 'refused', code: 'preset_not_found' },
     });
     const screen = await renderSettingsView(surface === 'detail'
       ? <MachinePresetView serverId={serverId} presetId="missing-preset" />
@@ -1087,6 +1087,10 @@ describe('reachable preset detail', () => {
       await flushHookEffects({ cycles: 30 });
       expect(harness.requests.filter(request => request.path.includes('machines.provisioners.'))).toEqual([]);
       expect(boundary.rpc).not.toHaveBeenCalled();
+      if (surface === 'detail') {
+        expect(screen.getTextContent()).toContain(t('machinePresets.accessLost'));
+        expect(screen.findByTestId('machine-preset.read-state-action')).toBeNull();
+      }
     } finally { await screen.unmount(); }
   });
 

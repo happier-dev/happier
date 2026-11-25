@@ -98,6 +98,16 @@ export function describeManagedPresetKeyPending(code: string | null | undefined)
     } : null;
 }
 
+export function describeManagedPresetReadFailure(code: string | null, denied = false): Readonly<{
+    title: string;
+    retryable: boolean;
+}> {
+    if (denied || code === 'permission_denied' || code === 'preset_not_found' || code === 'signed_out'
+        || code === 'action_account_scope_changed') return { title: t('machinePresets.accessLost'), retryable: false };
+    if (code === 'invalid_request') return { title: t('homeGovernance.invalidRead'), retryable: false };
+    return { title: t('machinePresets.loadFailed'), retryable: true };
+}
+
 export function describeManagedOperationDiagnostic(error: NonNullable<ActionOperationSnapshotV1['error']>): string {
     const details = error.details;
     if (details && 'kind' in details && (details.kind === 'managedNative' || details.kind === 'managedGuestHome')) {

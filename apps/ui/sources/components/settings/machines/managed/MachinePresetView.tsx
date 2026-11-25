@@ -39,7 +39,7 @@ import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creat
 import { buildManagedMachineConfigurationRoute } from './managedMachineConfigurationRoute';
 import { isManagedControllerCandidate, useManagedControllerScope } from './useManagedControllerScope';
 import { buildManagedConfigurationReceipt, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
-import { describeManagedPresetAvailabilityFailure, describeManagedPresetKeyPending } from './managedNativeFailurePresentation';
+import { describeManagedPresetAvailabilityFailure, describeManagedPresetKeyPending, describeManagedPresetReadFailure } from './managedNativeFailurePresentation';
 import { findPresetLastSavedFacts } from './managedPresetHistory';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
 import { useMachinePresetDetail, useMachinePresetConfiguration, useMachinePresetPreparation } from './useMachinePresets';
@@ -288,13 +288,14 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         title={t('approvals.title')} description={t('approvals.status.open')}
         action={{ label: t('approvals.details'), onPress: () => navigate(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}`) }} /> : null;
     const keyPending = describeManagedPresetKeyPending(detail.state.error);
+    const readFailure = !visiblePreset && !detail.state.loading && !keyPending
+        ? describeManagedPresetReadFailure(detail.state.error, teamDenied) : null;
     if (!visiblePreset) return <ItemList><PageHeader title={t('machinePresets.title')} description={t('machinePresets.futureOnly')} />
         {approvalNotice}
         <SurfaceStateCard testID="machine-preset.read-state" kind={detail.state.loading ? 'loading' : teamDenied ? 'denied' : 'unavailable'}
-            title={keyPending?.title ?? (detail.state.loading ? t('machinePresets.loading') : teamDenied || detail.state.error === 'permission_denied'
-                || detail.state.error === 'preset_not_found' || detail.state.error === 'signed_out' ? t('machinePresets.accessLost') : t('machinePresets.loadFailed'))}
+            title={keyPending?.title ?? readFailure?.title ?? t('machinePresets.loading')}
             reason={keyPending?.reason} diagnosticCode={keyPending ? undefined : detail.state.error}
-            action={detail.state.loading || keyPending ? undefined : { label: t('common.retry'), onPress: detail.refresh }} />
+            action={readFailure?.retryable ? { label: t('common.retry'), onPress: detail.refresh } : undefined} />
     </ItemList>;
 
     // Named apart from same-named machines in this Home, as the Machines list and the configurator chip name it.
