@@ -141,9 +141,10 @@ describe('New app draft (projects.starters.create operands)', () => {
 });
 
 it.each([
-  { phase: 'source', sourceId: undefined },
-  { phase: 'project', sourceId: 'source-already-created' },
-])('retains the published checkout continuation after a $phase failure', ({ phase, sourceId }) => {
+  { phase: 'source', code: 'source_backend_unavailable', sourceId: undefined },
+  { phase: 'source', code: 'outcome_unknown', sourceId: undefined },
+  { phase: 'project', code: 'source_backend_unavailable', sourceId: 'source-already-created' },
+])('retains the published checkout continuation when $phase returns $code', ({ phase, code, sourceId }) => {
   const resume = {
     directory: '/home/alice/src/rye-co-orders',
     repositoryUrl: 'https://github.com/alice/rye-co-orders',
@@ -156,7 +157,7 @@ it.each([
     ...(sourceId ? { sourceId } : {}),
   } satisfies ProjectStarterCreateResumeV1;
   const outcome = readStarterCreateOutcome({
-    kind: 'partial', phase, code: 'source_backend_unavailable',
+    kind: 'partial', phase, code,
     repositoryUrl: resume.repositoryUrl, resume,
   });
   expect(outcome).toMatchObject({ kind: 'failed', phase, repositoryCreated: true, resume });

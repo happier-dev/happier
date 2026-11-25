@@ -137,7 +137,8 @@ export function readStarterCreateOutcome(
     const resume = (value.resume as ProjectStarterCreateResumeV1 | undefined) ?? previousResume;
     const code = text(value.code) ?? 'starter_create_failed';
     if (code === 'scm_account_required') return { kind: 'needsScmAccount' };
-    if (code === 'outcome_unknown')
+    // A known checkout can resume even if the next step lost its response.
+    if (code === 'outcome_unknown' && !resume)
       return {
         kind: 'outcomeUnknown',
         repositoryUrl: text(value.repositoryUrl) ?? resume?.repositoryUrl ?? null,
