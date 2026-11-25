@@ -56,6 +56,22 @@ describe('a refused Team credential binding, said once for New Session and Fork'
       .toBe(t('session.access.authenticationRequired'));
   });
 
+  it.each([
+    ['session_access_subject_not_found', 'session.access.subjectNotFound'],
+    ['session_access_subject_ineligible', 'session.access.subjectIneligible'],
+  ] as const)('names the refused audience for %s after a direct start, retained operation, or Fork', async (code, message) => {
+    await preloadTranslations('en');
+    setPreferredLanguageFromSettings('en');
+    const result = SessionSpawnNewResultV1Schema.parse({ type: 'error', code, retryable: false });
+    if (result.type !== 'error') throw new Error('Expected a creation refusal');
+    const detail = normalizeSpawnSessionErrorDetail({ kind: 'session_creation_access_refused', code });
+    expect([
+      resolveSessionSpawnNewResultFailureMessage(result),
+      resolveSessionSpawnNewOperationFailureMessage({ errorCode: code, error: code }),
+      resolveSessionSpawnErrorDetailFailureMessage(detail),
+    ]).toEqual([t(message), t(message), t(message)]);
+  });
+
   it('gives every closed reason its own sentence in every locale, never a code or a key', async () => {
     for (const language of SUPPORTED_LANGUAGE_CODES) {
       await preloadTranslations(language as never);

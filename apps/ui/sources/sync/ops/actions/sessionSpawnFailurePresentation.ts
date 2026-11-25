@@ -189,16 +189,22 @@ export function resolvePendingDeliveryFailureMessage(failure: PendingDeliveryFai
     return diagnostic ? label + '\n' + (presentSessionStartupFailureCause(diagnostic.code) ?? t(diagnostic.bodyKey)) : label;
 }
 
-function presentSessionCreationAuthenticationFailure(code: string): string | null {
-    return code === 'session_access_authentication_required' || code === 'session_access_authentication_unavailable'
-        ? presentSessionAccessReason(code).message
-        : null;
+function presentSessionCreationAccessRefusal(code: string): string | null {
+    switch (code) {
+        case 'session_access_authentication_required':
+        case 'session_access_authentication_unavailable':
+        case 'session_access_subject_not_found':
+        case 'session_access_subject_ineligible':
+            return presentSessionAccessReason(code).message;
+        default:
+            return null;
+    }
 }
 
 /** A creator refusal carried as a spawn error detail (a Fork) reads the same words as a refused Session start. */
 export function resolveSessionSpawnErrorDetailFailureMessage(detail: SpawnSessionErrorDetail | undefined): string | null {
     if (detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_ACCESS_REFUSED) {
-        return presentSessionCreationAuthenticationFailure(detail.code);
+        return presentSessionCreationAccessRefusal(detail.code);
     }
     return detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_TEAM_CREDENTIAL_REFUSED
         ? resolveSessionSpawnNewResultFailureMessage({ type: 'error', code: detail.code, reason: detail.reason, retryable: false })
@@ -209,8 +215,8 @@ function resolveSessionSpawnNewResultFailureBody(
     result: Exclude<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>,
 ): string {
     if (isSessionSpawnGuestReconnectFailure(result)) return t('newSession.guestReconnectedBeforeSessionConfirmed');
-    const authenticationFailure = result.type === 'error' ? presentSessionCreationAuthenticationFailure(result.code) : null;
-    if (authenticationFailure) return authenticationFailure;
+    const accessRefusal = result.type === 'error' ? presentSessionCreationAccessRefusal(result.code) : null;
+    if (accessRefusal) return accessRefusal;
     if (result.type === 'error' && result.code === 'session_team_credential_binding_rejected') {
         return presentSessionTeamCredentialBindingRejection(result.reason);
     }
@@ -369,7 +375,7 @@ export function presentSessionSpawnNewConnectedAccountFailure(
 export function resolveSessionSpawnNewOperationFailureMessage(
     failure: ActionOperationFailureV1,
 ): string {
-    return presentSessionCreationAuthenticationFailure(failure.errorCode) ?? t('errors.errorWithCode', {
+    return presentSessionCreationAccessRefusal(failure.errorCode) ?? t('errors.errorWithCode', {
         message: t('newSession.failedToStart'),
         code: sessionSpawnFailureDisplayCode(failure),
     });
