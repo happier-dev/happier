@@ -8,6 +8,8 @@ import type {
 } from '@happier-dev/protocol/reviews/reviewStart';
 
 import { renderScreen } from '@/dev/testkit';
+import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
+import { installReactDomPortalBoundaryForTests } from '@/dev/testkit/mocks/reactDom';
 
 import {
   ReviewStartSteps,
@@ -200,6 +202,29 @@ describe('ReviewStartSteps', () => {
       person,
     ]);
     await screen.unmount();
+  });
+
+  it('keeps the expanded step menu outside its disclosure button and opens it without folding the step', async () => {
+    const browser = await installBrowserRuntimeForTests({ url: 'https://review-start.test/' });
+    const portal = installReactDomPortalBoundaryForTests();
+    const screen = await renderScreen(<Harness initial={TWO_STEPS} />);
+    try {
+      await screen.pressByTestIdAsync('review-start-step:1:header');
+      const header = screen.findAllHostsByTestId('review-start-step:1:header')
+        .find(node => node.props.role === 'button');
+      expect(header).toBeDefined();
+      expect(header!.findAll(node => typeof node.type === 'string'
+        && node.props.testID === 'review-start-step:1:menu')).toHaveLength(0);
+      await screen.pressByTestIdAsync('review-start-step:1:menu');
+      expect(screen.findByProps({ testID: 'review-start-step:1:menu:list' }).props.open).toBe(true);
+      expect(screen.findByTestId('review-start-step:1:header')?.props.accessibilityState).toEqual({ expanded: true });
+      expect(screen.findByTestId('who:0')).not.toBeNull();
+      expect(screen.findByTestId('who:1')).not.toBeNull();
+    } finally {
+      await screen.unmount();
+      portal.restore();
+      browser.restore();
+    }
   });
 
   it("removes a later step from its menu and keeps the first step's kind fixed", async () => {

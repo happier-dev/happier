@@ -406,6 +406,7 @@ const ReviewStartStep = React.memo(function ReviewStartStep(
             )
           }
           rightElement={expanded ? menu : marks}
+          rightElementOutsidePressable={menu !== null}
           keepChevronWithRightElement
         />
       )}
