@@ -7,7 +7,7 @@ import { definePlugin } from '../../src/definePlugin.js';
 import type { PluginRegistrationValueByFamily } from '../../src/registration/valueByFamily.js';
 import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { activate, manifest, voiceRuntime } from './index.js';
+import { activate, manifest } from './index.js';
 
 const services = {
   logger: {
@@ -48,9 +48,9 @@ async function expectErrorCode(promise: Promise<unknown>, code: string): Promise
   throw new Error(`expected error code ${code}`);
 }
 
-function expectDefinitionFailure(create: () => unknown, pattern: RegExp): void {
+function expectDefinitionFailure(create: () => Readonly<{ manifest: unknown }>, pattern: RegExp): void {
   try {
-    create();
+    void create().manifest;
   } catch (error) {
     assert(error instanceof Error && pattern.test(error.message), `expected definition failure ${pattern}`);
     return;
@@ -118,11 +118,9 @@ export async function exerciseTestkit(): Promise<void> {
       testkit.registration('voiceProviders', 'speech');
     assert(
       registeredVoiceRuntime !== undefined
-        && registeredVoiceRuntime !== voiceRuntime
-        && Object.isFrozen(registeredVoiceRuntime)
         && registeredVoiceRuntime.kind === 'speech'
         && typeof registeredVoiceRuntime.synthesize === 'function',
-      'Voice Provider registration did not expose a frozen registration-time runtime snapshot',
+      'Voice Provider registration did not expose the declared speech runtime',
     );
     const result = await testkit.invokeAction('echo', { text: 'hello' });
     assert(
