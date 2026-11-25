@@ -13,8 +13,7 @@ import { SCM_OPERATION_ERROR_CODES, ScmNativeOperationRefusalSchema } from '@hap
 
 import { resolveCwd } from '@/scm/runtime';
 import { resolveFilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
-import { joinRepositoryCheckpointPullRequestEvidence, readRepositoryCheckpointBranchEvidence,
-    type ReadSharedRepositoryCheckpointGraph } from '../checkpoints/sessionEvidence';
+import { joinRepositoryCheckpointPullRequestEvidence, readRepositoryCheckpointBranchEvidence } from '../checkpoints/sessionEvidence';
 import { notRepositoryResponse, runScmRoute } from '../rpc/dispatch';
 import { executeScmActionOperation, type ExecuteScmActionOperationParams } from './executeScmActionOperation';
 
@@ -113,26 +112,8 @@ export async function readScmWorkEvidence(input: Readonly<{
             }))));
         return { branch, pullRequests, git };
     };
-    // Discovery follows the checkout. Immutable walks follow its canonical Git
-    // common-directory identity and exact revision. Both are shared only in this RPC.
-    type SuccessfulGraph = Extract<Awaited<ReturnType<ReadSharedRepositoryCheckpointGraph>>, { success: true }>;
-    const reads = new Map<string,
-        | { kind: 'checkout'; promise: ReturnType<typeof discover> }
-        | { kind: 'graph'; promise: Promise<SuccessfulGraph | undefined> }>();
-    const readSharedGraph: ReadSharedRepositoryCheckpointGraph = async (repositoryKey, revision, read) => {
-        const key = JSON.stringify(['graph', repositoryKey, revision]);
-        const incumbent = reads.get(key);
-        if (incumbent?.kind === 'graph') {
-            const shared = await incumbent.promise;
-            if (shared) return shared;
-
-            // A failed walk belongs to that checkout. Each waiting consumer gets its own attempt.
-            return read();
-        }
-        const own = read();
-        reads.set(key, { kind: 'graph', promise: own.then(graph => graph.success ? graph : undefined, () => undefined) });
-        return own;
-    };
+    // This request owns discovery sharing; no retained cache or freshness policy.
+    const repositories = new Map<string, ReturnType<typeof discover>>();
     const sessions = await Promise.all(input.request.sessions.map(async (session): Promise<ScmWorkEvidenceSessionResult> => {
         const { sessionId } = session;
         if (!await input.authorizeSession(sessionId)) return {
@@ -142,17 +123,16 @@ export async function readScmWorkEvidence(input: Readonly<{
         const resolved = resolveCwd(session.cwd, input.workingDirectory, accessPolicy);
         if (!resolved.ok) return { sessionId, status: 'error', evidence: [], branchEvidence: [], errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH };
         try {
-            const key = JSON.stringify(['checkout', resolved.cwd]);
-            let checkout = reads.get(key);
-            if (checkout?.kind !== 'checkout') {
-                checkout = { kind: 'checkout', promise: discover(resolved.cwd) };
-                reads.set(key, checkout);
+            let repository = repositories.get(resolved.cwd);
+            if (!repository) {
+                repository = discover(resolved.cwd);
+                repositories.set(resolved.cwd, repository);
             }
-            const { branch, pullRequests, git } = await checkout.promise;
+            const { branch, pullRequests, git } = await repository;
             if ('data' in branch && !branch.data.success && branch.data.errorCode === SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY) {
                 return { sessionId, status: 'unsupported', evidence: [], branchEvidence: [] };
             }
-            const scope = { cwd: resolved.cwd, sessionId, signal: input.signal, readSharedGraph };
+            const scope = { cwd: resolved.cwd, sessionId, signal: input.signal };
             const branchSource: SourceResult = 'failure' in branch ? branch.failure
                 : !branch.data.success ? failedSource(branch.data.errorCode)
                 : !git ? { status: 'unsupported' }
