@@ -88,12 +88,14 @@ describe('useWorkflowActionCatalog', () => {
     const sectionsRead = new Set<string>();
     let deferred: ReturnType<typeof buildDeferredDaemonProjectionSections>;
     let holdProjection: (() => Promise<void>) | undefined;
+    let transportUnavailable: boolean;
 
     beforeEach(async () => {
         network.resetRequests();
         storage.setState(storage.getInitialState(), true);
         sectionsRead.clear();
         holdProjection = undefined;
+        transportUnavailable = false;
         deferred = buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
             protocolVersion: 1, projection, projectionDigest: 'b'.repeat(64) }));
         const sectionByIndexDigest = new Map(Object.entries(deferred.manifest.sections).map(([section, digest]) => [digest, section]));
@@ -111,6 +113,7 @@ describe('useWorkflowActionCatalog', () => {
             }
             const read = (request.payload as Readonly<{ sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } }>).sectionRead;
             if (!read) {
+                if (transportUnavailable) return { ok: false, error: 'Machine transport unavailable', errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE };
                 await holdProjection?.();
                 return { ok: true, result: deferred.manifest };
             }
@@ -521,9 +524,10 @@ describe('useWorkflowActionCatalog', () => {
         expect(ActionSpecSearchResultSchema.parse(complete.result).actionSpecs.map(spec => spec.id)).toContain('wait');
     });
 
-    it('adds discovered choices to the Action submenu opened before Machine discovery settles', async () => {
+    it.each(['pending', 'unavailable'] as const)('recovers the open Add Action submenu from %s Machine discovery', async (initial) => {
         const gate = Promise.withResolvers<void>();
         let requested = false;
+        transportUnavailable = initial === 'unavailable';
         holdProjection = () => {
             requested = true;
             return gate.promise;
@@ -535,21 +539,29 @@ describe('useWorkflowActionCatalog', () => {
             composerScope={{ kind: 'machine', machineId: 'picker-machine', serverId }} />);
         const command = 'selection-list:add-action:option:add-action:machines.command.run';
         const webhook = 'selection-list:add-action:option:add-action:webhooks.call';
+        const retry = 'add-action-retry';
         try {
             await screen.pressByTestIdAsync('add');
             await screen.pressByTestIdAsync('selection-list:add-root:option:add-action');
-            await waitForHomeGovernance(() => expect(requested).toBe(true));
             expect(screen.findByTestId(command)).toBeNull();
             expect(screen.findByTestId(webhook)).toBeNull();
-            expect(screen.getTextContent()).toContain('common.loading');
-            expect(screen.getTextContent()).not.toContain('selectionList.emptyMatch');
+            if (initial === 'unavailable') {
+                await waitForHomeGovernance(() => expect(screen.findByTestId(retry)).not.toBeNull());
+                transportUnavailable = false;
+                await screen.pressByTestIdAsync(retry);
+            } else {
+                await waitForHomeGovernance(() => expect(requested).toBe(true));
+                expect(screen.getTextContent()).toContain('common.loading');
+                expect(screen.getTextContent()).not.toContain('selectionList.emptyMatch');
+            }
             await act(async () => { gate.resolve(); });
             await waitForHomeGovernance(() => {
                 expect(screen.findByTestId(command)).not.toBeNull();
                 expect(screen.findByTestId(webhook)).not.toBeNull();
+                expect(screen.findByTestId(retry)).toBeNull();
             });
             await screen.pressByTestIdAsync(webhook);
-            expect(onAdd).toHaveBeenCalledWith({ kind: 'action', actionId: 'webhooks.call' });
+            expect(onAdd).toHaveBeenCalledExactlyOnceWith({ kind: 'action', actionId: 'webhooks.call' });
         } finally {
             gate.resolve();
         }

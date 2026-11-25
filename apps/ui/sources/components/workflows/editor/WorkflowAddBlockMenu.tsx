@@ -264,6 +264,14 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
             inputPlaceholder: t('workflows.page.blocks.actionSearch'),
             emptyStateLabel: actionDiscoveryLabel,
             sections: [
+                ...(catalog.phase === 'error' ? [{
+                    kind: 'static' as const,
+                    id: 'retry-actions',
+                    title: t('workflows.actionTitles.host'),
+                    resultHint: t('common.requestFailed'),
+                    action: { testID: optionId('action-retry'), label: t('common.retry'), onPress: catalog.retry },
+                    options: [],
+                }] : []),
                 { kind: 'static', id: 'host-actions', title: t('workflows.actionTitles.host'),
                     options: catalog.specs.filter((spec) => !spec.plugin).map(actionOption) },
                 ...(catalog.specs.some((spec) => spec.plugin) ? [{
@@ -361,7 +369,7 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
             ],
         };
     }, [libraryOptions, library.hasMore, library.loadingMore, library.loadMore, library.retry, library.status,
-        catalog.specs, catalog.phase, onAdd, onClose, props.currentWorkflowRef, props.purpose, props.testID, theme.colors.text.secondary, theme.colors.text.tertiary]);
+        catalog.specs, catalog.phase, catalog.retry, onAdd, onClose, props.currentWorkflowRef, props.purpose, props.testID, theme.colors.text.secondary, theme.colors.text.tertiary]);
 
     return (
         <AgentInputSelectionListPopover
