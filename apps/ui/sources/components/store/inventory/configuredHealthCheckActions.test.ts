@@ -128,8 +128,11 @@ describe('configured saved health public Action bridge', () => {
         } });
         try {
             const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-                // Permit catalog discovery, then apply the person's finite-run decision.
-                presentUserActionConfirmation: async () => ++confirmations === 1 || approved,
+                // The saved built-in Check goes directly to the finite Action.
+                presentUserActionConfirmation: async () => {
+                    confirmations++;
+                    return approved;
+                },
                 // Only contributed code/finite observation is a substituted process boundary.
                 invokeContributedAction: async request => {
                     if (request.context.externalActionTarget?.kind !== 'machine' || request.context.externalActionTarget.machineId !== 'observer') {
@@ -147,6 +150,7 @@ describe('configured saved health public Action bridge', () => {
                 signal: new AbortController().signal }, execute);
             if (approved) expect(await operation).toEqual(expected);
             else await expect(operation).rejects.toMatchObject({ code: 'approval_canceled' });
+            expect(confirmations).toBe(1);
             expect(probes).toBe(approved ? 1 : 0);
         } finally { await kit.dispose(); }
     });

@@ -36,8 +36,12 @@ describe('retained triggers whose Workflow is gone', () => {
         const authored = set('authored', { ...observers[0], automationId: 'authored', name: 'Production alerts' });
         const rows = project([...observers, authored]);
         expect(rows).toHaveLength(5);
-        expect(rows.filter(row => row.key !== 'account-trigger:authored').map(row => row.name))
-            .toEqual(Array(4).fill('workflows.triggers.kind.pluginEvent'));
+        expect(rows).toEqual(expect.arrayContaining(observers.map(observer => expect.objectContaining({
+            key: `account-trigger:${observer.automationId}`,
+            name: observer.automationId.endsWith('-deployment-succeeded')
+                ? 'workflows.triggers.summary.event(event=Deployment succeeded)'
+                : 'workflows.triggers.summary.event(event=Deployment failed)',
+        }))));
         expect(rows.find(row => row.key === 'account-trigger:authored')?.name).toBe('Production alerts');
     });
 
