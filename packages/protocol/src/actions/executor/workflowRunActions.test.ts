@@ -2603,7 +2603,7 @@ describe('shared Account workflow run owner', () => {
             ? { address: { serverId: 'home', sessionId: value }, machineId: 'machine-a' }
             : value && typeof value === 'object' && !Array.isArray(value) && value.serverId === 'home' && typeof value.sessionId === 'string'
               ? { address: { serverId: value.serverId, sessionId: value.sessionId }, machineId: 'machine-a' } : null,
-          readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) },
+          readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))) },
       }),
       resolveAgentStartContext: async () => ({ caller: { kind: 'session', sessionId: 'origin-1', starterDepth: 1, turnDepth: 1 },
         baseline: { machineId: 'machine-a', directory: '/repo', configuration: { agentTarget: target, permissionMode: 'default' } },

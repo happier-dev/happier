@@ -50,7 +50,8 @@ describe('the shared definition edit owner', () => {
       document: { text: 'After', references: [], attachments: [] } }] },
       revision: { headerVersion: 3, bodyVersion: 4 }, metadata: { ...metadata, title: 'New' }, changedBlockIds: ['step-1'] });
     expect(update).toHaveBeenCalledExactlyOnceWith({ artifactId: definitionId, expectedRevision: revision,
-      header: { kind: 'workflow-definition.v1', definitionId, revision: result.revision, metadata: { ...metadata, title: 'New' }, previewSteps: ['After'] },
+      header: { kind: 'workflow-definition.v1', definitionId, revision: result.revision, metadata: { ...metadata, title: 'New' }, previewSteps: ['After'],
+        previewAgents: [{ pluginId: 'happier.agent.claude', localId: 'claude' }], previewReviewScopes: [] },
       body: JSON.stringify({ kind: 'workflow-definition.v1', definition: result.definition }),
       savedBy: { kind: 'agent', accountId: 'editor', sessionId: 'editing-session' } });
     expect(read).toHaveBeenCalledOnce();

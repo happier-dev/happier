@@ -625,7 +625,8 @@ describe('shared workflow definition create', () => {
     await actions.update({ definitionId, expectedRevision: revision, metadata: { title: 'Changed' }, definition: opened.definition }, undefined, { surface: 'ui' });
     expect(writes).toBe(1);
     expect(header).toEqual({ kind: 'workflow-definition.v1', definitionId, revision,
-      metadata: { title: 'Changed' }, previewSteps: ['Review'] });
+      metadata: { title: 'Changed' }, previewSteps: ['Review'],
+      previewAgents: [{ pluginId: 'happier.agent.claude', localId: 'claude' }], previewReviewScopes: [] });
     expect(JSON.parse(body)).toEqual({ kind: 'workflow-definition.v1', definition: authored });
   });
 

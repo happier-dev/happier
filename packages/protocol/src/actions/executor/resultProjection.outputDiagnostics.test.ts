@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { completeActionResult, normalizeActionExecutorThrownError, settleActionOutput } from './resultProjection.js';
+import { createActionExecuteFailureError } from '../actionExecutionResult.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { withActionFailureCauseDiagnostic } from './actionFailureDiagnostic.js';
 import { classifyExecutionRunStartFailure } from './executionRuns.js';
@@ -16,19 +17,21 @@ it('creates private thrown-error diagnostics that survive native adapter spreadi
   expect(JSON.stringify(diagnostics)).not.toContain('PRIVATE_');
 });
 
-it('projects a carried cause through returned failure normalization without private exception data', () => {
-  const error = Object.assign(new TypeError('PRIVATE_PROVIDER_BODY'), {
-    code: 'execution_run_profile_preparation_failed',
-    cause: { headers: { authorization: 'PRIVATE_CREDENTIAL' }, response: 'PRIVATE_RESPONSE' },
-  });
+it.each([false, true])('settles a returned failure without private exception data (declared cause: %s)', declared => {
+  const errorCode = 'execution_run_profile_preparation_failed';
+  const privateCause = { headers: { authorization: 'PRIVATE_CREDENTIAL' }, response: 'PRIVATE_RESPONSE' };
+  const cause = declared
+    ? Object.assign(createActionExecuteFailureError({ ok: false, errorCode, error: 'Preparation failed' }), { cause: privateCause })
+    : privateCause;
+  const error = Object.assign(new TypeError('PRIVATE_PROVIDER_BODY', { cause }), { code: errorCode });
   const normalized = completeActionResult(withActionFailureCauseDiagnostic({
-    ok: false, errorCode: error.code, error: 'Preparation failed',
+    ok: false, errorCode, error: 'Preparation failed',
   }, error, 'execution.run.start'));
   if (normalized.ok) throw new Error('Expected returned failure');
   const result = settleActionOutput('execution.run.start', classifyExecutionRunStartFailure(normalized, 'noRunCreated'));
-  expect(result).toEqual({ ok: false, errorCode: error.code, error: 'Preparation failed',
+  expect(result).toEqual({ ok: false, errorCode, error: 'Preparation failed',
     details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
-    failureCause: { phase: 'execution.run.start', errorClass: 'TypeError', errorCode: error.code, httpStatus: null },
+    failureCause: { phase: 'execution.run.start', errorClass: 'TypeError', errorCode: declared ? errorCode : null, httpStatus: null },
   });
   expect(JSON.stringify(result)).not.toContain('PRIVATE_');
 });
