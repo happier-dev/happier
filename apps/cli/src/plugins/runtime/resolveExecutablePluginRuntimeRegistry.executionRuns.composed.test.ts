@@ -19,6 +19,9 @@ import { CHECKLIST_IDS } from '@/capabilities/checklistIds';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { resolveSessionRoleRpcOrigin } from '@/session/actions/sessionRoleRpcOrigin';
 
 // The native OS peer check is the boundary; local routing, caller admission,
 // contributed Actions and the Session RPC handler all use their real owners.
@@ -29,7 +32,55 @@ vi.mock('@/subprocess/supervision/processCustody', async original => ({
 }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+const originalCustodyCases = [
+    { name: 'original own Account', allowed: true },
+    { name: 'original own terminal', terminal: true, allowed: true },
+    { name: 'original foreign Account', accountId: 'guest', allowed: false },
+    { name: 'another Machine custodian Account', accountId: 'other', custodianAccountId: 'other', allowed: false },
+    { name: 'restricted API token', api: true, allowed: false },
+    { name: 'Session-origin Account', sessionOrigin: true, allowed: false },
+    { name: 'Workflow-origin Account', workflowOrigin: true, allowed: false },
+    { name: 'own Account with independent Session transport', sessionTransport: true, allowed: false },
+    { name: 'own Account with guest Machine admission', actorAccountId: 'guest', allowed: false },
+    { name: 'own Account with retired Machine admission', retired: true, allowed: false },
+] as const;
+
+// Home transport is the substituted boundary. Keep its admitted custody shape
+// schema-valid; the plugin, Account decision and Run transports remain real.
+const originalCustodyContexts = originalCustodyCases.map(scenario => {
+    const accountId = 'accountId' in scenario ? scenario.accountId : 'owner';
+    const grant = ApiTokenGrantV1Schema.parse({ v: 1, actions: { families: [], ids: ['execution.run.start'] },
+        targets: { sessions: [], machines: ['contributed-run-machine'] }, approve: false,
+        origins: [], models: null, permissionModes: null, create: null });
+    const sessionActionOrigin = 'sessionOrigin' in scenario ? resolveSessionRoleRpcOrigin({
+        actionCaller: { kind: 'session', sessionId: 'owner-session', starterDepth: 0, turnDepth: 0 },
+        sessionInputSource: { sourceSessionId: 'owner-session', sourceTurnId: 'turn', sourceInputId: 'input' },
+        actionRequestId: 'home-operation', callerPermissionMode: 'read_only', workspaceWrites: 'deny',
+    }) : undefined;
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-verified-root', binding: {
+        accountId, custodianAccountId: 'custodianAccountId' in scenario ? scenario.custodianAccountId : 'owner',
+        ...('api' in scenario ? { principalId: accountId, credentialId: '00000000-0000-4000-8000-000000000001', grant }
+            : { authentication: { kind: 'terminal' in scenario ? 'terminal' : 'account', tokenEpoch: 1 } }),
+        ...(sessionActionOrigin ? { sessionActionOrigin, sessionActionSource: {
+            machineId: 'contributed-run-machine', installationId: 'installation' } } : {}),
+        ...('workflowOrigin' in scenario ? { workflowActionOrigin: { runId: 'workflow-run', requestId: 'home-operation' } } : {}),
+        serverIdentityId: 'home', machineId: 'contributed-run-machine', installationId: 'installation',
+        actionId: ACTION_INVOKE_ACTION_ID_V1, requestId: 'home-operation', requestEnvelopeDigest: 'a'.repeat(43),
+        target: { kind: 'machine', machineId: 'contributed-run-machine' }, accountEncryptionMode: 'plain', admittedMachineRole: 'manage',
+    } });
+    const approvalContext: Partial<ActionExecutorContext> = {
+        runtimeAccountId: accountId,
+        callerInputAuthorization: authorization,
+        machineAdmission: { actorAccountId: 'actorAccountId' in scenario ? scenario.actorAccountId : accountId,
+            custodianAccountId: 'owner', machineId: 'contributed-run-machine', installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+        verifyMachineAdmissionCurrent: async () => !('retired' in scenario),
+        ...('sessionTransport' in scenario ? { rpcSessionAuthorization: { kind: 'session.write', sessionId: 'owner-session' } } : {}),
+    };
+    return { name: scenario.name, allowed: scenario.allowed, approvalContext };
+});
+
 const custodyCases = [
+    ...originalCustodyContexts,
     { name: 'owner starts a Run', approvalContext: {}, allowed: true },
     { name: 'broker owner Account requester starts a Run', broker: true,
         approvalContext: { runtimeAccountId: 'owner', actionRequestId: 'home-operation' }, allowed: true },

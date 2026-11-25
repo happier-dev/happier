@@ -3,6 +3,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { projectDaemonSpawnUnavailable, type SpawnSessionOptions, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { rethrowRequesterHomeReadFailure } from '../sessionEncryption/requesterCurrentness';
+import { isOriginalOwnAccountActionCustody } from '../sessionEncryption/requesterAccountActionProjection';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 export { RequesterWorkAttributionV1Schema, RequesterWorkAttributionStoredReadV1Schema,
   type RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
@@ -56,8 +57,8 @@ export async function canUseCustodianAccountForMachineRequest(context: Pick<RpcH
 
 /**
  * True when ingress carries requester, external, API-token, Session-scoped or
- * requester-Session authority. Such work never acts as this runtime's own
- * Account; Machine admission is decided by canUseCustodianAccountForMachineRequest.
+ * requester-Session authority. Credential reuse additionally distinguishes
+ * original own Account custody in canUseLocalRuntimeAccount.
  */
 export function carriesNonLocalRequesterAuthority(context: Readonly<{
   callerInputAuthorization?: unknown; externalActionExecutionAuthorization?: unknown; externalActionCredential?: unknown;
@@ -74,7 +75,15 @@ export async function canUseLocalRuntimeAccount(
   localAccountId: string | null,
   serverId?: string,
 ): Promise<boolean> {
-  if (!localAccountId || carriesNonLocalRequesterAuthority(context)) return false;
+  if (!localAccountId) return false;
+  const { externalActionExecutionAuthorization, callerInputAuthorization, ...independentAuthority } = context ?? {};
+  if (carriesNonLocalRequesterAuthority(independentAuthority)) return false;
+  // Inspect both verified carriers without changing the context passed to work.
+  // Original own custody cannot erase an independently narrowed caller scope.
+  for (const authorization of [externalActionExecutionAuthorization, callerInputAuthorization]) {
+    if (authorization && (!isOriginalOwnAccountActionCustody(authorization.binding)
+      || authorization.binding.accountId !== localAccountId)) return false;
+  }
   const attributedAccountId = projectRpcRequesterWorkAttribution(context, context?.serverId ?? serverId)?.accountId
     ?? context?.runtimeAccountId;
   return (attributedAccountId === undefined || attributedAccountId === localAccountId)

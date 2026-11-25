@@ -1,6 +1,29 @@
 import { expect, it } from 'vitest';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
 
 import { canUseLocalRuntimeAccount, isRequesterLaunchAdmissionCurrent } from './requesterWorkAttribution';
+
+it('retains independent API credential and caller scope alongside original own Account custody', async () => {
+  const binding = {
+    accountId: 'owner', custodianAccountId: 'owner',
+    serverIdentityId: 'home', machineId: 'machine', installationId: 'installation', actionId: 'action.invoke',
+    requestId: 'request', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+    accountEncryptionMode: 'plain', admittedMachineRole: 'manage',
+  } as const;
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-home-root',
+    binding: { ...binding, authentication: { kind: 'account', tokenEpoch: 1 } } });
+  const credential = { accountId: 'owner', principalId: 'owner', credentialId: '00000000-0000-4000-8000-000000000001',
+    grant: ApiTokenGrantV1Schema.parse({ v: 1, actions: { families: [], ids: ['execution.run.start'] }, targets: { sessions: [], machines: ['machine'] },
+      approve: false, origins: [], models: null, permissionModes: null, create: null }),
+  };
+  const context = { externalActionExecutionAuthorization: authorization, runtimeAccountId: 'owner' };
+  expect(await canUseLocalRuntimeAccount(context, 'owner', 'home')).toBe(true);
+  expect(await canUseLocalRuntimeAccount({ ...context, externalActionCredential: credential }, 'owner', 'home')).toBe(false);
+  expect(await canUseLocalRuntimeAccount({ ...context, callerInputAuthorization:
+    ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-home-caller', binding: { ...binding, ...credential } }),
+  }, 'owner', 'home')).toBe(false);
+});
 
 it('denies borrowing the runtime Account for another Account’s attributed work', async () => {
   const context = { runtimeAccountId: 'local-account', requesterWorkAttributionV1: {
