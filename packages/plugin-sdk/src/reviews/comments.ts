@@ -25,7 +25,7 @@ import type {
 } from '@happier-dev/protocol';
 import { projectZodProtocolSchema } from '@happier-dev/protocol/plugins/actions/internalProtocolZodAdapter';
 import { ReviewFindingSeveritySchema } from '@happier-dev/protocol/reviews/ReviewFinding';
-import { createReviewCommentLinkedIssueIdV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import { createReviewCommentLinkedIssueIdV1, ReviewCommentSnapshotV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
 import { buildReviewCommentPublicationEntryV1, createReviewCommentPublicationSettlementRequestV1, formatReviewCommentPublicationMarkerV1, hasReviewCommentPublicationMarkerV1, matchReviewCommentPublicationMarkerV1, parseReviewCommentPublicationPlanV1, preflightReviewCommentPublicationRoutingV1, reviewCommentPublicationEntryIsDiffLessV1, reviewCommentPublicationTargetMatchesV1 as canonicalReviewCommentPublicationTargetMatchesV1, validateReviewCommentPublicationClaimAgainstPlanV1, validateReviewCommentPublicationResultAgainstPlanV1 } from '@happier-dev/protocol/reviews/comments/actions';
 
 import { redactBugReportSensitiveText } from '../diagnostics.js';
@@ -55,20 +55,9 @@ export type ReviewCommentPublicationTargetExpectationV1 = (
 }>;
 
 const nonEmptyPublicationString = defineProtocolString({ minLength: 1 });
-const publicationBoolean = defineProtocolUnion([
-    defineProtocolLiteral(true),
-    defineProtocolLiteral(false),
-]);
 const publicationAnchorSide = defineProtocolUnion([
     defineProtocolLiteral('before'),
     defineProtocolLiteral('after'),
-]);
-const publicationSnapshotSource = defineProtocolUnion([
-    defineProtocolLiteral('workingTree'),
-    defineProtocolLiteral('committed'),
-    defineProtocolLiteral('diffSide'),
-    defineProtocolLiteral('agentBuffer'),
-    defineProtocolLiteral('untracked'),
 ]);
 const publicationAnchor = defineProtocolUnion([
     defineProtocolObject({
@@ -118,71 +107,7 @@ const publicationAnchor = defineProtocolUnion([
         targetPath: nonEmptyPublicationString,
     }, { policy: 'closed' }),
 ]);
-const publicationTextLines = defineProtocolArray(defineProtocolString());
-const publicationSnapshot = defineProtocolUnion([
-    defineProtocolObject({
-        kind: defineProtocolLiteral('none'),
-        capturedAt: defineProtocolNumber({ integer: true, minimum: 0 }),
-    }, { policy: 'closed' }),
-    defineProtocolObject({
-        kind: defineProtocolLiteral('text'),
-        selectedLines: publicationTextLines,
-        beforeContext: publicationTextLines,
-        afterContext: publicationTextLines,
-        selectedLinesHash: nonEmptyPublicationString,
-        contextWindowHash: nonEmptyPublicationString,
-        capturedAt: defineProtocolNumber({ integer: true, minimum: 0 }),
-        fileLength: defineProtocolNumber({ integer: true, minimum: 0 }),
-        source: publicationSnapshotSource,
-        commitSha: nonEmptyPublicationString.optional(),
-        isUncommitted: publicationBoolean,
-        isUntracked: publicationBoolean,
-        truncated: publicationBoolean,
-        truncationReason: defineProtocolUnion([
-            defineProtocolLiteral('file_too_large'),
-            defineProtocolLiteral('line_too_long'),
-            defineProtocolLiteral('context_cap'),
-        ]).optional(),
-        hasBidiControls: publicationBoolean,
-        likelyMinified: publicationBoolean,
-        diffContext: defineProtocolObject({
-            side: publicationAnchorSide,
-            baseSha: nonEmptyPublicationString.optional(),
-            headSha: nonEmptyPublicationString.optional(),
-            startSha: nonEmptyPublicationString.optional(),
-        }, { policy: 'closed' }).optional(),
-    }, { policy: 'closed' }),
-    defineProtocolObject({
-        kind: defineProtocolLiteral('binary'),
-        sizeBytes: defineProtocolNumber({ integer: true, minimum: 0 }),
-        sha256: nonEmptyPublicationString,
-        mimeType: nonEmptyPublicationString.optional(),
-        source: publicationSnapshotSource,
-        capturedAt: defineProtocolNumber({ integer: true, minimum: 0 }),
-    }, { policy: 'closed' }),
-    defineProtocolObject({
-        kind: defineProtocolLiteral('submodule'),
-        filePath: nonEmptyPublicationString,
-        commitSha: nonEmptyPublicationString.optional(),
-        url: nonEmptyPublicationString.optional(),
-        capturedAt: defineProtocolNumber({ integer: true, minimum: 0 }),
-    }, { policy: 'closed' }),
-    defineProtocolObject({
-        kind: defineProtocolLiteral('symlink'),
-        filePath: nonEmptyPublicationString,
-        targetPath: nonEmptyPublicationString,
-        targetExists: publicationBoolean.optional(),
-        capturedAt: defineProtocolNumber({ integer: true, minimum: 0 }),
-    }, { policy: 'closed' }),
-    defineProtocolObject({
-        kind: defineProtocolLiteral('too_large'),
-        filePath: nonEmptyPublicationString,
-        sizeBytes: defineProtocolNumber({ integer: true, minimum: 0 }),
-        sha256: nonEmptyPublicationString.optional(),
-        capBytes: defineProtocolNumber({ integer: true, minimum: 1 }),
-        capturedAt: defineProtocolNumber({ integer: true, minimum: 0 }),
-    }, { policy: 'closed' }),
-]);
+const publicationSnapshot = projectZodProtocolSchema(ReviewCommentSnapshotV1Schema);
 const publicationTargetFields = {
     providerId: nonEmptyPublicationString,
     entryRef: defineProtocolObject({

@@ -78,6 +78,50 @@ describe('review comment helpers', () => {
         }
     });
 
+    it('admits an anchored hosted patch snapshot without the full file length', () => {
+        const snapshot = {
+            kind: 'text',
+            selectedLines: ['return subtotal'],
+            beforeContext: [],
+            afterContext: [],
+            selectedLinesHash: 'selected-lines-hash',
+            contextWindowHash: 'context-window-hash',
+            capturedAt: 1,
+            source: 'diffSide',
+            isUncommitted: false,
+            isUntracked: false,
+            truncated: false,
+            hasBidiControls: false,
+            likelyMinified: false,
+            diffContext: { side: 'after', baseSha: 'abcdef1', headSha: '1234567' },
+        };
+        const plan = {
+            ...publicationPlan,
+            baseRevision: 'abcdef1',
+            headRevision: '1234567',
+            entries: [{
+                happierCommentId: 'hosted-patch-finding',
+                expectedServerRevision: 1,
+                anchor: { kind: 'line', filePath: 'totals.py', line: 3, side: 'after' },
+                snapshot,
+                body: 'Include the final price in the total.',
+            }],
+        };
+        const schema = defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema(
+            defineProtocolString({ pattern: '^[0-9a-f]{7,64}$' }),
+        );
+        const canonical = parseReviewCommentPublicationPlanV1(plan);
+        expect(schema.safeParse(canonical)).toEqual({ success: true, data: canonical });
+
+        for (const fileLength of [3, -1]) {
+            const candidate = {
+                ...plan,
+                entries: [{ ...plan.entries[0], snapshot: { ...snapshot, fileLength } }],
+            };
+            expect(schema.safeParse(candidate).success).toBe(fileLength >= 0);
+        }
+    });
+
     it('qualifies issue links beyond a provider-local number', () => {
         const base = {
             source: { pluginId: 'happier.scm.github', localId: 'github' },
