@@ -132,8 +132,10 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     // The sentence names the machine, or says "this machine" while its details are locked or loading; never its id.
     const selectedMachineLabel = getMachineSentenceName(params.selectedMachine);
     const destination = resolveMachineDestinationPurposeEligibility('session', undefined, params.selectedMachine ?? undefined, scope);
-    const wakeDescription = destination.eligible && destination.managedWake
-        ? describeMachineDestinationWorkerFacts(destination, undefined, 'session', selectedMachineLabel) : undefined;
+    const nativePresence = params.selectedMachineManagedPresence?.offline;
+    const wakeDescription = nativePresence?.state === 'starting' ? nativePresence.word
+        : destination.eligible && destination.managedWake === 'asleep'
+            ? describeMachineDestinationWorkerFacts(destination, undefined, 'session') : undefined;
     // The composer's status line speaks only when the machine cannot take the session: a ready machine
     // is already named by its chip, and healthy state stays quiet (DESIGN "Status and badges", lab
     // `.l12-sr`). A green "Online" beside a blocked-launch badge contradicted it.

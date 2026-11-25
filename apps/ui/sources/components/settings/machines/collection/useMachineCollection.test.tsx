@@ -25,14 +25,10 @@ it('renews retained native presence words when the ready locale changes with the
     const previousLanguage = getPreferredLanguage();
     await preloadTranslationsForSettings('en');
     setPreferredLanguageFromSettings('en');
-    const machine = createMachineFixture({ id: 'locale-machine', active: false, activeAt: 1, presenceProtocolVersion: 1 });
-    const managed = ManagedMachineV1Schema.parse({ id: 'locale-created', homeId: 'locale-home', custodianAccountId: 'owner',
-        enrolledMachineId: machine.id, launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Build box', choices: {} },
-        allocation: 'bound', creationState: 'active', resource: { contributionRef: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
-        desired: 'stop', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
-        observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' } });
+    const machine = createMachineFixture({ id: 'locale-machine', active: false, activeAt: 1, presenceProtocolVersion: 1,
+        managedInputRuntime: { nativeReady: false, wakeState: null, state: 'asleep' } });
     const input = { groups: [{ serverId: 'locale-home', serverName: 'Home', accountScope: { serverId: 'locale-home', accountId: 'owner' },
-        status: 'idle' as const, machines: [machine] }], groupedByHome: false, managedByServerId: { 'locale-home': [managed] } };
+        status: 'idle' as const, machines: [machine] }], groupedByHome: false };
     const hook = await renderHook(() => useMachineCollection(input));
     try {
         const english = hook.getCurrent().sections[0]!.rows[0]!.presence;

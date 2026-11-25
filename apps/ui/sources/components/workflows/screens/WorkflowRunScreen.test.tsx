@@ -687,22 +687,34 @@ it('keeps the Home managed-machine read across a switch between two Runs on that
     expect(managedReads()).toBe(opened);
 });
 
-it('does not re-render an executing Run for a Machine heartbeat that keeps presence', async () => {
+it('renders an executing Run once for a native Start and stays quiet on unchanged heartbeats', async () => {
+    const { t } = await import('@/text');
+    const { getMachineDisplayName } = await import('@/utils/sessions/machineUtils');
     const run = createWorkflowRunSummaryFixture({ id: routeState.runId, state: 'running', origin: { kind: 'direct' } });
-    const machine = { ...storeState.state.machines[run.machineId]!, active: true, activeAt: Date.now() };
-    getStorage().setState({ machines: { [machine.id]: machine } });
     let commits = 0;
     await renderRunScreen({ run, invocations: [], wrap: content =>
         <React.Profiler id="run-heartbeat" onRender={() => { commits += 1; }}>{content}</React.Profiler> });
     await vi.waitFor(() => expect(readContentProps()).toBeTruthy());
-    await act(async () => {});
+    const store = getStorage();
+    const source = { sourceServerId: servedHomeId, sourceAccountId: 'account-a' };
+    const machine = { ...store.getState().machines[run.machineId]!, active: true, activeAt: Date.now(), presenceProtocolVersion: 1 as const };
+    await act(async () => store.getState().applyMachines([machine], false, source));
     commits = 0;
-    // A live Machine republishes its record on every heartbeat; name, home and presence are unchanged.
     for (let beat = 1; beat <= 3; beat += 1) {
-        await act(async () => getStorage().setState({ machines: { [machine.id]: { ...machine,
-            activeAt: (machine.activeAt ?? 0) + beat * 1000, updatedAt: (machine.updatedAt ?? 0) + beat } } }));
+        await act(async () => store.getState().applyMachineActivityUpdates([
+            { id: machine.id, active: true, activeAt: machine.activeAt + beat * 1000 },
+        ], source));
     }
     expect(commits).toBe(0);
+    const asleep = { ...store.getState().machines[machine.id]!, active: false, activeAt: machine.activeAt + 4000,
+        managedInputRuntime: { nativeReady: false, wakeState: null, state: 'asleep' as const } };
+    await act(async () => store.getState().applyMachines([asleep], false, source));
+    expect(readContentProps()?.machineStatus?.word).toBe(t('managedPower.asleep'));
+    commits = 0;
+    await act(async () => store.getState().applyMachines([{ ...asleep,
+        managedInputRuntime: { nativeReady: false, wakeState: null, state: 'starting' } }], false, source));
+    expect(readContentProps()?.machineStatus?.word).toBe(t('managedWake.starting', { machine: getMachineDisplayName(machine) }));
+    expect(commits).toBe(1);
 });
 
 it.each(['invitation', 'external'] as const)('FIX250 carries %s approval custody through Screen into one Needs-you entry per waiting invocation', async requestKind => {

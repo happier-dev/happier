@@ -441,7 +441,7 @@ function resolveRowAvailability<TMachine extends MachineDisplayRenderable>(
         const selectable = presence.selectable || !!eligibility.managedWake;
         return {
             selectable,
-            reason: describeMachineDestinationWorkerFacts(eligibility, workerSubject, purpose, getMachineDisplayName(machine) ?? machine.id)
+            reason: describeMachineDestinationWorkerFacts(eligibility, workerSubject, purpose)
                 ?? (!selectable ? asleepReason : undefined)
                 ?? (!selectable && presence.status === 'unknown' ? t('common.unavailable') : undefined),
         };

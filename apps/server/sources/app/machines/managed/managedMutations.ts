@@ -531,7 +531,7 @@ export async function submitManagedIntent(canonical: ManagedControllerCurrentnes
             data: { admittedInput: { ...admitted, submittedEffect: { ...canonical, intent: row.desired,
                 ...(rebuild ? { reviewedEffectDigest: rebuild.reviewedEffectDigest } : {}) } } } });
         const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
-        if (changed.count) await invalidateManagedMachineInTx(tx, current);
+        if (changed.count) await invalidateManagedMachineInTx(tx, row);
         return { machine: projectManagedMachine(current), submitted: changed.count === 1 };
     });
 }

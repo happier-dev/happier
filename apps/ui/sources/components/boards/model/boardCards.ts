@@ -124,12 +124,13 @@ function readRunMachine(ref: BoardItemRefV1, summary: WorkflowRunSummaryV1, fact
     const machineRef = { kind: 'machine', qualifiedId: { serverId: ref.qualifiedId.serverId, id: summary.machineId } } as const;
     const machine = facts.machine(machineRef);
     const managedMachine = facts.managedMachine?.(machineRef);
+    const machineName = getMachineDisplayName(machine);
     const reachability = machine ? resolveMachineReachability(facts.machineScope?.(ref.qualifiedId.serverId), machine, facts.nowMs) : 'unknown';
     return { machine, managedMachine, context: { machineReachable: reachability === 'unknown' ? undefined : reachability === 'reachable',
-        machineName: machine ? getMachineDisplayName(machine) : null,
+        machineName,
         machineStatus: resolveManagedMachineWorkStatus({ machineId: summary.machineId, revokedAt: machine?.revokedAt,
             online: reachability === 'unknown' ? null : reachability === 'reachable', managedMachine,
-            nativeState: machine?.managedInputRuntime?.state }) } };
+            nativeState: machine?.managedInputRuntime?.state, machineName: machineName ?? '' }) } };
 }
 
 /**
@@ -305,7 +306,7 @@ function readBoardWorkStatus(member: BoardMember, facts: BoardCardFacts): WorkSt
                     ? t('boards.card.machine.needYou', { count: counts.needsYou }) : t('boards.card.machine.online'),
                 online, needsYouCount: counts.needsYou, runningSessionCount: counts.running,
                 machineId: machine.id, revokedAt: machine.revokedAt, managedMachine: facts.managedMachine?.(member.ref),
-                nativeState: machine.managedInputRuntime?.state,
+                nativeState: machine.managedInputRuntime?.state, machineName: getMachineDisplayName(machine),
                 workSummary: facts.machineWorkSummary?.(member.ref),
             } });
         }

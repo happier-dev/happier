@@ -271,7 +271,8 @@ describe('buildMachineCollection', () => {
         const stopped = managed('retained', { enrolledMachineId: 'guest', wakeOnAcceptedMessage: true,
             retention: { kind: 'unused', afterMs: 3600000, effect: 'stop' },
             observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained' } });
-        const collection = buildMachineCollection({ groups: [group('a', [machine('guest')]), group('b', [machine('guest')])], groupedByHome: true,
+        const guest = machine('guest', { managedInputRuntime: { nativeReady: false, wakeState: 'asleep', state: 'asleep' } });
+        const collection = buildMachineCollection({ groups: [group('a', [guest]), group('b', [machine('guest')])], groupedByHome: true,
             managedByServerId: { a: [stopped] } });
         const rows = collection.sections.flatMap(section => section.rows);
         expect(rows).toHaveLength(2);

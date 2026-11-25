@@ -1565,6 +1565,44 @@ describe("managed acquisition durable authority", () => {
         expect(await db.managedMachine.count({ where: { custodianAccountId: account.id } })).toBe(1);
     });
 
+    it('publishes each owner-approved Start transition once to the member Machine stream', async () => {
+        const { homeId, account, controller, input } = await createManagedComputeFixture('member-start');
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const guest = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id, metadata: 'ciphertext' } });
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: guest.id, accountId: member.id,
+            accessLevel: 'view', createdByAccountId: account.id } });
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            admittedActionRequestId: 'member-start-create', admittedInput: {}, enrolledMachineId: guest.id,
+            launch: input.selection.launch, resource: { contributionRef: input.selection.launch.provider,
+                schemaVersion: 1, value: { id: 'member-start-guest' } }, allocation: 'bound',
+            desired: 'stop', desiredWhen: 'now', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained' } } });
+        const emitted = vi.spyOn(eventRouter, 'emitUpdate').mockImplementation(() => {});
+        onTestFinished(() => { emitted.mockRestore(); });
+        const memberStates = () => emitted.mock.calls.flatMap(([event]) => {
+            if (event.userId !== member.id || event.recipientFilter?.type !== 'machine-scoped-only'
+                || event.recipientFilter.machineId !== guest.id) return [];
+            const { body } = UpdateContainerSchema.parse(event.payload);
+            return body.t === 'update-machine' && body.managedInputRuntime ? [body.managedInputRuntime.state] : [];
+        });
+
+        const requestId = 'member-start-approved';
+        await admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id, input: {
+            action: 'machines.managed.power.set', requestId, input: { homeId, managedId: row.id,
+                expectedRevision: 0, when: 'now', intent: 'start' },
+        } });
+        expect(memberStates()).toEqual([]);
+        const correlation = { homeId, managedId: row.id, expectedIntentRevision: 1, requestId, controller };
+        expect(await submitManagedIntent(correlation)).toMatchObject({ submitted: true });
+        expect(await submitManagedIntent(correlation)).toMatchObject({ submitted: false });
+        expect(memberStates()).toEqual(['starting']);
+
+        await reportManagedIntent({ ...correlation, result: { kind: 'confirmed' },
+            observation: { observedAt: 20, availability: 'present', power: 'running', storage: 'retained' } });
+        expect(memberStates()).toEqual(['starting', null]);
+    });
+
     it('settles a Lume Delete from exact native not-found through the report-intent route', async () => {
         const { homeId, account, controller } = await createManagedComputeFixture('lume-delete');
         const manifest = PluginManifestV2Schema.parse(LUME_PLUGIN.manifest);

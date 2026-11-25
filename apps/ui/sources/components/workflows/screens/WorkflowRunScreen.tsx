@@ -913,7 +913,7 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
     const managedInventory = useManagedMachineInventory(managedHomes);
     const runMachineStatus = runMachineId !== null && activeAccountScope ? resolveManagedMachineWorkStatus({
         machineId: runMachineId, revokedAt: runMachineRevokedAt, online: runMachineReachable ?? null,
-        nativeState: runMachinePresence.nativeState,
+        nativeState: runMachinePresence.nativeState, machineName: runMachineName ?? '',
         managedMachine: managedInventory.machinesByEnrolledMachineIdByServerId[activeAccountScope.serverId]?.[runMachineId],
     }) ?? undefined : undefined;
     const visibleDefinition = contentBelongsToActiveScope ? definition : null;

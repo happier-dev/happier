@@ -4709,10 +4709,11 @@ describe('managed Machine detail', () => {
             allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'after-idle', intentRevision: 1,
             retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' }, wakeOnAcceptedMessage: true,
             observation: { availability: 'present', observedAt: 1, power: 'stopped', storage: 'retained' } } satisfies ManagedMachineReadSnapshotV1;
-        const rail = resolveManagedMachineWorkStatus({ online: false, managedMachine: asleep, machineId: 'guest' })?.word;
+        const rail = resolveManagedMachineWorkStatus({ online: false, managedMachine: asleep, machineId: 'guest', nativeState: 'asleep' })?.word;
         expect(rail).toBeTruthy();
         const offlineGuest = createMachineFixture({ id: 'guest', active: false, activeAt: 1 });
-        expect(describeMachinePresenceLine(offlineGuest, 10_000_000, managedMachineHeaderPresence(asleep)).label).toBe(rail);
+        const parkedGuest = { ...offlineGuest, managedInputRuntime: { nativeReady: false, wakeState: 'asleep' as const, state: 'asleep' as const } };
+        expect(describeMachinePresenceLine(parkedGuest, 10_000_000, managedMachineHeaderPresence(asleep, parkedGuest)).label).toBe(rail);
         // Nothing observed yet: still the rail's word, never a second vocabulary.
         const unobserved = { ...asleep, observation: undefined };
         expect(describeMachinePresenceLine(offlineGuest, 10_000_000, managedMachineHeaderPresence(unobserved)).label)

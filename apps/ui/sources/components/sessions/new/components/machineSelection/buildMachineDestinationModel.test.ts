@@ -228,9 +228,8 @@ describe('buildMachineDestinationModel', () => {
         const facts = { ownership: 'shared', managedWake } as const;
         const eligibility = resolveMachineDestinationPurposeEligibility('session', facts, shared);
         expect(eligibility).toEqual({ eligible: true, managedWake });
-        expect(describeMachineDestinationWorkerFacts(eligibility, undefined, 'session', 'Shared machine'))
-            .toBe(managedWake === 'asleep' ? t('managedWake.startsOnSend')
-                : t('managedWake.starting', { machine: 'Shared machine' }));
+        expect(describeMachineDestinationWorkerFacts(eligibility, undefined, 'session'))
+            .toBe(managedWake === 'asleep' ? t('managedWake.startsOnSend') : undefined);
         expect(buildMachineDestinationModel({ purpose: 'session', groups: [group({ machines: [shared] })],
             managedMachineProjection: { state: 'unavailable', rowCount: 0 },
             resolveMachinePlacementFacts: () => facts }).soleSelectableDestination?.machine).toBe(shared);
@@ -457,11 +456,11 @@ describe('describeMachineDestinationWorkerFacts', () => {
         }
     });
 
-    it('says an asleep worker starts for this run and a starting one is starting, never offline', () => {
+    it('explains what a Run will do with a wakeable worker without supplying its power word', () => {
         const wake = (managedWake: 'asleep' | 'starting') => describeMachineDestinationWorkerFacts(
-            resolveMachineDestinationPurposeEligibility('finite', { ownership: 'owned', managedWake }), { scriptName: 'test' }, 'finite', 'hz-build-2');
-        expect(wake('asleep')).toBe(`${t('managedPower.asleep')} · ${t('projectWorkers.wakeForRun')}`);
-        expect(wake('starting')).toBe(`${t('managedWake.starting', { machine: 'hz-build-2' })} · ${t('projectWorkers.runAfterWake')}`);
+            resolveMachineDestinationPurposeEligibility('finite', { ownership: 'owned', managedWake }));
+        expect(wake('asleep')).toBe(t('projectWorkers.wakeForRun'));
+        expect(wake('starting')).toBe(t('projectWorkers.runAfterWake'));
     });
 
     it('adds the last clean copy to an eligible worker only when that fact is known', () => {

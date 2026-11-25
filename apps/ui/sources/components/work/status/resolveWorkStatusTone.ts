@@ -24,7 +24,6 @@ import {
 import type { StatusPillVariant } from '@/components/ui/status/StatusPill';
 import type { ManagedMachineV1, ManagedMachineInputRuntimeV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { t } from '@/text';
-import { resolveManagedMachineRuntimeV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { isManagedMachineResourceAbsent, managedCreationState } from '@/components/settings/machines/managed/managedCreationPresentation';
 import type { ExternalSessionRuntimePresentation } from '@/components/sessions/presentation/externalSessionRuntimePresentation';
 import { inboxItemViewV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
@@ -167,7 +166,7 @@ export type WorkStatusInput =
         word: string; online: boolean | null; needsYouCount: number; runningSessionCount: number;
         machineId?: string;
         revokedAt?: number | null;
-        /** Protected, Home-qualified inventory row; connectivity alone never establishes sleep. */
+        /** Home-qualified inventory row for allocation, cleanup and storage diagnostics. */
         managedMachine?: ManagedMachineV1 | null;
         /** Home's recipient-safe lifecycle; it grants no power or wake authority. */
         nativeState?: ManagedMachineInputRuntimeV1['state'];
@@ -204,8 +203,7 @@ export function resolveManagedMachineWorkStatus(facts: Pick<Extract<WorkStatusIn
     const hasManagedOwner = managed?.creationState === 'active' && managed.archivedAt === undefined
         && !(typeof facts.revokedAt === 'number' && facts.revokedAt > 0) && facts.machineId
         && managed.enrolledMachineId === facts.machineId;
-    const nativeState = facts.nativeState !== undefined ? facts.nativeState
-        : hasManagedOwner ? resolveManagedMachineRuntimeV1(managed, facts.machineId).state : null;
+    const nativeState = facts.nativeState;
     if (!(typeof facts.revokedAt === 'number' && facts.revokedAt > 0)) {
         if (nativeState === 'stopping') return workStatus('stopping', { bucket: 'working', tone: 'neutral' }, t('managedPower.stopPending'));
         if (nativeState === 'starting') return workStatus('starting', { bucket: 'working', tone: 'neutral' },

@@ -431,18 +431,16 @@ describe('board cards', () => {
             machine: () => guest, managedMachine: () => managed,
             machineSessionCounts: new Map(), accountScopedHome: () => true };
         const project = createBoardCardProjection();
-        expect(project(members, facts)[0]?.status).toMatchObject({ bucket: 'idle', word: 'managedPower.asleep' });
+        expect(project(members, facts)[0]?.status.word).not.toBe('managedPower.asleep');
         const starting = { ...managed, submittedNativeEffect: { intent: 'start' as const, intentRevision: 2, requestId: 'start', controller: managed.controller } };
-        expect(project(members, { ...facts, managedMachine: () => starting })[0]?.status).toMatchObject({ bucket: 'working', word: 'managedWake.starting' });
+        expect(project(members, { ...facts, managedMachine: () => starting })[0]?.status.word).not.toBe('managedWake.starting');
         const runRef = { kind: 'workflow_run', qualifiedId: { serverId: 'home-a', id: 'run' } } as const;
         const row = workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ state: 'running', machineId: guest.id }), null);
         const runFacts: BoardCardFacts = { ...facts, workflowRun: () => row,
             machineScope: () => ({ serverId: 'home-a', accountId: 'owner' }) };
         const runMembers = [member(runRef)];
-        expect(project(runMembers, runFacts)[0]?.status).toMatchObject({ bucket: 'idle', word: 'managedPower.asleep' });
-        expect(project(runMembers, { ...runFacts, managedMachine: () => starting })[0]?.status)
-            .toMatchObject({ bucket: 'working', word: 'managedWake.starting' });
-        for (const managedMachine of [undefined, () => null]) {
+        expect(project(runMembers, { ...runFacts, managedMachine: () => starting })[0]?.status.word).not.toBe('managedWake.starting');
+        for (const managedMachine of [undefined, () => starting]) {
             const publicGuest = { ...guest, managedInputRuntime: { nativeReady: false, wakeState: 'asleep' as const, state: 'asleep' as const } };
             const publicFacts: BoardCardFacts = { ...runFacts, managedMachine, machine: () => publicGuest };
             expect(project([...members, ...runMembers], publicFacts).map(card => card.status))
@@ -450,6 +448,10 @@ describe('board cards', () => {
             const publicStarting = { ...publicGuest, managedInputRuntime: { nativeReady: false, wakeState: 'starting' as const, state: 'starting' as const } };
             expect(project([...members, ...runMembers], { ...publicFacts, machine: () => publicStarting }).map(card => card.status))
                 .toMatchObject([{ bucket: 'working', word: 'managedWake.starting' }, { bucket: 'working', word: 'managedWake.starting' }]);
+            const settled = { ...publicGuest, managedInputRuntime: { nativeReady: true, wakeState: null, state: null } };
+            for (const card of project([...members, ...runMembers], { ...publicFacts, machine: () => settled })) {
+                expect(card.status.word).not.toBe('managedWake.starting');
+            }
         }
     });
     it('names why an online Machine needs the person in its state word, not its presence', () => {

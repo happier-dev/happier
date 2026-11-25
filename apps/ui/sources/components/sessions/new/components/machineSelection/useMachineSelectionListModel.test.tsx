@@ -519,6 +519,29 @@ describe('useMachineSelectionListModel', () => {
             expect(handlers.selectSpy).toHaveBeenCalledWith(machine.id);
         } finally { await rendered.unmount(); }
     });
+    it('renders a shared destination once when the Home publishes native Starting', async () => {
+        const guest: Machine = { ...createMachine('starting-guest'), active: false, activeAt: 1, isShared: true,
+            access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready' },
+            managedInputRuntime: { nativeReady: false, wakeState: null, state: 'asleep' } };
+        const handlers = makeHandlers();
+        const makeFixture = (machine: Machine): Fixture => ({ machines: [machine], groups: [{ serverId: 'server-a',
+            serverName: 'Server A', loading: false, signedOut: false, machines: [createScopedMachine(machine)] }], recent: [], favorites: [] });
+        let renders = 0;
+        const rendered = await renderHook((fixture: Fixture) => {
+            renders++;
+            return useMachineSelectionListModel(buildParams(fixture, handlers));
+        }, { initialProps: makeFixture(guest) });
+        const subtitle = () => rendered.getCurrent().rootStep.sections.flatMap(section => section.kind === 'static'
+            ? section.options : []).find(option => option.id === guest.id)?.subtitle;
+        try {
+            expect(subtitle()).toContain(t('managedPower.asleep'));
+            const before = renders;
+            await rendered.rerender(makeFixture({ ...guest, managedInputRuntime: { nativeReady: false, wakeState: null, state: 'starting' } }));
+            expect(subtitle()).toContain(t('managedWake.starting', { machine: guest.id }));
+            expect(renders - before).toBe(1);
+        } finally { await rendered.unmount(); }
+    });
+
     it.each([
         { purpose: 'finite', ownership: 'owned', managedWake: 'asleep' },
         { purpose: 'finite', ownership: 'owned', managedWake: 'starting' },

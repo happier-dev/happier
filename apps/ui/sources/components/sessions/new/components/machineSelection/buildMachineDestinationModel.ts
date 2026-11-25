@@ -127,16 +127,14 @@ export function describeMachineDestinationWorkerFacts(
     eligibility: ReturnType<typeof resolveMachineDestinationPurposeEligibility>,
     subject?: MachineDestinationWorkerSubject,
     purpose: MachineDestinationPurposeV1 = 'finite',
-    machineName?: string,
 ): string | undefined {
     if (purpose === 'session' && eligibility.eligible && eligibility.managedWake)
-        return eligibility.managedWake === 'asleep' ? t('managedWake.startsOnSend')
-            : t('managedWake.starting', { machine: machineName ?? '' });
-    // A retained managed worker (FX13): INT's power words, and what choosing it does for this Run.
+        return eligibility.managedWake === 'asleep' ? t('managedWake.startsOnSend') : undefined;
+    // Tell the person what choosing a wakeable worker does. The row's presence supplies the power word.
     if (eligibility.eligible && eligibility.managedWake === 'asleep')
-        return `${t('managedPower.asleep')} · ${t('projectWorkers.wakeForRun')}`;
+        return t('projectWorkers.wakeForRun');
     if (eligibility.eligible && eligibility.managedWake === 'starting')
-        return `${t('managedWake.starting', { machine: machineName ?? '' })} · ${t('projectWorkers.runAfterWake')}`;
+        return t('projectWorkers.runAfterWake');
     if (!eligibility.eligible && eligibility.reason === 'worker_status_unavailable') {
         return eligibility.statusFailed ? t('projectWorkers.statusUnavailable') : t('projectWorkers.loading');
     }

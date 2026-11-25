@@ -335,6 +335,14 @@ describe('useNewSessionAgentInputPresentation', () => {
         await hook.rerender();
         expect(hook.getCurrent().connectionStatus?.text).toBe('managedWake.startsOnSend');
         expect(hook.getCurrent().connectionStatus?.recovery).toBeUndefined();
+        const startingMachine = { ...initialParams.selectedMachine!, managedInputRuntime: {
+            nativeReady: false, wakeState: null, state: 'starting' as const } };
+        const { projectMachineManagedPresence } = await import('@/utils/sessions/machinePresenceLine');
+        const { t } = await import('@/text');
+        initialParams = { ...initialParams, selectedMachine: startingMachine,
+            selectedMachineManagedPresence: projectMachineManagedPresence(startingMachine) };
+        await hook.rerender();
+        expect(hook.getCurrent().connectionStatus?.text).toBe(t('managedWake.starting', { machine: 'host-1' }));
         const absent = { state: 'resource_absent', word: 'managedPower.resourceAbsent' };
         initialParams = { ...initialParams, selectedMachineManagedPresence: { online: absent, offline: absent } };
         await hook.rerender();
