@@ -653,13 +653,17 @@ export async function resolveInputOptions(params: Readonly<{
       : options };
   }
 
-  if (optionsSourceId === 'workflows.references.available') {
+  if (optionsSourceId === 'workflows.builtins.available' || optionsSourceId === 'workflows.references.available') {
+    const { getBuiltinWorkflowCatalogV1 } = await import('../workflows/builtins/catalog.js');
+    const builtinOptions = () => getBuiltinWorkflowCatalogV1().map(entry => ({ value: entry.id, label: entry.id }));
+    if (optionsSourceId === 'workflows.builtins.available') {
+      ctx.signal?.throwIfAborted();
+      return { ok: true, result: builtinOptions() };
+    }
     if (!deps.workflowAction) {
       return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:workflows.references.available' };
     }
-    const [{ WorkflowDefinitionListResultV1Schema }, { getBuiltinWorkflowCatalogV1 }, { resolveWorkflowDefinitionRefV1 }] = await Promise.all([
-      import('../workflows/actionsV1.js'), import('../workflows/builtins/catalog.js'), import('../workflows/workflowDefinitionResolverV1.js'),
-    ]);
+    const { WorkflowDefinitionListResultV1Schema } = await import('../workflows/actionsV1.js');
     const options: Array<{ value: string; label?: string }> = [];
     // A saved-definition field (workflow.definition.get and its siblings) offers saved workflows only, by name.
     const savedOnly = isWorkflowSavedDefinitionActionId(actionId);
@@ -685,12 +689,8 @@ export async function resolveInputOptions(params: Readonly<{
       }
       cursor = page.nextCursor;
     } while (cursor);
-    for (const entry of savedOnly ? [] : getBuiltinWorkflowCatalogV1()) {
-      const resolved = await resolveWorkflowDefinitionRefV1(entry.id, { signal: ctx.signal });
-      if (resolved?.kind === 'catalog') {
-        options.push({ value: resolved.ref, label: entry.id });
-      }
-    }
+    ctx.signal?.throwIfAborted();
+    if (!savedOnly) options.push(...builtinOptions());
     return { ok: true, result: normalizeResolvedOptions(options) };
   }
 

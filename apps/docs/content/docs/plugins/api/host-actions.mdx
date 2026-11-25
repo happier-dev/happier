@@ -699,7 +699,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `action.options.resolve`
 
-**Resolve action options** — Resolve valid options for one Action field or one declared workflow/widget input. Provide actionId and fieldPath, consumer and fieldPath, or a direct optionsSourceId. A consumer always requires fieldPath.
+**Resolve action options** — Resolve valid options for one Action field or one declared workflow/widget input. Provide actionId and fieldPath, consumer and fieldPath, or a direct optionsSourceId. Use workflows.builtins.available to list built-in Workflows without reading the saved library. A consumer always requires fieldPath.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -712,7 +712,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `actionId` (text): Action id — Optional when consumer or optionsSourceId is provided directly.
 - `consumer` (json): Input consumer — The schema-defined workflow or widget consumer reference. Workflow consumers identify kind workflow and a workflow reference; supply that workflow input name in fieldPath.
 - `fieldPath` (text): Field path — Required with actionId or consumer. Use the Action input dot-path, or the declared workflow input name without an inputs prefix. A known workflow with an unknown name returns availableFields in its refusal details.
-- `optionsSourceId` (text): Options source id — Direct options source lookup when known.
+- `optionsSourceId` (text): Options source id — Use workflows.builtins.available for the built-in Workflow roster, or another known options source.
 - `sessionId` (text): Session id — Omit to use the current invoking Session. Set only for an intentional authorized cross-Session target.
 - `draftInput` (json): Partial action input — Dependent inventory context: for execution.run.start use &#123;"backendTargetKey":"&lt;backend option.value&gt;"&#125; for model, config, or connected-service choices; backendTarget alone does not select an inventory. Ergonomic multi-backend starts use backendTargetKeys. Session spawn uses its agentTarget and executionTarget objects.
 - `query` (text): Query filter — Optional search text to filter the returned options.

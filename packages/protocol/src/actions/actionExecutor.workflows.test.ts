@@ -11,6 +11,8 @@ import { getActionSpec } from './actionSpecs.js';
 import { ActionExecuteFailureSchema } from './actionExecutionResult.js';
 import { PLAN_WITH_A_PANEL_WORKFLOW_V1 } from '../workflows/builtins/planWithAPanel.js';
 import { workflowDefinitionPreviewStepsV1 } from '../workflows/workflowStepLabel.js';
+import { ACTION_OPTIONS_RESOLVE_ACTION_ID_V1 } from './actionIds.js';
+import { WORKFLOW_TRIGGER_ADD_ACTION_ID } from './workflowTriggerActionIds.js';
 
 function workflowWithIngressBoundary(resolveIngressContext: NonNullable<Parameters<typeof createWorkflowActionExecutor>[0]['resolveIngressContext']>) {
   const unexpected = (): never => { throw new Error('unexpected_workflow_effect'); };
@@ -25,6 +27,21 @@ function workflowWithIngressBoundary(resolveIngressContext: NonNullable<Paramete
 }
 
 describe('createActionExecutor (Workflow family)', () => {
+  it('discovers the bundled Workflow roster without accessing the Account library', async () => {
+    const workflowAction = workflowWithIngressBoundary(() => { throw new Error('bundled_roster_needs_no_account'); });
+    const executor = createActionExecutor({ workflowAction } as ActionExecutorDeps);
+    const request = { optionsSourceId: 'workflows.builtins.available' };
+    const ui = await executor.execute(ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, request, { surface: 'ui' });
+
+    expect(ui).toMatchObject({
+      ok: true,
+      result: { options: getBuiltinWorkflowCatalogV1().map(entry => ({ value: entry.id })) },
+    });
+    for (const surface of ['agent', 'cli', 'mcp'] as const) {
+      await expect(executor.execute(ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, request, { surface })).resolves.toEqual(ui);
+    }
+  });
+
   it('returns declared Workflow input names so discovery can recover and resolve a real consuming field', async () => {
     const consumer = { kind: 'workflow', workflow: 'builtin:plan-with-a-panel' } as const;
     const targetKey = 'agent:example.agent/planner';
@@ -106,8 +123,11 @@ describe('createActionExecutor (Workflow family)', () => {
       expect(await resolveWorkflowDefinitionRefV1('builtin:plan-with-a-panel')).toMatchObject({ kind: 'catalog' });
     }
     workflowEnabled = false;
-    await expect(executor.execute('action.options.resolve', { actionId: 'workflow.trigger.add', fieldPath: 'workflow', draftInput: {} },
-      { surface: 'agent' })).resolves.toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+    const optionsRequest = { actionId: WORKFLOW_TRIGGER_ADD_ACTION_ID, fieldPath: 'workflow', draftInput: {} };
+    const refusal = ActionExecuteFailureSchema.parse(await executor.execute(ACTION_OPTIONS_RESOLVE_ACTION_ID_V1,
+      optionsRequest, { surface: 'ui' }));
+    expect(refusal).toMatchObject({ errorCode: 'content_unavailable' });
+    await expect(executor.execute(ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, optionsRequest, { surface: 'agent' })).resolves.toEqual(refusal);
   });
   it('routes a strict normalized input through the single Workflow dependency', async () => {
     const workflowAction = vi.fn(async () => ({
