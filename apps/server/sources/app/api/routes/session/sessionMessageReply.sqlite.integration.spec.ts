@@ -509,26 +509,30 @@ describe('original Session input reply custody', () => {
             const accepted = await app.inject({ method: 'POST', url, headers, payload: { localId, content,
                 targetMachineId: machine.id, reply } });
             expect(accepted.statusCode, accepted.body).toBe(200);
-            const original = await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: target.id, localId } } });
-            expect(original.inputAdmissionReceipt).toMatchObject({ issuer: 'authenticatedAccount', actorAccountId: bob.id });
-            const publisherAuthority = { accountId: alice.id, machineId: machine.id, sessionId: target.id, committedFence: target.lastActiveAt };
-            const finalContent = encryptionMode === 'plain' ? { ...plainContent, v: { ...plainContent.v,
-                meta: { ...withSessionInputAuthorityV1(plainContent.v.meta, settleSessionInputRequestV1({ request,
-                    currentSessionPermissionCeiling: 'default', inputAdmissionReceipt: original.inputAdmissionReceipt })),
-                    [SESSION_MESSAGE_PROVENANCE_META_KEY]: settleSessionMessageProvenanceV1({ request, requestedProvenance: null,
-                        inputAdmissionReceipt: original.inputAdmissionReceipt }) } } } : { t: 'encrypted' as const, c: 'settled-shared-human-ask' };
-            expect(await materializeNextPendingMessage({ actorUserId: alice.id, sessionId: target.id, publisherAuthority,
-                deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready' })).toMatchObject({ ok: true, didMaterialize: true });
-            expect(await settlePendingInputAdmission({ actorUserId: alice.id, sessionId: target.id, localId, publisherAuthority,
-                decision: { kind: 'admit', finalContent, validation: { reply } } })).toMatchObject({ ok: true, result: { status: 'accepted' } });
-            const committed = await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: target.id, localId } } });
-            const turnId = randomUUID();
-            expect(await applySessionTurnMutation({ actorUserId: alice.id, authentication, mutation: { v: 1,
-                sessionId: target.id, turnId, mutationId: randomUUID(), action: 'begin', observedAt: Date.now(),
-                transcriptAnchors: { userMessageSeqs: [committed.seq] } } })).toMatchObject({ ok: true });
-            expect(await resolveAcceptedPendingDelivery({ actorUserId: alice.id, sessionId: target.id, localId,
-                publisherAuthority, acceptedDelivery: encryptionMode === 'plain' ? { t: 'plain', v: { v: 1, acceptedAtMs: Date.now(), delivery: { kind: 'newTurn', turnId } } }
-                    : { t: 'encrypted', c: 'accepted-human-question' }, acceptedTurn: { kind: 'newTurn', turnId } })).toMatchObject({ ok: true, didResolve: true });
+            const acceptAsk = async (receiver: typeof target, localId: string) => {
+                const original = await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: receiver.id, localId } } });
+                expect(original.inputAdmissionReceipt).toMatchObject({ issuer: 'authenticatedAccount', actorAccountId: bob.id });
+                const publisherAuthority = { accountId: alice.id, machineId: machine.id, sessionId: receiver.id, committedFence: receiver.lastActiveAt };
+                const finalContent = encryptionMode === 'plain' ? { ...plainContent, v: { ...plainContent.v,
+                    meta: { ...withSessionInputAuthorityV1(plainContent.v.meta, settleSessionInputRequestV1({ request,
+                        currentSessionPermissionCeiling: 'default', inputAdmissionReceipt: original.inputAdmissionReceipt })),
+                        [SESSION_MESSAGE_PROVENANCE_META_KEY]: settleSessionMessageProvenanceV1({ request, requestedProvenance: null,
+                            inputAdmissionReceipt: original.inputAdmissionReceipt }) } } } : { t: 'encrypted' as const, c: 'settled-shared-human-ask' };
+                expect(await materializeNextPendingMessage({ actorUserId: alice.id, sessionId: receiver.id, publisherAuthority,
+                    deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready' })).toMatchObject({ ok: true, didMaterialize: true });
+                expect(await settlePendingInputAdmission({ actorUserId: alice.id, sessionId: receiver.id, localId, publisherAuthority,
+                    decision: { kind: 'admit', finalContent, validation: { reply } } })).toMatchObject({ ok: true, result: { status: 'accepted' } });
+                const committed = await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: receiver.id, localId } } });
+                const turnId = randomUUID();
+                expect(await applySessionTurnMutation({ actorUserId: alice.id, authentication, mutation: { v: 1,
+                    sessionId: receiver.id, turnId, mutationId: randomUUID(), action: 'begin', observedAt: Date.now(),
+                    transcriptAnchors: { userMessageSeqs: [committed.seq] } } })).toMatchObject({ ok: true });
+                expect(await resolveAcceptedPendingDelivery({ actorUserId: alice.id, sessionId: receiver.id, localId,
+                    publisherAuthority, acceptedDelivery: encryptionMode === 'plain' ? { t: 'plain', v: { v: 1, acceptedAtMs: Date.now(), delivery: { kind: 'newTurn', turnId } } }
+                        : { t: 'encrypted', c: 'accepted-human-question' }, acceptedTurn: { kind: 'newTurn', turnId } })).toMatchObject({ ok: true, didResolve: true });
+                return { original, committed, turnId };
+            };
+            const { original, committed, turnId } = await acceptAsk(target, localId);
             // A held source row must learn that the original input entered a
             // real turn, even before a terminal answer/pass exists.
             await vi.waitFor(() => expect(sourceSocket.emit).toHaveBeenCalledWith('ephemeral', {
@@ -583,6 +587,15 @@ describe('original Session input reply custody', () => {
                 .toMatchObject({ autonomousExchangeRootSessionId: target.id, autonomousExchangeRootLocalId: localId, autonomousExchangeCause: 'returned_answer' });
             await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: target.id, createdByAccountId: alice.id,
                 accountId: bob.id, accessLevel: 'edit', canApprovePermissions: false } });
+            const returnedTurnId = randomUUID();
+            expect(await applySessionTurnMutation({ actorUserId: bob.id, authentication, mutation: { v: 1,
+                sessionId: source.id, turnId: returnedTurnId, mutationId: randomUUID(), action: 'begin',
+                observedAt: Date.now(), startingInputId: returnedInputLocalId } })).toMatchObject({ ok: true });
+            expect(await resolveAcceptedPendingDelivery({ actorUserId: bob.id, sessionId: source.id, localId: returnedInputLocalId,
+                publisherAuthority: sourcePublisher, acceptedDelivery: encryptionMode === 'plain'
+                    ? { t: 'plain', v: { v: 1, acceptedAtMs: Date.now(), delivery: { kind: 'newTurn', turnId: returnedTurnId } } }
+                    : { t: 'encrypted', c: 'accepted-human-return' },
+                acceptedTurn: { kind: 'newTurn', turnId: returnedTurnId } })).toMatchObject({ ok: true, didResolve: true });
             const returnCommitted = new Error('Return acknowledgement lost after commit');
             await expect((async () => {
                 expect(await acknowledge()).toMatchObject({ ok: true, progress: { disposition: 'returned', humanOrigin, returnedInputLocalId } });
@@ -619,9 +632,54 @@ describe('original Session input reply custody', () => {
             expect((await read()).json()).toMatchObject({ status: 'available', progress: {
                 disposition: 'returned', returnedInputLocalId, outcome: { kind: 'terminal_no_result' },
             } });
-            expect(await db.sessionMessage.findMany({ where: { sessionId: source.id }, select: { localId: true } }))
-                .toEqual([{ localId: returnedInputLocalId }]);
+            expect(await db.sessionMessage.findMany({ where: { sessionId: source.id },
+                select: { localId: true, acceptedTurnId: true } }))
+                .toEqual([{ localId: returnedInputLocalId, acceptedTurnId: returnedTurnId }]);
             expect(await acknowledge()).toMatchObject({ ok: true, progress: { disposition: 'returned', returnedInputLocalId } });
+
+            // The other members of the same requester fanout settle independently.
+            // Use the native lifecycle and explicit Pass publisher for each member.
+            const siblings = [];
+            for (const kind of ['failed', 'cancelled', 'pass'] as const) {
+                const receiver = await db.session.create({ data: { accountId: alice.id, tag: randomUUID(), encryptionMode,
+                    metadata: '{}', active: true, lastActiveAt: new Date() } });
+                await db.accessKey.create({ data: { accountId: alice.id, machineId: machine.id, sessionId: receiver.id, data: 'encrypted' } });
+                await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: receiver.id, createdByAccountId: alice.id,
+                    accountId: bob.id, accessLevel: 'edit', canApprovePermissions: false } });
+                const siblingId = randomUUID();
+                const accepted = await app.inject({ method: 'POST', url: `/v2/sessions/${receiver.id}/pending`, headers,
+                    payload: { localId: siblingId, content, targetMachineId: machine.id, reply } });
+                expect(accepted.statusCode, accepted.body).toBe(200);
+                const { turnId } = await acceptAsk(receiver, siblingId);
+                const observedAt = Date.now() + 1;
+                if (kind === 'pass') {
+                    const socket = createAuthenticatedFakeSocket();
+                    sessionUpdateHandler(alice.id, socket as never, { connectionType: 'session-scoped', socket, userId: alice.id,
+                        sessionId: receiver.id } as never, { presence: createSessionPublisherPresence(),
+                        binding: { accountId: alice.id, machineId: machine.id, sessionId: receiver.id } });
+                    await getSocketHandler(socket, 'session-runtime-activity-snapshot')({ sessionId: receiver.id, mutationId: randomUUID(),
+                        snapshot: { state: 'idle', activeCount: 0 } }, () => {});
+                    let response: unknown;
+                    await getSocketHandler(socket, SESSION_MESSAGE_REPLY_MUTATE_EVENT_V1)({ v: 1, sessionId: receiver.id,
+                        requestSessionId: receiver.id, requestLocalId: siblingId, operation: { kind: 'fulfill', turnId, outcome: { kind: 'pass' } } },
+                    (value: unknown) => { response = value; });
+                    expect(response).toMatchObject({ ok: true });
+                }
+                expect(await applySessionTurnMutation({ actorUserId: alice.id, authentication, mutation: { v: 1,
+                    sessionId: receiver.id, turnId, mutationId: randomUUID(), observedAt,
+                    action: kind === 'failed' ? 'fail' : kind === 'cancelled' ? 'cancel' : 'complete',
+                    ...(kind === 'failed' ? { issue: { v: 1, scope: 'primary_session', status: 'failed', code: 'native_task_failed',
+                        source: 'agent_session_error', occurredAt: observedAt } } : {}),
+                } })).toMatchObject({ ok: true });
+                siblings.push({ sessionId: receiver.id, localId: siblingId, kind });
+            }
+            const members = [{ sessionId: target.id, localId, kind: 'terminal_no_result' }, ...siblings];
+            const mixed = await app.inject({ method: 'POST', url: '/v2/sessions/messages/replies/read-batch', headers,
+                payload: { requests: members.map(({ sessionId, localId }) => ({ sessionId, localId })) } });
+            expect(mixed.statusCode).toBe(200);
+            expect(mixed.json()).toMatchObject({ results: members.map(({ sessionId, localId, kind }) => ({
+                sessionId, localId, reply: { status: 'available', progress: { humanOrigin, outcome: { kind } } },
+            })) });
             await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: target.id, accountId: bob.id } });
             expect((await read()).json()).toMatchObject({ status: 'unavailable' });
             expect(await acknowledge()).toMatchObject({ ok: false });
