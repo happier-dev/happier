@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ScmWorkEvidenceReadResponseSchema, type ScmBranchWorkEvidence, type ScmPullRequestSummary, type ScmPullRequestWorkEvidence } from '@happier-dev/protocol/scm';
 import { createDeploymentGitRegistry } from '@/deployments/targets/ownServer/exactCommitRelease.testkit';
+import { createDeferred } from '@/testkit/async/deferred';
 import { createGithubForgeHttpFixture } from '@/testkit/scm/githubForgeHttp';
 
 import { gitCheckpointAdapter } from '../checkpoints/gitCheckpointAdapter';
@@ -207,14 +208,19 @@ describe('SCM batched work evidence', () => {
             runGit(cwd, ['update-ref', 'refs/remotes/origin/main', heads.main]);
             runGit(cwd, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
             const missingHead = 'f'.repeat(40);
+            const missingBase = 'e'.repeat(40);
             const forge = createGithubForgeHttpFixture({ nameWithOwner, cloneUrl, listPullRequests: query => {
                 const head = query.get('head');
                 if (query.get('state') !== 'open' || (head !== 'owner:main' && head !== 'owner:feature')) return [];
                 const headBranch = head === 'owner:main' ? 'main' : 'feature';
-                return [heads[headBranch], missingHead].map((headSha, index): ScmPullRequestSummary => ({
+                return [
+                    { baseSha, headSha: heads[headBranch] },
+                    { baseSha, headSha: missingHead },
+                    { baseSha: missingBase, headSha: heads.feature },
+                ].map((range, index): ScmPullRequestSummary => ({
                     provider: forge.provider, number: index + 1, title: `Range ${index}`, state: 'open',
                     url: `https://github.com/${nameWithOwner}/pull/${index + 1}`, headBranch,
-                    baseBranch: 'release', baseSha, headSha,
+                    baseBranch: 'release', ...range,
                 }));
             } });
             const registry = createDeploymentGitRegistry({ resolveScmHostingProviderRegistry: async () => forge.hosting });
@@ -243,8 +249,78 @@ describe('SCM batched work evidence', () => {
             expect(batched.sessions[2]).not.toHaveProperty('pullRequestsRead');
             const ranges = commands.filter(command => command.args.includes('rev-list')).map(command => command.args.at(-1));
             expect(ranges.sort()).toEqual([
-                heads.main, heads.feature, `${baseSha}..${heads.main}`, `${baseSha}..${heads.feature}`, `${baseSha}..${missingHead}`,
+                heads.main, heads.feature, `${baseSha}..${heads.main}`, `${baseSha}..${heads.feature}`,
+                `${baseSha}..${missingHead}`, `${baseSha}..${missingHead}`,
+                `${missingBase}..${heads.feature}`, `${missingBase}..${heads.feature}`,
             ].sort());
+        } finally {
+            rmSync(checkouts, { recursive: true, force: true });
+            rmSync(cwd, { recursive: true, force: true });
+        }
+    });
+
+    it.each([
+        ['head', 'command failure'],
+        ['head', 'launch refusal'],
+        ['PR range', 'command failure'],
+        ['PR range', 'launch refusal'],
+    ] as const)('keeps the healthy checkout’s %s witness after a sibling’s %s', async (kind, failure) => {
+        const cwd = realpathSync(createGitWorkspace('happier-work-graph-failure-'));
+        const checkouts = realpathSync(mkdtempSync(join(tmpdir(), 'happier-work-checkouts-')));
+        const worktree = join(checkouts, 'linked');
+        try {
+            runGit(cwd, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+            runGit(cwd, ['commit', '--allow-empty', '-m', 'base']);
+            const baseSha = runGit(cwd, ['rev-parse', 'HEAD']);
+            runGit(cwd, ['worktree', 'add', '-b', 'feature', worktree, baseSha]);
+            const headSha = await commitWitnessedChange(worktree, 'healthy-session', 'turn', 'feature.txt', 'feature change\n');
+            const nameWithOwner = 'owner/graph-failure';
+            const cloneUrl = `https://github.com/${nameWithOwner}.git`;
+            runGit(cwd, ['remote', 'add', 'origin', cloneUrl]);
+            runGit(cwd, ['update-ref', 'refs/remotes/origin/main', baseSha]);
+            runGit(cwd, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
+            const forge = createGithubForgeHttpFixture({ nameWithOwner, cloneUrl, listPullRequests: query => {
+                const head = query.get('head');
+                if (kind === 'head' || query.get('state') !== 'open' || (head !== 'owner:main' && head !== 'owner:feature')) return [];
+                return [{ provider: forge.provider, number: 1, title: 'Shared range', state: 'open',
+                    url: `https://github.com/${nameWithOwner}/pull/1`, headBranch: head === 'owner:main' ? 'main' : 'feature',
+                    baseBranch: 'release', baseSha, headSha }];
+            } });
+            const registry = createDeploymentGitRegistry({ resolveScmHostingProviderRegistry: async () => forge.hosting });
+            const { call } = createTestRpcManager({ workingDirectory: cwd, registry });
+            const failing = { sessionId: 'failing-session', cwd, turnIds: ['turn'] };
+            const healthy = { sessionId: 'healthy-session', cwd: worktree, turnIds: ['turn'] };
+            const read = async (sessions: (typeof failing)[]) => ScmWorkEvidenceReadResponseSchema.parse(
+                await call(RPC_METHODS.SCM_WORK_EVIDENCE_READ, { sessions },
+                    { kind: 'scm.workEvidence.admitted', admissions: sessions.map(({ sessionId }) => ({ kind: 'session.write', sessionId })) }),
+            );
+            const revision = kind === 'head' ? headSha : `${baseSha}..${headSha}`;
+            const firstAttempt = createDeferred();
+            const attempts: string[] = [];
+            const realGit = recordCommands([]);
+            const withFailingCheckout = async (input: ScmCommandInput): Promise<ScmExecResult> => {
+                if (input.cwd === worktree) await firstAttempt.promise;
+                if (input.args.includes('rev-list') && input.args.at(-1) === revision) {
+                    attempts.push(input.cwd);
+                    if (input.cwd === cwd) {
+                        firstAttempt.resolve();
+                        if (failure === 'launch refusal') throw new ScmExecutionRefusedError('agent_isolation_unavailable');
+                        return { success: false, stdout: '', stderr: 'checkout-local graph failure', exitCode: 128 };
+                    }
+                }
+                return realGit(input);
+            };
+            const healthyAlone = await runWithScmCommandRunner(realGit, () => read([healthy]));
+            const evidenceKey = kind === 'head' ? 'branchEvidence' : 'evidence';
+            expect(healthyAlone.sessions[0][evidenceKey]).toEqual([expect.objectContaining({ commitSha: headSha })]);
+
+            const batched = await runWithScmCommandRunner(withFailingCheckout, () => read([failing, healthy]));
+            expect.soft(JSON.stringify(batched.sessions[1])).toBe(JSON.stringify(healthyAlone.sessions[0]));
+            // The failed walk costs exactly one extra attempt for this consumer.
+            expect.soft(attempts).toEqual([cwd, worktree]);
+
+            const failingAlone = await runWithScmCommandRunner(withFailingCheckout, () => read([failing]));
+            expect(JSON.stringify(batched.sessions[0])).toBe(JSON.stringify(failingAlone.sessions[0]));
         } finally {
             rmSync(checkouts, { recursive: true, force: true });
             rmSync(cwd, { recursive: true, force: true });

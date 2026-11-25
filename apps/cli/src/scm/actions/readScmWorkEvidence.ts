@@ -115,16 +115,27 @@ export async function readScmWorkEvidence(input: Readonly<{
     };
     // Discovery follows the checkout. Immutable walks follow its canonical Git
     // common-directory identity and exact revision. Both are shared only in this RPC.
+    type SuccessfulGraph = Extract<Awaited<ReturnType<ReadSharedRepositoryCheckpointGraph>>, { success: true }>;
     const reads = new Map<string,
         | { kind: 'checkout'; promise: ReturnType<typeof discover> }
-        | { kind: 'graph'; promise: ReturnType<ReadSharedRepositoryCheckpointGraph> }>();
-    const readSharedGraph: ReadSharedRepositoryCheckpointGraph = (repositoryKey, revision, read) => {
+        | { kind: 'graph'; promise: Promise<SuccessfulGraph | undefined> }>();
+    const readSharedGraph: ReadSharedRepositoryCheckpointGraph = async (repositoryKey, revision, read) => {
         const key = JSON.stringify(['graph', repositoryKey, revision]);
         const incumbent = reads.get(key);
-        if (incumbent?.kind === 'graph') return incumbent.promise;
-        const promise = read();
-        reads.set(key, { kind: 'graph', promise });
-        return promise;
+        if (incumbent?.kind === 'graph') {
+            const shared = await incumbent.promise;
+            if (shared) return shared;
+
+            // A failed walk belongs to that checkout. Each waiting consumer gets its own attempt.
+            const own = await read();
+            if (own.success && reads.get(key) === incumbent) {
+                reads.set(key, { kind: 'graph', promise: Promise.resolve(own) });
+            }
+            return own;
+        }
+        const own = read();
+        reads.set(key, { kind: 'graph', promise: own.then(graph => graph.success ? graph : undefined, () => undefined) });
+        return own;
     };
     const sessions = await Promise.all(input.request.sessions.map(async (session): Promise<ScmWorkEvidenceSessionResult> => {
         const { sessionId } = session;
