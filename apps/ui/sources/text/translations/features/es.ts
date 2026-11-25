@@ -17013,6 +17013,10 @@ const spanish: TeamsTranslationRoot = {
                     teamConnectionRequired: "Añade primero una conexión de inicio de sesión del equipo.",
                     teamConnectionUnavailable: "No hay una conexión de inicio de sesión utilizable.",
                 },
+                admissionNeeds: {
+                    connection: "Añade una para que las personas se unan al iniciar sesión por primera vez.",
+                    directory: "Añade uno para que el directorio añada miembros.",
+                },
                 acceptedSection: 'Cómo inician sesión los miembros',
                 acceptedHelp: 'Qué inicio de sesión acepta este equipo antes de permitir trabajo del equipo.',
                 acceptedInherit: 'Usar la política del Home',

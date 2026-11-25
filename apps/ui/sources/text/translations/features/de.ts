@@ -16892,6 +16892,10 @@ const german: TeamsTranslationRoot = {
                     teamConnectionRequired: "Füge zuerst eine Team-Anmeldeverbindung hinzu.",
                     teamConnectionUnavailable: "Keine nutzbare Team-Anmeldeverbindung.",
                 },
+                admissionNeeds: {
+                    connection: "Füge eine hinzu, damit Personen bei der ersten Anmeldung beitreten können.",
+                    directory: "Füge eines hinzu, damit das Verzeichnis Mitglieder hinzufügt.",
+                },
                 acceptedSection: 'Wie sich Mitglieder anmelden',
                 acceptedHelp: 'Welche Anmeldung dieses Team akzeptiert, bevor Team-Arbeit erlaubt ist.',
                 acceptedInherit: 'Richtlinie des Home verwenden',

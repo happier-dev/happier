@@ -17091,6 +17091,10 @@ const catalan: TeamsTranslationRoot = {
                     teamConnectionRequired: "Afegeix primer una connexió d’inici de sessió de l’equip.",
                     teamConnectionUnavailable: "No hi ha cap connexió d’inici de sessió utilitzable.",
                 },
+                admissionNeeds: {
+                    connection: "Afegeix-ne una perquè la gent s’hi pugui unir en el primer inici de sessió.",
+                    directory: "Afegeix-ne un perquè el directori afegeixi membres.",
+                },
                 acceptedSection: 'Com inicien sessió els membres',
                 acceptedHelp: 'Quin inici de sessió accepta aquest equip abans de permetre feina de l\'equip.',
                 acceptedInherit: 'Fes servir la política del Home',

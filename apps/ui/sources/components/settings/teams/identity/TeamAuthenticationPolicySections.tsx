@@ -390,6 +390,10 @@ export const TeamAuthenticationPolicySections = React.memo(function TeamAuthenti
                         title={t('teams.authentication.policy.admissionRow')}
                         subtitleLines={0}
                         accessoryLayout="stacked"
+                        // One decision, one description: the chosen mode's consequence. What a blocked mode
+                        // needs is said where it is added (the connections and directory sections' lines and
+                        // the "Add connection" menu), and each blocked segment announces its own reason.
+                        reasonsInRow={false}
                         options={ADMISSION_MODES.map((mode) => {
                             const availability = admissionModeApplicability?.modes[mode] ?? null;
                             return {

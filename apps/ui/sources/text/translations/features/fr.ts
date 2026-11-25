@@ -17134,6 +17134,10 @@ const french: TeamsTranslationRoot = {
                     teamConnectionRequired: "Ajoute d’abord une connexion d’équipe.",
                     teamConnectionUnavailable: "Aucune connexion d’équipe utilisable.",
                 },
+                admissionNeeds: {
+                    connection: "Ajoute-en une pour que les personnes rejoignent l’équipe à leur première connexion.",
+                    directory: "Ajoute-en un pour que l’annuaire ajoute des membres.",
+                },
                 acceptedSection: 'Comment les membres se connectent',
                 acceptedHelp: "Quelle connexion cette équipe accepte avant d'autoriser un travail d'équipe.",
                 acceptedInherit: 'Utiliser la politique du Home',

@@ -17063,6 +17063,10 @@ const portuguese: TeamsTranslationRoot = {
                     teamConnectionRequired: "Adicione primeiro uma ligação de início de sessão da equipa.",
                     teamConnectionUnavailable: "Nenhuma ligação de início de sessão utilizável.",
                 },
+                admissionNeeds: {
+                    connection: "Adicione uma para que as pessoas entrem no primeiro início de sessão.",
+                    directory: "Adicione um para que o diretório adicione membros.",
+                },
                 acceptedSection: 'Como os membros iniciam sessão',
                 acceptedHelp: 'Que início de sessão esta equipa aceita antes de permitir trabalho da equipa.',
                 acceptedInherit: 'Usar a política da Home',

@@ -17101,6 +17101,10 @@ const polish: TeamsTranslationRoot = {
                     teamConnectionRequired: "Najpierw dodaj połączenie logowania zespołu.",
                     teamConnectionUnavailable: "Brak dostępnego połączenia logowania zespołu.",
                 },
+                admissionNeeds: {
+                    connection: "Dodaj je, aby osoby dołączały przy pierwszym logowaniu.",
+                    directory: "Dodaj go, aby katalog dodawał członków.",
+                },
                 acceptedSection: 'Jak logują się członkowie',
                 acceptedHelp: 'Jakie logowanie akceptuje ten zespół, zanim pozwoli na pracę zespołu.',
                 acceptedInherit: 'Użyj zasad Home',

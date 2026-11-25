@@ -144,9 +144,16 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     listScroll?: Pick<ItemListProps, 'onScroll' | 'scrollEventThrottle'>;
     /**
      * The page's known sections, holding their rows as skeletons while the Team is read, so the
-     * page keeps its shape when the Team arrives. Without it the wait is one state under the header.
+     * page keeps its shape when the Team arrives. Without it the wait is one state under the header. `known.row` is
+     * the Team's row as the Teams directory already holds it (the row the rail draws), or `null` when this device has
+     * not read it: a page may draw what that row already says instead of reserving it.
      */
-    renderLoading?: () => React.ReactNode;
+    renderLoading?: (known: Readonly<{
+        row: TeamSectionContext['team'] | null;
+        scope: ServerAccountScope | null;
+        address: TeamSectionContext['address'] | null;
+        homeName: string | undefined;
+    }>) => React.ReactNode;
     /**
      * An entity page's own header while the Team is read: what is already known of it (its mark, its Home), so
      * the header that arrives stands where this one stood. Without it the page title stands above the wait.
@@ -239,7 +246,12 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
         );
     // While the Team is read, one quiet line waits where the page's sections begin (as on the Team's Overview).
     const loadingPage = (testID: string) => conditionPage(
-        props.renderLoading?.() ?? <SurfaceStateCard testID={testID} size="line" kind="loading" title={t('teams.loading')} accessibilitySemantics="status" />,
+        props.renderLoading?.({
+            row: directoryRow,
+            scope: projection?.scope ?? null,
+            address: projection?.address ?? null,
+            homeName: projection?.homeName ?? ('homeName' in binding ? binding.homeName : undefined),
+        }) ?? <SurfaceStateCard testID={testID} size="line" kind="loading" title={t('teams.loading')} accessibilitySemantics="status" />,
         props.renderLoadingHeader?.({
             homeName: projection?.homeName ?? ('homeName' in binding ? binding.homeName : undefined),
             scope: projection?.scope ?? null,

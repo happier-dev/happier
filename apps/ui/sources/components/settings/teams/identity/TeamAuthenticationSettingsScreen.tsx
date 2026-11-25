@@ -275,7 +275,7 @@ const AuthorizedAuthenticationContent = React.memo(
               <ItemLoadStateRows
                 testID="team-authentication-loading"
                 state={{ kind: 'loading' }}
-                rows={2}
+                {...knownConnectionReserve(props.context.team)}
                 accessibilityLabel={t('common.loading')}
               />
             ) : (
@@ -431,6 +431,7 @@ const AuthorizedAuthenticationContent = React.memo(
                 kind="empty"
                 size="line"
                 title={t('teams.authentication.empty')}
+                reason={t('teams.authentication.policy.admissionNeeds.connection')}
               />
             ) : (
               state.items.map((connection) => (
@@ -575,13 +576,9 @@ const DirectorySection = React.memo(function DirectorySection(
           />
         ) : state.items.length === 0 ? (
           // The section description already says what a directory does; the quiet line names the
-          // state, as it does for sign-in connections above, and "+ Add source" is the way in.
-          <SurfaceStateCard
-            testID="team-authentication-directory"
-            kind="empty"
-            size="line"
-            title={t('teams.authentication.directory.empty')}
-          />
+          // state and what adding one lets the Team do, as it does for sign-in connections above,
+          // and "+ Add source" is the way in.
+          <DirectoryEmptyLine />
         ) : (
           <>
             {state.items.map((source) => (
@@ -811,24 +808,115 @@ const AuthenticationFacts = React.memo(function AuthenticationFacts(
   );
 });
 
-/** The page's sections, titled at once and holding their rows while the Team is read (lab `tsAuth-L`). */
-function AuthenticationLoading() {
-  const section = (title: string, rows: number) => (
-    <ItemGroup title={title}>
-      <ItemLoadStateRows
-        state={{ kind: 'loading' }}
-        rows={rows}
-        accessibilityLabel={t('teams.loading')}
-      />
-    </ItemGroup>
+/**
+ * The connections the Team summary proves exist: an "Only these" policy names each accepted Team connection. The
+ * count is otherwise unknown, so the reserve holds one row, in the empty line's one-line shape.
+ */
+function knownConnectionReserve(team: TeamSectionContext['team']): Readonly<{ rows: number; lines: 1 | 2 }> {
+  const policy = team.policy.authenticationPolicy;
+  const known = policy?.mode === 'restricted'
+    ? policy.accepted.filter((reference) => reference.kind === 'team_connection').length
+    : 0;
+  return known > 0 ? { rows: known, lines: 2 } : { rows: 1, lines: 1 };
+}
+
+const NO_OP = () => {};
+
+type AuthenticationLoadingKnown = Parameters<
+  NonNullable<React.ComponentProps<typeof TeamSection>['renderLoading']>
+>[0];
+
+/**
+ * The page's sections while the Team is read (lab `tsAuth-L`), each with its title and description from the first
+ * frame. When the Teams directory already holds this Team's row, the sections that row decides are drawn from it as
+ * they will stand (read-only until the Team answers): who can join and how members sign in, or a member's facts.
+ * What the row does not say is reserved: one row per section, or the connections the policy names.
+ */
+function AuthenticationLoading(known: AuthenticationLoadingKnown) {
+  const reserve = (rows: number, lines: 1 | 2 = 2) => (
+    <ItemLoadStateRows
+      state={{ kind: 'loading' }}
+      rows={rows}
+      lines={lines}
+      accessibilityLabel={t('teams.loading')}
+    />
   );
+  const team = known.row;
+  const held: TeamSectionContext | null =
+    team && known.scope && known.address && known.homeName !== undefined
+      ? {
+          scope: known.scope,
+          address: known.address,
+          homeName: known.homeName,
+          team,
+          mutationsAvailable: false,
+          archived: team.archivedAt !== null,
+          canMutate: false,
+          approvalPending: false,
+          refresh: NO_OP,
+          requestApproval: NO_OP,
+          settleLeave: NO_OP,
+        }
+      : null;
+  if (held && !held.team.capabilities.manageAuthentication) {
+    return <AuthenticationFacts context={held} />;
+  }
+  const connections = held ? knownConnectionReserve(held.team) : { rows: 1, lines: 1 as const };
   return (
     <>
-      {section(t('teams.authentication.policy.admissionSection'), 1)}
-      {section(t('teams.authentication.policy.acceptedSection'), 1)}
-      {section(t('teams.authentication.connectionsSection'), 2)}
-      {section(t('teams.authentication.directory.section'), 1)}
+      {held ? (
+        <TeamAuthenticationPolicySections
+          context={held}
+          connections={[]}
+          connectionsCurrent={false}
+          admissionModeApplicability={null}
+          homeMethods={[]}
+          homeMethodsCurrent={false}
+        />
+      ) : (
+        <>
+          <ItemGroup
+            title={t('teams.authentication.policy.admissionSection')}
+            description={t('teams.authentication.policy.admissionHelp')}
+          >
+            {reserve(1)}
+          </ItemGroup>
+          <ItemGroup
+            title={t('teams.authentication.policy.acceptedSection')}
+            description={t('teams.authentication.policy.acceptedHelp')}
+          >
+            {reserve(1)}
+          </ItemGroup>
+        </>
+      )}
+      <ItemGroup
+        title={t('teams.authentication.connectionsSection')}
+        description={t('teams.authentication.connectionsDescription')}
+      >
+        {reserve(connections.rows, connections.lines)}
+      </ItemGroup>
+      <ItemGroup
+        title={t('teams.authentication.directory.section')}
+        description={t('teams.authentication.directory.overviewSubtitle')}
+      >
+        {held?.team.directoryMembership === null ? (
+          <DirectoryEmptyLine />
+        ) : reserve(1)}
+      </ItemGroup>
     </>
+  );
+}
+
+/** A Team without a directory: one quiet line naming the state and what adding one does, beside "+ Add source". */
+function DirectoryEmptyLine() {
+  return (
+    <SurfaceStateCard
+      testID="team-authentication-directory"
+      kind="empty"
+      size="line"
+      title={t('teams.authentication.directory.empty')}
+      reason={t('teams.authentication.policy.admissionNeeds.directory')}
+    />
   );
 }
 

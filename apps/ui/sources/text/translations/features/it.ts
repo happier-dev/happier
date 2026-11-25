@@ -17077,6 +17077,10 @@ const italian: TeamsTranslationRoot = {
                     teamConnectionRequired: "Aggiungi prima una connessione di accesso del team.",
                     teamConnectionUnavailable: "Nessuna connessione di accesso del team utilizzabile.",
                 },
+                admissionNeeds: {
+                    connection: "Aggiungine una per far entrare le persone al primo accesso.",
+                    directory: "Aggiungine una perché la directory aggiunga membri.",
+                },
                 acceptedSection: 'Come accedono i membri',
                 acceptedHelp: 'Quale accesso accetta questo team prima di consentire il lavoro del team.',
                 acceptedInherit: 'Usa i criteri dell’Home',

@@ -17013,6 +17013,10 @@ const japanese: TeamsTranslationRoot = {
                     teamConnectionRequired: "先にチームのサインイン接続を追加してください。",
                     teamConnectionUnavailable: "利用可能なチームのサインイン接続がありません。",
                 },
+                admissionNeeds: {
+                    connection: "追加すると、初回サインイン時に参加できるようになります。",
+                    directory: "追加すると、ディレクトリがメンバーを追加します。",
+                },
                 acceptedSection: 'メンバーのサインイン方法',
                 acceptedHelp: 'チームの操作を許可する前に、このチームが受け入れるサインインです。',
                 acceptedInherit: 'Home のポリシーを使う',

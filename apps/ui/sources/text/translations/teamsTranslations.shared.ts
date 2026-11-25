@@ -334,6 +334,10 @@ export const english = {
                     teamConnectionRequired: "Add a Team sign-in connection first.",
                     teamConnectionUnavailable: "No usable Team sign-in connection.",
                 },
+                admissionNeeds: {
+                    connection: "Add one to let people join at first sign-in.",
+                    directory: "Add one to let the directory add members.",
+                },
                 acceptedSection: 'How members sign in',
                 acceptedHelp: 'Which sign-in this Team accepts before Team work is allowed.',
                 acceptedInherit: 'Use the Home policy',

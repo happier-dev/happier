@@ -42,6 +42,12 @@ export type SegmentedChoiceItemProps<T extends string> = Omit<ItemProps, 'rightE
     compact?: boolean;
     /** `inherited`: the value follows a default and draws as an outlined thumb (R8). Default `set`. */
     valueSource?: 'set' | 'inherited';
+    /**
+     * `false` when the page says each unavailable option's prerequisite where it is fixed (its own section's
+     * line beside that section's "+"): the row's line is then the chosen option's description alone, and each
+     * unavailable segment still announces its reason after its name. Default `true`.
+     */
+    reasonsInRow?: boolean;
 }>;
 
 /**
@@ -53,7 +59,7 @@ export type SegmentedChoiceItemProps<T extends string> = Omit<ItemProps, 'rightE
  * the one segmented control, whose default tab semantics belong to view switches.
  */
 export function SegmentedChoiceItem<T extends string>(props: SegmentedChoiceItemProps<T>) {
-    const { options, value, onChange, testIDPrefix, disabled, accessoryLayout = 'adaptive', labelSize, compact, valueSource, ...itemProps } = props;
+    const { options, value, onChange, testIDPrefix, disabled, accessoryLayout = 'adaptive', labelSize, compact, valueSource, reasonsInRow = true, ...itemProps } = props;
     // The shared row rule (plugin-ui): which segments are unavailable and what the row says about them.
     // Core keeps its own hosts (the page/menu `Item` and the sliding-thumb bar) over that one rule.
     const row = React.useMemo(() => resolveHappierSegmentedChoiceRow({ options, value }), [options, value]);
@@ -67,7 +73,7 @@ export function SegmentedChoiceItem<T extends string>(props: SegmentedChoiceItem
     // A composed title (a label node) names the group through the row's accessible name.
     const title = typeof itemProps.title === 'string' ? itemProps.title : itemProps.accessibilityLabel;
     const description = row.description ?? itemProps.subtitle;
-    const unavailableReasons = row.unavailableReasons;
+    const unavailableReasons = reasonsInRow ? row.unavailableReasons : [];
     const subtitle = unavailableReasons.length === 0
         ? description
         : typeof description === 'string' || description == null

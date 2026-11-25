@@ -17102,6 +17102,10 @@ const russian: TeamsTranslationRoot = {
                     teamConnectionRequired: "Сначала добавьте подключение для входа в команду.",
                     teamConnectionUnavailable: "Нет доступного подключения для входа в команду.",
                 },
+                admissionNeeds: {
+                    connection: "Добавьте подключение, чтобы люди присоединялись при первом входе.",
+                    directory: "Добавьте каталог, чтобы он добавлял участников.",
+                },
                 acceptedSection: 'Как входят участники',
                 acceptedHelp: 'Какой вход принимает эта команда, прежде чем разрешить командную работу.',
                 acceptedInherit: 'Использовать политику Home',

@@ -479,4 +479,80 @@ describe('TeamAuthenticationSettingsScreen', () => {
         await screen.pressByTestIdAsync('team-authentication-directory-add');
         expect(routerPushMock).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/authentication/directory`);
     });
+
+    it('says the New members row\'s chosen consequence alone, and each blocked mode\'s prerequisite where it is added', async () => {
+        const screen = await renderAuthentication();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-authentication-directory')).not.toBeNull());
+        // One row, one decision, one description: the chosen mode's consequence, never "Directory: …".
+        const admission = screen.findAllByType(Item).find((node) => node.props.testID === 'team-admission-mode');
+        expect(admission?.props.subtitle).toBe('teams.authentication.policy.admissionInviteOnlyDescription');
+        // Each blocked mode still announces its own reason after its name.
+        expect(screen.findByTestId('team-admission-mode:provisioned')?.props.accessibilityLabel)
+            .toContain('teams.authentication.policy.admissionUnavailableReason.directorySourceRequired');
+        // The prerequisite is said where it is added: its section's line, beside that section's "+".
+        expect(stateLine(screen, 'team-authentication-empty')?.reason)
+            .toBe('teams.authentication.policy.admissionNeeds.connection');
+        expect(stateLine(screen, 'team-authentication-directory')?.reason)
+            .toBe('teams.authentication.policy.admissionNeeds.directory');
+    });
+});
+
+const { Item } = await import('@/components/ui/lists/Item');
+const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+function stateLine(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
+    return screen.findAllByType(SurfaceStateCard).find((node) => node.props.testID === testID)?.props as
+        | Readonly<{ title?: string; reason?: string }> | undefined;
+}
+const { ItemGroup } = await import('@/components/ui/lists/ItemGroup');
+const { ItemLoadStateRows } = await import('@/components/ui/lists/ItemLoadStateRows');
+
+describe('the Authentication page while its Team is read', () => {
+    async function heldAuthentication(options: Readonly<{ directoryRow: Partial<Parameters<typeof teamSummaryFixture>[0]> | null }>) {
+        if (options.directoryRow) {
+            const { applyTeamsDirectoryPage } = await import('@/sync/store/teams/teamsSnapshots');
+            const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
+            const { teamDirectoryQueryKeyV1 } = await import('@happier-dev/protocol/teams');
+            const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+            applyTeamsDirectoryPage({
+                scope: createServerAccountScope(resolveServerProfileScopeIdForIdentifier(serverId), 'account-1')!,
+                queryKey: teamDirectoryQueryKeyV1({ v: 1, scope: 'member', archived: 'active' }),
+                items: [teamSummaryFixture({
+                    capabilities: teamCapabilitiesFixture({ manageAuthentication: true }),
+                    ...options.directoryRow,
+                })],
+                observedAt: 1,
+            });
+        }
+        harness.answer(serverId, '/v1/teams/get', { body: teamSummaryFixture(), respondAfter: new Promise<void>(() => {}) });
+        const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId={serverId} teamId="team-1" />);
+        await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/teams/get').length).toBeGreaterThan(0));
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId('team-page-header')).not.toBeNull());
+        return screen;
+    }
+    const sections = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAllByType(ItemGroup)
+        .filter((node) => typeof node.props.title === 'string')
+        .map((node) => [node.props.title, node.props.description]);
+    const PAGE_SECTIONS = [
+        ['teams.authentication.policy.admissionSection', 'teams.authentication.policy.admissionHelp'],
+        ['teams.authentication.policy.acceptedSection', 'teams.authentication.policy.acceptedHelp'],
+        ['teams.authentication.connectionsSection', 'teams.authentication.connectionsDescription'],
+        ['teams.authentication.directory.section', 'teams.authentication.directory.overviewSubtitle'],
+    ];
+
+    it('draws every section with its title and description from the first frame, with one reserved row each, when nothing of the Team is known', async () => {
+        const screen = await heldAuthentication({ directoryRow: null });
+        expect(sections(screen)).toEqual(PAGE_SECTIONS);
+        expect(screen.findAllByType(ItemLoadStateRows).map((node) => node.props.rows ?? 2)).toEqual([1, 1, 1, 1]);
+    });
+
+    it('draws the policy rows the Team summary already holds and reserves only what it does not know', async () => {
+        const screen = await heldAuthentication({ directoryRow: { directoryMembership: null } });
+        expect(sections(screen)).toEqual(PAGE_SECTIONS);
+        // The summary carries the policy, so its rows stand as they will (disabled until the Team answers).
+        const admission = screen.findAllByType(Item).find((node) => node.props.testID === 'team-admission-mode');
+        expect(admission?.props.subtitle).toBe('teams.authentication.policy.admissionInviteOnlyDescription');
+        // No directory in the summary: its one line, not a reserved row. Connections are unknown: one row.
+        expect(stateLine(screen, 'team-authentication-directory')?.title).toBe('teams.authentication.directory.empty');
+        expect(screen.findAllByType(ItemLoadStateRows).map((node) => node.props.rows ?? 2)).toEqual([1]);
+    });
 });

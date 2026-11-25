@@ -16953,6 +16953,10 @@ const simplifiedChinese: TeamsTranslationRoot = {
                     teamConnectionRequired: "请先添加团队登录连接。",
                     teamConnectionUnavailable: "没有可用的团队登录连接。",
                 },
+                admissionNeeds: {
+                    connection: "添加后，用户首次登录时即可加入。",
+                    directory: "添加后，目录会添加成员。",
+                },
                 acceptedSection: '成员如何登录',
                 acceptedHelp: '在允许团队操作之前，这个团队接受哪种登录方式。',
                 acceptedInherit: '使用 Home 策略',

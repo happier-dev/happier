@@ -16953,6 +16953,10 @@ const traditionalChinese: TeamsTranslationRoot = {
                     teamConnectionRequired: "請先新增團隊登入連線。",
                     teamConnectionUnavailable: "沒有可用的團隊登入連線。",
                 },
+                admissionNeeds: {
+                    connection: "新增後，使用者首次登入時即可加入。",
+                    directory: "新增後，目錄會新增成員。",
+                },
                 acceptedSection: '成員如何登入',
                 acceptedHelp: '在允許團隊操作之前，這個團隊接受哪種登入方式。',
                 acceptedInherit: '使用 Home 政策',
