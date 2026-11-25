@@ -75,14 +75,16 @@ export function demoteAskingSessionTarget(presentation: ApprovalFieldsPresentati
 }
 
 /**
- * The Home the approval is on and the viewer's own Account are already said by the page that asks ("Delete this
- * account?" on this Home), so a row naming them reads as filler ("Invoking Home · This Home", "Your Account · Your
- * account"). They keep their exact ids in Technical details (R16-D9). Another Home or another person's Account leads.
+ * The invocation's own context, the Home it runs on (`serverId`) and the Account it runs as (`accountId`), is already
+ * said by the page that asks ("Delete this account?" on this Home), so those rows read as filler ("Invoking Home · This
+ * Home", "Your Account · Your account") and keep their exact ids in Technical details (R16-D9). A Home or Account the
+ * Action acts on (its operand, e.g. `homeServerId`) always stays visible, even when it is this Home or this Account.
  */
+const INVOCATION_CONTEXT_PATHS = new Set(['serverId', 'accountId']);
 export function demoteSelfReferences(presentation: ApprovalFieldsPresentation, approvalServerId: string | null | undefined,
     viewer: Readonly<{ serverId: string; accountId: string }> | null): ApprovalFieldsPresentation {
     if (!approvalServerId) return presentation;
-    const isSelf = (row: ApprovalFieldRow) => row.kind === 'value' && !row.technical && (
+    const isSelf = (row: ApprovalFieldRow) => row.kind === 'value' && !row.technical && INVOCATION_CONTEXT_PATHS.has(row.path) && (
         (row.reference?.kind === 'home' && areServerProfileIdentifiersEquivalent(row.reference.id, approvalServerId))
         || (row.reference?.kind === 'account' && viewer !== null && viewer.accountId === row.reference.id
             && areServerProfileIdentifiersEquivalent(viewer.serverId, approvalServerId)));

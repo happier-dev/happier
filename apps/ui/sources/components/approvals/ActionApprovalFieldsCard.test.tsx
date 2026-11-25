@@ -1072,4 +1072,7 @@ it('keeps the invoking Home and the viewer\'s own Account out of the facts, one 
     expect(shown(demoteSelfReferences(presentation, 'home-b', { serverId: 'home-b', accountId: 'other' }).rows))
         .toEqual(['home', 'account']);
     expect(shown(demoteSelfReferences(presentation, 'home-a', { serverId: 'home-a', accountId: 'viewer' }).rows)).toEqual([]);
+    // A Home the Action acts on is its operand, not the invocation context: it stays even when it is this Home.
+    const operand = describeApprovalActionFields({ actionId: 'home.reachNudge.dismiss', actionArgs: { homeServerId: 'home-a' } });
+    expect(shown(demoteSelfReferences(operand, 'home-a', { serverId: 'home-a', accountId: 'viewer' }).rows)).toEqual(['home']);
 });
