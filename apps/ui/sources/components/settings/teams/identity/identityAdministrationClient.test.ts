@@ -9,7 +9,9 @@ import {
     HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1,
     TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
 } from '@happier-dev/protocol/changes';
-import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { TeamExternalGroupBindingV1Schema } from '@happier-dev/protocol/teams';
+import { createDeferred, createRootLayoutFeaturesResponse, findTestInstanceByTypeContainingText, renderHook, renderScreen, standardCleanup, teamGroupFixture } from '@/dev/testkit';
+import type { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 import { useManagedIdentityProviders } from '@/components/settings/home/identity/useManagedIdentityProviders';
 import { useManagedGitHubApps } from '@/components/settings/home/githubApps/useManagedGitHubApps';
 import { useIdentityAdministration } from './useIdentityAdministration';
@@ -92,6 +94,26 @@ function tokenForSub(sub: string): string {
         .replaceAll('/', '_')
         .replaceAll('=', '');
     return `e30.${payload}.signature`;
+}
+
+type RuntimeRequest = Parameters<typeof runtimeFetchWithServerReachability>[0];
+
+function respondToIdentityRequests(responses: Readonly<Record<string, unknown>>) {
+    runtimeFetchMock.mockImplementation(async ({ url, init }: RuntimeRequest) => {
+        const route = `${init.method} ${new URL(url).pathname}`;
+        if (route === 'GET /v1/features') {
+            return Response.json(createRootLayoutFeaturesResponse({ features: { workflows: { enabled: false } } }));
+        }
+        if (route in responses) return Response.json(responses[route]);
+        return Response.json({ error: 'not_found' }, { status: 404 });
+    });
+}
+
+function identityRequests() {
+    return runtimeFetchMock.mock.calls.map(([raw]) => {
+        const { url, init }: RuntimeRequest = raw;
+        return { url, method: init.method };
+    });
 }
 
 function connection(enabled: boolean) {
@@ -277,7 +299,9 @@ describe('createIdentityAdministrationClient', () => {
         expect(screen.findHostByTestId('team-identity-workos-directory')).toBeNull();
         const header = screen.findHostByTestId('identity-connection-header');
         expect(header).not.toBeNull();
-        expect(header?.findAll((node) => typeof node.type === 'string' && node.props.children === 'Acme').length).toBeGreaterThan(0);
+        const title = header && findTestInstanceByTypeContainingText(header, 'Text', 'Acme');
+        expect(title?.props).toMatchObject({ accessibilityRole: 'header', 'aria-level': 1 });
+        expect(title?.children).toEqual(['Acme']);
         expect(screen.findByTestId('identity-connection-status')).toBeNull();
         expect(screen.findByTestId('identity-connection-mode')).toBeNull();
     });
@@ -726,9 +750,9 @@ describe('createIdentityAdministrationClient', () => {
             name: 'Home A',
         })).id;
         const scope = createServerAccountScope(serverId, 'account-1')!;
-        runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({
-            connection: connection(false),
-        }), { status: 200 }));
+        respondToIdentityRequests({
+            'POST /v1/teams/identity/connections/disable': { connection: connection(false) },
+        });
 
         const result = await createIdentityAdministrationClient(scope).execute(
             'teams.identity.connections.disable',
@@ -736,8 +760,11 @@ describe('createIdentityAdministrationClient', () => {
         );
 
         expect(result).toEqual({ ok: true, value: { connection: connection(false) } });
-        const request = runtimeFetchMock.mock.calls[0]?.[0];
-        expect(request?.url).toBe('https://home-a.example/v1/teams/identity/connections/disable');
+        expect(identityRequests()).toEqual([
+            { url: 'https://home-a.example/v1/features', method: 'GET' },
+            { url: 'https://home-a.example/v1/teams/identity/connections/disable', method: 'POST' },
+        ]);
+        const request = runtimeFetchMock.mock.calls.at(-1)?.[0];
         expect(JSON.parse(request?.init?.body ?? 'null')).toEqual({
             v: 1,
             teamId: 'team-1',
@@ -816,8 +843,15 @@ describe('createIdentityAdministrationClient', () => {
             },
         });
         const { Modal } = await import('@/modal');
-        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
-        runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({ connection: connection(false) }), { status: 200 }));
+        vi.mocked(Modal.confirm).mockImplementationOnce(async () => {
+            expect(identityRequests()).toEqual([
+                { url: 'https://home-approval.example/v1/features', method: 'GET' },
+            ]);
+            return true;
+        });
+        respondToIdentityRequests({
+            'POST /v1/teams/identity/connections/disable': { connection: connection(false) },
+        });
         const onApprovalPending = vi.fn();
         const result = await createIdentityAdministrationClient(scope, { onApprovalPending }).execute(
             'teams.identity.connections.disable',
@@ -825,8 +859,11 @@ describe('createIdentityAdministrationClient', () => {
         );
 
         expect(result).toEqual({ ok: true, value: { connection: connection(false) } });
-        expect(Modal.confirm).toHaveBeenCalled();
-        expect(runtimeFetchMock.mock.calls[0]?.[0]?.url).toBe('https://home-approval.example/v1/teams/identity/connections/disable');
+        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        expect(identityRequests()).toEqual([
+            { url: 'https://home-approval.example/v1/features', method: 'GET' },
+            { url: 'https://home-approval.example/v1/teams/identity/connections/disable', method: 'POST' },
+        ]);
         expect(onApprovalPending).not.toHaveBeenCalled();
     });
 
@@ -856,6 +893,14 @@ describe('createIdentityAdministrationClient', () => {
                 },
             },
         });
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(false).mockResolvedValueOnce(false);
+        respondToIdentityRequests({
+            'POST /v1/session-access/principals/resolve': {
+                v: 1,
+                principals: [{ kind: 'team', teamId: 'team-1', name: 'Engineering' }],
+            },
+        });
         const onApprovalPending = vi.fn();
         const client = createIdentityAdministrationClient(scope, { onApprovalPending });
 
@@ -876,8 +921,17 @@ describe('createIdentityAdministrationClient', () => {
 
         expect(sourceResult).toMatchObject({ ok: false, failure: { code: 'approval_canceled' } });
         expect(mappingResult).toMatchObject({ ok: false, failure: { code: 'approval_canceled' } });
+        expect(Modal.confirm).toHaveBeenCalledTimes(2);
         expect(onApprovalPending).not.toHaveBeenCalled();
-        expect(runtimeFetchMock).not.toHaveBeenCalled();
+        expect(identityRequests()).toEqual([
+            { url: 'https://home-directory-approval.example/v1/features', method: 'GET' },
+            { url: 'https://home-directory-approval.example/v1/session-access/principals/resolve', method: 'POST' },
+        ]);
+        const principalRead = runtimeFetchMock.mock.calls.at(-1)?.[0];
+        expect(JSON.parse(principalRead?.init.body ?? 'null')).toEqual({
+            v: 1,
+            subjects: [{ kind: 'team', teamId: 'team-1' }],
+        });
     });
 
     it('reads fresh directory removal impact through the canonical public Action', async () => {
@@ -921,30 +975,40 @@ describe('createIdentityAdministrationClient', () => {
             name: 'Group mapping Home',
         })).id;
         const scope = createServerAccountScope(serverId, 'account-1')!;
-        runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({
+        const binding = TeamExternalGroupBindingV1Schema.parse({
             v: 1,
             id: 'binding-1',
             teamId: 'team-1',
             owner: { kind: 'directory_source', directorySourceId: 'source-1' },
             externalGroupId: 'external-1',
             mode: 'native_target',
-            target: { teamGroupId: 'group-1', name: 'Engineering', archivedAt: null },
-        }), { status: 200 }));
+            target: { teamGroupId: 'group-1', name: teamGroupFixture({ name: 'Engineering' }).name, archivedAt: null },
+        });
+        respondToIdentityRequests({ 'PUT /v1/teams/team-1/external-group-bindings': binding });
+        const input = {
+            v: 1,
+            teamId: 'team-1',
+            owner: { kind: 'directory_source', directorySourceId: 'source-1' },
+            externalGroupId: 'external-1',
+            target: { kind: 'native_target', teamGroupId: 'group-1' },
+        } as const;
 
         const result = await createIdentityAdministrationClient(scope).executeExternalGroupBinding(
             'teams.externalGroupBindings.set',
-            {
-                v: 1,
-                teamId: 'team-1',
-                owner: { kind: 'directory_source', directorySourceId: 'source-1' },
-                externalGroupId: 'external-1',
-                target: { kind: 'native_target', teamGroupId: 'group-1' },
-            },
+            input,
         );
 
-        expect(result.ok).toBe(true);
-        const request = runtimeFetchMock.mock.calls[0]?.[0];
-        expect(request?.url).toBe('https://home-group-mapping.example/v1/teams/team-1/external-group-bindings');
-        expect(request?.init?.method).toBe('PUT');
+        expect(result).toEqual({ ok: true, value: binding });
+        expect(identityRequests()).toEqual([
+            { url: 'https://home-group-mapping.example/v1/features', method: 'GET' },
+            { url: 'https://home-group-mapping.example/v1/teams/team-1/external-group-bindings', method: 'PUT' },
+        ]);
+        const request = runtimeFetchMock.mock.calls.at(-1)?.[0];
+        expect(JSON.parse(request?.init.body ?? 'null')).toEqual({
+            v: input.v,
+            owner: input.owner,
+            externalGroupId: input.externalGroupId,
+            target: input.target,
+        });
     });
 });
