@@ -3,8 +3,57 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema, FeaturesResponseSchema } from '@happier-dev/protocol';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
+import { createCliActionExecutor } from './createCliActionExecutor';
+import type { ActionExecutorContext } from '@happier-dev/protocol';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it.each([
+    { name: 'owner', accountId: 'owner', actorAccountId: 'owner', allowed: true },
+    { name: 'Manage guest', accountId: 'guest', actorAccountId: 'guest', allowed: false },
+    { name: 'guest with owner attribution', accountId: 'owner', actorAccountId: 'guest', allowed: false },
+    { name: 'foreign runtime Account', accountId: 'guest', allowed: false },
+])('admits $name before handing installed Account Review services to a Workflow', async ({ accountId, actorAccountId, allowed }) => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const executor = createCliActionExecutor({ token, credentials: { token, encryption: null },
+        sessionId: '', mode: 'plain', ctx: null, serverId: 'home',
+        pluginActionExecutionOwner: 'current_process',
+        actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+    let current = true;
+    const verifyMachineAdmissionCurrent = vi.fn(async () => current);
+    const context: ActionExecutorContext = { surface: 'cli', authority: 'account_automation', runtimeAccountId: accountId,
+        ...(actorAccountId ? { machineAdmission: { actorAccountId, custodianAccountId: 'owner', machineId: 'machine',
+            installationId: 'installation', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent } : {}) };
+    const get = vi.spyOn(axios, 'get').mockResolvedValue({ status: 404, data: { error: 'not_found' } });
+    const direct = await executor.execute('reviews.comments.list', { reviewId: 'missing-review' }, context);
+    if (allowed) {
+        expect(direct, JSON.stringify(direct)).toMatchObject({ ok: false, error: 'review_comment_encryption_material_unavailable' });
+        expect(get).toHaveBeenCalled();
+    } else {
+        expect(direct, JSON.stringify(direct)).toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied' });
+        expect(get).not.toHaveBeenCalled();
+    }
+    if (!allowed) {
+        await expect(executor.prepare!('reviews.comments.list', { reviewId: 'missing-review' }, context))
+            .resolves.toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'review_comment_permission_denied' } });
+        expect(get).not.toHaveBeenCalled();
+    }
+    verifyMachineAdmissionCurrent.mockClear();
+    const services = await executor.resolveReviewServices!(context);
+    if (!allowed) {
+        expect(services).toEqual({});
+        return;
+    }
+    expect(services.records).toBeDefined();
+    expect(services.comments).toBeTypeOf('function');
+    // The port has been admitted. Later finite work consumes it without a new
+    // Machine admission check after withdrawal.
+    current = false;
+    await expect(services.records!.read('missing-review')).resolves.toBeNull();
+    await expect(services.comments!({ actionId: 'reviews.comments.list', input: { reviewId: 'missing-review' } }))
+        .rejects.toThrow('review_comment_encryption_material_unavailable');
+    expect(verifyMachineAdmissionCurrent).toHaveBeenCalledTimes(1);
+});
 
 it('keeps host Review services on their captured Home with refreshed Account credentials', async () => {
     const serverApiUrl = 'https://review-home.example.test';

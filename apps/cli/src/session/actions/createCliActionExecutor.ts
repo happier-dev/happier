@@ -51,6 +51,8 @@ import { isManagedControllerCodecRootV1, openManagedControllerActionCodecV1 } fr
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readRetainedVerifiedExternalActionRequester, retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { ReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { canUseLocalRuntimeAccount } from '@/daemon/lifecycle/requesterWorkAttribution';
 
 type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>[0]
   & CliTranscriptActionExecutorOptions
@@ -198,7 +200,13 @@ export function createCliActionHost(params: CliActionExecutorParams):
     scopeKey: resolveAccountSettingsScopeKeyForToken(params.token),
   });
   const runtimeAccountId = readAccountIdFromToken(params.token) ?? undefined;
-  const requesterPrivateEffectAuthorityFailure = (actionId: ActionId, input: unknown, context: ActionExecutorContext | undefined) => {
+  const requesterPrivateEffectAuthorityFailure = async (actionId: ActionId, input: unknown, context: ActionExecutorContext | undefined) => {
+    if ((ACTION_ID_FAMILIES_V1.review_comments.some(id => id === actionId) || actionId === 'review.apply')
+      && !await canUseLocalRuntimeAccount(context, runtimeAccountId ?? null, params.serverId)) {
+      // The raw comment port spends this executor's Account credentials. Machine
+      // placement or requester attribution cannot lend that Account to a guest.
+      return { ok: false as const, errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' };
+    }
     const binding = context?.externalActionExecutionAuthorization?.binding;
     if (binding && binding.accountId !== runtimeAccountId && binding.accountEncryptionMode === 'e2ee'
       && (actionId === 'template.instantiate' || actionId === 'session.spawn_new')) {
@@ -636,6 +644,7 @@ export function createCliActionHost(params: CliActionExecutorParams):
     observeRecordedApprovalExecution: harness.observeRecordedApprovalExecution,
     prepareSessionSpawnNewInput: harness.deps.prepareSessionSpawnNewInput,
     resolveReviewServices: async context => {
+      if (!await canUseLocalRuntimeAccount(context, runtimeAccountId ?? null, params.serverId)) return {};
       const resolvedContext = await resolveContext(context);
       if (!resolvedContext) return {};
       const comments = harness.deps.reviewCommentAction;
@@ -649,7 +658,7 @@ export function createCliActionHost(params: CliActionExecutorParams):
     },
     prepare: async (actionId, input, context, options) => {
       const denied = filesystemRequesterAuthorityFailure(actionId, context)
-        ?? requesterPrivateEffectAuthorityFailure(actionId, input, context);
+        ?? await requesterPrivateEffectAuthorityFailure(actionId, input, context);
       if (denied) return { kind: 'settled' as const, result: denied };
       const resolvedContext = await measureActionStartPhaseV1(context, 'cli_context', () => resolveContext(context));
       if (!resolvedContext) return { kind: 'settled' as const,
@@ -669,7 +678,7 @@ export function createCliActionHost(params: CliActionExecutorParams):
     },
     execute: async (actionId, input, context) => {
       const denied = filesystemRequesterAuthorityFailure(actionId, context)
-        ?? requesterPrivateEffectAuthorityFailure(actionId, input, context);
+        ?? await requesterPrivateEffectAuthorityFailure(actionId, input, context);
       if (denied) return denied;
       const resolvedContext = await measureActionStartPhaseV1(context, 'cli_context', () => resolveContext(context));
       if (!resolvedContext) return actionStartTargetUnavailableV1(context, 'cli_context', 'requester_projection_unavailable');
