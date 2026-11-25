@@ -425,18 +425,21 @@ describe('Claude handoff bundle leaf', () => {
         );
     });
 
-    it('projects the public launch hints through the canonical handoff adapter', async () => {
+    it('imports into an empty Claude config root and returns the public launch hints', async ({ onTestFinished }) => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-handoff-adapter-'));
+        onTestFinished(() => rm(root, { recursive: true, force: true }));
         const targetPath = join(root, 'workspace');
         const configDir = join(root, '.claude-target');
-        await mkdir(targetPath, { recursive: true });
-        vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', configDir);
+        await Promise.all([mkdir(targetPath), mkdir(configDir)]);
+        vi.stubEnv('CLAUDE_CONFIG_DIR', configDir);
+        const transcript = '{"type":"assistant","text":"imported"}\n';
+        const projectId = resolveClaudeProjectId(targetPath);
 
         const result = await claudeHandoffSurface.importBundle({
             bundle: {
                 agentId: 'claude',
                 remoteSessionId: 'session-adapter',
-                transcriptBase64: Buffer.from('{"type":"assistant","text":"imported"}\n', 'utf8').toString('base64'),
+                transcriptBase64: Buffer.from(transcript, 'utf8').toString('base64'),
             },
             targetDirectory: targetPath,
         }, handoffContext());
@@ -448,7 +451,7 @@ describe('Claude handoff bundle leaf', () => {
                 source: {
                     kind: 'claudeConfig',
                     configDir,
-                    projectId: resolveClaudeProjectId(targetPath),
+                    projectId,
                 },
                 launch: {
                     directory: targetPath,
@@ -460,6 +463,35 @@ describe('Claude handoff bundle leaf', () => {
                 },
             },
         });
+        await expect(readFile(join(configDir, 'projects', projectId, 'session-adapter.jsonl'), 'utf8'))
+            .resolves.toBe(transcript);
+    });
+
+    it('preserves a regular file at the Claude projects path and returns a typed conflict', async ({ onTestFinished }) => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-handoff-projects-file-'));
+        onTestFinished(() => rm(root, { recursive: true, force: true }));
+        const configDir = join(root, '.claude-target');
+        const projectsPath = join(configDir, 'projects');
+        await mkdir(configDir);
+        await writeFile(projectsPath, 'preserve', 'utf8');
+        vi.stubEnv('CLAUDE_CONFIG_DIR', configDir);
+
+        const result = await claudeHandoffSurface.importBundle({
+            bundle: {
+                agentId: 'claude',
+                remoteSessionId: 'session-projects-file',
+                transcriptBase64: Buffer.from('{}\n', 'utf8').toString('base64'),
+            },
+            targetDirectory: root,
+        }, handoffContext());
+
+        expect(result).toMatchObject({
+            ok: false,
+            code: 'target_identity_conflict',
+            retryable: false,
+            diagnostics: [{ code: 'not_directory', details: { pathKind: 'claude_projects_dir' } }],
+        });
+        await expect(readFile(projectsPath, 'utf8')).resolves.toBe('preserve');
     });
 
     it('preserves nonblank vendor session ids exactly while rejecting unsafe or absent identities', async () => {
