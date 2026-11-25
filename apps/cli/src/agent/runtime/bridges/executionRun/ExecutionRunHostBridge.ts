@@ -1668,7 +1668,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     // An admitted Account Action can return before this lazy runtime opens.
     // Keep its private requester ports with the existing runtime lifetime,
     // including cold resume; currentness still checks the admitted authority.
-    const releaseRequester = readRequesterAccountActionContext(opts.projectLaunchContext?.ingress?.callerInputAuthorization)?.retain();
+    const releaseRequester = opts.projectLaunchContext?.forRunLifetime ? undefined
+      : readRequesterAccountActionContext(opts.projectLaunchContext?.ingress?.callerInputAuthorization)?.retain();
     const retainedRuntime = releaseRequester ? withExecutionRunHostRuntimeCleanup(runtime, releaseRequester) : runtime;
     // Preserve runtime accessors and the host's pending-permission projection.
     return Object.create(retainedRuntime, {
@@ -2404,11 +2405,35 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     } : this.bindExecutionRunRuntimeSnapshot(captureAccount ? {
       ...resolution,
       releaseAccountSnapshot: async () => { await admittedAccount?.release(); },
-    } : resolution, options => this.createExecutionRunRuntime({ ...options,
-      nativeSandbox,
-      resolveAccountSettingsSnapshot: admittedAccount?.read ?? accountSnapshotResolver,
-      ...(params.projectSetupOperation ? { projectSetupOperation: params.projectSetupOperation } : {}),
-      ...(params.projectLaunchContext ? { projectLaunchContext: params.projectLaunchContext } : {}) }));
+    } : resolution, options => {
+      const launch = params.projectLaunchContext;
+      const authorization = admittedAccount?.authorization;
+      const ingress = launch?.ingress;
+      const projectLaunchContext: ExecutionRunProjectLaunchContext | undefined = launch && ingress && authorization ? {
+        ...launch,
+        forRunLifetime: signal => {
+          // The Start already selected the requester and Machine. Project/setup
+          // consume that selection under the Run's signal. New Account reads
+          // use the retained ports and their own credential checks.
+          const isCurrent = async () => !signal.aborted;
+          const bindActionContext = <T extends NonNullable<typeof ingress.localActionContext>>(context: T) => ({
+            ...context, signal, externalActionExecutionAuthorization: authorization, callerInputAuthorization: authorization,
+            verifyMachineAdmissionCurrent: isCurrent, operationProgress: undefined, operationOwnerUpdate: undefined,
+            operationAcceptance: undefined, operationCancellation: undefined, operationReview: undefined,
+          });
+          return { ...launch, isCurrent, requester: undefined, operation: undefined,
+            ingress: { ...ingress, signal, verifyMachineAdmissionCurrent: isCurrent, callerInputAuthorization: authorization,
+              requesterSessionBootstrap: undefined,
+              ...(ingress.localActionContext ? { localActionContext: bindActionContext(ingress.localActionContext) } : {}) },
+            ...(launch.setupAutostart ? { setupAutostart: { ...launch.setupAutostart, callerInputAuthorization: authorization,
+              context: bindActionContext(launch.setupAutostart.context) } } : {}) };
+        },
+      } : launch;
+      return this.createExecutionRunRuntime({ ...options, nativeSandbox,
+        resolveAccountSettingsSnapshot: admittedAccount?.read ?? accountSnapshotResolver,
+        ...(params.projectSetupOperation && !projectLaunchContext?.forRunLifetime ? { projectSetupOperation: params.projectSetupOperation } : {}),
+        ...(projectLaunchContext ? { projectLaunchContext } : {}) });
+    });
     try {
       if (params.intent === 'voice_agent') params.signal?.throwIfAborted();
       const roleSessionMetadata = this.sessionInteractionHost?.session.getMetadataSnapshot();
@@ -2574,6 +2599,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
           // Start awaits its admission callbacks in sequence. The second
           // consultation reuses the custody acquired by the first.
           admittedAccount ??= await captureAccount(preparedParams.signal);
+          return admittedAccount.authorization;
         } : this.admitStart,
         recoverRetainedRuns: retained ? undefined : this.recoverRetainedRuns.bind(this),
         params: preparedParams,

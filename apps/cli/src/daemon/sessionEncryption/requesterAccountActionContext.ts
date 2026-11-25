@@ -47,8 +47,9 @@ export type RequesterAccountActionContext = Readonly<{
   subscribeEnvironmentAccess(listener: (event: RequesterEnvironmentAccessObservation) => void): () => void;
   /** Retained relationship custody needs an installed lifetime owner independent of finite ingress. */
   retainCustody?: (signal?: AbortSignal) => RetainedRequesterAccountCustody;
-  /** An admitted operation replaces its transport lifetime without spending a new Home admission. */
-  retainForOperation?: (signal: AbortSignal) => Promise<Readonly<{
+  /** An admitted operation replaces its transport lifetime without spending a new Home admission.
+   * A Run binds its cancellation signal when it opens the retained ports. */
+  retainForOperation?: (signal?: AbortSignal) => Promise<Readonly<{
     authorization: ExternalActionExecutionAuthorizationV1;
     dispose(): Promise<void>;
   }>>;

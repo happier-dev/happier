@@ -181,21 +181,33 @@ export function createExecutionRunAccountSettingsSnapshotResolver(input: Readonl
         const retainCustody = requester.retainCustody;
         if (!retainCustody) return read;
         const captureForDetachedRun: NonNullable<AccountSettingsSnapshotResolver['captureForDetachedRun']> = async signal => {
-            if (!await isCurrent(signal)) throw authorizationChanged('requester_not_current');
+            if (!await isCurrent(signal ?? ingress.signal)) throw authorizationChanged('requester_not_current');
             if (!requester.savedSecretOperationContext.readSnapshot()) throw authorizationChanged('requester_operation_not_current');
-            // Capture the already opened snapshot. Only a new catalog or secret
-            // demand needs the retained requester operation's live read ports.
-            const custody = retainCustody();
-            let snapshot = custody.savedSecretOperationContext.readSnapshot();
-            const current = (signal?: AbortSignal) => withCurrentHost(custody.isCurrent, signal);
-            return {
-                read: createRequesterSnapshotReader({ serverHttpBaseUrl: requester.serverHttpBaseUrl,
-                    savedSecretOperationContext: custody.savedSecretOperationContext,
-                    refreshAccountSettings: custody.refreshAccountSettings, isCurrent: current,
-                    readAdmittedSnapshot: () => snapshot,
-                    readAgentExecutionContext: signal => readAgentExecutionContext(current, signal) }),
-                release: async () => { snapshot = null; await custody.release(); },
-            };
+            // Share one retain between the settings reader and the installed
+            // Account's Project ports. The detached Run supplies later signals.
+            const retained = await requester.retainForOperation?.();
+            const projected = readRequesterAccountActionContext(retained?.authorization);
+            const custody = retained ? projected : retainCustody();
+            const release = retained?.dispose ?? (custody && 'release' in custody ? custody.release : undefined);
+            try {
+                signal?.throwIfAborted();
+                ingress.signal.throwIfAborted();
+                if (!custody || !release) throw authorizationChanged('requester_not_current');
+                let snapshot = custody.savedSecretOperationContext.readSnapshot();
+                const current = (signal?: AbortSignal) => withCurrentHost(custody.isCurrent, signal);
+                return {
+                    read: createRequesterSnapshotReader({ serverHttpBaseUrl: requester.serverHttpBaseUrl,
+                        savedSecretOperationContext: custody.savedSecretOperationContext,
+                        refreshAccountSettings: custody.refreshAccountSettings, isCurrent: current,
+                        readAdmittedSnapshot: () => snapshot,
+                        readAgentExecutionContext: signal => readAgentExecutionContext(current, signal) }),
+                    ...(retained ? { authorization: retained.authorization } : {}),
+                    release: async () => { snapshot = null; await release(); },
+                };
+            } catch (error) {
+                await release?.();
+                throw error;
+            }
         };
         return Object.assign(read, { captureForDetachedRun });
     };

@@ -204,7 +204,11 @@ export type BackendExecutionSurfaces = Readonly<{
 }>;
 
 /** Captured admitted requester and original operation; never authored Run input. */
-export type ExecutionRunProjectLaunchContext = Omit<Parameters<typeof import('@/daemon/agentRuntime/runnerAgentProjectLaunch').createRunnerAgentProjectLaunchInvocation>[0], 'cwd' | 'signal' | 'sessionId'>;
+type ExecutionRunProjectLaunchPorts = Omit<Parameters<typeof import('@/daemon/agentRuntime/runnerAgentProjectLaunch').createRunnerAgentProjectLaunchInvocation>[0], 'cwd' | 'signal' | 'sessionId'>;
+export type ExecutionRunProjectLaunchContext = ExecutionRunProjectLaunchPorts & Readonly<{
+    /** Binds an admitted detached request to the native Run occurrence. */
+    forRunLifetime?: (signal: AbortSignal) => ExecutionRunProjectLaunchPorts;
+}>;
 
 export type CreateCliExecutionRunBackendParams = Readonly<{
     functionTools?: AgentSessionOpenRequest['functionTools'];

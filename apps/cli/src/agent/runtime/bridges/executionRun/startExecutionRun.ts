@@ -2,6 +2,7 @@ import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/se
 import { createHash, randomUUID } from 'node:crypto';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { toVoiceAgentStartError } from '@/agent/voice/agent/voiceAgentStartError';
+import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 import type { SessionId } from '@/agent/core/AgentMessage';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
@@ -289,7 +290,7 @@ type StartExecutionRunArgs = Readonly<{
   sendAcp: SendAcp;
   streamedTranscriptSession: StreamedTranscriptWriterSession | null;
   /** Current daemon admission, evaluated in the Run's actual host process. */
-  admitStart?: () => Promise<void>;
+  admitStart?: () => Promise<ExternalActionExecutionAuthorizationV1 | void>;
   /** Restore request-bound identities before their existing-Run lookup. */
   recoverRetainedRuns?: () => Promise<void>;
   createRuntime: (opts: {
@@ -387,13 +388,17 @@ async function startExecutionRunInAccountScope(args: StartExecutionRunArgs): Pro
   // pending start through that transport, without consuming Run capacity.
   const releasePreparation = args.budgetRegistry?.retainExecutionRunPreparation(runId, args.params.intent, args.params.requesterWorkAttributionV1);
   try {
+    let admittedAuthorization: ExternalActionExecutionAuthorizationV1 | void;
     try {
-      await args.admitStart?.();
+      admittedAuthorization = await args.admitStart?.();
     } catch (error) {
       throw markExecutionRunStartFailure(error, 'noRunCreated');
     }
     try {
-      return await startAdmittedExecutionRun(args, runId, requestBoundRunId);
+      return await (admittedAuthorization
+        ? runWithScmAccountScope(admittedAuthorization.binding.accountId,
+          () => startAdmittedExecutionRun(args, runId, requestBoundRunId, admittedAuthorization), admittedAuthorization)
+        : startAdmittedExecutionRun(args, runId, requestBoundRunId));
     } catch (error) {
       // Start acknowledges creation, not successful execution or initial-input
       // delivery. Keep a known Run observable even when its initialization fails.
@@ -409,18 +414,20 @@ async function startExecutionRunInAccountScope(args: StartExecutionRunArgs): Pro
 
 async function startAdmittedExecutionRun(
   args: StartExecutionRunArgs, runId: string, requestBoundRunId: string | null,
+  admittedAuthorization?: ExternalActionExecutionAuthorizationV1,
 ): Promise<ExecutionRunStartResult> {
   const native = await args.params.projectLaunchContext?.prepareNativeOperation?.(
     args.params.cwd ?? sessionWorkingDirectory(), args.params.signal ?? new AbortController().signal, runId);
   return await (native?.memberIdentity
     ? runWithScmComparisonOperations(createMemberScmComparisonOperations({ native,
       signal: native.signal }),
-      () => startAdmittedExecutionRunInWorkspace(args, runId, requestBoundRunId))
-    : startAdmittedExecutionRunInWorkspace(args, runId, requestBoundRunId));
+      () => startAdmittedExecutionRunInWorkspace(args, runId, requestBoundRunId, admittedAuthorization))
+    : startAdmittedExecutionRunInWorkspace(args, runId, requestBoundRunId, admittedAuthorization));
 }
 
 async function startAdmittedExecutionRunInWorkspace(
   args: StartExecutionRunArgs, runId: string, requestBoundRunId: string | null,
+  admittedAuthorization?: ExternalActionExecutionAuthorizationV1,
 ): Promise<ExecutionRunStartResult> {
   if (args.params.sessionId === null) {
     const authority = resolveExecutionRunInputAuthority({ permissionMode: args.params.permissionMode,
@@ -750,13 +757,14 @@ async function startAdmittedExecutionRunInWorkspace(
       runClass: args.params.runClass,
       accountDefault: args.params.accountSettings?.executionRunsNotifyParentOnCompletionDefault === true,
     });
+  const executionAuthorization = admittedAuthorization
+    ?? args.params.projectLaunchContext?.ingress?.callerInputAuthorization;
 
   try {
     args.runs.set(runId, {
       runId,
       ...(args.params.actionInvocation ? { actionInvocation: args.params.actionInvocation } : {}),
-      ...(args.params.projectLaunchContext?.ingress?.callerInputAuthorization
-        ? { executionAuthorization: args.params.projectLaunchContext.ingress.callerInputAuthorization } : {}),
+      ...(executionAuthorization ? { executionAuthorization } : {}),
       ...(readScmComparisonOperations() ? { scmComparisonOperations: readScmComparisonOperations() } : {}),
       ...(args.params.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: args.params.requesterWorkAttributionV1 } : {}),
       callId,

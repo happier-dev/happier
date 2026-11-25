@@ -564,7 +564,8 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                         const projectInvocations = new Set<ReturnType<typeof createRunnerAgentProjectLaunchInvocation>>();
                         const createRunInvocationServices: CreateAgentInvocationServices | undefined = baseCreateRunInvocationServices
                             ? async input => {
-                                const captured = options.projectLaunchContext;
+                                const project = options.projectLaunchContext;
+                                const captured = project?.forRunLifetime?.(input.signal) ?? project;
                                 const projectSetupOperation = options.resolveProjectSetupOperation?.() ?? captured?.operation ?? options.projectSetupOperation;
                                 const runInput = options.readApprovalProfileSelection
                                     ? { ...input, readApprovalProfileSelection: options.readApprovalProfileSelection } : input;

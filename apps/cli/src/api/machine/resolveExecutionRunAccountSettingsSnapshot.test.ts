@@ -25,6 +25,11 @@ import { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/Exe
 import { createTestExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/testkit';
 import { resolveCliEngineRegistry } from '@/agent/runtime/registry/engineRegistry';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createInstalledProjectAgentLaunchFixture } from '@/daemon/testkit/installedProjectAgentLaunchFixture';
+import { createRunnerAgentProjectLaunchInvocation } from '@/daemon/agentRuntime/runnerAgentProjectLaunch';
+import type { ExecutionRunProjectLaunchContext } from '@/agent/runtime/registry/engineRegistryTypes';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { authorizePluginExecLaunchForHost, createStablePluginExecService, issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
 
 // Load the publication policy before replacing its filesystem boundary.
 const { createBundledPluginPublicationFsFixture } = await vi.hoisted(async () =>
@@ -300,12 +305,13 @@ describe('Machine Execution Run owner account snapshot', () => {
             await prepared.dispose();
         }
     });
-    it.each(['completed Run', 'cancelled Run', 'failed Start'] as const)(
+    it.each(['completed Run', 'cancelled Run', 'failed Start', 'daemon shutdown'] as const)(
         'retires requester custody exactly once after a detached Machine Action %s', async outcome => {
             const serverHttpBaseUrl = `https://${outcome.toLowerCase().replaceAll(' ', '-')}.session-home.test`;
-            const f = await createProjectSessionRuntimeFixture({ serverId: 'session-home', serverUrl: serverHttpBaseUrl,
+            const project = await createInstalledProjectAgentLaunchFixture({ serverId: 'session-home', serverUrl: serverHttpBaseUrl,
                 homeServerIdentityId: 'srv_session_home', accountSettings: { preferredLanguage: 'fr' },
                 machineAccess: { custodianAccountId: 'custodian', role: 'use' } });
+            const { f } = project;
             const machineAdmission = SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: 'requester',
                 custodianAccountId: 'custodian', machineId: 'machine', installationId: f.installation.installationId,
                 role: 'use', encryptionMode: 'plain' });
@@ -317,11 +323,20 @@ describe('Machine Execution Run owner account snapshot', () => {
                 requestId: 'requester-custody-start', requestEnvelopeDigest: 'a'.repeat(43),
                 target: { kind: 'machine', machineId: machineAdmission.machineId },
             } });
-            const retired = vi.fn(async () => {});
-            const requester = await admitRequesterAccountActionContext({ authorization: root,
-                credentials: f.bootstrap.credentials, serverId: 'session-home', serverIdentityId: 'srv_session_home',
+            const request = new AbortController();
+            const purpose = { kind: 'external_action' } as const;
+            const prepared = await prepareRequesterAccountActionContext({
+                authorization: sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
+                    credentials: { token: f.bootstrap.credentials.token, encryption: null, secret: null },
+                    installationPublicKey: decodeBase64(f.installation.publicKey, 'base64url'), randomBytes }),
+                purpose, machineId: machineAdmission.machineId, installationId: machineAdmission.installationId,
+                installationPrivateKey: decodeBase64(f.installation.privateKey, 'base64url'),
+                serverId: 'session-home', serverIdentityId: 'srv_session_home',
                 serverHttpBaseUrl, isCurrent: async () => true, isCustodyCurrent: async () => true,
-                isRetainedCustodyCurrent: async () => f.isHomeCurrent(), onRetire: retired, signal: f.signal });
+                isRetainedCustodyCurrent: async () => f.isHomeCurrent(), signal: request.signal,
+                createExecutor: () => ({ execute: async () => ({ ok: true, result: null }) }),
+            });
+            const requester = readRequesterAccountActionContext(prepared?.authorization);
             if (!requester) throw new Error('Requester admission failed');
 
             const resolver = createExecutionRunAccountSettingsSnapshotResolver({ machineId: machineAdmission.machineId,
@@ -334,19 +349,39 @@ describe('Machine Execution Run owner account snapshot', () => {
                 runtimeOptions: { pluginIds: ['happier.agent.codex'] } });
             const registry = await resolveCliEngineRegistry({ runtimeRegistry: agent.registry });
             const inputDelivered = Promise.withResolvers<void>();
+            const actionSettled = Promise.withResolvers<void>();
             const completeTurn = Promise.withResolvers<void>();
+            let launch: ReturnType<typeof createRunnerAgentProjectLaunchInvocation> | undefined;
+            let runtimeOptions: Readonly<{ projectLaunchContext?: ExecutionRunProjectLaunchContext }> | undefined;
+            const projectOpened = vi.fn();
+            const nativeDisposed = vi.fn();
             const native = createTestExecutionRunHostRuntime({
+                onProvisionRuntime: async () => {
+                    await actionSettled.promise;
+                    const projectContext = runtimeOptions?.projectLaunchContext;
+                    if (!projectContext) throw new Error('Missing Project launch context');
+                    const signal = native.getRuntimeLifetimeSignal();
+                    launch = createRunnerAgentProjectLaunchInvocation({ ...(projectContext.forRunLifetime?.(signal) ?? projectContext),
+                        cwd: project.cwd, signal });
+                    const exec = createStablePluginExecService({ signal, isOccurrenceCurrent: () => true,
+                        resolveExecutable: async () => ({ command: '/installed/agent' }), resolvePath: async () => project.cwd,
+                        prepareAgentNativeLaunch: launch.prepareAgentNativeLaunch });
+                    const result = await authorizePluginExecLaunchForHost(exec, {
+                        executable: { kind: 'systemTool', id: 'fixture.agent' }, cwd: project.cwd,
+                    }, { agentIsolation: null, nativeLaunch: issueAgentNativeLaunchQualifierForHost(exec) });
+                    try { projectOpened(result.env); } finally { await result.release(); }
+                },
                 onSendPrompt: async () => {
                     native.emitMessage({ type: 'model-output', fullText: 'Inspected.' });
                     inputDelivered.resolve();
                 },
                 onWaitForTurnCompletion: () => completeTurn.promise,
                 onCancel: async () => { completeTurn.resolve(); },
-                onDispose: async () => { completeTurn.resolve(); },
+                onDispose: async () => { nativeDisposed(); completeTurn.resolve(); await launch?.disposeProjectAgentLaunch(); },
             });
             // Replace the external Agent runtime only. Engine selection, provider preparation,
             // Start admission and the Run's cleanup still use their real owners.
-            const createNative = vi.fn(() => native);
+            const createNative = vi.fn((options: typeof runtimeOptions) => { runtimeOptions = options; return native; });
             const withNativeBoundary = (engine: Awaited<ReturnType<typeof registry.resolveForBackendId>>) =>
                 engine && { ...engine, engineAdapter: { ...engine.engineAdapter, runtimeCore: {
                     ...engine.engineAdapter.runtimeCore!, createExecutionRunBackend: createNative,
@@ -357,6 +392,7 @@ describe('Machine Execution Run owner account snapshot', () => {
                     withNativeBoundary(await registry.resolveForAgentTarget(target)),
             };
             const capturedReleases: Array<() => Promise<void>> = [];
+            const released = vi.fn();
             const observedResolver: AccountSettingsSnapshotResolver = Object.assign(resolver.bind(null), {
                 forInvocation: (ingress: Parameters<typeof resolver.forInvocation>[0]) => {
                     const read = resolver.forInvocation(ingress);
@@ -366,13 +402,13 @@ describe('Machine Execution Run owner account snapshot', () => {
                     return Object.assign(read, { captureForDetachedRun: async (signal?: AbortSignal) => {
                         const captured = await capture(signal);
                         capturedReleases.push(captured.release);
-                        return captured;
+                        return { ...captured, release: async () => { released(); await captured.release(); } };
                     } });
                 },
             });
             let consultations = 0;
             let clockFailed = false;
-            const bridge = new ExecutionRunHostBridge({ parentProvider: 'codex', cwd: f.directory, happyHomeDir: f.directory,
+            const bridge = new ExecutionRunHostBridge({ parentProvider: 'codex', cwd: project.cwd, happyHomeDir: f.directory,
                 machineId: machineAdmission.machineId, sendAcp: async () => {},
                 resolveExecutionRunProfileCatalog: outcome === 'failed Start' ? undefined : async () => ({
                     profileCatalog: await registry.resolveExecutionRunProfileCatalog(), engineRegistry,
@@ -393,15 +429,17 @@ describe('Machine Execution Run owner account snapshot', () => {
                 expect(await requester.refreshAccountSettings()).toBe(true);
                 let runId = '';
                 const started = await operations.runActionOperation({ actionId: 'execution.run.start', input: {},
-                    context: { surface: 'cli', signal: f.signal, actionRequestId: root.binding.requestId,
+                    context: { surface: 'cli', signal: request.signal, actionRequestId: root.binding.requestId,
                         externalActionExecutionAuthorization: requester.authorization, machineAdmission },
                     execute: async context => {
-                        const run = await bridge.start({ sessionId: null, intent: 'agent', signal: context.signal,
+                        const verifyMachineAdmissionCurrent = async () => !request.signal.aborted && f.isHomeCurrent();
+                        const run = await bridge.start({ sessionId: null, intent: 'agent', cwd: project.cwd, signal: context.signal,
                             backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, instructions: 'Inspect.',
                             permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded',
                             ioMode: 'request_response', modelSelection: null, connectedServices: null,
-                            projectLaunchContext: { isCurrent: () => f.isHomeCurrent(), resolveRuntime: async () => null,
-                                ingress: { signal: context.signal!, machineAdmission,
+                            projectLaunchContext: { isCurrent: async () => !context.signal!.aborted && await verifyMachineAdmissionCurrent(),
+                                resolveRuntime: ingress => project.machine.resolveProjectFiniteRuntime(ingress),
+                                ingress: { signal: context.signal!, machineAdmission, verifyMachineAdmissionCurrent,
                                     callerInputAuthorization: context.externalActionExecutionAuthorization } },
                         });
                         runId = run.runId;
@@ -411,31 +449,43 @@ describe('Machine Execution Run owner account snapshot', () => {
                 expect(started).toMatchObject({ ok: true });
                 expect(runId).toBeTruthy();
                 await requester.dispose();
+                request.abort();
+                actionSettled.resolve();
 
                 if (outcome === 'failed Start') {
                     expect(bridge.get(runId)).toMatchObject({ status: 'failed' });
                     expect(clockFailed).toBe(true);
                     expect(createNative).not.toHaveBeenCalled();
                 } else {
+                    const authorization = bridge.get(runId)?.executionAuthorization;
+                    await expect(authorization?.requesterHttpProjection?.isCurrent()).resolves.toBe(true);
                     await Promise.race([inputDelivered.promise, bridge.waitForTerminal(runId).then(() => {
                         throw new Error(`Run settled before Agent input: ${bridge.get(runId)?.error?.code}`);
                     })]);
-                    expect(retired).toHaveBeenCalledTimes(0);
-                    if (outcome === 'cancelled Run') {
-                        expect(await bridge.stop(runId)).toMatchObject({ ok: true });
+                    expect(projectOpened).toHaveBeenCalledWith(expect.objectContaining({ NATIVE: 'active' }));
+                    expect(released).toHaveBeenCalledTimes(0);
+                    if (outcome === 'daemon shutdown') {
+                        // Shutdown disposes the running Run; its Project launch and custody end with it.
+                        await bridge.dispose();
+                        expect(nativeDisposed).toHaveBeenCalled();
                     } else {
-                        completeTurn.resolve();
+                        if (outcome === 'cancelled Run') {
+                            expect(await bridge.stop(runId)).toMatchObject({ ok: true });
+                        } else {
+                            completeTurn.resolve();
+                        }
+                        await bridge.waitForTerminal(runId);
+                        expect(bridge.get(runId)).toMatchObject({ status: outcome === 'cancelled Run' ? 'cancelled' : 'succeeded' });
+                        expect(await bridge.stop(runId)).toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running' });
                     }
-                    await bridge.waitForTerminal(runId);
-                    expect(bridge.get(runId)).toMatchObject({ status: outcome === 'cancelled Run' ? 'cancelled' : 'succeeded' });
                 }
                 // Observe retirement before disposing the bridge, which could mask a leak.
                 expect(consultations).toBeGreaterThan(1);
-                await expect.poll(async () => ({ retains: capturedReleases.length, retirements: retired.mock.calls.length,
-                    publicationCurrent: await requester.refreshAccountSettings() }))
-                    .toEqual({ retains: 1, retirements: 1, publicationCurrent: false });
-                expect(requester.savedSecretOperationContext.readSnapshot()).toBeNull();
+                await expect.poll(() => ({ retains: capturedReleases.length, releases: released.mock.calls.length,
+                    snapshotRetired: requester.savedSecretOperationContext.readSnapshot() === null }))
+                    .toEqual({ retains: 1, releases: 1, snapshotRetired: true });
             } finally {
+                actionSettled.resolve();
                 completeTurn.resolve();
                 await bridge.dispose();
                 // Clean up even a deliberately leaked reference after the assertions.

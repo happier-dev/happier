@@ -69,9 +69,10 @@ export type AccountSettingsSnapshotResolver = ((input?: Readonly<{
   /** Machine-owned Run composition binds its admitted invocation's original
    * private Account holder. Session readers already capture that owner. */
   forInvocation?: (ingress?: import('@/api/rpc/types').RpcHandlerContext) => AccountSettingsSnapshotResolver;
-  /** Transfer an admitted Machine Action's private Settings into a detached Run. */
+  /** Transfer an admitted Machine Action's private Account custody into a detached Run. */
   captureForDetachedRun?: (signal?: AbortSignal) => Promise<Readonly<{
     read: AccountSettingsSnapshotResolver;
+    authorization?: import('@happier-dev/protocol/actions/externalActionApi').ExternalActionExecutionAuthorizationV1;
     release(): Promise<void>;
   }>>;
   readOperationContext?: () => import('@/settings/secrets/hydrateSavedSecretCatalog').SavedSecretOperationContextV1 | null;

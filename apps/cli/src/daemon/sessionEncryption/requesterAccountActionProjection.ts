@@ -924,12 +924,12 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
         }
         return { authorization: rebindRequesterAccountActionContext(authorization, projected, context), executor };
       };
-      const retainOperation = async (source: RequesterAccountActionContext, signal: AbortSignal):
+      const retainOperation = async (source: RequesterAccountActionContext, signal?: AbortSignal):
         ReturnType<NonNullable<RequesterAccountActionContext['retainForOperation']>> => {
         const custody = source.retainCustody!(signal);
         try {
           if (!await custody.prepareForOperation()) {
-            signal.throwIfAborted();
+            signal?.throwIfAborted();
             throw createRequesterAccountContextRetiredError(false);
           }
           // Reuse the admitted encryption witness and retained installed lifetime;
