@@ -103,6 +103,7 @@ export type OnboardingWizardSurfaceProps = Readonly<{
     initialStepId?: WizardStepId;
     initialServerUrl?: string;
     onInitialServerUrlConnected?: () => void;
+    onAbandonAuthentication?: () => void;
 
     /** Provider sign-in on the selected sign-in service. Never touches the focused Home. */
     onContinueWithAccountServiceProvider?: (request: WelcomeAuthenticationMethod, context: WelcomeAuthenticationActionContext) => Promise<void> | void;
@@ -245,6 +246,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         });
     });
     const currentState = React.useRef(state);
+    const onAbandonAuthentication = props.onAbandonAuthentication;
     const dispatch = React.useCallback((action: WizardAction, kind?: 'back' | 'notice') => {
         const previous = currentState.current;
         const next = wizardReducer(previous, action);
@@ -252,6 +254,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         const commit = () => {
             currentState.current = next;
             setState(next);
+            if (previous.currentStepId !== 'welcome' && next.currentStepId === 'welcome') onAbandonAuthentication?.();
         };
         if (next.currentStepId === previous.currentStepId) {
             commit();
@@ -264,7 +267,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             toWelcome: next.currentStepId === 'welcome',
             commit,
         });
-    }, []);
+    }, [onAbandonAuthentication]);
     const canCreatePersonalHome = requestPersonalHomeBootstrap != null;
     React.useEffect(() => {
         if (!preparedPersonalHome) return;

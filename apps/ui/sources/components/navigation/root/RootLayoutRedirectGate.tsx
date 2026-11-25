@@ -28,10 +28,50 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
+import { WizardAuthReturnRouteContext } from '@/components/onboarding/state/wizardResume';
+import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
+import { admitOpaqueInternalReturnPath, tryAdmitInternalRouteHref, withInternalRouteQueryParams } from '@/utils/path/routeUtils';
+import { parseToken } from '@/utils/auth/parseToken';
 import { SignedOutRecoveryWorkflow } from '@/components/onboarding/preAuth/SignedOutRecoveryWorkflow';
 import { firstRouteParam } from '@/components/settings/teams/teamRouteParams';
 
 class HomeConnectRequiresDraft extends Error {}
+
+const PROTECTED_DESTINATION_PARAM = 'onboardingDestination';
+
+function matchesSignedInAccount(expectedAccountId: string | null, token: string | undefined): boolean {
+    if (expectedAccountId === null) return true;
+    try {
+        return Boolean(token && parseToken(token) === expectedAccountId);
+    } catch {
+        return false;
+    }
+}
+
+function admitProtectedPath(value: unknown): string | null {
+    const path = admitOpaqueInternalReturnPath(value);
+    if (!path || path === '/' || path.includes('?') || path.includes('#')) return null;
+    return path;
+}
+
+function readProtectedDestination(value: string): Readonly<{
+    path: string;
+    homeId: string;
+    explicitHome: boolean;
+    accountId: string | null;
+}> | null {
+    try {
+        const parsed: unknown = JSON.parse(value);
+        if (!Array.isArray(parsed) || parsed.length !== 4) return null;
+        const [rawPath, homeId, explicitHome, accountId]: unknown[] = parsed;
+        const path = admitProtectedPath(rawPath);
+        if (!path || typeof homeId !== 'string' || !homeId || typeof explicitHome !== 'boolean') return null;
+        if (accountId !== null && (typeof accountId !== 'string' || !accountId)) return null;
+        return { path, homeId, explicitHome, accountId };
+    } catch {
+        return null;
+    }
+}
 
 const WebServerOverrideNavigationContext = React.createContext<Readonly<{
     draftHref: string | null;
@@ -100,31 +140,72 @@ export function RootLayoutRedirectGate({ children }: { children: React.ReactNode
         && !isPublicRouteForUnauthenticated([...segments])
         && !shouldHoldProtectedRouteForAuthRecovery;
 
+    const pending = pathname === '/' ? firstRouteParam(globalSearchParams[PROTECTED_DESTINATION_PARAM]) : '';
+    const destination = React.useMemo(() => pending ? readProtectedDestination(pending) : null, [pending]);
+    const signInEntry = React.useMemo(() => {
+        if (!destination) return null;
+        const entry = resolveWebServerEntrySignInRoute();
+        return {
+            returnTo: withInternalRouteQueryParams(entry, { [PROTECTED_DESTINATION_PARAM]: pending }),
+            abandon: () => router.replace(entry),
+        };
+    }, [destination, pending]);
+    const finishSignIn = isAuthenticated && Boolean(pending) && !suppliedHomeNavigation?.draftHref;
+    React.useLayoutEffect(() => {
+        if (!finishSignIn) return;
+        if (!destination || destination.homeId !== activeServerSnapshot.serverId
+            || !matchesSignedInAccount(destination.accountId, auth.credentials?.token)) {
+            router.replace('/');
+            return;
+        }
+        const path = destination.explicitHome
+            ? withInternalRouteQueryParams(destination.path, { serverId: destination.homeId })
+            : destination.path;
+        const continuation = tryAdmitInternalRouteHref(path);
+        if (continuation) resolvePostAuthLanding({ replace: router.replace, continuation });
+        else router.replace('/');
+    }, [activeServerSnapshot.serverId, auth.credentials?.token, destination, finishSignIn]);
+
     // Avoid rendering protected screens for a frame during redirect.
-    if (suppliedHomeNavigation?.draftHref) {
+    if (suppliedHomeNavigation?.draftHref || finishSignIn) {
         return null;
     }
     if (shouldRedirect) {
-        const destinationServerId = Platform.OS === 'web' ? readWebDestinationServerIdFromLocation() : null;
-        return destinationServerId
-            ? <UnauthenticatedDestinationHome serverId={destinationServerId} />
-            : <Redirect href={resolveWebServerEntrySignInRoute() as never} />;
+        const homeIdInPath = segments.includes('[serverId]');
+        const routeHomeId = firstRouteParam(globalSearchParams.serverId) || null;
+        const queryHomeId = Platform.OS === 'web'
+            ? readWebDestinationServerIdFromLocation()
+            : homeIdInPath ? null : routeHomeId;
+        const accountId = segments.includes('[accountId]') ? null : firstRouteParam(globalSearchParams.accountId) || null;
+        const path = admitProtectedPath(pathname);
+        const homeId = queryHomeId ?? (homeIdInPath ? routeHomeId : null) ?? activeServerSnapshot.serverId;
+        const entry = resolveWebServerEntrySignInRoute();
+        // Keep the request in the onboarding route for this attempt. The
+        // auth operation or the destination's own access policy still owns access.
+        const href = path && homeId
+            ? withInternalRouteQueryParams(entry, { [PROTECTED_DESTINATION_PARAM]: JSON.stringify([path, homeId, Boolean(queryHomeId), accountId]) })
+            : entry;
+        return queryHomeId
+            ? <UnauthenticatedDestinationHome serverId={queryHomeId} href={href} />
+            : <Redirect href={href as never} />;
     }
 
-    return <SignedOutRecoveryWorkflow
-        pathname={pathname}
-        signedIn={isAuthenticated}
-        homeTarget={firstRouteParam(globalSearchParams.target) || null}
-        navigation={router}
-    >
-        {children}
-    </SignedOutRecoveryWorkflow>;
+    return <WizardAuthReturnRouteContext.Provider value={signInEntry}>
+        <SignedOutRecoveryWorkflow
+            pathname={pathname}
+            signedIn={isAuthenticated}
+            homeTarget={firstRouteParam(globalSearchParams.target) || null}
+            navigation={router}
+        >
+            {children}
+        </SignedOutRecoveryWorkflow>
+    </WizardAuthReturnRouteContext.Provider>;
 }
 
 /** Boot refuses unknown Home credentials; retain that refusal without mounting the protected route. */
-function UnauthenticatedDestinationHome({ serverId }: Readonly<{ serverId: string }>): React.ReactElement {
+function UnauthenticatedDestinationHome({ serverId, href }: Readonly<{ serverId: string; href: string }>): React.ReactElement {
     // Profile knowledge cannot override boot's credential-adoption decision, including first-key custody.
-    return <KnownHomeGate serverId={serverId} testIDPrefix="root-destination"><Redirect href={resolveWebServerEntrySignInRoute() as never} /></KnownHomeGate>;
+    return <KnownHomeGate serverId={serverId} testIDPrefix="root-destination"><Redirect href={href as never} /></KnownHomeGate>;
 }
 
 /** Keep routes registered while withholding protected scenes during a redirect. */

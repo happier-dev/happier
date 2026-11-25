@@ -149,7 +149,11 @@ describe('RootLayoutRedirectGate', () => {
         const serverUrl = 'https://selected-entry.example.test';
         vi.stubGlobal('window', { location: { href: `https://app.example.test/settings?server=${encodeURIComponent(serverUrl)}` } });
         const screen = await renderGateScreen(<RootLayoutRedirectGate><></></RootLayoutRedirectGate>);
-        try { expect(screen.findByType('Redirect').props.href).toBe(`/?server=${encodeURIComponent(serverUrl)}`); }
+        try {
+            const redirect = new URL(screen.findByType('Redirect').props.href, 'https://app.example.test');
+            expect(redirect.pathname).toBe('/');
+            expect(redirect.searchParams.get('server')).toBe(serverUrl);
+        }
         finally { await screen.unmount(); }
     });
 
@@ -255,7 +259,7 @@ describe('RootLayoutRedirectGate', () => {
 
         try {
             expect(screen.findAllByType('Redirect' as never).length).toBe(1);
-            expect(screen.findAllByType('Redirect' as never)[0]?.props.href).toBe('/');
+            expect(new URL(screen.findByType('Redirect').props.href, 'https://app.example.test').pathname).toBe('/');
             expect(shell.n).toBe(0);
         } finally {
             await screen.unmount();

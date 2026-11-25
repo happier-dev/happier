@@ -32,7 +32,7 @@ import { DesktopShellWindowControlsHost } from '@/components/navigation/shell/de
 import { useResolvedDesktopWindowControls } from '@/components/navigation/shell/desktopChrome/useResolvedDesktopWindowControls';
 import { UpdatesEntry } from '@/components/updates/UpdatesPopoverButton';
 import { resolveAppShellChromeHost } from '@/components/appShell/resolveAppShellChromeHost';
-import { resolveWizardAuthReturnToRoute } from '@/components/onboarding/state/wizardResume';
+import { resolveWizardAuthReturnToRoute, WizardAuthReturnRouteContext } from '@/components/onboarding/state/wizardResume';
 import { getWizardStepDefinition } from '@/components/onboarding/state/wizardStepRegistry';
 import type { WizardStepId } from '@/components/onboarding/state/wizardTypes';
 import { executeHomeAuthentication } from '@/auth/flows/executeHomeAuthentication';
@@ -151,6 +151,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         }
     }, [accountContinuationIntent, accountServiceEntry]);
 
+    const signInEntryReturn = React.useContext(WizardAuthReturnRouteContext);
     const continueWithHomeAuthentication = React.useCallback(async function continueWithHomeAuthentication(request: WelcomeAuthenticationMethod, context: WelcomeAuthenticationActionContext) {
         const outcome = await executeHomeAuthentication({
             request,
@@ -167,7 +168,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
                     }
                 }
                 : auth.loginWithCredentials,
-            returnTo: resolveAuthReturnToRoute(),
+            returnTo: resolveWizardAuthReturnToRoute(signInEntryReturn?.returnTo),
             ...(authEntryOptions.homeTransport ? { transport: authEntryOptions.homeTransport } : {}),
             signal: context.signal,
             keyChallengeV2Available: authEntryOptions.keyChallengeV2Available,
@@ -244,7 +245,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
                 });
             },
         });
-    }, [auth.loginWithCredentials, auth.refreshFromActiveServer, authEntryOptions.homeLabel, authEntryOptions.homeTransport, authEntryOptions.keyChallengeV2Available, authEntryOptions.retryServerCheck, router]);
+    }, [auth.loginWithCredentials, auth.refreshFromActiveServer, authEntryOptions.homeLabel, authEntryOptions.homeTransport, authEntryOptions.keyChallengeV2Available, authEntryOptions.retryServerCheck, router, signInEntryReturn]);
 
     const resolvedInitialStepId = React.useMemo((): WizardStepId | undefined => {
         if (props.initialStepId) {
@@ -293,6 +294,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         onInitialServerUrlConnected: suppliedHomeAddress ? clearSuppliedHomeAddress : undefined,
         onContinueWithAccountServiceProvider: continueWithAccountServiceProvider,
         onContinueWithHomeAuthentication: continueWithHomeAuthentication,
+        onAbandonAuthentication: signInEntryReturn?.abandon,
         onAccountDirectoryKeyResult: () => {},
         onSelectAccountService: selectAccountService,
     };

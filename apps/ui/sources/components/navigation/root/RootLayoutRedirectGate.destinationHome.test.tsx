@@ -2,18 +2,23 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { WizardAuthReturnRouteContext } from '@/components/onboarding/state/wizardResume';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { initializeAuthRouteRuntimeForTests } from '@/dev/testkit/harness/authRouteRuntimeHarness';
 
 installTokenStorageWebPlatformMocks();
-const navigation = vi.hoisted(() => ({ pathname: '/', params: {} as Record<string, string>, segments: [] as string[] }));
+const navigation = vi.hoisted(() => ({
+    pathname: '/', params: {} as Record<string, string>, segments: [] as string[],
+    replace: vi.fn(),
+}));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({
         pathname: () => navigation.pathname,
         params: () => navigation.params,
         segments: () => navigation.segments,
+        router: { replace: navigation.replace },
     }).module;
 });
 
@@ -36,6 +41,7 @@ describe('cold destination Home through boot and root redirect admission', () =>
         storage = installLocalStorageMock();
         locks = installWebLockManagerMock();
         networkReads.mockClear();
+        navigation.replace.mockClear();
         setRuntimeFetch(networkReads);
     });
     afterEach(() => {
@@ -44,12 +50,18 @@ describe('cold destination Home through boot and root redirect admission', () =>
         vi.unstubAllGlobals();
     });
 
-    async function coldLoad(pathname: string, serverId?: string) {
+    function navigate(pathname: string, params: Record<string, string>) {
         navigation.pathname = pathname;
-        navigation.params = serverId ? { serverId } : {};
+        navigation.params = params;
         navigation.segments = ['(app)', ...pathname.split('/').filter(Boolean)];
-        const href = `https://app.example.test${pathname}${serverId ? `?serverId=${encodeURIComponent(serverId)}` : ''}#retained-target`;
+        const query = new URLSearchParams(params);
+        const href = `https://app.example.test${pathname}${query.size ? `?${query}` : ''}#retained-target`;
         vi.stubGlobal('window', { localStorage: globalThis.localStorage, location: { href }, history: { replaceState: vi.fn() } });
+        return href;
+    }
+
+    async function coldLoad(pathname: string, serverId?: string, params: Record<string, string> = {}) {
+        const href = navigate(pathname, { ...params, ...(serverId ? { serverId } : {}) });
         let credentials: Awaited<ReturnType<typeof resolveBootCredentials>> = null;
         await runAppBootSequence({
             loadFonts: async () => {}, sodiumReady: Promise.resolve(),
@@ -60,11 +72,86 @@ describe('cold destination Home through boot and root redirect admission', () =>
         });
         const protectedMount = vi.fn();
         function ProtectedSurface() { protectedMount(); return <div data-testid="protected-destination" />; }
-        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
-            <WebServerOverrideGate><RootLayoutRedirectGate><ProtectedSurface /></RootLayoutRedirectGate></WebServerOverrideGate>
-        </InjectedAuthProvider>);
-        return { screen, credentials, protectedMount, href };
+        function Welcome() {
+            const entry = React.useContext(WizardAuthReturnRouteContext);
+            return <button data-testid="welcome" onClick={() => entry?.abandon?.()}>Welcome</button>;
+        }
+        function App({ credentials }: Readonly<{ credentials: Awaited<ReturnType<typeof resolveBootCredentials>> }>) {
+            return <InjectedAuthProvider credentials={credentials}>
+                <WebServerOverrideGate><RootLayoutRedirectGate>
+                    {navigation.pathname === '/' ? <Welcome /> : <ProtectedSurface />}
+                </RootLayoutRedirectGate></WebServerOverrideGate>
+            </InjectedAuthProvider>;
+        }
+        const screen = await renderScreen(<App credentials={credentials} />);
+        async function finishSignIn(options?: { abandon?: boolean; switchHome?: boolean }) {
+            const redirect = screen.findByType('Redirect').props.href;
+            expect(typeof redirect).toBe('string');
+            const entry = new URL(redirect, 'https://app.example.test');
+            navigate(entry.pathname, Object.fromEntries(entry.searchParams));
+            await screen.update(<App credentials={null} />);
+            expect(screen.findByTestId('welcome')).not.toBeNull();
+            expect(protectedMount).not.toHaveBeenCalled();
+            if (options?.abandon) {
+                screen.findByTestId('welcome')?.props.onClick();
+                expect(navigation.replace).toHaveBeenCalledExactlyOnceWith('/');
+                navigate('/', {});
+                await screen.update(<App credentials={null} />);
+                navigation.replace.mockClear();
+            }
+            if (options?.switchHome) {
+                await upsertAndActivateServer({ serverUrl: 'https://other-selected.example.test', source: 'manual', scope: 'device' });
+            }
+            await screen.update(<App credentials={{ token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature' }} />);
+            return redirect;
+        }
+        return { screen, credentials, protectedMount, href, finishSignIn };
     }
+
+    it.each([
+        { pathname: '/session/session-a/sharing', qualified: false },
+        { pathname: '/session/session-a/sharing', qualified: true },
+        { pathname: '/session/session-a', qualified: false },
+        { pathname: '/settings/machines/presets/preset-a', qualified: false },
+    ])('resumes $pathname after cold sign-in (Home-qualified: $qualified)', async ({ pathname, qualified }) => {
+        const home = await upsertAndActivateServer({ serverUrl: 'https://resume.example.test', source: 'manual', scope: 'device' });
+        const { screen, protectedMount, finishSignIn } = await coldLoad(pathname, qualified ? home.id : undefined, { unrelated: 'discard-me' });
+        try {
+            const entry = await finishSignIn();
+            const destination = qualified ? `${pathname}?serverId=${encodeURIComponent(home.id)}` : pathname;
+            expect(entry).not.toContain('discard-me');
+            expect(protectedMount).not.toHaveBeenCalled();
+            expect(navigation.replace).toHaveBeenCalledExactlyOnceWith(destination);
+        } finally { await screen.unmount(); }
+    });
+
+    it.each([
+        { label: 'another Home', params: {}, options: { switchHome: true } },
+        { label: 'another Account', params: { accountId: 'account-b' }, options: {} },
+        { label: 'an abandoned sign-in', params: {}, options: { abandon: true } },
+    ])('settles at Home after $label', async ({ params, options }) => {
+        const home = await upsertAndActivateServer({ serverUrl: 'https://scoped-resume.example.test', source: 'manual', scope: 'device' });
+        const { screen, protectedMount, finishSignIn } = await coldLoad('/session/session-a/sharing', home.id, params);
+        try {
+            await finishSignIn(options);
+            expect(protectedMount).not.toHaveBeenCalled();
+            if ('abandon' in options) expect(navigation.replace).not.toHaveBeenCalled();
+            else expect(navigation.replace).toHaveBeenCalledExactlyOnceWith('/');
+        } finally { await screen.unmount(); }
+    });
+
+    it.each([
+        'https://another.example.test/session/session-a/sharing', 'javascript:alert(1)', 'data:text/plain,hi',
+        '//another.example.test', '%2F%2Fanother.example.test', '/%2Fanother.example.test',
+        '/%252Fanother.example.test', '/\\another.example.test', '/%5Canother.example.test',
+        '/session/%2e%2e/%2e%2e/home',
+    ])('silently falls back for a hostile protected address: %s', async (pathname) => {
+        const { screen, finishSignIn } = await coldLoad(pathname);
+        try {
+            expect(await finishSignIn()).toBe('/');
+            expect(navigation.replace).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); }
+    });
 
     // FIX-F4-BRIEF.md: unknown Home gets an explicit refusal, preserving the destination.
     it.each([

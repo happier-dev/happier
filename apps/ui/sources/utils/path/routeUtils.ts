@@ -35,7 +35,11 @@ export function admitOpaqueInternalReturnPath(raw: unknown): string | null {
     const path = raw.trim();
     if (!path.startsWith('/') || CONTROL_CHARACTER_PATTERN.test(path)) return null;
     const pathname = path.split(/[?#]/, 1)[0];
-    return normalizeInternalReturnPath(pathname) === null ? null : path;
+    const decoded = normalizeInternalReturnPath(pathname);
+    if (decoded === null || decoded.split('/').some(segment => segment === '.' || segment === '..')) return null;
+    // A second decode must not turn a path into a URL authority or a dot-segment traversal.
+    if (/%(?:25|2e|2f|5c)/i.test(decoded)) return null;
+    return path;
 }
 
 /** Check the navigation path while preserving the opaque query, fragment and params. */
