@@ -118,6 +118,7 @@ import {
   resolveWorkflowTriggerClaimSource,
   type WorkflowProductionExecutionDeps,
 } from './production';
+import { createDeferred } from '@/testkit/async/deferred';
 import { executeClaimedRun } from '@/daemon/automation/automationRunExecutor';
 import { createAutomationClaimClient } from '@/daemon/automation/automationClaimClient';
 import { AutomationV3WorkerFailRequestSchema } from '@happier-dev/protocol/automations/automationApiV3';
@@ -385,6 +386,80 @@ describe('production workflow coordinator', () => {
     // Re-presenting input must still consult the final parent/control predicate.
     await store.commitFact({ key, lifecycle: 'admitting', execution });
     expect(boundary.calls.length - admitted).toBe(1);
+  });
+  it('rejoins a committed Start without creating another Session while its selected model step is running', async () => {
+    const accountCurrentness = { mode: 'plain', version: 1, contentKeyFingerprint: null } as const;
+    const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+    const definition: WorkflowDefinitionV1 = { version: 1, defaults: {},
+      inputs: [{ name: 'chosen', valueType: 'json', required: true, inputType: { hostType: 'agentParticipant' } }],
+      blocks: [{ ...onlyStep, execution: { participant: { kind: 'input', name: 'chosen' } } }] };
+    const { projectDiscussionModelParticipantLaunchV1 } = await import('@happier-dev/protocol/discussions/participants');
+    const launch = projectDiscussionModelParticipantLaunchV1({ executionTarget: { serverId: 'server-1', machineId },
+      directory: { kind: 'path', path: '/repo' }, agentTarget });
+    const storage = createWorkflowRunStorageTestkit({ runId, machineId, origin: { kind: 'direct' } });
+    const owner = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId, storage,
+      definitions: { get: async () => { throw new Error('inline_has_no_artifact'); } },
+      resolveEncryption: async () => ({ kind: 'available', witness: accountCurrentness }),
+      normalizeAbsolutePath: path => path.startsWith('/') ? path : null,
+      randomBytes: () => { throw new Error('plain_has_no_keys'); },
+      prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } } }),
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+    });
+    const context = { surface: 'ui', authority: 'present_user', callerPermissionMode: 'default',
+      externalActionTarget: { kind: 'machine', machineId, project: { machineId, directory: '/repo' } } } as const;
+    const start = { actionId: 'workflow.run.start', context,
+      input: { runId, source: { kind: 'inline', definition }, inputs: { chosen: { kind: 'model', launch } } } } as const;
+    const modelRunning = createDeferred<string>();
+    const finishModel = createDeferred();
+    const sessions = new Map<string, string>();
+    const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId, storage,
+      execution: { ...productionExecution({
+        enqueue: async request => ({ status: 'accepted', localId: deriveWorkflowSessionInputLocalIdV2(request.workflow) }),
+        observe: async ({ sessionId, localId }) => {
+          modelRunning.resolve(sessionId);
+          await finishModel.promise;
+          return { ok: true, sessionId, localId, result: { kind: 'final_text', text: 'finished model step' } };
+        },
+      }), sessionStartup: async ({ creationKey }) => {
+        // The process boundary allocates a Session for every new startup that reaches it.
+        const sessionId = `model-session-${sessions.size + 1}`;
+        sessions.set(sessionId, creationKey);
+        return { sessionId };
+      }, action: { executor: createActionExecutor(createUnavailableActionTransportDeps()),
+        buildContext: async execution => buildWorkflowActionContext(execution),
+        observeRun: async () => { throw new Error('unexpected child Run'); } } },
+      resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation' }),
+      resolveAccountEncryption: async () => ({ kind: 'available', witness: accountCurrentness }),
+      isAcceptedAuthorizationCurrent: async () => true,
+      workspaceScm: { realizeWorktree: async () => { throw new Error('unexpected worktree'); },
+        inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
+    });
+    const loseStartResponse = new Error('Start response was dropped after admission');
+    let worker: ReturnType<typeof coordinate> | undefined;
+    try {
+      await expect((async () => {
+        await expect(owner.execute(start)).resolves.toMatchObject({ admission: 'created', run: { id: runId } });
+        const acceptedEnvelope = storage.acceptedEnvelope();
+        if (!acceptedEnvelope) throw new Error('missing accepted Run');
+        worker = coordinate({ runId, attempt: 0, expectedRevision: storage.run().revision, acceptedEnvelope, accountCurrentness });
+        await Promise.race([modelRunning.promise, worker.then(result => { throw new Error(`Run ended before the model was in flight: ${JSON.stringify(result)}`); })]);
+        throw loseStartResponse;
+      })()).rejects.toBe(loseStartResponse);
+      const sessionId = await modelRunning.promise;
+      expect([...sessions.keys()]).toEqual([sessionId]);
+      await expect(owner.execute(start)).resolves.toMatchObject({ admission: 'existing', run: { id: runId, state: 'running' } });
+      const readStep = async () => WorkflowActionOutputSchemasV1['workflow.run.invocations.list'].parse(
+        await owner.execute({ actionId: 'workflow.run.invocations.list', input: { runId, includeContent: true }, context }),
+      ).invocationDetails?.filter(row => row.progress.invocationPath.blockId === onlyStep.id);
+      expect(await readStep()).toMatchObject([{ index: { lifecycle: 'running' }, progress: { execution: { kind: 'session', sessionId } } }]);
+      finishModel.resolve();
+      await expect(worker).resolves.toMatchObject({ state: 'succeeded' });
+      expect(await readStep()).toMatchObject([{ index: { lifecycle: 'completed' }, progress: { execution: { kind: 'session', sessionId } } }]);
+      expect([...sessions.keys()]).toEqual([sessionId]);
+    } finally {
+      finishModel.resolve();
+      await worker?.catch(() => {});
+    }
   });
   it('materializes an explicitly selected model worktree before fresh Session creation', async () => {
     const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
