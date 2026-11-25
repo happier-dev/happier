@@ -1820,7 +1820,7 @@ export type WorkflowsActionInputById = {
                 };
                 optionsSourceId?: string | undefined;
                 inputType?: undefined | {
-                    hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                    hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                 } | {
                     hostType: 'usageQuery';
                     field?: 'period' | 'session' | undefined;
@@ -6131,7 +6131,7 @@ type WorkflowsActionDefinition1 = Readonly<{
         };
         optionsSourceId?: string | undefined;
         inputType?: undefined | {
-            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+            hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
         } | {
             hostType: 'usageQuery';
             field?: 'period' | 'session' | undefined;
@@ -6602,7 +6602,7 @@ export type WorkflowsActionResultById = {
                 };
                 optionsSourceId?: string | undefined;
                 inputType?: undefined | {
-                    hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                    hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                 } | {
                     hostType: 'usageQuery';
                     field?: 'period' | 'session' | undefined;
@@ -10347,7 +10347,7 @@ export type WorkflowsActionResultById = {
                     };
                     optionsSourceId?: string | undefined;
                     inputType?: undefined | {
-                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                        hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                     } | {
                         hostType: 'usageQuery';
                         field?: 'period' | 'session' | undefined;
@@ -12302,7 +12302,7 @@ export type WorkflowsActionResultById = {
                     };
                     optionsSourceId?: string | undefined;
                     inputType?: undefined | {
-                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                        hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                     } | {
                         hostType: 'usageQuery';
                         field?: 'period' | 'session' | undefined;
@@ -13128,7 +13128,7 @@ export type WorkflowsActionResultById = {
                 };
                 optionsSourceId?: string | undefined;
                 inputType?: undefined | {
-                    hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                    hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                 } | {
                     hostType: 'usageQuery';
                     field?: 'period' | 'session' | undefined;
@@ -21515,7 +21515,7 @@ export type WorkflowsActionResultById = {
                 };
                 optionsSourceId?: string | undefined;
                 inputType?: undefined | {
-                    hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                    hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                 } | {
                     hostType: 'usageQuery';
                     field?: 'period' | 'session' | undefined;
@@ -22030,7 +22030,7 @@ export type WorkflowsActionResultById = {
                 };
                 optionsSourceId?: string | undefined;
                 inputType?: undefined | {
-                    hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                    hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                 } | {
                     hostType: 'usageQuery';
                     field?: 'period' | 'session' | undefined;
@@ -23816,7 +23816,7 @@ export type WorkflowsActionResultById = {
                         };
                         optionsSourceId?: string | undefined;
                         inputType?: undefined | {
-                            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                            hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                         } | {
                             hostType: 'usageQuery';
                             field?: 'period' | 'session' | undefined;
@@ -26251,7 +26251,7 @@ export type WorkflowsActionResultById = {
                         };
                         optionsSourceId?: string | undefined;
                         inputType?: undefined | {
-                            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                            hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                         } | {
                             hostType: 'usageQuery';
                             field?: 'period' | 'session' | undefined;
@@ -28378,7 +28378,7 @@ export type WorkflowsActionResultById = {
                         };
                         optionsSourceId?: string | undefined;
                         inputType?: undefined | {
-                            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                            hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                         } | {
                             hostType: 'usageQuery';
                             field?: 'period' | 'session' | undefined;
@@ -30509,7 +30509,7 @@ export type WorkflowsActionResultById = {
                         };
                         optionsSourceId?: string | undefined;
                         inputType?: undefined | {
-                            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                            hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                         } | {
                             hostType: 'usageQuery';
                             field?: 'period' | 'session' | undefined;
@@ -31808,7 +31808,7 @@ type WorkflowsActionDefinition2 = Readonly<{
         };
         optionsSourceId?: string | undefined;
         inputType?: undefined | {
-            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+            hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
         } | {
             hostType: 'usageQuery';
             field?: 'period' | 'session' | undefined;

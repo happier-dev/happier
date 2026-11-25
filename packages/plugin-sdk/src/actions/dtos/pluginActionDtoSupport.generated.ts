@@ -2059,7 +2059,7 @@ export type SessionSpawnNewInputV2 = {
                     };
                     optionsSourceId?: string | undefined;
                     inputType?: undefined | {
-                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                        hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                     } | {
                         hostType: 'usageQuery';
                         field?: 'period' | 'session' | undefined;
@@ -10014,7 +10014,7 @@ export type SessionServerStartSpawnDraftV1 = {
                     };
                     optionsSourceId?: string | undefined;
                     inputType?: undefined | {
-                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                        hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                     } | {
                         hostType: 'usageQuery';
                         field?: 'period' | 'session' | undefined;
@@ -12502,7 +12502,7 @@ export type UsageCoachEvaluation = {
                     };
                     optionsSourceId?: string | undefined;
                     inputType?: undefined | {
-                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                        hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                     } | {
                         hostType: 'usageQuery';
                         field?: 'period' | 'session' | undefined;
@@ -13027,7 +13027,7 @@ export type ActionInputFieldHint = {
     widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
     title: string;
     inputType?: undefined | {
-        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+        hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
     } | {
         hostType: 'usageQuery';
         field?: 'period' | 'session' | undefined;
@@ -13089,7 +13089,7 @@ export type ActionInputHints = {
         widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
         title: string;
         inputType?: undefined | {
-            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+            hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
         } | {
             hostType: 'usageQuery';
             field?: 'period' | 'session' | undefined;
@@ -13204,7 +13204,7 @@ export type EffectiveActionInputField = {
     widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
     title: string;
     inputType?: undefined | {
-        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+        hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
     } | {
         hostType: 'usageQuery';
         field?: 'period' | 'session' | undefined;
@@ -13640,7 +13640,7 @@ export type PluginActionContributionV2 = {
                 params?: Record<string, number | string> | undefined;
             };
             inputType?: undefined | {
-                hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
             } | {
                 hostType: 'usageQuery';
                 field?: 'period' | 'session' | undefined;
@@ -13835,7 +13835,7 @@ export type PluginActionWorkflowDefinitionV1 = {
         };
         optionsSourceId?: string | undefined;
         inputType?: undefined | {
-            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+            hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
         } | {
             hostType: 'usageQuery';
             field?: 'period' | 'session' | undefined;
@@ -16878,7 +16878,7 @@ export type ActionSpec = {
             widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
             title: string;
             inputType?: undefined | {
-                hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
             } | {
                 hostType: 'usageQuery';
                 field?: 'period' | 'session' | undefined;
@@ -18617,7 +18617,7 @@ export type SessionBoardItemUpsertSchemaInputV1 = {
                                 widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                                 title: string;
                                 inputType?: undefined | {
-                                    hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                                    hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                                 } | {
                                     hostType: 'usageQuery';
                                     field?: 'period' | 'session' | undefined;

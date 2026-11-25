@@ -330,7 +330,7 @@ export type AccountProfileActionInputById = {
                                         widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                                         title: string;
                                         inputType?: undefined | {
-                                            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                                            hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                                         } | {
                                             hostType: 'usageQuery';
                                             field?: 'period' | 'session' | undefined;
@@ -498,7 +498,7 @@ export type AccountProfileActionInputById = {
                                     widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                                     title: string;
                                     inputType?: undefined | {
-                                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                                        hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                                     } | {
                                         hostType: 'usageQuery';
                                         field?: 'period' | 'session' | undefined;
@@ -984,7 +984,7 @@ export type AccountProfileActionInputById = {
                                         widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                                         title: string;
                                         inputType?: undefined | {
-                                            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                                            hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                                         } | {
                                             hostType: 'usageQuery';
                                             field?: 'period' | 'session' | undefined;
@@ -1152,7 +1152,7 @@ export type AccountProfileActionInputById = {
                                     widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                                     title: string;
                                     inputType?: undefined | {
-                                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                                        hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                                     } | {
                                         hostType: 'usageQuery';
                                         field?: 'period' | 'session' | undefined;
@@ -1640,7 +1640,7 @@ export type AccountProfileActionInputById = {
                                         widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                                         title: string;
                                         inputType?: undefined | {
-                                            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                                            hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                                         } | {
                                             hostType: 'usageQuery';
                                             field?: 'period' | 'session' | undefined;
@@ -1808,7 +1808,7 @@ export type AccountProfileActionInputById = {
                                     widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                                     title: string;
                                     inputType?: undefined | {
-                                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                                        hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                                     } | {
                                         hostType: 'usageQuery';
                                         field?: 'period' | 'session' | undefined;

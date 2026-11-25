@@ -16465,7 +16465,7 @@ export type UsageActionResultById = {
                                 };
                                 optionsSourceId?: string | undefined;
                                 inputType?: undefined | {
-                                    hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                                    hostType: 'agentParticipant' | 'homeId' | 'machine' | 'savedHealthSourceId' | 'savedSecretReference' | 'session' | 'workspace';
                                 } | {
                                     hostType: 'usageQuery';
                                     field?: 'period' | 'session' | undefined;
