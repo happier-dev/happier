@@ -34,7 +34,7 @@ import { readHomeConnectionDescriptor } from '../app/features/homeConnectionDesc
 import { createEphemeralTlsServerFixture } from '../../../../packages/tests/src/testkit/tls/ephemeralTlsServerFixture.mjs';
 
 /** Real storage/auth/Socket boundary. No CLI source is imported into the server. */
-export async function createDeploymentSocketHome({ encryptionMode = 'plain', credentialVariant = 'dataKey', dbProvider = 'sqlite', prepareMachineContent, configureApp, socketOrigin,
+export async function createDeploymentSocketHome({ encryptionMode = 'plain', credentialVariant = 'dataKey', dbProvider = 'sqlite', requireE2ee = false, prepareMachineContent, configureApp, socketOrigin,
     serverId = readCachedServerIdentityIdForHotPath() ?? `srv_${randomUUID().replaceAll('-', '')}` } = {}) {
     if (dbProvider === 'postgres' && (process.env.HAPPIER_DB_PROVIDER !== 'postgres' || !process.env.HAPPIER_DB_CONTRACT_CONTAINER_ID)) {
         throw new Error('The PostgreSQL deployment journey requires the disposable DB-contract runner');
@@ -42,7 +42,7 @@ export async function createDeploymentSocketHome({ encryptionMode = 'plain', cre
     const harness = await (dbProvider === 'postgres' ? createDatabaseIntegrationHarness : createLightSqliteHarness)({
         tempDirPrefix: 'happier-deployment-socket-home-', initAuth: true, initEncrypt: true,
         env: { HAPPIER_SERVER_IDENTITY_ID: serverId, AUTH_REQUIRED_LOGIN_PROVIDERS: '',
-            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: 'none' },
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: requireE2ee ? 'required_e2ee' : 'optional', HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: 'none' },
     });
     let home;
     let closeSocket;

@@ -985,6 +985,148 @@ it.each(['cold', 'cold with projection replacement', 'pinned Machine mount', 'un
     },
 );
 
+it('opens the Workbench read-login review through signed Preview on the selected installation', async () => {
+    const [
+        { ReadAccessSetup }, { PLUGIN_MANIFEST }, { WORKBENCH_PAGE_VIEW_ID },
+        { DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1, DatabaseReadAccessCreateInputV1Schema, DatabaseReadAccessSetupResultV1Schema },
+        { databaseActionLocalIdV1 }, { ActionInvokeInputSchema }, { createExternalActionAccountHttpBoundary },
+        { createHydratedPlainMachineFixture }, { publishMachineInventoryForTest },
+        { publishCommittedAppShellPluginUiProjection }, { createPluginUiPrivatePresentationHost },
+        { PluginUiProvider }, { Action },
+    ] = await Promise.all([
+        import('../../../../../../packages/plugins/database-workbench/src/ui/surface/ReadAccessSetup'),
+        import('../../../../../../packages/plugins/database-workbench/src/manifest'),
+        import('../../../../../../packages/plugins/database-workbench/src/ui/surface/views'),
+        import('@happier-dev/plugin-sdk/database'),
+        import('@happier-dev/plugin-sdk/actions'),
+        import('@happier-dev/protocol/actions/actionInvokeInput'),
+        import('@/dev/testkit/harness/externalActionAccountHttpBoundary'),
+        import('@/dev/testkit/fixtures/machineFixtures'),
+        import('@/dev/testkit/harness/machinePresence'),
+        import('@/components/appShell/plugins/committedPluginUiProjection'),
+        import('./pluginUiPrivatePresentationHost'),
+        import('@happier-dev/plugin-ui/advanced'),
+        import('@happier-dev/plugin-ui'),
+    ]);
+    const home = rpcHomes.get('server-client-action')!;
+    const lifetime = clientAccountLifetime(home.id);
+    const machineId = 'database-placement';
+    const installationId = 'database-placement-installation';
+    const pluginId = PLUGIN_MANIFEST.id;
+    const localId = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
+    const qualifiedId = buildQualifiedPluginContributionKey({ pluginId, localId });
+    const declaration = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === localId)!;
+    const occurrenceId = 'database-placement-current';
+    const origin = clientActionExecutionOrigin(pluginId);
+    const executionOrigin = { ...origin, materializationRef: { ...origin.materializationRef, machineId } };
+    const target = { kind: 'managed_deployment', environment: { serverId: 'srv_client_action',
+        environmentId: 'billing-environment', projectSourceId: 'billing-project' }, targetLinkId: 'billing-database',
+        contribution: { pluginId: 'happier.deploy.railway-data', contributionId: 'postgresql' },
+        platformProjectId: 'billing', branchId: 'staging', database: 'railway' } as const;
+    const statements = ['CREATE ROLE fixture_reader LOGIN', 'GRANT SELECT ON ALL TABLES IN SCHEMA public TO fixture_reader'];
+    const preview = DatabaseReadAccessSetupResultV1Schema.parse({ ok: true, status: 'review', role: 'fixture_reader', statements });
+    let received: unknown;
+    let refusePreview = true;
+    const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: home.serverUrl,
+        serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId, installationId,
+        actionId: 'action.invoke', tokenEpoch: 0,
+        execute(value, context) {
+            const action = ActionInvokeInputSchema.parse(value);
+            received = { action: action.action, input: DatabaseReadAccessCreateInputV1Schema.parse(action.input),
+                occurrenceId: action.expectedContributorOccurrenceId, target: context.target,
+                installationId: context.authorization.binding.installationId, authority: context.invocation.authority };
+            return preview;
+        },
+        failure: () => refusePreview ? { errorCode: 'target_unavailable', error: 'target_unavailable' } : null,
+    });
+    const previous = getStorage().getState();
+    onTestFinished(() => { accountBrowserRelay.enabled = false; getStorage().setState(previous); });
+    accountBrowserRelay.enabled = true;
+    network.setHttpResponder(async (url, init) => {
+        const request = new URL(String(url));
+        return await boundary.handle(request, init) ?? createEmptyAccountBootstrapHttpResponse(request.pathname, init);
+    });
+    await publishMachineInventoryForTest(lifetime.scope, [createHydratedPlainMachineFixture({
+        id: machineId, accountId: lifetime.scope.accountId, machine: {
+            activeAt: Date.now(), access: boundary.machine.access,
+            installationId, installationPublicKey: boundary.machine.installationPublicKey,
+        },
+    })]);
+    const daemonAction = PluginProjectedActionV2Schema.parse({
+        id: localId, pluginId, occurrenceId, available: true,
+        title: declaration.title, scopes: declaration.scopes, approvalScope: declaration.approvalScope,
+        surfaces: declaration.surfaces, execution: declaration.execution, dangerLevel: declaration.dangerLevel,
+        confirmation: declaration.confirmation, confirmationWhen: declaration.confirmationWhen, readOnly: declaration.readOnly,
+    });
+    const action = { ...daemonAction, executionOrigin,
+        [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: { ...CLIENT_ACTION_HOST_ORIGIN, serverId: home.id, machineId, executionOrigin } };
+    const projection = { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1, actionsById: { [qualifiedId]: action },
+        installedPackagesById: { [pluginId]: PluginProjectionInstalledPackageV2Schema.parse({ id: pluginId,
+            displayName: 'Database Workbench', version: PLUGIN_MANIFEST.version, enabled: true,
+            source: { kind: 'localPath', locator: pluginId }, occurrenceId, executionOrigin }) },
+    };
+    clientActionSchemasByQualifiedId.set(qualifiedId, {
+        inputSchema: declaration.inputSchema!,
+        outputSchema: declaration.resultSchema!,
+    });
+    onTestFinished(() => { clientActionSchemasByQualifiedId.delete(qualifiedId); });
+    daemonRpc.mockImplementation(async (request: { method: string }) => {
+        if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+            return { protocolVersion: 1, projection: PluginProjectionV2Schema.parse({
+                v: 2, generation: 1, familiesById: {}, actionsById: { [qualifiedId]: daemonAction },
+            }) };
+        }
+        if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) {
+            throw new Error('Workbench Preview requires signed Action admission');
+        }
+        return answerActionSchemasRead(request);
+    });
+    onTestFinished(publishCommittedAppShellPluginUiProjection(() => projection));
+    const hook = await renderHook(() => useBoundPluginSurfaceController({ facts: {
+        pluginId, contributionId: WORKBENCH_PAGE_VIEW_ID, surfaceId: 'workbench-read-setup',
+        placement: 'appSurface', platform: 'web', channel: 'internal', machineId, serverId: home.id, occurrenceId,
+        executionOrigin, accountLifetime: lifetime, interactionEnabled: true, daemonInteractionEnabled: true,
+        actionInputSelectionFactsKey: createPluginActionInputSelectionFactsPublication().publish({ targetPluginId: pluginId }),
+        pluginUiProjection: projection, resolveContributedAction: resolveExactClientAction(action),
+    } }));
+    const controller = hook.getCurrent();
+    if (!controller.actionControls) throw new Error('Expected the mounted Workbench Action controls');
+    const surface = createPluginSurfaceContextFixture({ mount: { kind: 'destination',
+        destination: { pluginId, localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } });
+    const facade = createCanonicalPluginReactNativeHostApiAdapter({ surface, requestSurface: controller.surfaceContext,
+        requestIdPrefix: 'workbench-read-setup', installedMethods: controller.hostApi.admissionMethods,
+        handleRequest: controller.hostApi.handleRequest });
+    onTestFinished(facade.retire);
+    const configure = vi.fn();
+    const screen = await renderScreen(React.createElement(PluginUiProvider, { hostApi: facade.api, context: surface,
+        presentationHost: createPluginUiPrivatePresentationHost(undefined, { actionControls: controller.actionControls }),
+    }, React.createElement(ReadAccessSetup, { target, onConfigured: configure })));
+    await vi.waitFor(() => expect(controller.actionControls!.getSnapshot()).toHaveLength(1));
+    const pressPreview = () => screen.pressByTestIdAsync(
+        `plugin-surface-action-control:${controller.actionControls!.getSnapshot()[0]!.id}`,
+    );
+    const assertSignedTarget = () => expect(received).toEqual({
+        action: { pluginId, localId }, input: { target, mode: 'preview' }, occurrenceId,
+        target: { kind: 'machine', machineId }, installationId, authority: 'present_user',
+    });
+    await pressPreview();
+    await vi.waitFor(() => {
+        const refusal = screen.tree.findAllByType(Action.Failure)[0]?.props.execution as { code?: string } | undefined;
+        expect(refusal?.code).toBe('target_unavailable');
+        assertSignedTarget();
+    });
+    for (const statement of statements) expect(screen.getTextContent()).not.toContain(statement);
+
+    refusePreview = false;
+    received = undefined;
+    await pressPreview();
+    await vi.waitFor(assertSignedTarget);
+    await vi.waitFor(() => {
+        for (const statement of statements) expect(screen.getTextContent()).toContain(statement);
+    });
+    expect(configure).not.toHaveBeenCalled();
+});
+
 it('settles Viewed writes through the native mount without an AppShell Action origin', async () => {
     const { ScmComparisonSchema } = await import('@happier-dev/protocol/scm/comparison');
     const { PluginHostApiProvider, PluginUiHostPresentationScope } = await import('@happier-dev/plugin-ui/advanced');

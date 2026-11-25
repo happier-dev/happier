@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { channel } from 'node:diagnostics_channel';
 import { mkdir } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
@@ -9,7 +9,7 @@ import { createDeploymentDumpBackupSourceV1, RESTIC_RUNTIME_V1 } from '@happier-
 import { ProjectSourcesCreateOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { DeploymentBackupConfigureResultV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import { SFTP_BACKUP_DESTINATION_REF_V1 } from '@happier-dev/protocol/plugins/contributions/backupDestinations';
-import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { sealSavedSecretResourceRecipientEnvelopeV1, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createDeploymentSocketHome } from '../../../server/sources/testkit/deploymentSocketHome.testkit.mjs';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
@@ -24,6 +24,9 @@ import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { AccountSettingsV2GetResponseSchema, AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
+import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
+import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { sealAccountSettingsV2RawContent } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
@@ -42,9 +45,12 @@ import { installRestoreBoundary } from './targets/ownServer/nativeRestore.testki
 
 afterEach(() => vi.restoreAllMocks());
 
-it('materializes a Saved Secret when an own-local CLI backup Test crosses Home approval and daemon ingress', async () => {
+it.each(['plain', 'e2ee'] as const)('materializes a Saved Secret when an own-local CLI backup Test crosses Home approval and daemon ingress (%s)', async encryptionMode => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-cli-backup-custody-' }, async () => {
-        const home = await createDeploymentSocketHome({ encryptionMode: 'plain' });
+        const home = await createDeploymentSocketHome({ encryptionMode, requireE2ee: encryptionMode === 'e2ee',
+            prepareMachineContent: (key, metadata) => createMachineContentCodec({
+                encryptionMode: 'e2ee', encryptionKey: key, encryptionVariant: 'dataKey',
+            }).encodeStored(metadata) });
         let daemon: Awaited<ReturnType<typeof createS0DeploymentDaemonIngress>> | undefined;
         let control: Awaited<ReturnType<typeof startDaemonControlServer>> | undefined;
         let mounted: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
@@ -65,6 +71,13 @@ it('materializes a Saved Secret when an own-local CLI backup Test crosses Home a
             vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockImplementation(
                 () => installationBoundary.getStore() ?? readS0Installation(home));
             const credentials = readS0ControllerCredentials(home);
+            const artifacts = createCredentialedAccountArtifactStore(credentials);
+            const createContentArtifact = async (body: string, kind: string) => {
+                const artifact = await runWithServerHttpBaseUrl(home.baseUrl,
+                    () => artifacts.create({ header: { kind, title: 'Backup fixture content' }, body }));
+                return { contentArtifactId: artifact.artifactId, contentHeaderVersion: artifact.revision.headerVersion,
+                    contentBodyVersion: artifact.revision.bodyVersion };
+            };
             mounted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: {
                 pluginIds: ['happier.backup.destinations'],
                 scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider() },
@@ -78,7 +91,8 @@ it('materializes a Saved Secret when an own-local CLI backup Test crosses Home a
                 `${home.baseUrl}/v2/account/settings`, { headers: settingsHeaders })).json());
             const settingsWrite = await fetch(`${home.baseUrl}/v2/account/settings`, {
                 method: 'POST', headers: settingsHeaders,
-                body: JSON.stringify({ expectedVersion: currentSettings.version, content: { t: 'plain', v: preferences } }),
+                body: JSON.stringify({ expectedVersion: currentSettings.version, content: sealAccountSettingsV2RawContent({ credentials, raw: preferences,
+                    envelopeKind: encryptionMode === 'e2ee' ? 'encrypted' : 'plain', randomBytes }) }),
             });
             expect(AccountSettingsV2UpdateResponseSchema.parse(await settingsWrite.json())).toMatchObject({ success: true });
             await adoptServerProfileHomeConnectionDescriptor({ observation: 'exact', createIfMissing: true,
@@ -156,12 +170,12 @@ it('materializes a Saved Secret when an own-local CLI backup Test crosses Home a
                 serverId: home.serverId, projectSourceId: source.source.id, requestKey: randomUUID(),
                 protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
                 controllerMachineId: home.machineId, buildMachineId: home.machineId,
-                ...await home.createContentArtifact({ body: JSON.stringify({ name: 'CLI backup custody', retainPreviousDeployments: 1,
+                ...await createContentArtifact(JSON.stringify({ name: 'CLI backup custody', retainPreviousDeployments: 1,
                     definition: { kind: 'stored', contentRevision: 1, document,
                         composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`,
-                        profiles: [], services: ['database'] }, bindings: [] }) }, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1),
+                        profiles: [], services: ['database'] }, bindings: [] }), DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1),
                 firstTargetLink: { machines: [{ machineId: home.machineId, installationId: home.installationId }],
-                    ...await home.createContentArtifact({ body: '{}' }, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1) },
+                    ...await createContentArtifact('{}', DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1) },
             }) });
             const environment = DeploymentEnvironmentCreateResultV1Schema.parse(await created.json());
             if (!environment.ok) throw new Error(environment.error);
@@ -169,20 +183,39 @@ it('materializes a Saved Secret when an own-local CLI backup Test crosses Home a
             if (!opened.ok) throw new Error(opened.errorCode);
             const detail = DeploymentEnvironmentGetResultV1Schema.parse(opened.result);
             if (!detail.ok) throw new Error(detail.error);
-            const resourceId = randomUUID();
-            const saved = await invoke('secrets.shared.create', { resourceId, displayName: 'Backup repository password', kind: 'token',
-                encryptionMode: 'plain', storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
-                    content: { v: 1, name: 'Backup repository password', kind: 'token', value: randomUUID() } }), keyEnvelopes: [] });
-            expect(saved.ok, saved.ok ? '' : saved.errorCode).toBe(true);
+            const savePassword = async (value: string) => {
+                const resourceId = randomUUID();
+                const content = { v: 1 as const, name: 'Backup repository password', kind: 'token' as const, value };
+                const resourceDataKey = randomBytes(32);
+                const saved = await invoke('secrets.shared.create', { resourceId, displayName: content.name, kind: content.kind,
+                    ...(home.encryption ? { encryptionMode: 'e2ee',
+                        storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'e2ee', resourceDataKey,
+                            content, randomBytes }),
+                        keyEnvelopes: [{ recipientAccountId: home.accountId, ...sealSavedSecretResourceRecipientEnvelopeV1({
+                            resourceDataKey, recipientContentPublicKey: home.encryption.publicKey, randomBytes,
+                        }) }] }
+                        : { encryptionMode: 'plain', storedContent: sealSavedSecretResourceStoredContentV1({
+                            resourceId, mode: 'plain', content }), keyEnvelopes: [] }),
+                });
+                resourceDataKey.fill(0);
+                expect(saved.ok, saved.ok ? '' : saved.errorCode).toBe(true);
+
+                return resourceId;
+            };
+            const password = randomUUID();
+            const resourceId = await savePassword(password);
 
             const docker = await createOwnServerDockerBoundary(join(home.baseDir, 'tools'));
             const tools = dirname(docker.executablePath);
             await docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
-            await installRestoreBoundary(tools, 'repositoryOnly', { toolDirectory: tools, environmentId: environment.environmentId });
+            await installRestoreBoundary(tools, 'repositoryOnly', {
+                toolDirectory: tools, environmentId: environment.environmentId,
+                repositoryPasswordDigest: createHash('sha256').update(password).digest('hex'),
+            });
             nativeEnvironment.patch({ PATH: `${tools}${delimiter}${process.env.PATH ?? ''}` });
             const repository = join(home.baseDir, 'backup-repository');
             await mkdir(join(repository, environment.environmentId), { recursive: true });
-            const testBackup = () => invoke('deployments.backups.configure', {
+            const testBackup = (secretId: string) => invoke('deployments.backups.configure', {
                 serverId: home.serverId, environmentId: environment.environmentId,
                 expectedRevision: detail.environment.revision, intent: 'test',
                 configuration: {
@@ -194,7 +227,7 @@ it('materializes a Saved Secret when an own-local CLI backup Test crosses Home a
                     retention: { kind: 'keepEverything' },
                 },
                 backupBindings: [{ purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword',
-                    source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } }],
+                    source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(secretId), resourceRevision: 1 } }],
             });
             // The named own-local target must retain Home requester custody.
             writeDaemonState({ pid: process.pid, httpPort: control.port, startedAt: Date.now(),
@@ -204,14 +237,21 @@ it('materializes a Saved Secret when an own-local CLI backup Test crosses Home a
                 .toEqual({ machineId: home.machineId, accountId: home.accountId, port: control.port });
             approvals.length = 0;
             privateRootRequests = 0;
-            const tested = await testBackup();
-            expect(tested, JSON.stringify(tested)).toMatchObject({ ok: true });
+            const tested = await testBackup(resourceId);
+            expect(tested.ok, tested.ok ? '' : tested.errorCode).toBe(true);
             if (!tested.ok) throw new Error(tested.errorCode);
             expect(DeploymentBackupConfigureResultV1Schema.parse(tested.result)).toMatchObject({
                 kind: 'tested', test: { kind: 'reachable', repositoryId: 'c'.repeat(64) },
             });
             expect(approvals).toHaveLength(1);
             expect(privateRootRequests).toBe(0);
+            if (encryptionMode === 'e2ee') {
+                const wrong = await testBackup(await savePassword(randomUUID()));
+                if (!wrong.ok) throw new Error(wrong.errorCode);
+                expect(DeploymentBackupConfigureResultV1Schema.parse(wrong.result)).toMatchObject({
+                    kind: 'tested', test: { kind: 'failed', step: 'repository', reason: 'repository_password_incorrect' },
+                });
+            }
         } finally {
             for (const transport of transports) transport.unsubscribe(observeRequest);
             lifetime.abort();

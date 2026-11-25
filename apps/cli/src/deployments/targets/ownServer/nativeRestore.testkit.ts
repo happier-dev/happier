@@ -31,7 +31,7 @@ export const sourceManifest = DeploymentBackupManifestV1Schema.parse({ schemaVer
  * This PostgreSQL/SQLite/restic substitute retains native state across processes.
  */
 export async function installRestoreBoundary(root: string, mode: string, options?: Readonly<{ toolDirectory: string; environmentId: string;
-    archive?: Uint8Array; nativePostgresql?: Readonly<{ pgRestorePath: string; connectionString: string }> }>) {
+    archive?: Uint8Array; repositoryPasswordDigest?: string; nativePostgresql?: Readonly<{ pgRestorePath: string; connectionString: string }> }>) {
     const toolDirectory = options?.toolDirectory ?? join(root, 'tools');
     if (mode === 'sqliteBackup') {
         // Keep SQLite's actual file/VACUUM behavior beneath the Docker boundary.
@@ -55,6 +55,7 @@ export async function installRestoreBoundary(root: string, mode: string, options
     };
     await writeRestoreState({ names: mode === 'safety' ? [database] : [], mode, snapshot: nativeSnapshot,
         runtimeImageLoaded: options === undefined, archive: Buffer.from(options?.archive ?? archive).toString('base64'),
+        ...(options?.repositoryPasswordDigest ? { repositoryPasswordDigest: options.repositoryPasswordDigest } : {}),
         ...(options?.nativePostgresql ? { nativePostgresql: options.nativePostgresql } : {}) });
     await writeFile(eventsFile, '');
     await writeFile(executable, `#!${process.execPath}\n` + String.raw`
@@ -176,7 +177,18 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
     const argv = request.slice(offset);
     const repository = argv[1];
     let output;
-    if (argv.includes('config')) output = JSON.stringify({version:2,id:'c'.repeat(64)});
+    let repositoryPasswordIncorrect = false;
+    if (argv.includes('config')) {
+        if (state.repositoryPasswordDigest) {
+            const passwordTarget = request.find(value => value.startsWith('RESTIC_PASSWORD_FILE='))?.split('=')[1];
+            const passwordMount = request.find(value => value.startsWith('type=bind,source=')
+                && value.split(',').includes('target=' + passwordTarget));
+            const passwordSource = passwordMount?.split(',').find(value => value.startsWith('source='))?.slice('source='.length);
+            repositoryPasswordIncorrect = !passwordSource
+                || crypto.createHash('sha256').update(fs.readFileSync(passwordSource)).digest('hex') !== state.repositoryPasswordDigest;
+        }
+        output = JSON.stringify({version:2,id:'c'.repeat(64)});
+    }
     else if (argv.includes('init')) {
         // The fixture's generated --mount uses these fixed CSV fields. Mirror
         // restic 0.19.1 local.Create: only init creates the selected directory.
@@ -267,6 +279,9 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
         docker.operationStdoutBase64 = Buffer.from(output).toString('base64');
         if (argv.includes('check') && state.repositoryCheckExitCode !== undefined) {
             docker.containers.find(row => row.Id === args.at(-1)).State.ExitCode = state.repositoryCheckExitCode;
+        }
+        if (repositoryPasswordIncorrect) {
+            docker.containers.find(row => row.Id === args.at(-1)).State.ExitCode = 12;
         }
         if (argv.includes('config') && state.repositoryConfigExitCode !== undefined) {
             docker.containers.find(row => row.Id === args.at(-1)).State.ExitCode = state.repositoryConfigExitCode;
