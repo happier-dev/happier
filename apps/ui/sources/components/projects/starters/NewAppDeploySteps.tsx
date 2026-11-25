@@ -35,7 +35,7 @@ import { t } from '@/text';
  * catalog app (its exact pin read from the registry). `targetId` pre-selects Where; the person can still change it.
  */
 export type NewAppDeploySource =
-  | Readonly<{ kind: 'repository'; projectSourceId: string }>
+  | Readonly<{ kind: 'repository'; projectSourceId: string; projectName?: string; createdProjectName?: string }>
   | Readonly<{
       kind: 'definition';
       definitionKind: DeploymentNewDefinitionKind;

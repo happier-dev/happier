@@ -198,7 +198,10 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     props.starterId ?? (starters.length === 1 && !props.projectSourceId ? starters[0]!.itemId : null),
   );
   // Deploy an app → Your code: a repository Project, chosen instead of a starter (lab f1src). One choice at a time.
-  const [codeSourceId, setCodeSourceId] = React.useState<string | null>(props.projectSourceId ?? null);
+  const [codeSource, setCodeSource] = React.useState<Readonly<{ id: string; name: string | null }> | null>(
+    props.projectSourceId ? { id: props.projectSourceId, name: null } : null,
+  );
+  const codeSourceId = codeSource?.id ?? null;
   // Already built and From the catalog (lab f1src): a way that continues outside this dialog, chosen like the others.
   const [door, setDoor] = React.useState<Door | null>(null);
   // Your code → a pasted link to a repository that is not a Project here yet (owner ruling 20:50Z).
@@ -219,8 +222,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     setDeployFrame(null);
     setStep('deploy');
   }, []);
-  const chooseCode = React.useCallback((next: string | null) => {
-    setCodeSourceId(next);
+  const chooseCode = React.useCallback((next: Pick<ProjectSourceV1, 'id' | 'name'> | null) => {
+    setCodeSource(next);
     if (next) {
       setStarterId(null);
       setDoor(null);
@@ -231,7 +234,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     setStarterId(next);
     setPickedStarter(next ? starters.find((candidate) => candidate.itemId === next) ?? null : null);
     if (next) {
-      setCodeSourceId(null);
+      setCodeSource(null);
       setDoor(null);
       setPastedRepository(null);
     }
@@ -240,7 +243,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     setDoor(next);
     if (next) {
       setStarterId(null);
-      setCodeSourceId(null);
+      setCodeSource(null);
       setPastedRepository(null);
     }
   }, []);
@@ -248,7 +251,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     save: () => Promise<ProjectSourceV1 | undefined>) => {
     setPastedRepository({ selector, save });
     setStarterId(null);
-    setCodeSourceId(null);
+    setCodeSource(null);
     setDoor(null);
   }, []);
   // The catalog's first apps, read only while the person is choosing a way in.
@@ -530,7 +533,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       setDescription(auto.description);
       setStarterId(source.kind === 'starter' ? suggestedStarterItemId(chosen) : null);
       setPickedStarter(null);
-      setCodeSourceId(null);
+      setCodeSource(null);
       setDoor(null);
       setPastedRepository(null);
       setStep('describe');
@@ -600,7 +603,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               setSavingSource(true);
               void pastedRepository.save().then((source) => {
                 setSavingSource(false);
-                if (source) startDeploy({ kind: 'repository', projectSourceId: source.id });
+                if (source) startDeploy({ kind: 'repository', projectSourceId: source.id, createdProjectName: source.name });
               });
               return;
             }
@@ -608,8 +611,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               continueThroughDoor(door);
               return;
             }
-            if (codeSourceId !== null) {
-              startDeploy({ kind: 'repository', projectSourceId: codeSourceId });
+            if (codeSource !== null) {
+              startDeploy({ kind: 'repository', projectSourceId: codeSource.id, ...(codeSource.name ? { projectName: codeSource.name } : {}) });
               return;
             }
             setPickedStarter(starter);
@@ -881,9 +884,14 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         ? [t('newApp.title'), name && target && deployFrame?.runsOn?.kind === 'platform'
           ? t('newApp.deploy.configurePlatform', { name, target }) : t('newApp.deploy.configureUnnamed')]
         : [t('newApp.title'), name ? t('newApp.deploy.whereDescription', { name }) : t('newApp.deploy.whereDescriptionUnnamed')];
+    const repositoryName = deploySource.kind === 'repository' ? named ?? deploySource.projectName ?? null : null;
+    const repositoryProject = deploySource.kind !== 'repository' ? null : deploySource.createdProjectName
+      ? t('newApp.deploy.repositoryCreatedProject', { project: deploySource.createdProjectName })
+      : repositoryName && props.projectSourceId && props.projectSourceId !== deploySource.projectSourceId
+        ? t('newApp.deploy.repositoryProject', { project: repositoryName }) : null;
     body = (
       <View testID="newApp.deploy">
-        {header(title, description)}
+        {header(title, repositoryProject ? `${description} ${repositoryProject}` : description)}
         <NewAppDeploySummary phone={phone} frame={deployFrame} onChangeSource={leaveDeploy}
           source={deploySource.kind === 'definition'
             ? { title: t(deploySource.definitionKind === 'image' ? 'newApp.deploy.builtImageSource'

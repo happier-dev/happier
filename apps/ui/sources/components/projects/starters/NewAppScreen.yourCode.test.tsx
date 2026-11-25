@@ -64,6 +64,10 @@ it("Deploy an app: your code continues to Where it runs inside the dialog, with 
     'updated',
     {
       handleRequest: async (path) =>
+        path === '/v1/projects/sources/source-invoices' ? Response.json({
+          ok: true, canManage: true, source: { id: 'source-invoices', revision: 2, name: 'invoices',
+            repository, defaultRef: 'main', audience: [], createdByAccountId: 'alice' },
+        }) :
         path.startsWith('/v1/projects/sources')
           ? Response.json({
               ok: true,
@@ -93,7 +97,7 @@ it("Deploy an app: your code continues to Where it runs inside the dialog, with 
   try {
     const onClose = vi.fn();
     routerMock.spies.push.mockClear();
-    const screen = await renderScreen(<NewAppScreen onClose={onClose} />);
+    const screen = await renderScreen(<NewAppScreen onClose={onClose} projectSourceId="source-stored" />);
     await waitForHomeGovernance(() =>
       expect(
         screen.findByTestId('newApp.code:source-invoices'),
@@ -109,6 +113,8 @@ it("Deploy an app: your code continues to Where it runs inside the dialog, with 
     // The dialog stays and hosts the Environment draft's Where step under the flow's summary.
     await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.draft')).toBeTruthy());
     expect(screen.findByTestId('newApp.deploy.summary.source')).toBeTruthy();
+    const { t } = await import('@/text');
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('newApp.deploy.repositoryProject', { project: 'invoices' })));
     expect(onClose).not.toHaveBeenCalled();
     expect(routerMock.spies.push).not.toHaveBeenCalled();
     // Change on the summary's Source goes back to the source step.

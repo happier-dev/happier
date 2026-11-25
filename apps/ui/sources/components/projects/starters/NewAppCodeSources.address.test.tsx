@@ -170,7 +170,7 @@ it.each([
       ).toBe(1),
     );
     if (outcome === 'picks')
-      expect(onChange).toHaveBeenCalledWith('source-invoices');
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ id: 'source-invoices', name: expect.any(String) }));
     else
       expect(onChooseRepository).toHaveBeenCalledWith(
         expect.objectContaining({

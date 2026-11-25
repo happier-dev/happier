@@ -48,7 +48,7 @@ export function NewAppCodeSources(
   props: Readonly<{
     scope: ServerAccountScope;
     value: string | null;
-    onChange: (projectSourceId: string | null) => void;
+    onChange: (project: Pick<ProjectSourceV1, 'id' | 'name'> | null) => void;
     /** A pasted repository that is not a Project here yet; null when a Project or nothing is chosen. */
     chosenRepository: ProjectSourceRepositorySelectorV1 | null;
     /** `save` keeps it as a Source through the Sources' own writer; resolves to the Source, or nothing when refused. */
@@ -73,7 +73,7 @@ export function NewAppCodeSources(
     const project = withCode.find((row) => sameScmHostingRepositoryIdentity(identityOf(row.repository!), identity));
     if (project) {
       setQuery('');
-      props.onChange(project.id);
+      props.onChange(project);
     } else {
       setSaveIssue(null);
       props.onChooseRepository(selector, async () => {
@@ -172,7 +172,7 @@ export function NewAppCodeSources(
             subtitleLines={1}
             value={pasted ? PASTED : props.value}
             onChange={(id) => {
-              if (id !== PASTED) props.onChange(id);
+              if (id !== PASTED) props.onChange(withCode.find((project) => project.id === id) ?? null);
             }}
             options={tiles}
           />
