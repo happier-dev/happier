@@ -53,7 +53,7 @@ import type {
 import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactBodyV1Schema, ArtifactBodyEnvelopeV1StoredSchema, ArtifactSavedByV1Schema, type ArtifactBodyEnvelopeV1, type ArtifactSavedByV1, type ArtifactWorkspaceSourceV1, ArtifactBlobReferenceV1Schema, type ArtifactBlobReferenceV1, type ArtifactBodyV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
-import { artifactKindRequiresSharedAudienceV1, artifactKindRequiresTextBodyV1, getArtifactUseTargetV1, isAddressedArtifactReadAllowedV1, readArtifactSharedAudienceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { artifactKindRequiresSharedAudienceV1, artifactKindRequiresTextBodyV1, getArtifactUseTargetV1, readArtifactSharedAudienceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { runArtifactRecipientKeyPreparationV1, prepareArtifactRecipientKeyEnvelopesV1, prepareOwedArtifactRecipientKeysV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
 import { withArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
 import { canShareArtifactWriteContentV1, prepareArtifactHeaderForRevisionV1, prepareArtifactHeaderForBodyV1 } from '@happier-dev/protocol/artifacts/artifactHeaderRestorationV1';
@@ -1442,19 +1442,19 @@ function assertArtifactDocumentReadAllowed(artifact: DecryptedArtifact | null): 
 export async function fetchArtifactForViewFromApi(params: Readonly<{
     credentials: AuthCredentials; request?: ArtifactApiOptions['request']; artifactId: string;
     readTransport?: ArtifactApiOptions['readTransport'];
-    readPolicy?: 'addressed';
     encryption: Encryption | null; artifactDataKeys: ArtifactDataKeyCache; signal?: AbortSignal;
 }>): Promise<ArtifactViewRead | null> {
     const artifact = await fetchArtifactWithBodyFromApi(params);
     if (!artifact) return null;
-    // Replay readers retain private custody; the generic Document reader never publishes it.
-    if (params.readPolicy === 'addressed') {
-        if (artifact.isDecrypted && !isAddressedArtifactReadAllowedV1({
-            header: artifact.rawHeader ?? artifact.header ?? {}, body: artifact.body, access: artifact.access,
-        })) throw Object.assign(new Error('artifact_kind_internal'), { code: 'artifact_kind_internal' });
-    } else {
-        assertArtifactDocumentReadAllowed(artifact);
-    }
+    assertArtifactDocumentReadAllowed(artifact);
+    return prepareOpenedArtifactViewFromApi({ ...params, artifact });
+}
+
+/** Prepare a preview from an already-open row and the same keyholding Account. */
+export async function prepareOpenedArtifactViewFromApi(
+    params: Parameters<typeof fetchArtifactForViewFromApi>[0] & Readonly<{ artifact: DecryptedArtifact }>,
+): Promise<ArtifactViewRead> {
+    const { artifact } = params;
     if (!artifact.isDecrypted) return { artifact };
     if (isArtifactHtmlHeaderV1(artifact.rawHeader ?? artifact.header)) {
         return { artifact, htmlPreview: await fetchArtifactHtmlPreviewFromApi({ ...params, artifact }) };

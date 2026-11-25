@@ -262,7 +262,8 @@ import { captureLazyActionAccountContext, captureApprovalSettlementAccount, with
 import { createUiPendingEditAction } from './pendingEdit';
 import { createUiPendingSendNowAction } from './pendingSendNow';
 import { readRequesterSessionSpawnDisposition, resolveRequesterSessionSpawnDisposition } from './requesterSessionSpawnPreparation';
-import { createUiArtifactAction } from './artifactActionDeps';
+import { createUiArtifactAction, type ArtifactViewCapture } from './artifactActionDeps';
+import type { ArtifactViewRead } from '@/sync/engine/artifacts/syncArtifacts';
 import { createUiArtifactPublicLinkDelivery } from './artifactPublicLinkDelivery';
 import { createUiBotTemplateAction, readUiOwnedSessionForAction } from './botTemplateActionDeps';
 import { createUiProfileActionExecuteV1 } from './profileActionDeps';
@@ -904,6 +905,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   onPublicLinkIssued?: (link: ArtifactPublicLinkIssuedV1) => void | Promise<void>;
   consumeArtifactSignedInLinkSecret?: (lookupId: string) => Promise<string | null>;
   onArtifactSignedInLinkOpened?: (opened: ArtifactSignedInLinkOpenedV1) => void | Promise<void>;
+  artifactView?: ArtifactViewCapture;
   /** Optional Session human-discussion family port bound by a mounted surface. */
   discussionAction?: NonNullable<ActionExecutorDeps['discussionAction']>;
   /** Exact mounted canvas for local pane interactions; external callers use the focused publication. */
@@ -2104,7 +2106,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       : { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' },
     ...(accountContext ? { artifactAction: createUiArtifactAction(accountContext, { onPublicLinkIssued,
       consumeArtifactSignedInLinkSecret: opts?.consumeArtifactSignedInLinkSecret,
-      onArtifactSignedInLinkOpened: opts?.onArtifactSignedInLinkOpened }) } : {}),
+      onArtifactSignedInLinkOpened: opts?.onArtifactSignedInLinkOpened, artifactView: opts?.artifactView }) } : {}),
     ...(accountContext ? (() => {
       const botTemplateAction = createUiBotTemplateAction(accountContext, opts?.openBotTemplate ?? (async input => {
         const { router } = await import('expo-router');
@@ -5929,6 +5931,30 @@ export async function withDefaultActionExecuteContext<TResult>(
     finishSessionArchiveInvocation(archiveInvocation);
     account.dispose();
   }
+}
+
+/** Admit an ordinary detail read before preparing its native preview. */
+export async function readArtifactViewThroughAction(
+  artifactId: string,
+  scope: Readonly<{ serverId: string; accountId: string }>,
+  signal: AbortSignal,
+): Promise<ArtifactViewRead | null> {
+  const { serverId, accountId } = scope;
+  const opened: { artifact?: ArtifactViewRead['artifact'] | null } = {};
+  return withDefaultActionExecuteContext({
+    artifactView: { artifactId, capture: artifact => { opened.artifact = artifact; } },
+  }, { serverId, expectedAccountId: accountId, signal }, async (executor, account) => {
+    const result = await executor.execute('artifact.get', { artifactId }, { surface: 'ui', serverId, runtimeAccountId: accountId, signal });
+    const artifact = opened.artifact;
+    if (!result.ok) {
+      if (result.errorCode === 'content_unavailable' && artifact?.isDecrypted === false) return { artifact };
+      if (result.errorCode === 'not_found') return null;
+      throw Object.assign(new Error(result.error), {
+        code: result.errorCode, details: result.details, failureCause: result.failureCause,
+      });
+    }
+    return artifact ? account.prepareArtifactView(artifact, signal) : null;
+  }, 'artifact.get');
 }
 
 /** Trusted native main-to-presenter continuation. The original Action already passed admission. */

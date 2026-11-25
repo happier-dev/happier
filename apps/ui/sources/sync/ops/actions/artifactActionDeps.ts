@@ -10,6 +10,7 @@ import { getRandomBytes } from '@/platform/cryptoRandom';
 import { ArtifactQuotaExceededError } from '@/sync/api/artifacts/apiArtifacts';
 import { HappyError } from '@/utils/errors/errors';
 import type { LazyActionAccountContext } from './actionAccountContext';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
@@ -34,11 +35,18 @@ import { exportArtifactToClient } from './artifactClientExport';
 import { createArtifactPublicLinkRequest } from '@/sync/api/artifacts/artifactPublicLinkRequest';
 import { resolvePreferredShareableServerUrl } from '@/sync/domains/server/url/shareableServerUrl';
 
+/** Native view custody stays local to the caller of this exact Artifact Action. */
+export type ArtifactViewCapture = Readonly<{
+    artifactId: string;
+    capture: (artifact: DecryptedArtifact | null) => void;
+}>;
+
 /** Artifact-backed Actions use the captured Account transport and canonical sync codecs. */
 export function createUiArtifactAction(account: LazyActionAccountContext, options?: Readonly<{
     onPublicLinkIssued?: (link: ArtifactPublicLinkIssuedV1) => void | Promise<void>;
     consumeArtifactSignedInLinkSecret?: (lookupId: string) => Promise<string | null>;
     onArtifactSignedInLinkOpened?: (opened: ArtifactSignedInLinkOpenedV1) => void | Promise<void>;
+    artifactView?: ArtifactViewCapture;
     workspaceDownload?: typeof downloadDaemonWorkspaceFileToDestination;
     /** One confined directory listing on the source machine (the daemon's filesystem Action). */
     workspaceList?: (request: Readonly<{ machineId: string; rootPath: string; agentRootPath?: string; path: string;
@@ -246,9 +254,11 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                 case 'artifact.get': {
                     const args = ArtifactActionInputSchemasV1[actionId].parse(input);
                     const readOnly = 'readOnly' in invocation && invocation.readOnly === true;
-                    const artifact = await (readOnly ? account.readArtifact : account.fetchArtifact)(args.artifactId, { signal,
+                    const view = options?.artifactView?.artifactId === args.artifactId ? options.artifactView : undefined;
+                    const artifact = await (readOnly || view ? account.readArtifact : account.fetchArtifact)(args.artifactId, { signal,
                         projectSourceId: args.projectSourceId,
                         ...(readOnly ? { prepareRecipientKeys: false } : {}) });
+                    view?.capture(artifact);
                     if (!artifact) return { artifact: null };
                     if (!artifact.isDecrypted || !artifact.rawHeader || artifact.bodyVersion === undefined) throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
                     return { artifact: ArtifactDocumentV1Schema.parse({ artifactId: artifact.id, header: artifact.rawHeader, body: artifact.body,

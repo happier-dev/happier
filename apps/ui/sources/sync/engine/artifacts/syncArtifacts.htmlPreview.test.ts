@@ -26,7 +26,7 @@ function detailBatch(artifact: Artifact) {
 }
 
 describe('Artifact HTML private preview', () => {
-    it('refuses a theme profile on the addressed document path while its own reader can open it', async () => {
+    it('opens a theme profile through its native reader', async () => {
         const stored: Artifact = { id: artifactId, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
             dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
             header: encodePlainArtifactStoredContent({ kind: THEME_PROFILE_ARTIFACT_KIND_V1 }),
@@ -35,8 +35,6 @@ describe('Artifact HTML private preview', () => {
         const params = { artifactId, credentials: { token: 'fixture-auth' },
             request: async (path: string) => Response.json(path === '/v1/artifacts/read' ? detailBatch(stored) : stored),
             encryption: null, artifactDataKeys: new Map() };
-        await expect(fetchArtifactForViewFromApi({ ...params, readPolicy: 'addressed' }))
-            .rejects.toMatchObject({ code: 'artifact_kind_internal' });
         await expect(fetchArtifactForViewFromApi(params)).resolves.toMatchObject({ artifact: { body: 'native theme content' } });
     });
 

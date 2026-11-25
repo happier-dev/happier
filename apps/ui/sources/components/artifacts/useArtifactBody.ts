@@ -58,7 +58,14 @@ export function useArtifactBody(artifactId: string, artifact: DecryptedArtifact 
         if (!requiresRead) { setRead({ state: 'ready', result: null }); return; }
         const controller = new AbortController();
         setRead({ state: 'loading', result: null });
-        void sync.fetchArtifactForView(artifactId, { signal: controller.signal, readPolicy }).then((full) => {
+        const readView = async () => {
+            if (readPolicy !== 'addressed') return sync.fetchArtifactForView(artifactId, { signal: controller.signal });
+            if (!lifetime) throw new Error('Artifact Account scope is unavailable');
+            const { readArtifactViewThroughAction } = await import('@/sync/ops/actions/defaultActionExecutor');
+            controller.signal.throwIfAborted();
+            return readArtifactViewThroughAction(artifactId, lifetime.scope, controller.signal);
+        };
+        void readView().then((full) => {
             if (controller.signal.aborted) return;
             if (full) {
                 // Acknowledge this operation before publishing its own row, so

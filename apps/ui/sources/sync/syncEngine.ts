@@ -10087,10 +10087,10 @@ class Sync {
     }
 
     public fetchArtifactForView = async (artifactId: string, options: Readonly<{
-        signal: AbortSignal; readPolicy?: 'addressed';
+        signal: AbortSignal;
     }>): Promise<ArtifactViewRead | null> => {
         return this.withArtifactReadAuthority(options.signal,
-            params => fetchArtifactForViewFromApi({ ...params, artifactId, readPolicy: options.readPolicy }));
+            params => fetchArtifactForViewFromApi({ ...params, artifactId }));
     };
 
     public fetchArtifactBinary = async (artifactId: string, reference: Parameters<typeof fetchArtifactBinaryFromApi>[0]['reference'], signal?: AbortSignal): Promise<Uint8Array> => {

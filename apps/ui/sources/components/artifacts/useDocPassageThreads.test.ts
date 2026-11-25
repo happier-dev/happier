@@ -5,6 +5,9 @@ import { createDeferred, renderHook, renderScreen, standardCleanup, waitForTestE
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { answerDiscussionThreadForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { setServerReachabilityNetworkAllowed } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -40,7 +43,6 @@ const { createArtifactActionsClient } = await import('./artifactActionsClient');
 const { createAccountArtifactStoredEnvelope } = await import('@/sync/domains/artifacts/accountArtifactEnvelope');
 const { storage } = await import('@/sync/domains/state/storage');
 const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
-const syncModule = await import('@/sync/sync');
 
 let previousProfileScope = storage.getState().profileScope;
 let previousSettingsScope = storage.getState().settingsScope;
@@ -493,6 +495,8 @@ describe('Doc passage thread demand', () => {
         await seeded.unmount();
         clearDiscussionRepositoryRegistryForTests();
         const parallelArtifactId = 'parallel-doc';
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        setServerReachabilityNetworkAllowed(true);
         const stored = homes.artifacts(scope.serverId).read(artifact.id)!;
         homes.artifacts(scope.serverId).replaceStoredRow({ ...stored, id: parallelArtifactId });
         const pending = createDeferred<void>();
@@ -511,7 +515,6 @@ describe('Doc passage thread demand', () => {
             return { body: await response.json() };
         } });
 
-        const bodyRead = vi.spyOn(syncModule.sync, 'fetchArtifactForView');
         const screen = await renderScreen(createElement(ArtifactView, {
             artifactId: parallelArtifactId,
             artifact: { ...artifact, id: parallelArtifactId, body: undefined },
@@ -519,8 +522,8 @@ describe('Doc passage thread demand', () => {
         }));
         const menu = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'artifact:comments.menu');
         const button = () => screen.findAllByType(RoundButton).find(node => node.props.testID === 'artifact:comments');
-        await waitForHomeGovernance(() => expect(bodyRead).toHaveBeenCalledWith(parallelArtifactId, expect.objectContaining({ signal: expect.any(AbortSignal) })));
-        bodyRead.mockRestore();
+        await waitForHomeGovernance(() => expect(homes.requests.some(request =>
+            request.path === `/v1/artifacts/${parallelArtifactId}` || request.path === '/v1/artifacts/read')).toBe(true));
         await waitForHomeGovernance(() => expect(homes.requests.filter(request => request.path.includes(`anchorDocArtifactId=${parallelArtifactId}`))).toHaveLength(1));
         await waitForHomeGovernance(() => expect(button()?.props.title).toBe('0'));
         expect(button()?.props.accessibilityLabel).toBe(t('artifacts.browser.passage.count', { count: 0 }));

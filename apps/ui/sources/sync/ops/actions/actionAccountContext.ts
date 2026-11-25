@@ -41,7 +41,7 @@ import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
 import { parseToken } from '@/utils/auth/parseToken';
 import { createArtifactWithHeaderViaApi, decryptArtifactListItems, fetchArtifactWithBodyFromApi, fetchArtifactsWithBodiesFromApi, openArtifactsWithBodiesFromApi, updateArtifactWithHeaderViaApi,
-    fetchArtifactBodyRevisionsFromApi, fetchArtifactBinaryFromApi, restoreArtifactBodyRevisionViaApi, type ArtifactDataKeyCache } from '@/sync/engine/artifacts/syncArtifacts';
+    fetchArtifactBodyRevisionsFromApi, fetchArtifactBinaryFromApi, prepareOpenedArtifactViewFromApi, restoreArtifactBodyRevisionViaApi, type ArtifactDataKeyCache } from '@/sync/engine/artifacts/syncArtifacts';
 import { listArtifactHeadersV1, type ArtifactListPageOptionsV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import { createArtifactAccessApi, deleteArtifact as deleteArtifactApi, fetchArtifactListPage, fetchArtifactReadBatch, fetchArtifactRevisionHeaders, fetchStorageInventory, trimArtifactRevisions, encodeArtifactListCursor } from '@/sync/api/artifacts/apiArtifacts';
 import { HappyError } from '@/utils/errors/errors';
@@ -163,6 +163,7 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
             },
             fetchArtifact: async (_artifactId: string, _options?: ArtifactReadOptions) => unavailable(),
             readArtifact: async (_artifactId: string, _options?: ArtifactReadOptions): Promise<DecryptedArtifact | null> => artifactUnavailable(),
+            prepareArtifactView: async (_artifact: DecryptedArtifact, _signal?: AbortSignal): ReturnType<typeof prepareOpenedArtifactViewFromApi> => artifactUnavailable(),
             readArtifactHeader: async (_artifactId: string, _options?: Pick<ArtifactReadOptions, 'signal' | 'fresh'>): Promise<DecryptedArtifact | null> => artifactUnavailable(),
             readArtifactHeaders: async (_artifactIds: readonly string[], _options?: Pick<ArtifactReadOptions, 'signal' | 'fresh'>): Promise<PromiseSettledResult<DecryptedArtifact | null>[]> => artifactUnavailable(),
             readArtifactContent: async (_artifactId: string, _options?: ArtifactContentReadOptions): Promise<ArtifactContentRead | null> => artifactUnavailable(),
@@ -855,6 +856,9 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
             },
             fetchArtifact,
             readArtifact,
+            prepareArtifactView: (artifact: DecryptedArtifact, operationSignal?: AbortSignal) =>
+                withArtifactReadSignal(operationSignal, async borrowerSignal =>
+                    prepareOpenedArtifactViewFromApi({ ...await artifactParams(), artifactId: artifact.id, artifact, signal: borrowerSignal })),
             readArtifactHeader,
             // Finite content observations use the same codec and authority without
             // invalidating the list that is currently reading them.

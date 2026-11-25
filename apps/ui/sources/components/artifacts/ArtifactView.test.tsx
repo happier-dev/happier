@@ -774,6 +774,24 @@ describe('Artifact composed view reads', () => {
             expect(served.requests.filter(request => request.path === '/v1/artifacts')).toHaveLength(0);
         } finally { await screen.unmount(); }
     });
+    it('honors a disabled Artifact get Action before opening the ordinary detail body', async () => {
+        const { served } = await setup('document', undefined, false, undefined, true);
+        const { normalizeActionsSettingsV1 } = await import('@happier-dev/protocol/actions/actionSettings');
+        const scope = captureActiveServerAccountScopeLifetime()?.scope;
+        if (!scope) throw new Error('The test Home must be applied');
+        getStorage().setState({ settingsScope: scope });
+        getStorage().getState().applySettingsForScope(scope, {
+            ...getStorage().getState().settings,
+            actionsSettingsV1: normalizeActionsSettingsV1({ v: 1, actions: { 'artifact.get': { enabled: false } } }),
+        }, 1);
+        const screen = await renderScreen(<OpenView id="document" />);
+        try {
+            const { t } = await import('@/text');
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('actionConfirmations.turnedOffUnnamedMessage')));
+            expect(served.requests.filter(request => request.path === '/v1/artifacts/document'
+                || request.path === '/v1/artifacts/read')).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
     it('keeps one cold edit body read when its inventory header arrives during the opening read', async () => {
         const pending = createDeferred<Response>();
         const { served, head, row } = await setup('document', undefined, false,
