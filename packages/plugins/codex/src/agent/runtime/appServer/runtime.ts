@@ -98,6 +98,8 @@ import {
   readCodexAppServerRpcTimeoutMs,
 } from './client/timeout.js';
 import { assignInjectedServerKeys, buildCodexAppServerConfigOverrides, buildCodexPromptProfileConfig, buildCodexUserMcpServerDisableOverrides, codexConfigOverridesToThreadConfig, resolveCodexHostFunctionNamespace, listCodexAppServerMcpServerNames } from './config/overrides.js';
+import { isFirstPartyHappierMcpBridgeServerName } from '../../mcp/serverKeys.js';
+import { CODEX_SUPPORTED_RUNTIME_VERSION } from '../../cli/supportedRuntime.js';
 import {
   CODEX_APP_SERVER_REASONING_EFFORT_CONFIG_OPTION_ID,
   CODEX_APP_SERVER_SERVICE_TIER_CONFIG_OPTION_ID,
@@ -912,6 +914,36 @@ export function createCodexAppServerRuntime(
   }
   const mcpServers = normalizeMcpServers(params.mcpServers);
   const mcpServerKeys = assignInjectedServerKeys(listCodexAppServerMcpServerNames(mcpServers, params.toolRestriction));
+  const captureMcpDiscovery = (appServerClient: DisposableCodexAppServerClient, threadId: string): void => {
+    if (params.happierSessionId === undefined) return;
+    const managedServers = [...mcpServerKeys].filter(([wireName]) => !isFirstPartyHappierMcpBridgeServerName(wireName));
+    if (managedServers.length === 0) return;
+    // A thread ID plus the injected server key reuses Codex's current MCP connection.
+    // Earlier servers can ignore those fields and enumerate ambient MCP inventory.
+    const canReadScopedStatus = params.appServerTransport !== 'daemonProxy'
+      && appServerClient.launchFeatures.nativeVersion === CODEX_SUPPORTED_RUNTIME_VERSION;
+    // Discovery may await optional startup, so keep it off the Session open path.
+    void Promise.all(managedServers.map(async ([wireName, injectedKey]) => {
+      const identity = { wireName, injectedKey };
+      if (!canReadScopedStatus) return { ...identity, refusalCode: 'codex_mcp_scoped_status_unavailable' };
+      const response = await appServerClient.request('mcpServerStatus/list', {
+        threadId, serverName: injectedKey, detail: 'toolsAndAuthOnly',
+      }).catch(() => null);
+      const data = readRecord(response)?.data;
+      if (!Array.isArray(data)) return { ...identity, refusalCode: 'codex_mcp_status_unavailable' };
+      const status = data.map(readRecord).find(row => row?.name === injectedKey);
+      if (!status) return { ...identity, refusalCode: 'codex_mcp_server_not_reported' };
+      const tools = readRecord(status.tools);
+      if (status.runtimeStatus !== 'connected' || status.toolsError || !tools) {
+        return { ...identity, refusalCode: 'codex_mcp_tools_unavailable' };
+      }
+      return { ...identity, stage: 'discovered', toolCount: Object.keys(tools).length };
+    })).then(servers => {
+      params.host.logger.debug('Codex startup phase', {
+        phase: 'mcp_discovery', sessionId: params.happierSessionId, servers,
+      });
+    });
+  };
   const hostFunctionNamespace = resolveCodexHostFunctionNamespace(params.toolRestriction);
   const runtimeTargetId = params.happierSessionId !== undefined
     ? params.happierSessionId
@@ -2946,6 +2978,7 @@ export function createCodexAppServerRuntime(
     } else {
       goalObservationState = 'observed';
     }
+    captureMcpDiscovery(appServerClient, nextThreadId);
     return nextThreadId;
   };
 

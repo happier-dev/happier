@@ -5,6 +5,7 @@ type HostServicePhase = 'external_sessions' | 'managed_provider_binding' | 'team
 type OpenPhaseDetail = Readonly<
     | { parentPhase: 'host_services'; status: 'started' | 'completed' | 'failed' }
     | { factoryInvokedAtMs: number; factoryInvocationMs: number; factoryPreparation?: RetainedAgentRuntimePreparation }
+    | { sdkMcpServers: readonly Readonly<{ wireName: string; serverId?: string }>[] }
 >;
 
 /** One Open phase owner: additive milestones and nested awaits share the same clock and log. */
@@ -24,16 +25,16 @@ export function createNativeAgentSessionOpenPhaseRecorder(sessionId: string, int
         });
     };
     return {
-        record(phase: string): void {
+        record(phase: string, detail?: Extract<OpenPhaseDetail, { sdkMcpServers: unknown }>): void {
             const now = performance.now();
-            const detail = phase === 'runtime_factory' && factoryInvocation
+            const phaseDetail = phase === 'runtime_factory' && factoryInvocation
                 ? {
                     factoryInvokedAtMs: factoryInvocation.wallMs,
                     factoryInvocationMs: Math.round(now - factoryInvocation.monotonicMs),
                     ...(factoryInvocation.preparation ? { factoryPreparation: factoryInvocation.preparation } : {}),
                 }
-                : undefined;
-            emit(phase, now, now - phaseStartedAt, detail);
+                : detail;
+            emit(phase, now, now - phaseStartedAt, phaseDetail);
             phaseStartedAt = now;
         },
         markRuntimeFactoryInvoked(preparation?: RetainedAgentRuntimePreparation): void {

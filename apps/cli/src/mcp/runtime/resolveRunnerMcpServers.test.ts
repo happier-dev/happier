@@ -134,7 +134,8 @@ describe('resolveRunnerMcpServers catalog admission', () => {
 
   it('keeps selected MCP servers and publishes a notice when requester native discovery is unavailable', async () => {
     const notices: unknown[] = [];
-    const captured = snapshot([server('selected')]);
+    const startupLog = vi.spyOn(logger, 'infoFile');
+    const captured = snapshot([{ ...server('selected'), stdio: { command: 'echo', args: ['private-fixture-argument'] } }]);
     const profile = await resolveRunnerMcpServers({ session: { ...session(),
       enqueueSessionEventCommitted: async event => { notices.push(event); return { persisted: true, delivered: true }; },
       getPluginMcpPort: () => ({ prepare: async () => ({ preparationId: '8888511a-7215-4f28-a706-ce09732d4194', items: [],
@@ -147,6 +148,16 @@ describe('resolveRunnerMcpServers catalog admission', () => {
     try {
       expect(Object.keys(profile.mcpServers)).toEqual(['selected']);
       expect(notices.map(readSessionCapabilityNoticeV1)).toContainEqual(expect.objectContaining({ items: [expect.objectContaining({ code: 'requester_native_discovery_unavailable' })] }));
+      expect(startupLog.mock.calls).toContainEqual(['[mcp] Startup phase', expect.objectContaining({
+        phase: 'capability_selection', selectedServers: [{ serverId: 'selected', wireName: 'selected' }],
+      })]);
+      expect(startupLog.mock.calls).toContainEqual(['[mcp] Startup phase', expect.objectContaining({
+        phase: 'native_discovery', refusalCode: 'requester_native_discovery_unavailable',
+      })]);
+      expect(startupLog.mock.calls).toContainEqual(['[mcp] Startup phase', expect.objectContaining({
+        phase: 'config_materialization', materializedServers: [{ serverId: 'selected', wireName: 'selected' }],
+      })]);
+      expect(JSON.stringify(startupLog.mock.calls)).not.toContain('private-fixture-argument');
     } finally { await profile.happierMcpServer.stop(); }
   });
 
@@ -665,13 +676,13 @@ describe('resolveRunnerMcpServers catalog admission', () => {
     expect(request).not.toHaveBeenCalled();
   });
   it.each([
-    ['mcp_catalog_unavailable', 'mcp_catalog_unavailable', 'mcp_catalog_unavailable'],
-    ['mcp_resource_mismatch', 'mcp_resource_mismatch', 'mcp_resource_mismatch'],
-    ['native_agent_privileged_effect_authority_unavailable', 'mcp_request_auth_unavailable', 'native_agent_privileged_effect_authority_unavailable'],
-    ['native_agent_privileged_effect_outcome_unknown', 'mcp_request_auth_unavailable', 'native_agent_privileged_effect_outcome_unknown'],
-    ['native_agent_privileged_effect_authority_unavailable', 'mcp_request_auth_unavailable', 'agent_runtime_daemon_service_forbidden', 'daemon_service_dispatch', 'agent_runtime_daemon_service_forbidden'],
-    ['untrusted exception with private connection details', 'mcp_request_auth_unavailable', 'mcp_request_auth_unavailable'],
-  ])('keeps other servers available and reports a safe refusal when OAuth admission fails (%s)', async (failure, detail, failureCode, failureCheckpoint = 'request_auth_open', causeCode?: string) => {
+    ['mcp_catalog_unavailable', 'mcp_catalog_unavailable'],
+    ['mcp_resource_mismatch', 'mcp_resource_mismatch'],
+    ['native_agent_privileged_effect_authority_unavailable', 'native_agent_privileged_effect_authority_unavailable'],
+    ['native_agent_privileged_effect_outcome_unknown', 'native_agent_privileged_effect_outcome_unknown'],
+    ['native_agent_privileged_effect_authority_unavailable', 'agent_runtime_daemon_service_forbidden', 'daemon_service_dispatch', 'agent_runtime_daemon_service_forbidden'],
+    ['untrusted exception with private connection details', 'mcp_request_auth_unavailable'],
+  ])('keeps other servers available and reports a safe refusal when OAuth admission fails (%s)', async (failure, failureCode, failureCheckpoint = 'request_auth_open', causeCode?: string) => {
     const warnings = vi.spyOn(logger, 'debug');
     const notices: unknown[] = [];
     const captured = snapshot([server('static'), { id: 'oauth', name: 'oauth', transport: 'http', remote: { url: 'https://mcp.example.test/path', headers: {}, auth: { kind: 'oauth' } }, env: {}, createdAt: 1, updatedAt: 1 }]);
@@ -685,12 +696,12 @@ describe('resolveRunnerMcpServers catalog admission', () => {
     try {
       expect(Object.keys(result.mcpServers)).toEqual(['static']);
       expect(warnings.mock.calls).toContainEqual(['[mcp] Materialization warnings', {
-        warningCount: 1, warnings: [{ serverName: 'oauth', code: 'invalid_server', detail,
+        warningCount: 1, warnings: [{ serverName: 'oauth', serverId: 'oauth', code: 'invalid_server',
           failureCode, failureCheckpoint }],
       }]);
       expect(JSON.stringify(notices)).not.toContain('failureCheckpoint');
       expect(JSON.stringify(notices)).not.toContain('native_agent_privileged_effect');
-      expect(JSON.stringify(warnings.mock.calls)).not.toContain('private connection details');
+      expect(JSON.stringify(warnings.mock.calls)).not.toMatch(/private connection details|https:\/\/mcp\.example\.test/u);
     } finally { await result.happierMcpServer.stop(); }
   });
   it('uses the materializer refusal for strict OAuth admission without exposing the port exception', async () => {

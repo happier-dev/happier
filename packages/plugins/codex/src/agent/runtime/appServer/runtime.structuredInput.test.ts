@@ -125,16 +125,21 @@ vi.mock('./client.js', async () => {
 
 import { createCodexAppServerClient } from './client.js';
 import { createCodexNativeAppServerSessionRuntime } from './native.js';
-import { createCodexAppServerRuntime } from './runtime.js';
+import { createCodexAppServerRuntime, startCodexAppServerRuntime } from './runtime.js';
+import { CODEX_SUPPORTED_RUNTIME_VERSION } from '../../cli/supportedRuntime.js';
 
-function createRuntime(inputFiles?: AgentSessionInputFilesService) {
+function createRuntime(inputFiles?: AgentSessionInputFilesService, mcpCapture?: {
+  mcpServers: Record<string, unknown>;
+  debug: (message: string, fields?: Readonly<Record<string, unknown>>) => void;
+  nativeVersion: string;
+}) {
   const exec = Object.freeze({}) as unknown as ExecService;
   return createCodexAppServerRuntime({
     host: {
       ...(inputFiles ? { inputFiles } : {}),
       baseProcessEnv: {},
       logger: {
-        debug: vi.fn(),
+        debug: mcpCapture?.debug ?? vi.fn(),
         warn: vi.fn(),
       },
       accountUsage: {
@@ -146,16 +151,20 @@ function createRuntime(inputFiles?: AgentSessionInputFilesService) {
           toRecordId: 'paug_v1_to',
         }),
       },
-      createClient: async (request) => await createCodexAppServerClient({
-        exec,
-        cwd: request.cwd,
-        processEnv: request.processEnv,
-        configOverrides: request.configOverrides,
-        disableUserMcpServers: request.disableUserMcpServers,
-      }),
+      createClient: async (request) => {
+        const client = await createCodexAppServerClient({
+          exec,
+          cwd: request.cwd,
+          processEnv: request.processEnv,
+          configOverrides: request.configOverrides,
+          disableUserMcpServers: request.disableUserMcpServers,
+        });
+        return mcpCapture ? { ...client, launchFeatures: { ...client.launchFeatures, nativeVersion: mcpCapture.nativeVersion } } : client;
+      },
     },
     directory: '/workspace',
     happierSessionId: 'session-1',
+    mcpServers: mcpCapture?.mcpServers,
   });
 }
 
@@ -181,6 +190,54 @@ const STRUCTURED_INPUT = {
 describe('Codex app-server structured input dispatch', () => {
   beforeEach(() => {
     clientState.reset();
+  });
+
+  it('captures scoped MCP discovery counts after opening the Codex thread', async () => {
+    const debug = vi.fn();
+    const request = clientState.request;
+    let finishDiscovery!: (response: unknown) => void;
+    const discovery = new Promise(resolve => { finishDiscovery = resolve; });
+    const rpc = vi.spyOn(clientState, 'request').mockImplementation(async (method, params) => {
+      if (method === 'mcpServerStatus/list') {
+        expect(params).toEqual({ threadId: 'thread-1', serverName: 'happier__member_tools', detail: 'toolsAndAuthOnly' });
+        return discovery;
+      }
+      return request(method, params);
+    });
+    const runtime = createRuntime(undefined, {
+      debug, nativeVersion: CODEX_SUPPORTED_RUNTIME_VERSION,
+      mcpServers: { member_tools: { command: 'echo', args: ['private-launch-argument'] } },
+    });
+    try {
+      await expect(startCodexAppServerRuntime(runtime)).resolves.toBe('thread-1');
+      finishDiscovery({ data: [{ name: 'happier__member_tools', runtimeStatus: 'connected', tools: { private_tool_name: {} } }] });
+      await vi.waitFor(() => expect(debug).toHaveBeenCalledWith('Codex startup phase', {
+        phase: 'mcp_discovery', sessionId: 'session-1',
+        servers: [{ wireName: 'member_tools', injectedKey: 'happier__member_tools', stage: 'discovered', toolCount: 1 }],
+      }));
+      expect(JSON.stringify(debug.mock.calls)).not.toMatch(/private-launch-argument|private_tool_name/u);
+    } finally {
+      finishDiscovery({ data: [] });
+      await runtime.dispose();
+      rpc.mockRestore();
+    }
+  });
+
+  it('keeps MCP diagnostics from querying ambient inventory on an older Codex runtime', async () => {
+    const debug = vi.fn();
+    const runtime = createRuntime(undefined, {
+      debug, nativeVersion: '0.120.0', mcpServers: { member_tools: { command: 'echo' } },
+    });
+    try {
+      await expect(startCodexAppServerRuntime(runtime)).resolves.toBe('thread-1');
+      expect(clientState.requests.map(({ method }) => method)).not.toContain('mcpServerStatus/list');
+      await vi.waitFor(() => expect(debug).toHaveBeenCalledWith('Codex startup phase', {
+        phase: 'mcp_discovery', sessionId: 'session-1',
+        servers: [{ wireName: 'member_tools', injectedKey: 'happier__member_tools', refusalCode: 'codex_mcp_scoped_status_unavailable' }],
+      }));
+    } finally {
+      await runtime.dispose();
+    }
   });
 
   it('delivers browser images through the verified host service without a text-only fallback', async () => {

@@ -5892,7 +5892,11 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             recordOpenPhase('resume_projection');
             const mcpServers = await resolveAgentSessionMcpLaunchConfigs(hostRuntimeParams.mcpServers, openInputs.configuration, signal,
                 hostRuntimeParams.resolveMcpToolNaming);
-            recordOpenPhase('mcp_launch');
+            recordOpenPhase('mcp_launch', {
+                sdkMcpServers: Object.keys(mcpServers ?? {}).map(wireName => ({
+                    wireName, serverId: hostRuntimeParams.mcpServerIdentities?.[wireName]?.serverId,
+                })),
+            });
             const agentSkills = resolveSessionAgentSkills(hostRuntimeParams.skills);
             const buildOpenRequest = (): AgentSessionOpenRequest =>
                 nativeForkSource

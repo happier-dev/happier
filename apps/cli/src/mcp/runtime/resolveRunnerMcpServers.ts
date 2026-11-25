@@ -289,10 +289,14 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
   try {
   const startedAt = performance.now();
   let phaseStartedAt = startedAt;
-  const recordStartupPhase = (phase: string) => {
+  const recordStartupPhase = (phase: string, details?: Readonly<{
+    selectedServers?: readonly Readonly<{ serverId: string; wireName: string }>[];
+    materializedServers?: readonly Readonly<{ serverId?: string; wireName: string }>[];
+    refusalCode?: string;
+  }>) => {
     const now = performance.now();
     logger.infoFile('[mcp] Startup phase', { sessionId: params.session.sessionId, phase,
-      durationMs: Math.round(now - phaseStartedAt), elapsedMs: Math.round(now - startedAt) });
+      durationMs: Math.round(now - phaseStartedAt), elapsedMs: Math.round(now - startedAt), ...details });
     phaseStartedAt = now;
   };
   recordStartupPhase('entered');
@@ -416,6 +420,8 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
   const detected = params.detectedMcpServers ?? [];
   const nativeServerNames = readLoadedMcpNativeServerNames({ servers: detected, agentId: params.agentId });
   let resolvedSelection: Awaited<ReturnType<typeof resolveSessionCapabilitiesForDirectory>> | null = null;
+  const selectedServerFacts = (selection: NonNullable<typeof resolvedSelection>) =>
+    Object.values(selection.selectedServersByName).map(({ serverId, name }) => ({ serverId, wireName: name }));
   if (mcpSettings && accountCredentials) {
     const initialSettings = mcpSettings;
     const selection = readSessionCapabilitySelectionFromMetadataV1(params.sessionMetadata ?? null).mcp;
@@ -437,7 +443,7 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     if (!params.admittedStdio && Object.values(initialSelection.selectedServersByName).some(server => server.enabled)) {
       await admitStdio(run?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined);
     }
-    recordStartupPhase('capability_selection');
+    recordStartupPhase('capability_selection', { selectedServers: selectedServerFacts(initialSelection) });
     const sharedReferences = listSelectedMcpSharedSecretReferences(initialSelection.selectedServersByName);
     if (sharedReferences.length > 0) {
       let admitted: Awaited<ReturnType<typeof refreshSavedSecretCatalogForOperation>>;
@@ -478,7 +484,7 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
         sessionProject: projectInput,
         mcpPluginItems, nativeServerNames,
       }));
-      recordStartupPhase('capability_reselection');
+      recordStartupPhase('capability_reselection', { selectedServers: selectedServerFacts(resolvedSelection) });
     }
   }
   if (resolvedSelection && Object.values(resolvedSelection.selectedServersByName).some(server => server.enabled)) {
@@ -508,7 +514,10 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
         projectKey: resolvedSelection!.projectKey, mcpPluginItems, nativeServerNames: nativeNames,
       }));
     }
-    recordStartupPhase('native_discovery');
+    recordStartupPhase('native_discovery', {
+      ...(nativeNames.length > 0 ? { selectedServers: selectedServerFacts(resolvedSelection) } : {}),
+      refusalCode: nativeDiscoveryNotices[0]?.code,
+    });
   }
   if (operationContext && !await operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
   recordStartupPhase('account_currentness');
@@ -753,7 +762,11 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     requestAuthByServerId,
     requestAuthFailuresByServerId,
   });
-    recordStartupPhase('config_materialization');
+    recordStartupPhase('config_materialization', {
+      materializedServers: Object.keys(materialized.mcpServers).map(wireName => ({
+        serverId: resolvedSelection?.itemsByName[wireName]?.serverId, wireName,
+      })),
+    });
   } catch (error) {
     await disposePluginAttachments();
     await retireRequestAuth();
@@ -772,7 +785,8 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
   if (materialized.warnings.length > 0) {
     logger.debug('[mcp] Materialization warnings', {
       warningCount: materialized.warnings.length,
-      warnings: materialized.warnings.map((w) => ({ serverName: w.serverName, code: w.code, detail: w.detail,
+      warnings: materialized.warnings.map((w) => ({ serverName: w.serverName, code: w.code,
+        serverId: resolvedSelection.itemsByName[w.serverName]?.serverId,
         ...requestAuthDiagnosticsByServerId[resolvedSelection.itemsByName[w.serverName]?.serverId ?? ''] })),
     });
   }
