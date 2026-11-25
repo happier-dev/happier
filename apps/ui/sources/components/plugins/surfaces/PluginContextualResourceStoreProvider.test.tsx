@@ -15,6 +15,7 @@ import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScope
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { installNativeRuntimeFetchBoundaryForTest } from '@/dev/testkit/harness/nativeRuntimeFetch';
+import { createPluginAccountResourceClient } from './pluginAccountResourceClient';
 import { createPluginSurfaceActionHostApi } from './pluginSurfaceActionDispatch';
 import { createCanonicalPluginReactNativeHostApiAdapter } from '@/components/plugins/reactNative/hostApi';
 import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
@@ -25,7 +26,7 @@ import { widgetProjectionOf, widgetInstalledPackage, widgetExecutionOrigin } fro
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { unionPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
 import { createBoundPluginSurfaceController } from './boundPluginSurfaceController';
-import { createPluginContextualResourceReadClient, createPluginSurfaceResourceReadHandler } from './pluginSurfaceResourceRead';
+import { createPluginContextualResourceReadClient, createPluginSurfaceResourceReadHandler, readPluginResourceStoreSnapshot } from './pluginSurfaceResourceRead';
 import { createPluginContextualResourceWatchClient, createPluginSurfaceResourceWatchHandlers } from './pluginSurfaceResourceWatch';
 import { DeclarativeWidgetDocument } from '@/components/widgets/DeclarativeWidgetDocument';
 import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
@@ -1110,7 +1111,7 @@ it('shares one portable Account Resource read for the exact Session and withdraw
     }
 });
 
-it('readmits a retired Account Resource projection and settles a permanent refusal', async () => {
+it.each(['initial observation', 'live observation'] as const)('readmits a retired Account Resource projection during %s', async (phase) => {
     installNativeRuntimeFetchBoundaryForTest();
     const account = await createAccountLifetime({ accountId: 'nested-read-retirement' });
     const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
@@ -1125,9 +1126,10 @@ it('readmits a retired Account Resource projection and settles a permanent refus
         } });
     if (!parsed.ok) throw new Error(`Invalid authored read fixture: ${JSON.stringify(parsed.diagnostics)}`);
     let nativeReads = 0;
-    let holdNative = false;
+    let holdNative = phase === 'initial observation';
     let projectionRevision = 'initial-private-value';
     let accessRemoved = false;
+    const initialObservation = createDeferred<void>();
     const replacementObservation = createDeferred<void>();
     const invalidations: PluginActionReadInvalidation[] = [];
     const nativePending: ReturnType<typeof createDeferred<{ value: string }>>[] = [];
@@ -1143,7 +1145,8 @@ it('readmits a retired Account Resource projection and settles a permanent refus
                 return await gate.promise;
             }, { async observeRead(_input, invalidate) {
                 invalidations.push(invalidate);
-                if (invalidations.length === 2) await replacementObservation.promise;
+                if (phase === 'initial observation' && invalidations.length === 1) await initialObservation.promise;
+                if (phase === 'live observation' && invalidations.length === 2) await replacementObservation.promise;
                 return { dispose() {} };
             } });
             api.resources.registerDynamicResource('status', {
@@ -1157,6 +1160,41 @@ it('readmits a retired Account Resource projection and settles a permanent refus
         } });
     const declaration = fixture.projection.resourcesById[`${pluginId}/status`];
     if (!declaration) throw new Error('Expected admitted Account Resource declaration');
+    if (phase === 'initial observation') {
+        const context = { kind: 'session', sessionId: 'read-retirement-session' } as const;
+        const { resources } = createTestResourceInvocationContext({ context });
+        const client = createPluginAccountResourceClient({ pluginId, declaration, context, accountLifetime: account.lifetime,
+            bindResources: () => resources, isCurrent: account.lifetime.isCurrent,
+            readBaseline: (signal): Promise<PluginUiResourceSnapshot> => readPluginResourceStoreSnapshot(entry, signal, false, true),
+        });
+        const store = createPluginUiResourceStore({ client });
+        const entry = store.getEntry('status');
+        const release = entry.subscribe(() => {}, true);
+        try {
+            await vi.waitFor(() => expect(invalidations).toHaveLength(1));
+            expect(entry.getSnapshot()).toMatchObject({ subscription: 'establishing', pending: 'initial' });
+            expect(entry.getSnapshot().value).toBeUndefined();
+            // This demand reaches the host while watch admission is pending.
+            // It has no read grant yet and remains demanded across retirement.
+            const snapshot = client.readResource('status');
+            void snapshot.catch(() => {});
+            await new Promise<void>(resolve => setImmediate(resolve));
+            holdNative = false;
+            projectionRevision = 'current-authority';
+            invalidations[0]!.retire();
+            const content = await snapshot;
+            expect(new TextDecoder().decode(content.bytes)).toBe('{"value":"current-authority"}');
+            await vi.waitFor(() => expect(entry.getSnapshot()).toMatchObject({
+                subscription: 'live', pending: 'idle', freshness: 'fresh', digest: content.digest,
+            }));
+            expect(invalidations).toHaveLength(2);
+        } finally {
+            initialObservation.resolve();
+            for (const pending of nativePending) pending.resolve({ value: 'disposed' });
+            release(); store.dispose(); await fixture.dispose();
+        }
+        return;
+    }
     const store = createPluginDeclaredResourceStore({ accountLifetime: account.lifetime, pluginId, machineId: null,
         serverId: account.lifetime.scope.serverId, expectedCallerOccurrenceId: declaration.occurrenceId!,
         resourcesById: fixture.projection.resourcesById, resourceDeclarationsComplete: true, sessionId: 'read-retirement-session' });

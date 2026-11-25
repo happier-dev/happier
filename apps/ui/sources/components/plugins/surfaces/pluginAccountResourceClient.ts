@@ -177,6 +177,10 @@ export function createPluginAccountResourceClient(input: Readonly<{
             attaching = admission;
             // The watch Promise owns reporting; a snapshot-only race may not join this bookkeeping Promise.
             void admission.catch(() => {});
+            const releaseAttachment = () => {
+                if (attaching === admission) attaching = null;
+                admit();
+            };
             let observation: Disposable | undefined;
             let closed = false;
             let observationDisposed = false;
@@ -199,6 +203,9 @@ export function createPluginAccountResourceClient(input: Readonly<{
             const expire = () => {
                 if (closed || !bound.isCurrent()) return;
                 closed = true;
+                // A snapshot waiting here has yet to acquire read authority.
+                // Let it enter normal admission after the store withdraws old demand.
+                releaseAttachment();
                 try {
                     listener({ version: 1, subscriptionId: input.declaration.id,
                         kind: 'error', code: 'expired_resource', diagnostics: ['plugin_read_authority_retired'] });
@@ -223,8 +230,7 @@ export function createPluginAccountResourceClient(input: Readonly<{
                     }
                 });
                 await awaitResourceOperation(observed, bound.options.signal);
-                admit();
-                if (attaching === admission) attaching = null;
+                releaseAttachment();
                 const baseline = await input.readBaseline(bound.options.signal);
                 if (!bound.isCurrent()) throw Object.assign(new Error('Resource operation was aborted'), { code: 'plugin_resource_aborted' });
                 // Read refusal does not retire the admitted observation. Wait
