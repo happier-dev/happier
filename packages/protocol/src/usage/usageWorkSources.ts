@@ -155,20 +155,25 @@ export async function collectUsageWorkSources(input: Readonly<{
                         results.set(session.sessionId, { status: 'error', unreadReason: 'failed', evidence: [], branchEvidence: [] });
                         continue;
                     }
+                    const unreadReason = classifyUnreadReason(row.errorCode);
+                    if (unreadReason === 'not_entitled') {
+                        results.set(session.sessionId, unreadSession(row.errorCode));
+                        continue;
+                    }
                     const turns = turnsBySession.get(session.sessionId)!;
                     if (row.status === 'unknown') {
-                        results.set(session.sessionId, { status: 'unknown', unreadReason: classifyUnreadReason(row.errorCode) });
+                        results.set(session.sessionId, { status: 'unknown', unreadReason });
                         continue;
                     }
                     if (row.status === 'error') {
                         results.set(session.sessionId, row.evidence === undefined && row.branchEvidence === undefined
                             ? unreadSession(row.errorCode)
-                            : { status: 'error', unreadReason: classifyUnreadReason(row.errorCode), evidence: [], branchEvidence: [] });
+                            : { status: 'error', unreadReason, evidence: [], branchEvidence: [] });
                         continue;
                     }
                     results.set(session.sessionId, { status: row.status,
                         ...(row.pullRequestsRead === true ? { pullRequestsRead: true } : {}),
-                        ...(row.errorCode === undefined ? {} : { unreadReason: classifyUnreadReason(row.errorCode) }),
+                        ...(row.errorCode === undefined ? {} : { unreadReason }),
                         evidence: (row.evidence ?? []).filter(witness => turns.has(witness.turnId)),
                         ...(row.branchEvidence === undefined ? {} : { branchEvidence: row.branchEvidence.filter(witness => turns.has(witness.turnId)) }),
                     });
@@ -202,13 +207,15 @@ export async function collectUsageWorkSources(input: Readonly<{
         const branchEvidence = selected.flatMap(source => 'branchEvidence' in source ? source.branchEvidence ?? [] : [])
             .filter(witness => turns.has(JSON.stringify([witness.sessionId, witness.turnId])));
         const unreadSessions: UnreadSessions = {};
+        const unreadBySession: [string, keyof UnreadSessions][] = [];
         let hasOfflineMachine = false;
-        for (const { unreadReason } of selected) {
+        for (const [index, { unreadReason }] of selected.entries()) {
             if (unreadReason === undefined) continue;
             if (unreadReason === 'machine_offline') hasOfflineMachine = true;
             const reason = unreadReason === 'machine_offline' || unreadReason === 'machine_admission_unavailable'
                 ? 'machine_unavailable' : unreadReason;
             unreadSessions[reason] = (unreadSessions[reason] ?? 0) + 1;
+            unreadBySession.push([selectedIds[index]!, reason]);
         }
         const failedReplacement = selected.length > 0 && selected.every(source => source.status === 'error' && !('evidence' in source));
         const readFailed = selected.some(source => source.status === 'error');
@@ -222,7 +229,7 @@ export async function collectUsageWorkSources(input: Readonly<{
         return { query, ...(failedReplacement ? {} : { evidence, branchEvidence }), status,
             pullRequestReadSessions,
             ...(status === 'error' ? {} : { asOfMs }),
-            ...(Object.keys(unreadSessions).length ? { unreadSessions } : {}),
+            ...(unreadBySession.length ? { unreadSessions, unreadBySession } : {}),
             ...(errorCode === undefined ? {} : { errorCode }) };
     });
 }

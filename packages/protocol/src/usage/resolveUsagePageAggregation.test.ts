@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as coachEvaluation from './coach/evaluateUsageCoach.js';
 import { normalizeUsageQuery, resolveUsageQueryPeriod, usageQueryToAnalyticsRequest, type UsageQuery } from '../inputs/usageQuery.js';
 import { UsageAnalyticsQueryResponseSchema, UsageAnalyticsSourceCoverageSchema, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
-import { readUsageAgentAccountingCalendar, resolveUsagePageAggregation, resolveUsagePageAccountingRequests, projectUsageAccountingSnapshotPrices, projectUsageAccountingSnapshotCalendar, retainUsageQueryResultReferences, UsageQueryBatchResultSchema, type UsageWorkSourceSnapshot } from './resolveUsagePageAggregation.js';
+import { readUsageAgentAccountingCalendar, resolveUsagePageAggregation, resolveUsagePageAccountingRequests, projectUsageAccountingSnapshotPrices, projectUsageAccountingSnapshotCalendar, retainUsageQueryResultReferences, UsageQueryBatchResultSchema, withdrawUsageQueryWork, type UsageWorkSourceSnapshot } from './resolveUsagePageAggregation.js';
 import type { UsageWorkEvidence } from './usageOutcomeAllocation.js';
 import { buildProviderAccountUsageRecordId } from '../connect/providerAccountUsagePrimitives.js';
 import { ConnectedServiceQuotaGetResultV1Schema } from '../connect/providerAccountUsageHistorySchemasV1.js';
@@ -18,6 +18,51 @@ import { projectUsageAnalyticsResponseDemand } from './usageAnalyticsDemandProje
 const tokens = { input: 12, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 16 };
 const accounting = UsageAnalyticsQueryResponseSchema.parse({
   v: 1, totals: { eventCount: 1, tokens, cost: { reportedUsd: 0.02, estimatedUsd: 0, currency: 'USD' } },
+});
+
+it('withdraws only the refused Session from a shared Work answer and preserves accounted usage', () => {
+  const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, includeWorkEvidence: true, workProjection: 'detail' });
+  const sessionIds = ['refused', 'allowed'];
+  const value = UsageAnalyticsQueryResponseSchema.parse({ ...accounting, contributions: sessionIds.map(sessionId => ({
+    id: sessionId, observedAtMs: 150, sessionId, turnId: 'turn', agentId: 'claude', modelId: null,
+    machineId: null, projectKey: null, workspaceId: null, source: 'runtime', tokens, cost: accounting.totals.cost,
+  })) });
+  const evidence: UsageWorkEvidence[] = sessionIds.map((sessionId, index) => ({
+    sessionId, turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint',
+    checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed',
+    pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
+      nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+      number: index + 1, title: sessionId, url: `https://github.com/owner/repo/pull/${index + 1}`,
+      baseBranch: 'main', headBranch: sessionId, state: 'merged' },
+  }));
+  const branchEvidence = evidence.map(({ pullRequest, ...checkpoint }) => ({
+    ...checkpoint, branch: { ref: `refs/heads/${pullRequest.headBranch}`, headSha: checkpoint.commitSha },
+  }));
+  const source: UsageWorkSourceSnapshot = { query, status: 'partial', asOfMs: 250, evidence, branchEvidence,
+    pullRequestReadSessions: sessionIds };
+  const first = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value }],
+    work: [source] }, bundledUsageModelPriceCatalog);
+  expect(first.results[0]!.work?.outcomes).toHaveLength(2);
+  expect(first.results[0]!.workSummary?.pullRequestsRead).toBe(true);
+  const { slice, source: retained } = withdrawUsageQueryWork(first.results[0]!, { sessionIds, source }, new Set(['refused']));
+  expect(slice.accounting).toBe(first.results[0]!.accounting);
+  expect(slice.work?.outcomes).toEqual([first.results[0]!.work?.outcomes[1]]);
+  expect(slice.work?.branches).toEqual([first.results[0]!.work?.branches.find(row => row.branch.ref === 'refs/heads/allowed')]);
+  expect(slice.workSummary ?? {}).not.toHaveProperty('pullRequestsRead');
+  expect(slice.workSummary ?? {}).not.toHaveProperty('mergedPrCount');
+  expect(slice.sources).toContainEqual({ source: 'work', status: 'partial', errorCode: 'work_evidence_failed',
+    asOfMs: 250, unreadSessions: { not_entitled: 1 } });
+  expect(retained?.evidence).toEqual([evidence[1]]);
+  expect(retained?.branchEvidence).toEqual([branchEvidence[1]]);
+  expect(retained?.pullRequestReadSessions).toEqual(['allowed']);
+  expect(UsageQueryBatchResultSchema.safeParse({ ...first, results: [slice] }).success).toBe(true);
+
+  const beforeRefusal: UsageWorkSourceSnapshot = { ...source, unreadSessions: { timed_out: 1, failed: 1 },
+    unreadBySession: [['refused', 'timed_out'], ['allowed', 'failed']] };
+  const hadUnread = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value }],
+    work: [beforeRefusal] }, bundledUsageModelPriceCatalog);
+  const corrected = withdrawUsageQueryWork(hadUnread.results[0]!, { sessionIds, source: beforeRefusal }, new Set(['refused']));
+  expect(corrected.slice.sources.find(row => row.source === 'work')?.unreadSessions).toEqual({ not_entitled: 1, failed: 1 });
 });
 
 it('projects producer coverage into distinct source states with the freshest observation', () => {

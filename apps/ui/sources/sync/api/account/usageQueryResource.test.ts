@@ -10034,6 +10034,92 @@ describe('usage query captured Resource adapter', () => {
 });
 
 describe('usage query Work composition', () => {
+  it.each(['refused', 'failed'] as const)('applies a %s batch Work read to the exact-query entry only on refusal', async state => {
+    const machineId = 'work-machine';
+    const contribution = { ...workContribution, machineId };
+    const captured = await context(request => request.path === '/v2/usage/query'
+      ? Response.json({ ...value, contributions: [contribution] }) : undefined);
+    const scope = captured.accountLifetime.scope;
+    storage.getState().applySessions([createSessionFixture({ id: contribution.sessionId, serverId: scope.serverId,
+      metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' } })]);
+    await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({
+      id: machineId, accountId: 'account-a', machine: { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 },
+    })]);
+    const checkpoint = { sessionId: contribution.sessionId, turnId: contribution.turnId, repositoryKey: 'repo',
+      checkpointRef: 'checkpoint/turn', checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40),
+      attributionScope: 'no_happier_checkpoint_overlap_observed' as const };
+    const evidence: UsageWorkEvidence = { ...checkpoint,
+      pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
+        nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+        number: 1, title: 'Linked', url: 'https://github.com/owner/repo/pull/1',
+        baseBranch: 'main', headBranch: 'work', state: 'merged' },
+    };
+    scmTransport.mockImplementationOnce(async (request: { payload: ScmWorkEvidenceReadRequest }) => workBatch(request, {
+      status: 'partial', pullRequestsRead: true, evidence: [evidence],
+      branchEvidence: [{ ...checkpoint, branch: { ref: 'refs/heads/work', headSha: checkpoint.commitSha } }],
+    }));
+    const query = normalizeUsageQuery({ session: [contribution.sessionId], period: { startMs: 0, endMs: 1000 },
+      includeQuota: false, includeQuotaHistory: false, includeComparison: false, includeSessionEvidence: false,
+      includeTranscriptEvidence: false, includeWorkEvidence: true, includeCoach: false, workProjection: 'detail' });
+    const exact = { queries: [query] };
+    const combined = { queries: [query,
+      normalizeUsageQuery({ ...query, includeWorkEvidence: false }),
+      normalizeUsageQuery({ ...query, includeWorkEvidence: false, metric: 'cost' })] };
+    const store = getUsageQueryResourceStore(captured);
+    const entry = (input: typeof exact) => store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport(input) });
+    const single = entry(exact);
+    const batch = entry(combined);
+    const read = (resource: typeof single) => decodeUsageQueryResource(resource.getSnapshot().value!).results
+      .find(slice => slice.key === getUsageQueryKey(query))!;
+    const workSource = (slice: ReturnType<typeof read>) => slice.sources.find(source => source.source === 'work');
+    const assertRetained = (slice: ReturnType<typeof read>, date: number | undefined) => {
+      expect(slice.work?.outcomes).toHaveLength(1);
+      expect(slice.work?.branches).toHaveLength(1);
+      expect(workSource(slice)?.asOfMs).toBe(date);
+    };
+    const stop = single.subscribe(() => {}, true);
+    try {
+      await expect.poll(() => single.getSnapshot().pending).toBe('idle');
+      const prior = read(single);
+      const firstReadAt = workSource(prior)?.asOfMs;
+      expect(firstReadAt).toEqual(expect.any(Number));
+      assertRetained(prior, firstReadAt);
+      expect(scmTransport).toHaveBeenCalledTimes(1);
+      scmTransport.mockImplementation(async () => {
+        if (state === 'refused') throw createRpcCallError({ error: 'Work refused', errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        throw new RetryableServerResponseError(503, 'Unavailable');
+      });
+      const stopBatch = batch.subscribe(() => {}, false);
+      try {
+        await expect.poll(() => batch.getSnapshot().pending).toBe('idle');
+        expect(scmTransport).toHaveBeenCalledTimes(2);
+        expect(workSource(read(batch))?.unreadSessions).toEqual(state === 'refused' ? { not_entitled: 1 } : { failed: 1 });
+        expect(read(batch).accounting?.totals).toEqual(prior.accounting?.totals);
+        expect(read(single).accounting?.totals).toEqual(prior.accounting?.totals);
+        const account = await captureLazyActionAccountContext(scope.serverId);
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(account) }));
+        const response = await executor.execute('usage.query', exact, { surface: 'ui', authority: 'present_user',
+          actionCaller: { kind: 'host' } });
+        if (!response.ok) throw new Error(response.errorCode);
+        const action = UsageQueryBatchResultSchema.parse(response.result).results[0]!;
+        expect(action.accounting?.totals).toMatchObject(value.totals);
+        if (state === 'refused') {
+          for (const slice of [read(single), action]) {
+            expect.soft(slice.work?.outcomes ?? []).toEqual([]);
+            expect.soft(slice.work?.branches ?? []).toEqual([]);
+            expect.soft(workSource(slice)?.asOfMs).toBeUndefined();
+          }
+          expect.soft(workSource(read(single))?.unreadSessions).toEqual({ not_entitled: 1 });
+          expect.soft(workSource(action)?.unreadSessions).toEqual({ not_entitled: 1 });
+        } else {
+          assertRetained(read(single), firstReadAt);
+          assertRetained(action, firstReadAt);
+        }
+        expect(scmTransport).toHaveBeenCalledTimes(2);
+      } finally { stopBatch(); }
+    } finally { stop(); }
+  });
+
   it('keeps mounted Week links and does no Work RPC for accounting-only pages with the same selectors', async () => {
     const machineIds = Array.from({ length: 15 }, (_, i) => `week-machine-${i}`);
     const sessions = Array.from({ length: 1_300 }, (_, i) => ({

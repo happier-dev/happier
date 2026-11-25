@@ -601,6 +601,8 @@ export type UsageWorkSourceSnapshot = Readonly<{
   errorCode?: string;
   updateRequired?: OperationUpdateRequiredV1;
   unreadSessions?: UsageQuerySourceState['unreadSessions'];
+  /** Local acquisition facts used to apply a Session-scoped refusal before delivery. */
+  unreadBySession?: readonly (readonly [string, keyof NonNullable<UsageQuerySourceState['unreadSessions']>])[];
 }>;
 
 export type UsageHowYouWorkSourceSnapshot = Readonly<{
@@ -769,6 +771,61 @@ function retainPublicProfileDetail(previous: NonNullable<UsageQueryResultSlice['
       return { ...lens, facts };
     }),
   };
+}
+
+/** Reallocate the same accounting facts after a sibling read withdraws Work admission. */
+export function withdrawUsageQueryWork(slice: UsageQueryResultSlice, input: Readonly<{
+  sessionIds: readonly string[];
+  source?: UsageWorkSourceSnapshot;
+}>, refused: ReadonlySet<string>): Readonly<{ slice: UsageQueryResultSlice; source?: UsageWorkSourceSnapshot }> {
+  const unreadBySession = new Map(input.source?.unreadBySession);
+  const withdrawn = input.sessionIds.filter(id => refused.has(id) && unreadBySession.get(id) !== 'not_entitled');
+  if (!withdrawn.length) return { slice, source: input.source };
+  for (const id of withdrawn) unreadBySession.set(id, 'not_entitled');
+  const unreadSessions: NonNullable<UsageWorkSourceSnapshot['unreadSessions']> = {};
+  for (const reason of unreadBySession.values()) unreadSessions[reason] = (unreadSessions[reason] ?? 0) + 1;
+
+  const evidence = (input.source?.evidence ?? slice.work?.allocations.flatMap(row => row.evidence) ?? [])
+    .filter(witness => unreadBySession.get(witness.sessionId) !== 'not_entitled');
+  const branchEvidence = (input.source?.branchEvidence ?? slice.work?.branchAllocations.flatMap(row => row.evidence) ?? [])
+    .filter(witness => unreadBySession.get(witness.sessionId) !== 'not_entitled');
+  const pullRequestReadSessions = (input.source?.pullRequestReadSessions ?? [])
+    .filter(id => unreadBySession.get(id) !== 'not_entitled');
+  const readable = evidence.length > 0 || branchEvidence.length > 0 || pullRequestReadSessions.length > 0;
+  const previous = slice.sources.find(source => source.source === 'work');
+  const asOfMs = readable ? previous?.asOfMs : undefined;
+  const status = readable ? 'partial' : 'error';
+  const errorCode = 'work_evidence_failed';
+  const clock = asOfMs === undefined ? {} : { asOfMs };
+  const source: UsageWorkSourceSnapshot = { query: slice.requestedQuery, status, errorCode, ...clock,
+    evidence, branchEvidence, pullRequestReadSessions, unreadSessions, unreadBySession: [...unreadBySession] };
+
+  const { work: priorWork, workSummary: _summary, mergedOutcomes: priorMerged, publicProfileEvidence,
+    [usagePageProjections]: projections, ...other } = slice as ProjectedUsageSlice;
+  const work = priorWork && allocateUsageOutcomes({ contributions: priorWork.allocations.map(row => row.contribution),
+    evidence, branchEvidence });
+  const mergedOutcomes = work && priorMerged && summarizeUsageMergedOutcomes({ work, period: priorMerged.period,
+    timeZoneOffsetMinutes: priorMerged.timeZoneOffsetMinutes, pullRequestsRead: false });
+  const workSummary = readable && work ? projectUsageWorkSummary(work.outcomes, false, work) : undefined;
+  const pending = previous?.status === 'pending' && input.sessionIds.some(id => unreadBySession.get(id) !== 'not_entitled');
+  const sources = slice.sources.map((current): UsageQuerySourceState => current.source === 'work' ? {
+    source: 'work', status: pending ? 'pending' : status, errorCode, ...clock, unreadSessions,
+  } : current);
+  const replacement: ProjectedUsageSlice = { ...other, sources,
+    pending: slice.pending && (sources.some(current => !isUsageDetailPhase(current)
+      && isUsageQuerySourceOutstanding(slice.requestedQuery, current))
+      || !!slice.comparison && isUsageQuerySourceOutstanding(slice.requestedQuery, slice.comparison.source)),
+    ...(work === undefined ? {} : { work }), ...(workSummary === undefined ? {} : { workSummary }),
+    ...(mergedOutcomes && mergedOutcomes.linkedMergedCount > 0 ? { mergedOutcomes } : {}),
+    ...(publicProfileEvidence === undefined ? {} : { publicProfileEvidence: retainPublicProfileDetail(publicProfileEvidence) }),
+  };
+  if (projections) {
+    // Keep accounting and detail projections while dropping the former Work inputs.
+    replacement[usagePageProjections] = { ...projections,
+      work: { inputs: {}, value: { work, summary: workSummary, profileLenses: [] } },
+      mergedOutcomes: { inputs: {}, value: replacement.mergedOutcomes } };
+  }
+  return { source, slice: replacement };
 }
 
 /** Quota-only demand uses the same admitted B snapshots and result identity, without touching A or private evidence. */

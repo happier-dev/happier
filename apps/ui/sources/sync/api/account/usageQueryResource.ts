@@ -13,7 +13,7 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, resolveUsageQueryPeriod, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, type UsageQuery, type UsageQueryBatchInput } from '@happier-dev/protocol/inputs/usageQuery';
 import { collectUsageWorkSources, readUsageWorkSessionTurns } from '@happier-dev/protocol/usage/usageWorkSources';
 import { hasSameUsageQueryWorkEvidenceMembership } from '@happier-dev/protocol/usage/usageWorkEvidence';
-import { readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageComparisonQuery, resolveUsageQuotaSourceSnapshot, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageComparisonQuery, resolveUsageQuotaSourceSnapshot, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, withdrawUsageQueryWork, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServicePoolSelectionGetRequestV1, type ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { readRpcErrorCode, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
@@ -1798,6 +1798,10 @@ export async function readUiUsageQueryBatch(
             })();
             admission?.settle(source);
             work = work.map((previous, sourceIndex) => sourceIndex === index ? source : previous);
+            if (source !== admission?.retained && source.unreadSessions?.not_entitled) {
+                accountOwner.withdrawSessionWork(new Set(source.unreadBySession?.flatMap(([id, reason]) =>
+                    reason === 'not_entitled' ? [id] : [])));
+            }
             publish();
         }),
         ...evidenceQueries.map(async query => {
@@ -1986,7 +1990,9 @@ function withExplicitAllowanceRefresh(store: ReturnType<typeof createPluginUiRes
                 refresh,
                 acquire(context) {
                     initialCaller = undefined;
-                    return withCaller(context, true, () => readAdmission(reference).reusable
+                    // The store's withdrawal publication marks its replacement stale.
+                    // Let the read owner publish the new admission as fresh.
+                    return withCaller(context, true, () => readAdmission(reference).reusable && entry.getSnapshot().freshness === 'fresh'
                         ? Promise.resolve(entry.getSnapshot()) : entry.refresh({ supersede: false }));
                 },
                 getCurrentSnapshot: () => readAdmission(reference).currentSnapshot,
@@ -2014,6 +2020,7 @@ type UsageAccountingAnswer = {
 };
 type AccountResourceOwner = Readonly<{ store: UsageQueryResourceStore; invalidate(event?: UsageQueryInvalidation, quotaRecordIds?: readonly string[], quotaSourceKeys?: readonly string[]): void; readSessionInput: SessionInputReader;
     withdrawSessionAccess(query: UsageQuery, errorCode: UsageAccountingSliceRefusal['code']): void;
+    withdrawSessionWork(sessionIds: ReadonlySet<string>): void;
     coachSuppressions: UsageCoachSuppressionStateV1 | undefined;
     readCoachSuppressions(read: () => Promise<UsageCoachSuppressionStateV1>): Promise<void>;
     publishCoachSuppressions(state: UsageCoachSuppressionStateV1): void;
@@ -2179,8 +2186,10 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     // first mount must keep the retained input's instant after a scoped wake.
     const accountingInputKey = (query: UsageQuery) => getUsageQueryKey({ ...query, metric: 'tokens' });
     const accountingInputs = new Map<string, { query: UsageQuery; identity: object; nowMs?: number }>();
-    const readingAccess = new Set<(matches: WithdrawUsageQuery, errorCode: UsageAccountingSliceRefusal['code'],
-        refusedQueryKey: string) => void>();
+    const readingAccess = new Set<Readonly<{
+        accounting(matches: WithdrawUsageQuery, errorCode: UsageAccountingSliceRefusal['code'], refusedQueryKey: string): void;
+        work(sessionIds: ReadonlySet<string>): void;
+    }>>();
     let retainedCurrentness = captureAccountEncryptionCurrentness(lifetime.scope.serverId);
     const replaceAccounting = () => {
         admittedAccounting = undefined;
@@ -2515,7 +2524,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 if (matches(slice.requestedQuery)) slicesByQuery.delete(key);
             }
             const refusedQueryKey = getUsageQueryKey(query);
-            for (const withdraw of readingAccess) withdraw(matches, errorCode, refusedQueryKey);
+            for (const withdraw of readingAccess) withdraw.accounting(matches, errorCode, refusedQueryKey);
             owner.store.replaceRetainedValues(content => {
                 const admitted = decodedValues.get(content);
                 if (!admitted) return content;
@@ -2526,6 +2535,42 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 const next = createUsageQueryResourceContent(replacement);
                 decodedValues.set(next, { value: replacement,
                     admission: admission && { ...admission, reusable: false } });
+                return next;
+            });
+        },
+        withdrawSessionWork(sessionIds) {
+            if (!sessionIds.size) return;
+            // Keep this viewer's accounting and the Work of other admitted Sessions.
+            for (const withdraw of readingAccess) withdraw.work(sessionIds);
+            const replace = (slice: UsageQueryResultSlice, input: UsageWorkMachineInput) => {
+                const replacement = withdrawUsageQueryWork(slice, input, sessionIds);
+                return { slice: replacement.slice, workInput: replacement.slice === slice ? input : { ...input, source: replacement.source } };
+            };
+            for (const [key, { slice, workInput }] of slicesByQuery) {
+                if (!workInput || !workInput.sessionIds.some(id => sessionIds.has(id))) continue;
+                slicesByQuery.set(key, replace(slice, workInput));
+            }
+            owner.store.replaceRetainedValues(content => {
+                const admitted = decodedValues.get(content);
+                if (!admitted?.admission) return content;
+                const { value, admission } = admitted;
+                const affected = admission.workMachineInputs.filter(input => input.sessionIds.some(id => sessionIds.has(id)));
+                if (!affected.length) return content;
+                const inputs = new Map(affected.map(input => [input.queryKey, input]));
+                let changed = false;
+                const results = value.results.map(slice => {
+                    const input = inputs.get(slice.key);
+                    if (!input) return slice;
+                    const next = replace(slice, input);
+                    inputs.set(slice.key, next.workInput);
+                    changed ||= next.slice !== slice;
+                    return next.slice;
+                });
+                if (!changed) return content;
+                const replacement = { ...value, results };
+                const next = createUsageQueryResourceContent(replacement);
+                decodedValues.set(next, { value: replacement, admission: { ...admission,
+                    workMachineInputs: admission.workMachineInputs.map(input => inputs.get(input.queryKey) ?? input) } });
                 return next;
             });
         },
@@ -2565,6 +2610,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 const readDemand = [...listeners.values()].filter(watched => resourceKey(watched.reference) === resourceKey(reference))
                     .map(watched => watched.takeReadDemand());
                 let withdrawn: Map<string, Readonly<{ errorCode: UsageAccountingSliceRefusal['code']; identity?: object; direct: boolean }>> | undefined;
+                let refusedWork: Set<string> | undefined;
                 const withdraw = (matches: WithdrawUsageQuery, errorCode: UsageAccountingSliceRefusal['code'], refusedQueryKey: string) => {
                     for (const query of queries) if (matches(query)) {
                         const key = getUsageQueryKey(query);
@@ -2574,12 +2620,19 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         });
                     }
                 };
+                const readsWork = queries.some(query => query.includeAccounting && query.includeWorkEvidence);
+                const withdrawAccess = {
+                    accounting: withdraw,
+                    work(ids: ReadonlySet<string>) {
+                        if (readsWork) for (const id of ids) (refusedWork ??= new Set()).add(id);
+                    },
+                };
                 try {
                 if (readDemand.some(demand => demand.authorityChanged)) replaceAccountInputs();
                 const retained = readUsageAdmission(reference, queries);
                 const { readInputs, nowMs, admission, quotaClockCurrent } = retained;
                 if (retained.reusable && retained.content && (readDemand.length === 0 || readDemand.every(demand => demand.unchanged))) return retained.content;
-                if (queries.some(query => query.session !== null)) readingAccess.add(withdraw);
+                if (readsWork || queries.some(query => query.session !== null)) readingAccess.add(withdrawAccess);
                 // Keep the admitted facts, not the superseded serialized bytes,
                 // in this async frame while unrelated source reads are pending.
                 const { value: ownPrevious, reproject: previousReproject } = (() => {
@@ -2645,7 +2698,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 const acquiredWorkInputs = new Map(ownWorkInputs);
                 const keepContent = (content: ResourceContent, value: UsageQueryBatchResult, publishSlices = false): ResourceContent => {
                     const workMachineInputs: UsageWorkMachineInput[] = [];
-                    for (const slice of value.results) {
+                    let correctedResults: UsageQueryResultSlice[] | undefined;
+                    for (const [index, original] of value.results.entries()) {
+                        let slice = original;
                         const status = slice.requestedQuery.includeWorkEvidence
                             ? slice.sources.find(source => source.source === 'work')?.status : undefined;
                         // Pending and stale links belong to the seed's targets.
@@ -2653,12 +2708,25 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         // an accounting wake cannot turn it into current PR coverage.
                         const seed = seedWorkInputs.get(slice.key);
                         const acquired = acquiredWorkInputs.get(slice.key);
-                        const workInput = status === 'pending' ? seed : status === 'stale'
+                        let workInput = status === 'pending' ? seed : status === 'stale'
                             ? seed && (acquired?.targetKey === seed.targetKey && acquired.machineKey === seed.machineKey
                                 ? { ...seed, turns: acquired.turns, source: acquired.source } : { ...seed, source: undefined })
                             : acquired;
+                        const refusals = refusedWork;
+                        if (refusals && workInput && workInput.sessionIds.some(id => refusals.has(id))) {
+                            const replacement = withdrawUsageQueryWork(slice, workInput, refusals);
+                            if (replacement.slice !== slice) {
+                                slice = replacement.slice;
+                                (correctedResults ??= [...value.results])[index] = slice;
+                                workInput = { ...workInput, source: replacement.source };
+                            }
+                        }
                         if (workInput) workMachineInputs.push(workInput);
-                        if (publishSlices) slicesByQuery.set(slice.key, { slice, workInput });
+                        if (publishSlices || slice !== original) slicesByQuery.set(slice.key, { slice, workInput });
+                    }
+                    if (correctedResults) {
+                        value = { ...value, results: correctedResults };
+                        content = createUsageQueryResourceContent(value);
                     }
                     // Keep the read's initial clock basis: a held read that
                     // crosses a quota boundary cannot renew its old derivation.
@@ -2692,7 +2760,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         const query = queries[index - (readInputs.length - queries.length)];
                         return (query && withdrawn?.get(getUsageQueryKey(query))?.identity) ?? identity;
                     }) : readInputs;
-                    decodedValues.set(content, { value, ...(reproject && !withdrawn ? { reproject } : {}),
+                    decodedValues.set(content, { value, ...(reproject && !withdrawn && !correctedResults ? { reproject } : {}),
                         admission: { inputs, quotaInterval, derivationInterval, reusable, settled, workMachineInputs } });
                     return content;
                 };
@@ -2820,7 +2888,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                             admitWork: (query, targets, turns) => {
                                 const queryKey = getUsageQueryKey(query);
                                 const input = readWorkMachineInput(queryKey, targets);
-                                const prior = reuseWork ? seedWorkInputs.get(queryKey) : undefined;
+                                const refusals = refusedWork;
+                                const prior = reuseWork && (!refusals || !input.sessionIds.some(id => refusals.has(id)))
+                                    ? seedWorkInputs.get(queryKey) : undefined;
                                 const retained = turns?.length && prior?.targetKey === input.targetKey
                                     && prior.machineKey === input.machineKey
                                     && hasSameUsageQueryWorkEvidenceMembership({ query, admittedTurns: turns, previousAdmittedTurns: prior.turns })
@@ -2883,13 +2953,14 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                             const settled: UsageQueryBatchResult = { ...batch, results: batch.results.map(slice => !slice.pending ? slice : {
                                 ...slice, pending: false, sources: slice.sources.map(source => isUsageQuerySourceOutstanding(slice.requestedQuery, source)
                                     ? { ...source, status: 'error' as const, errorCode } : source) }) };
-                            const content = createUsageQueryResourceContent(settled);
+                            let content = createUsageQueryResourceContent(settled);
                             if (code === 'usage_query_result_invalid') {
                                 // A malformed answer cannot admit the displayed fallback
                                 // for an Action. Preserve its decoded references for viewers.
-                                decodedValues.set(content, { value: settled });
+                                const admission = shown && decodedValues.get(shown)?.admission;
+                                decodedValues.set(content, { value: settled, admission: admission && { ...admission, reusable: false } });
                             } else {
-                                keepContent(content, settled);
+                                content = keepContent(content, settled);
                             }
                             options?.onProgress?.(content);
                         }
@@ -2904,7 +2975,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 settledRead = true;
                 return await contentFor(result);
                 } finally {
-                    readingAccess.delete(withdraw);
+                    readingAccess.delete(withdrawAccess);
                     for (const demand of readDemand) demand.finish();
                 }
             },
