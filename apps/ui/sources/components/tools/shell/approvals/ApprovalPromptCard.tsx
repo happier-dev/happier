@@ -406,6 +406,10 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
         }
     }, [approvalHome.serverId, approvalWithheld, bindingChoice, confidentialApproval, confidentialInputs, computerChoice, decisionDisabled, decide, isDeciding, proposal, props.artifact.id, secretPrompt, transcriptSource]);
 
+    // The sentence the card reads (or its title already says): its folded facts do not say a value it names again.
+    // Declared before the branches below return, so a card that changes branch keeps one hook order.
+    const [cardSummary, setCardSummary] = React.useState<string | null>(null);
+
     // An approved Agent visual is that visual's one transcript occurrence (owner amendment 2026-10-26): the same
     // live reference and controls as an Allowed call, at the request's position, with no card around it.
     const visualOccurrence = React.useMemo(() => {
@@ -451,8 +455,6 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
     const failureSummary = failureOutcome && !settledFailure && !projectCommand && !petImport?.outcome ? props.approval.summary?.trim() || null : null;
     const sameWords = (left: string, right: string) => left.replace(/[.\s]+$/, '').toLowerCase() === right.replace(/[.\s]+$/, '').toLowerCase();
     const repeatsActionName = (text: string) => sameWords(text, requestTitle);
-    // The sentence the card reads (or its title already says): its folded facts do not say a value it names again.
-    const [cardSummary, setCardSummary] = React.useState<string | null>(null);
     const cardSubtitle = failureOutcome ? (failureSummary && !repeatsActionName(failureSummary) ? failureSummary : null)
         : projectCommand || computerAction ? null
             // The page's description line: what the stored request says beyond its title.
