@@ -80,13 +80,13 @@ describe('Review preview (deploy auto-mode U9)', () => {
     } finally { await screen.unmount(); controller.retire(); await standardCleanup(); }
   });
 
-  it('shows no address or health check for an unverified preview without a domain', async () => {
+  it('leaves unknown health quiet for a preview without a domain', async () => {
     const { controller, environmentId } = previewController({ attachedDomain: false, health: null });
     const screen = await renderScreen(<DeploymentReviewPreview controller={controller} environmentId={environmentId}
       demand={shown} onOpenAddress={vi.fn()} />);
     try {
       await waitForTestEvent(screen.subscribe, () => row(screen, 'project-deployments.review.preview.health'),
-        (node) => node?.props.title === t('projects.deployments.review.noHealthCheck'));
+        (node) => node?.props.title === '—');
       await waitForTestEvent(screen.subscribe, () => row(screen, 'project-deployments.review.preview.address'),
         (node) => node?.props.title === t('projects.sources.noAddress'));
     } finally { await screen.unmount(); controller.retire(); await standardCleanup(); }

@@ -1106,8 +1106,8 @@ describe('managed-services SVC09 owner', () => {
         // Team access is decided by the canonical authenticated Source read;
         // its admitted Environment facts do not change the C1 recipient.
         if (ownership === 'team') environment.environment.owner = { kind: 'team', teamId: 'shared-source-team' };
-        let nativeHealth: 'ready' | 'not_ready' = 'ready';
-        let nativePhase: 'running' | 'stopped' = 'running';
+        let nativeHealth: 'ready' | 'not_ready' | 'not_reported' = 'ready';
+        let nativePhase: 'running' | 'stopped' | 'unknown' = 'running';
         let current = true;
         let writes = 0;
         const changes: Array<ReturnType<typeof buildDeploymentAccountChangeV1> & { cursor: number; changedAt: number }> = [];
@@ -1205,6 +1205,15 @@ describe('managed-services SVC09 owner', () => {
             await attachment.settled();
             if (!aggregate && !joining) expect(readEnvironment, 'one Environment admission at attachment').toHaveBeenCalledTimes(1);
             expect(stored.size, 'a healthy baseline is not an outage or recovery item').toBe(0);
+            if (!joining) {
+                nativePhase = 'unknown';
+                nativeHealth = 'not_reported';
+                await handle.inspectCurrentOccurrence();
+                await attachment.settled();
+                expect(owner.machineServiceRows.read(handle).health?.status).toBe('unknown');
+                expect(stored.size, 'an unavailable native observation is not an outage').toBe(0);
+                nativePhase = 'running';
+            }
             // Source withdrawal takes effect at the next deploy/attachment;
             // this user's already-admitted Machine still reports its outage.
             if (ownership === 'team') environment.environment.capabilities.read = false;

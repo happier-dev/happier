@@ -136,7 +136,7 @@ export type DeploymentServiceHealthNoticeInput = Readonly<{
     machineId: string;
     environment: Pick<DeploymentEnvironmentDetailV1, 'environment'>;
     recoveryReceipt?: DeploymentReceiptDetailV1;
-    serviceRows?: Pick<ReturnType<typeof createMachineServiceRowProjection>, 'read'>;
+    serviceRows?: Pick<ReturnType<typeof createMachineServiceRowProjection>, 'read' | 'subscribe'>;
     readEnvironment(signal: AbortSignal): Promise<DeploymentEnvironmentDetailV1>;
     readHealthAlertSource?: (sourceInstanceId: string) => Promise<SavedHealthCheckSourceRead>;
     handles: readonly Extract<ProjectManagedServiceHandle, { kind: 'environment' }>[];
@@ -303,7 +303,7 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
                     || aggregate.targetLinkId !== fresh.environment.runtimeTargetLinkId) return;
                 const alertDelivery = await readAlertDelivery();
                 const rows = readRows();
-                const affectedRows = rows.filter(row => row.health?.status !== 'up' && row.health?.expectedDown !== 'stop');
+                const affectedRows = rows.filter(row => row.health?.expectedDown !== 'stop' && (row.health?.status === 'down' || row.health?.status === 'degraded'));
                 const labels = await readMachineLabels(aggregate.members.map(member => member.machineId), signal);
                 if (!currentHealth()) return;
                 const committed = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => store.writeNotice({
@@ -346,21 +346,20 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
     function attachService({ handle, subject }: (typeof services)[number]) {
         const signal = AbortSignal.any([controller.signal, handle.retirementSignal]);
         const isCurrent = () => !signal.aborted && handle.isCurrent();
-        const observation = handle.observeHealth(snapshot => {
-            // The service owner alone classifies health. Unknown/retired is
-            // neither an outage nor evidence that an earlier outage recovered.
-            if (!isCurrent() || !['healthy', 'unhealthy', 'failed', 'stopped'].includes(snapshot.state)) return;
+        if (!serviceRows) return;
+        const observe = (row: MachineServiceRowV1) => {
+            const { health, native } = row;
+            if (!isCurrent() || !health || health.status === 'unknown') return;
+            const isObservationCurrent = () => isCurrent() && serviceRows.read(handle).health === health;
             pending = pending.catch(() => {}).then(async () => {
-                if (!isCurrent()) return;
+                if (!isObservationCurrent()) return;
                 const fresh = admittedEnvironment;
                 if (!fresh) return;
                 const alertDelivery = await readAlertDelivery();
-                if (!isCurrent()) return;
-                const expectedStop = snapshot.expectedDown === 'stop';
-                const recovered = snapshot.state === 'healthy' && !expectedStop;
-                const row = serviceRows?.read(handle);
+                const expectedStop = health.expectedDown === 'stop';
+                const recovered = health.status === 'up' && !expectedStop;
                 const labels = await readMachineLabels([subject.machineId], signal);
-                if (!isCurrent()) return;
+                if (!isObservationCurrent()) return;
                 const committed = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => store.writeNotice({
                     accountId, source: { kind: 'host', topic: 'service_health', subject },
                     page: { kind: 'host', page: 'machine_service', service: subject,
@@ -370,20 +369,16 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
                     title: `${subject.composeService} ${expectedStop ? 'expected during stop' : recovered ? 'recovered' : 'needs attention'}`,
                     type: !recovered && !expectedStop && fresh.environment.protection === 'production' ? 'blocked' : 'update',
                     healthPhase: recovered ? 'recovered' : 'open', resolved: false,
-                    ...(!recovered && !expectedStop ? recoveryChoices(fresh, row ? [row] : []) : {}),
-                    body: [`${labels.get(subject.machineId) ?? 'Machine name unavailable'}: ${row?.name ?? handle.composeService}. Service health: ${snapshot.state}.`,
-                        ...(snapshot.readiness ? [`Readiness: ${snapshot.readiness.replaceAll('_', ' ')}.`] : []),
-                        ...(snapshot.nativePhase ? [`Native phase: ${snapshot.nativePhase.replaceAll('_', ' ')}.`] : []),
+                    ...(!recovered && !expectedStop ? recoveryChoices(fresh, [row]) : {}),
+                    body: [`${labels.get(subject.machineId) ?? 'Machine name unavailable'}: ${row.name}. Service health: ${health.status}.`,
+                        ...(native ? [`Readiness: ${native.readiness.replaceAll('_', ' ')}.`] : []),
+                        ...(native ? [`Native phase: ${native.phase.replaceAll('_', ' ')}.`] : []),
                         ...(alertDelivery?.kind === 'unavailable' ? [`Off-app alert settings are unavailable (${alertDelivery.code}).`] : []),
                     ].join(' '),
                     signal,
                 }));
                 if (!committed.changed || !committed.healthOpening) return;
-                // Read the service owner's cached fact, never run another probe.
-                const openingCurrent = () => isCurrent() && (recovered
-                    ? handle.snapshot().state === 'healthy'
-                    : ['unhealthy', 'failed', 'stopped'].includes(handle.snapshot().state));
-                if (!openingCurrent()) return;
+                if (!isObservationCurrent()) return;
                 if (alertDelivery?.kind === 'available') await deliver({ receipt: committed, signal,
                     controllerMachineId: fresh.environment.controllerMachineId, alerts: alertDelivery.alerts });
             });
@@ -394,7 +389,11 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
                     failureCause: projectActionFailureCauseV1(error, 'deployment.notice.service_write', { allowUnknownErrorCode: false }),
                 });
             });
+        };
+        const observation = serviceRows.subscribe(subject.machineId, [handle], change => {
+            if (change.handle === handle && change.row) observe(change.row);
         });
+        observe(serviceRows.read(handle));
         const retire = () => observation.dispose();
         handle.retirementSignal.addEventListener('abort', retire, { once: true });
         cleanups.push(() => { observation.dispose(); handle.retirementSignal.removeEventListener('abort', retire); });

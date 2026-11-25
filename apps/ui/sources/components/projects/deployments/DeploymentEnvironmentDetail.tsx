@@ -908,7 +908,6 @@ export const DeploymentEnvironmentDetail = React.memo(
     const receipts = history.result.items;
     const recentReceipts = receipts.slice(0, RECENT_COUNT);
     const openServingReceipt = () => { if (activeReceipt) props.onOpenReceipt(activeReceipt.deployment.id); };
-    const servingNotice = activeReceipt ? deploymentStateNotice(activeReceipt.deployment.state) : null;
     // Overview owns the whole precedence; other tabs keep only what blocks their own presses.
     const overview = tab === 'overview';
     const latest = overview ? history.result.items[0] ?? null : null;
@@ -947,7 +946,6 @@ export const DeploymentEnvironmentDetail = React.memo(
       reviewPending,
       latest,
       health: overview ? detail.healthAggregate ?? null : null,
-      servingState: overview ? activeReceipt?.deployment.state ?? null : null,
       catalogUpdate: overview && Boolean(templateRef && (catalogUpdatePending || environment.catalogUpdate.upstream
         && environment.catalogUpdate.upstream.state !== 'current' || environment.catalogUpdate.error)),
     });
@@ -1075,7 +1073,7 @@ export const DeploymentEnvironmentDetail = React.memo(
           );
         }
         case 'unhealthy': {
-          const health = deploymentHealthFact(detail.healthAggregate, activeReceipt?.deployment.state);
+          const health = deploymentHealthFact(detail.healthAggregate);
           return (
             <AttentionBanner
               testID="project-deployments.environment.attention.unhealthy"
@@ -1110,8 +1108,8 @@ export const DeploymentEnvironmentDetail = React.memo(
             />
           );
         }
-        case 'runningUnverified':
-          // The serving receipt carries the native check result. The current health can supersede it.
+        case 'runningUnverified': {
+          const servingNotice = deploymentStateNotice('running_unverified');
           return servingNotice ? (
             <AttentionBanner
               testID="project-deployments.environment.serving.notice.running_unverified"
@@ -1120,6 +1118,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               description={servingNotice.text}
             />
           ) : null;
+        }
       }
     })();
 
@@ -1220,7 +1219,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                     <FactStrip
                       testID="project-deployments.environment.facts"
                       layout="columns" narrow={props.phone}
-                      facts={overviewFacts(detail, services.length, activeReceipt.facts.retainedPreviousCount ?? null, activeReceipt.deployment.state, latest?.state)}
+                      facts={overviewFacts(detail, services.length, activeReceipt.facts.retainedPreviousCount ?? null, latest?.state)}
                     />
                   </ItemGroup>
                 </>
@@ -1834,7 +1833,7 @@ function deploymentServices(content: DeploymentContentV1): readonly DeploymentSe
  * receipt fills (its services, what is kept), so a phone's two-per-row strip keeps its rows when the receipt answers.
  */
 function overviewPendingFacts(detail: DeploymentEnvironmentDetailV1, latestState?: DeploymentReceiptHeaderV1['state']): FactStripFact[] {
-  const facts = overviewFacts(detail, 0, null, undefined, latestState);
+  const facts = overviewFacts(detail, 0, null, latestState);
   const pending = (key: string, label: string): FactStripFact => ({ key, label, value: '—' });
   return [facts[0]!, pending('services', t('projects.deployments.servicesTitle')), ...facts.slice(1),
     ...(detail.content.retainPreviousDeployments > 0 ? [pending('kept', t('projects.deployments.keptForRollback'))] : [])];
@@ -1842,13 +1841,13 @@ function overviewPendingFacts(detail: DeploymentEnvironmentDetailV1, latestState
 
 /** The four headline facts under the serving version (lab `fc-facts`): health, services, rollout, rollback. */
 function overviewFacts(detail: DeploymentEnvironmentDetailV1, serviceCount: number, kept: number | null,
-  servingState?: DeploymentReceiptHeaderV1['state'], latestState?: DeploymentReceiptHeaderV1['state']): FactStripFact[] {
+  latestState?: DeploymentReceiptHeaderV1['state']): FactStripFact[] {
   const health = detail.healthAggregate;
   const facts: FactStripFact[] = [{
     key: 'health',
     testID: 'project-deployments.environment.facts.health',
     label: t('projects.deployments.healthTitle'),
-    ...deploymentHealthFact(health, servingState, latestState),
+    ...deploymentHealthFact(health, latestState),
   }];
   if (serviceCount > 0) {
     facts.push({ key: 'services', label: t('projects.deployments.servicesTitle'),

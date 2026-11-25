@@ -4,7 +4,7 @@ import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protoco
 import { DeploymentReceiptMetadataV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { t } from '@/text';
-import { deploymentDeployAvailability, deploymentFailureTitle, deploymentSourceLabel, deploymentHeadline, deploymentStateLabel, deploymentHistoryLead, deploymentStateNotice, deploymentRailState, deploymentEnvironmentAttention, deploymentAttentionLeaves, deploymentEnvironmentRowState, deploymentSettledStateLabel } from './deploymentPresentation';
+import { deploymentDeployAvailability, deploymentFailureTitle, deploymentSourceLabel, deploymentHeadline, deploymentStateLabel, deploymentHistoryLead, deploymentStateNotice, deploymentRailState, deploymentEnvironmentAttention, deploymentAttentionLeaves, deploymentEnvironmentRowState, deploymentHealthFact, deploymentSettledStateLabel } from './deploymentPresentation';
 
 it('presents the recorded interruption reason on the receipt and its history row', () => {
     const receipt = createDeploymentReceiptHeaderV1({ state: 'outcome_unknown' });
@@ -99,25 +99,25 @@ describe('receipt titles name the operation the receipt records', () => {
 describe('Environment attention slot (DEPLOY-COMPOSE R3): one notice, highest precedence first', () => {
     const calm = {
         machineOffline: false, noTarget: false, controller: null, refused: false, reviewPending: false,
-        latest: null, health: null, servingState: null,
+        latest: null, health: null,
     } satisfies Parameters<typeof deploymentEnvironmentAttention>[0];
     const failed = { id: 'd-failed', state: 'failed' as const };
 
     it('a healthy, settled Environment says nothing', () => {
         expect(deploymentEnvironmentAttention(calm)).toBeNull();
         expect(deploymentEnvironmentAttention({ ...calm, latest: { id: 'd-1', state: 'succeeded' }, health: { status: 'up' },
-            servingState: 'succeeded', controller: { state: 'available' } })).toBeNull();
+            controller: { state: 'available' } })).toBeNull();
     });
 
     it('when everything is wrong at once, only the blocking notice shows, then each lower one as the higher clears', () => {
         const all = { ...calm, machineOffline: true, noTarget: true, controller: { state: 'paused' as const }, refused: true,
-            latest: failed, reviewPending: true, health: { status: 'down' as const }, servingState: 'running_unverified' as const };
+            latest: failed, reviewPending: true, health: { status: 'down' as const } };
         const shown: string[] = [];
         let facts: Parameters<typeof deploymentEnvironmentAttention>[0] = all;
         const clear = {
             machineOffline: { machineOffline: false }, noTarget: { noTarget: false }, controllerPaused: { controller: null },
             actionRefused: { refused: false }, latestFailed: { latest: null }, approvalWaiting: { reviewPending: false },
-            unhealthy: { health: null }, runningUnverified: { servingState: null },
+            unhealthy: { health: null },
         } as const;
         for (;;) {
             const attention = deploymentEnvironmentAttention(facts);
@@ -126,7 +126,7 @@ describe('Environment attention slot (DEPLOY-COMPOSE R3): one notice, highest pr
             facts = { ...facts, ...clear[attention.kind as keyof typeof clear] };
         }
         expect(shown).toEqual(['machineOffline', 'noTarget', 'controllerPaused', 'actionRefused', 'latestFailed',
-            'approvalWaiting', 'unhealthy', 'runningUnverified']);
+            'approvalWaiting', 'unhealthy']);
     });
 
     it('names the receipt it is about: a failed latest deploy, or the one still deploying', () => {
@@ -146,7 +146,19 @@ describe('Environment attention slot (DEPLOY-COMPOSE R3): one notice, highest pr
 
     it('a newer catalog release is the quietest notice: it shows only when nothing else does', () => {
         expect(deploymentEnvironmentAttention({ ...calm, catalogUpdate: true })).toEqual({ kind: 'catalogUpdate' });
-        expect(deploymentEnvironmentAttention({ ...calm, catalogUpdate: true, servingState: 'running_unverified' })?.kind).toBe('runningUnverified');
+        const unchecked = { status: 'unknown' as const, members: [{ machineId: 'machine', roles: ['runtime' as const],
+            status: 'unknown' as const, evidence: [{ role: 'runtime' as const, source: 'native' as const,
+                status: 'unknown' as const, reason: 'running_unverified' }] }] };
+        expect(deploymentEnvironmentAttention({ ...calm, catalogUpdate: true, health: unchecked })?.kind).toBe('runningUnverified');
+    });
+
+    it('keeps a serving receipt quiet until health settles, including during replacement', () => {
+        expect(deploymentEnvironmentAttention(calm)).toBeNull();
+        expect(deploymentHealthFact(undefined)).toEqual({ value: '—' });
+        expect(deploymentHealthFact({ status: 'unknown', n: 1, down: 0, degraded: 0 }))
+            .toEqual({ value: '—' });
+        expect(deploymentHealthFact(undefined, 'running').value)
+            .toBe(deploymentStateLabel('running'));
     });
 
     it('an unknown controller makes no claim; a degraded service needs the person', () => {

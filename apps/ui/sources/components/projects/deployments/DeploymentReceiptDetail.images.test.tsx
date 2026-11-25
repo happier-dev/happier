@@ -508,15 +508,18 @@ describe('Receipt → running, not verified', () => {
   ] as const)('a $definition definition offers its Compose file as the next action: $opens (live checked: $verified, historical: $historical)', async ({ definition, opens, verified, historical }) => {
     const serving = createDeploymentReceiptHeaderV1({ state: 'running_unverified' });
     const initial = createDeploymentEnvironmentDetailV1();
-    const base = verified ? {
+    const base = {
       ...initial,
       targetLinks: initial.targetLinks.map(row => ({ ...row, targetLink: { ...row.targetLink,
         id: serving.targetLinkId, activeDeploymentId: serving.id } })),
       environment: { ...initial.environment, runtimeTargetLinkId: serving.targetLinkId },
       healthAggregate: { v: 1 as const, environmentId: initial.environment.id, targetLinkId: serving.targetLinkId,
-        protection: initial.environment.protection, status: 'up' as const, n: 1, down: 0, degraded: 0, unknown: 0,
-        members: [], affectedMachineIds: [], edgeUnreachable: false, authoritativeRecovery: true },
-    } : initial;
+        protection: initial.environment.protection, status: verified ? 'up' as const : 'unknown' as const,
+        n: 1, down: 0, degraded: 0, unknown: verified ? 0 : 1, affectedMachineIds: [], edgeUnreachable: false,
+        members: verified ? [] : [{ machineId: 'machine-1', roles: ['runtime' as const], status: 'unknown' as const,
+          evidence: [{ role: 'runtime' as const, source: 'native' as const, status: 'unknown' as const, reason: 'running_unverified' }] }],
+        authoritativeRecovery: verified },
+    };
     // A stored Compose file is edited in the Environment's Settings; a repository's lives in its repository.
     const detail = definition === 'stored' ? { ...base, content: { ...base.content, definition: {
       kind: 'stored' as const, document: 'services: {app: {image: app:1}}', profiles: [], services: ['app'],

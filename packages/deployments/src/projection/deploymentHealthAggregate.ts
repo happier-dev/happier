@@ -194,19 +194,15 @@ export function projectDeploymentHealthAggregateV1({ environment, targetLink, ob
             && evidence.length === old.evidence.length && evidence.every((value, i) => value === old.evidence[i])) return old;
         return { ...member, status, evidence };
     });
-    const production = environment.protection === 'production';
-    const down = rows.filter(member => member.evidence.some(value => value.expectedDown !== 'stop' && (value.status === 'down'
-        || (production && value.status === 'unknown'
-            && !(value.role === 'runtime' && value.source === 'native' && isDeploymentServiceRunningWithoutCheckV1(value.status, value.reason)))))).length;
+    const down = rows.filter(member => member.evidence.some(value => value.expectedDown !== 'stop' && value.status === 'down')).length;
     const degraded = rows.filter(member => member.status === 'degraded').length;
     const unknown = rows.filter(member => member.evidence.some(value => value.expectedDown !== 'stop' && value.status === 'unknown')).length;
     const edge = rows.flatMap(member => member.evidence.filter(value => value.role === 'edge'));
     const edgeUnreachable = edge.some(value => value.expectedDown !== 'stop' && value.status === 'down');
-    const edgeUnavailable = edgeUnreachable || (production && edge.some(value => value.expectedDown !== 'stop' && value.status === 'unknown'));
     const expectedStop = rows.some(member => member.evidence.some(value => value.expectedDown === 'stop'));
     const n = rows.length;
     const status: DeploymentHealthStatusV1 = n === 0 ? 'unknown'
-        : edgeUnavailable || down === n ? 'down'
+        : edgeUnreachable || down === n ? 'down'
             : down > 0 || degraded > 0 || expectedStop ? 'degraded' : unknown > 0 ? 'unknown' : 'up';
     if (prior && prior.protection === environment.protection && prior.status === status
         && rows.length === prior.members.length && rows.every((member, index) => member === prior.members[index])) return prior;

@@ -40,8 +40,16 @@ describe('Environment health aggregate', () => {
         });
         expect(project([database])).toMatchObject({ status: 'unknown', down: 0, authoritativeRecovery: false });
         expect(project([web, { serviceId: 'database' }])).toMatchObject({
-            status: 'degraded', down: 1, authoritativeRecovery: false,
+            status: 'unknown', down: 0, authoritativeRecovery: false,
         });
+    });
+
+    it('keeps an unobserved Production quiet when a shared Machine reports another Environment', () => {
+        const other = observation('a', { environmentId: 'staging', status: 'down' });
+        const cold = projectDeploymentHealthAggregateV1({ environment, targetLink, observations: [other] });
+        expect(cold).toMatchObject({ environmentId: environment.id, status: 'unknown', down: 0, unknown: 2 });
+        const settled = projectDeploymentHealthAggregateV1({ environment, targetLink, observations: [...healthy, other] });
+        expect(settled).toMatchObject({ environmentId: environment.id, status: 'up', down: 0, unknown: 0 });
     });
 
     it('retains actual stopped health without opening an outage or proving recovery for a native desired Stop', () => {
@@ -63,14 +71,16 @@ describe('Environment health aggregate', () => {
         }] })).toMatchObject({ down: 1, authoritativeRecovery: false });
     });
 
-    it.each(['down', 'unknown'] as const)('counts factual %s evidence independently of its diagnostic reason', status => {
+    it.each([{ status: 'down', aggregateStatus: 'degraded', down: 1, unknown: 0 },
+        { status: 'unknown', aggregateStatus: 'unknown', down: 0, unknown: 1 }] as const)(
+        'counts factual $status evidence independently of its diagnostic reason', ({ status, aggregateStatus, down, unknown }) => {
         const member = { environmentId: environment.id, targetLinkId: targetLink.id, targetLinkRevision: targetLink.revision,
             machineId: 'b', installationId: 'installation-b', role: 'runtime' as const, observedAtMs: 2000,
             source: { kind: 'native' as const }, services: [{ serviceId: 'worker', observation: {
                 status, observedAtMs: 2000, reason: 'expected_stop',
             } }] };
         const aggregate = projectDeploymentHealthAggregateV1({ environment, targetLink, observations: [healthy[0], member] });
-        expect(aggregate).toMatchObject({ status: 'degraded', down: 1, unknown: status === 'unknown' ? 1 : 0,
+        expect(aggregate).toMatchObject({ status: aggregateStatus, down, unknown,
             authoritativeRecovery: false, affectedMachineIds: ['b'] });
         expect(aggregate.members[1].evidence).toEqual([{ role: 'runtime', status, source: 'native', reason: 'expected_stop' }]);
         expect(DeploymentEnvironmentHealthAggregateV1Schema.parse(aggregate)).toEqual(aggregate);
@@ -141,7 +151,7 @@ describe('Environment health aggregate', () => {
             observation: { status: 'unknown' as const, observedAtMs: 3000 } }]]) {
             const current = projectDeploymentHealthAggregateV1({ environment, targetLink,
                 observations: [healthy[0], { ...service, services }, observation('b', { observedAtMs: 4000 })] }, previous);
-            expect(current).toMatchObject({ n: 2, down: 1, unknown: 1, authoritativeRecovery: false });
+            expect(current).toMatchObject({ n: 2, status: 'unknown', down: 0, unknown: 1, authoritativeRecovery: false });
             expect(current.members[1]).toMatchObject({ machineId: 'b', status: 'unknown',
                 evidence: [{ role: 'runtime', status: 'unknown', reason: 'coverage_unavailable' }] });
             const nonProduction = projectDeploymentHealthAggregateV1({
@@ -169,7 +179,7 @@ describe('Environment health aggregate', () => {
             observations: [healthy[0], { ...service, observedAtMs: 5000, services: [service.services[0]] }] }, incompleteFailure);
         expect(retiredService).toMatchObject({ status: 'up', authoritativeRecovery: true });
         const missingMember = projectDeploymentHealthAggregateV1({ environment, targetLink, observations: [healthy[0]] }, previous);
-        expect(missingMember).toMatchObject({ n: 2, down: 1, unknown: 1, authoritativeRecovery: false });
+        expect(missingMember).toMatchObject({ n: 2, status: 'unknown', down: 0, unknown: 1, authoritativeRecovery: false });
         expect(missingMember.members[1].evidence).toMatchObject([{ status: 'unknown', reason: 'coverage_unavailable' }]);
         const stale = projectDeploymentHealthAggregateV1({ environment, targetLink, observations: [healthy[0],
             { ...service, targetLinkRevision: targetLink.revision + 1 }, { ...service, installationId: 'old-installation' }] }, previous);
@@ -196,7 +206,7 @@ describe('Environment health aggregate', () => {
         const input = { environment, targetLink, observations: [healthy[0], { ...healthy[1], status: 'unknown' as const, reason: 'machine_unavailable' }] };
         lease.adopt(input);
         expect(changes).toHaveLength(2);
-        expect(lease.snapshot()).toMatchObject({ down: 1, unknown: 1, authoritativeRecovery: false });
+        expect(lease.snapshot()).toMatchObject({ down: 0, unknown: 1, authoritativeRecovery: false });
         expect(lease.snapshot().members[0]).toBe(first.members[0]);
         retirement.abort();
         lease.adopt({ environment, targetLink, observations: healthy });
@@ -312,12 +322,12 @@ describe('Environment health aggregate', () => {
             observation('a'), observation('b', { status: 'unknown', reason: 'machine_unavailable' }),
             observation('joining', { status: 'down' }), observation('controller', { status: 'down' }),
         ] });
-        expect(result).toMatchObject({ status: 'degraded', n: 2, down: 1, unknown: 1, degraded: 0,
+        expect(result).toMatchObject({ status: 'unknown', n: 2, down: 0, unknown: 1, degraded: 0,
             affectedMachineIds: ['b'], authoritativeRecovery: false });
         expect(result.members[1]).toMatchObject({ machineId: 'b', status: 'unknown',
             evidence: [{ role: 'runtime', status: 'unknown', reason: 'machine_unavailable' }] });
         const allUnknown = projectDeploymentHealthAggregateV1({ environment, targetLink, observations: [] });
-        expect(allUnknown).toMatchObject({ status: 'down', n: 2, down: 2, unknown: 2 });
+        expect(allUnknown).toMatchObject({ status: 'unknown', n: 2, down: 0, unknown: 2 });
         const nonProduction = projectDeploymentHealthAggregateV1({
             environment: { ...environment, protection: 'nonProduction' }, targetLink,
             observations: [observation('a'), observation('b', { status: 'unknown', reason: 'coverage_unavailable' })],
@@ -348,11 +358,11 @@ describe('Environment health aggregate', () => {
             observation('b', { source: { kind: 'presence' } }),
             observation('edge', { role: 'edge', source: { kind: 'domain', observerMachineId: 'edge' } }),
         ] });
-        expect(unproved).toMatchObject({ down: 3, unknown: 3, authoritativeRecovery: false });
+        expect(unproved).toMatchObject({ status: 'unknown', down: 0, unknown: 3, authoritativeRecovery: false });
         const partlyRecovered = projectDeploymentHealthAggregateV1({ environment: edgeEnvironment, targetLink,
             observations: [...healthy, observation('edge', { role: 'edge', status: 'unknown', reason: 'connect_failed',
                 source: { kind: 'domain', observerMachineId: 'controller' } })] }, unproved);
-        expect(partlyRecovered).toMatchObject({ down: 1, unknown: 1, status: 'down', authoritativeRecovery: false });
+        expect(partlyRecovered).toMatchObject({ down: 0, unknown: 1, status: 'unknown', authoritativeRecovery: false });
         const recovered = projectDeploymentHealthAggregateV1({ environment: edgeEnvironment, targetLink,
             observations: [...healthy, observation('edge', { role: 'edge',
                 source: { kind: 'domain', observerMachineId: 'controller' } })] }, partlyRecovered);
@@ -364,7 +374,7 @@ describe('Environment health aggregate', () => {
             observations: [observation('a'), observation('b', { status: 'down' })] });
         const remaining = { ...targetLink, revision: 2, machines: ['a'], members: [targetLink.members[0]] };
         const rebased = projectDeploymentHealthAggregateV1({ environment, targetLink: remaining, observations: healthy }, failed);
-        expect(rebased).toMatchObject({ n: 1, down: 1, unknown: 1, authoritativeRecovery: false });
+        expect(rebased).toMatchObject({ n: 1, down: 0, unknown: 1, authoritativeRecovery: false });
         expect(rebased.members.map(member => member.machineId)).toEqual(['a']);
         const stale = projectDeploymentHealthAggregateV1({ environment, targetLink: remaining, observations: [
             ...healthy, observation('b', { targetLinkRevision: 2, status: 'up' }),

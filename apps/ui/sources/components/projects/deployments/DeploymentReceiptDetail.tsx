@@ -58,7 +58,7 @@ import {
   deploymentFailureTitle,
   deploymentHeadline,
   deploymentHealthFact,
-  deploymentEnvironmentVerificationPending,
+  deploymentEnvironmentHealthKind,
   deploymentMachineHealthLabel,
   deploymentOperationLabel,
   deploymentRevisionLabel,
@@ -359,10 +359,9 @@ export const DeploymentReceiptDetail = React.memo(
       machineNames[machineId] ?? t('projects.deployments.aMachine');
     const images = 'images' in content ? content.images : NO_IMAGES;
     const currentHealth = serving ? environmentValue?.healthAggregate : undefined;
-    const noticeState = serving ? deployment.state : deploymentSettledReceiptState(deployment.state);
-    const notice = noticeState === 'running_unverified'
-      && !deploymentEnvironmentVerificationPending(noticeState, currentHealth?.status)
-      ? null : deploymentStateNotice(noticeState, facts.failure);
+    const unchecked = serving && deploymentEnvironmentHealthKind(currentHealth) === 'unchecked';
+    const noticeState = unchecked ? 'running_unverified' : deploymentSettledReceiptState(deployment.state);
+    const notice = deploymentStateNotice(noticeState, facts.failure);
     // Domains are read only while this receipt serves natively, so a historical one never borrows them.
     const live = resolveDeploymentLiveAddress({ ...value, facts }, nativeAddressDemand ? domains.result.items : [], serving);
     const outcomeUrl = live?.url ?? null;
@@ -406,10 +405,9 @@ export const DeploymentReceiptDetail = React.memo(
       addressPending: outcomeUrl === null && !facts.publicAddressFailure
         && deploymentAddressExpected({ ...value, facts }, nativeAddressDemand ? domains.result.items : [], serving),
       // A version running without a health check has its notice below say so; the facts don't repeat it.
-      healthSaidByNotice: deployment.state === 'running_unverified' && notice !== null,
+      healthSaidByNotice: unchecked && notice !== null,
       serving,
       health: currentHealth,
-      state: deployment.state,
       retainPolicy: environmentValue?.content.retainPreviousDeployments,
       // The failure card names the version that serves again; a second "Previous version" beside it would disagree.
       restoredSaid: deployment.state === 'failed' && restored,
@@ -660,9 +658,9 @@ export const DeploymentReceiptDetail = React.memo(
               testID="project-deployments.receipt.investigate" onChoosePlacement={investigation.investigateWithPlacement} pending={investigation.pending} /> : null}
             {!pressAttention && notice ? (
               <AttentionBanner
-                testID={`project-deployments.receipt.notice.${deployment.state}`}
+                testID={`project-deployments.receipt.notice.${noticeState}`}
                 tone={notice.tone}
-                title={deploymentStateLabel(deployment.state)}
+                title={deploymentStateLabel(noticeState)}
                 description={notice.text}
                 // An unknown outcome is settled by looking at what runs: the Machine's Services say it.
                 {...(deployment.state === 'outcome_unknown' && content.machines.length === 1 ? { action: {
@@ -672,7 +670,7 @@ export const DeploymentReceiptDetail = React.memo(
                 } } : {})}
                 // Running without a health check is fixed in the Compose file: a stored one is edited in Settings (lab d3d
                 // `unverified`); a repository's lives in its repository, so there is nothing here to open.
-                {...(deployment.state === 'running_unverified' && environmentValue?.content.definition.kind === 'stored'
+                {...(unchecked && environmentValue?.content.definition.kind === 'stored'
                   && props.onOpenEnvironmentTab ? { action: {
                   label: t('projects.deployments.openComposeFile'),
                   icon: 'file-text' as const,
@@ -943,7 +941,6 @@ function receiptFacts(input: Readonly<{
   healthSaidByNotice: boolean;
   serving: boolean;
   health: Parameters<typeof deploymentHealthFact>[0];
-  state: Parameters<typeof deploymentHealthFact>[1];
   /** How many earlier releases the Environment keeps; unknown until its read answers. */
   retainPolicy: number | undefined;
   restoredSaid: boolean;
@@ -951,7 +948,7 @@ function receiptFacts(input: Readonly<{
   const list: FactStripFact[] = [];
   if (input.serving) {
     if (!input.healthSaidByNotice) list.push({ key: 'health', testID: 'project-deployments.receipt.facts.health',
-      label: t('projects.deployments.factHealthNow'), ...deploymentHealthFact(input.health, input.state) });
+      label: t('projects.deployments.factHealthNow'), ...deploymentHealthFact(input.health) });
     if (input.address || input.addressPending) {
       list.push({ key: 'address', label: t('projects.deployments.factAddress'),
         value: input.address ?? t('projects.deployments.factNotAvailable') });

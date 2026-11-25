@@ -2450,10 +2450,10 @@ describe('Project deployments page', () => {
       const servingText = JSON.stringify(servingRow?.findAll(node => typeof node.type === 'string' && typeof node.props.children === 'string')
         .map(node => node.props.children));
       expect(servingText.split('aaaaaaa').length - 1).toBe(1);
-      // The fact strip reports the check status; the notice explains how to verify the serving version.
-      expect(screen.findByTestId('project-deployments.environment.serving.notice.running_unverified')).not.toBeNull();
+      // The serving receipt records the deployment outcome. It cannot diagnose the unread current health.
+      expect(screen.findByTestId('project-deployments.environment.serving.notice.running_unverified')).toBeNull();
       const healthFact = screen.findByTestId('project-deployments.environment.facts.health');
-      expect(healthFact?.findAll(node => typeof node.type === 'string' && node.props.children === 'No health check').length)
+      expect(healthFact?.findAll(node => typeof node.type === 'string' && node.props.children === '—').length)
         .toBeGreaterThan(0);
     } finally { controller.retire(); }
   });
@@ -3951,7 +3951,13 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
     const serving = createDeploymentReceiptDetailV1({
       deployment: createDeploymentReceiptHeaderV1({ id: servingId, state: 'running_unverified' }),
     });
-    const { controller, detail } = controllerFor({ detail: base, receipt: serving });
+    const { controller, detail } = controllerFor({ detail: { ...base, healthAggregate: {
+      v: 1, environmentId: base.environment.id, targetLinkId: base.environment.runtimeTargetLinkId!,
+      protection: base.environment.protection, status: 'unknown', n: 1, down: 0, degraded: 0, unknown: 1,
+      members: [{ machineId: 'machine-1', roles: ['runtime'], status: 'unknown',
+        evidence: [{ role: 'runtime', source: 'native', status: 'unknown', reason: 'running_unverified' }] }],
+      affectedMachineIds: [], edgeUnreachable: false, authoritativeRecovery: false,
+    } }, receipt: serving });
     const screen = await render(controller, detail);
     try {
       await waitForContent(screen, 'project-deployments.environment.serving.notice.running_unverified');

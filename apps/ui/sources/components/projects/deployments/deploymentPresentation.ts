@@ -2,7 +2,7 @@ import { projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deploym
 import type { DeploymentReceiptHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { isNativeDeploymentPromotionSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentContentV1, DeploymentEnvironmentContentV1, DeploymentMachineResultV1, DeploymentReceiptFailureV1, DeploymentReceiptDetailV1, DeploymentStepV1 } from '@happier-dev/deployments/contracts/v1';
-import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
+import { isDeploymentServiceRunningWithoutCheckV1, type DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { resolveWorkStatusTone, type WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 import type { ActionActorV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
@@ -329,7 +329,7 @@ export function deploymentEnvironmentRowState(item: Readonly<{
 }>): Readonly<{ tone: 'danger' | 'warning' | null; text: string }> | null {
   const state = item.currentDeployment?.state ?? null;
   if (state === 'failed' || state === 'outcome_unknown' || state === 'queued' || state === 'running') return deploymentRailState(state);
-  const health = item.healthAggregate?.status;
+  const health = deploymentEnvironmentHealthKind(item.healthAggregate);
   if (health === 'down') return { tone: 'danger', text: t('projects.deployments.healthDown') };
   if (health === 'degraded') return { tone: 'warning', text: t('projects.deployments.healthDegraded') };
   return state ? deploymentRailState(state) : null;
@@ -340,11 +340,20 @@ export function deploymentSettledStateLabel(state: ReceiptState): string {
   return deploymentStateLabel(deploymentSettledReceiptState(state));
 }
 
-export function deploymentEnvironmentVerificationPending(
-  state: ReceiptState | null | undefined,
-  health: NonNullable<DeploymentEnvironmentDetailV1['healthAggregate']>['status'] | undefined,
-): boolean {
-  return state === 'running_unverified' && (health === undefined || health === 'unknown');
+type HealthAggregate = NonNullable<DeploymentEnvironmentDetailV1['healthAggregate']>;
+type HealthEvidence = Pick<HealthAggregate, 'status'> & Partial<Pick<HealthAggregate, 'members'>>;
+
+/** Only current native evidence can confirm that a running service lacks a check. */
+export function deploymentEnvironmentHealthKind(
+  health: HealthEvidence | null | undefined,
+  latestState?: ReceiptState,
+): HealthAggregate['status'] | 'unchecked' | 'deploying' {
+  if (latestState === 'queued' || latestState === 'running') return 'deploying';
+  if (!health) return 'unknown';
+  if (health.status !== 'unknown') return health.status;
+  const unresolved = health.members?.flatMap(member => member.evidence.filter(evidence => evidence.status === 'unknown'));
+  return unresolved?.length && unresolved.every(evidence => evidence.role === 'runtime' && evidence.source === 'native'
+    && isDeploymentServiceRunningWithoutCheckV1(evidence.status, evidence.reason)) ? 'unchecked' : 'unknown';
 }
 
 export function deploymentEnvironmentVerificationLabel(
@@ -445,26 +454,21 @@ export function deploymentDeployAvailability(
 
 /**
  * The Environment's current health aggregate as one fact (lab `fc-facts`): one word for one server,
- * "2 of 3 servers healthy" when some of several are not, in its tone. Absent means not checked yet, unless the
- * serving receipt ran without a health check: then it says so, in the same words as that receipt's notice.
+ * "2 of 3 servers healthy" when some of several are not, in its tone. Unavailable coverage is quiet.
  */
 export function deploymentHealthFact(
-  health: Pick<NonNullable<DeploymentEnvironmentDetailV1['healthAggregate']>, 'status' | 'n' | 'down' | 'degraded'> | undefined,
-  servingState?: ReceiptState,
+  health: (HealthEvidence & Pick<HealthAggregate, 'n' | 'down' | 'degraded'>) | undefined,
   latestState?: ReceiptState,
 ): Readonly<{ value: string; tone?: 'danger' | 'attention' }> {
-  // A rollout can withdraw the departing runtime's observations before the new version has any.
-  // The latest receipt owns that interval; stale or missing coverage must not diagnose the new version.
-  if (latestState === 'queued' || latestState === 'running') return { value: deploymentStateLabel(latestState) };
-  if (!health || health.status === 'unknown') {
-    return { value: deploymentEnvironmentVerificationPending(servingState, health?.status)
-      ? t('projects.deployments.review.noHealthCheck') : t('projects.deployments.healthNotChecked') };
-  }
-  if (health.status === 'up') return { value: t('projects.deployments.healthUp') };
+  const kind = deploymentEnvironmentHealthKind(health, latestState);
+  if (kind === 'deploying') return { value: deploymentStateLabel(latestState === 'queued' ? 'queued' : 'running') };
+  if (kind === 'unchecked') return { value: t('projects.deployments.review.noHealthCheck') };
+  if (!health || kind === 'unknown') return { value: '—' };
+  if (kind === 'up') return { value: t('projects.deployments.healthUp') };
   const value = health.n > 1
     ? t('projects.deployments.healthServers', { healthy: Math.max(0, health.n - health.down - health.degraded), count: health.n })
-    : health.status === 'down' ? t('projects.deployments.healthDown') : t('projects.deployments.healthDegraded');
-  return { value, tone: health.status === 'down' ? 'danger' : 'attention' };
+    : kind === 'down' ? t('projects.deployments.healthDown') : t('projects.deployments.healthDegraded');
+  return { value, tone: kind === 'down' ? 'danger' : 'attention' };
 }
 
 /**
@@ -499,8 +503,7 @@ export type DeploymentEnvironmentAttentionFacts = Readonly<{
   reviewPending: boolean;
   /** The newest receipt in the Environment's history. */
   latest: Pick<DeploymentReceiptHeaderV1, 'id' | 'state'> | null;
-  health: Pick<NonNullable<DeploymentEnvironmentDetailV1['healthAggregate']>, 'status'> | null;
-  servingState: ReceiptState | null;
+  health: HealthEvidence | null;
   /** The template's catalog has a newer release (registry update observation). */
   catalogUpdate?: boolean;
 }>;
@@ -517,8 +520,9 @@ export function deploymentEnvironmentAttention(facts: DeploymentEnvironmentAtten
   if (facts.latest?.state === 'failed') return { kind: 'latestFailed', deploymentId: facts.latest.id };
   if (facts.reviewPending) return { kind: 'approvalWaiting' };
   if (facts.latest?.state === 'queued' || facts.latest?.state === 'running') return { kind: 'deploying', deploymentId: facts.latest.id };
-  if (facts.health?.status === 'down' || facts.health?.status === 'degraded') return { kind: 'unhealthy' };
-  if (deploymentEnvironmentVerificationPending(facts.servingState, facts.health?.status)) return { kind: 'runningUnverified' };
+  const health = deploymentEnvironmentHealthKind(facts.health);
+  if (health === 'down' || health === 'degraded') return { kind: 'unhealthy' };
+  if (health === 'unchecked') return { kind: 'runningUnverified' };
   if (facts.catalogUpdate) return { kind: 'catalogUpdate' };
   return null;
 }

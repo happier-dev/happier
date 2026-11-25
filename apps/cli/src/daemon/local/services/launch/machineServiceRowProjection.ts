@@ -80,7 +80,7 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
                 : undefined;
             const facts = handle.readNativeRuntimeFacts?.();
             const freshness = facts?.freshness === 'current' ? 'current' : 'unavailable';
-            const status = freshness !== 'current' ? 'unknown'
+            const status = freshness !== 'current' || snapshot.nativePhase === 'unknown' ? 'unknown'
                 : snapshot.state === 'unhealthy' || snapshot.state === 'stopped' || snapshot.nativePhase === 'stopped'
                     || snapshot.readiness === 'not_ready' ? 'down'
                     : snapshot.state === 'healthy' ? 'up' : 'unknown';
